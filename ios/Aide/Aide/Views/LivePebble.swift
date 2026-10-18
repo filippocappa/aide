@@ -8,6 +8,8 @@ struct LivePebble: View {
     var size: CGFloat
     /// Finger position in global coordinates, nil when nothing is touching the screen.
     var touch: CGPoint?
+    /// 0 = no halo, 1 = full. Pulses; faster while thinking.
+    var glow: Double = 0.5
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var squash: CGFloat = 0
 
@@ -39,6 +41,14 @@ struct LivePebble: View {
             let wobble = !still && mood == "thinking" ? sin(t * 5) * 5 : 0
             let hop = !still && mood == "happy" ? -abs(sin(t * 4.5)) * size * 0.06 : 0
 
+            let pulse = still ? 1 : 0.8 + 0.2 * sin(t * (mood == "thinking" ? 3.2 : 1.3))
+            let halo = glow * pulse
+            ZStack {
+            Circle()
+                .fill(RadialGradient(colors: [Theme.glow.opacity(0.55 * halo), Theme.glow.opacity(0)],
+                                     center: .center, startRadius: size * 0.2, endRadius: size * 1.0))
+                .frame(width: size * 2.2, height: size * 2.2)
+                .scaleEffect(1 + (mood == "thinking" ? 0.08 * sin(t * 3.2) : 0))
             Image("Pebble-\(blink ? "calm" : mood)")
                 .resizable()
                 .scaledToFit()
@@ -46,6 +56,7 @@ struct LivePebble: View {
                 .scaleEffect(x: 1 + breath, y: 1 - breath, anchor: .bottom)
                 .rotationEffect(.degrees(wobble + sway + curiousTilt))
                 .offset(y: bob + hop + curiousHop)
+            }
         }
         .scaleEffect(x: 1 + squash, y: 1 - squash, anchor: .bottom)
         .rotationEffect(.degrees(Double(lean.width) * 9))

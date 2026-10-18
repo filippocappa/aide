@@ -5,13 +5,13 @@ import SwiftUI
 struct PebbleStage: View {
     let area: CGSize
     let dockedY: CGFloat
-    let introDone: Bool
+    @Binding var introDone: Bool
     let busy: Bool
     let mood: String
     let touch: CGPoint?
 
     private enum Stage { case intro, docked }
-    private static let bigSize: CGFloat = 320
+    private static let bigSize: CGFloat = 480
     private static let dockedSize: CGFloat = 44
     private static let roamSize: CGFloat = 78
 
@@ -29,12 +29,18 @@ struct PebbleStage: View {
             let roam = CGPoint(x: area.width / 2 + sin(t * 0.7) * area.width * 0.30,
                                y: area.height * 0.42 + sin(t * 1.1 + 1) * area.height * 0.14)
             LivePebble(mood: stageMood, size: homeSize + (Self.roamSize - Self.dockedSize) * k * (stage == .docked ? 1 : 0),
-                       touch: touch)
+                       touch: touch, glow: stage == .intro ? 1 : busy ? 1 : 0.5)
                 .foregroundStyle(Theme.accent)
                 .position(x: home.x + (roam.x - home.x) * k, y: home.y + (roam.y - home.y) * k)
         }
         .animation(.spring(response: 0.85, dampingFraction: 0.6), value: stage)
         .allowsHitTesting(false)
+        .task {
+            // Starts huge in the middle, then drops into the top bar almost at once.
+            guard !introDone else { return }
+            try? await Task.sleep(for: .milliseconds(650))
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.72)) { introDone = true }
+        }
         .onChange(of: busy) { _, nowBusy in
             busyNow = nowBusy
             if nowBusy {
