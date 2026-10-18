@@ -8,7 +8,7 @@ The contract between the server (Ubuntu, `src/`) and the iOS app (`ios/`). See C
 - **Auth:** every request except `/v1/health` sends `Authorization: Bearer <token>`. The token is `AIDE_API_TOKEN` in the server's `.env`. The user types it into the app's Settings once, and the app stores it in the Keychain. A missing or wrong token gets `401`.
 - **Format:** JSON in and out, UTF-8. Field names are `snake_case`.
 - **Times:** ISO 8601 with offset, e.g. `2026-10-20T15:00:00+02:00`. The server answers in its local zone (Europe/Rome). All-day dates are `YYYY-MM-DD`.
-- **Errors:** non-2xx with `{"error": "human readable message"}`.
+- **Errors:** non-2xx with `{"error": "human readable message"}`. A body that doesn't fit the schema is `400` (it was FastAPI's `422` before the digest change).
 
 | Status | Meaning |
 |---|---|
@@ -74,7 +74,7 @@ Short facts Aide keeps between chats (preferences, names, routines). The server 
 | `POST /v1/memory` | `{"text": "Vegetarian"}` | The new item |
 | `DELETE /v1/memory/{id}` | | `{"ok": true}` |
 
-## Digest (contract change, server side pending)
+## Digest
 
 A summary the server builds on a schedule: daily, weekly or monthly. The app shows the latest one on the empty new-chat screen ("Hello, today…"), and the server also sends it as a Discord DM (push notification later). Sections are structured, so the app draws cards instead of parsing text.
 
@@ -93,13 +93,25 @@ A summary the server builds on a schedule: daily, weekly or monthly. The app sho
   ]
 }
 ```
-The app skips section types it doesn't know. `404` if none has been generated yet.
+The app skips section types it doesn't know. `404` if none has been generated yet; `400` for an unknown `kind`.
+
+- **What it covers:** daily = one day, weekly = 7 days, monthly = to the end of the month. The period starts today,
+  or tomorrow if the digest is made after 17:00 (so the Sunday 18:00 weekly covers Monday to Sunday). Section
+  titles say which ("Today", "Tomorrow", "Next 7 days", "October"; reminders "Due today", "Due in October", …).
+  Reminders include overdue ones.
+- **Only the greeting and the `text` section come from the model.** Everything else is data from code. If the
+  model fails, the greeting is a plain one from code and there's no `text` section.
+- **Sections can be missing:** `mail`, `reminders` and `habits` are left out when empty; `calendar` and `mail`
+  when the source isn't set up or is down. `calendar` is kept when empty (nothing scheduled).
+- **Schedule:** each enabled kind runs at its time. If the server was off then, it catches up within 6 hours,
+  otherwise skips that one. A scheduled digest is also sent as a Discord DM when `discord` is true; `POST
+  /v1/digest/run` isn't (you're looking at it). `day` 29–31 means the last day in shorter months.
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `POST /v1/digest/run` | `{"kind": "daily"}` | The freshly generated digest (can take 5–30 s). |
 | `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}, "discord": true}` (times in the server zone, `weekday` 1 = Monday) |
-| `PUT /v1/digest/settings` | the same object | the saved settings |
+| `PUT /v1/digest/settings` | the same object (all of it) | the saved settings; `400` if a time isn't `HH:MM` or a field is missing or out of range |
 
 ## Habits
 

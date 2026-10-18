@@ -13,6 +13,7 @@ from .channels.api import create_app
 from .channels.discord_bot import AideBot
 from .config import OPENROUTER_BASE_URL, load_settings
 from .db import Database
+from .digest import DigestService, digest_schedule
 from .gmail import Gmail
 from .habits import HabitStore
 from .icloud import ICloudCalendar
@@ -59,6 +60,7 @@ def main() -> None:
         tools += calendar_tools(cal, settings.timezone, settings.default_calendar)
     else:
         log.warning("ICLOUD_EMAIL / ICLOUD_APP_PASSWORD not set: calendar tools disabled")
+    gmail = None
     if settings.gmail_client_id and settings.gmail_client_secret and settings.gmail_refresh_token:
         gmail = Gmail(settings.gmail_client_id, settings.gmail_client_secret, settings.gmail_refresh_token)
         tools += mail_tools(gmail, settings.timezone)
@@ -77,14 +79,16 @@ def main() -> None:
         server_fallback=not settings.openrouter_api_key,
     )
     bot = AideBot(agent, settings.discord_owner_id)
+    digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail)
 
     async def run() -> None:
         jobs = [
             bot.start(settings.discord_token),
             reminder_fallback(reminders, bot.notify_owner, settings.timezone),
+            digest_schedule(digest, bot.notify_owner),
         ]
         if settings.api_token:
-            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits)
+            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

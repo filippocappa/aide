@@ -7,15 +7,18 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import anthropic
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..agent import CONVERSATION, Agent, UnknownConversation
 from ..db import Database
+from ..digest import DigestService, check_kind
 from ..habits import HabitStore
-from ..icloud import CalendarBackend, CalEvent
-from ..reminders import Reminder, ReminderStore
+from ..icloud import CalendarBackend
+from ..reminders import ReminderStore
+from ..shapes import event_json, event_start, reminder_json
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +53,10 @@ class CheckIn(BaseModel):
     done: bool = True
 
 
+class DigestRunIn(BaseModel):
+    kind: str = "daily"
+
+
 class ReminderChange(BaseModel):
     id: str | None = None
     apple_id: str | None = None
@@ -67,9 +74,11 @@ class SyncIn(BaseModel):
 
 
 def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | None,
-               tz: ZoneInfo, token: str, habits: HabitStore | None = None) -> FastAPI:
+               tz: ZoneInfo, token: str, habits: HabitStore | None = None,
+               digest: DigestService | None = None) -> FastAPI:
     db: Database = agent.db
     habits = habits or HabitStore(db.conn, tz)
+    digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar)
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
     def auth(authorization: str = Header(default="")) -> None:
@@ -90,6 +99,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def unknown_conversation(_: Request, exc: UnknownConversation):
         return JSONResponse({"error": str(exc)}, status_code=404)
 
+    @app.exception_handler(RequestValidationError)
+    async def bad_body(_: Request, exc: RequestValidationError):
+        first = exc.errors()[0] if exc.errors() else {}
+        where = ".".join(str(p) for p in first.get("loc", ())[1:])
+        return JSONResponse({"error": f"{where}: {first.get('msg', 'invalid')}" if where else "bad request body"},
+                            status_code=400)
+
     @app.exception_handler(ValueError)
     async def bad_value(_: Request, exc: ValueError):
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -105,20 +121,6 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     def memory_json(m) -> dict:
         return {"id": m["id"], "text": m["text"], "created_at": local(m["created_at"])}
-
-    def reminder_json(r: Reminder) -> dict:
-        return {
-            "id": r.id, "title": r.title, "notes": r.notes,
-            "due_at": r.due_at.astimezone(tz).isoformat() if r.due_at else None,
-            "completed": r.completed, "apple_id": r.apple_id,
-            "modified_at": r.modified_at.isoformat().replace("+00:00", "Z"), "deleted": r.deleted,
-        }
-
-    def event_json(e: CalEvent) -> dict:
-        def t(d):
-            return d.astimezone(tz).isoformat() if isinstance(d, datetime) else d.isoformat()
-        return {"id": e.uid, "title": e.title, "calendar": e.calendar, "start": t(e.start), "end": t(e.end),
-                "all_day": e.all_day, "location": e.location, "recurring": e.recurring}
 
     @app.get("/v1/health")
     async def health():
@@ -211,6 +213,25 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(404, f"no habit {habit_id}")
         return {"ok": True}
 
+    @app.get("/v1/digest", dependencies=[Depends(auth)])
+    async def latest_digest(kind: str = "daily"):
+        found = digest.latest(check_kind(kind))
+        if found is None:
+            raise HTTPException(404, f"no {kind} digest yet")
+        return found
+
+    @app.post("/v1/digest/run", dependencies=[Depends(auth)])
+    async def run_digest(body: DigestRunIn | None = None):
+        return await digest.generate(check_kind((body or DigestRunIn()).kind))
+
+    @app.get("/v1/digest/settings", dependencies=[Depends(auth)])
+    async def digest_settings():
+        return digest.settings()
+
+    @app.put("/v1/digest/settings", dependencies=[Depends(auth)])
+    async def save_digest_settings(body: dict = Body(...)):
+        return digest.save_settings(body)
+
     @app.get("/v1/today", dependencies=[Depends(auth)])
     async def today(date: date | None = None):  # noqa: A002 - matches the query parameter
         day = date or datetime.now(tz).date()
@@ -223,13 +244,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             except Exception:
                 log.exception("calendar lookup failed")
                 raise HTTPException(502, "iCloud Calendar is unavailable right now")
-
-            def key(e):
-                s = e.start if isinstance(e.start, datetime) else datetime.combine(e.start, time.min, tz)
-                return s.astimezone(tz)
-            events = [event_json(e) for e in sorted(found, key=key)]
+            events = [event_json(e, tz) for e in sorted(found, key=lambda e: event_start(e, tz))]
         return {"date": day.isoformat(), "events": events,
-                "reminders": [reminder_json(r) for r in store.due_before(end)]}
+                "reminders": [reminder_json(r, tz) for r in store.due_before(end)]}
 
     @app.post("/v1/reminders/sync", dependencies=[Depends(auth)])
     async def sync(body: SyncIn):
@@ -238,6 +255,6 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         except ValueError:
             raise HTTPException(400, "cursor must be the value returned by the last sync")
         new_cursor, changed = store.sync(cursor, [c.model_dump() for c in body.changes])
-        return {"cursor": str(new_cursor), "reminders": [reminder_json(r) for r in changed]}
+        return {"cursor": str(new_cursor), "reminders": [reminder_json(r, tz) for r in changed]}
 
     return app
