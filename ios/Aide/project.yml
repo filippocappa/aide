@@ -29,6 +29,8 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        NSMicrophoneUsageDescription: Aide listens when you tap the microphone, so you can talk instead of type.
+        NSSpeechRecognitionUsageDescription: Aide turns what you say into text to send to your assistant.
         NSRemindersFullAccessUsageDescription: Aide mirrors your reminders into a list in Apple Reminders so your phone can notify you.
     settings:
       base:

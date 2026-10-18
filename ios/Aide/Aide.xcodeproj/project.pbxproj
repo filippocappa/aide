@@ -23,6 +23,7 @@
 		AA355EF0C809637B2B575280 /* DigestViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78FD630BFAF2C84AC4AF0659 /* DigestViewModel.swift */; };
 		AA3A37D30E4DCE329F1D78A5 /* RichText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31E717ACC950E43DC53B945E /* RichText.swift */; };
 		AAEBF323BEFFB372CAD82193 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AEB482052BA9CB53D3B8410 /* ChatsView.swift */; };
+		B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */; };
 		B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
 		B924715E4A682C6A931189E9 /* PebbleStage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5BD3F89ACDD7A51F001415C /* PebbleStage.swift */; };
 		BD46F83D3EF35D141EA7239C /* ReminderSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148A57EF978A9887AF00FE8A /* ReminderSyncService.swift */; };
@@ -70,6 +71,7 @@
 		E5BD3F89ACDD7A51F001415C /* PebbleStage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PebbleStage.swift; sourceTree = "<group>"; };
 		E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSettingsView.swift; sourceTree = "<group>"; };
 		F32DFE4D7AD03B872AE8A96C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -118,6 +120,7 @@
 				63500D066A75FEEDD7B682E9 /* Keychain.swift */,
 				95BA6200F2ECB7474C9F8E54 /* Theme.swift */,
 				48D3B662149E81DAF5A28319 /* TouchTracker.swift */,
+				FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -299,6 +302,7 @@
 				7688764763680AE215A25A25 /* SettingsView.swift in Sources */,
 				B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */,
 				675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */,
+				B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
