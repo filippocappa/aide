@@ -100,11 +100,9 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
             return f"No events matching {query!r} between {SEARCH_BACK.days} days ago and a year ahead."
         return "\n".join(fmt(ev) for ev in sorted(hits, key=sort_key)[:30])
 
-    async def create_event(title: str, start: str, end: str, calendar: str | None = None,
+    async def create_event(title: str, start: str, end: str, calendar: str,
                            location: str | None = None, notes: str | None = None) -> str:
         s, e = parse_range(start, end)
-        if calendar is None:
-            calendar = default_calendar or (await asyncio.to_thread(cal.calendars))[0]
         ev = await asyncio.to_thread(cal.create, calendar, title, s, e, location or "", notes or "")
         return "Created: " + fmt(ev)
 
@@ -133,8 +131,8 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
         return f"Delete '{ev.title}' on {when(ev)} ({ev.calendar})"
 
     return [
-        Tool("list_calendars", "List the user's calendars. The default one is used when creating events "
-             "unless the user names another.", _obj({}, []), list_calendars),
+        Tool("list_calendars", "List the user's calendars. The one marked (default) is where they usually "
+             "put events.", _obj({}, []), list_calendars),
         Tool("list_events", "List calendar events between two local dates (inclusive), across all calendars. "
              "Each event starts with its id in brackets.",
              _obj({"start_date": {"type": "string", "description": "YYYY-MM-DD"},
@@ -148,10 +146,12 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
                    "start": {"type": "string", "description": DATETIME_HELP},
                    "end": {"type": "string", "description": DATETIME_HELP + " For a single all-day event, "
                            "use the same date as start."},
-                   "calendar": {"type": "string", "description": "Calendar name; omit for the default"},
+                   "calendar": {"type": "string", "description": "Exact calendar name from list_calendars. "
+                                "Use one only if it clearly fits the event, or the user named it; otherwise "
+                                "ask the user first."},
                    "location": {"type": "string"},
                    "notes": {"type": "string"}},
-                  ["title", "start", "end"]), create_event),
+                  ["title", "start", "end", "calendar"]), create_event),
         Tool("move_event", "Move an event to a new time. Needs the user's confirmation: it is queued, "
              "and runs only when the user replies !yes.",
              _obj({"event_id": {"type": "string"},

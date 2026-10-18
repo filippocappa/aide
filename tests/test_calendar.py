@@ -76,27 +76,37 @@ async def test_list_events_sorted_and_formatted(tools):
     ]
 
 
+def test_create_event_requires_calendar(tools):
+    schema = next(d for d in tools.definitions() if d["name"] == "create_event")["input_schema"]
+    assert "calendar" in schema["required"]
+
+
 async def test_list_events_rejects_huge_range(tools):
     with pytest.raises(ValueError, match="at most"):
         await tools.call("list_events", {"start_date": "2026-01-01", "end_date": "2026-12-31"})
 
 
-async def test_create_uses_local_time_and_default_calendar(tools, cal):
-    out = await tools.call("create_event", {"title": "Gym", "start": "2026-10-21T18:00", "end": "2026-10-21T19:00"})
+async def test_list_calendars_marks_default(tools):
+    assert await tools.call("list_calendars", {}) == "Home (default)\nWork"
+
+
+async def test_create_uses_local_time(tools, cal):
+    out = await tools.call("create_event", {"title": "Gym", "start": "2026-10-21T18:00", "end": "2026-10-21T19:00",
+                                            "calendar": "Home"})
     ev = cal.store["new-3"]
     assert ev.calendar == "Home" and ev.start == at(21, 18)
     assert out == "Created: [new-3] Wed 21 Oct 18:00–19:00 Gym (Home)"
 
 
 async def test_single_all_day_event_end_is_inclusive(tools, cal):
-    await tools.call("create_event", {"title": "Holiday", "start": "2026-11-01", "end": "2026-11-01"})
+    await tools.call("create_event", {"title": "Holiday", "start": "2026-11-01", "end": "2026-11-01", "calendar": "Home"})
     ev = cal.store["new-3"]
     assert (ev.start, ev.end) == (date(2026, 11, 1), date(2026, 11, 2))
 
 
 async def test_create_rejects_end_before_start(tools):
     with pytest.raises(ValueError):
-        await tools.call("create_event", {"title": "x", "start": "2026-10-21T18:00", "end": "2026-10-21T17:00"})
+        await tools.call("create_event", {"title": "x", "start": "2026-10-21T18:00", "end": "2026-10-21T17:00", "calendar": "Home"})
 
 
 # -- confirmation flow through the agent ---------------------------------------
