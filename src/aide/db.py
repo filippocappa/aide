@@ -161,12 +161,14 @@ class Database:
     def set_pending_status(self, action_id: int, status: str) -> None:
         self.conn.execute("UPDATE pending_actions SET status = ? WHERE id = ?", (status, action_id))
 
-    def cancel_pending(self, channel: str) -> int:
-        cur = self.conn.execute(
-            "UPDATE pending_actions SET status = 'cancelled' WHERE channel = ? AND status = 'pending'",
-            (channel,),
-        )
-        return cur.rowcount
+    def cancel_pending(self, channel: str, ids: list[int] | None = None) -> int:
+        """Cancel all pending actions for a channel, or only those with the given ids."""
+        sql = "UPDATE pending_actions SET status = 'cancelled' WHERE channel = ? AND status = 'pending'"
+        params: list = [channel]
+        if ids is not None:
+            sql += f" AND id IN ({', '.join('?' * len(ids))})" if ids else " AND 0"
+            params += ids
+        return self.conn.execute(sql, params).rowcount
 
     # -- audit -------------------------------------------------------------
 

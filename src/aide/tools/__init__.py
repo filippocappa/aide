@@ -34,6 +34,9 @@ class ToolRegistry:
         # Keep insertion order: a stable tool list keeps the prompt cache warm.
         self._tools = {t.name: t for t in tools}
 
+    def __iter__(self):
+        return iter(self._tools.values())
+
     def definitions(self) -> list[dict]:
         return [t.definition() for t in self._tools.values()]
 

@@ -228,3 +228,23 @@ def test_migration_backfills_target(tmp_path):
     old.commit(); old.close()
     db = Database(path)
     assert db.conn.execute("SELECT target FROM pending_actions").fetchone()[0] == "d1"
+
+
+async def test_model_sees_queue_and_can_cancel_items(tools, cal):
+    move = ("tool_use", call("move_event", event_id="d1", new_start="2026-10-21T10:00", new_end="2026-10-21T11:00"))
+    agent, db = agent_with(tools, [move, done(), ("tool_use", call("cancel_queued", action_ids=[1])), done()])
+    await agent.reply("discord", "move dentist to 10")
+    await agent.reply("discord", "actually leave it")
+    user_msg = agent.client.requests[2]["messages"][-1]["content"][0]["text"]
+    assert "#1 Move 'Dentist'" in user_msg
+    assert agent.pending("discord") == []
+    assert cal.store["d1"].start == at(20, 15)
+
+
+def test_cancel_specific_ids_only():
+    db = Database(":memory:")
+    a, _ = db.add_pending("discord", "t", {}, "a")
+    b, _ = db.add_pending("discord", "t", {}, "b")
+    assert db.cancel_pending("discord", [a]) == 1
+    assert db.cancel_pending("discord", []) == 0
+    assert [p["id"] for p in db.pending_actions("discord", timedelta(hours=1))] == [b]
