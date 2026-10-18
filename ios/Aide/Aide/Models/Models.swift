@@ -10,13 +10,15 @@ struct PendingAction: Codable, Identifiable, Hashable {
 struct ChatReply: Decodable {
     let reply: String
     let pending: [PendingAction]
+    let conversationId: String?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         reply = try c.decode(String.self, forKey: .reply)
         pending = try c.decodeIfPresent([PendingAction].self, forKey: .pending) ?? []
+        conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
     }
-    private enum CodingKeys: String, CodingKey { case reply, pending }
+    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId }
 }
 
 struct ActionResult: Decodable {
@@ -34,7 +36,25 @@ struct ActionResult: Decodable {
 struct OKResponse: Decodable { let ok: Bool }
 struct HealthResponse: Decodable { let ok: Bool; let version: String }
 struct EmptyBody: Encodable {}
-struct ChatRequest: Encodable { let text: String }
+/// `conversationId` nil keeps the old behaviour: the one shared conversation.
+struct ChatRequest: Encodable { let text: String; var conversationId: String? }
+struct ConversationBody: Encodable { var conversationId: String? }
+struct MemoryRequest: Encodable { let text: String }
+
+struct Conversation: Decodable, Identifiable, Hashable {
+    let id: String
+    let title: String?
+    let preview: String?
+    let updatedAt: String?
+}
+struct ConversationList: Decodable { let conversations: [Conversation] }
+
+struct MemoryItem: Decodable, Identifiable, Hashable {
+    let id: Int
+    let text: String
+    let createdAt: String?
+}
+struct MemoryList: Decodable { let items: [MemoryItem] }
 
 struct HistoryMessage: Decodable {
     let role: String

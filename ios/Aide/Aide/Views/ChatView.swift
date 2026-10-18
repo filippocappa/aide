@@ -4,9 +4,11 @@ struct ChatView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
     @State private var draft = ""
-    @FocusState private var composerFocused: Bool
+    @State private var showChats = false
     @State private var justReplied = false
+    @FocusState private var composerFocused: Bool
 
+    /// Pebble's expression follows what's happening (brand/README.md).
     private var mood: String {
         if !settings.isConfigured || chat.loadError != nil { return "sleeping" }
         if chat.isSending || chat.isActing { return "thinking" }
@@ -22,38 +24,41 @@ struct ChatView: View {
                 composer
             }
             .background(Theme.background)
-                        .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Image("Pebble-\(mood)").resizable().scaledToFit().frame(width: 34, height: 34)
+                    Image("Pebble-\(mood)")
+                        .resizable().scaledToFit().frame(width: 36, height: 36)
                         .foregroundStyle(Theme.accent)
                         .animation(.easeInOut(duration: 0.2), value: mood)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Chats", systemImage: "list.bullet") { showChats = true }
+                        .disabled(!settings.isConfigured)
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button("New chat", systemImage: "square.and.pencil") {
+                        chat.startNewChat()
+                        composerFocused = true
+                    }
                     Menu {
-                        Button("New conversation", systemImage: "square.and.pencil") {
-                            Task { await chat.newConversation() }
-                        }
-                        Button("Think harder", systemImage: "brain") {
-                            Task { await chat.think() }
-                        }
+                        Button("Think harder", systemImage: "brain") { Task { await chat.think() } }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
                     .disabled(!settings.isConfigured)
                 }
             }
+            .sheet(isPresented: $showChats) { ChatsView() }
         }
     }
 
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(spacing: 10) {
-                    if chat.messages.isEmpty && !chat.isSending {
-                        emptyState
-                    }
-                    ForEach(chat.messages) { MessageBubble(message: $0) }
+                VStack(spacing: 14) {
+                    if chat.messages.isEmpty && !chat.isSending { emptyState }
+                    ForEach(chat.messages) { MessageRow(message: $0) }
                     if chat.isSending { ThinkingRow() }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -64,6 +69,7 @@ struct ChatView: View {
             .defaultScrollAnchor(.bottom)
             .onTapGesture { composerFocused = false }
             .onChange(of: chat.messages) { _, _ in scrollToBottom(proxy) }
+            .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.isSending) { _, sending in
                 scrollToBottom(proxy)
                 if !sending, chat.messages.last?.role == .assistant, chat.messages.last?.isError == false {
@@ -71,7 +77,6 @@ struct ChatView: View {
                     Task { try? await Task.sleep(for: .seconds(2)); justReplied = false }
                 }
             }
-            .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
         }
     }
 
@@ -80,18 +85,33 @@ struct ChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            PebbleMark(size: 72).foregroundStyle(Theme.accent)
+        VStack(spacing: 20) {
+            PebbleMark(size: 84).foregroundStyle(Theme.accent)
             if settings.isConfigured {
-                Text(chat.loadError ?? "Ask about your day, or tell me what to remember.")
+                Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
+                VStack(spacing: 8) {
+                    suggestion("What's on my calendar today?", send: true)
+                    suggestion("Remind me to ", send: false)
+                    suggestion("Remember that ", send: false)
+                }
             } else {
-                Text("Add your server token in Settings to start.")
+                Text("Add your server token in Settings to start.").foregroundStyle(.secondary)
             }
         }
-        .font(.callout)
         .multilineTextAlignment(.center)
-        .foregroundStyle(.secondary)
-        .padding(.top, 80)
+        .padding(.top, 60)
+    }
+
+    private func suggestion(_ text: String, send: Bool) -> some View {
+        Button {
+            if send { Task { await chat.send(text) } } else { draft = text; composerFocused = true }
+        } label: {
+            Text(text.trimmingCharacters(in: .whitespaces) + (send ? "" : "…"))
+                .font(.subheadline)
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .background(Theme.chip, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var composer: some View {
@@ -99,17 +119,20 @@ struct ChatView: View {
             TextField("Message Aide", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
                 .focused($composerFocused)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             Button {
                 let text = draft
                 draft = ""
                 Task { await chat.send(text) }
             } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(canSend ? Theme.accent : Color.secondary.opacity(0.4))
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Theme.onAccent)
+                    .frame(width: 38, height: 38)
+                    .background(Theme.accent, in: Circle())
+                    .opacity(canSend ? 1 : 0.3)
             }
             .buttonStyle(.plain)
             .contentShape(Circle())
@@ -127,29 +150,30 @@ struct ChatView: View {
     }
 }
 
-private struct MessageBubble: View {
+/// Your messages sit in Slate bubbles; Aide's reply is plain text on the page, like Pebble speaking.
+private struct MessageRow: View {
     let message: ChatViewModel.Message
 
     var body: some View {
-        HStack {
-            if message.role == .user { Spacer(minLength: 48) }
-            Text(message.text.markdown)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .foregroundStyle(foreground)
-                .background(background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            if message.role == .assistant { Spacer(minLength: 48) }
+        if message.role == .user {
+            HStack {
+                Spacer(minLength: 56)
+                Text(message.text.markdown)
+                    .textSelection(.enabled)
+                    .foregroundStyle(Theme.userBubbleText)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+        } else {
+            HStack {
+                Text(message.text.markdown)
+                    .textSelection(.enabled)
+                    .foregroundStyle(message.isError ? Color.red : Color.primary)
+                    .lineSpacing(3)
+                Spacer(minLength: 32)
+            }
+            .padding(.horizontal, 2)
         }
-    }
-
-    private var foreground: Color {
-        if message.isError { return .red }
-        return message.role == .user ? Theme.userBubbleText : .primary
-    }
-
-    private var background: Color {
-        message.role == .user ? Theme.userBubble : Theme.card
     }
 }
 
@@ -157,10 +181,10 @@ private struct ThinkingRow: View {
     var body: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text("Aide is thinking…").font(.footnote).foregroundStyle(.secondary)
+            Text("Thinking…").font(.footnote).foregroundStyle(.secondary)
             Spacer()
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 2)
     }
 }
 
@@ -173,28 +197,17 @@ private struct PendingCard: View {
             Text(chat.pending.count == 1 ? "Waiting for your OK" : "\(chat.pending.count) changes waiting for your OK")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.secondary)
-            ForEach(chat.pending) { action in
-                Text(action.summary).font(.callout)
-            }
+            ForEach(chat.pending) { Text($0.summary).font(.callout) }
             HStack(spacing: 10) {
-                Button {
-                    Task { await chat.confirm() }
-                } label: {
-                    Text("Confirm").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                Button(role: .cancel) {
-                    Task { await chat.cancel() }
-                } label: {
-                    Text("Cancel").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
+                Button { Task { await chat.confirm() } } label: { Text("Confirm").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent)
+                Button(role: .cancel) { Task { await chat.cancel() } } label: { Text("Cancel").frame(maxWidth: .infinity) }
+                    .buttonStyle(.bordered)
             }
             .disabled(chat.isActing)
         }
         .padding(14)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.accent.opacity(0.25)))
+        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.top, 6)
     }

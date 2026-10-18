@@ -15,6 +15,7 @@ enum Theme {
     static let accent = color(light: 0x34413F, dark: 0xECE5D8)
     static let onAccent = color(light: 0xECE5D8, dark: 0x34413F)
     static let userBubble = color(light: 0x34413F, dark: 0x3B4A47)
+    static let chip = color(light: 0xE8E1D2, dark: 0x2B3634)
     static let userBubbleText = Color(uiColor: UIColor(hex: 0xECE5D8))
 }
 

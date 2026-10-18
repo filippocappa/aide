@@ -15,7 +15,9 @@
 		7688764763680AE215A25A25 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB893CFE71A535E6990CADF /* SettingsView.swift */; };
 		77F46E3BE8C9B9AF42649FB9 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DFEF5446D771554DAAA7229 /* AppSettings.swift */; };
 		7A1944AB03B3DAB2D824A08E /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44C5DADD1850C6A342CB0F42 /* ChatView.swift */; };
+		7F41522F5C768CB044BFBE4B /* MemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */; };
 		A839EDCD73AEB1F1DBD6E437 /* AideApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */; };
+		AAEBF323BEFFB372CAD82193 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AEB482052BA9CB53D3B8410 /* ChatsView.swift */; };
 		B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
 		BD46F83D3EF35D141EA7239C /* ReminderSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148A57EF978A9887AF00FE8A /* ReminderSyncService.swift */; };
 		DCEC0F33C64ACC4F4D889BCE /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58AE8C76701A110B13945027 /* ChatViewModel.swift */; };
@@ -36,6 +38,7 @@
 		0D0E327019026782069A1BA0 /* AideTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideTests.swift; sourceTree = "<group>"; };
 		0DFEF5446D771554DAAA7229 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		148A57EF978A9887AF00FE8A /* ReminderSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSyncService.swift; sourceTree = "<group>"; };
+		3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryView.swift; sourceTree = "<group>"; };
 		44C5DADD1850C6A342CB0F42 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		58AE8C76701A110B13945027 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
@@ -44,6 +47,7 @@
 		7934D306980F7BA0DBBD8E3D /* Aide.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Aide.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		87320B5BA6327928E4CC8A7D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		95BA6200F2ECB7474C9F8E54 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		9AEB482052BA9CB53D3B8410 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
 		9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideApp.swift; sourceTree = "<group>"; };
 		B9FC43C842297C98B8EC0DAE /* AideTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AideTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -56,8 +60,10 @@
 			isa = PBXGroup;
 			children = (
 				5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */,
+				9AEB482052BA9CB53D3B8410 /* ChatsView.swift */,
 				44C5DADD1850C6A342CB0F42 /* ChatView.swift */,
 				58AE8C76701A110B13945027 /* ChatViewModel.swift */,
+				3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */,
 				DBB893CFE71A535E6990CADF /* SettingsView.swift */,
 			);
 			path = Views;
@@ -244,7 +250,9 @@
 				77F46E3BE8C9B9AF42649FB9 /* AppSettings.swift in Sources */,
 				7A1944AB03B3DAB2D824A08E /* ChatView.swift in Sources */,
 				DCEC0F33C64ACC4F4D889BCE /* ChatViewModel.swift in Sources */,
+				AAEBF323BEFFB372CAD82193 /* ChatsView.swift in Sources */,
 				1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */,
+				7F41522F5C768CB044BFBE4B /* MemoryView.swift in Sources */,
 				25FDB4AE99AC133557167989 /* Models.swift in Sources */,
 				BD46F83D3EF35D141EA7239C /* ReminderSyncService.swift in Sources */,
 				7688764763680AE215A25A25 /* SettingsView.swift in Sources */,
