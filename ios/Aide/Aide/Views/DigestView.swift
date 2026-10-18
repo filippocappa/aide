@@ -3,7 +3,7 @@ import SwiftUI
 /// The latest digest, drawn from its structured sections. Unknown section types are skipped.
 struct DigestView: View {
     @EnvironmentObject private var model: DigestViewModel
-    let digest: Digest
+    let digest: Digest?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -13,9 +13,13 @@ struct DigestView: View {
             .pickerStyle(.segmented)
             .onChange(of: model.kind) { _, _ in Task { await model.load() } }
 
-            Text(digest.greeting.markdown).font(.title3.weight(.medium)).lineSpacing(3)
+            if let digest {
+                Text(digest.greeting.markdown).font(.title3.weight(.medium)).lineSpacing(3)
+            } else {
+                Text("No \(model.kind.label.lowercased()) digest yet.").foregroundStyle(.secondary)
+            }
 
-            ForEach(digest.sections) { section in
+            ForEach(digest?.sections ?? []) { section in
                 switch section.content {
                 case .calendar(let events): card(section.title) { CalendarTiles(events: events) }
                 case .mail(let items): card(section.title) { MailCards(items: items) }

@@ -32,6 +32,8 @@ enum Theme {
         return palette[Int(h % UInt32(palette.count))]
     }
 
+    /// Switch colour: Sand-on-white switches vanish in dark mode, so switches get a sage green.
+    static let toggle = Color(red: 0.36, green: 0.58, blue: 0.45)
     static let userBubbleText = Color(uiColor: UIColor(hex: 0xECE5D8))
 }
 

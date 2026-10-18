@@ -16,6 +16,7 @@ struct MemoryView: View {
                         .lineLimit(1...4)
                     Button("Add") { Task { await add() } }
                         .buttonStyle(.borderedProminent)
+                        .foregroundStyle(Theme.onAccent)
                         .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }

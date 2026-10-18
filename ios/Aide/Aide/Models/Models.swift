@@ -151,6 +151,11 @@ struct Habit: Decodable, Identifiable, Hashable {
 }
 struct HabitList: Decodable { let habits: [Habit] }
 struct HabitCheck: Encodable { var done: Bool }
+struct HabitNew: Encodable {
+    struct Cadence: Encodable { var type: String; var perWeek: Int? }
+    var name: String
+    var cadence: Cadence
+}
 
 struct MailItem: Decodable, Identifiable, Hashable {
     let id: String
@@ -215,7 +220,8 @@ struct DigestSchedule: Codable, Equatable {
 }
 
 struct DigestSettings: Codable, Equatable {
-    var daily: DigestSchedule
+    var daily: DigestSchedule // the morning digest
+    var evening: DigestSchedule?
     var weekly: DigestSchedule
     var monthly: DigestSchedule
     var discord: Bool

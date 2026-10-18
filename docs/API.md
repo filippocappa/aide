@@ -78,7 +78,7 @@ Short facts Aide keeps between chats (preferences, names, routines). The server 
 
 A summary the server builds on a schedule: daily, weekly or monthly. The app shows the latest one on the empty new-chat screen ("Hello, today…"), and the server also sends it as a Discord DM (push notification later). Sections are structured, so the app draws cards instead of parsing text.
 
-`GET /v1/digest?kind=daily` (`daily` default, `weekly`, `monthly`) →
+`GET /v1/digest?kind=daily` (`daily` default, `evening`, `weekly`, `monthly`) →
 ```json
 {
   "kind": "daily",
@@ -95,6 +95,10 @@ A summary the server builds on a schedule: daily, weekly or monthly. The app sho
 ```
 The app skips section types it doesn't know. `404` if none has been generated yet; `400` for an unknown `kind`.
 
+- **Morning and evening (contract change, server side pending):** `daily` is the morning digest (the app calls it
+  "Morning"). `evening` is new, for before bed: tomorrow's calendar ("Tomorrow"), reminders due tomorrow or overdue,
+  habits not yet done today (`habits` section, only the undone ones), unread mail from today, and a short `text`
+  wrap-up. It always looks at tomorrow, whatever the clock says. Default time 22:00.
 - **What it covers:** daily = one day, weekly = 7 days, monthly = to the end of the month. The period starts today,
   or tomorrow if the digest is made after 17:00 (so the Sunday 18:00 weekly covers Monday to Sunday). Section
   titles say which ("Today", "Tomorrow", "Next 7 days", "October"; reminders "Due today", "Due in October", …).
@@ -110,8 +114,8 @@ The app skips section types it doesn't know. `404` if none has been generated ye
 | Endpoint | Body | Response |
 |---|---|---|
 | `POST /v1/digest/run` | `{"kind": "daily"}` | The freshly generated digest (can take 5–30 s). |
-| `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}, "discord": true}` (times in the server zone, `weekday` 1 = Monday) |
-| `PUT /v1/digest/settings` | the same object (all of it) | the saved settings; `400` if a time isn't `HH:MM` or a field is missing or out of range |
+| `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "evening": {"enabled": true, "time": "22:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}, "discord": true}` (times in the server zone, `weekday` 1 = Monday) |
+| `PUT /v1/digest/settings` | the same object (all of it; `evening` may be missing from older clients: keep its current value) | the saved settings; `400` if a time isn't `HH:MM` or a field is missing or out of range |
 
 ## Habits
 
