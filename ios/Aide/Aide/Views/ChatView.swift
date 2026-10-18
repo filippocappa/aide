@@ -19,7 +19,7 @@ struct ChatView: View {
     }
 
     private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending }
-    private var showsDigest: Bool { isEmpty && settings.isConfigured && digest.digest != nil }
+    private var showsDigest: Bool { isEmpty && settings.isConfigured && digest.hasDigests }
 
     /// Top safe-area inset of the window, so the small Pebble can sit in the navigation bar.
     private var windowTopInset: CGFloat {
@@ -121,8 +121,8 @@ struct ChatView: View {
         VStack(spacing: 20) {
             Color.clear.frame(height: 160) // room for the big Pebble, which is drawn above
             if settings.isConfigured {
-                if let d = digest.digest {
-                    DigestView(digest: d).multilineTextAlignment(.leading)
+                if digest.hasDigests {
+                    DigestView(digest: digest.digest).multilineTextAlignment(.leading)
                 } else {
                     Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
                     VStack(spacing: 8) {
@@ -235,6 +235,7 @@ private struct PendingCard: View {
             HStack(spacing: 10) {
                 Button { Task { await chat.confirm() } } label: { Text("Confirm").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent)
+                    .foregroundStyle(Theme.onAccent)
                 Button(role: .cancel) { Task { await chat.cancel() } } label: { Text("Cancel").frame(maxWidth: .infinity) }
                     .buttonStyle(.bordered)
             }

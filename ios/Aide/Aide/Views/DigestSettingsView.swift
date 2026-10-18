@@ -14,9 +14,25 @@ struct DigestSettingsView: View {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
             }
             if let binding = Binding($settings) {
-                Section("Every day") {
-                    Toggle("Daily digest", isOn: binding.daily.enabled)
+                Section {
+                    Toggle("Morning", isOn: binding.daily.enabled)
                     TimeRow(time: binding.daily.time)
+                } header: {
+                    Text("Start of the day")
+                } footer: {
+                    Text("Today's calendar, reminders, unread mail and habits.")
+                }
+                if binding.wrappedValue.evening != nil {
+                    Section {
+                        Toggle("Evening", isOn: Binding(get: { binding.wrappedValue.evening?.enabled ?? false },
+                                                        set: { binding.wrappedValue.evening?.enabled = $0 }))
+                        TimeRow(time: Binding(get: { binding.wrappedValue.evening?.time ?? "22:00" },
+                                              set: { binding.wrappedValue.evening?.time = $0 }))
+                    } header: {
+                        Text("Before bed")
+                    } footer: {
+                        Text("Tomorrow's calendar, what's still open today, and habits you haven't ticked.")
+                    }
                 }
                 Section("Every week") {
                     Toggle("Weekly digest", isOn: binding.weekly.enabled)
@@ -43,6 +59,7 @@ struct DigestSettingsView: View {
             }
         }
         .scrollContentBackground(.hidden)
+        .tint(Theme.toggle)
         .background(Theme.background)
         .navigationTitle("Digests")
         .navigationBarTitleDisplayMode(.inline)

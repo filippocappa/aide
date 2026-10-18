@@ -101,6 +101,14 @@ final class APIClient {
         return list.habits
     }
 
+    func addHabit(_ habit: HabitNew) async throws -> Habit {
+        try await send("POST", "/v1/habits", body: habit)
+    }
+
+    func deleteHabit(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/habits/\(id)", body: EmptyBody())
+    }
+
     func checkHabit(_ id: Int, done: Bool) async throws -> Habit {
         try await send("POST", "/v1/habits/\(id)/check", body: HabitCheck(done: done))
     }

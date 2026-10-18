@@ -23,6 +23,7 @@ struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .tint(Theme.toggle)
             .background(Theme.background)
             .navigationTitle("Settings")
             .onChange(of: settings.reminderListID) { _, _ in Task { await sync.sync() } }
