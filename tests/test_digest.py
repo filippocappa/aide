@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -29,13 +30,22 @@ class Calendar:
         return [e for e in self._events if start <= digest_mod.event_start(e, ROME) < end]
 
 
+def mail(id, received, subject="Appointment"):
+    return {"id": id, "threadId": "t1", "internalDate": str(int(received.timestamp() * 1000)),
+            "snippet": "See you Tuesday", "labelIds": ["INBOX", "UNREAD"],
+            "payload": {"headers": [{"name": "From", "value": "Dr. Rossi <rossi@example.com>"},
+                                    {"name": "Subject", "value": subject}]}}
+
+
 class Mail:
+    def __init__(self, messages=None):
+        self.messages = messages if messages is not None else [mail("m1", datetime(2026, 10, 18, 10, tzinfo=ROME))]
+        self.queries = []
+
     async def search(self, query, max_results):
-        assert query == "is:unread in:inbox"
-        return [{"id": "m1", "threadId": "t1", "internalDate": "1792321200000", "snippet": "See you Tuesday",
-                 "labelIds": ["INBOX", "UNREAD"],
-                 "payload": {"headers": [{"name": "From", "value": "Dr. Rossi <rossi@example.com>"},
-                                         {"name": "Subject", "value": "Appointment"}]}}]
+        assert query.startswith("is:unread in:inbox")
+        self.queries.append(query)
+        return self.messages
 
 
 @pytest.fixture
@@ -145,7 +155,7 @@ async def test_schedule_generates_once_and_sends_to_discord(env, monkeypatch):
     _, service, _ = make([done("Hello.\n---\n- ahead"), done("unused")])
     now = datetime.now(ROME)
     off = {"enabled": False, "time": "00:00"}
-    service.save_settings({"daily": {"enabled": True, "time": f"{now - timedelta(minutes=1):%H:%M}"},
+    service.save_settings({"daily": {"enabled": True, "time": f"{now - timedelta(minutes=1):%H:%M}"}, "evening": off,
                            "weekly": {**off, "weekday": 1}, "monthly": {**off, "day": 1}, "discord": True})
     sent = []
 
@@ -172,3 +182,69 @@ def test_discord_text():
     ]
     assert to_text("Hi.", sections, ROME) == (
         "**Hi.**\n\n**Today**\n• Nothing scheduled.\n\n**Mail**\n• Ann: Hi\n\n**Habits**\n• Read: streak 1 day ✓ today")
+
+
+# -- evening -------------------------------------------------------------------
+
+
+def test_evening_is_always_about_tomorrow():
+    for hour in (7, 12, 22, 23):
+        p = period("evening", datetime(2026, 10, 18, hour, tzinfo=ROME))
+        assert (p.start, p.end, p.calendar_title, p.reminders_title) == (
+            date(2026, 10, 19), date(2026, 10, 20), "Tomorrow", "Due tomorrow")
+    now = datetime(2026, 10, 18, 21, tzinfo=ROME)
+    assert latest_slot("evening", {"time": "22:00"}, now) == datetime(2026, 10, 17, 22, tzinfo=ROME)
+
+
+def test_evening_digest_has_tomorrow_open_habits_todays_mail_and_a_wrap_up(env):
+    make, store, habits = env
+    now = datetime.now(ROME)
+    tomorrow = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), ROME)
+    ev = CalEvent("e1", "Uni", "Exam", tomorrow + timedelta(hours=9), tomorrow + timedelta(hours=11))
+    today_ev = CalEvent("e0", "Uni", "Lecture", tomorrow - timedelta(hours=1), tomorrow - timedelta(minutes=30))
+    midnight = tomorrow - timedelta(days=1)
+    inbox = Mail([mail("new", max(midnight, now - timedelta(minutes=5)), "Today's"),
+                  mail("old", midnight - timedelta(hours=3), "Yesterday's")])
+    client, _, fake = make([done("Good evening. Exam at 9.\n---\n- Pack your calculator")], Calendar([ev, today_ev]),
+                           inbox)
+    store.create("Print notes", tomorrow + timedelta(hours=8))
+    store.create("Next week", tomorrow + timedelta(days=7))
+    habits.add("Gym")
+    habits.add("Read")
+    habits.check(2)
+
+    body = client.post("/v1/digest/run", json={"kind": "evening"}, headers=AUTH).json()
+    assert body["kind"] == "evening" and body["greeting"] == "Good evening. Exam at 9."
+    sections = {s["type"]: s for s in body["sections"]}
+    assert list(sections) == ["calendar", "mail", "reminders", "habits", "text"]
+    assert sections["calendar"]["title"] == "Tomorrow"
+    assert [e["title"] for e in sections["calendar"]["events"]] == ["Exam"]
+    assert [m["id"] for m in sections["mail"]["items"]] == ["new"]
+    assert inbox.queries == [f"is:unread in:inbox after:{int(midnight.timestamp())}"]
+    assert [r["title"] for r in sections["reminders"]["reminders"]] == ["Print notes"]
+    assert sections["reminders"]["title"] == "Due tomorrow"
+    assert [h["name"] for h in sections["habits"]["habits"]] == ["Gym"]  # Read is done today
+    assert sections["text"] == {"type": "text", "title": "Wrap-up", "text": "- Pack your calculator"}
+    assert "Wrap-up" in fake.requests[0]["system"] and "before bed" in fake.requests[0]["system"]
+
+    assert client.get("/v1/digest?kind=evening", headers=AUTH).json() == body
+    assert client.get("/v1/digest", headers=AUTH).status_code == 404  # daily (morning) is separate
+
+
+def test_evening_settings_and_older_clients_that_leave_it_out(env):
+    make, _, _ = env
+    client, service, _ = make()
+    assert client.get("/v1/digest/settings", headers=AUTH).json()["evening"] == {"enabled": True, "time": "22:00"}
+    settings = {**DEFAULT_SETTINGS, "evening": {"enabled": False, "time": "21:30"}}
+    assert client.put("/v1/digest/settings", json=settings, headers=AUTH).json()["evening"] == settings["evening"]
+
+    old_client = {k: v for k, v in DEFAULT_SETTINGS.items() if k != "evening"}
+    old_client["daily"] = {"enabled": True, "time": "07:00"}
+    saved = client.put("/v1/digest/settings", json=old_client, headers=AUTH).json()
+    assert saved["daily"]["time"] == "07:00" and saved["evening"] == {"enabled": False, "time": "21:30"}
+    bad = {**settings, "evening": {"enabled": True, "time": "25"}}
+    assert client.put("/v1/digest/settings", json=bad, headers=AUTH).status_code == 400
+
+    # Settings saved before evening existed read back with its default.
+    service.conn.execute("UPDATE settings SET value = ? WHERE key = 'digest'", (json.dumps(old_client),))
+    assert client.get("/v1/digest/settings", headers=AUTH).json()["evening"] == {"enabled": True, "time": "22:00"}
