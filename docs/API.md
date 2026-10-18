@@ -56,7 +56,7 @@ The app keeps many chats; Discord stays on the one shared conversation. Every ch
 | Endpoint | Body / query | Response |
 |---|---|---|
 | `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the shared (Discord) conversation, titled "Discord" or similar. |
-| `POST /v1/conversations` | `{}` | The new conversation (same shape as a list row, `title: null`). |
+| `POST /v1/conversations` | `{}`, or `{"digest": "daily" \| "evening"}` | The new conversation (same shape as a list row, `title: null`). With `digest`, the chat starts with that digest's greeting as Aide's first message: it's in `/v1/history` and `preview`, and the model knows it said it. See Digest. |
 | `DELETE /v1/conversations/{id}` | | `{"ok": true}`. The shared conversation can't be deleted (400). |
 | `POST /v1/chat` | `{"text": "…", "conversation_id": "c_91f…"}` | Same as before, plus `"conversation_id"`. The server sets `title` from the first exchange. |
 | `GET /v1/history` | `?limit=50&conversation_id=c_91f…` | As before, for that conversation. |
@@ -76,7 +76,7 @@ Short facts Aide keeps between chats (preferences, names, routines). The server 
 
 ## Digest
 
-A summary the server builds on a schedule: daily, weekly or monthly. The app shows the latest one on the empty new-chat screen ("Hello, today…"), and the server also sends it as a Discord DM (push notification later). Sections are structured, so the app draws cards instead of parsing text.
+A summary the server builds on a schedule: morning (`daily`), evening, weekly or monthly. Its greeting opens a new chat (`POST /v1/conversations` with `digest`), the app shows the cards behind a "Details" link, and the server also sends it as a Discord DM (push notification later). Sections are structured, so the app draws cards instead of parsing text.
 
 `GET /v1/digest?kind=daily` (`daily` default, `evening`, `weekly`, `monthly`) →
 ```json
@@ -87,7 +87,7 @@ A summary the server builds on a schedule: daily, weekly or monthly. The app sho
   "sections": [
     {"type": "calendar", "title": "Today", "events": [ /* same objects as a calendar event: id, title, calendar, start, end, all_day, location, recurring */ ]},
     {"type": "mail", "title": "Mail", "items": [{"id": "…", "from": "Dr. Rossi", "subject": "Appointment", "preview": "…", "received_at": "…", "unread": true}]},
-    {"type": "reminders", "title": "Due today", "reminders": [ /* Reminder objects */ ]},
+    {"type": "reminders", "title": "Due today", "reminders": [ /* Reminder objects, plus "overdue": true | false */ ]},
     {"type": "habits", "title": "Habits", "habits": [ /* Habit objects, see below */ ]},
     {"type": "text", "title": "Looking ahead", "text": "free-form markdown"}
   ]
@@ -96,13 +96,30 @@ A summary the server builds on a schedule: daily, weekly or monthly. The app sho
 The app skips section types it doesn't know. `404` if none has been generated yet; `400` for an unknown `kind`.
 
 - **Morning and evening:** `daily` is the morning digest (the app calls it
-  "Morning"). `evening` is new, for before bed: tomorrow's calendar ("Tomorrow"), reminders due tomorrow or overdue,
-  habits not yet done today (`habits` section, only the undone ones), unread mail from today, and a short `text`
+  "Morning"). `evening` is for before bed: tomorrow's calendar ("Tomorrow"), reminders due by the end of tomorrow,
+  habits not yet done today (`habits` section, only the undone ones), today's mail, and a short `text`
   wrap-up (titled "Wrap-up"). It always looks at tomorrow, whatever the clock says. Default time 22:00.
 - **What it covers:** daily = one day, weekly = 7 days, monthly = to the end of the month. The period starts today,
   or tomorrow if the digest is made after 17:00 (so the Sunday 18:00 weekly covers Monday to Sunday). Section
   titles say which ("Today", "Tomorrow", "Next 7 days", "October"; reminders "Due today", "Due in October", …).
-  Reminders include overdue ones.
+- **Live data:** `GET /v1/digest` builds the `calendar`, `mail`, `reminders` and `habits` sections again on every
+  call, for the period the stored digest covers. Only `greeting`, `generated_at` and the `text` section are from the
+  stored, scheduled generation. Completed or deleted reminders never appear. (`POST /v1/digest/run` returns the
+  same thing, freshly made.)
+- **Reminders:** open ones due by the end of the period, plus overdue ones from the **last 48 hours** only.
+  Each has `"overdue": true` if its `due_at` has passed. Older overdue ones are left to the chat. Reminders with no
+  due time aren't listed.
+- **Mail:** what came into the inbox today, read or unread, newest first, up to 25, with `unread` per item. "Today"
+  means since local midnight; for the morning digest, since the previous evening (the evening digest's time,
+  default 22:00).
+- **Greeting:** two or three spoken-style sentences: what's coming, what to do, and mail that seems to want an
+  answer. No lists, no markdown. It's written to be read as a chat message, e.g. *"Tomorrow is light: the dentist
+  at 15:00 and gym at 19:00. Still to do: pay the electricity bill and call Marco. 6 emails today; the one from
+  Giulia about Saturday looks like it wants an answer."*
+- **Opening a chat with it:** `POST /v1/conversations` with `{"digest": "evening"}` (or `daily`; any kind works)
+  uses that kind's stored greeting if it still covers the same days as a digest made now would. Otherwise it makes
+  a fresh digest first (5–30 s, not sent to Discord). The app picks `daily` before 17:00 and `evening` after.
+  An unknown kind is `400`.
 - **Only the greeting and the `text` section come from the model.** Everything else is data from code. If the
   model fails, the greeting is a plain one from code and there's no `text` section.
 - **Sections can be missing:** `mail`, `reminders` and `habits` are left out when empty; `calendar` and `mail`

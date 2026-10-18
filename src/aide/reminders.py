@@ -100,6 +100,14 @@ class ReminderStore:
         ).fetchall()
         return [self._row(r) for r in rows]
 
+    def due_between(self, start: datetime, end: datetime) -> list[Reminder]:
+        """Open reminders due in [start, end)."""
+        rows = self.conn.execute(
+            "SELECT * FROM reminders WHERE completed = 0 AND deleted = 0 AND due_at >= ? AND due_at < ? ORDER BY due_at",
+            (_utc(start), _utc(end)),
+        ).fetchall()
+        return [self._row(r) for r in rows]
+
     def changed_since(self, cursor: int) -> list[Reminder]:
         rows = self.conn.execute("SELECT * FROM reminders WHERE seq > ? ORDER BY seq", (cursor,)).fetchall()
         return [self._row(r) for r in rows]

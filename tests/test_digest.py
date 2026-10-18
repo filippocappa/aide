@@ -39,11 +39,11 @@ def mail(id, received, subject="Appointment"):
 
 class Mail:
     def __init__(self, messages=None):
-        self.messages = messages if messages is not None else [mail("m1", datetime(2026, 10, 18, 10, tzinfo=ROME))]
+        self.messages = messages if messages is not None else [mail("m1", datetime.now(ROME) - timedelta(seconds=1))]
         self.queries = []
 
     async def search(self, query, max_results):
-        assert query.startswith("is:unread in:inbox")
+        assert query.startswith("in:inbox after:")
         self.queries.append(query)
         return self.messages
 
@@ -220,7 +220,7 @@ def test_evening_digest_has_tomorrow_open_habits_todays_mail_and_a_wrap_up(env):
     assert sections["calendar"]["title"] == "Tomorrow"
     assert [e["title"] for e in sections["calendar"]["events"]] == ["Exam"]
     assert [m["id"] for m in sections["mail"]["items"]] == ["new"]
-    assert inbox.queries == [f"is:unread in:inbox after:{int(midnight.timestamp())}"]
+    assert inbox.queries == [f"in:inbox after:{int(midnight.timestamp())}"]
     assert [r["title"] for r in sections["reminders"]["reminders"]] == ["Print notes"]
     assert sections["reminders"]["title"] == "Due tomorrow"
     assert [h["name"] for h in sections["habits"]["habits"]] == ["Gym"]  # Read is done today
@@ -248,3 +248,103 @@ def test_evening_settings_and_older_clients_that_leave_it_out(env):
     # Settings saved before evening existed read back with its default.
     service.conn.execute("UPDATE settings SET value = ? WHERE key = 'digest'", (json.dumps(old_client),))
     assert client.get("/v1/digest/settings", headers=AUTH).json()["evening"] == {"enabled": True, "time": "22:00"}
+
+
+# -- v2: live sections, 48 h overdue, mail from today, digest as a chat's first message ------------------------
+
+
+def test_get_rebuilds_the_data_sections_but_keeps_the_stored_greeting(env):
+    make, store, habits = env
+    late = late_in_period()
+    client, service, fake = make([done("Hi.\n---\n- ahead")], Calendar([]), Mail([]))
+    done_later = store.create("Pay the bill", late)
+    store.create("Call Marco", late - timedelta(minutes=5))
+    habits.add("Read")
+    made = client.post("/v1/digest/run", json={"kind": "daily"}, headers=AUTH).json()
+
+    store.update(done_later.id, completed=True)
+    store.delete(store.open()[0].id)
+    habits.check(1)
+    service.gmail = Mail([mail("m9", datetime.now(ROME) - timedelta(seconds=1), "New one")])
+    live = client.get("/v1/digest", headers=AUTH).json()
+    assert live["greeting"] == "Hi." and live["generated_at"] == made["generated_at"]
+    types = [s["type"] for s in live["sections"]]
+    assert types == ["calendar", "mail", "habits", "text"]  # both reminders gone: done and deleted
+    assert live["sections"][1]["items"][0]["subject"] == "New one"
+    assert live["sections"][2]["habits"][0]["done_today"] is True
+    assert live["sections"][-1] == {"type": "text", "title": "Looking ahead", "text": "- ahead"}
+    assert len(fake.requests) == 1  # reading doesn't call the model
+
+
+def test_reminders_cover_the_period_and_only_48_hours_of_overdue(env):
+    make, store, _ = env
+    now = datetime.now(ROME)
+    client, _, _ = make([], Calendar([]))
+    store.create("Ancient", now - timedelta(days=5))
+    store.create("Yesterday", now - timedelta(hours=20))
+    store.create("Later", late_in_period())
+    store.create("Next month", now + timedelta(days=40))
+    store.create("No time")
+    body = client.post("/v1/digest/run", json={"kind": "daily"}, headers=AUTH).json()
+    rem = next(s for s in body["sections"] if s["type"] == "reminders")["reminders"]
+    assert [(r["title"], r["overdue"]) for r in rem] == [("Yesterday", True), ("Later", False)]
+
+
+def test_mail_is_everything_that_came_in_today_newest_first(env):
+    make, _, _ = env
+    now = datetime(2026, 10, 19, 12, tzinfo=ROME)
+    client, service, _ = make()
+    p = period("daily", now)
+    assert service.mail_since("daily", p, now) == datetime(2026, 10, 18, 22, tzinfo=ROME)  # since last evening
+    assert service.mail_since("evening", period("evening", now), now) == datetime(2026, 10, 19, tzinfo=ROME)
+    assert service.mail_since("weekly", period("weekly", now), now) == datetime(2026, 10, 19, tzinfo=ROME)
+
+    t = datetime.now(ROME)
+    read = mail("read", t - timedelta(seconds=2), "Read one")
+    read["labelIds"] = ["INBOX"]
+    service.gmail = Mail([read, mail("unread", t - timedelta(seconds=1), "Unread one")])
+    items = asyncio.run(service._mail(t - timedelta(minutes=1)))
+    assert [(m["id"], m["unread"]) for m in items] == [("unread", True), ("read", False)]
+
+
+def test_greeting_prompt_asks_for_a_spoken_note(env):
+    make, _, _ = env
+    client, _, fake = make([done("Tomorrow is light.\n---\n- x")], Calendar([]), Mail())
+    client.post("/v1/digest/run", json={"kind": "evening"}, headers=AUTH)
+    system = fake.requests[0]["system"]
+    assert "No lists" in system and "wants an answer" in system
+    assert "See you Tuesday" in fake.requests[0]["messages"][0]["content"]  # the model sees what mail says
+
+
+def test_new_conversation_can_open_with_the_digest_greeting(env):
+    make, _, _ = env
+    client, service, fake = make([done("Tomorrow is light: gym at 19:00.\n---\n- x"),
+                                  done("Moved in your head, at least."), done("Gym tomorrow")], Calendar([]))
+    client.post("/v1/digest/run", json={"kind": "evening"}, headers=AUTH)
+
+    new = client.post("/v1/conversations", json={"digest": "evening"}, headers=AUTH).json()
+    assert new["preview"] == "Tomorrow is light: gym at 19:00." and new["title"] is None
+    history = client.get(f"/v1/history?conversation_id={new['id']}", headers=AUTH).json()["messages"]
+    assert [(m["role"], m["text"]) for m in history] == [("assistant", "Tomorrow is light: gym at 19:00.")]
+    assert len(fake.requests) == 1  # today's stored evening greeting was reused
+
+    client.post("/v1/chat", json={"text": "make gym 20:00", "conversation_id": new["id"]}, headers=AUTH)
+    sent = fake.requests[1]["messages"]
+    assert sent[0]["role"] == "user" and sent[1]["role"] == "assistant"
+    assert sent[1]["content"][0]["text"] == "Tomorrow is light: gym at 19:00."  # the model knows it said it
+    rows = client.get("/v1/conversations", headers=AUTH).json()["conversations"]
+    assert next(r for r in rows if r["id"] == new["id"])["title"] == "Gym tomorrow"
+
+    plain = client.post("/v1/conversations", json={}, headers=AUTH).json()
+    assert plain["preview"] is None
+    assert client.get(f"/v1/history?conversation_id={plain['id']}", headers=AUTH).json()["messages"] == []
+    assert client.post("/v1/conversations", json={"digest": "yearly"}, headers=AUTH).status_code == 400
+
+
+def test_opening_makes_a_fresh_digest_when_the_stored_one_is_stale(env):
+    make, _, _ = env
+    client, service, fake = make([done("Fresh one.\n---\n- x")], Calendar([]))
+    stale = {"kind": "daily", "generated_at": "2026-01-01T08:00:00+01:00", "greeting": "Old news.", "sections": []}
+    service._store("daily", datetime(2026, 1, 1, 7, tzinfo=ROME), stale)
+    new = client.post("/v1/conversations", json={"digest": "daily"}, headers=AUTH).json()
+    assert new["preview"] == "Fresh one." and len(fake.requests) == 1

@@ -134,9 +134,16 @@ class Agent:
             r["preview"] = last[0]["text"] if last else None
         return rows
 
-    def new_conversation(self) -> dict:
+    def new_conversation(self, opening: str | None = None) -> dict:
+        """A new app chat. With `opening`, it starts with that as Aide's first message (the digest greeting)."""
         row = self.db.new_app_conversation()
-        return {"id": row["public_id"], "title": None, "preview": None, "updated_at": row["last_active_at"]}
+        if opening:
+            # The API wants a user turn first; this note stays out of the visible history.
+            note = f"{_OPENED} on {datetime.now(self.tz):%a %d %b %Y %H:%M}. Greet them with their digest.]"
+            self.db.append_turn(row["id"], "app", [{"role": "user", "content": note},
+                                                   {"role": "assistant", "content": [{"type": "text", "text": opening}]}])
+            row = self.db.app_conversation(row["public_id"])
+        return {"id": row["public_id"], "title": None, "preview": opening, "updated_at": row["last_active_at"]}
 
     def delete_conversation(self, channel: str, conversation: str) -> None:
         if conversation == channel:
@@ -152,8 +159,8 @@ class Agent:
         out = []
         for role, content, ts in self.db.history_with_ts(conversation_id):
             if role == "user":
-                if not isinstance(content, str) or content.startswith("[The user replied"):
-                    continue  # tool results and confirm/cancel notes
+                if not isinstance(content, str) or content.startswith(("[The user replied", _OPENED)):
+                    continue  # tool results, confirm/cancel notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
             elif isinstance(content, str):
                 text = content
@@ -238,7 +245,7 @@ class Agent:
             reply = await self._run(channel, model, history, turn)
             # Saved only after the loop completes: a crash mid-turn leaves history consistent.
             self.db.append_turn(conversation_id, channel if conversation is None else "app", turn)
-            if conversation is not None and not history:
+            if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
                 self.db.set_conversation_title(conversation_id, await self._title(text, reply))
             return reply
 
@@ -356,6 +363,7 @@ class Agent:
 
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
+_OPENED = "[The user opened a new chat in the app"
 
 
 def _with_cache_breakpoint(messages: list[dict]) -> list[dict]:
