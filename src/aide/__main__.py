@@ -1,6 +1,7 @@
 """Entry point: `aide` or `python -m aide`."""
 
 import logging
+import threading
 from datetime import timedelta
 
 import anthropic
@@ -21,6 +22,7 @@ def main() -> None:
     # No timestamps: journald adds its own.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx2").setLevel(logging.WARNING)  # one line per API call is noise
+    logging.getLogger("caldav").setLevel(logging.ERROR)  # its warnings dump raw event data
     logging.getLogger("discord.client").addFilter(  # Aide doesn't use voice
         lambda record: "voice will NOT be supported" not in record.getMessage()
     )
@@ -37,6 +39,8 @@ def main() -> None:
     tools = [clock_tool(settings.timezone)]
     if settings.icloud_email and settings.icloud_app_password:
         cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
+        # Find the calendars in the background so the first request doesn't wait for it.
+        threading.Thread(target=cal.calendars, daemon=True).start()
         tools += calendar_tools(cal, settings.timezone, settings.default_calendar)
     else:
         log.warning("ICLOUD_EMAIL / ICLOUD_APP_PASSWORD not set: calendar tools disabled")

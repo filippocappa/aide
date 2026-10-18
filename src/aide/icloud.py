@@ -2,9 +2,10 @@
 
 import logging
 import uuid
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Protocol
 
 import caldav
@@ -73,14 +74,21 @@ class ICloudCalendar:
         # "OSError: [Errno 90] Message too long". Plain HTTPS over TCP works everywhere.
         self.client.session = niquests.Session(multiplexed=self.client.session.multiplexed, disable_http3=True)
         self._calendars: dict[str, caldav.Calendar] | None = None
+        # uid -> (calendar name, URL), remembered from listings. iCloud rejects lookups by UID
+        # (412 on the REPORT that event_by_uid sends), so events are fetched by URL instead.
+        self._where: dict[str, tuple[str, str]] = {}
 
     def _cals(self) -> dict[str, caldav.Calendar]:
         # Cached for the process lifetime; restart Aide after adding a calendar.
         if self._calendars is None:
-            found = {}
-            for cal in self.client.principal().calendars():
-                if "VEVENT" in cal.get_supported_components():  # skip Reminders lists
-                    found[cal.get_display_name()] = cal
+            def describe(cal):
+                # Reminders lists are calendars too; keep only those that hold events.
+                return cal.get_display_name(), "VEVENT" in cal.get_supported_components()
+
+            cals = self.client.principal().calendars()
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                info = list(pool.map(describe, cals))
+            found = {name: cal for (name, events), cal in zip(info, cals) if events}
             self._calendars = found
             log.info("iCloud calendars: %s", ", ".join(found))
         return self._calendars
@@ -91,19 +99,47 @@ class ICloudCalendar:
     def events(self, start: datetime, end: datetime) -> list[CalEvent]:
         def one(name: str, cal: caldav.Calendar) -> list[CalEvent]:
             found = cal.search(event=True, start=start, end=end, expand=True)
-            return [_event_from_component(obj.icalendar_component, name) for obj in found]
+            events = [_event_from_component(obj.icalendar_component, name) for obj in found]
+            for ev, obj in zip(events, found):
+                self._where[ev.uid] = (name, str(obj.url))
+            return events
 
         # One request per calendar; in parallel, since iCloud users often have a dozen.
         with ThreadPoolExecutor(max_workers=8) as pool:
             results = pool.map(lambda item: one(*item), self._cals().items())
             return [ev for evs in results for ev in evs]
 
+    def _fetch(self, name: str, url) -> caldav.Event | None:
+        try:
+            obj = self._cals()[name].event_by_url(url)
+            obj.load()
+            return obj
+        except caldav.error.DAVError:  # 404 and friends
+            return None
+
     def _find(self, uid: str) -> tuple[str, caldav.Event] | None:
-        for name, cal in self._cals().items():
-            try:
-                return name, cal.event_by_uid(uid)
-            except caldav.error.NotFoundError:
-                continue
+        def matches(obj) -> bool:
+            return obj is not None and str(obj.icalendar_component.get("UID")) == uid
+
+        if uid in self._where:  # 1. where a recent listing saw it
+            name, url = self._where[uid]
+            if matches(obj := self._fetch(name, url)):
+                return name, obj
+        cals = self._cals()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            # 2. <uid>.ics, where Aide and most Apple clients store events
+            guesses = pool.map(lambda n: (n, self._fetch(n, cals[n].url.join(quote(uid) + ".ics"))), cals)
+            for name, obj in guesses:
+                if matches(obj):
+                    return name, obj
+            # 3. scan a wide window (no expansion, so recurring masters come back whole)
+            now = datetime.now(timezone.utc)
+            def scan(name):
+                found = cals[name].search(event=True, start=now - timedelta(days=365), end=now + timedelta(days=730))
+                return [(name, o) for o in found if matches(o)]
+            for hits in pool.map(scan, cals):
+                if hits:
+                    return hits[0]
         return None
 
     def get(self, uid: str) -> CalEvent | None:
@@ -129,8 +165,10 @@ class ICloudCalendar:
         cal.add("version", "2.0")
         cal.add_component(ev)
         cal.add_missing_timezones()
-        cals[calendar].add_event(cal.to_ical().decode())
-        return _event_from_component(ev, calendar)
+        obj = cals[calendar].add_event(cal.to_ical().decode())
+        created = _event_from_component(ev, calendar)
+        self._where[created.uid] = (calendar, str(obj.url))
+        return created
 
     def move(self, uid, start, end) -> CalEvent:
         found = self._find(uid)
