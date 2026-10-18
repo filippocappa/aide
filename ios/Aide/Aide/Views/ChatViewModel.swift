@@ -21,6 +21,8 @@ final class ChatViewModel: ObservableObject {
     }
     @Published private(set) var isSending = false
     @Published private(set) var isActing = false
+    /// A new chat is waiting for its digest greeting.
+    @Published private(set) var isOpening = false
     @Published private(set) var loadError: String?
 
     /// Called after the server may have changed reminders or events.
@@ -35,11 +37,35 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: Conversations
 
-    func startNewChat() {
+    /// A new chat opens with Pebble's digest greeting (docs/API.md, "Opening a chat with it"): the morning
+    /// one before 17:00, the evening one after. A digest-only chat you never answered is cleared away first,
+    /// so tapping New chat repeatedly doesn't pile them up. If the server can't, it's a blank chat as before.
+    func startNewChat() async {
+        let unanswered = messages.count == 1 && messages[0].role == .assistant ? conversationID : nil
+        reset()
+        if let unanswered { try? await api.deleteConversation(unanswered) }
+        isOpening = true
+        defer { isOpening = false }
+        guard let conversation = try? await api.createConversation(digest: Self.digestKind()),
+              conversationID == nil, messages.isEmpty
+        else { return }
+        conversationID = conversation.id
+        await loadHistory()
+    }
+
+    /// The digest that fits the time of day: "daily" (morning) before 17:00, "evening" after.
+    static func digestKind(at now: Date = Date()) -> String {
+        Calendar.current.component(.hour, from: now) < 17 ? "daily" : "evening"
+    }
+
+    private func reset() {
         conversationID = nil
         messages = []
         pending = []
     }
+
+    /// The chat opened with the digest: its first message is Aide's (every other chat starts with yours).
+    var startsWithDigest: Bool { messages.first?.role == .assistant }
 
     func open(_ conversation: Conversation) async {
         conversationID = conversation.id
@@ -61,7 +87,7 @@ final class ChatViewModel: ObservableObject {
     func delete(_ conversation: Conversation) async {
         do {
             try await api.deleteConversation(conversation.id)
-            if conversation.id == conversationID { startNewChat() }
+            if conversation.id == conversationID { reset() }
             await loadConversations()
         } catch {
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
@@ -90,7 +116,7 @@ final class ChatViewModel: ObservableObject {
 
     func send(_ raw: String) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isSending else { return }
+        guard !text.isEmpty, !isSending, !isOpening else { return }
         messages.append(Message(role: .user, text: text))
         isSending = true
         do {

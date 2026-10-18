@@ -106,9 +106,13 @@ private struct ReminderRows: View {
                 Text(r.title).strikethrough(r.completed)
                 Spacer(minLength: 0)
                 if let due = r.dueDate {
-                    Text(due.formatted(date: Calendar.current.isDateInToday(due) ? .omitted : .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(due < Date() && !r.completed ? Color.red : Color.secondary)
+                    let late = (r.overdue || due < Date()) && !r.completed
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(due.formatted(date: Calendar.current.isDateInToday(due) ? .omitted : .abbreviated, time: .shortened))
+                            .font(.caption)
+                        if late { Text("Overdue").font(.caption2.weight(.semibold)) }
+                    }
+                    .foregroundStyle(late ? Color.red : Color.secondary)
                 }
             }
         }

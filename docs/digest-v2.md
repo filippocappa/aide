@@ -1,7 +1,7 @@
 # Digest v2: proposal (for the Ubuntu session)
 
 Status: **server part built** (2026-10-19, Ubuntu; contract in `docs/API.md`, "Digest" and "Conversations").
-**App part still to do** (Mac): see "App changes" below. Written on the Mac on 2026-10-19 from Filippo's feedback.
+**App part built** (2026-10-19, Mac): see "App changes" below. Written on the Mac on 2026-10-19 from Filippo's feedback.
 
 Built as proposed, plus the details the app may care about: the `reminders` window ends at the end of the
 period (so tonight's later reminders show in the evening digest too); `mail` is capped at 25; `POST

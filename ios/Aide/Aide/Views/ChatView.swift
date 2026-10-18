@@ -4,6 +4,7 @@ struct ChatView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var voice: VoiceController
+    @EnvironmentObject private var digest: DigestViewModel
     @State private var draft = ""
     @State private var showChats = false
     @State private var showDigest = false
@@ -16,7 +17,7 @@ struct ChatView: View {
         if !settings.isConfigured || chat.loadError != nil { return "sleeping" }
         if voice.isListening { return "awake" }
         if voice.isSpeaking { return "happy" }
-        if chat.isSending || chat.isActing { return "thinking" }
+        if chat.isSending || chat.isActing || chat.isOpening { return "thinking" }
         if justReplied { return "happy" }
         return composerFocused ? "awake" : "calm"
     }
@@ -24,7 +25,7 @@ struct ChatView: View {
     private static let headerPebble: CGFloat = 84
     private static let voicePebble: CGFloat = 250
 
-    private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending }
+    private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending && !chat.isOpening }
 
     private var replying: Bool { (chat.isSending || chat.isActing) && !voice.isActive }
 
@@ -79,8 +80,7 @@ struct ChatView: View {
                 .disabled(!settings.isConfigured)
             Spacer()
             headerButton("square.and.pencil", label: "New chat") {
-                chat.startNewChat()
-                composerFocused = true
+                Task { await chat.startNewChat() }
             }
             Menu {
                 Button("Think harder", systemImage: "brain") { Task { await chat.think() } }
@@ -109,15 +109,19 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 14) {
-                    if chat.messages.isEmpty && !chat.isSending { emptyState }
+                    if isEmpty { emptyState }
                     ForEach(chat.messages) { message in
-                        MessageRow(message: message)
-                            .transition(.asymmetric(
-                                insertion: .scale(scale: 0.5, anchor: message.role == .user ? .bottomTrailing : .bottomLeading)
-                                    .combined(with: .move(edge: .bottom))
-                                    .combined(with: .opacity),
-                                removal: .opacity))
+                        VStack(alignment: .leading, spacing: 8) {
+                            MessageRow(message: message)
+                            if chat.startsWithDigest, message.id == chat.messages.first?.id { digestDetails }
+                        }
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.5, anchor: message.role == .user ? .bottomTrailing : .bottomLeading)
+                                .combined(with: .move(edge: .bottom))
+                                .combined(with: .opacity),
+                            removal: .opacity))
                     }
+                    if chat.isOpening { ThinkingRow(label: "Getting your digest…") }
                     if chat.isSending { ThinkingRow() }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -142,6 +146,22 @@ struct ChatView: View {
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+    }
+
+    /// Under Pebble's digest greeting: the cards it was written from.
+    private var digestDetails: some View {
+        Button {
+            digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
+            showDigest = true
+        } label: {
+            Label("Details", systemImage: "sun.horizon")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Theme.chip, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 2)
     }
 
     private var emptyState: some View {
@@ -211,12 +231,12 @@ struct ChatView: View {
 
     /// An empty message box offers the microphone instead of send.
     private var showsMic: Bool {
-        settings.isConfigured && !chat.isSending
+        settings.isConfigured && !chat.isSending && !chat.isOpening
             && (voice.isActive || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     private var canSend: Bool {
-        settings.isConfigured && !chat.isSending
+        settings.isConfigured && !chat.isSending && !chat.isOpening
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
@@ -246,10 +266,12 @@ private struct MessageRow: View {
 }
 
 private struct ThinkingRow: View {
+    var label = "Thinking…"
+
     var body: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text("Thinking…").font(.footnote).foregroundStyle(.secondary)
+            Text(label).font(.footnote).foregroundStyle(.secondary)
             Spacer()
         }
         .padding(.horizontal, 2)
