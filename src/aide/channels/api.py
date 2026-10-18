@@ -11,7 +11,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..agent import CONVERSATION, Agent
+from ..agent import CONVERSATION, Agent, UnknownConversation
+from ..db import Database
 from ..icloud import CalendarBackend, CalEvent
 from ..reminders import Reminder, ReminderStore
 
@@ -21,6 +22,15 @@ VERSION = "0.2.0"
 
 
 class ChatIn(BaseModel):
+    text: str
+    conversation_id: str | None = None  # None: the conversation shared with Discord
+
+
+class ConversationIn(BaseModel):
+    conversation_id: str | None = None
+
+
+class MemoryIn(BaseModel):
     text: str
 
 
@@ -42,6 +52,7 @@ class SyncIn(BaseModel):
 
 def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | None,
                tz: ZoneInfo, token: str) -> FastAPI:
+    db: Database = agent.db
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
     def auth(authorization: str = Header(default="")) -> None:
@@ -58,12 +69,25 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         log.error("Claude API error: %s", exc)
         return JSONResponse({"error": "The assistant is unavailable right now. Try again."}, status_code=502)
 
+    @app.exception_handler(UnknownConversation)
+    async def unknown_conversation(_: Request, exc: UnknownConversation):
+        return JSONResponse({"error": str(exc)}, status_code=404)
+
     @app.exception_handler(ValueError)
     async def bad_value(_: Request, exc: ValueError):
         return JSONResponse({"error": str(exc)}, status_code=400)
 
     def pending() -> list[dict]:
         return agent.pending_with_ids(CONVERSATION)
+
+    def local(utc_iso: str) -> str:
+        return datetime.fromisoformat(utc_iso).astimezone(tz).replace(microsecond=0).isoformat()
+
+    def conversation_json(c: dict) -> dict:
+        return {"id": c["id"], "title": c["title"], "preview": c["preview"], "updated_at": local(c["updated_at"])}
+
+    def memory_json(m) -> dict:
+        return {"id": m["id"], "text": m["text"], "created_at": local(m["created_at"])}
 
     def reminder_json(r: Reminder) -> dict:
         return {
@@ -88,8 +112,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         text = body.text.strip()
         if not text:
             raise HTTPException(400, "text is empty")
-        reply = await agent.reply(CONVERSATION, text)
-        return {"reply": reply, "pending": pending()}
+        conversation = body.conversation_id or CONVERSATION
+        reply = await agent.reply(CONVERSATION, text, conversation)
+        return {"reply": reply, "pending": pending(), "conversation_id": conversation}
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
     async def confirm():
@@ -105,13 +130,43 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"ok": True}
 
     @app.post("/v1/think", dependencies=[Depends(auth)])
-    async def think():
-        agent.think(CONVERSATION)
+    async def think(body: ConversationIn | None = None):
+        agent.think(CONVERSATION, body.conversation_id if body else None)
         return {"ok": True}
 
     @app.get("/v1/history", dependencies=[Depends(auth)])
-    async def history(limit: int = 50):
-        return {"messages": agent.visible_history(CONVERSATION, max(1, min(limit, 500)))}
+    async def history(limit: int = 50, conversation_id: str | None = None):
+        return {"messages": agent.visible_history(CONVERSATION, max(1, min(limit, 500)), conversation_id)}
+
+    @app.get("/v1/conversations", dependencies=[Depends(auth)])
+    async def conversations():
+        return {"conversations": [conversation_json(c) for c in agent.conversations(CONVERSATION)]}
+
+    @app.post("/v1/conversations", dependencies=[Depends(auth)])
+    async def new_conversation():
+        return conversation_json(agent.new_conversation())
+
+    @app.delete("/v1/conversations/{conversation_id}", dependencies=[Depends(auth)])
+    async def delete_conversation(conversation_id: str):
+        agent.delete_conversation(CONVERSATION, conversation_id)
+        return {"ok": True}
+
+    @app.get("/v1/memory", dependencies=[Depends(auth)])
+    async def memory():
+        return {"items": [memory_json(m) for m in db.memories()]}
+
+    @app.post("/v1/memory", dependencies=[Depends(auth)])
+    async def add_memory(body: MemoryIn):
+        text = " ".join(body.text.split())
+        if not text:
+            raise HTTPException(400, "text is empty")
+        return memory_json(db.add_memory(text))
+
+    @app.delete("/v1/memory/{memory_id}", dependencies=[Depends(auth)])
+    async def delete_memory(memory_id: int):
+        if not db.delete_memory(memory_id):
+            raise HTTPException(404, f"no memory {memory_id}")
+        return {"ok": True}
 
     @app.get("/v1/today", dependencies=[Depends(auth)])
     async def today(date: date | None = None):  # noqa: A002 - matches the query parameter
