@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><title>Aide</title>
+<style>
+  .body { transform-origin: 128px 198px; animation: breathe 3.84s ease-in-out infinite; }
+  .eyes { transform-origin: 128px 124px; animation: blink 3.84s infinite; }
+  @keyframes breathe { 0%,100% { transform: scale(1,1); } 25% { transform: scale(.988,1.03); } 75% { transform: scale(1.012,.97); } }
+  @keyframes blink { 0%,78%,88%,100% { transform: scaleY(1); } 82%,84% { transform: scaleY(.15); } }
+  @media (prefers-reduced-motion: reduce) { .body, .eyes { animation: none; } }
+</style>
+<rect width="256" height="256" fill="#ECE5D8"/>
+<g transform="translate(128 128) scale(1.2) translate(-128 -128)">
+  <g class="body"><path fill="#34413F" d="M116 62H140A68 68 0 0 1 140 198H116A68 68 0 0 1 116 62Z"/>
+    <path class="eyes" fill="#ECE5D8" d="M90.00 124a10.00 10.00 0 1 0 20.00 0a10.00 10.00 0 1 0 -20.00 0ZM146.00 124a10.00 10.00 0 1 0 20.00 0a10.00 10.00 0 1 0 -20.00 0Z"/></g>
+</g></svg>
