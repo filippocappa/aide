@@ -1,0 +1,23 @@
+[project]
+name = "aide"
+version = "0.1.0"
+description = "Personal AI assistant for schedule, reminders and mail, over chat."
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.0",
+    "discord.py>=2.4",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+aide = "aide.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
