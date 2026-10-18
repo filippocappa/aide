@@ -33,12 +33,8 @@ struct ChatView: View {
                 let top = geo.frame(in: .global).minY
                 PebbleStage(area: geo.size,
                             dockedY: windowTopInset + 22 - top,
-                            introDone: env.introDone,
+                            introDone: $env.introDone,
                             busy: chat.isSending || chat.isActing, mood: mood, touch: touch)
-            }
-            .task {
-                try? await Task.sleep(for: .seconds(2.2)) // let the big Pebble say hello first
-                env.introDone = true
             }
         }
     }

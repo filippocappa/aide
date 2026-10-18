@@ -24,7 +24,8 @@ targets:
       path: Aide/Info.plist
       properties:
         CFBundleDisplayName: Aide
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
