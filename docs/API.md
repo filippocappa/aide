@@ -74,6 +74,46 @@ Short facts Aide keeps between chats (preferences, names, routines). The server 
 | `POST /v1/memory` | `{"text": "Vegetarian"}` | The new item |
 | `DELETE /v1/memory/{id}` | | `{"ok": true}` |
 
+## Digest (contract change, server side pending)
+
+A summary the server builds on a schedule: daily, weekly or monthly. The app shows the latest one on the empty new-chat screen ("Hello, today…"), and the server also sends it as a Discord DM (push notification later). Sections are structured, so the app draws cards instead of parsing text.
+
+`GET /v1/digest?kind=daily` (`daily` default, `weekly`, `monthly`) →
+```json
+{
+  "kind": "daily",
+  "generated_at": "2026-10-19T08:00:03+02:00",
+  "greeting": "Good morning. Two meetings today and three mails that need you.",
+  "sections": [
+    {"type": "calendar", "title": "Today", "events": [ /* same objects as a calendar event: id, title, calendar, start, end, all_day, location, recurring */ ]},
+    {"type": "mail", "title": "Mail", "items": [{"id": "…", "from": "Dr. Rossi", "subject": "Appointment", "preview": "…", "received_at": "…", "unread": true}]},
+    {"type": "reminders", "title": "Due today", "reminders": [ /* Reminder objects */ ]},
+    {"type": "habits", "title": "Habits", "habits": [ /* Habit objects, see below */ ]},
+    {"type": "text", "title": "Looking ahead", "text": "free-form markdown"}
+  ]
+}
+```
+The app skips section types it doesn't know. `404` if none has been generated yet.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/digest/run` | `{"kind": "daily"}` | The freshly generated digest (can take 5–30 s). |
+| `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}, "discord": true}` (times in the server zone, `weekday` 1 = Monday) |
+| `PUT /v1/digest/settings` | the same object | the saved settings |
+
+## Habits (contract change, server side pending)
+
+Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null}`.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/habits` | | `{"habits": [Habit]}` |
+| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}}` | the new Habit |
+| `POST /v1/habits/{id}/check` | `{"date": "2026-10-18"}` (optional, default today; send `"done": false` to undo) | the updated Habit |
+| `DELETE /v1/habits/{id}` | | `{"ok": true}` |
+
+The assistant also gets tools to add, check and list habits (deleting is queued for confirmation).
+
 ## Today
 
 `GET /v1/today` (optional `?date=YYYY-MM-DD`, default today) →
