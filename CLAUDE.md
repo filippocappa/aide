@@ -40,8 +40,11 @@ Rules that matter here:
 
 ## iOS app (MacBook)
 
-SwiftUI, iOS 17+, Xcode project in `ios/Aide/`. Free Apple ID ("Personal Team"), so:
-- Installs on the phone expire after 7 days: rebuild from Xcode to renew. No push notifications.
+SwiftUI, iOS 17+, Xcode project in `ios/Aide/`. Paid Apple Developer Program account (bought 2026-10-18;
+enrolment may still be finishing), so:
+- Sign with the paid team, not "Personal Team". Installs last a year, and TestFlight is available.
+- **Push notifications are possible** (APNs). v1 doesn't use them yet; they're the next step after v1
+  (the server notifies the phone directly, and silent pushes trigger reminder sync).
 - Develop against the **Simulator** (no signing needed). Install on the phone only to try it for real.
 
 ```bash
@@ -54,7 +57,7 @@ xcodebuild -scheme Aide -destination 'platform=iOS Simulator,name=iPhone 16' tes
 What the app does, v1:
 1. **Chat** with Aide. Same conversation as Discord, so you can start on one and continue on the other.
 2. **Today:** today's calendar events and reminders.
-3. **Reminders sync** with Apple Reminders through EventKit. The app is the only part that can touch Apple Reminders. Each synced reminder gets an EventKit alarm at its due time, so **Apple** notifies the user even with the app closed.
+3. **Reminders sync** with Apple Reminders through EventKit. The app is the only part that can touch Apple Reminders. Each synced reminder gets an EventKit alarm at its due time, so **Apple** notifies the user even with the app closed. Until push exists, reminders that haven't reached the phone are sent as Discord DMs.
 4. **Settings:** server URL and API token, kept in the Keychain. Never hardcode them.
 
 The app reaches the server over Tailscale (the phone needs the Tailscale app). Everything is in `docs/API.md`.
@@ -63,4 +66,5 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 Done: 1 core (Discord bot, agent loop, service), 2 iCloud Calendar.
 Now: **server HTTP API** (Ubuntu) and **iOS app v1** (Mac), both per `docs/API.md`.
+Next: push notifications (APNs) and silent-push sync, after which Discord becomes optional.
 Later: habits, weekly digest, mail, nightly backups.
