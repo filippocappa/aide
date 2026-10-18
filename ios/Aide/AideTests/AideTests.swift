@@ -112,3 +112,14 @@ final class APIClientTests: XCTestCase {
         catch { XCTAssertEqual(error as? APIError, .notConfigured) }
     }
 }
+
+final class RichTextTests: XCTestCase {
+    func testCalendarReplyBecomesEventCards() {
+        let blocks = RichText.parse("**Tomorrow**\n- 09:00–10:00 Dentist\n- All day: Trip\nNothing else.")
+        guard blocks.count == 4,
+              case .event(let s, let e, let t) = blocks[1],
+              case .event(let s2, _, let t2) = blocks[2] else { return XCTFail("\(blocks)") }
+        XCTAssertEqual([s, e, t], ["09:00", "10:00", "Dentist"])
+        XCTAssertEqual([s2, t2], ["All day", "Trip"])
+    }
+}
