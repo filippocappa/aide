@@ -35,6 +35,7 @@ final class AppEnvironment: ObservableObject {
         }
 
         chat.onServerChange = { [weak self] in await self?.sync.sync() }
+        digest.completeReminder = { [weak sync] reminder, done in await sync?.setCompleted(reminder, done) ?? false }
     }
 
     /// Launch and return-to-foreground.

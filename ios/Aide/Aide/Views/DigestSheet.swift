@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The digest on its own page, reachable from any chat.
+/// The digest on its own page, reachable from any chat. The period (morning, evening, week, month)
+/// sits in a menu in the corner rather than on the page.
 struct DigestSheet: View {
     @EnvironmentObject private var digest: DigestViewModel
     @Environment(\.dismiss) private var dismiss
@@ -9,12 +10,26 @@ struct DigestSheet: View {
         NavigationStack {
             ScrollView {
                 DigestView(digest: digest.digest)
-                    .padding(16)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
             }
             .background(Theme.background)
-            .navigationTitle("Digest")
+            .navigationTitle(digest.kind.label)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Picker("Period", selection: $digest.kind) {
+                            ForEach(DigestViewModel.Kind.allCases) { Text($0.label).tag($0) }
+                        }
+                    } label: {
+                        Image(systemName: "calendar")
+                    }
+                    .accessibilityLabel("Period")
+                }
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+            }
+            .onChange(of: digest.kind) { _, _ in Task { await digest.load() } }
             .task { await digest.load() }
         }
     }
