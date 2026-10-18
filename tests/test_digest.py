@@ -109,7 +109,8 @@ def test_digest_sections_are_data_and_the_model_writes_only_greeting_and_ahead(e
 def test_digest_survives_a_failing_model_and_calendar(env):
     make, store, _ = env
     client, _, _ = make([], Calendar(fail=True))  # no scripted response: the model call fails
-    store.create("Overdue thing", datetime.now(ROME) - timedelta(days=1))
+    now = datetime.now(ROME)
+    store.create("Overdue thing", max(datetime.combine(now.date(), datetime.min.time(), ROME), now - timedelta(hours=1)))
     body = client.post("/v1/digest/run", json={}, headers=AUTH).json()
     assert body["greeting"].startswith("Good ") and "1 reminder" in body["greeting"]
     assert [s["type"] for s in body["sections"]] == ["reminders"]
@@ -276,18 +277,20 @@ def test_get_rebuilds_the_data_sections_but_keeps_the_stored_greeting(env):
     assert len(fake.requests) == 1  # reading doesn't call the model
 
 
-def test_reminders_cover_the_period_and_only_48_hours_of_overdue(env):
+def test_reminders_cover_the_period_and_only_todays_overdue(env):
     make, store, _ = env
     now = datetime.now(ROME)
+    midnight = datetime.combine(now.date(), datetime.min.time(), ROME)
     client, _, _ = make([], Calendar([]))
     store.create("Ancient", now - timedelta(days=5))
-    store.create("Yesterday", now - timedelta(hours=20))
+    store.create("Yesterday", midnight - timedelta(minutes=1))
+    store.create("Earlier today", max(midnight, now - timedelta(hours=3)))
     store.create("Later", late_in_period())
     store.create("Next month", now + timedelta(days=40))
     store.create("No time")
     body = client.post("/v1/digest/run", json={"kind": "daily"}, headers=AUTH).json()
     rem = next(s for s in body["sections"] if s["type"] == "reminders")["reminders"]
-    assert [(r["title"], r["overdue"]) for r in rem] == [("Yesterday", True), ("Later", False)]
+    assert [(r["title"], r["overdue"]) for r in rem] == [("Earlier today", True), ("Later", False)]
 
 
 def test_mail_is_everything_that_came_in_today_newest_first(env):

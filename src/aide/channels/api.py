@@ -136,8 +136,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if not text:
             raise HTTPException(400, "text is empty")
         conversation = body.conversation_id or CONVERSATION
-        reply = await agent.reply(CONVERSATION, text, conversation)
-        return {"reply": reply, "pending": pending(), "conversation_id": conversation}
+        reply, attachments = await agent.respond(CONVERSATION, text, conversation)
+        return {"reply": reply, "pending": pending(), "conversation_id": conversation, "attachments": attachments}
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
     async def confirm():
@@ -159,7 +159,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/history", dependencies=[Depends(auth)])
     async def history(limit: int = 50, conversation_id: str | None = None):
-        return {"messages": agent.visible_history(CONVERSATION, max(1, min(limit, 500)), conversation_id)}
+        messages = agent.visible_history(CONVERSATION, max(1, min(limit, 500)), conversation_id)
+        for m in messages:  # reminders as they are now, so a reload shows ticks made since
+            for a in m["attachments"]:
+                if a["type"] == "reminders":
+                    a["reminders"] = [reminder_json(r, tz) if (r := store.get(old["id"])) else old
+                                      for old in a["reminders"]]
+        return {"messages": messages}
 
     @app.get("/v1/conversations", dependencies=[Depends(auth)])
     async def conversations():

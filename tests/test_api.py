@@ -10,6 +10,7 @@ from aide.channels.api import create_app
 from aide.db import Database
 from aide.icloud import CalEvent
 from aide.reminders import ReminderStore
+from aide.shapes import reminder_json
 from aide.tools import ToolRegistry
 from aide.tools.reminders import reminder_tools
 
@@ -76,8 +77,9 @@ def test_bad_token_is_rejected(env, headers):
 def test_chat_returns_reply_and_pending(env):
     client, agent, store = env([call("create_reminder", title="Bins"), done("ok")])
     r = client.post("/v1/chat", json={"text": "remind me bins"}, headers=AUTH)
-    assert r.json() == {"reply": "ok", "pending": [], "conversation_id": "main"}
     rem = store.open()[0]
+    assert r.json() == {"reply": "ok", "pending": [], "conversation_id": "main",
+                        "attachments": [{"type": "reminders", "reminders": [reminder_json(rem, ROME)]}]}
 
     client2, _, _ = env([call("delete_reminder", reminder_id=rem.id), done("queued")])
     body = client2.post("/v1/chat", json={"text": "delete it"}, headers=AUTH).json()
@@ -393,3 +395,76 @@ def test_local_due_times_are_stored_as_utc_so_due_checks_work():
     assert db.conn.execute("SELECT due_at FROM reminders").fetchone()[0] == "2026-10-19T21:30:00+00:00"
     assert [r.id for r in store.due_before(datetime(2026, 10, 20, tzinfo=ROME))] == [rem.id]
     assert [r.id for r in store.unsynced_due(datetime(2026, 10, 19, 21, 31, tzinfo=timezone.utc))] == [rem.id]
+
+
+# -- attachments ---------------------------------------------------------------
+
+
+def calls(*uses):
+    return ("tool_use", [Block(type="tool_use", id=f"t{i}", name=n, input=a) for i, (n, a) in enumerate(uses)])
+
+
+def test_listing_reminders_attaches_them_and_history_keeps_them_up_to_date(env):
+    client, agent, store = env()
+    a, b = store.create("Bins", datetime(2026, 10, 20, 9, tzinfo=ROME)), store.create("Call mum")
+    client, agent, _ = env([call("list_reminders"), done("Two open reminders.")])
+    body = client.post("/v1/chat", json={"text": "what are my reminders?"}, headers=AUTH).json()
+    (att,) = body["attachments"]
+    assert att["type"] == "reminders" and [r["id"] for r in att["reminders"]] == [a.id, b.id]
+    assert set(att["reminders"][0]) == {"id", "title", "notes", "due_at", "completed", "apple_id", "modified_at",
+                                        "deleted"}  # the same Reminder object as /v1/reminders/sync
+    store.update(a.id, completed=True)  # ticked in the app afterwards
+    user, reply = client.get("/v1/history", headers=AUTH).json()["messages"]
+    assert user["attachments"] == []
+    assert reply["text"] == "Two open reminders." and reply["attachments"][0]["reminders"][0]["completed"] is True
+
+
+def test_created_and_changed_reminders_merge_into_one_attachment(env):
+    client, agent, store = env()
+    rem = store.create("Bins")
+    client, _, _ = env([calls(("create_reminder", {"title": "Milk"}), ("complete_reminder", {"reminder_id": rem.id})),
+                        call("list_reminders"), done("Done.")])
+    body = client.post("/v1/chat", json={"text": "add milk, bins are done"}, headers=AUTH).json()
+    (att,) = body["attachments"]
+    titles = [(r["title"], r["completed"]) for r in att["reminders"]]
+    assert sorted(titles) == [("Bins", True), ("Milk", False)]  # Milk listed again later: shown once
+
+
+def test_no_tools_means_no_attachments(env):
+    client, _, _ = env([done("hi")])
+    assert client.post("/v1/chat", json={"text": "hello"}, headers=AUTH).json()["attachments"] == []
+    assert all(m["attachments"] == [] for m in client.get("/v1/history", headers=AUTH).json()["messages"])
+
+
+def test_listing_events_attaches_event_objects():
+    from aide.tools.calendar import calendar_tools
+    db = Database(":memory:")
+    ev = CalEvent("e1", "Home", "Dentist", datetime(2026, 10, 20, 15, tzinfo=ROME), datetime(2026, 10, 20, 16, tzinfo=ROME))
+
+    class Cal(FakeCalendar):
+        def calendars(self):
+            return ["Home"]
+    tools = ToolRegistry(calendar_tools(Cal([ev]), ROME))
+    agent = Agent(FakeClient([call("list_events", start_date="2026-10-20", end_date="2026-10-20"), done("One.")]),
+                  db, tools, model="m", tz=ROME)
+    app = create_app(agent, ReminderStore(db.conn), Cal([ev]), ROME, TOKEN)
+    body = TestClient(app).post("/v1/chat", json={"text": "tuesday?"}, headers=AUTH).json()
+    assert body["attachments"] == [{"type": "events", "events": [{
+        "id": "e1", "title": "Dentist", "calendar": "Home", "start": "2026-10-20T15:00:00+02:00",
+        "end": "2026-10-20T16:00:00+02:00", "all_day": False, "location": "", "recurring": False}]}]
+
+
+def test_discord_gets_the_cards_as_a_list():
+    from aide.channels.discord_bot import with_cards
+    db = Database(":memory:")
+    store = ReminderStore(db.conn)
+    rem = store.create("Bins", datetime(2026, 10, 20, 9, tzinfo=ROME))
+    done_ = store.update(store.create("Milk").id, completed=True)
+    out = with_cards("Two.", [{"type": "reminders", "reminders": [reminder_json(rem, ROME), reminder_json(done_, ROME)]}])
+    assert out == "Two.\n\n**Reminders**\n• Tue 20 Oct 09:00 Bins\n• Milk ✓"
+    assert with_cards("hi", []) == "hi"
+
+
+def test_system_prompt_says_the_app_shows_cards(env):
+    _, agent, _ = env()
+    assert "as cards" in agent._system()[0]["text"]

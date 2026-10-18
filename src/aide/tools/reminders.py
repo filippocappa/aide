@@ -4,7 +4,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..reminders import Reminder, ReminderStore
-from . import Tool
+from ..shapes import reminder_json
+from . import Tool, ToolOutput
 
 DUE_HELP = "Local time as YYYY-MM-DDTHH:MM. Omit for a reminder with no time."
 
@@ -32,12 +33,16 @@ def reminder_tools(store: ReminderStore, tz: ZoneInfo) -> list[Tool]:
             raise KeyError(f"no reminder with id {reminder_id}")
         return rem
 
+    def cards(text: str, reminders: list[Reminder]) -> ToolOutput:
+        return ToolOutput(text, {"type": "reminders", "reminders": [reminder_json(r, tz) for r in reminders]})
+
     async def create_reminder(title: str, due: str | None = None, notes: str | None = None) -> str:
-        return "Created: " + fmt(store.create(title, parse_due(due), notes or ""))
+        rem = store.create(title, parse_due(due), notes or "")
+        return cards("Created: " + fmt(rem), [rem])
 
     async def list_reminders() -> str:
         open_ = store.open()
-        return "\n".join(fmt(r) for r in open_) if open_ else "No open reminders."
+        return cards("\n".join(fmt(r) for r in open_), open_) if open_ else "No open reminders."
 
     async def update_reminder(reminder_id: str, title: str | None = None, due: str | None = None,
                               notes: str | None = None, clear_due: bool = False) -> str:
@@ -47,11 +52,13 @@ def reminder_tools(store: ReminderStore, tz: ZoneInfo) -> list[Tool]:
             changes["due_at"] = None
         elif due is not None:
             changes["due_at"] = parse_due(due)
-        return "Updated: " + fmt(store.update(reminder_id, **changes))
+        rem = store.update(reminder_id, **changes)
+        return cards("Updated: " + fmt(rem), [rem])
 
     async def complete_reminder(reminder_id: str) -> str:
         find(reminder_id)
-        return "Completed: " + fmt(store.update(reminder_id, completed=True))
+        rem = store.update(reminder_id, completed=True)
+        return cards("Completed: " + fmt(rem), [rem])
 
     async def delete_reminder(reminder_id: str) -> str:
         rem = find(reminder_id)

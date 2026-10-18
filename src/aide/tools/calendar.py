@@ -5,7 +5,8 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from ..icloud import CalendarBackend, CalEvent
-from . import Tool
+from ..shapes import event_json
+from . import Tool, ToolOutput
 
 MAX_RANGE_DAYS = 62
 SEARCH_BACK, SEARCH_AHEAD = timedelta(days=30), timedelta(days=365)
@@ -64,6 +65,10 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
         s = ev.start if isinstance(ev.start, datetime) else datetime.combine(ev.start, time.min, tz)
         return s.astimezone(tz)
 
+    def cards(events: list[CalEvent]) -> ToolOutput:
+        return ToolOutput("\n".join(fmt(ev) for ev in events),
+                          {"type": "events", "events": [event_json(ev, tz) for ev in events]})
+
     def day_start(d: date) -> datetime:
         return datetime.combine(d, time.min, tz)
 
@@ -89,7 +94,7 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
         events = await asyncio.to_thread(cal.events, day_start(s), day_start(e + timedelta(days=1)))
         if not events:
             return "No events."
-        return "\n".join(fmt(ev) for ev in sorted(events, key=sort_key))
+        return cards(sorted(events, key=sort_key))
 
     async def search_events(query: str) -> str:
         now = datetime.now(tz)
@@ -98,7 +103,7 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
         hits = [ev for ev in events if q in f"{ev.title} {ev.location} {ev.notes}".casefold()]
         if not hits:
             return f"No events matching {query!r} between {SEARCH_BACK.days} days ago and a year ahead."
-        return "\n".join(fmt(ev) for ev in sorted(hits, key=sort_key)[:30])
+        return cards(sorted(hits, key=sort_key)[:30])
 
     async def create_event(title: str, start: str, end: str, calendar: str,
                            location: str | None = None, notes: str | None = None) -> str:

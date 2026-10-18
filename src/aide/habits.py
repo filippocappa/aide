@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS habit_checks (
 """
 
 MAX_NAME = 100
+HISTORY_DAYS = 182  # 26 weeks, for the app's grid
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class Habit:
     done_today: bool
     last_done: date | None
     this_week: int  # checks since Monday, for weekly habits
+    history: tuple[date, ...] = ()  # checked days in the last HISTORY_DAYS, newest first
 
     @property
     def cadence(self) -> dict:
@@ -45,7 +47,8 @@ class Habit:
 
     def as_json(self) -> dict:
         return {"id": self.id, "name": self.name, "cadence": self.cadence, "streak": self.streak,
-                "done_today": self.done_today, "last_done": self.last_done.isoformat() if self.last_done else None}
+                "done_today": self.done_today, "last_done": self.last_done.isoformat() if self.last_done else None,
+                "history": [d.isoformat() for d in self.history]}
 
 
 def monday(d: date) -> date:
@@ -89,6 +92,7 @@ class HabitStore:
             streak=streak(days, row["per_week"], today), done_today=today in days,
             last_done=max((d for d in days if d <= today), default=None),
             this_week=sum(1 for d in days if monday(today) <= d <= today),
+            history=tuple(sorted((d for d in days if today - timedelta(days=HISTORY_DAYS) < d <= today), reverse=True)),
         )
 
     def get(self, habit_id: int) -> Habit | None:
