@@ -36,6 +36,8 @@ struct ActionResult: Decodable {
 struct OKResponse: Decodable { let ok: Bool }
 struct HealthResponse: Decodable { let ok: Bool; let version: String }
 struct EmptyBody: Encodable {}
+/// `digest` nil sends `{}`: a blank chat.
+struct NewConversation: Encodable { var digest: String? }
 /// `conversationId` nil keeps the old behaviour: the one shared conversation.
 struct ChatRequest: Encodable { let text: String; var conversationId: String? }
 struct ConversationBody: Encodable { var conversationId: String? }
@@ -108,6 +110,8 @@ struct Reminder: Codable, Identifiable, Hashable {
     var appleId: String?
     var modifiedAt: String
     var deleted: Bool
+    /// Set in digests: due time has passed (the server lists only the last 48 h of those).
+    var overdue: Bool
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -119,8 +123,9 @@ struct Reminder: Codable, Identifiable, Hashable {
         appleId = try c.decodeIfPresent(String.self, forKey: .appleId)
         modifiedAt = try c.decodeIfPresent(String.self, forKey: .modifiedAt) ?? ""
         deleted = try c.decodeIfPresent(Bool.self, forKey: .deleted) ?? false
+        overdue = try c.decodeIfPresent(Bool.self, forKey: .overdue) ?? false
     }
-    private enum CodingKeys: String, CodingKey { case id, title, notes, dueAt, completed, appleId, modifiedAt, deleted }
+    private enum CodingKeys: String, CodingKey { case id, title, notes, dueAt, completed, appleId, modifiedAt, deleted, overdue }
 
     var dueDate: Date? { dueAt.flatMap(Wire.parse) }
 }

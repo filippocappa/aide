@@ -63,8 +63,10 @@ final class APIClient {
         return list.conversations
     }
 
-    func createConversation() async throws -> Conversation {
-        try await send("POST", "/v1/conversations", body: EmptyBody())
+    /// With a digest kind the chat opens with that digest's greeting. The server may have to make the
+    /// digest first, which can take 30 s.
+    func createConversation(digest: String? = nil) async throws -> Conversation {
+        try await send("POST", "/v1/conversations", body: NewConversation(digest: digest), timeout: 60)
     }
 
     func deleteConversation(_ id: String) async throws {
