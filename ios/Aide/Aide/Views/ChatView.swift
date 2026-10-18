@@ -9,6 +9,7 @@ struct ChatView: View {
     @State private var showChats = false
     @State private var justReplied = false
     @State private var touch: CGPoint?
+    @State private var tapCount = 0
     @FocusState private var composerFocused: Bool
 
     /// Pebble's expression follows what's happening (brand/README.md).
@@ -33,8 +34,8 @@ struct ChatView: View {
                 let top = geo.frame(in: .global).minY
                 PebbleStage(area: geo.size,
                             dockedY: windowTopInset + 22 - top,
-                            introDone: $env.introDone,
-                            busy: chat.isSending || chat.isActing, mood: mood, touch: touch)
+                            introDone: env.introDone,
+                            busy: chat.isSending || chat.isActing, mood: mood, touch: touch, tapCount: tapCount)
             }
         }
     }
@@ -67,10 +68,7 @@ struct ChatView: View {
                 }
             }
             .sheet(isPresented: $showChats) { ChatsView() }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                    .onChanged { touch = $0.location }
-                    .onEnded { _ in touch = nil })
+            .background(TouchTracker(point: $touch, tapCount: $tapCount))
         }
     }
 
