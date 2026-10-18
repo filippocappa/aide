@@ -23,6 +23,12 @@ final class AppEnvironment: ObservableObject {
         self.digest = DigestViewModel(api: api)
 
         // The assistant may have created reminders or moved events: sync.
+        // The big Pebble says hello, then drops into the top bar. Timed here so no screen can stall it.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.72)) { self?.introDone = true }
+        }
+
         chat.onServerChange = { [weak self] in await self?.sync.sync() }
     }
 

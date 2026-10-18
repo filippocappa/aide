@@ -19,6 +19,7 @@ struct SettingsView: View {
                     NavigationLink("What Aide remembers") { MemoryView() }
                 }
                 Section("About") {
+                    LabeledContent("Built", value: Self.buildTime)
                     LabeledContent("App version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")
                 }
             }
@@ -28,6 +29,14 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .onChange(of: settings.reminderListID) { _, _ in Task { await sync.sync() } }
         }
+    }
+
+    /// When this binary was linked, to tell a fresh build from an old install.
+    private static var buildTime: String {
+        guard let path = Bundle.main.executablePath,
+              let date = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        else { return "–" }
+        return date.formatted(date: .abbreviated, time: .standard)
     }
 
     private var serverSection: some View {
