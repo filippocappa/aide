@@ -15,6 +15,17 @@ struct SettingsView: View {
                 serverSection
                 remindersSection
                 Section {
+                    Picker("I speak", selection: $settings.voiceLanguage) {
+                        Text("English").tag("en-US")
+                        Text("Italiano").tag("it-IT")
+                    }
+                    Toggle("Read replies aloud", isOn: $settings.speakReplies)
+                } header: {
+                    Text("Voice")
+                } footer: {
+                    Text("Tap the microphone in a chat to talk. Aide answers out loud and keeps listening until you tap stop.")
+                }
+                Section {
                     NavigationLink("Digests") { DigestSettingsView() }
                     NavigationLink("What Aide remembers") { MemoryView() }
                 }

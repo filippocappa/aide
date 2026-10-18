@@ -8,6 +8,7 @@ final class AppEnvironment: ObservableObject {
     let sync: ReminderSyncService
     let chat: ChatViewModel
     let digest: DigestViewModel
+    let voice = VoiceController()
     /// The big Pebble has said hello and flown to the top bar.
     @Published var introDone = false
 
@@ -23,6 +24,18 @@ final class AppEnvironment: ObservableObject {
         self.digest = DigestViewModel(api: api)
 
         // The assistant may have created reminders or moved events: sync.
+        voice.languageCode = { [weak settings] in settings?.voiceLanguage ?? "en-US" }
+        voice.speaksReplies = { [weak settings] in settings?.speakReplies ?? true }
+        voice.onUtterance = { [weak self] text in
+            guard let self else { return }
+            await self.chat.send(text)
+            if let reply = self.chat.messages.last, reply.role == .assistant, !reply.isError {
+                self.voice.speak(reply.text)
+            } else {
+                self.voice.stopAll()
+            }
+        }
+
         // The big Pebble says hello, then drops into the top bar. Timed here so no screen can stall it.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(900))

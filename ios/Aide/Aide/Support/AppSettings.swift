@@ -15,6 +15,8 @@ final class AppSettings: ObservableObject {
         static let serverURL = "serverURL"
         static let reminderListID = "reminderListID"
         static let token = "apiToken"
+        static let voiceLanguage = "voiceLanguage"
+        static let speakReplies = "speakReplies"
     }
 
     @Published var serverURL: String {
@@ -28,11 +30,21 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(reminderListID, forKey: Keys.reminderListID) }
     }
 
+    /// Language Aide listens for when you talk: a BCP 47 code like en-US or it-IT.
+    @Published var voiceLanguage: String {
+        didSet { UserDefaults.standard.set(voiceLanguage, forKey: Keys.voiceLanguage) }
+    }
+    @Published var speakReplies: Bool {
+        didSet { UserDefaults.standard.set(speakReplies, forKey: Keys.speakReplies) }
+    }
+
     init() {
         let defaults = UserDefaults.standard
         serverURL = defaults.string(forKey: Keys.serverURL) ?? Self.defaultServerURL
         token = Keychain.get(Keys.token) ?? ""
         reminderListID = defaults.string(forKey: Keys.reminderListID) ?? ""
+        voiceLanguage = defaults.string(forKey: Keys.voiceLanguage) ?? "en-US"
+        speakReplies = defaults.object(forKey: Keys.speakReplies) as? Bool ?? true
     }
 
     var apiConfig: APIConfig? {

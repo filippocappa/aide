@@ -5,6 +5,7 @@ struct ChatView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var digest: DigestViewModel
     @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var voice: VoiceController
     @State private var draft = ""
     @State private var showChats = false
     @State private var justReplied = false
@@ -15,6 +16,8 @@ struct ChatView: View {
     /// Pebble's expression follows what's happening (brand/README.md).
     private var mood: String {
         if !settings.isConfigured || chat.loadError != nil { return "sleeping" }
+        if voice.isListening { return "awake" }
+        if voice.isSpeaking { return "happy" }
         if chat.isSending || chat.isActing { return "thinking" }
         if justReplied { return "happy" }
         return composerFocused ? "awake" : "calm"
@@ -68,6 +71,8 @@ struct ChatView: View {
                 }
             }
             .sheet(isPresented: $showChats) { ChatsView() }
+            .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
+            .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
             .background(TouchTracker(point: $touch, tapCount: $tapCount))
         }
     }
@@ -153,25 +158,35 @@ struct ChatView: View {
                 .padding(.vertical, 10)
                 .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             Button {
-                let text = draft
-                draft = ""
-                Task { await chat.send(text) }
+                if showsMic {
+                    Task { await voice.toggle() }
+                } else {
+                    let text = draft
+                    draft = ""
+                    Task { await chat.send(text) }
+                }
             } label: {
-                Image(systemName: "arrow.up")
+                Image(systemName: showsMic ? (voice.isActive ? "stop.fill" : "mic.fill") : "arrow.up")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Theme.onAccent)
                     .frame(width: 38, height: 38)
                     .background(Theme.accent, in: Circle())
-                    .opacity(canSend ? 1 : 0.5)
+                    .opacity(canSend || showsMic ? 1 : 0.5)
             }
             .buttonStyle(.plain)
             .contentShape(Circle())
-            .disabled(!canSend)
-            .accessibilityLabel("Send")
+            .disabled(!canSend && !showsMic)
+            .accessibilityLabel(showsMic ? (voice.isActive ? "Stop voice chat" : "Talk to Aide") : "Send")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Theme.background)
+    }
+
+    /// An empty message box offers the microphone instead of send.
+    private var showsMic: Bool {
+        settings.isConfigured && !chat.isSending
+            && (voice.isActive || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     private var canSend: Bool {
