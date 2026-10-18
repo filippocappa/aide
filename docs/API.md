@@ -49,7 +49,7 @@ A reply can take 5–30 s (the model plus tools). Use a request timeout of at le
 
 `GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…"}]}`. The current conversation's visible text, oldest first, so the chat screen can show what was said on Discord too. Tool calls and internal notes are left out.
 
-## Conversations (contract change, server side pending)
+## Conversations
 
 The app keeps many chats; Discord stays on the one shared conversation. Every chat endpoint takes an optional `conversation_id`. **Omitted means the shared conversation, exactly as before**, so old clients keep working. Reminders, the confirmation queue and `POST /v1/confirm` / `/v1/cancel` stay global.
 
@@ -64,7 +64,7 @@ The app keeps many chats; Discord stays on the one shared conversation. Every ch
 
 The app creates a conversation with `POST /v1/conversations` before the first message of each new chat. If that returns 404 or 405 (older server), it falls back to the shared conversation.
 
-## Memory (contract change, server side pending)
+## Memory
 
 Short facts Aide keeps between chats (preferences, names, routines). The server puts all items into the model's context at the start of every conversation and gives the model a `remember` tool to add one (adding is harmless, so it isn't queued; the model deleting one is, like other destructive actions).
 

@@ -76,7 +76,7 @@ def test_bad_token_is_rejected(env, headers):
 def test_chat_returns_reply_and_pending(env):
     client, agent, store = env([call("create_reminder", title="Bins"), done("ok")])
     r = client.post("/v1/chat", json={"text": "remind me bins"}, headers=AUTH)
-    assert r.json() == {"reply": "ok", "pending": []}
+    assert r.json() == {"reply": "ok", "pending": [], "conversation_id": "main"}
     rem = store.open()[0]
 
     client2, _, _ = env([call("delete_reminder", reminder_id=rem.id), done("queued")])
@@ -114,6 +114,136 @@ def test_shared_conversation_with_discord_key(env):
     client, agent, _ = env([done("hi")])
     client.post("/v1/chat", json={"text": "hello"}, headers=AUTH)
     assert [m["text"] for m in agent.visible_history(CONVERSATION)] == ["hello", "hi"]
+
+
+# -- conversations -------------------------------------------------------------
+
+
+def test_conversations_list_includes_the_shared_one(env):
+    client, _, _ = env([done("hi from discord")])
+    client.post("/v1/chat", json={"text": "hello"}, headers=AUTH)
+    rows = client.get("/v1/conversations", headers=AUTH).json()["conversations"]
+    assert [(r["id"], r["title"], r["preview"]) for r in rows] == [("main", "Discord", "hi from discord")]
+    assert rows[0]["updated_at"].endswith(("+01:00", "+02:00"))
+
+
+def test_app_conversation_is_separate_and_gets_a_title(env):
+    client, agent, _ = env([done("shared reply"), done("Friday 10:00 it is."), done("Dentist on Friday")])
+    client.post("/v1/chat", json={"text": "on discord"}, headers=AUTH)
+    new = client.post("/v1/conversations", json={}, headers=AUTH).json()
+    assert new["id"].startswith("c_") and new["title"] is None and new["preview"] is None
+    body = client.post("/v1/chat", json={"text": "dentist friday 10", "conversation_id": new["id"]},
+                       headers=AUTH).json()
+    assert body["reply"] == "Friday 10:00 it is." and body["conversation_id"] == new["id"]
+
+    app_msgs = client.get(f"/v1/history?conversation_id={new['id']}", headers=AUTH).json()["messages"]
+    assert [m["text"] for m in app_msgs] == ["dentist friday 10", "Friday 10:00 it is."]
+    shared = client.get("/v1/history", headers=AUTH).json()["messages"]
+    assert [m["text"] for m in shared] == ["on discord", "shared reply"]
+
+    rows = client.get("/v1/conversations", headers=AUTH).json()["conversations"]
+    assert [(r["id"], r["title"]) for r in rows] == [(new["id"], "Dentist on Friday"), ("main", "Discord")]
+
+
+def test_title_falls_back_to_the_first_message(env):
+    client, _, _ = env([done("ok")])  # no scripted title response: the title call fails
+    cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    client.post("/v1/chat", json={"text": "plan a weekend trip to the lakes with friends", "conversation_id": cid},
+                headers=AUTH)
+    rows = client.get("/v1/conversations", headers=AUTH).json()["conversations"]
+    row = next(r for r in rows if r["id"] == cid)
+    assert row["title"] == "plan a weekend trip to the lakes with…"
+
+
+def test_think_per_conversation(env):
+    client, agent, _ = env()
+    cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    assert client.post("/v1/think", json={"conversation_id": cid}, headers=AUTH).json() == {"ok": True}
+    assert agent.db.conversation_model(agent.db.app_conversation(cid)["id"]) == agent.smart_model
+    assert agent.db.conversation_model(agent.db.current_conversation(CONVERSATION, agent.idle)) is None
+    assert client.post("/v1/think", headers=AUTH).json() == {"ok": True}  # old clients send no body
+
+
+def test_delete_conversation(env):
+    client, _, _ = env([done("ok")])
+    cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    client.post("/v1/chat", json={"text": "hi", "conversation_id": cid}, headers=AUTH)
+    assert client.delete(f"/v1/conversations/{cid}", headers=AUTH).json() == {"ok": True}
+    assert [r["id"] for r in client.get("/v1/conversations", headers=AUTH).json()["conversations"]] == ["main"]
+    assert client.get(f"/v1/history?conversation_id={cid}", headers=AUTH).status_code == 404
+    r = client.post("/v1/chat", json={"text": "hi", "conversation_id": cid}, headers=AUTH)
+    assert r.status_code == 404 and "error" in r.json()
+    assert client.delete(f"/v1/conversations/{cid}", headers=AUTH).status_code == 404
+
+
+def test_shared_conversation_cannot_be_deleted(env):
+    client, _, _ = env()
+    r = client.delete("/v1/conversations/main", headers=AUTH)
+    assert r.status_code == 400 and "error" in r.json()
+
+
+def test_queue_is_global_and_results_go_to_the_chat_that_queued(env):
+    client, agent, store = env()
+    rem = store.create("Bins")
+    client, agent, _ = env([call("delete_reminder", reminder_id=rem.id), done("queued"), done("Delete bins")])
+    cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    body = client.post("/v1/chat", json={"text": "delete bins", "conversation_id": cid}, headers=AUTH).json()
+    assert [p["summary"] for p in body["pending"]] == ["Delete reminder 'Bins'"]
+    assert agent.pending(CONVERSATION) == ["Delete reminder 'Bins'"]  # Discord sees it too
+
+    assert client.post("/v1/confirm", json={}, headers=AUTH).json()["result"] == "✓ Deleted reminder: Bins"
+    app_conv = agent.db.app_conversation(cid)["id"]
+    assert "Deleted reminder: Bins" in agent.db.history(app_conv)[-1]["content"]
+    assert agent.visible_history(CONVERSATION) == []  # nothing noted in the shared chat
+
+
+# -- memory --------------------------------------------------------------------
+
+
+def test_memory_crud(env):
+    client, _, _ = env()
+    assert client.get("/v1/memory", headers=AUTH).json() == {"items": []}
+    a = client.post("/v1/memory", json={"text": "Vegetarian"}, headers=AUTH).json()
+    b = client.post("/v1/memory", json={"text": "Sister is Giulia"}, headers=AUTH).json()
+    assert a["text"] == "Vegetarian" and isinstance(a["id"], int) and a["created_at"].endswith(("+01:00", "+02:00"))
+    items = client.get("/v1/memory", headers=AUTH).json()["items"]
+    assert [i["text"] for i in items] == ["Sister is Giulia", "Vegetarian"]  # newest first
+    assert client.delete(f"/v1/memory/{a['id']}", headers=AUTH).json() == {"ok": True}
+    assert client.delete(f"/v1/memory/{a['id']}", headers=AUTH).status_code == 404
+    assert [i["id"] for i in client.get("/v1/memory", headers=AUTH).json()["items"]] == [b["id"]]
+    assert client.post("/v1/memory", json={"text": "  "}, headers=AUTH).status_code == 400
+
+
+def test_memory_is_in_every_conversations_system_context(env):
+    client, agent, _ = env([done("a"), done("b"), done("title")])
+    requests = []
+    create = agent.client.beta.messages.create
+
+    async def spy(**kwargs):
+        requests.append(kwargs)
+        return await create(**kwargs)
+    agent.client.beta.messages.create = spy
+
+    client.post("/v1/memory", json={"text": "Vegetarian"}, headers=AUTH)
+    client.post("/v1/chat", json={"text": "hi"}, headers=AUTH)
+    cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    client.post("/v1/chat", json={"text": "hi", "conversation_id": cid}, headers=AUTH)
+    for req in requests[:2]:
+        assert "Vegetarian" in req["system"][-1]["text"]
+
+
+def test_model_remembers_immediately_but_forgetting_is_queued(env):
+    client, agent, _ = env([call("remember", text="Likes window seats"), done("Noted.")])
+    client.post("/v1/chat", json={"text": "I always want a window seat"}, headers=AUTH)
+    item = client.get("/v1/memory", headers=AUTH).json()["items"][0]
+    assert item["text"] == "Likes window seats"
+
+    client, agent, _ = env([call("forget", memory_id=item["id"]), done("Queued.")])
+    body = client.post("/v1/chat", json={"text": "forget the seat thing"}, headers=AUTH).json()
+    assert body["pending"][0]["summary"] == "Forget 'Likes window seats'"
+    assert len(client.get("/v1/memory", headers=AUTH).json()["items"]) == 1  # not yet
+    client.post("/v1/confirm", json={}, headers=AUTH)
+    assert client.get("/v1/memory", headers=AUTH).json()["items"] == []
 
 
 # -- sync ----------------------------------------------------------------------

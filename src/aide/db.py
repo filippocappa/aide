@@ -1,6 +1,7 @@
 """SQLite storage. WAL mode, all timestamps stored as UTC ISO-8601 strings."""
 
 import json
+import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,7 +12,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     channel        TEXT NOT NULL,
     started_at     TEXT NOT NULL,
     last_active_at TEXT NOT NULL,
-    model          TEXT  -- NULL means the default model
+    model          TEXT,  -- NULL means the default model
+    public_id      TEXT,  -- app chats only ("c_…"); NULL for the shared conversation
+    title          TEXT
 );
 
 -- content is the JSON the API expects: a string, or a list of content blocks
@@ -34,8 +37,16 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     args       TEXT NOT NULL,
     summary    TEXT NOT NULL,
     target     TEXT,  -- what the action changes; a newer action on the same target replaces it
+    conversation TEXT,  -- public id of the app chat that queued it; NULL means the shared conversation
     created_at TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'pending'  -- pending, done, failed, cancelled, expired, replaced
+);
+
+-- Short facts the model sees in every conversation.
+CREATE TABLE IF NOT EXISTS memory (
+    id         INTEGER PRIMARY KEY,
+    text       TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -72,10 +83,16 @@ class Database:
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(conversations)")}
         if "model" not in columns:  # databases created before !think existed
             self.conn.execute("ALTER TABLE conversations ADD COLUMN model TEXT")
+        if "public_id" not in columns:  # databases created before the app had many chats
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN public_id TEXT")
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN title TEXT")
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS conversations_public ON conversations(public_id)")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(pending_actions)")}
         if "target" not in columns:  # databases created before actions could be replaced
             self.conn.execute("ALTER TABLE pending_actions ADD COLUMN target TEXT")
             self.conn.execute("UPDATE pending_actions SET target = json_extract(args, '$.event_id')")
+        if "conversation" not in columns:
+            self.conn.execute("ALTER TABLE pending_actions ADD COLUMN conversation TEXT")
         # Discord and the app now share one conversation, keyed "main" instead of "discord".
         for table in ("conversations", "messages", "pending_actions"):
             self.conn.execute(f"UPDATE {table} SET channel = 'main' WHERE channel = 'discord'")
@@ -88,13 +105,16 @@ class Database:
     def current_conversation(self, channel: str, idle: timedelta) -> int:
         """Return the active conversation for a channel, starting a new one after `idle` of silence."""
         now = utcnow()
-        row = self.conn.execute(
-            "SELECT id, last_active_at FROM conversations WHERE channel = ? ORDER BY id DESC LIMIT 1",
-            (channel,),
-        ).fetchone()
+        row = self.latest_conversation(channel)
         if row and now - datetime.fromisoformat(row["last_active_at"]) < idle:
             return row["id"]
         return self.new_conversation(channel)
+
+    def latest_conversation(self, channel: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT id, last_active_at FROM conversations WHERE channel = ? ORDER BY id DESC LIMIT 1",
+            (channel,),
+        ).fetchone()
 
     def new_conversation(self, channel: str) -> int:
         now = utcnow().isoformat()
@@ -103,6 +123,40 @@ class Database:
             (channel, now, now),
         )
         return cur.lastrowid
+
+    def new_app_conversation(self) -> sqlite3.Row:
+        """An app chat: never rotates on idle, lives until deleted."""
+        now = utcnow().isoformat()
+        public_id = "c_" + secrets.token_hex(6)
+        self.conn.execute(
+            "INSERT INTO conversations (channel, started_at, last_active_at, public_id) VALUES ('app', ?, ?, ?)",
+            (now, now, public_id),
+        )
+        return self.app_conversation(public_id)
+
+    def app_conversation(self, public_id: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT id, public_id, title, last_active_at FROM conversations WHERE public_id = ?", (public_id,)
+        ).fetchone()
+
+    def app_conversations(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT id, public_id, title, last_active_at FROM conversations "
+            "WHERE public_id IS NOT NULL ORDER BY last_active_at DESC"
+        ).fetchall()
+
+    def delete_app_conversation(self, public_id: str) -> bool:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            row = self.app_conversation(public_id)
+            if row is None:
+                return False
+            self.conn.execute("DELETE FROM messages WHERE conversation_id = ?", (row["id"],))
+            self.conn.execute("DELETE FROM conversations WHERE id = ?", (row["id"],))
+        return True
+
+    def set_conversation_title(self, conversation_id: int, title: str) -> None:
+        self.conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
 
     def conversation_model(self, conversation_id: int) -> str | None:
         row = self.conn.execute("SELECT model FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
@@ -140,7 +194,8 @@ class Database:
 
     # -- pending actions -----------------------------------------------------
 
-    def add_pending(self, channel: str, tool: str, args: dict, summary: str, target: str | None = None) -> tuple[int, int]:
+    def add_pending(self, channel: str, tool: str, args: dict, summary: str, target: str | None = None,
+                    conversation: str | None = None) -> tuple[int, int]:
         """Queue an action. Returns (new id, number of older actions on the same target it replaced)."""
         with self.conn:
             self.conn.execute("BEGIN")
@@ -152,8 +207,9 @@ class Database:
                     (channel, target),
                 ).rowcount
             cur = self.conn.execute(
-                "INSERT INTO pending_actions (channel, tool, args, summary, target, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (channel, tool, json.dumps(args), summary, target, utcnow().isoformat()),
+                "INSERT INTO pending_actions (channel, tool, args, summary, target, conversation, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (channel, tool, json.dumps(args), summary, target, conversation, utcnow().isoformat()),
             )
         return cur.lastrowid, replaced
 
@@ -164,11 +220,12 @@ class Database:
             (cutoff,),
         )
         rows = self.conn.execute(
-            "SELECT id, tool, args, summary FROM pending_actions "
+            "SELECT id, tool, args, summary, conversation FROM pending_actions "
             "WHERE channel = ? AND status = 'pending' ORDER BY id",
             (channel,),
         ).fetchall()
-        return [{"id": r["id"], "tool": r["tool"], "args": json.loads(r["args"]), "summary": r["summary"]} for r in rows]
+        return [{"id": r["id"], "tool": r["tool"], "args": json.loads(r["args"]), "summary": r["summary"],
+                 "conversation": r["conversation"]} for r in rows]
 
     def set_pending_status(self, action_id: int, status: str) -> None:
         self.conn.execute("UPDATE pending_actions SET status = ? WHERE id = ?", (status, action_id))
@@ -181,6 +238,24 @@ class Database:
             sql += f" AND id IN ({', '.join('?' * len(ids))})" if ids else " AND 0"
             params += ids
         return self.conn.execute(sql, params).rowcount
+
+    # -- memory ------------------------------------------------------------
+
+    def add_memory(self, text: str) -> sqlite3.Row:
+        cur = self.conn.execute(
+            "INSERT INTO memory (text, created_at) VALUES (?, ?)", (text, utcnow().isoformat())
+        )
+        return self.memory_item(cur.lastrowid)
+
+    def memory_item(self, memory_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT id, text, created_at FROM memory WHERE id = ?", (memory_id,)).fetchone()
+
+    def memories(self) -> list[sqlite3.Row]:
+        """Newest first."""
+        return self.conn.execute("SELECT id, text, created_at FROM memory ORDER BY id DESC").fetchall()
+
+    def delete_memory(self, memory_id: int) -> bool:
+        return self.conn.execute("DELETE FROM memory WHERE id = ?", (memory_id,)).rowcount > 0
 
     # -- audit -------------------------------------------------------------
 
