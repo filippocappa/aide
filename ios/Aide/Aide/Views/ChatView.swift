@@ -17,7 +17,30 @@ struct ChatView: View {
         return composerFocused ? "awake" : "calm"
     }
 
+    private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending }
+
+    /// Top safe-area inset of the window, so the small Pebble can sit in the navigation bar.
+    private var windowTopInset: CGFloat {
+        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow?.safeAreaInsets.top ?? 59
+    }
+
     var body: some View {
+        GeometryReader { geo in
+            stack.overlay(alignment: .topLeading) {
+                // One Pebble: big in the middle of a new chat, then it slides up to the top bar.
+                let top = geo.frame(in: .global).minY
+                LivePebble(mood: isEmpty && mood == "calm" ? "awake" : mood,
+                           size: isEmpty ? 160 : 44, touch: touch)
+                    .foregroundStyle(Theme.accent)
+                    .position(x: geo.size.width / 2,
+                              y: isEmpty ? geo.size.height * 0.33 : windowTopInset - 22 - top)
+                    .animation(.spring(response: 0.7, dampingFraction: 0.65), value: isEmpty)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var stack: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 transcript
@@ -27,9 +50,6 @@ struct ChatView: View {
             .background(Theme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    LivePebble(mood: mood, size: 44, touch: touch).foregroundStyle(Theme.accent)
-                }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Chats", systemImage: "list.bullet") { showChats = true }
                         .disabled(!settings.isConfigured)
@@ -68,7 +88,7 @@ struct ChatView: View {
                 .padding(.vertical, 12)
             }
             .scrollDismissesKeyboard(.immediately)
-            .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(isEmpty ? .center : .bottom)
             .onTapGesture { composerFocused = false }
             .onChange(of: chat.messages) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
@@ -88,7 +108,7 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 20) {
-            LivePebble(mood: mood == "calm" ? "awake" : mood, size: 160, touch: touch).foregroundStyle(Theme.accent)
+            Color.clear.frame(height: 160) // room for the big Pebble, which is drawn above
             if settings.isConfigured {
                 Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
                 VStack(spacing: 8) {
