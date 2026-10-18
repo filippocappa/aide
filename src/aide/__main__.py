@@ -14,12 +14,14 @@ from .channels.discord_bot import AideBot
 from .config import OPENROUTER_BASE_URL, load_settings
 from .db import Database
 from .gmail import Gmail
+from .habits import HabitStore
 from .icloud import ICloudCalendar
 from .reminders import ReminderStore
 from .scheduler import reminder_fallback
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
+from .tools.habits import habit_tools
 from .tools.mail import mail_tools
 from .tools.reminders import reminder_tools
 
@@ -46,8 +48,9 @@ def main() -> None:
 
     db = Database(settings.db_path)
     reminders = ReminderStore(db.conn)
+    habits = HabitStore(db.conn, settings.timezone)
 
-    tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone)]
+    tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits)]
     cal = None
     if settings.icloud_email and settings.icloud_app_password:
         cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
@@ -81,7 +84,7 @@ def main() -> None:
             reminder_fallback(reminders, bot.notify_owner, settings.timezone),
         ]
         if settings.api_token:
-            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token)
+            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

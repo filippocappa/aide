@@ -101,7 +101,7 @@ The app skips section types it doesn't know. `404` if none has been generated ye
 | `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}, "discord": true}` (times in the server zone, `weekday` 1 = Monday) |
 | `PUT /v1/digest/settings` | the same object | the saved settings |
 
-## Habits (contract change, server side pending)
+## Habits
 
 Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null}`.
 
@@ -111,6 +111,11 @@ Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": 
 | `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}}` | the new Habit |
 | `POST /v1/habits/{id}/check` | `{"date": "2026-10-18"}` (optional, default today; send `"done": false` to undo) | the updated Habit |
 | `DELETE /v1/habits/{id}` | | `{"ok": true}` |
+
+`streak` counts consecutive scheduled periods done: days for a daily habit, Monday-to-Sunday weeks with at least
+`per_week` checks for a weekly one. Today (or this week) adds to the streak once it's done, and doesn't break it
+while it's still in progress. Names are unique, ignoring case (a duplicate is `400`); checking a future date is
+`400`; an unknown id is `404`.
 
 The assistant also gets tools to add, check and list habits (deleting is queued for confirmation).
 

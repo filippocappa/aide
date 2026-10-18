@@ -9,10 +9,11 @@ from zoneinfo import ZoneInfo
 import anthropic
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..agent import CONVERSATION, Agent, UnknownConversation
 from ..db import Database
+from ..habits import HabitStore
 from ..icloud import CalendarBackend, CalEvent
 from ..reminders import Reminder, ReminderStore
 
@@ -34,6 +35,21 @@ class MemoryIn(BaseModel):
     text: str
 
 
+class Cadence(BaseModel):
+    type: str = "daily"
+    per_week: int | None = None
+
+
+class HabitIn(BaseModel):
+    name: str
+    cadence: Cadence = Cadence()
+
+
+class CheckIn(BaseModel):
+    day: date | None = Field(None, alias="date")  # a field named `date` would shadow the type
+    done: bool = True
+
+
 class ReminderChange(BaseModel):
     id: str | None = None
     apple_id: str | None = None
@@ -51,8 +67,9 @@ class SyncIn(BaseModel):
 
 
 def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | None,
-               tz: ZoneInfo, token: str) -> FastAPI:
+               tz: ZoneInfo, token: str, habits: HabitStore | None = None) -> FastAPI:
     db: Database = agent.db
+    habits = habits or HabitStore(db.conn, tz)
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
     def auth(authorization: str = Header(default="")) -> None:
@@ -166,6 +183,32 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def delete_memory(memory_id: int):
         if not db.delete_memory(memory_id):
             raise HTTPException(404, f"no memory {memory_id}")
+        return {"ok": True}
+
+    @app.get("/v1/habits", dependencies=[Depends(auth)])
+    async def list_habits():
+        return {"habits": [h.as_json() for h in habits.all()]}
+
+    @app.post("/v1/habits", dependencies=[Depends(auth)])
+    async def add_habit(body: HabitIn):
+        if body.cadence.type not in ("daily", "weekly"):
+            raise HTTPException(400, "cadence type must be daily or weekly")
+        if body.cadence.type == "weekly" and body.cadence.per_week is None:
+            raise HTTPException(400, "a weekly habit needs per_week")
+        per_week = body.cadence.per_week if body.cadence.type == "weekly" else None
+        return habits.add(body.name, per_week).as_json()
+
+    @app.post("/v1/habits/{habit_id}/check", dependencies=[Depends(auth)])
+    async def check_habit(habit_id: int, body: CheckIn | None = None):
+        body = body or CheckIn()
+        if habits.get(habit_id) is None:
+            raise HTTPException(404, f"no habit {habit_id}")
+        return habits.check(habit_id, body.day, body.done).as_json()
+
+    @app.delete("/v1/habits/{habit_id}", dependencies=[Depends(auth)])
+    async def delete_habit(habit_id: int):
+        if not habits.delete(habit_id):
+            raise HTTPException(404, f"no habit {habit_id}")
         return {"ok": True}
 
     @app.get("/v1/today", dependencies=[Depends(auth)])
