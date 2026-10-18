@@ -114,12 +114,11 @@ final class APIClientTests: XCTestCase {
 }
 
 final class RichTextTests: XCTestCase {
-    func testCalendarReplyBecomesEventCards() {
+    func testCalendarReplyBecomesOneAgendaBlock() {
         let blocks = RichText.parse("**Tomorrow**\n- 09:00–10:00 Dentist\n- All day: Trip\nNothing else.")
-        guard blocks.count == 4,
-              case .event(let s, let e, let t) = blocks[1],
-              case .event(let s2, _, let t2) = blocks[2] else { return XCTFail("\(blocks)") }
-        XCTAssertEqual([s, e, t], ["09:00", "10:00", "Dentist"])
-        XCTAssertEqual([s2, t2], ["All day", "Trip"])
+        guard blocks.count == 2, case .agenda(let title, let events) = blocks[0] else { return XCTFail("\(blocks)") }
+        XCTAssertEqual(title, "Tomorrow")
+        XCTAssertEqual(events, [.init(start: "09:00", end: "10:00", title: "Dentist"),
+                                .init(start: "All day", end: nil, title: "Trip")])
     }
 }

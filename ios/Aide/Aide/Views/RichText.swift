@@ -24,8 +24,10 @@ struct RichText: View {
                         Text(n).foregroundStyle(.secondary).monospacedDigit()
                         Text(s.markdown).lineSpacing(3)
                     }
-                case .event(let start, let end, let title):
-                    EventCard(start: start, end: end, title: title)
+                case .event:
+                    EmptyView() // always folded into an agenda by parse()
+                case .agenda(let title, let events):
+                    AgendaBlock(title: title, events: events)
                 }
             }
         }
@@ -38,7 +40,10 @@ struct RichText: View {
     enum Block {
         case paragraph(String), heading(String), bullet(String), numbered(String, String)
         case event(start: String, end: String?, title: String)
+        case agenda(title: String?, events: [AgendaEvent])
     }
+
+    struct AgendaEvent: Hashable { let start: String; let end: String?; let title: String }
 
     private static let timeLine = try! NSRegularExpression(
         pattern: #"^\**(\d{1,2}[:.]\d{2})(?:\s*[–—-]\s*(\d{1,2}[:.]\d{2}))?\**[\s:,\-–—]*(.+)$"#)
@@ -69,7 +74,28 @@ struct RichText: View {
             }
             blocks.append(.paragraph(line))
         }
-        return blocks
+        return grouped(blocks)
+    }
+
+    /// Consecutive events become one agenda block; a short heading line just before it becomes its title.
+    private static func grouped(_ blocks: [Block]) -> [Block] {
+        var out: [Block] = []
+        for block in blocks {
+            guard case .event(let s, let e, let t) = block else { out.append(block); continue }
+            let item = AgendaEvent(start: s, end: e, title: t)
+            if case .agenda(let title, let events)? = out.last {
+                out[out.count - 1] = .agenda(title: title, events: events + [item])
+            } else if case .paragraph(let p)? = out.last, p.count < 60, p.hasSuffix(":") || p.hasPrefix("**") || p.hasPrefix("#") {
+                out.removeLast()
+                out.append(.agenda(title: p.trimmingCharacters(in: CharacterSet(charactersIn: "*:# ")), events: [item]))
+            } else if case .heading(let h)? = out.last {
+                out.removeLast()
+                out.append(.agenda(title: h, events: [item]))
+            } else {
+                out.append(.agenda(title: nil, events: [item]))
+            }
+        }
+        return out
     }
 
     private static func event(in line: String) -> Block? {
@@ -94,24 +120,40 @@ struct RichText: View {
     }
 }
 
-private struct EventCard: View {
-    let start: String
-    let end: String?
-    let title: String
+/// One day's events as a single card: a timeline with the time on the left.
+private struct AgendaBlock: View {
+    let title: String?
+    let events: [RichText.AgendaEvent]
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(start).font(.subheadline.weight(.semibold)).monospacedDigit()
-                if let end { Text(end).font(.caption).foregroundStyle(.secondary).monospacedDigit() }
+        VStack(alignment: .leading, spacing: 0) {
+            if let title {
+                Label(title, systemImage: "calendar")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.bottom, 10)
             }
-            .frame(minWidth: 52, alignment: .trailing)
-            Capsule().fill(Theme.accent).frame(width: 3)
-            Text(title.markdown).font(.body)
-            Spacer(minLength: 0)
+            ForEach(Array(events.enumerated()), id: \.offset) { i, event in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(event.start).font(.subheadline.weight(.semibold)).monospacedDigit()
+                        if let end = event.end { Text(end).font(.caption).foregroundStyle(.secondary).monospacedDigit() }
+                    }
+                    .frame(minWidth: 52, alignment: .trailing)
+                    VStack(spacing: 0) {
+                        Circle().fill(Theme.accent).frame(width: 9, height: 9).padding(.top, 5)
+                        if i < events.count - 1 {
+                            Rectangle().fill(Theme.accent.opacity(0.25)).frame(width: 2).frame(maxHeight: .infinity)
+                        }
+                    }
+                    Text(event.title.markdown)
+                        .padding(.bottom, i < events.count - 1 ? 14 : 0)
+                    Spacer(minLength: 0)
+                }
+            }
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
