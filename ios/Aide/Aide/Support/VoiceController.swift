@@ -157,7 +157,9 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         let plain = Self.spokenText(text)
         guard !plain.isEmpty else { listenAgain(); return }
         let utterance = AVSpeechUtterance(string: plain)
-        let lang = NLLanguageRecognizer.dominantLanguage(for: plain)?.rawValue ?? languageCode()
+        let detected = NLLanguageRecognizer.dominantLanguage(for: plain)?.rawValue ?? languageCode()
+        // "en" alone has no accent: use the speaker's region when it's the same language.
+        let lang = languageCode().hasPrefix(detected) ? languageCode() : detected
         utterance.voice = Self.bestVoice(for: lang) ?? Self.bestVoice(for: languageCode())
         utterance.rate = 0.5
         utterance.pitchMultiplier = 1.0
@@ -178,11 +180,21 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     }
 
     /// The best installed voice for a language: Premium, then Enhanced, then the default one.
+    /// Novelty voices (Bells, Bad News, …) never count. At equal quality the exact region and then the
+    /// system's own voice for it win, instead of whichever happens to come first.
     /// Better voices are a free download in iOS Settings > Accessibility > Spoken Content > Voices.
     static func bestVoice(for language: String) -> AVSpeechSynthesisVoice? {
         let prefix = language.prefix(2)
-        let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(prefix) }
-        return candidates.max { $0.quality.rawValue < $1.quality.rawValue } ?? AVSpeechSynthesisVoice(language: language)
+        let standard = AVSpeechSynthesisVoice(language: language)
+        let candidates = AVSpeechSynthesisVoice.speechVoices().filter {
+            $0.language.hasPrefix(prefix) && !$0.voiceTraits.contains(.isNoveltyVoice)
+        }
+        func score(_ voice: AVSpeechSynthesisVoice) -> Int {
+            voice.quality.rawValue * 10
+                + (voice.language == language ? 2 : 0)
+                + (voice.identifier == standard?.identifier ? 1 : 0)
+        }
+        return candidates.max { score($0) < score($1) } ?? standard
     }
 
     /// Drops markdown markers and symbols that sound wrong when read out.
