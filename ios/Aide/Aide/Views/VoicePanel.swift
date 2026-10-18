@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Full-screen voice chat: you and Pebble, with the words you can read underneath.
-struct VoiceModeView: View {
+/// The voice-chat half of the chat screen: status, the words said so far, and an End button.
+/// Pebble itself stays above, grown big.
+struct VoicePanel: View {
     @EnvironmentObject private var voice: VoiceController
     @EnvironmentObject private var chat: ChatViewModel
-    let mood: String
 
     private var status: String {
         if voice.isListening { return voice.transcript.isEmpty ? "Listening…" : "Listening" }
@@ -18,24 +18,7 @@ struct VoiceModeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Spacer()
-                Button { voice.stopAll() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .frame(width: 40, height: 40)
-                        .background(Theme.chip, in: Circle())
-                }
-                .accessibilityLabel("End voice chat")
-            }
-            .padding(.horizontal, 16).padding(.top, 8)
-
-            Spacer(minLength: 0)
-            LivePebble(mood: mood, size: 260, energy: voice.isListening ? voice.level : 0)
-                .foregroundStyle(Theme.accent)
-            Text(status).font(.subheadline).foregroundStyle(.secondary).padding(.top, 12)
-            Spacer(minLength: 0)
+            Text(status).font(.subheadline).foregroundStyle(.secondary).padding(.bottom, 12)
 
             // What was said, so you can read as well as hear.
             ScrollView {
@@ -55,8 +38,11 @@ struct VoiceModeView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
             }
-            .frame(maxHeight: 260)
             .defaultScrollAnchor(.top)
+
+            if let error = voice.error {
+                Text(error).font(.footnote).foregroundStyle(.red).padding(.horizontal, 20)
+            }
 
             Button { voice.stopAll() } label: {
                 Label("End", systemImage: "stop.fill")
@@ -66,12 +52,6 @@ struct VoiceModeView: View {
                     .background(Theme.accent, in: Capsule())
             }
             .padding(.vertical, 18)
-        }
-        .background(Theme.background.ignoresSafeArea())
-        .overlay(alignment: .top) {
-            if let error = voice.error {
-                Text(error).font(.footnote).foregroundStyle(.red).padding(.top, 56).padding(.horizontal, 20)
-            }
         }
     }
 

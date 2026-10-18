@@ -7,6 +7,8 @@ struct ChatView: View {
     @EnvironmentObject private var voice: VoiceController
     @State private var draft = ""
     @State private var showChats = false
+    @State private var showDigest = false
+    @State private var tapCount = 0
     @State private var justReplied = false
     @FocusState private var composerFocused: Bool
 
@@ -23,30 +25,45 @@ struct ChatView: View {
     private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending }
     private var showsDigest: Bool { isEmpty && settings.isConfigured && digest.hasDigests }
 
+    private var replying: Bool { (chat.isSending || chat.isActing) && !voice.isActive }
+
     var body: some View {
         VStack(spacing: 0) {
-            header
-            transcript
-            if !chat.pending.isEmpty { PendingCard() }
-            composer
+            // One Pebble, always centred. In a voice chat it grows and the chat gives way to the voice panel.
+            ZStack(alignment: .top) {
+                LivePebble(mood: mood, size: voice.isActive ? 250 : 84, energy: voice.isListening ? voice.level : 0,
+                           bounceTrigger: tapCount + chat.messages.count)
+                    .foregroundStyle(Theme.accent)
+                    .scaleEffect(replying ? 1.3 : 1) // a little bigger while it answers
+                    .frame(maxWidth: .infinity)
+                    .frame(height: voice.isActive ? 330 : 108)
+                if !voice.isActive { buttons.transition(.opacity) }
+            }
+            if voice.isActive {
+                VoicePanel().transition(.opacity)
+            } else {
+                transcript.transition(.opacity)
+                if !chat.pending.isEmpty { PendingCard() }
+                composer
+            }
         }
+        .animation(.spring(response: 0.6, dampingFraction: 0.78), value: voice.isActive)
+        .animation(.spring(response: 0.5, dampingFraction: 0.6), value: replying)
         .background(Theme.background)
+        .background(TouchTracker(tapCount: $tapCount))
         .sheet(isPresented: $showChats) { ChatsView() }
-        .fullScreenCover(isPresented: Binding(get: { voice.isActive }, set: { if !$0 { voice.stopAll() } })) {
-            VoiceModeView(mood: mood)
-        }
+        .sheet(isPresented: $showDigest) { DigestSheet() }
         .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
         .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
     }
 
-    /// Pebble sits big in the middle of the header, with the chat controls on either side.
-    private var header: some View {
-        HStack {
+    /// Chat controls on either side of Pebble.
+    private var buttons: some View {
+        HStack(spacing: 8) {
             headerButton("list.bullet", label: "Chats") { showChats = true }
                 .disabled(!settings.isConfigured)
-            Spacer()
-            LivePebble(mood: mood, size: 84, bounceTrigger: chat.messages.count)
-                .foregroundStyle(Theme.accent)
+            headerButton("sun.horizon", label: "Digest") { showDigest = true }
+                .disabled(!settings.isConfigured)
             Spacer()
             headerButton("square.and.pencil", label: "New chat") {
                 chat.startNewChat()
