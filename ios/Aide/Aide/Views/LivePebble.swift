@@ -1,74 +1,59 @@
 import SwiftUI
 
 /// Pebble with a pulse: it squashes and stretches as it breathes, blinks while awake, wobbles while
-/// thinking, hops when happy, leans toward wherever you touch the screen and bounces when you tap.
+/// thinking, hops when happy, and leans toward the finger. A halo glows behind it.
 /// Falls back to a still image when Reduce Motion is on.
 struct LivePebble: View {
     var mood: String
     var size: CGFloat
-    /// Finger position in global coordinates, nil when nothing is touching the screen.
-    var touch: CGPoint?
+    /// -1…1 per axis: how far to lean toward the finger.
+    var lean: CGSize = .zero
     /// 0 = no halo, 1 = full. Pulses; faster while thinking.
     var glow: Double = 0.5
+    /// Changes make it squash and bounce.
+    var bounceTrigger: Int = 0
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var squash: CGFloat = 0
 
     var body: some View {
-        GeometryReader { geo in
-            let frame = geo.frame(in: .global)
-            let lean = leanVector(from: CGPoint(x: frame.midX, y: frame.midY))
-            body(lean: lean)
-                .frame(width: geo.size.width, height: geo.size.height)
-        }
-        .frame(width: size, height: size)
-        .onChange(of: touch == nil) { _, released in if !released { bounce(0.16) } }
-        .onChange(of: mood) { _, _ in bounce(0.12) }
-    }
-
-    private func body(lean: CGSize) -> some View {
-        TimelineView(.animation(paused: reduceMotion)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let still = reduceMotion
+            let thinking = mood == "thinking"
             let breath = still ? 0 : sin(t * 2.4) * 0.045
             let bob = still ? 0 : sin(t * 1.2) * size * 0.035
             let sway = still ? 0 : sin(t * 0.8) * 2.5
+            let blink = !still && mood == "awake" && t.truncatingRemainder(dividingBy: 4.3) < 0.14
+            let wobble = !still && thinking ? sin(t * 5) * 5 : 0
+            let hop = !still && mood == "happy" ? -abs(sin(t * 4.5)) * size * 0.06 : 0
             // Every ~7 s it does something on its own: a little hop and a curious tilt.
             let cycle = t.truncatingRemainder(dividingBy: 7)
             let curious = !still && cycle < 0.7 ? sin(cycle / 0.7 * .pi) : 0
-            let curiousHop = -curious * size * 0.07
-            let curiousTilt = still ? 0 : (cycle < 0.7 ? sin(cycle / 0.7 * 2 * .pi) * 7 : 0)
-            let blink = !still && mood == "awake" && t.truncatingRemainder(dividingBy: 4.3) < 0.14
-            let wobble = !still && mood == "thinking" ? sin(t * 5) * 5 : 0
-            let hop = !still && mood == "happy" ? -abs(sin(t * 4.5)) * size * 0.06 : 0
+            let tilt = !still && cycle < 0.7 ? sin(cycle / 0.7 * 2 * .pi) * 7 : 0
+            let halo = glow * (still ? 1 : 0.8 + 0.2 * sin(t * (thinking ? 3.2 : 1.3)))
 
-            let pulse = still ? 1 : 0.8 + 0.2 * sin(t * (mood == "thinking" ? 3.2 : 1.3))
-            let halo = glow * pulse
             ZStack {
-            Circle()
-                .fill(RadialGradient(colors: [Theme.glow.opacity(0.55 * halo), Theme.glow.opacity(0)],
-                                     center: .center, startRadius: size * 0.2, endRadius: size * 1.0))
-                .frame(width: size * 2.2, height: size * 2.2)
-                .scaleEffect(1 + (mood == "thinking" ? 0.08 * sin(t * 3.2) : 0))
-            Image("Pebble-\(blink ? "calm" : mood)")
-                .resizable()
-                .scaledToFit()
-                .frame(width: size, height: size)
-                .scaleEffect(x: 1 + breath, y: 1 - breath, anchor: .bottom)
-                .rotationEffect(.degrees(wobble + sway + curiousTilt))
-                .offset(y: bob + hop + curiousHop)
+                Circle()
+                    .fill(RadialGradient(colors: [Theme.glow.opacity(0.5 * halo), Theme.glow.opacity(0)],
+                                         center: .center, startRadius: size * 0.25, endRadius: size * 0.85))
+                    .frame(width: size * 1.7, height: size * 1.7)
+                Image("Pebble-\(blink ? "calm" : mood)")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+                    .scaleEffect(x: 1 + breath, y: 1 - breath, anchor: .bottom)
+                    .rotationEffect(.degrees(wobble + sway + tilt))
+                    .offset(y: bob + hop - curious * size * 0.07)
             }
+            .scaleEffect(x: 1 + squash, y: 1 - squash, anchor: .bottom)
+            .rotationEffect(.degrees(Double(lean.width) * 9))
+            .offset(x: lean.width * size * 0.10, y: lean.height * size * 0.06)
+            .animation(.interpolatingSpring(stiffness: 140, damping: 7), value: lean)
         }
-        .scaleEffect(x: 1 + squash, y: 1 - squash, anchor: .bottom)
-        .rotationEffect(.degrees(Double(lean.width) * 9))
-        .offset(x: lean.width * size * 0.10, y: lean.height * size * 0.06)
-        .animation(.interpolatingSpring(stiffness: 140, damping: 7), value: lean)
-    }
-
-    /// -1…1 on each axis: how far the finger is from Pebble's centre, softened.
-    private func leanVector(from center: CGPoint) -> CGSize {
-        guard let touch, !reduceMotion else { return .zero }
-        func soft(_ v: CGFloat) -> CGFloat { max(-1, min(1, v / 220)) }
-        return CGSize(width: soft(touch.x - center.x), height: soft(touch.y - center.y))
+        .frame(width: size, height: size)
+        .onChange(of: bounceTrigger) { _, _ in bounce(0.16) }
+        .onChange(of: mood) { _, _ in bounce(0.12) }
     }
 
     private func bounce(_ amount: CGFloat) {
