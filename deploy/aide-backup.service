@@ -1,0 +1,11 @@
+# Nightly backup of data/ to ~/aide-backups, started by aide-backup.timer.
+# Install: see README.md, "Backups".
+[Unit]
+Description=Aide nightly backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Developer/aide
+ExecStart=%h/Developer/aide/.venv/bin/python -m aide.backup
+Nice=10
+IOSchedulingClass=idle
