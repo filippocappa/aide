@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     id             INTEGER PRIMARY KEY,
     channel        TEXT NOT NULL,
     started_at     TEXT NOT NULL,
-    last_active_at TEXT NOT NULL
+    last_active_at TEXT NOT NULL,
+    model          TEXT  -- NULL means the default model
 );
 
 -- content is the JSON the API expects: a string, or a list of content blocks
@@ -51,6 +52,12 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(conversations)")}
+        if "model" not in columns:  # databases created before !think existed
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN model TEXT")
 
     def close(self) -> None:
         self.conn.close()
@@ -75,6 +82,13 @@ class Database:
             (channel, now, now),
         )
         return cur.lastrowid
+
+    def conversation_model(self, conversation_id: int) -> str | None:
+        row = self.conn.execute("SELECT model FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        return row["model"]
+
+    def set_conversation_model(self, conversation_id: int, model: str) -> None:
+        self.conn.execute("UPDATE conversations SET model = ? WHERE id = ?", (model, conversation_id))
 
     def history(self, conversation_id: int) -> list[dict]:
         rows = self.conn.execute(

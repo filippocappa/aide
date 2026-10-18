@@ -36,6 +36,7 @@ class Agent:
         db: Database,
         tools: ToolRegistry,
         model: str,
+        smart_model: str | None = None,
         effort: str = "medium",
         idle: timedelta = timedelta(hours=6),
         server_fallback: bool = False,
@@ -44,6 +45,7 @@ class Agent:
         self.db = db
         self.tools = tools
         self.model = model
+        self.smart_model = smart_model or model
         self.effort = effort
         self.idle = idle
         self.server_fallback = server_fallback  # Anthropic API only, not via OpenRouter
@@ -52,19 +54,25 @@ class Agent:
     def reset(self, channel: str) -> None:
         self.db.new_conversation(channel)
 
+    def think(self, channel: str) -> None:
+        """Use the smart model for the rest of the current conversation."""
+        conversation_id = self.db.current_conversation(channel, self.idle)
+        self.db.set_conversation_model(conversation_id, self.smart_model)
+
     async def reply(self, channel: str, text: str) -> str:
         async with self._lock:
             conversation_id = self.db.current_conversation(channel, self.idle)
+            model = self.db.conversation_model(conversation_id) or self.model
             history = self.db.history(conversation_id)
             turn: list[dict] = [{"role": "user", "content": text}]
-            reply = await self._run(history, turn)
+            reply = await self._run(model, history, turn)
             # Saved only after the loop completes: a crash mid-turn leaves history consistent.
             self.db.append_turn(conversation_id, channel, turn)
             return reply
 
-    async def _run(self, history: list[dict], turn: list[dict]) -> str:
+    async def _run(self, model: str, history: list[dict], turn: list[dict]) -> str:
         for _ in range(MAX_TOOL_ROUNDS):
-            response = await self._create(history + turn)
+            response = await self._create(model, history + turn)
             # Store blocks exactly as returned (thinking blocks included, even when empty).
             turn.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
             text = "\n\n".join(b.text for b in response.content if b.type == "text").strip()
@@ -93,13 +101,13 @@ class Agent:
         turn.append({"role": "assistant", "content": "I stopped after too many steps."})
         return "I stopped after too many steps. Try asking in a simpler way."
 
-    async def _create(self, messages: list[dict]):
+    async def _create(self, model: str, messages: list[dict]):
         extra = {}
-        if self.server_fallback:
+        if self.server_fallback and "haiku" not in model:  # Haiku has no server-side fallback
             # On a safety decline, retry server-side on Anthropic's recommended model.
             extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
         return await self.client.beta.messages.create(
-            model=self.model,
+            model=model,
             max_tokens=16000,
             # Two cache breakpoints: tools + system, and the conversation so far.
             system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": EPHEMERAL}],

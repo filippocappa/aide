@@ -32,6 +32,7 @@ def main() -> None:
         db=db,
         tools=ToolRegistry([clock_tool(settings.timezone)]),
         model=settings.model,
+        smart_model=settings.smart_model,
         effort=settings.effort,
         idle=timedelta(hours=settings.idle_hours),
         server_fallback=not settings.openrouter_api_key,

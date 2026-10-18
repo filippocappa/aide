@@ -60,7 +60,7 @@ def db():
 
 def make_agent(db, responses):
     client = FakeClient(responses)
-    return Agent(client, db, TOOLS, model="test-model"), client
+    return Agent(client, db, TOOLS, model="fast-model", smart_model="smart-model"), client
 
 
 async def test_plain_reply_is_stored(db):
@@ -139,3 +139,14 @@ async def test_cache_breakpoint_does_not_leak_into_history(db):
     await agent.reply("discord", "a")
     conv = db.current_conversation("discord", timedelta(hours=1))
     assert db.history(conv)[0] == {"role": "user", "content": "a"}
+
+
+async def test_think_switches_model_until_new_conversation(db):
+    agent, client = make_agent(db, [("end_turn", [text("x")])] * 4)
+    await agent.reply("discord", "a")
+    agent.think("discord")
+    await agent.reply("discord", "b")
+    await agent.reply("discord", "c")
+    agent.reset("discord")
+    await agent.reply("discord", "d")
+    assert [r["model"] for r in client.requests] == ["fast-model", "smart-model", "smart-model", "fast-model"]

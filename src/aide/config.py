@@ -21,6 +21,7 @@ class Settings:
     timezone: ZoneInfo
     db_path: Path
     model: str
+    smart_model: str
     effort: str
     idle_hours: float
 
@@ -38,7 +39,9 @@ def load_settings() -> Settings:
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or None
     if not (openrouter_key or anthropic_key):
         raise SystemExit("set OPENROUTER_API_KEY or ANTHROPIC_API_KEY")
-    default_model = "anthropic/claude-sonnet-5.5" if openrouter_key else "claude-sonnet-5-5"
+    prefix = "anthropic/" if openrouter_key else ""
+    haiku = prefix + ("claude-haiku-5.5" if openrouter_key else "claude-haiku-5-5")
+    sonnet = prefix + ("claude-sonnet-5.5" if openrouter_key else "claude-sonnet-5-5")
     return Settings(
         openrouter_api_key=openrouter_key,
         anthropic_api_key=None if openrouter_key else anthropic_key,
@@ -46,7 +49,8 @@ def load_settings() -> Settings:
         discord_owner_id=int(_required("DISCORD_OWNER_ID")),
         timezone=ZoneInfo(os.environ.get("AIDE_TIMEZONE", "UTC")),
         db_path=Path(os.environ.get("AIDE_DB_PATH", "./data/aide.db")),
-        model=os.environ.get("AIDE_MODEL") or default_model,
+        model=os.environ.get("AIDE_MODEL") or haiku,
+        smart_model=os.environ.get("AIDE_SMART_MODEL") or sonnet,
         effort=os.environ.get("AIDE_EFFORT", "medium"),
         idle_hours=float(os.environ.get("AIDE_IDLE_HOURS", "6")),
     )

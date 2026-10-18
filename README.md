@@ -23,7 +23,7 @@ deploy/aide.service      systemd unit
 3. **Env file.** `cp .env.example .env` and fill in your OpenRouter (or Anthropic) key, bot token and owner ID.
 4. **Run.** `uv sync && uv run aide`. The bot DMs you "Aide is up." once it's connected.
 
-In the DM, type anything to talk to it, or `!new` to start a fresh conversation. A new conversation also starts after `AIDE_IDLE_HOURS` (default 6) of silence. That keeps each request small and cheap without editing history.
+In the DM, type anything to talk to it. `!new` starts a fresh conversation. `!think` (alone or before a message) switches the rest of the conversation from Haiku to Sonnet for harder requests. A new conversation also starts after `AIDE_IDLE_HOURS` (default 6) of silence. That keeps each request small and cheap without editing history.
 
 ## Tests
 
@@ -50,6 +50,6 @@ The database lives at `/var/lib/aide/aide.db` (systemd creates the directory). `
 
 ## Notes
 
-- LLM: OpenRouter (`OPENROUTER_API_KEY`, model `anthropic/claude-sonnet-5.5`) or the Anthropic API directly (`ANTHROPIC_API_KEY`, model `claude-sonnet-5-5`). Prompt caching is on for both; server-side refusal fallback only works direct. Override the model with `AIDE_MODEL`.
+- LLM: OpenRouter (`OPENROUTER_API_KEY`) or the Anthropic API directly (`ANTHROPIC_API_KEY`). Haiku 5.5 by default, Sonnet 5.5 after `!think`; override with `AIDE_MODEL` / `AIDE_SMART_MODEL`. Prompt caching is on for both; server-side refusal fallback only works direct, and not on Haiku.
 - Each turn is saved to SQLite only after it completes. A crash mid-turn loses that turn but never corrupts history.
 - Every tool call is written to `audit_log`.

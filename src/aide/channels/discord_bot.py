@@ -61,6 +61,12 @@ class AideBot(discord.Client):
             self.agent.reset(CHANNEL)
             await message.channel.send("Started a new conversation.")
             return
+        if text.startswith("!think"):
+            self.agent.think(CHANNEL)
+            text = text.removeprefix("!think").strip()
+            if not text:
+                await message.channel.send("Using the smarter model for the rest of this conversation.")
+                return
 
         async with message.channel.typing():
             try:
