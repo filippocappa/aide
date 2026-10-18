@@ -13,6 +13,7 @@ src/aide/
   agent.py               Claude tool-use loop and conversation history
   tools/                 tool registry: clock, calendar, reminders, memory, mail
   gmail.py, gmail_auth.py  Gmail API client; one-time OAuth sign-in script
+  backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
   channels/discord_bot.py  Discord adapter (owner DMs only)
 deploy/aide.service      systemd unit
 ```
@@ -91,6 +92,37 @@ journalctl --user -u aide -f          # live logs
 ```
 
 The database is `data/aide.db` in this folder. `deploy/aide.service` is a hardened system-wide alternative (dedicated `aide` user, `/opt/aide`) if you ever want that instead.
+
+## Backups
+
+Every night at about 03:30 a user-level timer copies `data/` to `~/aide-backups/YYYY-MM-DD/`. Databases are
+copied with SQLite's online backup (safe while Aide is running) and the copy must pass `integrity_check`, or the
+run fails and no folder is written. The Gmail refresh token lives in `.env`, not the database, so its
+`GMAIL_*` lines go into `gmail.env` next to it (mode 600; the folder is 700). Nothing else from `.env` is copied,
+and none of it is in git. It keeps the newest 14 backups plus the newest of each of the last 8 weeks.
+
+```bash
+ln -sf "$PWD/deploy/aide-backup.service" ~/.config/systemd/user/aide-backup.service
+ln -sf "$PWD/deploy/aide-backup.timer" ~/.config/systemd/user/aide-backup.timer
+systemctl --user daemon-reload
+systemctl --user enable --now aide-backup.timer
+systemctl --user start aide-backup          # run one now
+journalctl --user -u aide-backup -n 20     # "backup ok: …" or "backup FAILED: …"
+systemctl --user list-timers aide-backup.timer
+```
+
+**Restore.** Stop the service first, so it doesn't write to the old database while you swap it:
+
+```bash
+systemctl --user stop aide
+mv data data.broken                          # keep the old one until you're sure
+mkdir data && cp ~/aide-backups/2026-10-18/aide.db data/
+systemctl --user start aide
+```
+
+The copy is a single self-contained file (no `-wal`/`-shm` needed). If `.env` was lost too, rebuild it from
+`.env.example` and paste in the lines from `gmail.env`; the other secrets (Discord, OpenRouter, iCloud, API
+token) aren't backed up and have to be re-entered or regenerated.
 
 ## Notes
 
