@@ -27,10 +27,7 @@ struct ChatView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Image("Pebble-\(mood)")
-                        .resizable().scaledToFit().frame(width: 36, height: 36)
-                        .foregroundStyle(Theme.accent)
-                        .animation(.easeInOut(duration: 0.2), value: mood)
+                    LivePebble(mood: mood, size: 44).foregroundStyle(Theme.accent)
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Chats", systemImage: "list.bullet") { showChats = true }
@@ -86,7 +83,7 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 20) {
-            PebbleMark(size: 84).foregroundStyle(Theme.accent)
+            LivePebble(mood: mood == "calm" ? "awake" : mood, size: 160).foregroundStyle(Theme.accent)
             if settings.isConfigured {
                 Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
                 VStack(spacing: 8) {
@@ -99,7 +96,7 @@ struct ChatView: View {
             }
         }
         .multilineTextAlignment(.center)
-        .padding(.top, 60)
+        .padding(.top, 24)
     }
 
     private func suggestion(_ text: String, send: Bool) -> some View {
@@ -166,10 +163,7 @@ private struct MessageRow: View {
             }
         } else {
             HStack {
-                Text(message.text.markdown)
-                    .textSelection(.enabled)
-                    .foregroundStyle(message.isError ? Color.red : Color.primary)
-                    .lineSpacing(3)
+                RichText(text: message.text, isError: message.isError)
                 Spacer(minLength: 32)
             }
             .padding(.horizontal, 2)
