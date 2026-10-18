@@ -5,6 +5,14 @@ struct ChatView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
+    @State private var justReplied = false
+
+    private var mood: String {
+        if !settings.isConfigured || chat.loadError != nil { return "sleeping" }
+        if chat.isSending || chat.isActing { return "thinking" }
+        if justReplied { return "happy" }
+        return composerFocused ? "awake" : "calm"
+    }
 
     var body: some View {
         NavigationStack {
@@ -14,9 +22,13 @@ struct ChatView: View {
                 composer
             }
             .background(Theme.background)
-            .navigationTitle("Aide")
-            .navigationBarTitleDisplayMode(.inline)
+                        .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Image("Pebble-\(mood)").resizable().scaledToFit().frame(width: 34, height: 34)
+                        .foregroundStyle(Theme.accent)
+                        .animation(.easeInOut(duration: 0.2), value: mood)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("New conversation", systemImage: "square.and.pencil") {
@@ -37,7 +49,7 @@ struct ChatView: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 10) {
+                VStack(spacing: 10) {
                     if chat.messages.isEmpty && !chat.isSending {
                         emptyState
                     }
@@ -48,9 +60,17 @@ struct ChatView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
-            .scrollDismissesKeyboard(.interactively)
+            .scrollDismissesKeyboard(.immediately)
+            .defaultScrollAnchor(.bottom)
+            .onTapGesture { composerFocused = false }
             .onChange(of: chat.messages) { _, _ in scrollToBottom(proxy) }
-            .onChange(of: chat.isSending) { _, _ in scrollToBottom(proxy) }
+            .onChange(of: chat.isSending) { _, sending in
+                scrollToBottom(proxy)
+                if !sending, chat.messages.last?.role == .assistant, chat.messages.last?.isError == false {
+                    justReplied = true
+                    Task { try? await Task.sleep(for: .seconds(2)); justReplied = false }
+                }
+            }
             .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
         }
     }
@@ -91,11 +111,14 @@ struct ChatView: View {
                     .font(.system(size: 34))
                     .foregroundStyle(canSend ? Theme.accent : Color.secondary.opacity(0.4))
             }
+            .buttonStyle(.plain)
+            .contentShape(Circle())
             .disabled(!canSend)
             .accessibilityLabel("Send")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .background(Theme.background)
     }
 
     private var canSend: Bool {

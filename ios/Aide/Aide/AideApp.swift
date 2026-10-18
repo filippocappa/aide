@@ -12,7 +12,6 @@ struct AideApp: App {
                 .environmentObject(env.settings)
                 .environmentObject(env.sync)
                 .environmentObject(env.chat)
-                .environmentObject(env.today)
                 .tint(Theme.accent)
                 .task { await env.refreshAll() }
                 .onChange(of: scenePhase) { _, phase in
@@ -26,16 +25,13 @@ struct ContentView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var tab = Tab.chat
 
-    enum Tab { case chat, today, settings }
+    enum Tab { case chat, settings }
 
     var body: some View {
         TabView(selection: $tab) {
             ChatView()
                 .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
                 .tag(Tab.chat)
-            TodayView()
-                .tabItem { Label("Today", systemImage: "calendar") }
-                .tag(Tab.today)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)

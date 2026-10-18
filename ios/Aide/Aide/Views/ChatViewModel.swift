@@ -27,7 +27,7 @@ final class ChatViewModel: ObservableObject {
     func loadHistory() async {
         guard !isSending, !isActing else { return }
         do {
-            let history = try await api.history(limit: 50)
+            let history = try await api.history(limit: 200)
             guard !isSending, !isActing else { return }
             messages = history.messages.map {
                 Message(role: $0.role == "user" ? .user : .assistant, text: $0.text)
