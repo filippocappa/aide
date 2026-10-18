@@ -25,23 +25,27 @@ struct HabitsView: View {
                     .listRowBackground(Color.clear)
                 }
                 ForEach(habits) { habit in
-                    HStack(spacing: 14) {
-                        Button { Task { await toggle(habit) } } label: {
-                            Image(systemName: habit.doneToday ? "checkmark.circle.fill" : "circle").font(.title2)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 14) {
+                            Button { Task { await toggle(habit) } } label: {
+                                Image(systemName: habit.doneToday ? "checkmark.circle.fill" : "circle").font(.title2)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Theme.accent)
+                            .accessibilityLabel(habit.doneToday ? "Undo \(habit.name)" : "Mark \(habit.name) done")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(habit.name).font(.body.weight(.medium))
+                                Text(habit.cadenceText).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if habit.streak > 0 {
+                                Label("\(habit.streak)", systemImage: "flame.fill")
+                                    .font(.subheadline.weight(.semibold)).foregroundStyle(Color.orange)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Theme.accent)
-                        .accessibilityLabel(habit.doneToday ? "Undo \(habit.name)" : "Mark \(habit.name) done")
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(habit.name).font(.body.weight(.medium))
-                            Text(habit.cadenceText).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if habit.streak > 0 {
-                            Label("\(habit.streak)", systemImage: "flame.fill")
-                                .font(.subheadline.weight(.semibold)).foregroundStyle(Color.orange)
-                        }
+                        if let history = habit.history { HabitGrid(done: Set(history)) }
                     }
+                    .padding(.vertical, 4)
                     .listRowBackground(Theme.card)
                 }
                 .onDelete { offsets in
@@ -130,5 +134,40 @@ private struct NewHabitSheet: View {
             }
         }
         .presentationDetents([.medium])
+    }
+}
+
+/// The last 26 weeks, GitHub style: one column per week (Monday on top), a filled square for each
+/// day it was done. The current week is the last column; days still to come are left out.
+private struct HabitGrid: View {
+    let done: Set<String>
+
+    private static let weeks = 26
+    private static let gap: CGFloat = 0.28 // of a square
+
+    var body: some View {
+        Canvas { context, size in
+            let n = CGFloat(Self.weeks)
+            let cell = size.width / (n + (n - 1) * Self.gap)
+            let step = cell * (1 + Self.gap)
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.firstWeekday = 2 // Monday
+            let today = calendar.startOfDay(for: Date())
+            guard let thisWeek = calendar.dateInterval(of: .weekOfYear, for: today)?.start else { return }
+            for week in 0..<Self.weeks {
+                for weekday in 0..<7 {
+                    let offset = (week - (Self.weeks - 1)) * 7 + weekday
+                    guard let day = calendar.date(byAdding: .day, value: offset, to: thisWeek), day <= today else { continue }
+                    let rect = CGRect(x: CGFloat(week) * step, y: CGFloat(weekday) * step, width: cell, height: cell)
+                    let shape = Path(roundedRect: rect, cornerRadius: cell * 0.25)
+                    let isDone = done.contains(Wire.dayString(day))
+                    context.fill(shape, with: .color(Theme.accent.opacity(isDone ? 1 : 0.1)))
+                    if day == today { context.stroke(shape, with: .color(Theme.accent.opacity(0.6)), lineWidth: 1) }
+                }
+            }
+        }
+        // 26 squares across, 7 down, with the same gap between them.
+        .aspectRatio((26 + 25 * Self.gap) / (7 + 6 * Self.gap), contentMode: .fit)
+        .accessibilityLabel("\(done.count) days done in the last 26 weeks")
     }
 }
