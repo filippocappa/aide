@@ -6,6 +6,7 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var showChats = false
     @State private var justReplied = false
+    @State private var touch: CGPoint?
     @FocusState private var composerFocused: Bool
 
     /// Pebble's expression follows what's happening (brand/README.md).
@@ -27,7 +28,7 @@ struct ChatView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    LivePebble(mood: mood, size: 44).foregroundStyle(Theme.accent)
+                    LivePebble(mood: mood, size: 44, touch: touch).foregroundStyle(Theme.accent)
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Chats", systemImage: "list.bullet") { showChats = true }
@@ -47,6 +48,10 @@ struct ChatView: View {
                 }
             }
             .sheet(isPresented: $showChats) { ChatsView() }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { touch = $0.location }
+                    .onEnded { _ in touch = nil })
         }
     }
 
@@ -83,7 +88,7 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 20) {
-            LivePebble(mood: mood == "calm" ? "awake" : mood, size: 160).foregroundStyle(Theme.accent)
+            LivePebble(mood: mood == "calm" ? "awake" : mood, size: 160, touch: touch).foregroundStyle(Theme.accent)
             if settings.isConfigured {
                 Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
                 VStack(spacing: 8) {
