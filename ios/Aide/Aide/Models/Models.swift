@@ -1,0 +1,217 @@
+import Foundation
+
+// Wire types for docs/API.md. Field names are snake_case on the wire; the decoder/encoder convert.
+
+struct PendingAction: Codable, Identifiable, Hashable {
+    let id: Int
+    let summary: String
+}
+
+struct ChatReply: Decodable {
+    let reply: String
+    let pending: [PendingAction]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        reply = try c.decode(String.self, forKey: .reply)
+        pending = try c.decodeIfPresent([PendingAction].self, forKey: .pending) ?? []
+    }
+    private enum CodingKeys: String, CodingKey { case reply, pending }
+}
+
+struct ActionResult: Decodable {
+    let result: String
+    let pending: [PendingAction]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        result = try c.decode(String.self, forKey: .result)
+        pending = try c.decodeIfPresent([PendingAction].self, forKey: .pending) ?? []
+    }
+    private enum CodingKeys: String, CodingKey { case result, pending }
+}
+
+struct OKResponse: Decodable { let ok: Bool }
+struct HealthResponse: Decodable { let ok: Bool; let version: String }
+struct EmptyBody: Encodable {}
+struct ChatRequest: Encodable { let text: String }
+
+struct HistoryMessage: Decodable {
+    let role: String
+    let text: String
+    let ts: String?
+}
+
+struct HistoryResponse: Decodable { let messages: [HistoryMessage] }
+
+struct CalendarEvent: Decodable, Identifiable, Hashable {
+    let id: String
+    let title: String
+    let calendar: String?
+    let start: String
+    let end: String
+    let allDay: Bool
+    let location: String?
+    let recurring: Bool
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        calendar = try c.decodeIfPresent(String.self, forKey: .calendar)
+        start = try c.decode(String.self, forKey: .start)
+        end = try c.decode(String.self, forKey: .end)
+        allDay = try c.decodeIfPresent(Bool.self, forKey: .allDay) ?? false
+        location = try c.decodeIfPresent(String.self, forKey: .location)
+        recurring = try c.decodeIfPresent(Bool.self, forKey: .recurring) ?? false
+    }
+    private enum CodingKeys: String, CodingKey { case id, title, calendar, start, end, allDay, location, recurring }
+
+    var startDate: Date? { allDay ? Wire.day(start) : Wire.parse(start) }
+    var endDate: Date? { allDay ? Wire.day(end) : Wire.parse(end) }
+
+    /// "All day" or "15:00 – 16:00".
+    var timeText: String {
+        guard !allDay, let s = startDate else { return "All day" }
+        let from = s.formatted(date: .omitted, time: .shortened)
+        guard let e = endDate else { return from }
+        return "\(from) – \(e.formatted(date: .omitted, time: .shortened))"
+    }
+}
+
+struct Reminder: Codable, Identifiable, Hashable {
+    var id: String
+    var title: String
+    var notes: String
+    var dueAt: String?
+    var completed: Bool
+    var appleId: String?
+    var modifiedAt: String
+    var deleted: Bool
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        dueAt = try c.decodeIfPresent(String.self, forKey: .dueAt)
+        completed = try c.decodeIfPresent(Bool.self, forKey: .completed) ?? false
+        appleId = try c.decodeIfPresent(String.self, forKey: .appleId)
+        modifiedAt = try c.decodeIfPresent(String.self, forKey: .modifiedAt) ?? ""
+        deleted = try c.decodeIfPresent(Bool.self, forKey: .deleted) ?? false
+    }
+    private enum CodingKeys: String, CodingKey { case id, title, notes, dueAt, completed, appleId, modifiedAt, deleted }
+
+    var dueDate: Date? { dueAt.flatMap(Wire.parse) }
+}
+
+struct TodayResponse: Decodable {
+    let date: String
+    let events: [CalendarEvent]
+    let reminders: [Reminder]
+}
+
+// MARK: - Reminder sync
+
+/// A reminder changed on the phone. Nullable fields are always sent (`"id": null` means created on the phone).
+struct ReminderChange: Encodable, Equatable {
+    var id: String?
+    var appleId: String
+    var title: String
+    var notes: String
+    var dueAt: String?
+    var completed: Bool
+    var modifiedAt: String
+    var deleted: Bool
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(appleId, forKey: .appleId)
+        try c.encode(title, forKey: .title)
+        try c.encode(notes, forKey: .notes)
+        try c.encode(dueAt, forKey: .dueAt)
+        try c.encode(completed, forKey: .completed)
+        try c.encode(modifiedAt, forKey: .modifiedAt)
+        try c.encode(deleted, forKey: .deleted)
+    }
+    private enum CodingKeys: String, CodingKey { case id, appleId, title, notes, dueAt, completed, modifiedAt, deleted }
+}
+
+struct SyncRequest: Encodable {
+    var cursor: String?
+    var changes: [ReminderChange]
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(cursor, forKey: .cursor)
+        try c.encode(changes, forKey: .changes)
+    }
+    private enum CodingKeys: String, CodingKey { case cursor, changes }
+}
+
+struct SyncResponse: Decodable {
+    let cursor: String
+    let reminders: [Reminder]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // The cursor is opaque; accept a number in case the server sends one.
+        if let s = try? c.decode(String.self, forKey: .cursor) {
+            cursor = s
+        } else {
+            cursor = String(try c.decode(Int.self, forKey: .cursor))
+        }
+        reminders = try c.decode([Reminder].self, forKey: .reminders)
+    }
+    private enum CodingKeys: String, CodingKey { case cursor, reminders }
+}
+
+// MARK: - Dates
+
+/// ISO 8601 with offset for times, `YYYY-MM-DD` for days.
+enum Wire {
+    private static let plain = ISO8601DateFormatter()
+    private static let fractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    static func parse(_ s: String) -> Date? { plain.date(from: s) ?? fractional.date(from: s) }
+
+    /// UTC, e.g. `2026-10-18T11:20:00Z`. For `modified_at`.
+    static func utc(_ d: Date) -> String { plain.string(from: d) }
+
+    /// Local offset, e.g. `2026-10-20T17:00:00+02:00`. For `due_at`.
+    static func local(_ d: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.timeZone = .current
+        return f.string(from: d)
+    }
+
+    static func day(_ s: String) -> Date? { dayFormatter.date(from: s) }
+    static func dayString(_ d: Date) -> String { dayFormatter.string(from: d) }
+}
+
+extension JSONDecoder {
+    static let api: JSONDecoder = {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        return d
+    }()
+}
+
+extension JSONEncoder {
+    static let api: JSONEncoder = {
+        let e = JSONEncoder()
+        e.keyEncodingStrategy = .convertToSnakeCase
+        return e
+    }()
+}
