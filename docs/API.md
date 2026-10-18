@@ -95,10 +95,10 @@ A summary the server builds on a schedule: daily, weekly or monthly. The app sho
 ```
 The app skips section types it doesn't know. `404` if none has been generated yet; `400` for an unknown `kind`.
 
-- **Morning and evening (contract change, server side pending):** `daily` is the morning digest (the app calls it
+- **Morning and evening:** `daily` is the morning digest (the app calls it
   "Morning"). `evening` is new, for before bed: tomorrow's calendar ("Tomorrow"), reminders due tomorrow or overdue,
   habits not yet done today (`habits` section, only the undone ones), unread mail from today, and a short `text`
-  wrap-up. It always looks at tomorrow, whatever the clock says. Default time 22:00.
+  wrap-up (titled "Wrap-up"). It always looks at tomorrow, whatever the clock says. Default time 22:00.
 - **What it covers:** daily = one day, weekly = 7 days, monthly = to the end of the month. The period starts today,
   or tomorrow if the digest is made after 17:00 (so the Sunday 18:00 weekly covers Monday to Sunday). Section
   titles say which ("Today", "Tomorrow", "Next 7 days", "October"; reminders "Due today", "Due in October", …).
