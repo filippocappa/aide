@@ -26,6 +26,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
 - `channels/discord_bot.py` and `channels/api.py` (FastAPI, the app's API): two adapters over one agent and one shared conversation.
 - `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (the Discord fallback).
+- `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
+- `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
 uv run pytest                       # tests; keep them green
@@ -70,4 +72,4 @@ live on the Ubuntu box; reminders store and sync; Discord fallback for reminders
 Now: **iOS app v1** (Mac), per `docs/API.md`.
 Next: push notifications (APNs) and silent-push sync, after which Discord becomes optional.
 Mail (Gmail: read, search; send and reply after confirmation) is in; it needs the one-time setup in README.md, "Gmail".
-Later: habits, weekly digest, nightly backups.
+Done since: nightly backups, habits, digests (server side, per `docs/API.md`; the app's habit and digest screens are Mac work).

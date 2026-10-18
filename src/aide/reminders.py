@@ -40,6 +40,10 @@ def parse_time(value: str | None) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
+def _utc(dt: datetime | None) -> str | None:
+    return dt.astimezone(timezone.utc).isoformat() if dt else None
+
+
 @dataclass(frozen=True)
 class Reminder:
     id: str
@@ -56,6 +60,11 @@ class ReminderStore:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.conn.executescript(SCHEMA)
+        # Times are compared as strings, so they must all be UTC. Rows written before _save normalised them:
+        for r in self.conn.execute("SELECT id, due_at, modified_at FROM reminders WHERE due_at NOT LIKE '%+00:00' "
+                                   "OR modified_at NOT LIKE '%+00:00'").fetchall():
+            self.conn.execute("UPDATE reminders SET due_at = ?, modified_at = ? WHERE id = ?",
+                              (_utc(parse_time(r["due_at"])), _utc(parse_time(r["modified_at"])), r["id"]))
 
     # -- reading -----------------------------------------------------------
 
@@ -115,9 +124,9 @@ class ReminderStore:
                  notified = CASE WHEN :renotify THEN 0 ELSE notified END, seq = excluded.seq""",
             {
                 "id": rem.id, "title": rem.title, "notes": rem.notes,
-                "due_at": rem.due_at.isoformat() if rem.due_at else None,
+                "due_at": _utc(rem.due_at),
                 "completed": int(rem.completed), "apple_id": rem.apple_id,
-                "modified_at": rem.modified_at.isoformat(), "deleted": int(rem.deleted),
+                "modified_at": _utc(rem.modified_at), "deleted": int(rem.deleted),
                 "renotify": int(renotify),
             },
         )

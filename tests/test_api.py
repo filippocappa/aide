@@ -384,3 +384,12 @@ def test_memory_block_tells_the_model_to_check_first(env):
     agent.db.add_memory("Vegetarian")
     block = agent._system()[-1]["text"]
     assert "Before calling remember, check this list" in block and "[1] Vegetarian" in block
+
+
+def test_local_due_times_are_stored_as_utc_so_due_checks_work():
+    db = Database(":memory:")
+    store = ReminderStore(db.conn)
+    rem = store.create("x", datetime(2026, 10, 19, 23, 30, tzinfo=ROME))  # 21:30 UTC
+    assert db.conn.execute("SELECT due_at FROM reminders").fetchone()[0] == "2026-10-19T21:30:00+00:00"
+    assert [r.id for r in store.due_before(datetime(2026, 10, 20, tzinfo=ROME))] == [rem.id]
+    assert [r.id for r in store.unsynced_due(datetime(2026, 10, 19, 21, 31, tzinfo=timezone.utc))] == [rem.id]
