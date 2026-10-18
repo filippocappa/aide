@@ -6,6 +6,20 @@ from typing import Any, Awaitable, Callable
 ToolHandler = Callable[..., Awaitable[str]]
 
 
+class ToolOutput(str):
+    """A tool result: the text the model reads, plus data the app shows as cards under the reply.
+
+    `attachment` is one docs/API.md attachment, e.g. {"type": "reminders", "reminders": [...]}.
+    """
+
+    attachment: dict | None
+
+    def __new__(cls, text: str, attachment: dict | None = None):
+        out = super().__new__(cls, text)
+        out.attachment = attachment
+        return out
+
+
 @dataclass(frozen=True)
 class Tool:
     name: str

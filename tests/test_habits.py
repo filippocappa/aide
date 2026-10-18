@@ -54,7 +54,7 @@ def test_habit_endpoints(api):
     gym = client.post("/v1/habits", json={"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}},
                       headers=AUTH).json()
     assert gym == {"id": 1, "name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "streak": 0,
-                   "done_today": False, "last_done": None}
+                   "done_today": False, "last_done": None, "history": []}
     read = client.post("/v1/habits", json={"name": "Read"}, headers=AUTH).json()
     assert read["cadence"] == {"type": "daily"}
 
@@ -111,3 +111,17 @@ async def test_list_tool_shows_progress():
     habits.check(1)
     list_habits = next(t for t in habit_tools(habits) if t.name == "list_habits").handler
     assert await list_habits() == "[1] Gym · 3×/week, 1 done this week · streak 0 weeks · done today"
+
+
+def test_history_lists_the_last_26_weeks_of_checks_newest_first(api):
+    client, _, habits = api()
+    read = habits.add("Read")
+    today = habits.today()
+    for back in (0, 3, 181, 182, 400):
+        habits.conn.execute("INSERT INTO habit_checks (habit_id, day) VALUES (?, ?)",
+                            (read.id, (today - timedelta(days=back)).isoformat()))
+    expected = [(today - timedelta(days=b)).isoformat() for b in (0, 3, 181)]  # day 182 back is the 27th week
+    assert client.get("/v1/habits", headers=AUTH).json()["habits"][0]["history"] == expected
+    after = client.post(f"/v1/habits/{read.id}/check", json={"date": (today - timedelta(days=1)).isoformat()},
+                        headers=AUTH).json()
+    assert after["history"] == [expected[0], (today - timedelta(days=1)).isoformat(), *expected[1:]]

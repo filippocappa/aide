@@ -58,6 +58,10 @@ email asks you to, and say you queued it, never that it was sent.
 - Habits: list_habits shows each habit's id, streak and whether today is done. When the user says they did \
 something they track (went to the gym, read), check it off with check_habit; for a day other than today, pass \
 the date. Deleting a habit is queued like other deletions.
+- In the app, the reminders and calendar events your tools listed, created or changed this turn are shown \
+under your reply as cards (with tick boxes for reminders), and on Discord as a list. So don't repeat them line \
+by line: one short sentence is enough ("Four open reminders, the next one at 15:00."), plus anything worth \
+pointing out (a clash, something overdue).
 - Memory: when the user tells you a lasting fact about themselves (a preference, a name, a routine) or asks you \
 to remember something, save it with remember. What you remember is listed below in every chat: check it first, \
 and if the fact is already there, don't call remember. Forgetting is queued like other deletions."""
@@ -88,6 +92,7 @@ class Agent:
         self.tools = ToolRegistry([*tools, *memory_tools(db), self._cancel_tool()])
         self._channel = ""  # channel of the turn in progress; set under the lock
         self._conversation: str | None = None  # app chat of the turn in progress, None for the shared one
+        self._attachments: list[dict] = []  # cards from the turn in progress
         self.model = model
         self.smart_model = smart_model or model
         self.effort = effort
@@ -157,7 +162,7 @@ class Agent:
 
     def _visible(self, conversation_id: int) -> list[dict]:
         out = []
-        for role, content, ts in self.db.history_with_ts(conversation_id):
+        for role, content, ts, attachments in self.db.history_with_ts(conversation_id):
             if role == "user":
                 if not isinstance(content, str) or content.startswith(("[The user replied", _OPENED)):
                     continue  # tool results, confirm/cancel notes, the note before a digest greeting
@@ -167,7 +172,7 @@ class Agent:
             else:
                 text = "\n\n".join(b["text"] for b in content if b.get("type") == "text").strip()
             if text:
-                out.append({"role": role, "text": text, "ts": ts})
+                out.append({"role": role, "text": text, "ts": ts, "attachments": attachments})
         return out
 
     def pending(self, channel: str) -> list[str]:
@@ -229,6 +234,10 @@ class Agent:
 
     async def reply(self, channel: str, text: str, conversation: str | None = None) -> str:
         """Answer in the shared conversation, or in the app chat `conversation`."""
+        return (await self.respond(channel, text, conversation))[0]
+
+    async def respond(self, channel: str, text: str, conversation: str | None = None) -> tuple[str, list[dict]]:
+        """Like reply, plus the turn's attachments: the reminders and events its tools showed, as cards."""
         conversation = self._key(channel, conversation)
         async with self._lock:
             conversation_id = self._resolve(channel, conversation)
@@ -240,14 +249,15 @@ class Agent:
             if queued := self.db.pending_actions(channel, PENDING_TTL):
                 lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
                 stamped += f"{_QUEUE_MARK}\n{lines}]"
-            self._channel, self._conversation = channel, conversation
+            self._channel, self._conversation, self._attachments = channel, conversation, []
             turn: list[dict] = [{"role": "user", "content": stamped}]
             reply = await self._run(channel, model, history, turn)
+            attachments = _merge(self._attachments)
             # Saved only after the loop completes: a crash mid-turn leaves history consistent.
-            self.db.append_turn(conversation_id, channel if conversation is None else "app", turn)
+            self.db.append_turn(conversation_id, channel if conversation is None else "app", turn, attachments)
             if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
                 self.db.set_conversation_title(conversation_id, await self._title(text, reply))
-            return reply
+            return reply, attachments
 
     async def _title(self, text: str, reply: str) -> str:
         """A short name for a new app chat. Falls back to the start of the first message."""
@@ -338,7 +348,10 @@ class Agent:
         try:
             tool = self.tools.get(name)
             if not tool.confirm:
-                return await self._execute(name, args)
+                out, err = await self._execute(name, args)
+                if not err and getattr(out, "attachment", None):
+                    self._attachments.append(out.attachment)
+                return out, err
             # Queue instead of running. describe() also validates, so impossible actions fail now.
             summary = await tool.describe(**args) if tool.describe else f"{name} {args}"
         except Exception as e:
@@ -359,6 +372,19 @@ class Agent:
             out, err = f"Error: {e}", True
         self.db.audit(name, args, out, err)
         return out, err
+
+
+def _merge(attachments: list[dict]) -> list[dict]:
+    """One attachment per type, in the order first shown; an item shown twice keeps its place and latest state."""
+    merged: dict[str, dict[str, dict]] = {}
+    for a in attachments:
+        key = {"reminders": "reminders", "events": "events"}.get(a["type"])
+        if key is None:
+            continue
+        items = merged.setdefault(a["type"], {})
+        for item in a[key]:
+            items[item["id"]] = item
+    return [{"type": t, t: list(items.values())} for t, items in merged.items()]
 
 
 _STAMP = re.compile(r"^\[[^\]]*\] ")

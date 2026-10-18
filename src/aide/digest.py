@@ -40,7 +40,6 @@ DEFAULT_SETTINGS = {
 EVENING = 17  # a digest made after this hour is about tomorrow onwards
 LOOKAHEAD = {"daily": 3, "evening": 3, "weekly": 7, "monthly": 14}  # extra days the model sees for "Looking ahead"
 MAIL_ITEMS = 25
-OVERDUE = timedelta(hours=48)  # older overdue reminders are left out (mostly one-off alerts, long past)
 KEEP = 60  # digests kept per kind
 TICK = 30  # seconds
 CATCH_UP = timedelta(hours=6)  # a slot missed (machine off) by more than this is skipped
@@ -270,8 +269,8 @@ class DigestService:
             notes.append("Mail couldn't be read." if self.gmail else "No mail account is connected.")
         elif mail:
             sections.append({"type": "mail", "title": "Mail", "items": mail})
-        # Open ones due by the end of the period, overdue ones only from the last 48 hours.
-        due = self.reminders.due_between(now - OVERDUE, end)
+        # Open ones due by the end of the period; overdue ones only from today (older ones are mostly past alerts).
+        due = self.reminders.due_between(datetime.combine(now.date(), time.min, self.tz), end)
         if due:
             sections.append({"type": "reminders", "title": p.reminders_title, "reminders": [
                 {**reminder_json(r, self.tz), "overdue": r.due_at < now} for r in due]})
@@ -379,7 +378,8 @@ def to_text(greeting: str | None, sections: list[dict], tz: ZoneInfo) -> str:
                 rows = [f"{m['from']}: {m['subject']}" for m in s["items"]]
             case "reminders":
                 rows = [(f"{datetime.fromisoformat(r['due_at']):%a %d %b %H:%M} " if r["due_at"] else "") + r["title"]
-                        + (" (overdue)" if r.get("overdue") else "") for r in s["reminders"]]
+                        + (" (overdue)" if r.get("overdue") else "") + (" ✓" if r.get("completed") else "")
+                        for r in s["reminders"]]
             case "habits":
                 rows = []
                 for h in s["habits"]:

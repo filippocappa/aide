@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS messages (
     channel         TEXT NOT NULL,
     role            TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content         TEXT NOT NULL,
-    ts              TEXT NOT NULL
+    ts              TEXT NOT NULL,
+    attachments     TEXT  -- JSON list shown as cards under a reply (docs/API.md); NULL for none
 );
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, id);
 
@@ -87,6 +88,9 @@ class Database:
             self.conn.execute("ALTER TABLE conversations ADD COLUMN public_id TEXT")
             self.conn.execute("ALTER TABLE conversations ADD COLUMN title TEXT")
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS conversations_public ON conversations(public_id)")
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(messages)")}
+        if "attachments" not in columns:  # databases created before replies had cards
+            self.conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(pending_actions)")}
         if "target" not in columns:  # databases created before actions could be replaced
             self.conn.execute("ALTER TABLE pending_actions ADD COLUMN target TEXT")
@@ -165,12 +169,13 @@ class Database:
     def set_conversation_model(self, conversation_id: int, model: str) -> None:
         self.conn.execute("UPDATE conversations SET model = ? WHERE id = ?", (model, conversation_id))
 
-    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str]]:
+    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list]]:
+        """(role, content, ts, attachments) per message, oldest first."""
         rows = self.conn.execute(
-            "SELECT role, content, ts FROM messages WHERE conversation_id = ? ORDER BY id",
+            "SELECT role, content, ts, attachments FROM messages WHERE conversation_id = ? ORDER BY id",
             (conversation_id,),
         ).fetchall()
-        return [(r["role"], json.loads(r["content"]), r["ts"]) for r in rows]
+        return [(r["role"], json.loads(r["content"]), r["ts"], json.loads(r["attachments"] or "[]")) for r in rows]
 
     def history(self, conversation_id: int) -> list[dict]:
         rows = self.conn.execute(
@@ -179,14 +184,20 @@ class Database:
         ).fetchall()
         return [{"role": r["role"], "content": json.loads(r["content"])} for r in rows]
 
-    def append_turn(self, conversation_id: int, channel: str, messages: list[dict]) -> None:
-        """Store a whole turn atomically, so history never ends on an unanswered tool_use."""
+    def append_turn(self, conversation_id: int, channel: str, messages: list[dict],
+                    attachments: list[dict] | None = None) -> None:
+        """Store a whole turn atomically, so history never ends on an unanswered tool_use.
+
+        `attachments` go with the turn's last message (the final reply).
+        """
         now = utcnow().isoformat()
+        last = len(messages) - 1
         with self.conn:
             self.conn.execute("BEGIN")
             self.conn.executemany(
-                "INSERT INTO messages (conversation_id, channel, role, content, ts) VALUES (?, ?, ?, ?, ?)",
-                [(conversation_id, channel, m["role"], json.dumps(m["content"]), now) for m in messages],
+                "INSERT INTO messages (conversation_id, channel, role, content, ts, attachments) VALUES (?, ?, ?, ?, ?, ?)",
+                [(conversation_id, channel, m["role"], json.dumps(m["content"]), now,
+                  json.dumps(attachments) if attachments and i == last else None) for i, m in enumerate(messages)],
             )
             self.conn.execute(
                 "UPDATE conversations SET last_active_at = ? WHERE id = ?", (now, conversation_id)

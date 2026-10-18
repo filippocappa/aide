@@ -33,12 +33,29 @@ The conversation is shared with Discord: one assistant, one history, one confirm
 ```json
 {
   "reply": "I queued the move to Friday 10:00–11:00.",
-  "pending": [{"id": 42, "summary": "Move 'Dentist' from Tue 20 Oct 15:00–16:00 to Fri 23 Oct 10:00–11:00"}]
+  "pending": [{"id": 42, "summary": "Move 'Dentist' from Tue 20 Oct 15:00–16:00 to Fri 23 Oct 10:00–11:00"}],
+  "attachments": []
 }
 ```
 A reply can take 5–30 s (the model plus tools). Use a request timeout of at least 90 s and show a typing indicator.
 
 `pending` lists the actions waiting for confirmation, written by code, not the model. When it isn't empty, show the summaries with **Confirm** and **Cancel** buttons.
+
+`attachments` (always present, default `[]`) is structured data to draw as cards under the reply, written by code
+from the tools the assistant used in that turn, not parsed from its text:
+
+```json
+"attachments": [
+  {"type": "reminders", "reminders": [ /* Reminder objects, as in Reminders below */ ]},
+  {"type": "events", "events": [ /* calendar event objects, as in /v1/today */ ]}
+]
+```
+- `reminders`: when the assistant listed reminders, or created, changed or completed one, in that turn.
+- `events`: when it listed or searched calendar events.
+- At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
+  skips types it doesn't know.
+- The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
+  On Discord the same items are appended to the reply as a list.
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -47,7 +64,9 @@ A reply can take 5–30 s (the model plus tools). Use a request timeout of at le
 | `POST /v1/new` | `{}` | `{"ok": true}`. Starts a fresh conversation (like `!new`). |
 | `POST /v1/think` | `{}` | `{"ok": true}`. Smarter model for the rest of the conversation (like `!think`). |
 
-`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…"}]}`. The current conversation's visible text, oldest first, so the chat screen can show what was said on Discord too. Tool calls and internal notes are left out.
+`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ]}]}`
+(`attachments` as in `/v1/chat`, `[]` on user messages and plain replies; reminders in them are reloaded as they are now,
+so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said on Discord too. Tool calls and internal notes are left out.
 
 ## Conversations
 
@@ -106,8 +125,8 @@ The app skips section types it doesn't know. `404` if none has been generated ye
   call, for the period the stored digest covers. Only `greeting`, `generated_at` and the `text` section are from the
   stored, scheduled generation. Completed or deleted reminders never appear. (`POST /v1/digest/run` returns the
   same thing, freshly made.)
-- **Reminders:** open ones due by the end of the period, plus overdue ones from the **last 48 hours** only.
-  Each has `"overdue": true` if its `due_at` has passed. Older overdue ones are left to the chat. Reminders with no
+- **Reminders:** open ones due by the end of the period, plus overdue ones from **today** only (since local
+  midnight). Each has `"overdue": true` if its `due_at` has passed. Older overdue ones are left to the chat. Reminders with no
   due time aren't listed.
 - **Mail:** what came into the inbox today, read or unread, newest first, up to 25, with `unread` per item. "Today"
   means since local midnight; for the morning digest, since the previous evening (the evening digest's time,
@@ -136,7 +155,11 @@ The app skips section types it doesn't know. `404` if none has been generated ye
 
 ## Habits
 
-Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null}`.
+Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …]}`.
+
+`history` is every local date the habit was checked in the last 26 weeks (182 days, today included), newest first,
+for a GitHub-style grid. Every endpoint that returns a Habit includes it, `POST /v1/habits/{id}/check` too, and
+so does the `habits` digest section.
 
 | Endpoint | Body | Response |
 |---|---|---|

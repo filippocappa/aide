@@ -6,6 +6,7 @@ import anthropic
 import discord
 
 from ..agent import CONVERSATION, Agent
+from ..digest import to_text
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +31,15 @@ def split_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
     if text:
         chunks.append(text)
     return chunks
+
+
+def with_cards(reply: str, attachments: list[dict]) -> str:
+    """Discord has no cards: the reminders and events the app would show go under the reply as a list."""
+    sections = [{"type": "calendar", "title": "Events", "events": a["events"]} if a["type"] == "events" else
+                {"type": "reminders", "title": "Reminders", "reminders": a["reminders"]}
+                for a in attachments if a["type"] in ("events", "reminders")]
+    cards = to_text(None, sections, None) if sections else ""
+    return f"{reply}\n\n{cards}" if cards else reply
 
 
 class AideBot(discord.Client):
@@ -84,7 +94,8 @@ class AideBot(discord.Client):
 
         async with message.channel.typing():
             try:
-                reply = await self.agent.reply(CHANNEL, text)
+                reply, attachments = await self.agent.respond(CHANNEL, text)
+                reply = with_cards(reply, attachments)
             except anthropic.RateLimitError:
                 reply = "I'm being rate limited right now. Try again in a minute."
             except anthropic.APIConnectionError:
