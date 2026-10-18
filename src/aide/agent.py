@@ -5,6 +5,7 @@ Knows nothing about Discord or iOS; channel adapters call `Agent.reply(channel, 
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,9 @@ from .db import Database
 from .tools import Tool, ToolRegistry
 
 log = logging.getLogger(__name__)
+
+# Discord and the iOS app share one conversation (and one confirmation queue).
+CONVERSATION = "main"
 
 MAX_TOOL_ROUNDS = 12
 PENDING_TTL = timedelta(minutes=30)  # an unconfirmed action expires after this
@@ -40,6 +44,8 @@ remove it with cancel_queued; if the user asks for a change that isn't queued ex
 clearly fits the event (an exam in "Exam", a run in "Run"), use it. Otherwise don't guess: ask which one, \
 listing the names on one line with the default first, and create the event after they answer.
 - If the user gives no end time or length, make the event 1 hour long.
+- Reminders are for things to remember at a time ("remind me to call mum at 5"); calendar events are for \
+time blocks. Reminders go to Apple Reminders on the user's iPhone, which alerts them.
 - To fix or rearrange a schedule, look at the days involved, explain the conflicts and your plan in a few \
 lines, then queue the moves."""
 
@@ -71,6 +77,26 @@ class Agent:
 
     def reset(self, channel: str) -> None:
         self.db.new_conversation(channel)
+
+    def pending_with_ids(self, channel: str) -> list[dict]:
+        return [{"id": p["id"], "summary": p["summary"]} for p in self.db.pending_actions(channel, PENDING_TTL)]
+
+    def visible_history(self, channel: str, limit: int = 50) -> list[dict]:
+        """What a chat screen should show: the text both sides wrote, without tool calls or notes."""
+        conversation_id = self.db.current_conversation(channel, self.idle)
+        out = []
+        for role, content, ts in self.db.history_with_ts(conversation_id):
+            if role == "user":
+                if not isinstance(content, str) or content.startswith("[The user replied"):
+                    continue  # tool results and confirm/cancel notes
+                text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
+            elif isinstance(content, str):
+                text = content
+            else:
+                text = "\n\n".join(b["text"] for b in content if b.get("type") == "text").strip()
+            if text:
+                out.append({"role": role, "text": text, "ts": ts})
+        return out[-limit:]
 
     def pending(self, channel: str) -> list[str]:
         """One line per action waiting for the user's !yes, written by code, not the model."""
@@ -131,7 +157,7 @@ class Agent:
             stamped = f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] {text}"
             if queued := self.db.pending_actions(channel, PENDING_TTL):
                 lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
-                stamped += f"\n[Queued, waiting for the user's !yes:\n{lines}]"
+                stamped += f"{_QUEUE_MARK}\n{lines}]"
             self._channel = channel
             turn: list[dict] = [{"role": "user", "content": stamped}]
             reply = await self._run(channel, model, history, turn)
@@ -220,6 +246,10 @@ class Agent:
             out, err = f"Error: {e}", True
         self.db.audit(name, args, out, err)
         return out, err
+
+
+_STAMP = re.compile(r"^\[[^\]]*\] ")
+_QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
 
 
 def _with_cache_breakpoint(messages: list[dict]) -> list[dict]:

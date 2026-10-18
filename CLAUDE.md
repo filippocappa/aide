@@ -24,7 +24,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `agent.py`: Claude tool-use loop (via OpenRouter, Anthropic SDK), conversation history, the confirmation queue.
 - `db.py`: SQLite (WAL) at `data/aide.db`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
-- `channels/discord_bot.py`: Discord adapter. The HTTP API for the app is another adapter. Neither knows about the other.
+- `channels/discord_bot.py` and `channels/api.py` (FastAPI, the app's API): two adapters over one agent and one shared conversation.
+- `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (the Discord fallback).
 
 ```bash
 uv run pytest                       # tests; keep them green
@@ -64,7 +65,8 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 ## Roadmap
 
-Done: 1 core (Discord bot, agent loop, service), 2 iCloud Calendar.
-Now: **server HTTP API** (Ubuntu) and **iOS app v1** (Mac), both per `docs/API.md`.
+Done: 1 core (Discord bot, agent loop, service), 2 iCloud Calendar, **server HTTP API v1** (all of `docs/API.md`,
+live on the Ubuntu box; reminders store and sync; Discord fallback for reminders not yet on the phone).
+Now: **iOS app v1** (Mac), per `docs/API.md`.
 Next: push notifications (APNs) and silent-push sync, after which Discord becomes optional.
 Later: habits, weekly digest, mail, nightly backups.

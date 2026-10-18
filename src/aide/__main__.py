@@ -1,19 +1,25 @@
 """Entry point: `aide` or `python -m aide`."""
 
+import asyncio
 import logging
 import threading
 from datetime import timedelta
 
 import anthropic
+import uvicorn
 
 from .agent import Agent
+from .channels.api import create_app
 from .channels.discord_bot import AideBot
 from .config import OPENROUTER_BASE_URL, load_settings
 from .db import Database
 from .icloud import ICloudCalendar
+from .reminders import ReminderStore
+from .scheduler import reminder_fallback
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
+from .tools.reminders import reminder_tools
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +42,11 @@ def main() -> None:
     else:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-    tools = [clock_tool(settings.timezone)]
+    db = Database(settings.db_path)
+    reminders = ReminderStore(db.conn)
+
+    tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone)]
+    cal = None
     if settings.icloud_email and settings.icloud_app_password:
         cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
         # Find the calendars in the background so the first request doesn't wait for it.
@@ -45,7 +55,6 @@ def main() -> None:
     else:
         log.warning("ICLOUD_EMAIL / ICLOUD_APP_PASSWORD not set: calendar tools disabled")
 
-    db = Database(settings.db_path)
     agent = Agent(
         client=client,
         db=db,
@@ -58,8 +67,29 @@ def main() -> None:
         server_fallback=not settings.openrouter_api_key,
     )
     bot = AideBot(agent, settings.discord_owner_id)
+
+    async def run() -> None:
+        jobs = [
+            bot.start(settings.discord_token),
+            reminder_fallback(reminders, bot.notify_owner, settings.timezone),
+        ]
+        if settings.api_token:
+            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token)
+            # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
+            config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
+            jobs.append(uvicorn.Server(config).serve())
+            log.info("API on http://127.0.0.1:%d", settings.api_port)
+        else:
+            log.warning("AIDE_API_TOKEN not set: HTTP API for the iOS app disabled")
+        try:
+            await asyncio.gather(*jobs)
+        finally:
+            await bot.close()
+
     try:
-        bot.run(settings.discord_token, log_handler=None)  # use our logging config
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass
     finally:
         db.close()
 

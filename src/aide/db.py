@@ -57,7 +57,9 @@ class Database:
     def __init__(self, path: Path | str):
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path, isolation_level=None)  # explicit transactions only
+        # Explicit transactions only. All access happens on the event loop thread, one call at a time;
+        # check_same_thread=False lets test clients (which run the app on another thread) share it.
+        self.conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -74,6 +76,9 @@ class Database:
         if "target" not in columns:  # databases created before actions could be replaced
             self.conn.execute("ALTER TABLE pending_actions ADD COLUMN target TEXT")
             self.conn.execute("UPDATE pending_actions SET target = json_extract(args, '$.event_id')")
+        # Discord and the app now share one conversation, keyed "main" instead of "discord".
+        for table in ("conversations", "messages", "pending_actions"):
+            self.conn.execute(f"UPDATE {table} SET channel = 'main' WHERE channel = 'discord'")
 
     def close(self) -> None:
         self.conn.close()
@@ -105,6 +110,13 @@ class Database:
 
     def set_conversation_model(self, conversation_id: int, model: str) -> None:
         self.conn.execute("UPDATE conversations SET model = ? WHERE id = ?", (model, conversation_id))
+
+    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str]]:
+        rows = self.conn.execute(
+            "SELECT role, content, ts FROM messages WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        ).fetchall()
+        return [(r["role"], json.loads(r["content"]), r["ts"]) for r in rows]
 
     def history(self, conversation_id: int) -> list[dict]:
         rows = self.conn.execute(

@@ -27,6 +27,8 @@ class Settings:
     icloud_email: str | None
     icloud_app_password: str | None
     default_calendar: str | None
+    api_token: str | None
+    api_port: int
 
 
 def _required(name: str) -> str:
@@ -59,4 +61,6 @@ def load_settings() -> Settings:
         icloud_email=os.environ.get("ICLOUD_EMAIL", "").strip() or None,
         icloud_app_password=os.environ.get("ICLOUD_APP_PASSWORD", "").strip() or None,
         default_calendar=os.environ.get("AIDE_DEFAULT_CALENDAR", "").strip() or None,
+        api_token=os.environ.get("AIDE_API_TOKEN", "").strip() or None,
+        api_port=int(os.environ.get("AIDE_API_PORT", "8787")),
     )

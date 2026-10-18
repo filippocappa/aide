@@ -5,12 +5,12 @@ import logging
 import anthropic
 import discord
 
-from ..agent import Agent
+from ..agent import CONVERSATION, Agent
 
 log = logging.getLogger(__name__)
 
 DISCORD_LIMIT = 2000
-CHANNEL = "discord"
+CHANNEL = CONVERSATION  # shared with the iOS app
 # Plain words count as !yes / !no only while something is waiting for confirmation.
 YES_WORDS = {"yes", "y", "ok", "si", "sì", "confirm"}
 NO_WORDS = {"no", "n", "cancel", "annulla"}
@@ -46,13 +46,17 @@ class AideBot(discord.Client):
             self._announced = True
             await self.notify_owner("Aide is up.")
 
-    async def notify_owner(self, text: str) -> None:
+    async def notify_owner(self, text: str) -> bool:
+        """DM the owner. Returns False if Discord refused or isn't connected, so callers can retry."""
         try:
+            await self.wait_until_ready()
             owner = await self.fetch_user(self.owner_id)
             for chunk in split_message(text):
                 await owner.send(chunk)
+            return True
         except discord.DiscordException:
             log.exception("could not DM owner")
+            return False
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.id != self.owner_id or not isinstance(message.channel, discord.DMChannel):
