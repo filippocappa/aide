@@ -11,6 +11,9 @@ log = logging.getLogger(__name__)
 
 DISCORD_LIMIT = 2000
 CHANNEL = "discord"
+# Plain words count as !yes / !no only while something is waiting for confirmation.
+YES_WORDS = {"yes", "y", "ok", "si", "sì", "confirm"}
+NO_WORDS = {"no", "n", "cancel", "annulla"}
 
 
 def split_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
@@ -61,6 +64,13 @@ class AideBot(discord.Client):
             self.agent.reset(CHANNEL)
             await message.channel.send("Started a new conversation.")
             return
+        word = text.lower().rstrip(".!")
+        if text == "!yes" or (word in YES_WORDS and self.agent.pending(CHANNEL)):
+            await self._send(message.channel, await self.agent.confirm(CHANNEL))
+            return
+        if text == "!no" or (word in NO_WORDS and self.agent.pending(CHANNEL)):
+            await self._send(message.channel, await self.agent.cancel(CHANNEL))
+            return
         if text.startswith("!think"):
             self.agent.think(CHANNEL)
             text = text.removeprefix("!think").strip()
@@ -81,5 +91,11 @@ class AideBot(discord.Client):
             except Exception:
                 log.exception("turn failed")
                 reply = "Something went wrong on my side. It's in the logs."
-        for chunk in split_message(reply):
-            await message.channel.send(chunk)
+        if pending := self.agent.pending(CHANNEL):
+            reply += "\n\n**Waiting for your OK:**\n" + "\n".join(f"• {p}" for p in pending)
+            reply += "\nReply **!yes** to do it, or **!no** to cancel."
+        await self._send(message.channel, reply)
+
+    async def _send(self, channel: discord.abc.Messageable, text: str) -> None:
+        for chunk in split_message(text):
+            await channel.send(chunk)

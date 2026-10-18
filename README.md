@@ -1,7 +1,7 @@
 # Aide
 
 Personal assistant over Discord DMs, backed by Claude. See [SPEC.md](SPEC.md) for the full plan.
-This is milestone 1: the agent loop, SQLite history, the Discord bot with an owner allowlist, and a systemd unit.
+Done so far: milestone 1 (agent loop, SQLite history, Discord bot with an owner allowlist, systemd service) and milestone 2 (iCloud Calendar).
 
 ## Layout
 
@@ -21,7 +21,10 @@ deploy/aide.service      systemd unit
 1. **Discord bot.** In the [Developer Portal](https://discord.com/developers/applications), create an application, add a bot and copy its token. No privileged intents are needed. Invite the bot to any server you're in (OAuth2 → URL Generator → scope `bot`), so Discord lets you DM it.
 2. **Your user ID.** Discord settings → Advanced → Developer Mode, then right-click your name → Copy User ID.
 3. **Env file.** `cp .env.example .env` and fill in your OpenRouter (or Anthropic) key, bot token and owner ID.
-4. **Run.** `uv sync && uv run aide`. The bot DMs you "Aide is up." once it's connected.
+4. **iCloud Calendar (optional).** Create an app-specific password at account.apple.com → Sign-In and Security, and set `ICLOUD_EMAIL` and `ICLOUD_APP_PASSWORD`. Without them the calendar tools are off.
+5. **Run.** `uv sync && uv run aide`. The bot DMs you "Aide is up." once it's connected.
+
+Aide can list, search and create events on your iCloud calendars right away. Moving or deleting an event is queued: the bot shows exactly what will change, and nothing happens until you reply `!yes` (or `yes`). `!no` cancels, and queued actions expire after 30 minutes. Recurring events are listed but can't be changed yet.
 
 In the DM, type anything to talk to it. `!new` starts a fresh conversation. `!think` (alone or before a message) switches the rest of the conversation from Haiku to Sonnet for harder requests. A new conversation also starts after `AIDE_IDLE_HOURS` (default 6) of silence. That keeps each request small and cheap without editing history.
 

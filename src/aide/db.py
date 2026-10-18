@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, id);
 
+-- Tool calls that wait for the user's !yes before running.
+CREATE TABLE IF NOT EXISTS pending_actions (
+    id         INTEGER PRIMARY KEY,
+    channel    TEXT NOT NULL,
+    tool       TEXT NOT NULL,
+    args       TEXT NOT NULL,
+    summary    TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending'  -- pending, done, failed, cancelled, expired
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id     INTEGER PRIMARY KEY,
     ts     TEXT NOT NULL,
@@ -109,6 +120,38 @@ class Database:
             self.conn.execute(
                 "UPDATE conversations SET last_active_at = ? WHERE id = ?", (now, conversation_id)
             )
+
+    # -- pending actions -----------------------------------------------------
+
+    def add_pending(self, channel: str, tool: str, args: dict, summary: str) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO pending_actions (channel, tool, args, summary, created_at) VALUES (?, ?, ?, ?, ?)",
+            (channel, tool, json.dumps(args), summary, utcnow().isoformat()),
+        )
+        return cur.lastrowid
+
+    def pending_actions(self, channel: str, ttl: timedelta) -> list[dict]:
+        cutoff = (utcnow() - ttl).isoformat()
+        self.conn.execute(
+            "UPDATE pending_actions SET status = 'expired' WHERE status = 'pending' AND created_at < ?",
+            (cutoff,),
+        )
+        rows = self.conn.execute(
+            "SELECT id, tool, args, summary FROM pending_actions "
+            "WHERE channel = ? AND status = 'pending' ORDER BY id",
+            (channel,),
+        ).fetchall()
+        return [{"id": r["id"], "tool": r["tool"], "args": json.loads(r["args"]), "summary": r["summary"]} for r in rows]
+
+    def set_pending_status(self, action_id: int, status: str) -> None:
+        self.conn.execute("UPDATE pending_actions SET status = ? WHERE id = ?", (status, action_id))
+
+    def cancel_pending(self, channel: str) -> int:
+        cur = self.conn.execute(
+            "UPDATE pending_actions SET status = 'cancelled' WHERE channel = ? AND status = 'pending'",
+            (channel,),
+        )
+        return cur.rowcount
 
     # -- audit -------------------------------------------------------------
 

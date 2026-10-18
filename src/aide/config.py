@@ -24,6 +24,9 @@ class Settings:
     smart_model: str
     effort: str
     idle_hours: float
+    icloud_email: str | None
+    icloud_app_password: str | None
+    default_calendar: str | None
 
 
 def _required(name: str) -> str:
@@ -53,4 +56,7 @@ def load_settings() -> Settings:
         smart_model=os.environ.get("AIDE_SMART_MODEL") or sonnet,
         effort=os.environ.get("AIDE_EFFORT", "medium"),
         idle_hours=float(os.environ.get("AIDE_IDLE_HOURS", "6")),
+        icloud_email=os.environ.get("ICLOUD_EMAIL", "").strip() or None,
+        icloud_app_password=os.environ.get("ICLOUD_APP_PASSWORD", "").strip() or None,
+        default_calendar=os.environ.get("AIDE_DEFAULT_CALENDAR", "").strip() or None,
     )

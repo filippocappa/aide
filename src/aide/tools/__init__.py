@@ -12,6 +12,10 @@ class Tool:
     description: str
     input_schema: dict
     handler: ToolHandler
+    # confirm=True: the agent queues the call and runs it only after the user's !yes.
+    # describe(**args) says in one line what will happen, and raises if it can't happen.
+    confirm: bool = False
+    describe: ToolHandler | None = None
 
     def definition(self) -> dict:
         return {
@@ -30,8 +34,11 @@ class ToolRegistry:
     def definitions(self) -> list[dict]:
         return [t.definition() for t in self._tools.values()]
 
-    async def call(self, name: str, args: dict[str, Any]) -> str:
+    def get(self, name: str) -> Tool:
         tool = self._tools.get(name)
         if tool is None:
             raise KeyError(f"unknown tool {name!r}")
-        return await tool.handler(**args)
+        return tool
+
+    async def call(self, name: str, args: dict[str, Any]) -> str:
+        return await self.get(name).handler(**args)

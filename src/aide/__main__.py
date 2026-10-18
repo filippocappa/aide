@@ -9,8 +9,12 @@ from .agent import Agent
 from .channels.discord_bot import AideBot
 from .config import OPENROUTER_BASE_URL, load_settings
 from .db import Database
+from .icloud import ICloudCalendar
 from .tools import ToolRegistry
+from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
+
+log = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -30,11 +34,18 @@ def main() -> None:
     else:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
+    tools = [clock_tool(settings.timezone)]
+    if settings.icloud_email and settings.icloud_app_password:
+        cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
+        tools += calendar_tools(cal, settings.timezone, settings.default_calendar)
+    else:
+        log.warning("ICLOUD_EMAIL / ICLOUD_APP_PASSWORD not set: calendar tools disabled")
+
     db = Database(settings.db_path)
     agent = Agent(
         client=client,
         db=db,
-        tools=ToolRegistry([clock_tool(settings.timezone)]),
+        tools=ToolRegistry(tools),
         model=settings.model,
         smart_model=settings.smart_model,
         effort=settings.effort,
