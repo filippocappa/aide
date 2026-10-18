@@ -32,11 +32,11 @@ struct ChatView: View {
                 // One Pebble: big in the middle of a new chat, then it slides up to the top bar.
                 let top = geo.frame(in: .global).minY
                 LivePebble(mood: isEmpty && mood == "calm" ? "awake" : mood,
-                           size: isEmpty ? 160 : 44, touch: touch)
+                           size: isEmpty ? 320 : 44, touch: touch)
                     .foregroundStyle(Theme.accent)
                     .position(x: geo.size.width / 2,
                               y: !isEmpty ? windowTopInset + 22 - top
-                                  : showsDigest ? windowTopInset + 160 - top : geo.size.height * 0.33)
+                                  : showsDigest ? windowTopInset + 240 - top : geo.size.height * 0.33)
                     .animation(.spring(response: 0.7, dampingFraction: 0.65), value: isEmpty)
                     .allowsHitTesting(false)
             }
@@ -119,7 +119,7 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 20) {
-            Color.clear.frame(height: 160) // room for the big Pebble, which is drawn above
+            Color.clear.frame(height: 320) // room for the big Pebble, which is drawn above
             if settings.isConfigured {
                 if digest.hasDigests {
                     DigestView(digest: digest.digest).multilineTextAlignment(.leading)
