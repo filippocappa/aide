@@ -8,6 +8,7 @@ dependencies = [
     "caldav>=3.5.0",
     "discord.py>=2.4",
     "fastapi>=0.143.5",
+    "httpx>=0.28.1",
     "niquests>=3.21.2",
     "python-dotenv>=1.0",
     "uvicorn>=0.54.0",

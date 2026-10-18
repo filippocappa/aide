@@ -69,4 +69,5 @@ Done: 1 core (Discord bot, agent loop, service), 2 iCloud Calendar, **server HTT
 live on the Ubuntu box; reminders store and sync; Discord fallback for reminders not yet on the phone).
 Now: **iOS app v1** (Mac), per `docs/API.md`.
 Next: push notifications (APNs) and silent-push sync, after which Discord becomes optional.
-Later: habits, weekly digest, mail, nightly backups.
+Mail (Gmail: read, search; send and reply after confirmation) is in; it needs the one-time setup in README.md, "Gmail".
+Later: habits, weekly digest, nightly backups.

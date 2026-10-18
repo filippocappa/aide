@@ -13,12 +13,14 @@ from .channels.api import create_app
 from .channels.discord_bot import AideBot
 from .config import OPENROUTER_BASE_URL, load_settings
 from .db import Database
+from .gmail import Gmail
 from .icloud import ICloudCalendar
 from .reminders import ReminderStore
 from .scheduler import reminder_fallback
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
+from .tools.mail import mail_tools
 from .tools.reminders import reminder_tools
 
 log = logging.getLogger(__name__)
@@ -54,6 +56,11 @@ def main() -> None:
         tools += calendar_tools(cal, settings.timezone, settings.default_calendar)
     else:
         log.warning("ICLOUD_EMAIL / ICLOUD_APP_PASSWORD not set: calendar tools disabled")
+    if settings.gmail_client_id and settings.gmail_client_secret and settings.gmail_refresh_token:
+        gmail = Gmail(settings.gmail_client_id, settings.gmail_client_secret, settings.gmail_refresh_token)
+        tools += mail_tools(gmail, settings.timezone)
+    else:
+        log.warning("GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN not set: mail tools disabled")
 
     agent = Agent(
         client=client,

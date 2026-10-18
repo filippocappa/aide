@@ -1,9 +1,25 @@
 """Memory tools. Remembering runs immediately; forgetting waits for the user's !yes."""
 
+import re
+from difflib import SequenceMatcher
+
 from ..db import Database
 from . import Tool
 
 MAX_LENGTH = 500
+SIMILAR = 0.85  # character similarity above which two facts count as the same one, reworded
+
+# Words that don't change what a fact says ("User's name is X" = "Name: X" = "My name is X").
+STOPWORDS = set("""
+a an the is are was were be been am i im me my mine user users their theirs they he she his her hers
+of to in on at for with and or by as that this has have had
+""".split())
+# Extra words that flip a fact rather than add detail to it: never merged silently.
+NEGATIONS = {"not", "no", "never", "dont", "doesnt", "isnt", "arent", "wasnt", "cant", "wont", "anymore", "nor"}
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in re.findall(r"\w+", text.casefold().replace("'", "")) if w not in STOPWORDS]
 
 
 def memory_tools(db: Database) -> list[Tool]:
@@ -19,8 +35,20 @@ def memory_tools(db: Database) -> list[Tool]:
             raise ValueError("nothing to remember")
         if len(text) > MAX_LENGTH:
             raise ValueError(f"keep it under {MAX_LENGTH} characters")
-        if any(m["text"] == text for m in db.memories()):
-            return f"Already remembered: {text}"
+        new = set(_words(text))
+        leaving = db.memories_being_forgotten()  # a correction: the old fact is on its way out
+        for item in db.memories():
+            if item["id"] in leaving:
+                continue
+            old = set(_words(item["text"]))
+            if new and new <= old:  # same fact, or the saved one already says more
+                return f"Already saved, nothing added: [{item['id']}] {item['text']}"
+            if old and old < new and not (new - old) & NEGATIONS:  # adds detail: keep one, the fuller
+                db.set_memory_text(item["id"], text)
+                return f"Already saved; updated it with the new detail: [{item['id']}] {text}"
+            if SequenceMatcher(None, " ".join(_words(item["text"])), " ".join(_words(text))).ratio() >= SIMILAR:
+                return (f"Not saved: a very similar fact is already saved: [{item['id']}] {item['text']}. "
+                        f"If the user is correcting it, queue forget for [{item['id']}] and then remember the new one.")
         item = db.add_memory(text)
         return f"Remembered: [{item['id']}] {item['text']}"
 
@@ -34,7 +62,8 @@ def memory_tools(db: Database) -> list[Tool]:
 
     return [
         Tool("remember", "Save a short, lasting fact about the user (a preference, a name, a routine) so you know "
-             "it in every future chat. One fact per call, written as a plain note. Runs immediately.",
+             "it in every future chat. Check the saved facts first and don't save one that's already there. "
+             "One fact per call, written as a plain note. Runs immediately; a duplicate is not saved twice.",
              {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"],
               "additionalProperties": False}, remember),
         Tool("forget", "Delete a remembered fact, by the id shown in the memory list. Needs the user's confirmation: "

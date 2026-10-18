@@ -342,3 +342,45 @@ async def test_fallback_notifies_once_and_retries_failures(monkeypatch):
     task.cancel()
     assert len(sent) == 2  # first DM failed, retried once, then marked sent
     assert sent[0].startswith("⏰ Pills") and "late" in sent[0]
+
+
+# -- memory duplicates ---------------------------------------------------------
+
+
+async def _remember(db, *texts):
+    from aide.tools.memory import memory_tools
+    remember = next(t for t in memory_tools(db) if t.name == "remember").handler
+    return [await remember(t) for t in texts]
+
+
+async def test_remember_skips_duplicates_and_rewordings():
+    db = Database(":memory:")
+    out = await _remember(db, "Name is Filippo", "My name is Filippo", "User's name is filippo.", "Vegetarian",
+                          "Is vegetarian")
+    assert [o.split(":")[0] for o in out] == ["Remembered", "Already saved, nothing added", "Already saved, nothing added",
+                                              "Remembered", "Already saved, nothing added"]
+    assert [m["text"] for m in db.memories()] == ["Vegetarian", "Name is Filippo"]
+
+
+async def test_remember_merges_extra_detail_but_not_a_negation():
+    db = Database(":memory:")
+    out = await _remember(db, "Dentist is Dr Rossi", "Dentist is Dr Rossi in Milan", "Likes cats", "Likes cats not")
+    assert out[1].startswith("Already saved; updated")
+    assert [m["text"] for m in db.memories()] == ["Likes cats not", "Likes cats", "Dentist is Dr Rossi in Milan"]
+
+
+async def test_near_duplicate_is_refused_until_the_old_one_is_being_forgotten():
+    db = Database(":memory:")
+    await _remember(db, "Dentist is Dr Rossi")
+    (out,) = await _remember(db, "Dentist is Dr Russo")
+    assert out.startswith("Not saved") and "forget" in out
+    db.add_pending("main", "forget", {"memory_id": 1}, "Forget 'Dentist is Dr Rossi'", "1")
+    (out,) = await _remember(db, "Dentist is Dr Russo")
+    assert out.startswith("Remembered")
+
+
+def test_memory_block_tells_the_model_to_check_first(env):
+    _, agent, _ = env()
+    agent.db.add_memory("Vegetarian")
+    block = agent._system()[-1]["text"]
+    assert "Before calling remember, check this list" in block and "[1] Vegetarian" in block
