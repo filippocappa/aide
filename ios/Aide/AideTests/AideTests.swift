@@ -122,3 +122,21 @@ final class RichTextTests: XCTestCase {
                                 .init(start: "All day", end: nil, title: "Trip")])
     }
 }
+
+final class DigestTests: XCTestCase {
+    func testDigestDecodesKnownAndUnknownSections() throws {
+        let json = #"""
+        {"kind":"daily","generated_at":"2026-10-19T08:00:03+02:00","greeting":"Good morning.","sections":[
+          {"type":"calendar","title":"Today","events":[{"id":"e1","title":"Dentist","calendar":"Home","start":"2026-10-19T15:00:00+02:00","end":"2026-10-19T16:00:00+02:00","all_day":false,"location":null,"recurring":false}]},
+          {"type":"mail","title":"Mail","items":[{"id":"m1","from":"Dr. Rossi","subject":"Appointment","preview":"See you","received_at":"2026-10-19T07:00:00Z","unread":true}]},
+          {"type":"habits","title":"Habits","habits":[{"id":3,"name":"Gym","cadence":{"type":"weekly","per_week":3},"streak":4,"done_today":false,"last_done":null}]},
+          {"type":"hologram","title":"Future"}]}
+        """#
+        let d = try JSONDecoder.api.decode(Digest.self, from: Data(json.utf8))
+        XCTAssertEqual(d.sections.count, 4)
+        guard case .calendar(let events) = d.sections[0].content, case .habits(let habits) = d.sections[2].content,
+              case .unknown = d.sections[3].content else { return XCTFail("wrong section kinds") }
+        XCTAssertEqual(events[0].calendar, "Home")
+        XCTAssertEqual(habits[0].cadenceText, "3× a week")
+    }
+}

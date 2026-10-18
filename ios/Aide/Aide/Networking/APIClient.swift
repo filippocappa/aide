@@ -84,6 +84,27 @@ final class APIClient {
         let _: OKResponse = try await send("DELETE", "/v1/memory/\(id)", body: EmptyBody())
     }
 
+    func digest(kind: String) async throws -> Digest {
+        try await send("GET", "/v1/digest", query: [URLQueryItem(name: "kind", value: kind)])
+    }
+
+    func digestSettings() async throws -> DigestSettings {
+        try await send("GET", "/v1/digest/settings")
+    }
+
+    func saveDigestSettings(_ settings: DigestSettings) async throws -> DigestSettings {
+        try await send("PUT", "/v1/digest/settings", body: settings)
+    }
+
+    func habits() async throws -> [Habit] {
+        let list: HabitList = try await send("GET", "/v1/habits")
+        return list.habits
+    }
+
+    func checkHabit(_ id: Int, done: Bool) async throws -> Habit {
+        try await send("POST", "/v1/habits/\(id)/check", body: HabitCheck(done: done))
+    }
+
     func today(date: Date? = nil) async throws -> TodayResponse {
         let query = date.map { [URLQueryItem(name: "date", value: Wire.dayString($0))] } ?? []
         return try await send("GET", "/v1/today", query: query)

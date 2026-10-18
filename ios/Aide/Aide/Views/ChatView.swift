@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var digest: DigestViewModel
     @State private var draft = ""
     @State private var showChats = false
     @State private var justReplied = false
@@ -18,6 +19,7 @@ struct ChatView: View {
     }
 
     private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending }
+    private var showsDigest: Bool { isEmpty && settings.isConfigured && digest.digest != nil }
 
     /// Top safe-area inset of the window, so the small Pebble can sit in the navigation bar.
     private var windowTopInset: CGFloat {
@@ -33,7 +35,8 @@ struct ChatView: View {
                            size: isEmpty ? 160 : 44, touch: touch)
                     .foregroundStyle(Theme.accent)
                     .position(x: geo.size.width / 2,
-                              y: isEmpty ? geo.size.height * 0.33 : windowTopInset + 22 - top)
+                              y: !isEmpty ? windowTopInset + 22 - top
+                                  : showsDigest ? windowTopInset + 160 - top : geo.size.height * 0.33)
                     .animation(.spring(response: 0.7, dampingFraction: 0.65), value: isEmpty)
                     .allowsHitTesting(false)
             }
@@ -96,7 +99,7 @@ struct ChatView: View {
                 .animation(.spring(response: 0.42, dampingFraction: 0.72), value: chat.messages)
             }
             .scrollDismissesKeyboard(.immediately)
-            .defaultScrollAnchor(isEmpty ? .center : .bottom)
+            .defaultScrollAnchor(showsDigest ? .top : isEmpty ? .center : .bottom)
             .onTapGesture { composerFocused = false }
             .onChange(of: chat.messages) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
@@ -118,11 +121,15 @@ struct ChatView: View {
         VStack(spacing: 20) {
             Color.clear.frame(height: 160) // room for the big Pebble, which is drawn above
             if settings.isConfigured {
-                Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
-                VStack(spacing: 8) {
-                    suggestion("What's on my calendar today?", send: true)
-                    suggestion("Remind me to ", send: false)
-                    suggestion("Remember that ", send: false)
+                if let d = digest.digest {
+                    DigestView(digest: d).multilineTextAlignment(.leading)
+                } else {
+                    Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
+                    VStack(spacing: 8) {
+                        suggestion("What's on my calendar today?", send: true)
+                        suggestion("Remind me to ", send: false)
+                        suggestion("Remember that ", send: false)
+                    }
                 }
             } else {
                 Text("Add your server token in Settings to start.").foregroundStyle(.secondary)
