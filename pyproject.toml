@@ -7,6 +7,7 @@ dependencies = [
     "anthropic>=1.0",
     "caldav>=3.5.0",
     "discord.py>=2.4",
+    "niquests>=3.21.2",
     "python-dotenv>=1.0",
 ]
 

@@ -2,11 +2,13 @@
 
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Protocol
 
 import caldav
+import niquests
 import icalendar
 
 log = logging.getLogger(__name__)
@@ -67,6 +69,9 @@ def _event_from_component(comp, calendar: str) -> CalEvent:
 class ICloudCalendar:
     def __init__(self, email: str, app_password: str):
         self.client = caldav.DAVClient(url=ICLOUD_URL, username=email, password=app_password, features="icloud")
+        # niquests tries HTTP/3 (QUIC over UDP) with iCloud, and receiving fails on this host with
+        # "OSError: [Errno 90] Message too long". Plain HTTPS over TCP works everywhere.
+        self.client.session = niquests.Session(multiplexed=self.client.session.multiplexed, disable_http3=True)
         self._calendars: dict[str, caldav.Calendar] | None = None
 
     def _cals(self) -> dict[str, caldav.Calendar]:
@@ -84,11 +89,14 @@ class ICloudCalendar:
         return list(self._cals())
 
     def events(self, start: datetime, end: datetime) -> list[CalEvent]:
-        out = []
-        for name, cal in self._cals().items():
-            for obj in cal.search(event=True, start=start, end=end, expand=True):
-                out.append(_event_from_component(obj.icalendar_component, name))
-        return out
+        def one(name: str, cal: caldav.Calendar) -> list[CalEvent]:
+            found = cal.search(event=True, start=start, end=end, expand=True)
+            return [_event_from_component(obj.icalendar_component, name) for obj in found]
+
+        # One request per calendar; in parallel, since iCloud users often have a dozen.
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = pool.map(lambda item: one(*item), self._cals().items())
+            return [ev for evs in results for ev in evs]
 
     def _find(self, uid: str) -> tuple[str, caldav.Event] | None:
         for name, cal in self._cals().items():
