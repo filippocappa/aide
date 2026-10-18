@@ -49,7 +49,13 @@ final class ChatViewModel: ObservableObject {
     }
 
     func loadConversations() async {
-        do { conversations = try await api.conversations() } catch { loadError = error.localizedDescription }
+        do {
+            conversations = try await api.conversations()
+        } catch APIError.server(let status, _) where status == 404 {
+            conversations = [] // server without conversations yet
+        } catch {
+            conversations = []
+        }
     }
 
     func delete(_ conversation: Conversation) async {
@@ -58,7 +64,7 @@ final class ChatViewModel: ObservableObject {
             if conversation.id == conversationID { startNewChat() }
             await loadConversations()
         } catch {
-            loadError = error.localizedDescription
+            messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
         }
     }
 
