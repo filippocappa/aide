@@ -105,16 +105,27 @@ final class ReminderSyncService: ObservableObject {
     }
 
     /// Ticks a reminder off on the phone, then syncs so the server hears about it.
-    func setCompleted(_ reminder: Reminder, _ done: Bool) async {
-        guard hasAccess, let appleID = reminder.appleId, let ek = findReminder(appleID) else { return }
+    /// One that hasn't reached the phone yet gets there with a sync first. Returns whether it worked.
+    @discardableResult
+    func setCompleted(_ reminder: Reminder, _ done: Bool) async -> Bool {
+        guard hasAccess else { return false }
+        var found = localReminder(for: reminder)
+        if found == nil { await sync(); found = localReminder(for: reminder) }
+        guard let ek = found else { return false }
         ek.isCompleted = done
         do {
             try store.save(ek, commit: true)
         } catch {
             lastError = error.localizedDescription
-            return
+            return false
         }
         await sync()
+        return true
+    }
+
+    private func localReminder(for reminder: Reminder) -> EKReminder? {
+        let appleID = reminder.appleId ?? state.entries.first { $0.value.serverID == reminder.id }?.key
+        return appleID.flatMap(findReminder)
     }
 
     private func syncPass() async throws {

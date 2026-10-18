@@ -30,36 +30,25 @@ struct ChatView: View {
     private var replying: Bool { (chat.isSending || chat.isActing) && !voice.isActive }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // One Pebble, always centred. In a voice chat it grows and the chat gives way to the voice panel.
-            // It's laid out once at full size and only scaled, so growing can't shift it sideways.
-            ZStack(alignment: .top) {
-                LivePebble(mood: mood, size: Self.voicePebble, energy: voice.isListening ? voice.level : 0,
-                           bounceTrigger: tapCount + chat.messages.count)
-                    .foregroundStyle(Theme.accent)
-                    // a little bigger while it answers
-                    .scaleEffect((voice.isActive ? 1 : Self.headerPebble / Self.voicePebble) * (replying ? 1.3 : 1), anchor: .top)
-                    // In the header it reaches up beside the Dynamic Island, level with the buttons.
-                    .offset(y: voice.isActive ? 40 : -10)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: voice.isActive ? 330 : Self.headerPebble, alignment: .top)
-                if !voice.isActive { buttons.transition(.opacity) }
-            }
-            // Stacked rather than one after the other, so the chat and the voice panel cross-fade
-            // in the same space instead of squeezing each other (and the End button) mid-animation.
-            ZStack {
+        ZStack(alignment: .top) {
+            // The chat fills the screen and scrolls under Pebble. In a voice chat the voice panel takes its
+            // place: the old one fades out quickly, then the new one fades in, so the End button and the
+            // message box are never half-faded on top of each other.
+            Group {
                 if voice.isActive {
-                    VoicePanel().transition(.opacity)
+                    VoicePanel()
+                        .padding(.top, Self.voiceHeader)
+                        .transition(Self.swap)
                 } else {
                     VStack(spacing: 0) {
                         transcript
                         if !chat.pending.isEmpty { PendingCard() }
                         composer
                     }
-                    .transition(.opacity)
+                    .transition(Self.swap)
                 }
             }
-            .frame(maxHeight: .infinity)
+            header
         }
         .animation(.spring(response: 0.6, dampingFraction: 0.78), value: voice.isActive)
         .animation(.spring(response: 0.5, dampingFraction: 0.6), value: replying)
@@ -69,6 +58,34 @@ struct ChatView: View {
         .sheet(isPresented: $showDigest) { DigestSheet() }
         .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
         .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
+        .onChange(of: voice.isActive) { _, active in if active { composerFocused = false } } // no keyboard in voice
+    }
+
+    private static let voiceHeader: CGFloat = 330
+    private static let swap = AnyTransition.asymmetric(
+        insertion: .opacity.animation(.easeOut(duration: 0.25).delay(0.15)),
+        removal: .opacity.animation(.easeIn(duration: 0.15)))
+
+    /// One Pebble, always centred, over a soft blur the messages slide under. In a voice chat it grows
+    /// and the blur goes. It's laid out once at full size and only scaled, so growing can't shift it sideways.
+    private var header: some View {
+        ZStack(alignment: .top) {
+            ProgressiveBlur()
+                .frame(height: Self.headerPebble + 24)
+                .ignoresSafeArea(edges: .top)
+                .opacity(voice.isActive ? 0 : 1)
+                .allowsHitTesting(false)
+            LivePebble(mood: mood, size: Self.voicePebble, energy: voice.isListening ? voice.level : 0,
+                       bounceTrigger: tapCount + chat.messages.count)
+                .foregroundStyle(Theme.accent)
+                // a little bigger while it answers
+                .scaleEffect((voice.isActive ? 1 : Self.headerPebble / Self.voicePebble) * (replying ? 1.3 : 1), anchor: .top)
+                // In the header it reaches up beside the Dynamic Island, level with the buttons.
+                .offset(y: voice.isActive ? 40 : -10)
+                .frame(maxWidth: .infinity)
+                .frame(height: voice.isActive ? Self.voiceHeader : Self.headerPebble, alignment: .top)
+            if !voice.isActive { buttons.transition(.opacity) }
+        }
     }
 
     /// Chat controls on either side of Pebble.
@@ -76,7 +93,10 @@ struct ChatView: View {
         HStack(spacing: 8) {
             headerButton("list.bullet", label: "Chats") { showChats = true }
                 .disabled(!settings.isConfigured)
-            headerButton("sun.horizon", label: "Digest") { showDigest = true }
+            headerButton("sun.horizon", label: "Digest") {
+                digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
+                showDigest = true
+            }
                 .disabled(!settings.isConfigured)
             Spacer()
             headerButton("square.and.pencil", label: "New chat") {
@@ -130,6 +150,7 @@ struct ChatView: View {
                 .animation(.spring(response: 0.42, dampingFraction: 0.72), value: chat.messages)
             }
             .scrollDismissesKeyboard(.immediately)
+            .contentMargins(.top, Self.headerPebble, for: .scrollContent) // starts below Pebble, scrolls under it
             .defaultScrollAnchor(isEmpty ? .center : .bottom)
             .onTapGesture { composerFocused = false }
             .onChange(of: chat.messages) { _, _ in scrollToBottom(proxy) }
@@ -301,5 +322,20 @@ private struct PendingCard: View {
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.top, 6)
+    }
+}
+
+/// A blur that's strongest at the top and fades out downwards, so messages soften as they slide under Pebble.
+private struct ProgressiveBlur: View {
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.4),
+                                             .init(color: .clear, location: 1)],
+                                     startPoint: .top, endPoint: .bottom))
+            LinearGradient(colors: [Theme.background.opacity(0.9), Theme.background.opacity(0)],
+                           startPoint: .top, endPoint: .bottom)
+        }
     }
 }

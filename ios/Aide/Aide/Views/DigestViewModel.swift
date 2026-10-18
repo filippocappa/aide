@@ -15,6 +15,11 @@ final class DigestViewModel: ObservableObject {
     @Published private(set) var hasDigests = false
     /// Habits ticked here, newer than the digest's snapshot.
     @Published private(set) var habitOverrides: [Int: Habit] = [:]
+    /// Reminders ticked here, by server id, until the next load shows the synced state.
+    @Published private(set) var reminderOverrides: [String: Bool] = [:]
+
+    /// Set by AppEnvironment: ticks a reminder in Apple Reminders and syncs. Returns false if it couldn't.
+    var completeReminder: ((Reminder, Bool) async -> Bool)?
 
     private let api: APIClient
     init(api: APIClient) { self.api = api }
@@ -26,9 +31,15 @@ final class DigestViewModel: ObservableObject {
             digest = try await api.digest(kind: kind.rawValue)
             hasDigests = true
             habitOverrides = [:]
+            reminderOverrides = [:]
         } catch {
             digest = nil // 404 until the first digest exists; the empty chat falls back to suggestions
         }
+    }
+
+    func setCompleted(_ reminder: Reminder, _ done: Bool) async {
+        reminderOverrides[reminder.id] = done // tick at once; undone below if it didn't work
+        if await completeReminder?(reminder, done) != true { reminderOverrides[reminder.id] = nil }
     }
 
     func toggle(_ habit: Habit) async {
