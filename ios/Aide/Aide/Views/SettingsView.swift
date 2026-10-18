@@ -14,6 +14,9 @@ struct SettingsView: View {
             Form {
                 serverSection
                 remindersSection
+                Section {
+                    NavigationLink("What Aide remembers") { MemoryView() }
+                }
                 Section("About") {
                     LabeledContent("App version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")
                 }

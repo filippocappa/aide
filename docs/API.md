@@ -49,6 +49,31 @@ A reply can take 5–30 s (the model plus tools). Use a request timeout of at le
 
 `GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…"}]}`. The current conversation's visible text, oldest first, so the chat screen can show what was said on Discord too. Tool calls and internal notes are left out.
 
+## Conversations (contract change, server side pending)
+
+The app keeps many chats; Discord stays on the one shared conversation. Every chat endpoint takes an optional `conversation_id`. **Omitted means the shared conversation, exactly as before**, so old clients keep working. Reminders, the confirmation queue and `POST /v1/confirm` / `/v1/cancel` stay global.
+
+| Endpoint | Body / query | Response |
+|---|---|---|
+| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the shared (Discord) conversation, titled "Discord" or similar. |
+| `POST /v1/conversations` | `{}` | The new conversation (same shape as a list row, `title: null`). |
+| `DELETE /v1/conversations/{id}` | | `{"ok": true}`. The shared conversation can't be deleted (400). |
+| `POST /v1/chat` | `{"text": "…", "conversation_id": "c_91f…"}` | Same as before, plus `"conversation_id"`. The server sets `title` from the first exchange. |
+| `GET /v1/history` | `?limit=50&conversation_id=c_91f…` | As before, for that conversation. |
+| `POST /v1/think` | `{"conversation_id": "c_91f…"}` (optional) | `{"ok": true}`. Smarter model for that conversation. |
+
+The app creates a conversation with `POST /v1/conversations` before the first message of each new chat. If that returns 404 or 405 (older server), it falls back to the shared conversation.
+
+## Memory (contract change, server side pending)
+
+Short facts Aide keeps between chats (preferences, names, routines). The server puts all items into the model's context at the start of every conversation and gives the model a `remember` tool to add one (adding is harmless, so it isn't queued; the model deleting one is, like other destructive actions).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/memory` | | `{"items": [{"id": 7, "text": "Vegetarian", "created_at": "2026-10-18T11:20:00+02:00"}]}` newest first |
+| `POST /v1/memory` | `{"text": "Vegetarian"}` | The new item |
+| `DELETE /v1/memory/{id}` | | `{"ok": true}` |
+
 ## Today
 
 `GET /v1/today` (optional `?date=YYYY-MM-DD`, default today) →

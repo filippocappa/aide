@@ -36,8 +36,8 @@ final class APIClient {
     }
 
     /// A reply can take 5–30 s, so the timeout is generous.
-    func chat(_ text: String) async throws -> ChatReply {
-        try await send("POST", "/v1/chat", body: ChatRequest(text: text), timeout: 120)
+    func chat(_ text: String, conversationID: String? = nil) async throws -> ChatReply {
+        try await send("POST", "/v1/chat", body: ChatRequest(text: text, conversationId: conversationID), timeout: 120)
     }
 
     func confirm() async throws -> ActionResult {
@@ -48,16 +48,40 @@ final class APIClient {
         try await send("POST", "/v1/cancel", body: EmptyBody())
     }
 
-    func newConversation() async throws {
-        let _: OKResponse = try await send("POST", "/v1/new", body: EmptyBody())
+    func think(conversationID: String? = nil) async throws {
+        let _: OKResponse = try await send("POST", "/v1/think", body: ConversationBody(conversationId: conversationID))
     }
 
-    func think() async throws {
-        let _: OKResponse = try await send("POST", "/v1/think", body: EmptyBody())
+    func history(limit: Int = 50, conversationID: String? = nil) async throws -> HistoryResponse {
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let conversationID { query.append(URLQueryItem(name: "conversation_id", value: conversationID)) }
+        return try await send("GET", "/v1/history", query: query)
     }
 
-    func history(limit: Int = 50) async throws -> HistoryResponse {
-        try await send("GET", "/v1/history", query: [URLQueryItem(name: "limit", value: String(limit))])
+    func conversations() async throws -> [Conversation] {
+        let list: ConversationList = try await send("GET", "/v1/conversations")
+        return list.conversations
+    }
+
+    func createConversation() async throws -> Conversation {
+        try await send("POST", "/v1/conversations", body: EmptyBody())
+    }
+
+    func deleteConversation(_ id: String) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/conversations/\(id)", body: EmptyBody())
+    }
+
+    func memory() async throws -> [MemoryItem] {
+        let list: MemoryList = try await send("GET", "/v1/memory")
+        return list.items
+    }
+
+    func addMemory(_ text: String) async throws -> MemoryItem {
+        try await send("POST", "/v1/memory", body: MemoryRequest(text: text))
+    }
+
+    func deleteMemory(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/memory/\(id)", body: EmptyBody())
     }
 
     func today(date: Date? = nil) async throws -> TodayResponse {

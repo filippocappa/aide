@@ -10,8 +10,15 @@ final class ChatViewModel: ObservableObject {
         var isError = false
     }
 
+    private static let conversationKey = "conversationID"
+
     @Published private(set) var messages: [Message] = []
     @Published private(set) var pending: [PendingAction] = []
+    @Published private(set) var conversations: [Conversation] = []
+    /// nil is a blank new chat: the server conversation is created when the first message is sent.
+    @Published private(set) var conversationID: String? {
+        didSet { UserDefaults.standard.set(conversationID, forKey: Self.conversationKey) }
+    }
     @Published private(set) var isSending = false
     @Published private(set) var isActing = false
     @Published private(set) var loadError: String?
@@ -21,14 +28,45 @@ final class ChatViewModel: ObservableObject {
 
     private let api: APIClient
 
-    init(api: APIClient) { self.api = api }
+    init(api: APIClient) {
+        self.api = api
+        conversationID = UserDefaults.standard.string(forKey: Self.conversationKey)
+    }
 
-    /// The shared conversation, so Discord messages show up here too.
-    func loadHistory() async {
-        guard !isSending, !isActing else { return }
+    // MARK: Conversations
+
+    func startNewChat() {
+        conversationID = nil
+        messages = []
+        pending = []
+    }
+
+    func open(_ conversation: Conversation) async {
+        conversationID = conversation.id
+        messages = []
+        pending = []
+        await loadHistory()
+    }
+
+    func loadConversations() async {
+        do { conversations = try await api.conversations() } catch { loadError = error.localizedDescription }
+    }
+
+    func delete(_ conversation: Conversation) async {
         do {
-            let history = try await api.history(limit: 200)
-            guard !isSending, !isActing else { return }
+            try await api.deleteConversation(conversation.id)
+            if conversation.id == conversationID { startNewChat() }
+            await loadConversations()
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    func loadHistory() async {
+        guard !isSending, !isActing, let id = conversationID else { return }
+        do {
+            let history = try await api.history(limit: 200, conversationID: id)
+            guard !isSending, !isActing, id == conversationID else { return }
             messages = history.messages.map {
                 Message(role: $0.role == "user" ? .user : .assistant, text: $0.text)
             }
@@ -38,20 +76,33 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    // MARK: Messages
+
     func send(_ raw: String) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isSending else { return }
         messages.append(Message(role: .user, text: text))
         isSending = true
         do {
-            let reply = try await api.chat(text)
+            if conversationID == nil { conversationID = try await newConversationID() }
+            let reply = try await api.chat(text, conversationID: conversationID)
             messages.append(Message(role: .assistant, text: reply.reply))
             pending = reply.pending
+            if let id = reply.conversationId { conversationID = id }
             isSending = false
             await onServerChange?()
         } catch {
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
             isSending = false
+        }
+    }
+
+    /// A server without conversations yet answers 404; chat then falls back to the one shared conversation.
+    private func newConversationID() async throws -> String? {
+        do {
+            return try await api.createConversation().id
+        } catch APIError.server(let status, _) where status == 404 || status == 405 {
+            return nil
         }
     }
 
@@ -73,20 +124,10 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func newConversation() async {
-        do {
-            try await api.newConversation()
-            messages = []
-            pending = []
-        } catch {
-            messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
-        }
-    }
-
     func think() async {
         do {
-            try await api.think()
-            messages.append(Message(role: .assistant, text: "Using the smarter model for the rest of this conversation."))
+            try await api.think(conversationID: conversationID)
+            messages.append(Message(role: .assistant, text: "Using the smarter model for the rest of this chat."))
         } catch {
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
         }

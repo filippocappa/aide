@@ -13,6 +13,7 @@ struct AideApp: App {
                 .environmentObject(env.sync)
                 .environmentObject(env.chat)
                 .tint(Theme.accent)
+                .fontDesign(.rounded)
                 .task { await env.refreshAll() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { Task { await env.refreshAll() } }
