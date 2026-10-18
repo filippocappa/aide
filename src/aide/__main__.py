@@ -50,6 +50,7 @@ def main() -> None:
         smart_model=settings.smart_model,
         effort=settings.effort,
         idle=timedelta(hours=settings.idle_hours),
+        tz=settings.timezone,
         server_fallback=not settings.openrouter_api_key,
     )
     bot = AideBot(agent, settings.discord_owner_id)

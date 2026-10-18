@@ -1,3 +1,4 @@
+import re
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -67,10 +68,9 @@ async def test_plain_reply_is_stored(db):
     agent, _ = make_agent(db, [("end_turn", [text("hi there")])])
     assert await agent.reply("discord", "hello") == "hi there"
     conv = db.current_conversation("discord", timedelta(hours=1))
-    assert db.history(conv) == [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": [{"type": "text", "text": "hi there"}]},
-    ]
+    user, assistant = db.history(conv)
+    assert re.fullmatch(r"\[\w{3} \d{2} \w{3} \d{4} \d{2}:\d{2}\] hello", user["content"])
+    assert assistant == {"role": "assistant", "content": [{"type": "text", "text": "hi there"}]}
 
 
 async def test_tool_loop_runs_tools_and_returns_results_together(db):
@@ -138,7 +138,8 @@ async def test_cache_breakpoint_does_not_leak_into_history(db):
     agent, _ = make_agent(db, [("end_turn", [text("x")])])
     await agent.reply("discord", "a")
     conv = db.current_conversation("discord", timedelta(hours=1))
-    assert db.history(conv)[0] == {"role": "user", "content": "a"}
+    first = db.history(conv)[0]
+    assert isinstance(first["content"], str) and first["content"].endswith("] a")
 
 
 async def test_think_switches_model_until_new_conversation(db):
@@ -150,3 +151,13 @@ async def test_think_switches_model_until_new_conversation(db):
     agent.reset("discord")
     await agent.reply("discord", "d")
     assert [r["model"] for r in client.requests] == ["fast-model", "smart-model", "smart-model", "fast-model"]
+
+
+async def test_message_is_stamped_in_local_time(db):
+    from zoneinfo import ZoneInfo
+    client = FakeClient([("end_turn", [text("x")])])
+    agent = Agent(client, db, TOOLS, model="m", tz=ZoneInfo("Pacific/Kiritimati"))  # UTC+14
+    await agent.reply("discord", "hi")
+    stamp = client.requests[0]["messages"][-1]["content"][0]["text"]
+    from datetime import datetime
+    assert stamp.startswith(f"[{datetime.now(ZoneInfo('Pacific/Kiritimati')):%a %d %b %Y %H:}")
