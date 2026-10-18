@@ -4,3 +4,9 @@ __pycache__/
 .env
 data/
 .pytest_cache/
+
+# iOS
+ios/**/xcuserdata/
+ios/**/DerivedData/
+ios/build/
+.DS_Store
