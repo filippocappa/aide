@@ -1,0 +1,19 @@
+# User-level service: runs from the checkout, reads .env there, no root needed.
+# Install: see README.md, "Running as a service".
+[Unit]
+Description=Aide personal assistant
+# Give up restarting only after 10 failures in 10 minutes.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Developer/aide
+ExecStart=%h/Developer/aide/.venv/bin/aide
+Restart=always
+RestartSec=5
+# Wait for the network on boot; Restart= covers the rare case it's still not up.
+ExecStartPre=/bin/sh -c 'for i in $(seq 30); do getent hosts discord.com >/dev/null && exit 0; sleep 2; done; exit 0'
+
+[Install]
+WantedBy=default.target

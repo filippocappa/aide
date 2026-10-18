@@ -16,6 +16,10 @@ from .tools.clock import clock_tool
 def main() -> None:
     # No timestamps: journald adds its own.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx2").setLevel(logging.WARNING)  # one line per API call is noise
+    logging.getLogger("discord.client").addFilter(  # Aide doesn't use voice
+        lambda record: "voice will NOT be supported" not in record.getMessage()
+    )
     settings = load_settings()
 
     if settings.openrouter_api_key:

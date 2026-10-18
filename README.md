@@ -33,20 +33,25 @@ uv run pytest
 
 ## Running as a service
 
+Aide runs as a systemd **user** service straight from this checkout, reading `.env` here. It starts at boot and restarts on crashes.
+
 ```bash
-sudo useradd --system --home /opt/aide --shell /usr/sbin/nologin aide
-sudo mkdir -p /opt/aide /etc/aide
-sudo rsync -a --exclude .venv --exclude data --exclude .env ./ /opt/aide/
-sudo chown -R aide:aide /opt/aide
-sudo -u aide env UV_PYTHON_INSTALL_DIR=/opt/aide/.python uv sync --project /opt/aide --no-dev
-sudo install -m 600 -o aide -g aide .env /etc/aide/aide.env
-sudo cp deploy/aide.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now aide
-journalctl -u aide -f
+mkdir -p ~/.config/systemd/user
+ln -sf "$PWD/deploy/aide-user.service" ~/.config/systemd/user/aide.service
+systemctl --user daemon-reload
+systemctl --user enable --now aide
+sudo loginctl enable-linger "$USER"   # keep running while logged out, and start at boot
 ```
 
-The database lives at `/var/lib/aide/aide.db` (systemd creates the directory). `AIDE_DB_PATH` in the env file is overridden by the unit.
+Day to day:
+
+```bash
+systemctl --user status aide          # is it running?
+systemctl --user restart aide         # after a git pull or editing .env
+journalctl --user -u aide -f          # live logs
+```
+
+The database is `data/aide.db` in this folder. `deploy/aide.service` is a hardened system-wide alternative (dedicated `aide` user, `/opt/aide`) if you ever want that instead.
 
 ## Notes
 
