@@ -34,6 +34,10 @@ class ConversationIn(BaseModel):
     conversation_id: str | None = None
 
 
+class NewConversationIn(BaseModel):
+    digest: str | None = None  # start the chat with this digest's greeting
+
+
 class MemoryIn(BaseModel):
     text: str
 
@@ -162,8 +166,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"conversations": [conversation_json(c) for c in agent.conversations(CONVERSATION)]}
 
     @app.post("/v1/conversations", dependencies=[Depends(auth)])
-    async def new_conversation():
-        return conversation_json(agent.new_conversation())
+    async def new_conversation(body: NewConversationIn | None = None):
+        opening = await digest.opening(check_kind(body.digest)) if body and body.digest else None
+        return conversation_json(agent.new_conversation(opening))
 
     @app.delete("/v1/conversations/{conversation_id}", dependencies=[Depends(auth)])
     async def delete_conversation(conversation_id: str):
@@ -215,7 +220,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/digest", dependencies=[Depends(auth)])
     async def latest_digest(kind: str = "daily"):
-        found = digest.latest(check_kind(kind))
+        found = await digest.view(check_kind(kind))
         if found is None:
             raise HTTPException(404, f"no {kind} digest yet")
         return found

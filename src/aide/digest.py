@@ -1,8 +1,10 @@
 """Digests: a morning ("daily"), evening, weekly or monthly briefing. Contract in docs/API.md, "Digest".
 
-Every section is data from code (calendar, unread mail, reminders, habits). The model writes only
-the greeting and the closing text ("Looking ahead", or the evening "Wrap-up"), and the digest still goes out without them if it fails.
-A source that's down or not set up just leaves its section out.
+Every section is data from code (calendar, mail, reminders, habits), and GET /v1/digest builds them again
+on each read, so a done reminder never lingers. The model writes only the greeting (a short spoken note,
+also the first message of a chat opened with the digest) and the closing text ("Looking ahead", or the
+evening "Wrap-up"); those are stored when the digest is made. Without the model it still goes out, with a
+plain greeting. A source that's down or not set up just leaves its section out.
 """
 
 import asyncio
@@ -37,7 +39,8 @@ DEFAULT_SETTINGS = {
 }
 EVENING = 17  # a digest made after this hour is about tomorrow onwards
 LOOKAHEAD = {"daily": 3, "evening": 3, "weekly": 7, "monthly": 14}  # extra days the model sees for "Looking ahead"
-MAIL_ITEMS = 10
+MAIL_ITEMS = 25
+OVERDUE = timedelta(hours=48)  # older overdue reminders are left out (mostly one-off alerts, long past)
 KEEP = 60  # digests kept per kind
 TICK = 30  # seconds
 CATCH_UP = timedelta(hours=6)  # a slot missed (machine off) by more than this is skipped
@@ -58,11 +61,15 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 PROMPT = """You write two short parts of a briefing for one person: the greeting and {title!r}. \
-The app already shows their calendar, unread mail, reminders and habits as cards, so don't repeat the lists.
+The greeting is the first message of a chat with them, so they can answer it straight away; the app shows \
+the calendar, mail, reminders and habits as cards behind it, so don't repeat the lists.
 
 Reply in exactly this form, nothing before or after:
-<greeting: one or two plain, warm sentences on what matters most, starting with Good morning, \
-Good afternoon or Good evening to fit the local time>
+<greeting: two or three short sentences, the way you'd say it out loud. No lists, no markdown, no headings. \
+Say what's coming (the few things that matter, not every event), what they have to do (reminders due, \
+habits still open), and which email, if any, looks like it wants an answer. Times like 15:00. \
+For example: "Tomorrow is light: the dentist at 15:00 and gym at 19:00. Still to do: pay the electricity bill \
+and call Marco. 6 emails today; the one from Giulia about Saturday looks like it wants an answer.">
 ---
 <{closing}>
 
@@ -210,13 +217,45 @@ class DigestService:
         generated = utcnow()
         now = generated.astimezone(self.tz)
         p = period(kind, now)
+        sections, later, notes = await self._sections(kind, p, now)
+        greeting, ahead = await self._write(kind, now, p, sections, later, notes)
+        texts = [{"type": "text", "title": CLOSING.get(kind, LOOKING_AHEAD)[0], "text": ahead}] if ahead else []
+        body = {"kind": kind, "generated_at": now.replace(microsecond=0).isoformat(),
+                "greeting": greeting, "sections": sections + texts}
+        self._store(kind, generated, body)
+        return body
+
+    async def view(self, kind: str) -> dict | None:
+        """The latest digest: its stored greeting and text, with the data sections built again now."""
+        stored = self.latest(kind)
+        if stored is None:
+            return None
+        p = period(kind, datetime.fromisoformat(stored["generated_at"]).astimezone(self.tz))
+        sections, _, _ = await self._sections(kind, p, datetime.now(self.tz))
+        return {**stored, "sections": sections + [s for s in stored["sections"] if s["type"] == "text"]}
+
+    async def opening(self, kind: str) -> str:
+        """The greeting for a new chat: the stored one if it still covers the same days, else a fresh digest."""
+        stored = self.latest(kind)
+        now = datetime.now(self.tz)
+        if stored and period(kind, datetime.fromisoformat(stored["generated_at"]).astimezone(self.tz)) == period(kind, now):
+            return stored["greeting"]
+        return (await self.generate(kind))["greeting"]
+
+    def mail_since(self, kind: str, p: Period, now: datetime) -> datetime:
+        """Mail "from today": since local midnight; for the morning digest, since the evening before."""
+        midnight = datetime.combine(now.date(), time.min, self.tz)
+        if kind != "daily":
+            return midnight
+        evening = datetime.combine(p.start - timedelta(days=1), _clock(self.settings()["evening"]["time"]), self.tz)
+        return min(evening, midnight)
+
+    async def _sections(self, kind: str, p: Period, now: datetime) -> tuple[list[dict], list[CalEvent], list[str]]:
+        """The data sections, plus events after the period and notes on missing sources (both for the model)."""
         start = datetime.combine(p.start, time.min, self.tz)
         end = datetime.combine(p.end, time.min, self.tz)
         later_end = end + timedelta(days=LOOKAHEAD[kind])
-
-        # Evening: only mail that came in today.
-        since = datetime.combine(now.date(), time.min, self.tz) if kind == "evening" else None
-        events, mail = await asyncio.gather(self._events(start, later_end), self._mail(since))
+        events, mail = await asyncio.gather(self._events(start, later_end), self._mail(self.mail_since(kind, p, now)))
         sections: list[dict] = []
         notes: list[str] = []  # for the model: what's missing
         later: list[CalEvent] = []
@@ -231,23 +270,17 @@ class DigestService:
             notes.append("Mail couldn't be read." if self.gmail else "No mail account is connected.")
         elif mail:
             sections.append({"type": "mail", "title": "Mail", "items": mail})
-        due = self.reminders.due_before(end)
+        # Open ones due by the end of the period, overdue ones only from the last 48 hours.
+        due = self.reminders.due_between(now - OVERDUE, end)
         if due:
-            sections.append({"type": "reminders", "title": p.reminders_title,
-                             "reminders": [reminder_json(r, self.tz) for r in due]})
+            sections.append({"type": "reminders", "title": p.reminders_title, "reminders": [
+                {**reminder_json(r, self.tz), "overdue": r.due_at < now} for r in due]})
         habits = self.habits.all()
         if kind == "evening":  # still open today
             habits = [h for h in habits if not h.done_today]
         if habits:
             sections.append({"type": "habits", "title": "Habits", "habits": [h.as_json() for h in habits]})
-
-        greeting, ahead = await self._write(kind, now, p, sections, later, notes)
-        if ahead:
-            sections.append({"type": "text", "title": CLOSING.get(kind, LOOKING_AHEAD)[0], "text": ahead})
-        body = {"kind": kind, "generated_at": now.replace(microsecond=0).isoformat(),
-                "greeting": greeting, "sections": sections}
-        self._store(kind, generated, body)
-        return body
+        return sections, later, notes
 
     async def _events(self, start: datetime, end: datetime) -> list[CalEvent] | None:
         if self.calendar is None:
@@ -259,10 +292,11 @@ class DigestService:
             return None
         return sorted(found, key=lambda e: event_start(e, self.tz))
 
-    async def _mail(self, since: datetime | None = None) -> list[dict] | None:
+    async def _mail(self, since: datetime) -> list[dict] | None:
+        """Inbox mail received since `since`, read or unread, newest first."""
         if self.gmail is None:
             return None
-        query = "is:unread in:inbox" + (f" after:{int(since.timestamp())}" if since else "")
+        query = f"in:inbox after:{int(since.timestamp())}"
         try:
             found = await self.gmail.search(query, MAIL_ITEMS)
         except Exception:
@@ -273,12 +307,12 @@ class DigestService:
             h = headers(m)
             name, addr = parseaddr(h.get("from", ""))
             received = datetime.fromtimestamp(int(m["internalDate"]) / 1000, self.tz)
-            if since and received < since:
+            if received < since:
                 continue
             items.append({"id": m["id"], "from": name or addr or "?", "subject": h.get("subject") or "(no subject)",
                           "preview": m.get("snippet", ""), "received_at": received.isoformat(),
                           "unread": "UNREAD" in m.get("labelIds", [])})
-        return items
+        return sorted(items, key=lambda m: m["received_at"], reverse=True)
 
     async def _write(self, kind: str, now: datetime, p: Period, sections: list[dict],
                      later: list[CalEvent], notes: list[str]) -> tuple[str, str]:
@@ -286,6 +320,10 @@ class DigestService:
         name = {"daily": "morning", "evening": "evening (before bed)"}.get(kind, kind)
         lines = [f"A {name} briefing, made {now:%a %d %b %Y %H:%M}, covering {p.start:%a %d %b} "
                  f"to {p.end - timedelta(days=1):%a %d %b}.", *notes, "", to_text(None, sections, self.tz)]
+        mail = next((s["items"] for s in sections if s["type"] == "mail"), [])
+        if mail:  # what the mail says, so the greeting can pick the one that wants an answer
+            lines += ["", "Mail in more detail:", *(f"- {m['from']}: {m['subject']}{' (unread)' if m['unread'] else ''}"
+                                                    f" — {m['preview'][:200]}" for m in mail)]
         if later:
             lines += ["", "After that period:", *(f"- {_event_line(event_json(e, self.tz), self.tz)}"
                                                   for e in later[:30])]
@@ -313,8 +351,8 @@ def _fallback_greeting(now: datetime, sections: list[dict]) -> str:
     for s in sections:
         n = len(s.get("events") or s.get("items") or s.get("reminders") or [])
         if n and s["type"] in ("calendar", "mail", "reminders"):
-            noun = {"calendar": "event", "mail": "unread mail", "reminders": "reminder"}[s["type"]]
-            counts.append(f"{n} {noun}{'s' if n != 1 and s['type'] != 'mail' else ''}")
+            noun = {"calendar": "event", "mail": "email", "reminders": "reminder"}[s["type"]]
+            counts.append(f"{n} {noun}{'s' if n != 1 else ''}")
     return f"Good {part}." + (f" {', '.join(counts)}." if counts else "")
 
 
@@ -341,7 +379,7 @@ def to_text(greeting: str | None, sections: list[dict], tz: ZoneInfo) -> str:
                 rows = [f"{m['from']}: {m['subject']}" for m in s["items"]]
             case "reminders":
                 rows = [(f"{datetime.fromisoformat(r['due_at']):%a %d %b %H:%M} " if r["due_at"] else "") + r["title"]
-                        for r in s["reminders"]]
+                        + (" (overdue)" if r.get("overdue") else "") for r in s["reminders"]]
             case "habits":
                 rows = []
                 for h in s["habits"]:

@@ -1,6 +1,13 @@
 # Digest v2: proposal (for the Ubuntu session)
 
-Status: **proposal, not built.** Written on the Mac on 2026-10-19 from Filippo's feedback on the app.
+Status: **server part built** (2026-10-19, Ubuntu; contract in `docs/API.md`, "Digest" and "Conversations").
+**App part still to do** (Mac): see "App changes" below. Written on the Mac on 2026-10-19 from Filippo's feedback.
+
+Built as proposed, plus the details the app may care about: the `reminders` window ends at the end of the
+period (so tonight's later reminders show in the evening digest too); `mail` is capped at 25; `POST
+/v1/conversations` with `digest` reuses the stored greeting only if it still covers the same days, otherwise it
+makes a fresh digest first (can take 5–30 s, so show the typing indicator); the `text` section ("Looking ahead" /
+"Wrap-up") is still there, stored like the greeting.
 `docs/API.md` stays the contract: change it in the same commit as the server code, as usual.
 
 ## What's wrong now
