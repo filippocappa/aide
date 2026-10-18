@@ -1,6 +1,7 @@
 import AVFoundation
 import NaturalLanguage
 import Speech
+import SwiftUI
 
 /// Talk to Aide: live speech-to-text that sends itself after a pause, and replies read aloud.
 /// In a voice conversation it listens again after each spoken reply, until you tap stop.
@@ -9,6 +10,8 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     @Published private(set) var isListening = false
     @Published private(set) var isSpeaking = false
     @Published private(set) var transcript = ""
+    /// 0…1 microphone loudness while listening.
+    @Published private(set) var level: CGFloat = 0
     @Published var error: String?
 
     /// Called with the final text once the user stops talking.
@@ -71,8 +74,14 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             req.shouldReportPartialResults = true
             request = req
             let input = engine.inputNode
-            input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+            input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in
                 req.append(buffer)
+                guard let samples = buffer.floatChannelData?[0] else { return }
+                let n = Int(buffer.frameLength)
+                var sum: Float = 0
+                for i in stride(from: 0, to: n, by: 4) { sum += samples[i] * samples[i] }
+                let rms = sqrt(sum / Float(max(1, n / 4)))
+                Task { @MainActor in self?.level = CGFloat(min(1, rms * 9)) }
             }
             engine.prepare()
             try engine.start()
@@ -121,6 +130,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         task?.cancel()
         request = nil; task = nil
         isListening = false
+        level = 0
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = ""
         if send, !text.isEmpty {
@@ -148,7 +158,9 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         guard !plain.isEmpty else { listenAgain(); return }
         let utterance = AVSpeechUtterance(string: plain)
         let lang = NLLanguageRecognizer.dominantLanguage(for: plain)?.rawValue ?? languageCode()
-        utterance.voice = AVSpeechSynthesisVoice(language: lang) ?? AVSpeechSynthesisVoice(language: languageCode())
+        utterance.voice = Self.bestVoice(for: lang) ?? Self.bestVoice(for: languageCode())
+        utterance.rate = 0.5
+        utterance.pitchMultiplier = 1.0
         isSpeaking = true
         synthesizer.speak(utterance)
     }
@@ -163,6 +175,14 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             isSpeaking = false
             listenAgain()
         }
+    }
+
+    /// The best installed voice for a language: Premium, then Enhanced, then the default one.
+    /// Better voices are a free download in iOS Settings > Accessibility > Spoken Content > Voices.
+    static func bestVoice(for language: String) -> AVSpeechSynthesisVoice? {
+        let prefix = language.prefix(2)
+        let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(prefix) }
+        return candidates.max { $0.quality.rawValue < $1.quality.rawValue } ?? AVSpeechSynthesisVoice(language: language)
     }
 
     /// Drops markdown markers and symbols that sound wrong when read out.

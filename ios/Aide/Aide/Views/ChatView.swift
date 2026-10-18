@@ -23,43 +23,56 @@ struct ChatView: View {
     private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending }
     private var showsDigest: Bool { isEmpty && settings.isConfigured && digest.hasDigests }
 
-    var body: some View { stack }
-
-    private var stack: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                transcript
-                if !chat.pending.isEmpty { PendingCard() }
-                composer
-            }
-            .background(Theme.background)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    LivePebble(mood: mood, size: 34, glow: voice.isListening || chat.isSending ? 0.9 : 0.4)
-                        .foregroundStyle(Theme.accent)
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Chats", systemImage: "list.bullet") { showChats = true }
-                        .disabled(!settings.isConfigured)
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("New chat", systemImage: "square.and.pencil") {
-                        chat.startNewChat()
-                        composerFocused = true
-                    }
-                    Menu {
-                        Button("Think harder", systemImage: "brain") { Task { await chat.think() } }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .disabled(!settings.isConfigured)
-                }
-            }
-            .sheet(isPresented: $showChats) { ChatsView() }
-            .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
-            .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            transcript
+            if !chat.pending.isEmpty { PendingCard() }
+            composer
         }
+        .background(Theme.background)
+        .sheet(isPresented: $showChats) { ChatsView() }
+        .fullScreenCover(isPresented: Binding(get: { voice.isActive }, set: { if !$0 { voice.stopAll() } })) {
+            VoiceModeView(mood: mood)
+        }
+        .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
+        .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
+    }
+
+    /// Pebble sits big in the middle of the header, with the chat controls on either side.
+    private var header: some View {
+        HStack {
+            headerButton("list.bullet", label: "Chats") { showChats = true }
+                .disabled(!settings.isConfigured)
+            Spacer()
+            LivePebble(mood: mood, size: 84, bounceTrigger: chat.messages.count)
+                .foregroundStyle(Theme.accent)
+            Spacer()
+            headerButton("square.and.pencil", label: "New chat") {
+                chat.startNewChat()
+                composerFocused = true
+            }
+            Menu {
+                Button("Think harder", systemImage: "brain") { Task { await chat.think() } }
+            } label: {
+                headerIcon("ellipsis")
+            }
+            .disabled(!settings.isConfigured)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+    }
+
+    private func headerButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { headerIcon(icon) }.accessibilityLabel(label)
+    }
+
+    private func headerIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(Theme.accent)
+            .frame(width: 40, height: 40)
+            .background(Theme.chip, in: Circle())
     }
 
     private var transcript: some View {

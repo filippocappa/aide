@@ -8,8 +8,8 @@ struct LivePebble: View {
     var size: CGFloat
     /// -1…1 per axis: how far to lean toward the finger.
     var lean: CGSize = .zero
-    /// 0 = no halo, 1 = full. Pulses; faster while thinking.
-    var glow: Double = 0.5
+    /// 0…1 loudness of the user's voice: the body swells and stretches with it.
+    var energy: CGFloat = 0
     /// Changes make it squash and bounce.
     var bounceTrigger: Int = 0
 
@@ -31,13 +31,8 @@ struct LivePebble: View {
             let cycle = t.truncatingRemainder(dividingBy: 7)
             let curious = !still && cycle < 0.7 ? sin(cycle / 0.7 * .pi) : 0
             let tilt = !still && cycle < 0.7 ? sin(cycle / 0.7 * 2 * .pi) * 7 : 0
-            let halo = glow * (still ? 1 : 0.8 + 0.2 * sin(t * (thinking ? 3.2 : 1.3)))
 
             ZStack {
-                Circle()
-                    .fill(RadialGradient(colors: [Theme.glow.opacity(0.5 * halo), Theme.glow.opacity(0)],
-                                         center: .center, startRadius: size * 0.25, endRadius: size * 0.85))
-                    .frame(width: size * 1.7, height: size * 1.7)
                 Image("Pebble-\(blink ? "calm" : mood)")
                     .resizable()
                     .scaledToFit()
@@ -46,12 +41,15 @@ struct LivePebble: View {
                     .rotationEffect(.degrees(wobble + sway + tilt))
                     .offset(y: bob + hop - curious * size * 0.07)
             }
-            .scaleEffect(x: 1 + squash, y: 1 - squash, anchor: .bottom)
+            .scaleEffect(x: 1 + squash - energy * 0.05, y: 1 - squash + energy * 0.14, anchor: .bottom)
+            .animation(.easeOut(duration: 0.12), value: energy)
             .rotationEffect(.degrees(Double(lean.width) * 9))
             .offset(x: lean.width * size * 0.10, y: lean.height * size * 0.06)
             .animation(.interpolatingSpring(stiffness: 140, damping: 7), value: lean)
         }
         .frame(width: size, height: size)
+        .contentShape(Rectangle())
+        .onTapGesture { bounce(0.2) } // poke it
         .onChange(of: bounceTrigger) { _, _ in bounce(0.16) }
         .onChange(of: mood) { _, _ in bounce(0.12) }
     }
