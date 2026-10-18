@@ -125,21 +125,8 @@ private struct AgendaBlock: View {
     let title: String?
     let events: [RichText.AgendaEvent]
 
-    private static let palette: [Color] = [
-        Color(red: 0.24, green: 0.49, blue: 0.69), // ocean
-        Color(red: 0.42, green: 0.56, blue: 0.44), // sage
-        Color(red: 0.56, green: 0.35, blue: 0.61), // plum
-        Color(red: 0.85, green: 0.64, blue: 0.25), // amber
-        Color(red: 0.78, green: 0.36, blue: 0.48), // rose
-        Color(red: 0.16, green: 0.62, blue: 0.56), // teal
-    ]
-
-    /// Stable per title, so a recurring event keeps its colour from day to day.
     private func color(for event: RichText.AgendaEvent) -> Color {
-        if event.start == "All day" { return Theme.accent }
-        var h: UInt32 = 5381
-        for u in event.title.lowercased().unicodeScalars { h = h &* 33 &+ u.value }
-        return Self.palette[Int(h % UInt32(Self.palette.count))]
+        event.start == "All day" ? Theme.accent : Theme.tint(for: event.title)
     }
 
     var body: some View {

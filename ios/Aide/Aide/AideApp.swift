@@ -12,6 +12,7 @@ struct AideApp: App {
                 .environmentObject(env.settings)
                 .environmentObject(env.sync)
                 .environmentObject(env.chat)
+                .environmentObject(env.digest)
                 .tint(Theme.accent)
                 .fontDesign(.rounded)
                 .task { await env.refreshAll() }

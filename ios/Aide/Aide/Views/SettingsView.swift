@@ -15,6 +15,7 @@ struct SettingsView: View {
                 serverSection
                 remindersSection
                 Section {
+                    NavigationLink("Digests") { DigestSettingsView() }
                     NavigationLink("What Aide remembers") { MemoryView() }
                 }
                 Section("About") {

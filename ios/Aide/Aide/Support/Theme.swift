@@ -16,6 +16,22 @@ enum Theme {
     static let onAccent = color(light: 0xECE5D8, dark: 0x34413F)
     static let userBubble = color(light: 0x34413F, dark: 0x3B4A47)
     static let chip = color(light: 0xE8E1D2, dark: 0x2B3634)
+    private static let palette: [Color] = [
+        Color(red: 0.24, green: 0.49, blue: 0.69), // ocean
+        Color(red: 0.42, green: 0.56, blue: 0.44), // sage
+        Color(red: 0.56, green: 0.35, blue: 0.61), // plum
+        Color(red: 0.85, green: 0.64, blue: 0.25), // amber
+        Color(red: 0.78, green: 0.36, blue: 0.48), // rose
+        Color(red: 0.16, green: 0.62, blue: 0.56), // teal
+    ]
+
+    /// A stable colour per name (calendar, event title), the same on every launch.
+    static func tint(for key: String) -> Color {
+        var h: UInt32 = 5381
+        for u in key.lowercased().unicodeScalars { h = h &* 33 &+ u.value }
+        return palette[Int(h % UInt32(palette.count))]
+    }
+
     static let userBubbleText = Color(uiColor: UIColor(hex: 0xECE5D8))
 }
 

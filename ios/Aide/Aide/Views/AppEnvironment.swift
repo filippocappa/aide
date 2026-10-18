@@ -7,6 +7,7 @@ final class AppEnvironment: ObservableObject {
     let api: APIClient
     let sync: ReminderSyncService
     let chat: ChatViewModel
+    let digest: DigestViewModel
 
     init() {
         let settings = AppSettings()
@@ -17,6 +18,7 @@ final class AppEnvironment: ObservableObject {
         self.api = api
         self.sync = sync
         self.chat = chat
+        self.digest = DigestViewModel(api: api)
 
         // The assistant may have created reminders or moved events: sync.
         chat.onServerChange = { [weak self] in await self?.sync.sync() }
@@ -26,8 +28,10 @@ final class AppEnvironment: ObservableObject {
     func refreshAll() async {
         guard settings.isConfigured else { return }
         async let history: Void = chat.loadHistory()
+        async let digestLoad: Void = digest.load()
         await sync.sync()
         await history
+        await digestLoad
     }
 
 }

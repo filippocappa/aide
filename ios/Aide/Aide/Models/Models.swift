@@ -131,6 +131,96 @@ struct TodayResponse: Decodable {
     let reminders: [Reminder]
 }
 
+// MARK: - Habits and digest
+
+struct Habit: Decodable, Identifiable, Hashable {
+    struct Cadence: Decodable, Hashable {
+        let type: String
+        let perWeek: Int?
+    }
+    let id: Int
+    let name: String
+    let cadence: Cadence
+    var streak: Int
+    var doneToday: Bool
+    let lastDone: String?
+
+    var cadenceText: String {
+        cadence.type == "weekly" ? "\(cadence.perWeek ?? 1)× a week" : "Every day"
+    }
+}
+struct HabitList: Decodable { let habits: [Habit] }
+struct HabitCheck: Encodable { var done: Bool }
+
+struct MailItem: Decodable, Identifiable, Hashable {
+    let id: String
+    let from: String
+    let subject: String
+    let preview: String?
+    let receivedAt: String?
+    let unread: Bool
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        from = try c.decodeIfPresent(String.self, forKey: .from) ?? ""
+        subject = try c.decodeIfPresent(String.self, forKey: .subject) ?? "(no subject)"
+        preview = try c.decodeIfPresent(String.self, forKey: .preview)
+        receivedAt = try c.decodeIfPresent(String.self, forKey: .receivedAt)
+        unread = try c.decodeIfPresent(Bool.self, forKey: .unread) ?? false
+    }
+    private enum CodingKeys: String, CodingKey { case id, from, subject, preview, receivedAt, unread }
+}
+
+struct DigestSection: Decodable, Identifiable {
+    enum Content {
+        case calendar([CalendarEvent])
+        case mail([MailItem])
+        case reminders([Reminder])
+        case habits([Habit])
+        case text(String)
+        case unknown // a section type this app version doesn't know: skipped
+    }
+    let id = UUID()
+    let title: String
+    let content: Content
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        switch try c.decode(String.self, forKey: .type) {
+        case "calendar": content = .calendar(try c.decode([CalendarEvent].self, forKey: .events))
+        case "mail": content = .mail(try c.decode([MailItem].self, forKey: .items))
+        case "reminders": content = .reminders(try c.decode([Reminder].self, forKey: .reminders))
+        case "habits": content = .habits(try c.decode([Habit].self, forKey: .habits))
+        case "text": content = .text(try c.decode(String.self, forKey: .text))
+        default: content = .unknown
+        }
+    }
+    private enum CodingKeys: String, CodingKey { case type, title, events, items, reminders, habits, text }
+}
+
+struct Digest: Decodable {
+    let kind: String
+    let generatedAt: String?
+    let greeting: String
+    let sections: [DigestSection]
+}
+
+struct DigestSchedule: Codable, Equatable {
+    var enabled: Bool
+    var time: String // "HH:MM" in the server's zone
+    var weekday: Int? // weekly: 1 = Monday
+    var day: Int? // monthly: 1–31
+}
+
+struct DigestSettings: Codable, Equatable {
+    var daily: DigestSchedule
+    var weekly: DigestSchedule
+    var monthly: DigestSchedule
+    var discord: Bool
+}
+
 // MARK: - Reminder sync
 
 /// A reminder changed on the phone. Nullable fields are always sent (`"id": null` means created on the phone).
