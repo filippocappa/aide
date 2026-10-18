@@ -120,39 +120,55 @@ struct RichText: View {
     }
 }
 
-/// One day's events as a single card: a timeline with the time on the left.
+/// One day's events as a single card, each event a tile in its own colour.
 private struct AgendaBlock: View {
     let title: String?
     let events: [RichText.AgendaEvent]
 
+    private static let palette: [Color] = [
+        Color(red: 0.24, green: 0.49, blue: 0.69), // ocean
+        Color(red: 0.42, green: 0.56, blue: 0.44), // sage
+        Color(red: 0.56, green: 0.35, blue: 0.61), // plum
+        Color(red: 0.85, green: 0.64, blue: 0.25), // amber
+        Color(red: 0.78, green: 0.36, blue: 0.48), // rose
+        Color(red: 0.16, green: 0.62, blue: 0.56), // teal
+    ]
+
+    /// Stable per title, so a recurring event keeps its colour from day to day.
+    private func color(for event: RichText.AgendaEvent) -> Color {
+        if event.start == "All day" { return Theme.accent }
+        var h: UInt32 = 5381
+        for u in event.title.lowercased().unicodeScalars { h = h &* 33 &+ u.value }
+        return Self.palette[Int(h % UInt32(Self.palette.count))]
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             if let title {
                 Label(title, systemImage: "calendar")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.accent)
-                    .padding(.bottom, 10)
+                    .padding(.bottom, 2)
             }
-            ForEach(Array(events.enumerated()), id: \.offset) { i, event in
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text(event.start).font(.subheadline.weight(.semibold)).monospacedDigit()
-                        if let end = event.end { Text(end).font(.caption).foregroundStyle(.secondary).monospacedDigit() }
+            ForEach(events, id: \.self) { event in
+                let tint = color(for: event)
+                HStack(spacing: 12) {
+                    Capsule().fill(tint).frame(width: 4)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(event.title.markdown).font(.body.weight(.medium))
+                        Text(event.end.map { "\(event.start) – \($0)" } ?? event.start)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(tint)
+                            .monospacedDigit()
                     }
-                    .frame(minWidth: 52, alignment: .trailing)
-                    VStack(spacing: 0) {
-                        Circle().fill(Theme.accent).frame(width: 9, height: 9).padding(.top, 5)
-                        if i < events.count - 1 {
-                            Rectangle().fill(Theme.accent.opacity(0.25)).frame(width: 2).frame(maxHeight: .infinity)
-                        }
-                    }
-                    Text(event.title.markdown)
-                        .padding(.bottom, i < events.count - 1 ? 14 : 0)
                     Spacer(minLength: 0)
                 }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }

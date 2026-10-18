@@ -33,7 +33,7 @@ struct ChatView: View {
                            size: isEmpty ? 160 : 44, touch: touch)
                     .foregroundStyle(Theme.accent)
                     .position(x: geo.size.width / 2,
-                              y: isEmpty ? geo.size.height * 0.33 : windowTopInset - 22 - top)
+                              y: isEmpty ? geo.size.height * 0.33 : windowTopInset + 22 - top)
                     .animation(.spring(response: 0.7, dampingFraction: 0.65), value: isEmpty)
                     .allowsHitTesting(false)
             }
@@ -80,12 +80,20 @@ struct ChatView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     if chat.messages.isEmpty && !chat.isSending { emptyState }
-                    ForEach(chat.messages) { MessageRow(message: $0) }
+                    ForEach(chat.messages) { message in
+                        MessageRow(message: message)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.5, anchor: message.role == .user ? .bottomTrailing : .bottomLeading)
+                                    .combined(with: .move(edge: .bottom))
+                                    .combined(with: .opacity),
+                                removal: .opacity))
+                    }
                     if chat.isSending { ThinkingRow() }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                .animation(.spring(response: 0.42, dampingFraction: 0.72), value: chat.messages)
             }
             .scrollDismissesKeyboard(.immediately)
             .defaultScrollAnchor(isEmpty ? .center : .bottom)
