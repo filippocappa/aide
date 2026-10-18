@@ -35,12 +35,6 @@ struct PebbleStage: View {
         }
         .animation(.spring(response: 0.85, dampingFraction: 0.6), value: stage)
         .allowsHitTesting(false)
-        .task {
-            // Starts huge in the middle, then drops into the top bar almost at once.
-            guard !introDone else { return }
-            try? await Task.sleep(for: .milliseconds(650))
-            withAnimation(.spring(response: 0.55, dampingFraction: 0.72)) { introDone = true }
-        }
         .onChange(of: busy) { _, nowBusy in
             busyNow = nowBusy
             if nowBusy {
