@@ -33,12 +33,11 @@ struct ChatView: View {
                 let top = geo.frame(in: .global).minY
                 PebbleStage(area: geo.size,
                             dockedY: windowTopInset + 22 - top,
-                            heroY: showsDigest ? windowTopInset + 240 - top : geo.size.height * 0.33,
-                            isEmpty: isEmpty, introDone: env.introDone,
+                            introDone: env.introDone,
                             busy: chat.isSending || chat.isActing, mood: mood, touch: touch)
             }
             .task {
-                try? await Task.sleep(for: .seconds(1.8)) // let the big Pebble say hello first
+                try? await Task.sleep(for: .seconds(2.2)) // let the big Pebble say hello first
                 env.introDone = true
             }
         }
@@ -120,7 +119,6 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 20) {
-            Color.clear.frame(height: 320) // room for the big Pebble, which is drawn above
             if settings.isConfigured {
                 if digest.hasDigests {
                     DigestView(digest: digest.digest).multilineTextAlignment(.leading)

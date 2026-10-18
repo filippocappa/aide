@@ -1,18 +1,16 @@
 import SwiftUI
 
-/// The one Pebble. It opens the app big in the middle, flies up into the top bar, comes back
-/// down big on an empty new chat, and wanders around the screen while Aide works on a long task.
+/// The one Pebble. It opens the app big in the middle, flies up into the top bar and stays there,
+/// and wanders around the screen while Aide works on a long task.
 struct PebbleStage: View {
     let area: CGSize
     let dockedY: CGFloat
-    let heroY: CGFloat
-    let isEmpty: Bool
     let introDone: Bool
     let busy: Bool
     let mood: String
     let touch: CGPoint?
 
-    private enum Stage { case intro, hero, docked }
+    private enum Stage { case intro, docked }
     private static let bigSize: CGFloat = 320
     private static let dockedSize: CGFloat = 44
     private static let roamSize: CGFloat = 78
@@ -21,10 +19,10 @@ struct PebbleStage: View {
     @State private var roamStart: Date?
     @State private var roamEnd: Date?
 
-    private var stage: Stage { !introDone ? .intro : isEmpty ? .hero : .docked }
+    private var stage: Stage { !introDone ? .intro : .docked }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: roamStart == nil && roamEnd == nil)) { context in
+        TimelineView(.animation(paused: roamStart == nil && roamEnd == nil)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let k = stage == .docked ? roamBlend(context.date) : 0
             let home = homePosition
@@ -58,7 +56,6 @@ struct PebbleStage: View {
     private var stageMood: String {
         switch stage {
         case .intro: "happy"
-        case .hero: mood == "calm" ? "awake" : mood
         case .docked: mood
         }
     }
@@ -68,7 +65,6 @@ struct PebbleStage: View {
     private var homePosition: CGPoint {
         switch stage {
         case .intro: CGPoint(x: area.width / 2, y: area.height * 0.40)
-        case .hero: CGPoint(x: area.width / 2, y: heroY)
         case .docked: CGPoint(x: area.width / 2, y: dockedY)
         }
     }

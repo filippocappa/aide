@@ -24,22 +24,28 @@ struct LivePebble: View {
     }
 
     private func body(lean: CGSize) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+        TimelineView(.animation(paused: reduceMotion)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let still = reduceMotion
-            let breath = still ? 0 : sin(t * 2.4) * 0.05
-            let bob = still ? 0 : sin(t * 1.2) * size * 0.04
+            let breath = still ? 0 : sin(t * 2.4) * 0.045
+            let bob = still ? 0 : sin(t * 1.2) * size * 0.035
+            let sway = still ? 0 : sin(t * 0.8) * 2.5
+            // Every ~7 s it does something on its own: a little hop and a curious tilt.
+            let cycle = t.truncatingRemainder(dividingBy: 7)
+            let curious = !still && cycle < 0.7 ? sin(cycle / 0.7 * .pi) : 0
+            let curiousHop = -curious * size * 0.07
+            let curiousTilt = still ? 0 : (cycle < 0.7 ? sin(cycle / 0.7 * 2 * .pi) * 7 : 0)
             let blink = !still && mood == "awake" && t.truncatingRemainder(dividingBy: 4.3) < 0.14
             let wobble = !still && mood == "thinking" ? sin(t * 5) * 5 : 0
-            let hop = !still && mood == "happy" ? -abs(sin(t * 7)) * size * 0.08 : 0
+            let hop = !still && mood == "happy" ? -abs(sin(t * 4.5)) * size * 0.06 : 0
 
             Image("Pebble-\(blink ? "calm" : mood)")
                 .resizable()
                 .scaledToFit()
                 .frame(width: size, height: size)
                 .scaleEffect(x: 1 + breath, y: 1 - breath, anchor: .bottom)
-                .rotationEffect(.degrees(wobble))
-                .offset(y: bob + hop)
+                .rotationEffect(.degrees(wobble + sway + curiousTilt))
+                .offset(y: bob + hop + curiousHop)
         }
         .scaleEffect(x: 1 + squash, y: 1 - squash, anchor: .bottom)
         .rotationEffect(.degrees(Double(lean.width) * 9))
