@@ -10,3 +10,4 @@ ios/**/xcuserdata/
 ios/**/DerivedData/
 ios/build/
 .DS_Store
+ios/Aide/Config/Signing.local.xcconfig
