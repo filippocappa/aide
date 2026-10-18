@@ -39,9 +39,12 @@ One-time setup in Google Cloud, by hand:
 
 1. [console.cloud.google.com](https://console.cloud.google.com): create a project, e.g. "Aide".
 2. **APIs & Services → Library → Gmail API → Enable.**
-3. **Google Auth Platform → Branding:** app name "Aide", your address as support and developer contact.
-   **Audience:** External, and add your Gmail address under *Test users*.
-4. **Data Access → Add or remove scopes:** add `.../auth/gmail.readonly` and `.../auth/gmail.send`.
+3. **Google Auth Platform → Branding:** app name "Aide", your address as support email and as developer
+   contact (at the bottom of the page). Publishing also needs an app domain: home page
+   `https://filippocappa.github.io/aide/`, privacy policy `https://filippocappa.github.io/aide/privacy.html`
+   (both served from the `gh-pages` branch), authorized domain `filippocappa.github.io` (no `https://`).
+   **Audience:** External.
+4. **Data Access:** leave it empty. The sign-in script asks for the two scopes itself.
 5. **Clients → Create client:** type **Desktop app**, name "Aide server". Copy the client ID and secret into
    `.env` as `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`.
 6. **Audience → Publish app** ("In production"). Skip this and the refresh token dies after 7 days, which is
@@ -55,9 +58,10 @@ uv run python -m aide.gmail_auth        # opens the consent page, writes GMAIL_R
 systemctl --user restart aide
 ```
 
-The browser has to reach `http://127.0.0.1:8765` on the server. From another computer, either forward the
-port first (`ssh -L 8765:127.0.0.1:8765 cappa`, then open the printed link locally), or run with `--paste`
-and paste back the address the browser fails to load. The token is never printed. If Aide later says Gmail
+The browser has to reach `http://127.0.0.1:8765` on the server. If you sign in from another computer (the
+Mac), run it with `--paste` instead: when the browser says it can't connect, copy the whole address from the
+address bar straight into the script's prompt, within a few minutes. (Or forward the port first with
+`ssh -L 8765:127.0.0.1:8765 cappa`.) The token is never printed. If Aide later says Gmail
 access expired, run the script again.
 
 ## Tests
