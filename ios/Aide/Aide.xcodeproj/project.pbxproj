@@ -46,6 +46,7 @@
 		5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		58AE8C76701A110B13945027 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		63500D066A75FEEDD7B682E9 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		68C4CE2352B9DD9BE976A094 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		7386B4E42939B32072754CC0 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		7934D306980F7BA0DBBD8E3D /* Aide.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Aide.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		87320B5BA6327928E4CC8A7D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -88,6 +89,7 @@
 			children = (
 				A30C93E5D707B68AF2E2D7A6 /* Aide */,
 				D338606E62443220708E86C3 /* AideTests */,
+				9B7808F323AF2547B1CB00A2 /* Config */,
 				FFC67A70CA212FD0258AC42E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -116,6 +118,14 @@
 				148A57EF978A9887AF00FE8A /* ReminderSyncService.swift */,
 			);
 			path = Sync;
+			sourceTree = "<group>";
+		};
+		9B7808F323AF2547B1CB00A2 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				68C4CE2352B9DD9BE976A094 /* Base.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		A30C93E5D707B68AF2E2D7A6 /* Aide */ = {
@@ -298,6 +308,7 @@
 		};
 		390C49357627970F2817E4EA /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 68C4CE2352B9DD9BE976A094 /* Base.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -364,6 +375,7 @@
 		};
 		6D9AB754B60D24E8A62C610E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 68C4CE2352B9DD9BE976A094 /* Base.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;

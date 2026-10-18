@@ -1,0 +1,2 @@
+// Your signing team lives in Signing.local.xcconfig (git-ignored) so regenerating the project keeps it.
+#include? "Signing.local.xcconfig"
