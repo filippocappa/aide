@@ -16,6 +16,9 @@ class Tool:
     # describe(**args) says in one line what will happen, and raises if it can't happen.
     confirm: bool = False
     describe: ToolHandler | None = None
+    # Argument naming what the action changes (e.g. event_id). A newly queued action on the
+    # same target replaces older queued ones, so "no, make it 2pm" doesn't leave both waiting.
+    target_arg: str | None = None
 
     def definition(self) -> dict:
         return {

@@ -33,8 +33,9 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     tool       TEXT NOT NULL,
     args       TEXT NOT NULL,
     summary    TEXT NOT NULL,
+    target     TEXT,  -- what the action changes; a newer action on the same target replaces it
     created_at TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'pending'  -- pending, done, failed, cancelled, expired
+    status     TEXT NOT NULL DEFAULT 'pending'  -- pending, done, failed, cancelled, expired, replaced
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -69,6 +70,10 @@ class Database:
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(conversations)")}
         if "model" not in columns:  # databases created before !think existed
             self.conn.execute("ALTER TABLE conversations ADD COLUMN model TEXT")
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(pending_actions)")}
+        if "target" not in columns:  # databases created before actions could be replaced
+            self.conn.execute("ALTER TABLE pending_actions ADD COLUMN target TEXT")
+            self.conn.execute("UPDATE pending_actions SET target = json_extract(args, '$.event_id')")
 
     def close(self) -> None:
         self.conn.close()
@@ -123,12 +128,22 @@ class Database:
 
     # -- pending actions -----------------------------------------------------
 
-    def add_pending(self, channel: str, tool: str, args: dict, summary: str) -> int:
-        cur = self.conn.execute(
-            "INSERT INTO pending_actions (channel, tool, args, summary, created_at) VALUES (?, ?, ?, ?, ?)",
-            (channel, tool, json.dumps(args), summary, utcnow().isoformat()),
-        )
-        return cur.lastrowid
+    def add_pending(self, channel: str, tool: str, args: dict, summary: str, target: str | None = None) -> tuple[int, int]:
+        """Queue an action. Returns (new id, number of older actions on the same target it replaced)."""
+        with self.conn:
+            self.conn.execute("BEGIN")
+            replaced = 0
+            if target is not None:
+                replaced = self.conn.execute(
+                    "UPDATE pending_actions SET status = 'replaced' "
+                    "WHERE channel = ? AND target = ? AND status = 'pending'",
+                    (channel, target),
+                ).rowcount
+            cur = self.conn.execute(
+                "INSERT INTO pending_actions (channel, tool, args, summary, target, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (channel, tool, json.dumps(args), summary, target, utcnow().isoformat()),
+            )
+        return cur.lastrowid, replaced
 
     def pending_actions(self, channel: str, ttl: timedelta) -> list[dict]:
         cutoff = (utcnow() - ttl).isoformat()

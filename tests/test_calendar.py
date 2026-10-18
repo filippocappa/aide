@@ -202,3 +202,29 @@ def test_parse_component_with_duration_and_rrule():
     ev.add("rrule", {"freq": "weekly"})
     parsed = _event_from_component(ev, "Home")
     assert parsed.end == at(19, 7, 45) and parsed.recurring and parsed.title == "Yoga"
+
+
+async def test_new_move_replaces_earlier_queued_move(tools, cal):
+    move = lambda start, end: ("tool_use", call("move_event", event_id="d1", new_start=start, new_end=end))
+    agent, db = agent_with(tools, [move("2026-10-21T10:00", "2026-10-21T11:00"), done(),
+                                   move("2026-10-21T14:00", "2026-10-21T15:00"), done()])
+    await agent.reply("discord", "move dentist to 10")
+    await agent.reply("discord", "no, make it 2pm")
+    assert agent.pending("discord") == ["Move 'Dentist' from Tue 20 Oct 15:00–16:00 to Wed 21 Oct 14:00–15:00"]
+    result = agent.client.requests[3]["messages"][-1]["content"][0]["content"]
+    assert "replaces the change queued earlier" in result
+    await agent.confirm("discord")
+    assert cal.store["d1"].start == at(21, 14)
+
+
+def test_migration_backfills_target(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE pending_actions (id INTEGER PRIMARY KEY, channel TEXT NOT NULL, tool TEXT NOT NULL, "
+                "args TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending')")
+    old.execute("INSERT INTO pending_actions (channel, tool, args, summary, created_at) VALUES "
+                "('discord', 'move_event', '{\"event_id\": \"d1\"}', 's', '2026-01-01')")
+    old.commit(); old.close()
+    db = Database(path)
+    assert db.conn.execute("SELECT target FROM pending_actions").fetchone()[0] == "d1"

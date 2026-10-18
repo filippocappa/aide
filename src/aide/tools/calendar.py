@@ -158,9 +158,9 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
                    "new_start": {"type": "string", "description": DATETIME_HELP},
                    "new_end": {"type": "string", "description": DATETIME_HELP}},
                   ["event_id", "new_start", "new_end"]),
-             move_event, confirm=True, describe=describe_move),
+             move_event, confirm=True, describe=describe_move, target_arg="event_id"),
         Tool("delete_event", "Delete an event. Needs the user's confirmation: it is queued, "
              "and runs only when the user replies !yes.",
              _obj({"event_id": {"type": "string"}}, ["event_id"]),
-             delete_event, confirm=True, describe=describe_delete),
+             delete_event, confirm=True, describe=describe_delete, target_arg="event_id"),
     ]
