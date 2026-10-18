@@ -82,7 +82,7 @@ async def test_tool_loop_runs_tools_and_returns_results_together(db):
 
     results = client.requests[1]["messages"][-1]
     assert results["role"] == "user"
-    assert results["content"] == [
+    assert [{k: v for k, v in b.items() if k != "cache_control"} for b in results["content"]] == [
         {"type": "tool_result", "tool_use_id": "t1", "content": "A", "is_error": False},
         {"type": "tool_result", "tool_use_id": "t2", "content": "Error: calendar down", "is_error": True},
     ]
@@ -128,5 +128,14 @@ async def test_request_is_cache_friendly(db):
     await agent.reply("discord", "b")
     first, second = client.requests
     assert first["system"] == second["system"]
+    assert first["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert first["tools"] == second["tools"]
-    assert first["cache_control"] == {"type": "ephemeral"}
+    assert second["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "fallbacks" not in first
+
+
+async def test_cache_breakpoint_does_not_leak_into_history(db):
+    agent, _ = make_agent(db, [("end_turn", [text("x")])])
+    await agent.reply("discord", "a")
+    conv = db.current_conversation("discord", timedelta(hours=1))
+    assert db.history(conv)[0] == {"role": "user", "content": "a"}

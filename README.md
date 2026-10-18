@@ -20,7 +20,7 @@ deploy/aide.service      systemd unit
 
 1. **Discord bot.** In the [Developer Portal](https://discord.com/developers/applications), create an application, add a bot and copy its token. No privileged intents are needed. Invite the bot to any server you're in (OAuth2 → URL Generator → scope `bot`), so Discord lets you DM it.
 2. **Your user ID.** Discord settings → Advanced → Developer Mode, then right-click your name → Copy User ID.
-3. **Env file.** `cp .env.example .env` and fill in the Anthropic key, bot token and owner ID.
+3. **Env file.** `cp .env.example .env` and fill in your OpenRouter (or Anthropic) key, bot token and owner ID.
 4. **Run.** `uv sync && uv run aide`. The bot DMs you "Aide is up." once it's connected.
 
 In the DM, type anything to talk to it, or `!new` to start a fresh conversation. A new conversation also starts after `AIDE_IDLE_HOURS` (default 6) of silence. That keeps each request small and cheap without editing history.
@@ -50,6 +50,6 @@ The database lives at `/var/lib/aide/aide.db` (systemd creates the directory). `
 
 ## Notes
 
-- Model: `claude-sonnet-5-5` with prompt caching. Server-side refusal fallback (`fallbacks: "default"`) is on. Switch the model with `AIDE_MODEL`.
+- LLM: OpenRouter (`OPENROUTER_API_KEY`, model `anthropic/claude-sonnet-5.5`) or the Anthropic API directly (`ANTHROPIC_API_KEY`, model `claude-sonnet-5-5`). Prompt caching is on for both; server-side refusal fallback only works direct. Override the model with `AIDE_MODEL`.
 - Each turn is saved to SQLite only after it completes. A crash mid-turn loses that turn but never corrupts history.
 - Every tool call is written to `audit_log`.

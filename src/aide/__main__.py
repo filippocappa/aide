@@ -7,7 +7,7 @@ import anthropic
 
 from .agent import Agent
 from .channels.discord_bot import AideBot
-from .config import load_settings
+from .config import OPENROUTER_BASE_URL, load_settings
 from .db import Database
 from .tools import ToolRegistry
 from .tools.clock import clock_tool
@@ -18,14 +18,23 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     settings = load_settings()
 
+    if settings.openrouter_api_key:
+        # OpenRouter speaks the Anthropic Messages format; the key goes in as a bearer token.
+        client = anthropic.AsyncAnthropic(
+            base_url=OPENROUTER_BASE_URL, auth_token=settings.openrouter_api_key, api_key=None
+        )
+    else:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
     db = Database(settings.db_path)
     agent = Agent(
-        client=anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key),
+        client=client,
         db=db,
         tools=ToolRegistry([clock_tool(settings.timezone)]),
         model=settings.model,
         effort=settings.effort,
         idle=timedelta(hours=settings.idle_hours),
+        server_fallback=not settings.openrouter_api_key,
     )
     bot = AideBot(agent, settings.discord_owner_id)
     try:

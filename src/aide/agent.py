@@ -15,6 +15,7 @@ from .tools import ToolRegistry
 log = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 12
+EPHEMERAL = {"type": "ephemeral"}
 
 # Byte-stable on purpose: no dates or per-request values, so it caches.
 SYSTEM_PROMPT = """You are Aide, a personal assistant for one person. You help them manage \
@@ -37,6 +38,7 @@ class Agent:
         model: str,
         effort: str = "medium",
         idle: timedelta = timedelta(hours=6),
+        server_fallback: bool = False,
     ):
         self.client = client
         self.db = db
@@ -44,6 +46,7 @@ class Agent:
         self.model = model
         self.effort = effort
         self.idle = idle
+        self.server_fallback = server_fallback  # Anthropic API only, not via OpenRouter
         self._lock = asyncio.Lock()  # one turn at a time keeps history append-only
 
     def reset(self, channel: str) -> None:
@@ -91,17 +94,19 @@ class Agent:
         return "I stopped after too many steps. Try asking in a simpler way."
 
     async def _create(self, messages: list[dict]):
+        extra = {}
+        if self.server_fallback:
+            # On a safety decline, retry server-side on Anthropic's recommended model.
+            extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
         return await self.client.beta.messages.create(
             model=self.model,
             max_tokens=16000,
-            system=SYSTEM_PROMPT,
+            # Two cache breakpoints: tools + system, and the conversation so far.
+            system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": EPHEMERAL}],
             tools=self.tools.definitions(),
-            messages=messages,
+            messages=_with_cache_breakpoint(messages),
             output_config={"effort": self.effort},
-            cache_control={"type": "ephemeral"},
-            # On a safety decline, retry server-side on Anthropic's recommended model.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
+            **extra,
         )
 
     async def _run_tools(self, content) -> list[dict]:
@@ -121,3 +126,12 @@ class Agent:
             out, err = f"Error: {e}", True
         self.db.audit(name, args, out, err)
         return out, err
+
+
+def _with_cache_breakpoint(messages: list[dict]) -> list[dict]:
+    """Copy of messages with cache_control on the last block. Stored history is not modified."""
+    *rest, last = messages
+    content = last["content"]
+    blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+    blocks[-1] = {**blocks[-1], "cache_control": EPHEMERAL}
+    return [*rest, {**last, "content": blocks}]
