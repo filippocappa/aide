@@ -257,6 +257,17 @@ class Database:
     def delete_memory(self, memory_id: int) -> bool:
         return self.conn.execute("DELETE FROM memory WHERE id = ?", (memory_id,)).rowcount > 0
 
+    def set_memory_text(self, memory_id: int, text: str) -> None:
+        self.conn.execute("UPDATE memory SET text = ? WHERE id = ?", (text, memory_id))
+
+    def memories_being_forgotten(self) -> set[int]:
+        """Ids of memories with a queued, not yet confirmed `forget`."""
+        rows = self.conn.execute(
+            "SELECT json_extract(args, '$.memory_id') AS id FROM pending_actions "
+            "WHERE tool = 'forget' AND status = 'pending'"
+        ).fetchall()
+        return {r["id"] for r in rows}
+
     # -- audit -------------------------------------------------------------
 
     def audit(self, tool: str, args: dict, result: str, error: bool = False) -> None:
