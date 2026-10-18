@@ -73,8 +73,12 @@ final class ChatViewModel: ObservableObject {
         do {
             let history = try await api.history(limit: 200, conversationID: id)
             guard !isSending, !isActing, id == conversationID else { return }
-            messages = history.messages.map {
+            let loaded = history.messages.map {
                 Message(role: $0.role == "user" ? .user : .assistant, text: $0.text)
+            }
+            // Keep the existing rows when nothing changed, so a refresh doesn't replay the pop-in animation.
+            if loaded.map({ [$0.role == .user ? "u" : "a", $0.text] }) != messages.filter({ !$0.isError }).map({ [$0.role == .user ? "u" : "a", $0.text] }) {
+                messages = loaded
             }
             loadError = nil
         } catch {
