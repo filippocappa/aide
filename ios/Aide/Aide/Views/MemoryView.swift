@@ -14,10 +14,18 @@ struct MemoryView: View {
                 HStack(alignment: .bottom, spacing: 8) {
                     TextField("Something Aide should remember", text: $draft, axis: .vertical)
                         .lineLimit(1...4)
-                    Button("Add") { Task { await add() } }
-                        .buttonStyle(.borderedProminent)
-                        .foregroundStyle(Theme.onAccent)
-                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    // Borderless, or the List turns the whole row into this button: tapping the
+                    // empty field then hit the disabled Add instead of opening the keyboard.
+                    Button { Task { await add() } } label: {
+                        Text("Add")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.onAccent)
+                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            .background(Theme.accent, in: Capsule())
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .opacity(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
                 }
             }
             if let error {

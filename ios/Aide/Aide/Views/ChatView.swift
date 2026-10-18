@@ -3,7 +3,6 @@ import SwiftUI
 struct ChatView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var digest: DigestViewModel
     @EnvironmentObject private var voice: VoiceController
     @State private var draft = ""
     @State private var showChats = false
@@ -22,30 +21,44 @@ struct ChatView: View {
         return composerFocused ? "awake" : "calm"
     }
 
+    private static let headerPebble: CGFloat = 84
+    private static let voicePebble: CGFloat = 250
+
     private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending }
-    private var showsDigest: Bool { isEmpty && settings.isConfigured && digest.hasDigests }
 
     private var replying: Bool { (chat.isSending || chat.isActing) && !voice.isActive }
 
     var body: some View {
         VStack(spacing: 0) {
             // One Pebble, always centred. In a voice chat it grows and the chat gives way to the voice panel.
+            // It's laid out once at full size and only scaled, so growing can't shift it sideways.
             ZStack(alignment: .top) {
-                LivePebble(mood: mood, size: voice.isActive ? 250 : 84, energy: voice.isListening ? voice.level : 0,
+                LivePebble(mood: mood, size: Self.voicePebble, energy: voice.isListening ? voice.level : 0,
                            bounceTrigger: tapCount + chat.messages.count)
                     .foregroundStyle(Theme.accent)
-                    .scaleEffect(replying ? 1.3 : 1) // a little bigger while it answers
+                    // a little bigger while it answers
+                    .scaleEffect((voice.isActive ? 1 : Self.headerPebble / Self.voicePebble) * (replying ? 1.3 : 1), anchor: .top)
+                    // In the header it reaches up beside the Dynamic Island, level with the buttons.
+                    .offset(y: voice.isActive ? 40 : -10)
                     .frame(maxWidth: .infinity)
-                    .frame(height: voice.isActive ? 330 : 108)
+                    .frame(height: voice.isActive ? 330 : Self.headerPebble, alignment: .top)
                 if !voice.isActive { buttons.transition(.opacity) }
             }
-            if voice.isActive {
-                VoicePanel().transition(.opacity)
-            } else {
-                transcript.transition(.opacity)
-                if !chat.pending.isEmpty { PendingCard() }
-                composer
+            // Stacked rather than one after the other, so the chat and the voice panel cross-fade
+            // in the same space instead of squeezing each other (and the End button) mid-animation.
+            ZStack {
+                if voice.isActive {
+                    VoicePanel().transition(.opacity)
+                } else {
+                    VStack(spacing: 0) {
+                        transcript
+                        if !chat.pending.isEmpty { PendingCard() }
+                        composer
+                    }
+                    .transition(.opacity)
+                }
             }
+            .frame(maxHeight: .infinity)
         }
         .animation(.spring(response: 0.6, dampingFraction: 0.78), value: voice.isActive)
         .animation(.spring(response: 0.5, dampingFraction: 0.6), value: replying)
@@ -113,7 +126,7 @@ struct ChatView: View {
                 .animation(.spring(response: 0.42, dampingFraction: 0.72), value: chat.messages)
             }
             .scrollDismissesKeyboard(.immediately)
-            .defaultScrollAnchor(showsDigest ? .top : isEmpty ? .center : .bottom)
+            .defaultScrollAnchor(isEmpty ? .center : .bottom)
             .onTapGesture { composerFocused = false }
             .onChange(of: chat.messages) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
@@ -134,15 +147,12 @@ struct ChatView: View {
     private var emptyState: some View {
         VStack(spacing: 20) {
             if settings.isConfigured {
-                if digest.hasDigests {
-                    DigestView(digest: digest.digest).multilineTextAlignment(.leading)
-                } else {
-                    Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
-                    VStack(spacing: 8) {
-                        suggestion("What's on my calendar today?", send: true)
-                        suggestion("Remind me to ", send: false)
-                        suggestion("Remember that ", send: false)
-                    }
+                // The digest lives behind the sun button, so a new chat starts clean.
+                Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
+                VStack(spacing: 8) {
+                    suggestion("What's on my calendar today?", send: true)
+                    suggestion("Remind me to ", send: false)
+                    suggestion("Remember that ", send: false)
                 }
             } else {
                 Text("Add your server token in Settings to start.").foregroundStyle(.secondary)
@@ -193,9 +203,10 @@ struct ChatView: View {
             .disabled(!canSend && !showsMic)
             .accessibilityLabel(showsMic ? (voice.isActive ? "Stop voice chat" : "Talk to Aide") : "Send")
         }
+        // No background of its own: the page's shows through, and an opaque band here would fade
+        // out over the voice panel's End button as a visible stripe.
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Theme.background)
     }
 
     /// An empty message box offers the microphone instead of send.
