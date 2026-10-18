@@ -67,9 +67,25 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 ## Roadmap
 
-Done: 1 core (Discord bot, agent loop, service), 2 iCloud Calendar, **server HTTP API v1** (all of `docs/API.md`,
-live on the Ubuntu box; reminders store and sync; Discord fallback for reminders not yet on the phone).
-Now: **iOS app v1** (Mac), per `docs/API.md`.
-Next: push notifications (APNs) and silent-push sync, after which Discord becomes optional.
-Mail (Gmail: read, search; send and reply after confirmation) is in; it needs the one-time setup in README.md, "Gmail".
-Done since: nightly backups, habits, digests (server side, per `docs/API.md`; the app's habit and digest screens are Mac work).
+Where things stand (2026-10-19):
+
+**Done, server (Ubuntu, live):**
+- Core: Discord bot, agent loop, systemd service; iCloud Calendar; Gmail (read, search; send and reply after
+  confirmation; one-time setup in README.md, "Gmail").
+- HTTP API v1, all of `docs/API.md`: chat with many conversations and memory, reminders store and sync, Discord
+  fallback for reminders not yet on the phone.
+- Nightly backups to `~/aide-backups` (user timer, 14 daily + 8 weekly; restore notes in README.md).
+- Habits with streaks and a 26-week `history` for the app's grid.
+- Digests: morning (`daily`), evening, weekly, monthly, on the schedule in the digest settings, also sent as
+  Discord DMs. Data sections are rebuilt live on every read; only the greeting (a short spoken note) is stored.
+  Reminders: due in the period plus today's overdue. Mail: today's inbox. A new chat can open with the
+  greeting (`POST /v1/conversations` with `digest`). Background in `docs/digest-v2.md` (built, both sides).
+- Chat `attachments`: reminder and event cards from the turn's tool calls, in `/v1/chat` and `/v1/history`.
+
+**Done, app (Mac):** iOS app v1 (chat, Today, reminders sync, settings), voice chat, habits tab, digest
+greeting as the first chat message with a Details sheet, digest settings.
+
+**Next on the Mac** (server side shipped in 9971ff4): reminder cards with tick boxes in chat from `attachments`
+(and event cards instead of parsing time-prefixed lines), the habit grid from `history`.
+
+**Then:** push notifications (APNs) and silent-push sync, after which Discord becomes optional.
