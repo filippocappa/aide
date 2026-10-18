@@ -39,7 +39,7 @@ struct DigestView: View {
 }
 
 /// Time on the left, title on the right; the weekday too when it isn't today.
-private struct EventRows: View {
+struct EventRows: View {
     let events: [CalendarEvent]
 
     var body: some View {

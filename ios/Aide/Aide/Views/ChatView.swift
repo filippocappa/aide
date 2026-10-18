@@ -277,12 +277,41 @@ private struct MessageRow: View {
                     .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
         } else {
-            HStack {
-                RichText(text: message.text, isError: message.isError)
-                Spacer(minLength: 32)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    RichText(text: message.text, isError: message.isError)
+                    Spacer(minLength: 32)
+                }
+                .padding(.horizontal, 2)
+                ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                    AttachmentCard(attachment: attachment)
+                }
             }
-            .padding(.horizontal, 2)
         }
+    }
+}
+
+/// The reminders or events a reply was about, as a card: reminders tick off right here.
+private struct AttachmentCard: View {
+    let attachment: Attachment
+
+    var body: some View {
+        switch attachment {
+        case .reminders(let all):
+            let reminders = all.filter { !$0.deleted } // deleted since the reply
+            if !reminders.isEmpty { card { ReminderRows(reminders: reminders) } }
+        case .events(let events):
+            card { EventRows(events: events) }
+        case .unknown:
+            EmptyView()
+        }
+    }
+
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) { content() }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 

@@ -11,14 +11,37 @@ struct ChatReply: Decodable {
     let reply: String
     let pending: [PendingAction]
     let conversationId: String?
+    let attachments: [Attachment]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         reply = try c.decode(String.self, forKey: .reply)
         pending = try c.decodeIfPresent([PendingAction].self, forKey: .pending) ?? []
         conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
+        attachments = Attachment.known(try c.decodeIfPresent([Attachment].self, forKey: .attachments))
     }
-    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId }
+    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments }
+}
+
+/// Cards under a reply, built by the server from the tools that turn used (docs/API.md, "Chat").
+enum Attachment: Decodable, Hashable {
+    case reminders([Reminder])
+    case events([CalendarEvent])
+    case unknown // a type this app version doesn't know: skipped
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .type) {
+        case "reminders": self = .reminders(try c.decode([Reminder].self, forKey: .reminders))
+        case "events": self = .events(try c.decode([CalendarEvent].self, forKey: .events))
+        default: self = .unknown
+        }
+    }
+    private enum CodingKeys: String, CodingKey { case type, reminders, events }
+
+    static func known(_ list: [Attachment]?) -> [Attachment] {
+        (list ?? []).filter { $0 != .unknown }
+    }
 }
 
 struct ActionResult: Decodable {
@@ -62,6 +85,17 @@ struct HistoryMessage: Decodable {
     let role: String
     let text: String
     let ts: String?
+    /// Reminders in here are in their current state: ticked or deleted since.
+    let attachments: [Attachment]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        role = try c.decode(String.self, forKey: .role)
+        text = try c.decode(String.self, forKey: .text)
+        ts = try c.decodeIfPresent(String.self, forKey: .ts)
+        attachments = Attachment.known(try c.decodeIfPresent([Attachment].self, forKey: .attachments))
+    }
+    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments }
 }
 
 struct HistoryResponse: Decodable { let messages: [HistoryMessage] }
@@ -149,6 +183,8 @@ struct Habit: Decodable, Identifiable, Hashable {
     var streak: Int
     var doneToday: Bool
     let lastDone: String?
+    /// Local dates ("2026-10-19") it was checked in the last 26 weeks. Missing from older servers.
+    var history: [String]?
 
     var cadenceText: String {
         cadence.type == "weekly" ? "\(cadence.perWeek ?? 1)× a week" : "Every day"

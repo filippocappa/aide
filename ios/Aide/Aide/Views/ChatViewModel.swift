@@ -8,6 +8,7 @@ final class ChatViewModel: ObservableObject {
         let role: Role
         let text: String
         var isError = false
+        var attachments: [Attachment] = []
     }
 
     private static let conversationKey = "conversationID"
@@ -100,10 +101,14 @@ final class ChatViewModel: ObservableObject {
             let history = try await api.history(limit: 200, conversationID: id)
             guard !isSending, !isActing, id == conversationID else { return }
             let loaded = history.messages.map {
-                Message(role: $0.role == "user" ? .user : .assistant, text: $0.text)
+                Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, attachments: $0.attachments)
             }
             // Keep the existing rows when nothing changed, so a refresh doesn't replay the pop-in animation.
-            if loaded.map({ [$0.role == .user ? "u" : "a", $0.text] }) != messages.filter({ !$0.isError }).map({ [$0.role == .user ? "u" : "a", $0.text] }) {
+            // Attachments count: a reminder ticked elsewhere should show as ticked.
+            func content(_ list: [Message]) -> [String] {
+                list.map { "\($0.role == .user ? "u" : "a")|\($0.text)|\($0.attachments.hashValue)" }
+            }
+            if content(loaded) != content(messages.filter { !$0.isError }) {
                 messages = loaded
             }
             loadError = nil
@@ -122,7 +127,7 @@ final class ChatViewModel: ObservableObject {
         do {
             if conversationID == nil { conversationID = try await newConversationID() }
             let reply = try await api.chat(text, conversationID: conversationID)
-            messages.append(Message(role: .assistant, text: reply.reply))
+            messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments))
             pending = reply.pending
             if let id = reply.conversationId { conversationID = id }
             isSending = false
