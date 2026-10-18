@@ -4,13 +4,10 @@ struct ChatView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var digest: DigestViewModel
-    @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var voice: VoiceController
     @State private var draft = ""
     @State private var showChats = false
     @State private var justReplied = false
-    @State private var touch: CGPoint?
-    @State private var tapCount = 0
     @FocusState private var composerFocused: Bool
 
     /// Pebble's expression follows what's happening (brand/README.md).
@@ -26,22 +23,7 @@ struct ChatView: View {
     private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending }
     private var showsDigest: Bool { isEmpty && settings.isConfigured && digest.hasDigests }
 
-    /// Top safe-area inset of the window, so the small Pebble can sit in the navigation bar.
-    private var windowTopInset: CGFloat {
-        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow?.safeAreaInsets.top ?? 59
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            stack.overlay(alignment: .topLeading) {
-                let top = geo.frame(in: .global).minY
-                PebbleStage(area: geo.size,
-                            dockedY: windowTopInset + 22 - top,
-                            introDone: env.introDone,
-                            busy: chat.isSending || chat.isActing, mood: mood, touch: touch, tapCount: tapCount)
-            }
-        }
-    }
+    var body: some View { stack }
 
     private var stack: some View {
         NavigationStack {
@@ -53,6 +35,10 @@ struct ChatView: View {
             .background(Theme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    LivePebble(mood: mood, size: 34, glow: voice.isListening || chat.isSending ? 0.9 : 0.4)
+                        .foregroundStyle(Theme.accent)
+                }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Chats", systemImage: "list.bullet") { showChats = true }
                         .disabled(!settings.isConfigured)
@@ -73,7 +59,6 @@ struct ChatView: View {
             .sheet(isPresented: $showChats) { ChatsView() }
             .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
             .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
-            .background(TouchTracker(point: $touch, tapCount: $tapCount))
         }
     }
 
