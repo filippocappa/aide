@@ -4,6 +4,7 @@ struct ChatView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var digest: DigestViewModel
+    @EnvironmentObject private var env: AppEnvironment
     @State private var draft = ""
     @State private var showChats = false
     @State private var justReplied = false
@@ -29,16 +30,16 @@ struct ChatView: View {
     var body: some View {
         GeometryReader { geo in
             stack.overlay(alignment: .topLeading) {
-                // One Pebble: big in the middle of a new chat, then it slides up to the top bar.
                 let top = geo.frame(in: .global).minY
-                LivePebble(mood: isEmpty && mood == "calm" ? "awake" : mood,
-                           size: isEmpty ? 320 : 44, touch: touch)
-                    .foregroundStyle(Theme.accent)
-                    .position(x: geo.size.width / 2,
-                              y: !isEmpty ? windowTopInset + 22 - top
-                                  : showsDigest ? windowTopInset + 240 - top : geo.size.height * 0.33)
-                    .animation(.spring(response: 0.7, dampingFraction: 0.65), value: isEmpty)
-                    .allowsHitTesting(false)
+                PebbleStage(area: geo.size,
+                            dockedY: windowTopInset + 22 - top,
+                            heroY: showsDigest ? windowTopInset + 240 - top : geo.size.height * 0.33,
+                            isEmpty: isEmpty, introDone: env.introDone,
+                            busy: chat.isSending || chat.isActing, mood: mood, touch: touch)
+            }
+            .task {
+                try? await Task.sleep(for: .seconds(1.8)) // let the big Pebble say hello first
+                env.introDone = true
             }
         }
     }
