@@ -65,7 +65,7 @@ struct SettingsView: View {
                     ForEach(sync.lists) { Text($0.title).tag($0.id) }
                 }
                 Button {
-                    Task { await env.syncAndReloadToday() }
+                    Task { await env.sync.sync() }
                 } label: {
                     HStack {
                         Text("Sync now")
@@ -99,7 +99,7 @@ struct SettingsView: View {
         defer { testing = false }
         do {
             let health = try await env.api.health()
-            _ = try await env.api.today() // health needs no token, this one does
+            _ = try await env.api.history(limit: 1) // health needs no token, this one does
             testResult = (true, "Connected. Server \(health.version).")
         } catch {
             testResult = (false, error.localizedDescription)
