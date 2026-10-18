@@ -15,6 +15,7 @@ struct LivePebble: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var squash: CGFloat = 0
+    @State private var kick: Double = 0
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { context in
@@ -43,7 +44,7 @@ struct LivePebble: View {
             }
             .scaleEffect(x: 1 + squash - energy * 0.05, y: 1 - squash + energy * 0.14, anchor: .bottom)
             .animation(.easeOut(duration: 0.12), value: energy)
-            .rotationEffect(.degrees(Double(lean.width) * 9))
+            .rotationEffect(.degrees(Double(lean.width) * 9 + kick))
             .offset(x: lean.width * size * 0.10, y: lean.height * size * 0.06)
             .animation(.interpolatingSpring(stiffness: 140, damping: 7), value: lean)
         }
@@ -56,10 +57,10 @@ struct LivePebble: View {
 
     private func bounce(_ amount: CGFloat) {
         guard !reduceMotion else { return }
-        withAnimation(.easeOut(duration: 0.07)) { squash = amount }
+        withAnimation(.easeOut(duration: 0.07)) { squash = amount; kick = Bool.random() ? 9 : -9 }
         Task {
             try? await Task.sleep(for: .milliseconds(70))
-            withAnimation(.interpolatingSpring(stiffness: 170, damping: 5)) { squash = 0 }
+            withAnimation(.interpolatingSpring(stiffness: 170, damping: 5)) { squash = 0; kick = 0 }
         }
     }
 }
