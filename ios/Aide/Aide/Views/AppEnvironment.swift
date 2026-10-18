@@ -8,6 +8,8 @@ final class AppEnvironment: ObservableObject {
     let sync: ReminderSyncService
     let chat: ChatViewModel
     let digest: DigestViewModel
+    /// The big Pebble has said hello and flown to the top bar.
+    @Published var introDone = false
 
     init() {
         let settings = AppSettings()
