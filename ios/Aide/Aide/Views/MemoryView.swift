@@ -43,8 +43,13 @@ struct MemoryView: View {
     }
 
     private func load() async {
-        do { items = try await env.api.memory(); error = nil } catch { self.error = error.localizedDescription }
+        do { items = try await env.api.memory(); error = nil } catch { self.error = describe(error) }
         loaded = true
+    }
+
+    private func describe(_ error: Error) -> String {
+        if case APIError.server(404, _) = error { return "The server doesn't support Memory yet. Update the server first." }
+        return error.localizedDescription
     }
 
     private func add() async {
@@ -54,13 +59,13 @@ struct MemoryView: View {
             items.insert(try await env.api.addMemory(text), at: 0)
             draft = ""
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = describe(error) }
     }
 
     private func remove(_ item: MemoryItem) async {
         do {
             try await env.api.deleteMemory(item.id)
             items.removeAll { $0.id == item.id }
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = describe(error) }
     }
 }

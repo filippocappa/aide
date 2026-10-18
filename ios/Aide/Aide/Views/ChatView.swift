@@ -132,7 +132,7 @@ struct ChatView: View {
                     .foregroundStyle(Theme.onAccent)
                     .frame(width: 38, height: 38)
                     .background(Theme.accent, in: Circle())
-                    .opacity(canSend ? 1 : 0.3)
+                    .opacity(canSend ? 1 : 0.5)
             }
             .buttonStyle(.plain)
             .contentShape(Circle())
