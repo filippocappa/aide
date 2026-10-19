@@ -24,7 +24,9 @@ from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
 from .tools.habits import habit_tools
 from .tools.mail import mail_tools
+from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
+from .tools.search import Tavily, search_tools
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +68,16 @@ def main() -> None:
         tools += mail_tools(gmail, settings.timezone)
     else:
         log.warning("GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN not set: mail tools disabled")
+    if settings.tavily_api_key:
+        tools += search_tools(Tavily(settings.tavily_api_key), settings.timezone)
+    else:
+        log.warning("TAVILY_API_KEY not set: web search disabled")
+    if settings.google_maps_api_key:
+        tools += maps_tools(GoogleMaps(settings.google_maps_api_key), settings.timezone, settings.home_address)
+        if not settings.home_address:
+            log.warning("AIDE_HOME_ADDRESS not set: Maps tools need an explicit origin")
+    else:
+        log.warning("GOOGLE_MAPS_API_KEY not set: Maps tools disabled")
 
     agent = Agent(
         client=client,

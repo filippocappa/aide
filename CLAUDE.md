@@ -81,11 +81,14 @@ Where things stand (2026-10-19):
   Reminders: due in the period plus today's overdue. Mail: today's inbox. A new chat can open with the
   greeting (`POST /v1/conversations` with `digest`). Background in `docs/digest-v2.md` (built, both sides).
 - Chat `attachments`: reminder and event cards from the turn's tool calls, in `/v1/chat` and `/v1/history`.
+- Web search (Tavily: `web_search`, `fetch_page`) and Google Maps (`find_places`, `travel_time`), read-only,
+  each on only when its key is set; home from `AIDE_HOME_ADDRESS`, or memory when it says otherwise. Plain chat
+  text for now; place cards in the app can come later.
 
 **Done, app (Mac):** iOS app v1 (chat, Today, reminders sync, settings), voice chat, habits tab, digest
-greeting as the first chat message with a Details sheet, digest settings.
+greeting as the first chat message with a Details sheet, digest settings, reminder and event cards with tick
+boxes in chat from `attachments`, the habit grid from `history` (9f24ec4).
 
-**Next on the Mac** (server side shipped in 9971ff4): reminder cards with tick boxes in chat from `attachments`
-(and event cards instead of parsing time-prefixed lines), the habit grid from `history`.
+**Next on the Mac:** push notifications (APNs), waiting on the developer enrolment to finish.
 
-**Then:** push notifications (APNs) and silent-push sync, after which Discord becomes optional.
+**Then:** the server side of push and silent-push sync, after which Discord becomes optional.
