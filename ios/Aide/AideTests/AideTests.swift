@@ -58,11 +58,12 @@ final class ModelTests: XCTestCase {
 
 final class StubURLProtocol: URLProtocol {
     static var handler: ((URLRequest) -> (status: Int, body: String))?
+    static var headers: [String: String]?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let (status, body) = Self.handler?(request) ?? (500, "{}")
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: Self.headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(body.utf8))
         client?.urlProtocolDidFinishLoading(self)
@@ -104,6 +105,92 @@ final class APIClientTests: XCTestCase {
         StubURLProtocol.handler = { _ in (502, #"{"error":"Claude is down"}"#) }
         do { _ = try await makeClient().chat("hi"); XCTFail("expected failure") }
         catch { XCTAssertEqual(error as? APIError, .server(status: 502, message: "Claude is down")) }
+    }
+
+    func testChatLiveReadsTheStream() async throws {
+        StubURLProtocol.headers = ["Content-Type": "text/event-stream"]
+        defer { StubURLProtocol.headers = nil }
+        var body: [String: Any]?
+        StubURLProtocol.handler = { req in
+            body = req.httpBodyStream.flatMap { stream in
+                stream.open(); defer { stream.close() }
+                var data = Data(), buffer = [UInt8](repeating: 0, count: 1024)
+                while stream.hasBytesAvailable { let n = stream.read(&buffer, maxLength: 1024); if n <= 0 { break }; data.append(buffer, count: n) }
+                return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            }
+            return (200, """
+            : keep-alive
+
+            event: team
+            data: {"from": "aide", "to": "coach", "text": "Gym tonight?"}
+
+            event: team
+            data: {"from": "coach", "to": "aide", "text": "Easy session."}
+
+            event: reply
+            data: {"reply": "Coach says easy.", "team": [{"from": "aide", "to": "coach", "text": "Gym tonight?"}, {"from": "coach", "to": "aide", "text": "Easy session."}]}
+
+            """)
+        }
+        var live: [TeamMessage] = []
+        let reply = try await makeClient().chatLive("gym?", conversationID: "c_1") { live.append($0) }
+        XCTAssertEqual(live.map(\.from), ["aide", "coach"])
+        XCTAssertEqual(reply.reply, "Coach says easy.")
+        XCTAssertEqual(reply.team, live)
+        XCTAssertEqual(body?["stream"] as? Bool, true)
+        XCTAssertEqual(body?["conversation_id"] as? String, "c_1")
+    }
+
+    func testChatLiveFallsBackToPlainJSON() async throws {
+        StubURLProtocol.handler = { _ in (200, #"{"reply":"hi","pending":[]}"#) }
+        let reply = try await makeClient().chatLive("hi") { _ in XCTFail("nothing live from an old server") }
+        XCTAssertEqual(reply.reply, "hi")
+        XCTAssertEqual(reply.team, [])
+    }
+
+    func testTeamPostStreamsWorkingAndMessages() async throws {
+        StubURLProtocol.headers = ["Content-Type": "text/event-stream"]
+        defer { StubURLProtocol.headers = nil }
+        StubURLProtocol.handler = { req in
+            XCTAssertEqual(req.url?.path, "/v1/team")
+            return (200, """
+            event: team
+            data: {"from": "user", "to": "team", "text": "@coach recovery?", "conversation_id": null}
+
+            event: working
+            data: {"agent": "coach"}
+
+            event: team
+            data: {"from": "coach", "to": "team", "text": "Good, HRV is back to usual."}
+
+            event: done
+            data: {"messages": [{"from": "user", "to": "team", "text": "@coach recovery?"}, {"from": "coach", "to": "team", "text": "Good, HRV is back to usual."}], "pending": []}
+
+            """)
+        }
+        var seen: [String] = []
+        let reply = try await makeClient().postTeam("@coach recovery?") { event in
+            switch event {
+            case .working(let agent): seen.append("working:" + agent)
+            case .team(let m): seen.append("team:" + m.from)
+            default: seen.append("other")
+            }
+        }
+        XCTAssertEqual(seen, ["team:user", "working:coach", "team:coach"])
+        XCTAssertEqual(reply.messages.count, 2)
+        XCTAssertEqual(reply.pending, [])
+    }
+
+    func testStreamErrorSurfaces() {
+        var stream = EventStream()
+        XCTAssertNil(try stream.feed("event: error"))
+        XCTAssertThrowsError(try stream.feed(#"data: {"error": "Claude is down"}"#)) {
+            XCTAssertEqual($0 as? APIError, .server(status: 500, message: "Claude is down"))
+        }
+        // Unknown events are skipped, and the name resets after each data line.
+        XCTAssertNil(try stream.feed("event: progress"))
+        XCTAssertNil(try stream.feed(#"data: {"x": 1}"#))
+        XCTAssertNil(try stream.feed(#"data: {"reply": "plain message event"}"#))
     }
 
     func testMissingConfigFailsBeforeNetwork() async {
@@ -267,6 +354,21 @@ final class HealthTests: XCTestCase {
 }
 
 final class AgentTests: XCTestCase {
+    func testEachKnownAgentHasItsOwnFigure() {
+        XCTAssertEqual(Figure(agent: "aide"), .pebble)
+        XCTAssertEqual(Figure(agent: "coach"), .ball)
+        XCTAssertEqual(Figure(agent: "someone-new"), .pebble) // an agent the app doesn't know yet
+        XCTAssertEqual(Figure(agent: nil), .pebble)
+        // Every figure fits its tile at the live size (scaled 1.2 about the centre).
+        for figure in [Figure.pebble, .bubble, .dome, .ball, .ingot] {
+            let box = figure.body.boundingRect
+            XCTAssertGreaterThanOrEqual((box.minX - 128) * 1.2 + 128, 0, "\(figure)")
+            XCTAssertLessThanOrEqual((box.maxX - 128) * 1.2 + 128, 256, "\(figure)")
+            XCTAssertGreaterThanOrEqual((box.minY - 128) * 1.2 + 128, 0, "\(figure)")
+            XCTAssertLessThanOrEqual((box.maxY - 128) * 1.2 + 128, 256, "\(figure)")
+        }
+    }
+
     func testAgentsDecodeWithDefaults() throws {
         let json = #"""
         {"agents":[{"id":"aide","name":"Aide","role":"Talks to all of them","color":"#34413F","orchestrator":true,"starters":["Remind me to "]},
@@ -286,10 +388,45 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(reply.consulted, ["coach"])
         let old = try JSONDecoder.api.decode(ChatReply.self, from: Data(#"{"reply":"ok"}"#.utf8))
         XCTAssertEqual(old.consulted, [])
+        XCTAssertEqual(old.team, [])
+        let h = try JSONDecoder.api.decode(HistoryMessage.self, from: Data(
+            #"{"role":"assistant","text":"ok","team":[{"from":"aide","to":"coach","text":"?","ts":"2026-10-19T18:02:11+02:00"}]}"#.utf8))
+        XCTAssertEqual(h.team.first?.to, "coach")
+        let t = try JSONDecoder.api.decode(TeamList.self, from: Data(
+            #"{"messages":[{"from":"coach","to":"aide","text":"!","conversation_id":"c_9"}]}"#.utf8))
+        XCTAssertEqual(t.messages.first?.conversationId, "c_9")
         let c = try JSONDecoder.api.decode(Conversation.self, from: Data(#"{"id":"c_1","title":null}"#.utf8))
         XCTAssertNil(c.agent)
         let m = try JSONDecoder.api.decode(MemoryItem.self, from: Data(#"{"id":7,"text":"Vegetarian","agent":"coach"}"#.utf8))
         XCTAssertEqual(m.agent, "coach")
+    }
+
+    func testRoutinesDecodeAndLabel() throws {
+        let r = try JSONDecoder.api.decode(Routine.self, from: Data(#"""
+        {"id": 3, "agent": "coach", "title": "Weekly recap", "prompt": "Recap", "time": "18:00", "days": [7],
+         "enabled": true, "conversation_id": "c_7", "next_run": "2026-10-25T18:00:00+02:00", "last_run": null}
+        """#.utf8))
+        XCTAssertEqual(r.conversationId, "c_7")
+        XCTAssertNil(r.lastRun)
+        let agent = try JSONDecoder.api.decode(Agent.self, from: Data(
+            #"{"id":"coach","name":"Coach","routine_ideas":[{"title":"Weekly recap","prompt":"Recap","days":[7]}]}"#.utf8))
+        XCTAssertEqual(agent.routineIdeas.first?.time, "09:00")
+        let c = try JSONDecoder.api.decode(Conversation.self, from: Data(#"{"id":"c_7","title":"Weekly recap","routine":3}"#.utf8))
+        XCTAssertEqual(c.routine, 3)
+        let h = try JSONDecoder.api.decode(HistoryMessage.self, from: Data(
+            #"{"role":"assistant","text":"Recap…","routine":{"id":3,"title":"Weekly recap"}}"#.utf8))
+        XCTAssertEqual(h.routine?.title, "Weekly recap")
+        // A change leaves `agent` out.
+        let patch = String(decoding: try JSONEncoder.api.encode(
+            RoutineDraft(title: "T", prompt: "P", time: "09:00", days: [], enabled: false)), as: UTF8.self)
+        XCTAssertFalse(patch.contains("agent"))
+
+        XCTAssertEqual(Schedule.label(time: "09:00", days: []), "Every day at 09:00")
+        XCTAssertEqual(Schedule.label(time: "09:00", days: [1, 2, 3, 4, 5]), "Weekdays at 09:00")
+        XCTAssertEqual(Schedule.label(time: "10:00", days: [6, 7]), "Weekends at 10:00")
+        XCTAssertEqual(Schedule.label(time: "18:00", days: [7]), "Sundays at 18:00")
+        XCTAssertEqual(Schedule.label(time: "07:30", days: [5, 1, 3]), "Mon, Wed, and Fri at 07:30")
+        XCTAssertEqual(RoutineEditor.string(from: RoutineEditor.date(from: "07:05")), "07:05")
     }
 
     func testNewConversationSendsAgentOnlyWhenSet() throws {
