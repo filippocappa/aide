@@ -278,8 +278,13 @@ morning digest, which runs at its time as before.
   `sleep` and `recovery` first. The greeting is spoken and knows the time: when you got up, how you slept compared
   with usual, recovery in a few words, then what's next and when to leave. Example: *"Morning. You're up at 8:10
   after 6h40, a bit under your usual, and your body looks recovered. Lecture at 9:30 in Città Studi: leave by 8:55
-  by tram. Giulia replied about Saturday."* Travel time comes from Google Maps (`travel_time`, from home) when the
-  next event has a location and Maps is set up; otherwise the greeting just gives the time.
+  by tram. Giulia replied about Saturday."* Travel time comes from Google Maps when the next event has a location
+  and Maps is set up; otherwise the greeting just gives the time. The trip starts from home (the address in the
+  assistant's memory if there is one, else the server's configured one) and aims to arrive 10 minutes before the
+  event starts; leave-by times are rounded down to 5 minutes. The server asks for walking and public transport:
+  if the walk is 35 minutes or less the greeting can give both ("walk: leave by 8:50, tram: leave by 9:05"),
+  otherwise transit only. If memory says how the user gets to that place ("I always walk to uni"), only that
+  way is used.
 - **Delivery:** a `digest` push with `"digest": "wake"` (title "Good morning"), and a Discord DM when the digest
   settings' `discord` is true, like the scheduled digests.
 - **Opening it:** `POST /v1/conversations` with `{"digest": "wake"}` uses today's wake greeting. If there's none

@@ -50,12 +50,17 @@ class Push:
 
 
 class Maps:
-    def __init__(self, seconds=1500):
-        self.seconds, self.bodies = seconds, []
+    """Minutes per travel mode; transit rides a tram."""
+
+    def __init__(self, walk=25, transit=15):
+        self.minutes, self.bodies = {"WALK": walk, "TRANSIT": transit}, []
 
     async def route(self, body):
         self.bodies.append(body)
-        return {"duration": f"{self.seconds}s"}
+        out = {"duration": f"{self.minutes[body['travelMode']] * 60}s"}
+        if body["travelMode"] == "TRANSIT":
+            out["legs"] = [{"steps": [{}, {"transitDetails": {"transitLine": {"vehicle": {"name": {"text": "Tram"}}}}}]}]
+        return out
 
 
 @pytest.fixture
@@ -79,7 +84,7 @@ def world():
         wake = WakeService(digest, health, ROME, notify, push, clock)
         agent = Agent(client, db, ToolRegistry([]), model="m", tz=ROME)
         app = create_app(agent, store, cal, ROME, TOKEN, habits, digest, health=health, wake=wake)
-        return SimpleNamespace(http=TestClient(app), app=app, digest=digest, wake=wake, push=push, model=client,
+        return SimpleNamespace(db=db, http=TestClient(app), app=app, digest=digest, wake=wake, push=push, model=client,
                                health=health, habits=habits)
     yield make
     db.close()
@@ -248,7 +253,7 @@ async def test_wake_signal_rules(world):
 
 async def test_wake_greeting_knows_time_sleep_and_when_to_leave(world):
     lecture = MORNING.replace(hour=9, minute=30)
-    maps = Maps(seconds=35 * 60)
+    maps = Maps(walk=23, transit=15)
     sent = []
 
     async def notify(text):
@@ -263,13 +268,54 @@ async def test_wake_greeting_knows_time_sleep_and_when_to_leave(world):
     await settle(w)
     prompt = w.model.requests[0]["messages"][0]["content"]
     assert "They got up at 08:10." in prompt
-    assert "Next: Lecture at 09:30 at Città Studi. By public transport from home: 35 min, leave by 08:55." in prompt
+    assert ("Next: Lecture at 09:30 at Città Studi. To be there 10 min early, from home: "
+            "walk: leave by 8:55 (23 min), tram: leave by 9:05 (15 min).") in prompt
     assert "Asleep 6h40 (usual 7h18)" in prompt and "HRV above your usual" in prompt
     assert "wake-up briefing" in w.model.requests[0]["system"] and "medical" in w.model.requests[0]["system"]
-    assert maps.bodies[0]["travelMode"] == "TRANSIT" and maps.bodies[0]["destination"] == {"address": "Città Studi"}
+    walk, transit = sorted(maps.bodies, key=lambda b: b["travelMode"], reverse=True)
+    assert walk == {"origin": {"address": "Via Roma 1, Milano"}, "destination": {"address": "Città Studi"},
+                    "travelMode": "WALK"}
+    arrive = datetime.fromisoformat(transit["arrivalTime"].replace("Z", "+00:00")).astimezone(ROME)
+    assert transit["travelMode"] == "TRANSIT" and arrive == lecture - timedelta(minutes=10)
     assert sent and sent[0].startswith("**Morning.**")
     d = w.digest.latest("wake")
     assert [s["type"] for s in d["sections"]][:2] == ["sleep", "recovery"]
+
+
+async def leave_line(world, maps, responses=(), memories=()):
+    """The leave-by line the wake greeting's model is given, for a 9:30 lecture at Città Studi."""
+    lecture = MORNING.replace(hour=9, minute=30)
+    w = world([*responses, done("Morning.")], [CalEvent("e1", "Uni", "Lecture", lecture,
+                                                        lecture + timedelta(hours=2), "Città Studi")], maps)
+    for m in memories:
+        w.db.add_memory(m)
+    await w.digest.generate("wake", MORNING)
+    prompt = w.model.requests[-1]["messages"][0]["content"]
+    return next(line for line in prompt.splitlines() if line.startswith("Next:")), w
+
+
+async def test_long_walk_means_transit_only(world):
+    line, _ = await leave_line(world, Maps(walk=50, transit=20))
+    assert line.endswith("from home: tram: leave by 9:00 (20 min).")
+
+
+async def test_memory_gives_home_and_mode(world):
+    maps = Maps(walk=12)
+    plan = done('{"home": "Via Verdi 5, Milano", "mode": "walk"}')
+    line, w = await leave_line(world, maps, [plan], ["Home is Via Verdi 5, Milano", "I always walk to uni"])
+    assert line.endswith("from home: walk: leave by 9:05 (12 min).")
+    assert [b["travelMode"] for b in maps.bodies] == ["WALK"]
+    assert maps.bodies[0]["origin"] == {"address": "Via Verdi 5, Milano"}
+    ask = w.model.requests[0]["messages"][0]["content"]
+    assert "I always walk to uni" in ask and "Città Studi" in ask and "JSON" in w.model.requests[0]["system"]
+
+
+async def test_memory_without_travel_facts_or_unreadable(world):
+    for answer in ('{"home": null, "mode": null}', "no idea"):
+        maps = Maps()
+        line, _ = await leave_line(world, maps, [done(answer)], ["Likes sushi"])
+        assert line.endswith("walk: leave by 8:55 (25 min), tram: leave by 9:05 (15 min).")
+        assert {b["origin"]["address"] for b in maps.bodies} == {"Via Roma 1, Milano"}
 
 
 async def test_wake_waits_for_sleep_then_goes_ahead(world, monkeypatch):
