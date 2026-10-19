@@ -24,6 +24,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var isActing = false
     /// A new chat is waiting for its digest greeting.
     @Published private(set) var isOpening = false
+    /// The digest kind this chat was opened with, so Details shows the same one. Nil for chats opened later.
+    @Published private(set) var openedDigest: String?
     @Published private(set) var loadError: String?
 
     /// Called after the server may have changed reminders or events.
@@ -47,10 +49,12 @@ final class ChatViewModel: ObservableObject {
         if let unanswered { try? await api.deleteConversation(unanswered) }
         isOpening = true
         defer { isOpening = false }
-        guard let conversation = try? await api.createConversation(digest: kind ?? Self.digestKind()),
+        let kind = kind ?? Self.digestKind()
+        guard let conversation = try? await api.createConversation(digest: kind),
               conversationID == nil, messages.isEmpty
         else { return }
         conversationID = conversation.id
+        openedDigest = kind
         await loadHistory()
     }
 
@@ -60,6 +64,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func reset() {
+        openedDigest = nil
         conversationID = nil
         messages = []
         pending = []
@@ -73,6 +78,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func open(id: String) async {
+        if id != conversationID { openedDigest = nil }
         conversationID = id
         messages = []
         pending = []

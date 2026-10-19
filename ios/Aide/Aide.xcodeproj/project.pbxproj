@@ -13,6 +13,8 @@
 		1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		22723056AB8C45B0D23646D9 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
 		25FDB4AE99AC133557167989 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32DFE4D7AD03B872AE8A96C /* Models.swift */; };
+		313DDC3B1BB41035C1030689 /* WakeUpIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */; };
+		583CA03CCC0F99FEB9CC3EB6 /* HealthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAE455930B7B7F343EF3E0F7 /* HealthService.swift */; };
 		6050EEA9BDAD57AB18630D2E /* DigestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */; };
 		675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48D3B662149E81DAF5A28319 /* TouchTracker.swift */; };
 		6FFB4761315BC0B5CD78D8C6 /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36387E8AE9A51ED3851F3281 /* PushService.swift */; };
@@ -33,6 +35,7 @@
 		DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B4431689B0F772EB8EDA27 /* LivePebble.swift */; };
 		E0244E5AF24BFFC84C55D2A4 /* VoicePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */; };
 		EA7898D2B9F95FC9F72530FD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */; };
+		F889CC6C37E9D4CC8806D49B /* SleepSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +63,7 @@
 		605B384AB6649D33C15F6172 /* Aide.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Aide.entitlements; sourceTree = "<group>"; };
 		63500D066A75FEEDD7B682E9 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
 		68C4CE2352B9DD9BE976A094 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepSummary.swift; sourceTree = "<group>"; };
 		7386B4E42939B32072754CC0 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePanel.swift; sourceTree = "<group>"; };
 		78FD630BFAF2C84AC4AF0659 /* DigestViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestViewModel.swift; sourceTree = "<group>"; };
@@ -69,10 +73,13 @@
 		95BA6200F2ECB7474C9F8E54 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		9AEB482052BA9CB53D3B8410 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
 		9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideApp.swift; sourceTree = "<group>"; };
+		B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeUpIntent.swift; sourceTree = "<group>"; };
 		B9FC43C842297C98B8EC0DAE /* AideTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AideTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitsView.swift; sourceTree = "<group>"; };
+		CAE455930B7B7F343EF3E0F7 /* HealthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthService.swift; sourceTree = "<group>"; };
 		CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DBB893CFE71A535E6990CADF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		E8BFC1DAA6E43241677C8730 /* Health.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Health.entitlements; sourceTree = "<group>"; };
 		E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSettingsView.swift; sourceTree = "<group>"; };
 		F32DFE4D7AD03B872AE8A96C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSheet.swift; sourceTree = "<group>"; };
@@ -140,6 +147,16 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
+		4FE6C5EFCDAF271AC45911B4 /* Health */ = {
+			isa = PBXGroup;
+			children = (
+				CAE455930B7B7F343EF3E0F7 /* HealthService.swift */,
+				6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */,
+				B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */,
+			);
+			path = Health;
+			sourceTree = "<group>";
+		};
 		52F4BFF6E2EFCABE7988E66E /* Sync */ = {
 			isa = PBXGroup;
 			children = (
@@ -162,7 +179,9 @@
 				605B384AB6649D33C15F6172 /* Aide.entitlements */,
 				9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */,
 				CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */,
+				E8BFC1DAA6E43241677C8730 /* Health.entitlements */,
 				87320B5BA6327928E4CC8A7D /* Info.plist */,
+				4FE6C5EFCDAF271AC45911B4 /* Health */,
 				49327BF300E149686FF8BF47 /* Models */,
 				180901E9CD4ACEE633D8B0F3 /* Networking */,
 				32C52886798B75C3BF6CAD88 /* Support */,
@@ -301,6 +320,7 @@
 				08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */,
 				AA355EF0C809637B2B575280 /* DigestViewModel.swift in Sources */,
 				C09D1B1769A15612EC00F4D0 /* HabitsView.swift in Sources */,
+				583CA03CCC0F99FEB9CC3EB6 /* HealthService.swift in Sources */,
 				1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */,
 				DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */,
 				7F41522F5C768CB044BFBE4B /* MemoryView.swift in Sources */,
@@ -309,10 +329,12 @@
 				BD46F83D3EF35D141EA7239C /* ReminderSyncService.swift in Sources */,
 				AA3A37D30E4DCE329F1D78A5 /* RichText.swift in Sources */,
 				7688764763680AE215A25A25 /* SettingsView.swift in Sources */,
+				F889CC6C37E9D4CC8806D49B /* SleepSummary.swift in Sources */,
 				B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */,
 				675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */,
 				B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */,
 				E0244E5AF24BFFC84C55D2A4 /* VoicePanel.swift in Sources */,
+				313DDC3B1BB41035C1030689 /* WakeUpIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

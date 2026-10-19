@@ -3,15 +3,19 @@ import SwiftUI
 /// Builds the object graph once and keeps the three screens in step with each other.
 @MainActor
 final class AppEnvironment: ObservableObject {
+    /// One per process: the app delegate, the screens and the "I'm up" shortcut all use it.
+    static let shared = AppEnvironment()
+
     let settings: AppSettings
     let api: APIClient
     let sync: ReminderSyncService
     let chat: ChatViewModel
     let digest: DigestViewModel
     let push: PushService
+    let health: HealthService
     let voice = VoiceController()
 
-    init() {
+    private init() {
         let settings = AppSettings()
         let api = APIClient(config: { [weak settings] in settings?.apiConfig })
         let sync = ReminderSyncService(api: api, settings: settings)
@@ -22,6 +26,7 @@ final class AppEnvironment: ObservableObject {
         self.chat = chat
         self.digest = DigestViewModel(api: api)
         self.push = PushService(api: api)
+        self.health = HealthService(api: api)
 
         // The assistant may have created reminders or moved events: sync.
         voice.languageCode = { [weak settings] in settings?.voiceLanguage ?? "en-US" }
@@ -46,10 +51,12 @@ final class AppEnvironment: ObservableObject {
         async let history: Void = chat.loadHistory()
         async let digestLoad: Void = digest.load()
         async let pushRefresh: Void = push.refresh()
+        async let healthUpload = health.upload()
         await sync.sync()
         await history
         await digestLoad
         await pushRefresh
+        _ = await healthUpload
     }
 
     /// A tapped notification (docs/API.md, Push).

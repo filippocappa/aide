@@ -100,4 +100,10 @@ Settings → Notifications with a test button. Needs the `.p8` key (README.md, "
 developer enrolment finishes; then install on the phone and send a test. App unit tests not yet run (this Mac
 had no Simulator runtime on 2026-10-19).
 
-**Next:** try push live, then Discord becomes optional. After that #2 (wake-up briefing with Apple Health sleep).
+**In progress:** Apple Health (#2), contract in `docs/API.md` ("Apple Health"). App side built (not yet run on a
+device): daily health summaries with a 60-day backfill, HealthKit background delivery, the "I'm up" App Intent for a
+Shortcuts Sleep → Waking Up automation, the `wake` digest with sleep and recovery cards, Watch workouts ticking
+habits. Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server side next.
+
+**Next:** try push live, then Discord becomes optional. Later for health: bedtime nudge in the evening digest,
+weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).

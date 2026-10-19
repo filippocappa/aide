@@ -2,5 +2,6 @@
 // (developer.apple.com > Account > Membership details > Team ID).
 DEVELOPMENT_TEAM = XXXXXXXXXX
 
-// Push notifications (docs/API.md, Push). Only with the paid team; leave it out for a Personal Team.
+// Push notifications (docs/API.md, Push), plus Apple Health. Only with the paid team; leave it out for a
+// Personal Team. (If a Personal Team won't sign Apple Health either, set AIDE_ENTITLEMENTS = to turn it off.)
 AIDE_ENTITLEMENTS = Aide/Aide.entitlements

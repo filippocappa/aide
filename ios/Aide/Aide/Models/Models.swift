@@ -188,6 +188,8 @@ struct Habit: Decodable, Identifiable, Hashable {
     let lastDone: String?
     /// Local dates ("2026-10-19") it was checked in the last 26 weeks. Missing from older servers.
     var history: [String]?
+    /// Watch workout types that check it by themselves (docs/API.md, "Workout types"). Missing from older servers.
+    var workouts: [String]?
 
     var cadenceText: String {
         cadence.type == "weekly" ? "\(cadence.perWeek ?? 1)× a week" : "Every day"
@@ -195,10 +197,98 @@ struct Habit: Decodable, Identifiable, Hashable {
 }
 struct HabitList: Decodable { let habits: [Habit] }
 struct HabitCheck: Encodable { var done: Bool }
+/// The body of `POST /v1/habits` and `PATCH /v1/habits/{id}`.
 struct HabitNew: Encodable {
     struct Cadence: Encodable { var type: String; var perWeek: Int? }
     var name: String
     var cadence: Cadence
+    var workouts: [String] = []
+}
+
+/// Labels for the workout types a habit can be checked by, in the order the picker shows them.
+enum WorkoutType {
+    static let all: [(id: String, label: String)] = [
+        ("any", "Any workout"), ("strength", "Strength"), ("run", "Run"), ("walk", "Walk"), ("hike", "Hike"),
+        ("cycle", "Cycling"), ("swim", "Swim"), ("hiit", "HIIT"), ("yoga", "Yoga"), ("pilates", "Pilates"),
+        ("core", "Core"), ("dance", "Dance"), ("climb", "Climbing"), ("row", "Rowing"),
+        ("elliptical", "Elliptical"), ("stairs", "Stairs"), ("cardio", "Cardio"),
+        ("martial_arts", "Martial arts"), ("sport", "Sports"), ("other", "Other"),
+    ]
+
+    static func label(_ id: String) -> String { all.first { $0.id == id }?.label ?? id }
+}
+
+// MARK: - Apple Health
+
+/// The night that ended on a health day's date (docs/API.md, "Health day").
+struct SleepNight: Codable, Hashable {
+    var bedtime: String
+    var wake: String
+    var asleepMin: Int
+    var inBedMin: Int
+    var awakeMin: Int?
+    /// Stages are nil without a Watch.
+    var deepMin: Int?
+    var coreMin: Int?
+    var remMin: Int?
+
+    var bedtimeDate: Date? { Wire.parse(bedtime) }
+    var wakeDate: Date? { Wire.parse(wake) }
+}
+
+struct HealthWorkout: Encodable, Equatable {
+    var id: String
+    var type: String
+    var start: String
+    var end: String
+    var minutes: Int
+    var kcal: Int?
+}
+
+/// One local day's summary. Nil fields are left out: no data.
+struct HealthDay: Encodable, Equatable {
+    var date: String
+    var sleep: SleepNight?
+    var restingHr: Int?
+    var hrvMs: Double?
+    var respiratoryRate: Double?
+    var wristTempC: Double?
+    var steps: Int?
+    var activeKcal: Int?
+    var exerciseMin: Int?
+    var workouts: [HealthWorkout] = []
+}
+
+struct HealthUpload: Encodable { let days: [HealthDay] }
+struct HealthUploadResult: Decodable {
+    let saved: Int
+    /// Habits this upload checked through workouts.
+    let checked: [Habit]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        saved = try c.decodeIfPresent(Int.self, forKey: .saved) ?? 0
+        checked = try c.decodeIfPresent([Habit].self, forKey: .checked) ?? []
+    }
+    private enum CodingKeys: String, CodingKey { case saved, checked }
+}
+
+/// `source` is "shortcut" or "app".
+struct WakeRequest: Encodable { let at: String; let source: String; let day: HealthDay? }
+struct WakeResult: Decodable {
+    let started: Bool
+    /// When not started: "already", "off" or "outside_hours".
+    let reason: String?
+}
+
+/// How last night and today compare with your usual numbers (docs/API.md, "Sleep and recovery").
+struct Recovery: Decodable, Hashable {
+    let level: String // "good", "normal" or "low"
+    let summary: String
+    let hrvMs: Double?
+    let hrvUsualMs: Double?
+    let restingHr: Int?
+    let restingHrUsual: Int?
 }
 
 struct MailItem: Decodable, Identifiable, Hashable {
@@ -227,6 +317,8 @@ struct DigestSection: Decodable, Identifiable {
         case mail([MailItem])
         case reminders([Reminder])
         case habits([Habit])
+        case sleep(SleepNight, usualAsleepMin: Int?)
+        case recovery(Recovery)
         case text(String)
         case unknown // a section type this app version doesn't know: skipped
     }
@@ -242,11 +334,14 @@ struct DigestSection: Decodable, Identifiable {
         case "mail": content = .mail(try c.decode([MailItem].self, forKey: .items))
         case "reminders": content = .reminders(try c.decode([Reminder].self, forKey: .reminders))
         case "habits": content = .habits(try c.decode([Habit].self, forKey: .habits))
+        case "sleep": content = .sleep(try c.decode(SleepNight.self, forKey: .sleep),
+                                       usualAsleepMin: try c.decodeIfPresent(Int.self, forKey: .usualAsleepMin))
+        case "recovery": content = .recovery(try Recovery(from: decoder))
         case "text": content = .text(try c.decode(String.self, forKey: .text))
         default: content = .unknown
         }
     }
-    private enum CodingKeys: String, CodingKey { case type, title, events, items, reminders, habits, text }
+    private enum CodingKeys: String, CodingKey { case type, title, events, items, reminders, habits, sleep, usualAsleepMin, text }
 }
 
 struct Digest: Decodable {
@@ -263,8 +358,12 @@ struct DigestSchedule: Codable, Equatable {
     var day: Int? // monthly: 1–31
 }
 
+/// The wake-up briefing has no time: it runs when you get up.
+struct WakeSchedule: Codable, Equatable { var enabled: Bool }
+
 struct DigestSettings: Codable, Equatable {
     var daily: DigestSchedule // the morning digest
+    var wake: WakeSchedule? // nil from older servers; left out when saving, so the server keeps its value
     var evening: DigestSchedule?
     var weekly: DigestSchedule
     var monthly: DigestSchedule

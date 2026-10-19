@@ -22,6 +22,8 @@
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Aide reads your sleep, heart rate, HRV, steps and workouts to write your wake-up briefing and tick off workout habits.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Aide listens when you tap the microphone, so you can talk instead of type.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

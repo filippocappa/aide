@@ -115,6 +115,18 @@ final class APIClient {
         try await send("POST", "/v1/habits/\(id)/check", body: HabitCheck(done: done))
     }
 
+    func updateHabit(_ id: Int, _ habit: HabitNew) async throws -> Habit {
+        try await send("PATCH", "/v1/habits/\(id)", body: habit)
+    }
+
+    func uploadHealthDays(_ days: [HealthDay]) async throws -> HealthUploadResult {
+        try await send("POST", "/v1/health/days", body: HealthUpload(days: days), timeout: 60)
+    }
+
+    func wake(_ request: WakeRequest) async throws -> WakeResult {
+        try await send("POST", "/v1/wake", body: request)
+    }
+
     func today(date: Date? = nil) async throws -> TodayResponse {
         let query = date.map { [URLQueryItem(name: "date", value: Wire.dayString($0))] } ?? []
         return try await send("GET", "/v1/today", query: query)

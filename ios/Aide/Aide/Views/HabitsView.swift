@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Habits: tick them off, add new ones, swipe to delete. The assistant can do the same from chat.
+/// Habits: tick them off, add new ones, tap one to edit it, swipe to delete. The assistant can do the same from chat.
 struct HabitsView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var settings: AppSettings
@@ -8,6 +8,7 @@ struct HabitsView: View {
     @State private var loaded = false
     @State private var error: String?
     @State private var adding = false
+    @State private var editing: Habit?
 
     var body: some View {
         NavigationStack {
@@ -33,15 +34,22 @@ struct HabitsView: View {
                             .buttonStyle(.plain)
                             .foregroundStyle(Theme.accent)
                             .accessibilityLabel(habit.doneToday ? "Undo \(habit.name)" : "Mark \(habit.name) done")
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(habit.name).font(.body.weight(.medium))
-                                Text(habit.cadenceText).font(.caption).foregroundStyle(.secondary)
+                            Button { editing = habit } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(habit.name).font(.body.weight(.medium))
+                                        Text(Self.detail(habit)).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if habit.streak > 0 {
+                                        Label("\(habit.streak)", systemImage: "flame.fill")
+                                            .font(.subheadline.weight(.semibold)).foregroundStyle(Color.orange)
+                                    }
+                                }
+                                .contentShape(Rectangle())
                             }
-                            Spacer()
-                            if habit.streak > 0 {
-                                Label("\(habit.streak)", systemImage: "flame.fill")
-                                    .font(.subheadline.weight(.semibold)).foregroundStyle(Color.orange)
-                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Edit")
                         }
                         if let history = habit.history { HabitGrid(done: Set(history)) }
                     }
@@ -61,7 +69,8 @@ struct HabitsView: View {
                     Button("Add habit", systemImage: "plus") { adding = true }.disabled(!settings.isConfigured)
                 }
             }
-            .sheet(isPresented: $adding) { NewHabitSheet { await add($0) } }
+            .sheet(isPresented: $adding) { HabitSheet(habit: nil) { await add($0) } }
+            .sheet(item: $editing) { habit in HabitSheet(habit: habit) { await update(habit, $0) } }
             .refreshable { await load() }
             .task { await load() }
         }
@@ -87,6 +96,23 @@ struct HabitsView: View {
         } catch { self.error = error.localizedDescription }
     }
 
+    /// "Every day · Strength from the Watch"
+    private static func detail(_ habit: Habit) -> String {
+        guard let workouts = habit.workouts, !workouts.isEmpty else { return habit.cadenceText }
+        let names = workouts.contains("any") ? "Any workout" : workouts.map(WorkoutType.label).formatted(.list(type: .or))
+        return "\(habit.cadenceText) · \(names) from the Watch"
+    }
+
+    private func update(_ habit: Habit, _ changes: HabitNew) async -> String? {
+        do {
+            let updated = try await env.api.updateHabit(habit.id, changes)
+            if let i = habits.firstIndex(where: { $0.id == habit.id }) { habits[i] = updated }
+            return nil
+        } catch APIError.server(let status, _) where status == 404 || status == 405 {
+            return "The server can't edit habits yet."
+        } catch { return error.localizedDescription }
+    }
+
     private func add(_ habit: HabitNew) async -> String? {
         do {
             habits.append(try await env.api.addHabit(habit))
@@ -95,45 +121,105 @@ struct HabitsView: View {
     }
 }
 
-private struct NewHabitSheet: View {
+/// Adding a habit, or editing one (`habit` set).
+private struct HabitSheet: View {
+    let habit: Habit?
     /// Returns an error message, or nil when saved.
     let save: (HabitNew) async -> String?
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var weekly = false
-    @State private var perWeek = 3
+    @State private var name: String
+    @State private var weekly: Bool
+    @State private var perWeek: Int
+    @State private var workouts: Set<String>
     @State private var error: String?
+
+    init(habit: Habit?, save: @escaping (HabitNew) async -> String?) {
+        self.habit = habit
+        self.save = save
+        _name = State(initialValue: habit?.name ?? "")
+        _weekly = State(initialValue: habit?.cadence.type == "weekly")
+        _perWeek = State(initialValue: habit?.cadence.perWeek ?? 3)
+        _workouts = State(initialValue: Set(habit?.workouts ?? []))
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Name, e.g. Gym", text: $name)
-                Picker("How often", selection: $weekly) {
-                    Text("Every day").tag(false)
-                    Text("Some days a week").tag(true)
+                Section {
+                    TextField("Name, e.g. Gym", text: $name)
+                    Picker("How often", selection: $weekly) {
+                        Text("Every day").tag(false)
+                        Text("Some days a week").tag(true)
+                    }
+                    if weekly { Stepper("\(perWeek)× a week", value: $perWeek, in: 1...6) }
                 }
-                if weekly { Stepper("\(perWeek)× a week", value: $perWeek, in: 1...6) }
+                Section {
+                    NavigationLink {
+                        WorkoutPicker(selection: $workouts)
+                    } label: {
+                        LabeledContent("Apple Watch workouts", value: summary)
+                    }
+                } footer: {
+                    Text("A workout of one of these types, 10 minutes or longer, ticks the habit by itself.")
+                }
                 if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
             }
             .scrollContentBackground(.hidden)
             .background(Theme.background)
-            .navigationTitle("New habit")
+            .navigationTitle(habit == nil ? "New habit" : "Edit habit")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
+                    Button(habit == nil ? "Add" : "Save") {
                         Task {
-                            let habit = HabitNew(name: name.trimmingCharacters(in: .whitespaces),
-                                                 cadence: .init(type: weekly ? "weekly" : "daily", perWeek: weekly ? perWeek : nil))
-                            if let message = await save(habit) { error = message } else { dismiss() }
+                            let new = HabitNew(name: name.trimmingCharacters(in: .whitespaces),
+                                               cadence: .init(type: weekly ? "weekly" : "daily", perWeek: weekly ? perWeek : nil),
+                                               workouts: workouts.contains("any") ? ["any"] : workouts.sorted())
+                            if let message = await save(new) { error = message } else { dismiss() }
                         }
                     }
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
+    }
+
+    private var summary: String {
+        if workouts.isEmpty { return "None" }
+        if workouts.contains("any") { return "Any" }
+        return workouts.count == 1 ? WorkoutType.label(workouts.first!) : "\(workouts.count) types"
+    }
+}
+
+/// Tick the workout types that count. "Any workout" covers them all.
+private struct WorkoutPicker: View {
+    @Binding var selection: Set<String>
+
+    var body: some View {
+        List(WorkoutType.all, id: \.id) { type in
+            let on = selection.contains(type.id) || (type.id != "any" && selection.contains("any"))
+            Button {
+                if type.id == "any" {
+                    selection = selection.contains("any") ? [] : ["any"]
+                } else {
+                    selection.remove("any")
+                    if selection.contains(type.id) { selection.remove(type.id) } else { selection.insert(type.id) }
+                }
+            } label: {
+                HStack {
+                    Text(type.label).foregroundStyle(Color.primary)
+                    Spacer()
+                    if on { Image(systemName: "checkmark").foregroundStyle(Theme.accent) }
+                }
+                .contentShape(Rectangle())
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Theme.background)
+        .navigationTitle("Workouts")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
