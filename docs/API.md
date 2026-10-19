@@ -57,6 +57,10 @@ from the tools the assistant used in that turn, not parsed from its text:
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
   On Discord the same items are appended to the reply as a list.
 
+`consulted` (always present, default `[]`) lists the agent ids Aide asked during that turn, in order, e.g.
+`["coach"]` (see Agents). The app shows them above the reply as small Pebbles ("Asked Coach"). Cards from a
+consulted agent's tools are in this reply's `attachments`.
+
 | Endpoint | Body | Response |
 |---|---|---|
 | `POST /v1/confirm` | `{}` | `{"result": "✓ Moved: …", "pending": []}`. Runs every pending action. |
@@ -64,8 +68,8 @@ from the tools the assistant used in that turn, not parsed from its text:
 | `POST /v1/new` | `{}` | `{"ok": true}`. Starts a fresh conversation (like `!new`). |
 | `POST /v1/think` | `{}` | `{"ok": true}`. Smarter model for the rest of the conversation (like `!think`). |
 
-`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ]}]}`
-(`attachments` as in `/v1/chat`, `[]` on user messages and plain replies; reminders in them are reloaded as they are now,
+`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ]}]}`
+(`attachments` and `consulted` as in `/v1/chat`, `[]` on user messages and plain replies; reminders in them are reloaded as they are now,
 so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said on Discord too. Tool calls and internal notes are left out.
 
 ## Conversations
@@ -74,8 +78,8 @@ The app keeps many chats; Discord stays on the one shared conversation. Every ch
 
 | Endpoint | Body / query | Response |
 |---|---|---|
-| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the shared (Discord) conversation, titled "Discord" or similar. |
-| `POST /v1/conversations` | `{}`, or `{"digest": "daily" \| "evening"}` | The new conversation (same shape as a list row, `title: null`). With `digest`, the chat starts with that digest's greeting as Aide's first message: it's in `/v1/history` and `preview`, and the model knows it said it. See Digest. |
+| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the shared (Discord) conversation, titled "Discord" or similar. |
+| `POST /v1/conversations` | `{}`, `{"agent": "coach"}`, or `{"digest": "daily" \| "evening"}` | The new conversation (same shape as a list row, `title: null`). `agent` defaults to `aide`; an unknown one is `400`. With `digest`, the chat is Aide's (`agent` is ignored) and starts with that digest's greeting as Aide's first message: it's in `/v1/history` and `preview`, and the model knows it said it. See Digest. |
 | `DELETE /v1/conversations/{id}` | | `{"ok": true}`. The shared conversation can't be deleted (400). |
 | `POST /v1/chat` | `{"text": "…", "conversation_id": "c_91f…"}` | Same as before, plus `"conversation_id"`. The server sets `title` from the first exchange. |
 | `GET /v1/history` | `?limit=50&conversation_id=c_91f…` | As before, for that conversation. |
@@ -83,14 +87,67 @@ The app keeps many chats; Discord stays on the one shared conversation. Every ch
 
 The app creates a conversation with `POST /v1/conversations` before the first message of each new chat. If that returns 404 or 405 (older server), it falls back to the shared conversation.
 
+Every conversation belongs to one agent (`agent`, see Agents), fixed when it's created. `POST /v1/chat` answers as
+that agent. Chats from before agents existed, digest chats and the shared Discord conversation are `aide`'s.
+
+## Agents
+
+Aide is the orchestrator: you can ask it anything, and it asks the specialists when a question needs them. Each
+specialist also has its own chats, with its own instructions, tools and memory. The list comes from the server, so
+a new agent needs no app update.
+
+`GET /v1/agents` →
+```json
+{"agents": [
+  {"id": "aide", "name": "Aide", "role": "Talks to all of them", "color": "#34413F", "orchestrator": true,
+   "starters": ["What's on today?", "Plan my week", "Remind me to "]},
+  {"id": "secretary", "name": "Secretary", "role": "Calendar, reminders and mail", "color": "#3B6FD8",
+   "starters": ["What's on my calendar today?", "Any mail I need to answer?", "Remind me to "]},
+  {"id": "professor", "name": "Professor", "role": "Study and lectures", "color": "#7A4FD0",
+   "starters": ["Explain ", "Make me a study plan for "]},
+  {"id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#E0782F",
+   "starters": ["How did I sleep this week?", "Should I train hard today?"]},
+  {"id": "finance", "name": "Finance", "role": "Money and budgets", "color": "#B8921C",
+   "starters": ["Help me set a monthly budget", "I spent "]}
+]}
+```
+- The order is the order the app shows them in. `orchestrator` is true for exactly one agent (default false).
+- `color` is Pebble's colour on light backgrounds (`#RRGGBB`). The app may lighten it in dark mode.
+- `starters` are suggestions for an empty chat. One that ends in a space goes into the text field for you to
+  finish; any other is sent as it is.
+
+**What each one does** (server side; the app only shows them):
+
+| Agent | Tools | Notes |
+|---|---|---|
+| `aide` | all of today's tools, plus `ask_agent` | Keeps the tools it has now, so quick things stay one step. It asks a specialist when the answer needs that specialist's own memory, judgment or tools (a study question, training advice, a budget). |
+| `secretary` | calendar, reminders, mail, maps, web | Today's assistant, focused on the day: schedule, errands, mail. |
+| `professor` | web, `fetch_page` | Explains, plans study, and later gets study notes and lecture audio (#3) and quizzes (#4). |
+| `coach` | Apple Health, habits, calendar (read), web | Sleep, recovery, training, habits. Compares with your own usual numbers; never makes medical claims. |
+| `finance` | web | No bank data yet: it keeps what you tell it (income, spending, goals) in its own memory. |
+
+- **Asking an agent.** `ask_agent(agent, request)` runs one turn of that agent: its instructions, its tools, the
+  shared memory plus its own, and the request (Aide puts the context it needs into it). It doesn't see Aide's chat
+  and doesn't write to the agent's own chats. Its answer goes back to Aide, which replies, saying who it asked
+  ("Coach thinks…"). Actions it queues join the usual confirmation queue; cards from its tools join the reply.
+  At most 3 asks per turn, and an asked agent can't ask others.
+- **Discord** talks to Aide, as before.
+
 ## Memory
 
-Short facts Aide keeps between chats (preferences, names, routines). The server puts all items into the model's context at the start of every conversation and gives the model a `remember` tool to add one (adding is harmless, so it isn't queued; the model deleting one is, like other destructive actions).
+Short facts Aide keeps between chats (preferences, names, routines). The server puts the items into the model's context at the start of every conversation and gives the model a `remember` tool to add one (adding is harmless, so it isn't queued; the model deleting one is, like other destructive actions).
+
+Each item is **shared** (`"agent": null`: about you in general, every agent sees it) or **belongs to one agent**
+(`"agent": "coach"`: only that agent sees it, e.g. training goals for the Coach, courses for the Professor). An
+agent's context has the shared items plus its own. Aide sees only the shared ones and asks specialists for the rest.
+`remember` in Aide's chats saves a shared item. In a specialist's chat the model chooses: shared for facts about
+you that any agent could use (name, home, routines), its own for things only it needs. Items from before agents
+existed are shared.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/memory` | | `{"items": [{"id": 7, "text": "Vegetarian", "created_at": "2026-10-18T11:20:00+02:00"}]}` newest first |
-| `POST /v1/memory` | `{"text": "Vegetarian"}` | The new item |
+| `GET /v1/memory` | | `{"items": [{"id": 7, "text": "Vegetarian", "agent": null, "created_at": "2026-10-18T11:20:00+02:00"}]}` newest first, all agents |
+| `POST /v1/memory` | `{"text": "Vegetarian"}`, or with `"agent": "coach"` | The new item (`agent` omitted or null: shared; unknown agent: `400`) |
 | `DELETE /v1/memory/{id}` | | `{"ok": true}` |
 
 ## Digest
