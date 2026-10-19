@@ -140,3 +140,32 @@ final class DigestTests: XCTestCase {
         XCTAssertEqual(habits[0].cadenceText, "3× a week")
     }
 }
+
+final class PushTests: XCTestCase {
+    func testRoutesFromPayloads() {
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "digest", "digest": "evening"]]), .digest("evening"))
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "reminder", "reminder_id": "6f1c"]]), .today)
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "message", "conversation_id": "c_91f"]]), .conversation("c_91f"))
+    }
+
+    func testSilentTestAndUnknownPushesDontRoute() {
+        XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "sync"]]))
+        XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "test"]]))
+        XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "something-new"]]))
+        XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "message"]]))
+        XCTAssertNil(PushRoute(userInfo: ["aps": ["alert": "hi"]]))
+        XCTAssertTrue(PushRoute.isSync(["aps": ["content-available": 1], "aide": ["kind": "sync"]]))
+        XCTAssertFalse(PushRoute.isSync(["aide": ["kind": "digest"]]))
+    }
+
+    @MainActor
+    func testTokenIsLowercaseHex() {
+        XCTAssertEqual(PushService.hex(Data([0x0a, 0xff, 0x00, 0x7b])), "0aff007b")
+    }
+
+    func testDeviceRegistrationIsSnakeCase() throws {
+        let data = try JSONEncoder.api.encode(DeviceRegistration(token: "ab", environment: "sandbox", name: "iPhone"))
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: String])
+        XCTAssertEqual(obj, ["token": "ab", "environment": "sandbox", "name": "iPhone"])
+    }
+}

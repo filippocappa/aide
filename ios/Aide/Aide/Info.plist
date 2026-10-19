@@ -28,6 +28,10 @@
 	<string>Aide mirrors your reminders into a list in Apple Reminders so your phone can notify you.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Aide turns what you say into text to send to your assistant.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

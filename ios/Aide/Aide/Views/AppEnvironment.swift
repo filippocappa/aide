@@ -8,6 +8,7 @@ final class AppEnvironment: ObservableObject {
     let sync: ReminderSyncService
     let chat: ChatViewModel
     let digest: DigestViewModel
+    let push: PushService
     let voice = VoiceController()
 
     init() {
@@ -20,6 +21,7 @@ final class AppEnvironment: ObservableObject {
         self.sync = sync
         self.chat = chat
         self.digest = DigestViewModel(api: api)
+        self.push = PushService(api: api)
 
         // The assistant may have created reminders or moved events: sync.
         voice.languageCode = { [weak settings] in settings?.voiceLanguage ?? "en-US" }
@@ -43,9 +45,25 @@ final class AppEnvironment: ObservableObject {
         guard settings.isConfigured else { return }
         async let history: Void = chat.loadHistory()
         async let digestLoad: Void = digest.load()
+        async let pushRefresh: Void = push.refresh()
         await sync.sync()
         await history
         await digestLoad
+        await pushRefresh
+    }
+
+    /// A tapped notification (docs/API.md, Push).
+    func open(_ route: PushRoute) async {
+        switch route {
+        case .today:
+            await sync.sync()
+            digest.kind = .daily
+            digest.isPresented = true
+        case .digest(let kind):
+            await chat.startNewChat(digest: kind)
+        case .conversation(let id):
+            await chat.open(id: id)
+        }
     }
 
 }

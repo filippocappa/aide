@@ -65,6 +65,9 @@ struct NewConversation: Encodable { var digest: String? }
 struct ChatRequest: Encodable { let text: String; var conversationId: String? }
 struct ConversationBody: Encodable { var conversationId: String? }
 struct MemoryRequest: Encodable { let text: String }
+/// `environment` is "sandbox" for Xcode builds, "production" for TestFlight and the App Store.
+struct DeviceRegistration: Encodable { let token: String; let environment: String; let name: String }
+struct PushTestResult: Decodable { let sent: Int; let failed: Int }
 
 struct Conversation: Decodable, Identifiable, Hashable {
     let id: String

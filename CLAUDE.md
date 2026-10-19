@@ -47,8 +47,8 @@ Rules that matter here:
 SwiftUI, iOS 17+, Xcode project in `ios/Aide/`. Paid Apple Developer Program account (bought 2026-10-18;
 enrolment may still be finishing), so:
 - Sign with the paid team, not "Personal Team". Installs last a year, and TestFlight is available.
-- **Push notifications are possible** (APNs). v1 doesn't use them yet; they're the next step after v1
-  (the server notifies the phone directly, and silent pushes trigger reminder sync).
+- **Push notifications** (APNs): built on both sides, live once the `.p8` key exists. `PushService` registers the
+  device token, silent `sync` pushes run the reminders sync, taps route through `AppEnvironment.open(_:)`.
 - Develop against the **Simulator** (no signing needed). Install on the phone only to try it for real.
 
 ```bash
@@ -90,9 +90,11 @@ Where things stand (2026-10-19):
 greeting as the first chat message with a Details sheet, digest settings, reminder and event cards with tick
 boxes in chat from `attachments`, the habit grid from `history` (9f24ec4).
 
-**Done, server, not yet tried live:** push (issue #1): devices endpoints, APNs sender, silent `sync` on
-server-side reminder changes, `reminder` and `digest` alerts with Discord as the fallback. Needs the `.p8` key
-(README.md, "Push notifications") once the developer enrolment finishes.
+**Done, both sides, not yet tried live:** push (issue #1). Server: devices endpoints, APNs sender, silent `sync`
+on server-side reminder changes, `reminder` and `digest` alerts with Discord as the fallback. App: device
+registration, background sync on silent pushes, taps open the digest chat, the conversation or Details, and
+Settings → Notifications with a test button. Needs the `.p8` key (README.md, "Push notifications") once the
+developer enrolment finishes; then install on the phone and send a test. App unit tests not yet run (this Mac
+had no Simulator runtime on 2026-10-19).
 
-**Next on the Mac:** push notifications (APNs) in the app, waiting on the enrolment. After that, Discord
-becomes optional.
+**Next:** try push live, then Discord becomes optional. After that #2 (wake-up briefing with Apple Health sleep).
