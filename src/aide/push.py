@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 HOSTS = {"sandbox": "https://api.sandbox.push.apple.com", "production": "https://api.push.apple.com"}
 JWT_TTL = 50 * 60  # seconds
 SYNC_EVERY = 10  # seconds: at most one silent sync push per this long
-DIGEST_TITLES = {"daily": "Morning", "evening": "Evening", "weekly": "This week"}  # monthly: the month's name
+DIGEST_TITLES = {"daily": "Morning", "wake": "Good morning", "evening": "Evening", "weekly": "This week"}  # monthly: the month's name
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS devices (

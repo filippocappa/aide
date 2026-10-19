@@ -27,6 +27,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `channels/discord_bot.py` and `channels/api.py` (FastAPI, the app's API): two adapters over one agent and one shared conversation.
 - `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (the Discord fallback).
 - `push.py`: APNs sender and the devices table (off without `APNS_*` in `.env`; then Discord only).
+- `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
@@ -100,10 +101,14 @@ Settings → Notifications with a test button. Needs the `.p8` key (README.md, "
 developer enrolment finishes; then install on the phone and send a test. App unit tests not yet run (this Mac
 had no Simulator runtime on 2026-10-19).
 
-**In progress:** Apple Health (#2), contract in `docs/API.md` ("Apple Health"). App side built (not yet run on a
-device): daily health summaries with a 60-day backfill, HealthKit background delivery, the "I'm up" App Intent for a
+**Done, both sides, not yet tried live:** Apple Health (#2), contract in `docs/API.md` ("Apple Health"). App:
+daily health summaries with a 60-day backfill, HealthKit background delivery, the "I'm up" App Intent for a
 Shortcuts Sleep → Waking Up automation, the `wake` digest with sleep and recovery cards, Watch workouts ticking
-habits. Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server side next.
+habits. Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
+(live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
+implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for sleep), the `wake` digest with a
+time-aware greeting and leave-by time (Maps, transit, from `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
+sections in `wake` and `daily`, the read-only `health` tool. No real health data uploaded yet.
 
 **Next:** try push live, then Discord becomes optional. Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).

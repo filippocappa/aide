@@ -54,7 +54,7 @@ def test_habit_endpoints(api):
     gym = client.post("/v1/habits", json={"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}},
                       headers=AUTH).json()
     assert gym == {"id": 1, "name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "streak": 0,
-                   "done_today": False, "last_done": None, "history": []}
+                   "done_today": False, "last_done": None, "history": [], "workouts": []}
     read = client.post("/v1/habits", json={"name": "Read"}, headers=AUTH).json()
     assert read["cadence"] == {"type": "daily"}
 

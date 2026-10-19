@@ -16,6 +16,7 @@ from .db import Database
 from .digest import DigestService, digest_schedule
 from .gmail import Gmail
 from .habits import HabitStore
+from .health import HealthStore
 from .icloud import ICloudCalendar
 from .push import Push
 from .reminders import ReminderStore
@@ -24,10 +25,12 @@ from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
 from .tools.habits import habit_tools
+from .tools.health import health_tools
 from .tools.mail import mail_tools
 from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
+from .wake import WakeService
 
 log = logging.getLogger(__name__)
 
@@ -53,13 +56,15 @@ def main() -> None:
     db = Database(settings.db_path)
     reminders = ReminderStore(db.conn)
     habits = HabitStore(db.conn, settings.timezone)
+    health = HealthStore(db.conn, settings.timezone)
     push = Push(db.conn, settings.apns_key_path, settings.apns_key_id, settings.apns_team_id, settings.apns_bundle_id)
     if push.enabled:
         reminders.on_change.append(push.request_sync)
     elif not (settings.apns_key_path and settings.apns_key_id and settings.apns_team_id):
         log.warning("APNS_KEY_PATH / APNS_KEY_ID / APNS_TEAM_ID not set: push notifications off, Discord only")
 
-    tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits)]
+    tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits),
+             *health_tools(health, settings.timezone)]
     cal = None
     if settings.icloud_email and settings.icloud_app_password:
         cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
@@ -78,8 +83,10 @@ def main() -> None:
         tools += search_tools(Tavily(settings.tavily_api_key), settings.timezone)
     else:
         log.warning("TAVILY_API_KEY not set: web search disabled")
+    maps = None
     if settings.google_maps_api_key:
-        tools += maps_tools(GoogleMaps(settings.google_maps_api_key), settings.timezone, settings.home_address)
+        maps = GoogleMaps(settings.google_maps_api_key)
+        tools += maps_tools(maps, settings.timezone, settings.home_address)
         if not settings.home_address:
             log.warning("AIDE_HOME_ADDRESS not set: Maps tools need an explicit origin")
     else:
@@ -97,16 +104,19 @@ def main() -> None:
         server_fallback=not settings.openrouter_api_key,
     )
     bot = AideBot(agent, settings.discord_owner_id)
-    digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail)
+    digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail,
+                           health, maps, settings.home_address)
 
     async def run() -> None:
+        wake = WakeService(digest, health, settings.timezone, bot.notify_owner, push)
         jobs = [
             bot.start(settings.discord_token),
             reminder_fallback(reminders, bot.notify_owner, settings.timezone, push),
             digest_schedule(digest, bot.notify_owner, push),
         ]
         if settings.api_token:
-            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push)
+            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
+                             health, wake)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
