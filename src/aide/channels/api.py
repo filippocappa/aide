@@ -17,6 +17,7 @@ from ..db import Database
 from ..digest import DigestService, check_kind
 from ..habits import HabitStore
 from ..icloud import CalendarBackend
+from ..push import Push
 from ..reminders import ReminderStore
 from ..shapes import event_json, event_start, reminder_json
 
@@ -72,6 +73,12 @@ class ReminderChange(BaseModel):
     deleted: bool = False
 
 
+class DeviceIn(BaseModel):
+    token: str
+    environment: str
+    name: str = ""
+
+
 class SyncIn(BaseModel):
     cursor: str | None = None
     changes: list[ReminderChange] = []
@@ -79,8 +86,9 @@ class SyncIn(BaseModel):
 
 def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | None,
                tz: ZoneInfo, token: str, habits: HabitStore | None = None,
-               digest: DigestService | None = None) -> FastAPI:
+               digest: DigestService | None = None, push: Push | None = None) -> FastAPI:
     db: Database = agent.db
+    push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar)
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
@@ -267,5 +275,27 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(400, "cursor must be the value returned by the last sync")
         new_cursor, changed = store.sync(cursor, [c.model_dump() for c in body.changes])
         return {"cursor": str(new_cursor), "reminders": [reminder_json(r, tz) for r in changed]}
+
+    @app.post("/v1/devices", dependencies=[Depends(auth)])
+    async def register_device(body: DeviceIn):
+        push.register(body.token, body.environment, body.name.strip())
+        return {"ok": True}
+
+    @app.get("/v1/devices", dependencies=[Depends(auth)])
+    async def devices():
+        return {"devices": [{"token": d["token"], "environment": d["environment"], "name": d["name"],
+                             "registered_at": local(d["registered_at"]),
+                             "last_push_at": local(d["last_push_at"]) if d["last_push_at"] else None}
+                            for d in push.devices()]}
+
+    @app.post("/v1/devices/test", dependencies=[Depends(auth)])
+    async def test_push():
+        sent, failed = await push.send_test()
+        return {"sent": sent, "failed": failed}
+
+    @app.delete("/v1/devices/{token}", dependencies=[Depends(auth)])
+    async def delete_device(token: str):
+        push.remove(token)
+        return {"ok": True}
 
     return app

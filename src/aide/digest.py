@@ -24,6 +24,7 @@ from .db import utcnow
 from .gmail import Gmail, headers
 from .habits import HabitStore
 from .icloud import CalendarBackend, CalEvent
+from .push import Push
 from .reminders import ReminderStore
 from .shapes import event_json, event_start, reminder_json
 
@@ -398,8 +399,9 @@ def to_text(greeting: str | None, sections: list[dict], tz: ZoneInfo) -> str:
 # -- schedule ------------------------------------------------------------------
 
 
-async def digest_schedule(service: DigestService, notify: Callable[[str], Awaitable[bool]]) -> None:
-    """Generate each enabled digest at its time (catching up after a short outage), and DM it."""
+async def digest_schedule(service: DigestService, notify: Callable[[str], Awaitable[bool]],
+                          push: Push | None = None) -> None:
+    """Generate each enabled digest at its time (catching up after a short outage), push it and DM it."""
     failed: dict[str, datetime] = {}
     while True:
         await asyncio.sleep(TICK)  # first: let startup (the calendar prefetch) finish before catching up
@@ -424,6 +426,11 @@ async def digest_schedule(service: DigestService, notify: Callable[[str], Awaita
                     continue
                 failed.pop(kind, None)
                 log.info("%s digest generated", kind)
+                if push:
+                    try:
+                        await push.send_digest(kind, digest["greeting"], period(kind, now).start)
+                    except Exception:
+                        log.exception("%s digest push failed", kind)
                 if settings["discord"] and not await notify(to_text(digest["greeting"], digest["sections"], service.tz)):
                     log.warning("%s digest not sent to Discord; it's still in the app", kind)
         except Exception:

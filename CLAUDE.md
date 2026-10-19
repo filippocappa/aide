@@ -26,6 +26,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
 - `channels/discord_bot.py` and `channels/api.py` (FastAPI, the app's API): two adapters over one agent and one shared conversation.
 - `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (the Discord fallback).
+- `push.py`: APNs sender and the devices table (off without `APNS_*` in `.env`; then Discord only).
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
@@ -89,6 +90,9 @@ Where things stand (2026-10-19):
 greeting as the first chat message with a Details sheet, digest settings, reminder and event cards with tick
 boxes in chat from `attachments`, the habit grid from `history` (9f24ec4).
 
-**Next on the Mac:** push notifications (APNs), waiting on the developer enrolment to finish.
+**Done, server, not yet tried live:** push (issue #1): devices endpoints, APNs sender, silent `sync` on
+server-side reminder changes, `reminder` and `digest` alerts with Discord as the fallback. Needs the `.p8` key
+(README.md, "Push notifications") once the developer enrolment finishes.
 
-**Then:** the server side of push and silent-push sync, after which Discord becomes optional.
+**Next on the Mac:** push notifications (APNs) in the app, waiting on the enrolment. After that, Discord
+becomes optional.

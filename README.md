@@ -14,6 +14,7 @@ src/aide/
   tools/                 tool registry: clock, calendar, reminders, memory, mail
   gmail.py, gmail_auth.py  Gmail API client; one-time OAuth sign-in script
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
+  push.py                APNs pushes and the devices table
   channels/discord_bot.py  Discord adapter (owner DMs only)
 deploy/aide.service      systemd unit
 ```
@@ -89,6 +90,31 @@ month), copy the API key from the dashboard into `.env` as `TAVILY_API_KEY`. Aid
 Requests ask only for the fields Aide shows (field masks), which keeps them on the cheapest SKU that has them.
 Then `systemctl --user restart aide`.
 
+## Push notifications
+
+The server sends pushes through APNs (docs/API.md, "Push"): a silent `sync` when reminders change on the
+server, a `reminder` alert for one that never reached the phone, and a `digest` alert for each scheduled
+digest. Without a key, or with no device registered, everything goes to Discord as before.
+
+1. [developer.apple.com/account](https://developer.apple.com/account) → **Certificates, IDs & Profiles → Keys**
+   → **+**. Name it (e.g. "Aide push"), tick **Apple Push Notifications service (APNs)**, register, and
+   download the `.p8`. Apple lets you download it only once.
+2. Note the **Key ID** (on the key's page) and your **Team ID** (Membership details, top right of the account
+   page).
+3. Keep the key outside the repo, readable only by you:
+   ```bash
+   mkdir -p ~/.config/aide && mv ~/Downloads/AuthKey_XXXXXXXXXX.p8 ~/.config/aide/
+   chmod 600 ~/.config/aide/AuthKey_XXXXXXXXXX.p8
+   ```
+4. In `.env`: `APNS_KEY_PATH=/home/<you>/.config/aide/AuthKey_XXXXXXXXXX.p8`, `APNS_KEY_ID`, `APNS_TEAM_ID`,
+   and `APNS_BUNDLE_ID` (default `com.filippocappa.aide`, from `ios/Aide/project.yml`). Then
+   `systemctl --user restart aide`.
+
+The app registers its device token on launch. Debug builds from Xcode use the sandbox APNs host, TestFlight
+and App Store builds production; the server picks the host from what each device registered with. Check with
+`GET /v1/devices`, and send a test with `POST /v1/devices/test`. One key works for both hosts and doesn't
+expire; revoking it in the portal stops all pushes.
+
 ## Tests
 
 ```
@@ -146,7 +172,9 @@ systemctl --user start aide
 
 The copy is a single self-contained file (no `-wal`/`-shm` needed). If `.env` was lost too, rebuild it from
 `.env.example` and paste in the lines from `gmail.env`; the other secrets (Discord, OpenRouter, iCloud, API
-token) aren't backed up and have to be re-entered or regenerated.
+token) aren't backed up and have to be re-entered or regenerated. The same goes for the APNs `.p8`: if it's
+lost, revoke it and make a new one (README, "Push notifications"). Devices are in the database, so they come
+back with it.
 
 ## Notes
 
