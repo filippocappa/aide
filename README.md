@@ -15,6 +15,7 @@ src/aide/
   gmail.py, gmail_auth.py  Gmail API client; one-time OAuth sign-in script
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
   push.py                APNs pushes and the devices table
+  health.py, wake.py     Apple Health days and usual numbers; the wake-up briefing
   channels/discord_bot.py  Discord adapter (owner DMs only)
 deploy/aide.service      systemd unit
 ```

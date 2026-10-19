@@ -7,7 +7,7 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import anthropic
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -16,10 +16,12 @@ from ..agent import CONVERSATION, Agent, UnknownConversation
 from ..db import Database
 from ..digest import DigestService, check_kind
 from ..habits import HabitStore
+from ..health import HealthStore, workout_date, workout_minutes
 from ..icloud import CalendarBackend
 from ..push import Push
 from ..reminders import ReminderStore
 from ..shapes import event_json, event_start, reminder_json
+from ..wake import WakeService
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +53,23 @@ class Cadence(BaseModel):
 class HabitIn(BaseModel):
     name: str
     cadence: Cadence = Cadence()
+    workouts: list[str] = []
+
+
+class HabitPatch(BaseModel):
+    name: str | None = None
+    cadence: Cadence | None = None
+    workouts: list[str] | None = None
+
+
+class HealthDaysIn(BaseModel):
+    days: list[dict]
+
+
+class WakeIn(BaseModel):
+    at: datetime | None = None
+    source: str = "app"
+    day: dict | None = None
 
 
 class CheckIn(BaseModel):
@@ -86,11 +105,14 @@ class SyncIn(BaseModel):
 
 def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | None,
                tz: ZoneInfo, token: str, habits: HabitStore | None = None,
-               digest: DigestService | None = None, push: Push | None = None) -> FastAPI:
+               digest: DigestService | None = None, push: Push | None = None,
+               health: HealthStore | None = None, wake: WakeService | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
-    digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar)
+    health = health or HealthStore(db.conn, tz)
+    digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
+    wake = wake or WakeService(digest, health, tz, push=push)
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
     def auth(authorization: str = Header(default="")) -> None:
@@ -135,7 +157,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"id": m["id"], "text": m["text"], "created_at": local(m["created_at"])}
 
     @app.get("/v1/health")
-    async def health():
+    async def alive():
         return {"ok": True, "version": VERSION}
 
     @app.post("/v1/chat", dependencies=[Depends(auth)])
@@ -210,14 +232,25 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def list_habits():
         return {"habits": [h.as_json() for h in habits.all()]}
 
+    def per_week(cadence: Cadence) -> int | None:
+        if cadence.type not in ("daily", "weekly"):
+            raise HTTPException(400, "cadence type must be daily or weekly")
+        if cadence.type == "weekly" and cadence.per_week is None:
+            raise HTTPException(400, "a weekly habit needs per_week")
+        return cadence.per_week if cadence.type == "weekly" else None
+
     @app.post("/v1/habits", dependencies=[Depends(auth)])
     async def add_habit(body: HabitIn):
-        if body.cadence.type not in ("daily", "weekly"):
-            raise HTTPException(400, "cadence type must be daily or weekly")
-        if body.cadence.type == "weekly" and body.cadence.per_week is None:
-            raise HTTPException(400, "a weekly habit needs per_week")
-        per_week = body.cadence.per_week if body.cadence.type == "weekly" else None
-        return habits.add(body.name, per_week).as_json()
+        return habits.add(body.name, per_week(body.cadence), body.workouts).as_json()
+
+    @app.patch("/v1/habits/{habit_id}", dependencies=[Depends(auth)])
+    async def edit_habit(habit_id: int, body: HabitPatch):
+        if habits.get(habit_id) is None:
+            raise HTTPException(404, f"no habit {habit_id}")
+        changes = body.model_dump(exclude_unset=True, exclude={"cadence"})
+        if body.cadence is not None:
+            changes["per_week"] = per_week(body.cadence)
+        return habits.update(habit_id, **{k: v for k, v in changes.items() if v is not None or k == "per_week"}).as_json()
 
     @app.post("/v1/habits/{habit_id}/check", dependencies=[Depends(auth)])
     async def check_habit(habit_id: int, body: CheckIn | None = None):
@@ -275,6 +308,36 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(400, "cursor must be the value returned by the last sync")
         new_cursor, changed = store.sync(cursor, [c.model_dump() for c in body.changes])
         return {"cursor": str(new_cursor), "reminders": [reminder_json(r, tz) for r in changed]}
+
+    def save_days(days: list[dict]) -> tuple[list[dict], list[dict]]:
+        """Store health days and check habits from their workouts. Returns (days saved, habits checked)."""
+        saved = health.save(days)
+        workouts = [(w["id"], str(w.get("type", "other")), workout_minutes(w), workout_date(w, d["date"], tz))
+                    for d in saved for w in d.get("workouts", [])]
+        return saved, [h.as_json() for h in habits.check_workouts(workouts)]
+
+    @app.post("/v1/health/days", dependencies=[Depends(auth)])
+    async def upload_health(body: HealthDaysIn):
+        saved, checked = save_days(body.days)
+        wake.uploaded(saved)
+        return {"ok": True, "saved": len(saved), "checked": checked}
+
+    @app.get("/v1/health/days", dependencies=[Depends(auth)])
+    async def health_days(start: date | None = Query(None, alias="from"), end: date | None = Query(None, alias="to")):
+        end = end or datetime.now(tz).date()
+        start = start or end - timedelta(days=29)
+        return {"days": health.between(start, end)}
+
+    @app.post("/v1/wake", dependencies=[Depends(auth)])
+    async def wake_up(body: WakeIn | None = None):
+        body = body or WakeIn()
+        if body.at is not None and body.at.tzinfo is None:
+            raise HTTPException(400, "at needs a UTC offset")
+        if body.day:
+            save_days([body.day])
+        log.info("wake signal from %s", body.source)
+        started, reason = wake.signal(body.at)
+        return {"started": True} if started else {"started": False, "reason": reason}
 
     @app.post("/v1/devices", dependencies=[Depends(auth)])
     async def register_device(body: DeviceIn):
