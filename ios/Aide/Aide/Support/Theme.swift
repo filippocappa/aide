@@ -49,6 +49,21 @@ extension UIColor {
     }
 }
 
+extension Agent {
+    /// Pebble's colour for this agent. Aide keeps the app's own Slate and Sand; the others lighten a little
+    /// in dark mode so they stay readable on the dark background.
+    var tint: Color {
+        guard !orchestrator, let hex else { return Theme.accent }
+        return Color(uiColor: UIColor { traits in
+            let base = UIColor(hex: hex)
+            guard traits.userInterfaceStyle == .dark else { return base }
+            var (r, g, b, a): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+            base.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return UIColor(red: r + (1 - r) * 0.3, green: g + (1 - g) * 0.3, blue: b + (1 - b) * 0.3, alpha: a)
+        })
+    }
+}
+
 /// Pebble from the asset catalog, tinted by the surrounding foreground style.
 struct PebbleMark: View {
     var size: CGFloat = 28

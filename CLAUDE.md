@@ -110,5 +110,9 @@ implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for 
 time-aware greeting and leave-by times (Maps: walk and transit, arriving 10 min early, home and per-place mode from memory, else `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
 sections in `wake` and `daily`, the read-only `health` tool. No real health data uploaded yet.
 
+**In progress:** agents (contract in `docs/API.md`, "Agents"): Aide as the orchestrator that asks Secretary,
+Professor, Coach and Finance (`ask_agent`), each with its own chats, tools, memory and Pebble colour. App side built
+(agent row in the chat list, tinted Pebble, starters, "Asked Coach" above replies, memory per agent); server next.
+
 **Next:** try push live, then Discord becomes optional. Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).

@@ -65,8 +65,13 @@ final class APIClient {
 
     /// With a digest kind the chat opens with that digest's greeting. The server may have to make the
     /// digest first, which can take 30 s.
-    func createConversation(digest: String? = nil) async throws -> Conversation {
-        try await send("POST", "/v1/conversations", body: NewConversation(digest: digest), timeout: 60)
+    func createConversation(digest: String? = nil, agent: String? = nil) async throws -> Conversation {
+        try await send("POST", "/v1/conversations", body: NewConversation(digest: digest, agent: agent), timeout: 60)
+    }
+
+    func agents() async throws -> [Agent] {
+        let list: AgentList = try await send("GET", "/v1/agents")
+        return list.agents
     }
 
     func deleteConversation(_ id: String) async throws {
@@ -78,8 +83,8 @@ final class APIClient {
         return list.items
     }
 
-    func addMemory(_ text: String) async throws -> MemoryItem {
-        try await send("POST", "/v1/memory", body: MemoryRequest(text: text))
+    func addMemory(_ text: String, agent: String? = nil) async throws -> MemoryItem {
+        try await send("POST", "/v1/memory", body: MemoryRequest(text: text, agent: agent))
     }
 
     func deleteMemory(_ id: Int) async throws {

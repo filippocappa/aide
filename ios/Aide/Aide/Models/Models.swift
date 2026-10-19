@@ -12,6 +12,8 @@ struct ChatReply: Decodable {
     let pending: [PendingAction]
     let conversationId: String?
     let attachments: [Attachment]
+    /// Agents Aide asked during the turn (docs/API.md, "Agents").
+    let consulted: [String]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -19,8 +21,9 @@ struct ChatReply: Decodable {
         pending = try c.decodeIfPresent([PendingAction].self, forKey: .pending) ?? []
         conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
         attachments = Attachment.known(try c.decodeIfPresent([Attachment].self, forKey: .attachments))
+        consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments }
+    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments, consulted }
 }
 
 /// Cards under a reply, built by the server from the tools that turn used (docs/API.md, "Chat").
@@ -59,18 +62,21 @@ struct ActionResult: Decodable {
 struct OKResponse: Decodable { let ok: Bool }
 struct HealthResponse: Decodable { let ok: Bool; let version: String }
 struct EmptyBody: Encodable {}
-/// `digest` nil sends `{}`: a blank chat.
-struct NewConversation: Encodable { var digest: String? }
+/// `digest` and `agent` nil send `{}`: a blank chat with Aide.
+struct NewConversation: Encodable { var digest: String?; var agent: String? }
 /// `conversationId` nil keeps the old behaviour: the one shared conversation.
 struct ChatRequest: Encodable { let text: String; var conversationId: String? }
 struct ConversationBody: Encodable { var conversationId: String? }
-struct MemoryRequest: Encodable { let text: String }
+/// `agent` nil: shared by every agent.
+struct MemoryRequest: Encodable { let text: String; var agent: String? }
 /// `environment` is "sandbox" for Xcode builds, "production" for TestFlight and the App Store.
 struct DeviceRegistration: Encodable { let token: String; let environment: String; let name: String }
 struct PushTestResult: Decodable { let sent: Int; let failed: Int }
 
 struct Conversation: Decodable, Identifiable, Hashable {
     let id: String
+    /// nil from older servers: Aide's.
+    let agent: String?
     let title: String?
     let preview: String?
     let updatedAt: String?
@@ -80,6 +86,8 @@ struct ConversationList: Decodable { let conversations: [Conversation] }
 struct MemoryItem: Decodable, Identifiable, Hashable {
     let id: Int
     let text: String
+    /// nil: shared by every agent.
+    let agent: String?
     let createdAt: String?
 }
 struct MemoryList: Decodable { let items: [MemoryItem] }
@@ -90,6 +98,7 @@ struct HistoryMessage: Decodable {
     let ts: String?
     /// Reminders in here are in their current state: ticked or deleted since.
     let attachments: [Attachment]
+    let consulted: [String]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -97,9 +106,49 @@ struct HistoryMessage: Decodable {
         text = try c.decode(String.self, forKey: .text)
         ts = try c.decodeIfPresent(String.self, forKey: .ts)
         attachments = Attachment.known(try c.decodeIfPresent([Attachment].self, forKey: .attachments))
+        consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments }
+    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted }
 }
+
+/// Aide (the orchestrator) or one of the specialists (docs/API.md, "Agents").
+struct Agent: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let role: String
+    /// "#RRGGBB", Pebble's colour on light backgrounds.
+    let color: String
+    let orchestrator: Bool
+    /// Empty-chat suggestions; one ending in a space goes into the text field instead of being sent.
+    let starters: [String]
+
+    init(id: String, name: String, role: String, color: String, orchestrator: Bool, starters: [String]) {
+        (self.id, self.name, self.role, self.color, self.orchestrator, self.starters) = (id, name, role, color, orchestrator, starters)
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        role = try c.decodeIfPresent(String.self, forKey: .role) ?? ""
+        color = try c.decodeIfPresent(String.self, forKey: .color) ?? "#34413F"
+        orchestrator = try c.decodeIfPresent(Bool.self, forKey: .orchestrator) ?? false
+        starters = try c.decodeIfPresent([String].self, forKey: .starters) ?? []
+    }
+    private enum CodingKeys: String, CodingKey { case id, name, role, color, orchestrator, starters }
+
+    /// What the app shows when the server has no agents yet: Aide alone, as before.
+    static let aide = Agent(id: "aide", name: "Aide", role: "Talks to all of them", color: "#34413F", orchestrator: true,
+                            starters: ["What's on my calendar today?", "Remind me to ", "Remember that "])
+
+    /// The hex value, or nil if it isn't "#RRGGBB".
+    var hex: UInt32? {
+        let digits = color.hasPrefix("#") ? String(color.dropFirst()) : color
+        guard digits.count == 6 else { return nil }
+        return UInt32(digits, radix: 16)
+    }
+}
+struct AgentList: Decodable { let agents: [Agent] }
 
 struct HistoryResponse: Decodable { let messages: [HistoryMessage] }
 
