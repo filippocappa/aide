@@ -8,6 +8,16 @@ from pathlib import Path
 
 from .agents import ORCHESTRATOR
 
+TEAM_TABLE = """CREATE TABLE IF NOT EXISTS team_messages (
+    id              INTEGER PRIMARY KEY,
+    conversation_id INTEGER REFERENCES conversations(id),
+    message_id      INTEGER REFERENCES messages(id),  -- Aide's reply in that turn
+    sender          TEXT NOT NULL,  -- agent id, or 'user'
+    recipient       TEXT NOT NULL,  -- agent id, or 'team'
+    text            TEXT NOT NULL,
+    ts              TEXT NOT NULL
+)"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
     id             INTEGER PRIMARY KEY,
@@ -30,7 +40,8 @@ CREATE TABLE IF NOT EXISTS messages (
     content         TEXT NOT NULL,
     ts              TEXT NOT NULL,
     attachments     TEXT,  -- JSON list shown as cards under a reply (docs/API.md); NULL for none
-    consulted       TEXT   -- JSON list of the agent ids Aide asked for this reply; NULL for none
+    consulted       TEXT,  -- JSON list of the agent ids Aide asked for this reply; NULL for none
+    routine         TEXT   -- JSON {id, title} of the routine whose run posted it; NULL for others
 );
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, id);
 
@@ -55,17 +66,23 @@ CREATE TABLE IF NOT EXISTS memory (
     agent      TEXT  -- the one agent that sees it; NULL means shared, every agent sees it
 );
 
--- The agents' group chat: each ask_agent request and the answer, tied to the reply they were for.
-CREATE TABLE IF NOT EXISTS team_messages (
+-- The agents' group chat: each ask_agent request and the answer, tied to the reply they were for,
+-- and what's said in the Team chat itself (conversation_id and message_id NULL).
+""" + TEAM_TABLE + """;
+
+-- Jobs an agent runs on a schedule, each posting in its own chat (docs/API.md, "Routines").
+CREATE TABLE IF NOT EXISTS routines (
     id              INTEGER PRIMARY KEY,
+    agent           TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    prompt          TEXT NOT NULL,
+    time            TEXT NOT NULL,  -- HH:MM local
+    days            TEXT NOT NULL,  -- JSON list of ISO weekdays; [] is every day
+    enabled         INTEGER NOT NULL DEFAULT 1,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-    message_id      INTEGER NOT NULL REFERENCES messages(id),  -- Aide's reply in that turn
-    sender          TEXT NOT NULL,  -- agent id
-    recipient       TEXT NOT NULL,
-    text            TEXT NOT NULL,
-    ts              TEXT NOT NULL
+    since           TEXT NOT NULL,  -- UTC; only slots after this run (set on create and on schedule changes)
+    last_run        TEXT            -- UTC
 );
-CREATE INDEX IF NOT EXISTS team_messages_message ON team_messages(message_id);
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id     INTEGER PRIMARY KEY,
@@ -96,6 +113,7 @@ class Database:
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(SCHEMA)
         self._migrate()
+        self.conn.execute("CREATE INDEX IF NOT EXISTS team_messages_message ON team_messages(message_id)")
 
     def _migrate(self) -> None:
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(conversations)")}
@@ -112,6 +130,17 @@ class Database:
             self.conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
         if "consulted" not in columns:
             self.conn.execute("ALTER TABLE messages ADD COLUMN consulted TEXT")
+        if "routine" not in columns:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN routine TEXT")
+        notnull = {r["name"]: r["notnull"] for r in self.conn.execute("PRAGMA table_info(team_messages)")}
+        if notnull["conversation_id"]:  # from before the Team chat: rebuild with the chat links optional
+            with self.conn:
+                self.conn.execute("BEGIN")
+                self.conn.execute("DROP INDEX IF EXISTS team_messages_message")
+                self.conn.execute("ALTER TABLE team_messages RENAME TO team_messages_old")
+                self.conn.execute(TEAM_TABLE)
+                self.conn.execute("INSERT INTO team_messages SELECT * FROM team_messages_old")
+                self.conn.execute("DROP TABLE team_messages_old")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(memory)")}
         if "agent" not in columns:  # databases created before agents: every item is shared
             self.conn.execute("ALTER TABLE memory ADD COLUMN agent TEXT")
@@ -163,16 +192,15 @@ class Database:
         )
         return self.app_conversation(public_id)
 
+    _APP_CONVERSATION = ("SELECT c.id, c.public_id, c.title, c.last_active_at, c.agent, r.id AS routine "
+                         "FROM conversations c LEFT JOIN routines r ON r.conversation_id = c.id ")
+
     def app_conversation(self, public_id: str) -> sqlite3.Row | None:
-        return self.conn.execute(
-            "SELECT id, public_id, title, last_active_at, agent FROM conversations WHERE public_id = ?", (public_id,)
-        ).fetchone()
+        return self.conn.execute(self._APP_CONVERSATION + "WHERE c.public_id = ?", (public_id,)).fetchone()
 
     def app_conversations(self) -> list[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT id, public_id, title, last_active_at, agent FROM conversations "
-            "WHERE public_id IS NOT NULL ORDER BY last_active_at DESC"
-        ).fetchall()
+            self._APP_CONVERSATION + "WHERE c.public_id IS NOT NULL ORDER BY c.last_active_at DESC").fetchall()
 
     def delete_app_conversation(self, public_id: str) -> bool:
         with self.conn:
@@ -181,6 +209,7 @@ class Database:
             if row is None:
                 return False
             self.conn.execute("DELETE FROM team_messages WHERE conversation_id = ?", (row["id"],))
+            self.conn.execute("DELETE FROM routines WHERE conversation_id = ?", (row["id"],))
             self.conn.execute("DELETE FROM messages WHERE conversation_id = ?", (row["id"],))
             self.conn.execute("DELETE FROM conversations WHERE id = ?", (row["id"],))
         return True
@@ -198,10 +227,11 @@ class Database:
     def set_conversation_model(self, conversation_id: int, model: str) -> None:
         self.conn.execute("UPDATE conversations SET model = ? WHERE id = ?", (model, conversation_id))
 
-    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list, list, list]]:
-        """(role, content, ts, attachments, consulted, team) per message, oldest first."""
+    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list, list, list, dict | None]]:
+        """(role, content, ts, attachments, consulted, team, routine) per message, oldest first."""
         rows = self.conn.execute(
-            "SELECT id, role, content, ts, attachments, consulted FROM messages WHERE conversation_id = ? ORDER BY id",
+            "SELECT id, role, content, ts, attachments, consulted, routine FROM messages "
+            "WHERE conversation_id = ? ORDER BY id",
             (conversation_id,),
         ).fetchall()
         team: dict[int, list[dict]] = {}
@@ -212,19 +242,25 @@ class Database:
             team.setdefault(t["message_id"], []).append(
                 {"from": t["sender"], "to": t["recipient"], "text": t["text"], "ts": t["ts"]})
         return [(r["role"], json.loads(r["content"]), r["ts"], json.loads(r["attachments"] or "[]"),
-                 json.loads(r["consulted"] or "[]"), team.get(r["id"], [])) for r in rows]
+                 json.loads(r["consulted"] or "[]"), team.get(r["id"], []), json.loads(r["routine"] or "null"))
+                for r in rows]
 
     def team_messages(self, limit: int) -> list[dict]:
         """The latest `limit` team messages from every chat, oldest first, with the chat's public id
-        (the channel name for the shared conversation)."""
+        (the channel name for the shared conversation, None for the Team chat itself)."""
         rows = self.conn.execute(
             "SELECT * FROM (SELECT t.id, t.sender, t.recipient, t.text, t.ts, "
             "COALESCE(c.public_id, c.channel) AS conversation FROM team_messages t "
-            "JOIN conversations c ON c.id = t.conversation_id ORDER BY t.id DESC LIMIT ?) ORDER BY id",
+            "LEFT JOIN conversations c ON c.id = t.conversation_id ORDER BY t.id DESC LIMIT ?) ORDER BY id",
             (limit,),
         ).fetchall()
         return [{"from": r["sender"], "to": r["recipient"], "text": r["text"], "ts": r["ts"],
                  "conversation_id": r["conversation"]} for r in rows]
+
+    def add_team_message(self, message: dict) -> None:
+        """One message said in the Team chat itself ({from, to, text, ts}), tied to no chat."""
+        self.conn.execute("INSERT INTO team_messages (sender, recipient, text, ts) VALUES (?, ?, ?, ?)",
+                          (message["from"], message["to"], message["text"], message["ts"]))
 
     def history(self, conversation_id: int) -> list[dict]:
         rows = self.conn.execute(
@@ -235,21 +271,23 @@ class Database:
 
     def append_turn(self, conversation_id: int, channel: str, messages: list[dict],
                     attachments: list[dict] | None = None, consulted: list[str] | None = None,
-                    team: list[dict] | None = None) -> None:
+                    team: list[dict] | None = None, routine: dict | None = None) -> None:
         """Store a whole turn atomically, so history never ends on an unanswered tool_use.
 
-        `attachments`, `consulted` and `team` ({from, to, text, ts}) go with the turn's last message (the final reply).
+        `attachments`, `consulted`, `team` ({from, to, text, ts}) and `routine` ({id, title}) go with the turn's last
+        message (the final reply).
         """
         now = utcnow().isoformat()
         last = len(messages) - 1
         with self.conn:
             self.conn.execute("BEGIN")
             self.conn.executemany(
-                "INSERT INTO messages (conversation_id, channel, role, content, ts, attachments, consulted) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages (conversation_id, channel, role, content, ts, attachments, consulted, routine) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [(conversation_id, channel, m["role"], json.dumps(m["content"]), now,
                   json.dumps(attachments) if attachments and i == last else None,
-                  json.dumps(consulted) if consulted and i == last else None) for i, m in enumerate(messages)],
+                  json.dumps(consulted) if consulted and i == last else None,
+                  json.dumps(routine) if routine and i == last else None) for i, m in enumerate(messages)],
             )
             if team:
                 reply_id = self.conn.execute(

@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 from datetime import date, datetime, time, timedelta
+from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 import anthropic
@@ -14,7 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..agent import CONVERSATION, Agent, Turn, UnknownConversation
-from ..agents import AGENTS, check_agent
+from ..agents import AGENTS, check_agent, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
 from ..habits import HabitStore
@@ -22,6 +23,7 @@ from ..health import HealthStore, workout_date, workout_minutes
 from ..icloud import CalendarBackend
 from ..push import Push
 from ..reminders import ReminderStore
+from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..wake import WakeService
 
@@ -34,6 +36,28 @@ class ChatIn(BaseModel):
     text: str
     conversation_id: str | None = None  # None: the conversation shared with Discord
     stream: bool = False  # answer as text/event-stream, with team talk as it happens
+
+
+class TeamIn(BaseModel):
+    text: str
+    stream: bool = False
+
+
+class RoutineIn(BaseModel):
+    agent: str
+    title: str
+    prompt: str
+    time: str
+    days: list[int] = []
+    enabled: bool = True
+
+
+class RoutinePatch(BaseModel):
+    title: str | None = None
+    prompt: str | None = None
+    time: str | None = None
+    days: list[int] | None = None
+    enabled: bool | None = None
 
 
 class ConversationIn(BaseModel):
@@ -119,7 +143,8 @@ def sse(event: str, data: dict) -> str:
 def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | None,
                tz: ZoneInfo, token: str, habits: HabitStore | None = None,
                digest: DigestService | None = None, push: Push | None = None,
-               health: HealthStore | None = None, wake: WakeService | None = None) -> FastAPI:
+               health: HealthStore | None = None, wake: WakeService | None = None,
+               notify: Callable[[str], Awaitable[bool]] | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -164,8 +189,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return datetime.fromisoformat(utc_iso).astimezone(tz).replace(microsecond=0).isoformat()
 
     def conversation_json(c: dict) -> dict:
-        return {"id": c["id"], "agent": c["agent"], "title": c["title"], "preview": c["preview"],
-                "updated_at": local(c["updated_at"])}
+        return {"id": c["id"], "agent": c["agent"], "title": c["title"], "routine": c["routine"],
+                "preview": c["preview"], "updated_at": local(c["updated_at"])}
 
     def team_json(t: dict) -> dict:
         return {**t, "ts": local(t["ts"])}
@@ -176,6 +201,33 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 "team": [team_json(t) for t in turn.team]}
 
     turns: set[asyncio.Task] = set()  # streamed turns, held so they finish even if the app hangs up
+
+    def streamed(run: Callable[[Callable[[str, dict], None]], Awaitable], done: Callable[[object], str]):
+        """Run a turn as server-sent events: `run(emit)` emits events as they happen, `done(result)` is the last one."""
+        events: asyncio.Queue = asyncio.Queue()
+        task = asyncio.create_task(run(lambda event, data: events.put_nowait(sse(event, data))))
+        turns.add(task)
+
+        def finished(t: asyncio.Task) -> None:
+            turns.discard(t)
+            if not t.cancelled() and t.exception():
+                log.error("streamed turn failed", exc_info=t.exception())
+            events.put_nowait(None)
+        task.add_done_callback(finished)
+
+        async def stream():
+            while (event := await events.get()) is not None:
+                yield event
+            if task.cancelled() or task.exception():
+                error = task.cancelled() or task.exception()
+                yield sse("error", {"error": UNAVAILABLE if isinstance(error, anthropic.APIError)
+                                    else "Something went wrong on the server. It's in the logs."})
+            else:
+                yield done(task.result())
+
+        # No caching or proxy buffering, so each event reaches the app as it's sent.
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     def memory_json(m) -> dict:
         return {"id": m["id"], "text": m["text"], "agent": m["agent"], "created_at": local(m["created_at"])}
@@ -194,32 +246,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return chat_json(conversation, await agent.respond(CONVERSATION, text, conversation))
         if conversation != CONVERSATION and db.app_conversation(conversation) is None:
             raise UnknownConversation(f"no conversation {conversation}")  # a plain 404, before the stream starts
-
-        events: asyncio.Queue = asyncio.Queue()
-        task = asyncio.create_task(agent.respond(CONVERSATION, text, conversation,
-                                                 lambda t: events.put_nowait(sse("team", team_json(t)))))
-        turns.add(task)
-
-        def finished(t: asyncio.Task) -> None:
-            turns.discard(t)
-            if not t.cancelled() and t.exception():
-                log.error("streamed turn failed", exc_info=t.exception())
-            events.put_nowait(None)
-        task.add_done_callback(finished)
-
-        async def stream():
-            while (event := await events.get()) is not None:
-                yield event
-            if task.cancelled() or task.exception():
-                error = task.cancelled() or task.exception()
-                yield sse("error", {"error": UNAVAILABLE if isinstance(error, anthropic.APIError)
-                                    else "Something went wrong on the server. It's in the logs."})
-            else:
-                yield sse("reply", chat_json(conversation, task.result()))
-
-        # No caching or proxy buffering, so each event reaches the app as it's sent.
-        return StreamingResponse(stream(), media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        return streamed(
+            lambda emit: agent.respond(CONVERSATION, text, conversation, lambda t: emit("team", team_json(t))),
+            lambda turn: sse("reply", chat_json(conversation, turn)))
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
     async def confirm():
@@ -253,6 +282,61 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.get("/v1/team", dependencies=[Depends(auth)])
     async def team(limit: int = 100):
         return {"messages": [team_json(t) for t in db.team_messages(max(1, min(limit, 500)))]}
+
+    @app.post("/v1/team", dependencies=[Depends(auth)])
+    async def write_in_team(body: TeamIn):
+        text = body.text.strip()
+        if not text:
+            raise HTTPException(400, "text is empty")
+        mentions(text)  # an unknown @mention is a plain 400, before anyone answers
+
+        def team_body(new: list[dict]) -> dict:
+            return {"messages": [team_json({**t, "conversation_id": None}) for t in new], "pending": pending()}
+
+        if not body.stream:
+            return team_body(await agent.team_chat(CONVERSATION, text))
+        return streamed(
+            lambda emit: agent.team_chat(CONVERSATION, text, lambda a: emit("working", {"agent": a}),
+                                         lambda t: emit("team", team_json({**t, "conversation_id": None}))),
+            lambda new: sse("done", team_body(new)))
+
+    # -- routines ------------------------------------------------------------
+
+    routines = agent.routines
+
+    def routine_or_404(routine_id: int) -> dict:
+        r = routines.get(routine_id)
+        if r is None:
+            raise HTTPException(404, f"no routine {routine_id}")
+        return r
+
+    @app.get("/v1/routines", dependencies=[Depends(auth)])
+    async def list_routines(agent_id: str | None = Query(None, alias="agent")):
+        return {"routines": [routines.as_json(r) for r in
+                             routines.all(check_agent(agent_id) if agent_id is not None else None)]}
+
+    @app.post("/v1/routines", dependencies=[Depends(auth)])
+    async def add_routine(body: RoutineIn):
+        return routines.as_json(routines.create(**body.model_dump()))
+
+    @app.patch("/v1/routines/{routine_id}", dependencies=[Depends(auth)])
+    async def edit_routine(routine_id: int, body: RoutinePatch):
+        routine_or_404(routine_id)
+        changes = body.model_dump(exclude_unset=True)
+        return routines.as_json(routines.update(routine_id, **{k: v for k, v in changes.items()
+                                                                if k in ROUTINE_FIELDS}))
+
+    @app.delete("/v1/routines/{routine_id}", dependencies=[Depends(auth)])
+    async def delete_routine(routine_id: int):
+        if not routines.delete(routine_id):
+            raise HTTPException(404, f"no routine {routine_id}")
+        return {"ok": True}
+
+    @app.post("/v1/routines/{routine_id}/run", dependencies=[Depends(auth)])
+    async def run_routine(routine_id: int):
+        r = routine_or_404(routine_id)
+        await deliver(agent, CONVERSATION, r, push, notify)
+        return {"routine": routines.as_json(routines.get(routine_id)), "conversation_id": r["public_id"]}
 
     @app.get("/v1/conversations", dependencies=[Depends(auth)])
     async def conversations():
