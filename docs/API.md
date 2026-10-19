@@ -95,7 +95,7 @@ Short facts Aide keeps between chats (preferences, names, routines). The server 
 
 ## Digest
 
-A summary the server builds on a schedule: morning (`daily`), evening, weekly or monthly. Its greeting opens a new chat (`POST /v1/conversations` with `digest`), the app shows the cards behind a "Details" link, and the server also sends it as a Discord DM (push notification later). Sections are structured, so the app draws cards instead of parsing text.
+A summary the server builds on a schedule: morning (`daily`), evening, weekly or monthly. Its greeting opens a new chat (`POST /v1/conversations` with `digest`), the app shows the cards behind a "Details" link, and the server also sends it as a push notification and/or a Discord DM (see Push). Sections are structured, so the app draws cards instead of parsing text.
 
 `GET /v1/digest?kind=daily` (`daily` default, `evening`, `weekly`, `monthly`) →
 ```json
@@ -245,4 +245,52 @@ The server keeps the master list. Apple Reminders on the phone is a mirror the a
 
 **Which list:** the app syncs **one** Apple Reminders list, chosen in Settings (default: the system default list). Reminders in other lists stay private to the phone.
 
-**Notification rule (server side):** at `due_at`, if a reminder is still not completed and has no `apple_id` (it never reached the phone), the server sends it as a Discord DM. Otherwise Apple Reminders notifies, and the server stays quiet.
+**Notification rule (server side):** at `due_at`, if a reminder is still not completed and has no `apple_id` (it never reached the phone), the server sends a `reminder` push (see Push), or a Discord DM if no push was delivered. Otherwise Apple Reminders notifies, and the server stays quiet.
+
+**Silent sync:** whenever reminders change on the server, it also sends a silent `sync` push, so the phone syncs (and sets the alarms) without the app being opened. iOS may delay or drop silent pushes, so the triggers above still apply.
+
+## Push
+
+The server notifies the phone through APNs. It sends only when it has a key (`APNS_*` in `.env`) and at least one registered device; otherwise it falls back to Discord DMs, as before.
+
+### Devices
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/devices` | `{"token": "a1b2…", "environment": "sandbox" \| "production", "name": "Filippo's iPhone"}` | `{"ok": true}`. Adds or updates the device (keyed by `token`). |
+| `GET /v1/devices` | | `{"devices": [{"token": "a1b2…", "environment": "sandbox", "name": "…", "registered_at": "…", "last_push_at": "…" \| null}]}` |
+| `DELETE /v1/devices/{token}` | | `{"ok": true}`, also for an unknown token. |
+| `POST /v1/devices/test` | `{}` | `{"sent": 1, "failed": 0}`. Sends a visible test push to every device. |
+
+- `token` is the APNs device token as lowercase hex. `environment` is `sandbox` for Debug builds from Xcode and
+  `production` for TestFlight and App Store builds. The server must send each token to the matching APNs host.
+- The app registers on every launch (the token can change), and when notifications are turned on in Settings.
+  A `404` means an older server: the app ignores it.
+- When APNs answers that a token is invalid (`410`, or `400 BadDeviceToken`), the server deletes the device.
+
+### Payloads
+
+Every push carries an `aide` object saying what it is. The app ignores kinds it doesn't know.
+
+| `aide.kind` | Type | When | Extra fields | On tap |
+|---|---|---|---|---|
+| `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server | | (not shown) the app runs a reminders sync |
+| `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
+| `digest` | alert | a scheduled digest is ready | `digest` (`daily`, `evening`, `weekly`, `monthly`) | opens a new chat with that digest (`POST /v1/conversations` with `digest`) |
+| `message` | alert | Aide writes first (future use: briefings, leave-now alerts) | `conversation_id` | opens that conversation |
+| `test` | alert | `POST /v1/devices/test` | | nothing |
+
+```json
+{
+  "aps": {"alert": {"title": "Morning", "body": "Two meetings today and three mails that need you."},
+          "sound": "default", "thread-id": "digest"},
+  "aide": {"kind": "digest", "digest": "daily"}
+}
+```
+```json
+{"aps": {"content-available": 1}, "aide": {"kind": "sync"}}
+```
+- Alert pushes use `thread-id` = the kind, so iOS groups them.
+- A scheduled digest is pushed to every device. The Discord DM still follows the digest settings' `discord` flag,
+  so turning it off leaves just the push.
+- Silent `sync` pushes are coalesced: at most one per 10 seconds, so a burst of changes sends one.
