@@ -49,6 +49,9 @@ enrolment may still be finishing), so:
 - Sign with the paid team, not "Personal Team". Installs last a year, and TestFlight is available.
 - **Push notifications** (APNs): built on both sides, live once the `.p8` key exists. `PushService` registers the
   device token, silent `sync` pushes run the reminders sync, taps route through `AppEnvironment.open(_:)`.
+- Push is opt-in per Mac: `AIDE_ENTITLEMENTS = Aide/Aide.entitlements` in `ios/Aide/Config/Signing.local.xcconfig`
+  (see the `.example`). A Personal Team can't sign it, so leave it out until the paid team is active.
+- The team ID goes in `Signing.local.xcconfig`, not in Xcode's Signing tab: `xcodegen generate` rewrites the project.
 - Develop against the **Simulator** (no signing needed). Install on the phone only to try it for real.
 
 ```bash

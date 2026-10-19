@@ -1,3 +1,6 @@
 // Copy to Signing.local.xcconfig and put in the paid team's ID
 // (developer.apple.com > Account > Membership details > Team ID).
 DEVELOPMENT_TEAM = XXXXXXXXXX
+
+// Push notifications (docs/API.md, Push). Only with the paid team; leave it out for a Personal Team.
+AIDE_ENTITLEMENTS = Aide/Aide.entitlements
