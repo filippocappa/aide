@@ -32,6 +32,9 @@ class Settings:
     gmail_client_id: str | None
     gmail_client_secret: str | None
     gmail_refresh_token: str | None
+    tavily_api_key: str | None
+    google_maps_api_key: str | None
+    home_address: str | None
 
 
 def _required(name: str) -> str:
@@ -69,4 +72,7 @@ def load_settings() -> Settings:
         gmail_client_id=os.environ.get("GMAIL_CLIENT_ID", "").strip() or None,
         gmail_client_secret=os.environ.get("GMAIL_CLIENT_SECRET", "").strip() or None,
         gmail_refresh_token=os.environ.get("GMAIL_REFRESH_TOKEN", "").strip() or None,
+        tavily_api_key=os.environ.get("TAVILY_API_KEY", "").strip() or None,
+        google_maps_api_key=os.environ.get("GOOGLE_MAPS_API_KEY", "").strip() or None,
+        home_address=os.environ.get("AIDE_HOME_ADDRESS", "").strip() or None,
     )

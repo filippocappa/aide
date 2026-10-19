@@ -25,6 +25,7 @@ deploy/aide.service      systemd unit
 3. **Env file.** `cp .env.example .env` and fill in your OpenRouter (or Anthropic) key, bot token and owner ID.
 4. **iCloud Calendar (optional).** Create an app-specific password at account.apple.com → Sign-In and Security, and set `ICLOUD_EMAIL` and `ICLOUD_APP_PASSWORD`. Without them the calendar tools are off.
 5. **Gmail (optional).** See [Gmail](#gmail) below. Without it the mail tools are off.
+   **Web search and Maps (optional)** are in [Web search and Maps](#web-search-and-maps); without their keys those tools are off.
 6. **Run.** `uv sync && uv run aide`. The bot DMs you "Aide is up." once it's connected.
 
 Aide can list, search and create events on your iCloud calendars right away. Moving or deleting an event is queued: the bot shows exactly what will change, and nothing happens until you reply `!yes` (or `yes`). `!no` cancels, and queued actions expire after 30 minutes. Recurring events are listed but can't be changed yet.
@@ -64,6 +65,29 @@ Mac), run it with `--paste` instead: when the browser says it can't connect, cop
 address bar straight into the script's prompt, within a few minutes. (Or forward the port first with
 `ssh -L 8765:127.0.0.1:8765 cappa`.) The token is never printed. If Aide later says Gmail
 access expired, run the script again.
+
+## Web search and Maps
+
+Read-only tools, so they run without `!yes`. Each one is on only when its key is set.
+
+**Web search (Tavily).** Sign up at [tavily.com](https://tavily.com) (the free plan gives 1,000 searches a
+month), copy the API key from the dashboard into `.env` as `TAVILY_API_KEY`. Aide gets `web_search` and
+`fetch_page` (reads one page in full).
+
+**Google Maps.** Aide gets `find_places` (Places API (New) Text Search) and `travel_time` (Routes API).
+
+1. [console.cloud.google.com](https://console.cloud.google.com): pick a project (the Gmail one is fine) or make one.
+2. **Billing:** link a billing account. Both APIs need it, even within Google's free monthly usage.
+3. **APIs & Services → Library:** enable **Places API (New)** and **Routes API** (not the legacy "Places API"
+   or "Directions API").
+4. **APIs & Services → Credentials → Create credentials → API key.** Edit the key: under *API restrictions*
+   choose *Restrict key* and tick only Places API (New) and Routes API. (No application restriction: the
+   server calls from its own IP.) Copy it into `.env` as `GOOGLE_MAPS_API_KEY`.
+5. Set `AIDE_HOME_ADDRESS` (e.g. `Via Roma 1, 20121 Milano`): "near me" and travel times start there. If you
+   tell Aide you've moved, it remembers that and uses it instead.
+
+Requests ask only for the fields Aide shows (field masks), which keeps them on the cheapest SKU that has them.
+Then `systemctl --user restart aide`.
 
 ## Tests
 
