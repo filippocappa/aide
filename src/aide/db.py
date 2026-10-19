@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .agents import ORCHESTRATOR
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
     id             INTEGER PRIMARY KEY,
@@ -270,7 +272,9 @@ class Database:
     # -- memory ------------------------------------------------------------
 
     def add_memory(self, text: str, agent: str | None = None) -> sqlite3.Row:
-        """A shared item, or with `agent`, one only that agent sees."""
+        """A shared item, or with `agent`, one only that agent sees. Aide's items are shared: it sees those anyway."""
+        if agent == ORCHESTRATOR:
+            agent = None
         cur = self.conn.execute(
             "INSERT INTO memory (text, created_at, agent) VALUES (?, ?, ?)", (text, utcnow().isoformat(), agent)
         )

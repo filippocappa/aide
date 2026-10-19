@@ -142,7 +142,7 @@ Each item is **shared** (`"agent": null`: about you in general, every agent sees
 agent's context has the shared items plus its own. Aide sees only the shared ones and asks specialists for the rest.
 `remember` in Aide's chats saves a shared item. In a specialist's chat the model chooses: shared for facts about
 you that any agent could use (name, home, routines), its own for things only it needs. Items from before agents
-existed are shared.
+existed are shared. An item saved with `"agent": "aide"` is stored as shared (`null`): Aide has no items of its own.
 
 | Endpoint | Body | Response |
 |---|---|---|

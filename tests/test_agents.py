@@ -163,12 +163,15 @@ def test_older_databases_become_aides_and_shared(tmp_path):
 
 
 def test_memory_api_takes_and_returns_the_agent(env):
-    client, _, _ = env()
+    client, agent, _ = env()
     shared = client.post("/v1/memory", json={"text": "Vegetarian"}, headers=AUTH).json()
     own = client.post("/v1/memory", json={"text": "Marathon in April", "agent": "coach"}, headers=AUTH).json()
     assert shared["agent"] is None and own["agent"] == "coach"
     assert [i["agent"] for i in client.get("/v1/memory", headers=AUTH).json()["items"]] == ["coach", None]
     assert client.post("/v1/memory", json={"text": "x", "agent": "butler"}, headers=AUTH).status_code == 400
+    aide = client.post("/v1/memory", json={"text": "Likes tea", "agent": "aide"}, headers=AUTH).json()
+    assert aide["agent"] is None  # Aide has no items of its own
+    assert agent.db.memory_item(aide["id"])["agent"] is None
 
 
 def test_each_agent_sees_shared_memory_plus_its_own(env):
