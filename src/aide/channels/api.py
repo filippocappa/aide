@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..agent import CONVERSATION, Agent, UnknownConversation
+from ..agents import AGENTS, check_agent
 from ..db import Database
 from ..digest import DigestService, check_kind
 from ..habits import HabitStore
@@ -38,11 +39,13 @@ class ConversationIn(BaseModel):
 
 
 class NewConversationIn(BaseModel):
-    digest: str | None = None  # start the chat with this digest's greeting
+    agent: str = "aide"
+    digest: str | None = None  # start the chat with this digest's greeting (and make it Aide's)
 
 
 class MemoryIn(BaseModel):
     text: str
+    agent: str | None = None  # None: shared
 
 
 class Cadence(BaseModel):
@@ -151,10 +154,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return datetime.fromisoformat(utc_iso).astimezone(tz).replace(microsecond=0).isoformat()
 
     def conversation_json(c: dict) -> dict:
-        return {"id": c["id"], "title": c["title"], "preview": c["preview"], "updated_at": local(c["updated_at"])}
+        return {"id": c["id"], "agent": c["agent"], "title": c["title"], "preview": c["preview"],
+                "updated_at": local(c["updated_at"])}
 
     def memory_json(m) -> dict:
-        return {"id": m["id"], "text": m["text"], "created_at": local(m["created_at"])}
+        return {"id": m["id"], "text": m["text"], "agent": m["agent"], "created_at": local(m["created_at"])}
 
     @app.get("/v1/health")
     async def alive():
@@ -166,8 +170,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if not text:
             raise HTTPException(400, "text is empty")
         conversation = body.conversation_id or CONVERSATION
-        reply, attachments = await agent.respond(CONVERSATION, text, conversation)
-        return {"reply": reply, "pending": pending(), "conversation_id": conversation, "attachments": attachments}
+        reply, attachments, consulted = await agent.respond(CONVERSATION, text, conversation)
+        return {"reply": reply, "pending": pending(), "conversation_id": conversation, "attachments": attachments,
+                "consulted": consulted}
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
     async def confirm():
@@ -203,8 +208,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.post("/v1/conversations", dependencies=[Depends(auth)])
     async def new_conversation(body: NewConversationIn | None = None):
-        opening = await digest.opening(check_kind(body.digest)) if body and body.digest else None
-        return conversation_json(agent.new_conversation(opening))
+        body = body or NewConversationIn()
+        if body.digest:  # the chat is Aide's: agent is ignored
+            return conversation_json(agent.new_conversation(await digest.opening(check_kind(body.digest))))
+        return conversation_json(agent.new_conversation(agent=check_agent(body.agent)))
+
+    @app.get("/v1/agents", dependencies=[Depends(auth)])
+    async def agents():
+        return {"agents": [a.as_json() for a in AGENTS.values()]}
 
     @app.delete("/v1/conversations/{conversation_id}", dependencies=[Depends(auth)])
     async def delete_conversation(conversation_id: str):
@@ -220,7 +231,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         text = " ".join(body.text.split())
         if not text:
             raise HTTPException(400, "text is empty")
-        return memory_json(db.add_memory(text))
+        return memory_json(db.add_memory(text, check_agent(body.agent) if body.agent is not None else None))
 
     @app.delete("/v1/memory/{memory_id}", dependencies=[Depends(auth)])
     async def delete_memory(memory_id: int):

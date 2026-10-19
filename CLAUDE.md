@@ -22,6 +22,7 @@ Both machines run Claude Code on the same GitHub repo (`filippocappa/aide`).
 Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 
 - `agent.py`: Claude tool-use loop (via OpenRouter, Anthropic SDK), conversation history, the confirmation queue.
+- `agents.py`: the agents (Aide and the specialists): prompts, tool sets, colours, starters.
 - `db.py`: SQLite (WAL) at `data/aide.db`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
 - `channels/discord_bot.py` and `channels/api.py` (FastAPI, the app's API): two adapters over one agent and one shared conversation.
@@ -112,7 +113,11 @@ sections in `wake` and `daily`, the read-only `health` tool. No real health data
 
 **In progress:** agents (contract in `docs/API.md`, "Agents"): Aide as the orchestrator that asks Secretary,
 Professor, Coach and Finance (`ask_agent`), each with its own chats, tools, memory and Pebble colour. App side built
-(agent row in the chat list, tinted Pebble, starters, "Asked Coach" above replies, memory per agent); server next.
+(agent row in the chat list, tinted Pebble, starters, "Asked Coach" above replies, memory per agent). Server
+(live): definitions and prompts in `agents.py`, `GET /v1/agents`, `agent` on conversations and memory, each chat
+answered by its agent with its own tools and memory (shared plus its own; Aide sees shared only), `ask_agent` for
+Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Discord stays on Aide. Not yet tried
+from the app.
 
 **Next:** try push live, then Discord becomes optional. Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).

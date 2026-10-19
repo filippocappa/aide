@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     last_active_at TEXT NOT NULL,
     model          TEXT,  -- NULL means the default model
     public_id      TEXT,  -- app chats only ("c_…"); NULL for the shared conversation
-    title          TEXT
+    title          TEXT,
+    agent          TEXT NOT NULL DEFAULT 'aide'  -- the agent that answers in it (agents.py)
 );
 
 -- content is the JSON the API expects: a string, or a list of content blocks
@@ -26,7 +27,8 @@ CREATE TABLE IF NOT EXISTS messages (
     role            TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content         TEXT NOT NULL,
     ts              TEXT NOT NULL,
-    attachments     TEXT  -- JSON list shown as cards under a reply (docs/API.md); NULL for none
+    attachments     TEXT,  -- JSON list shown as cards under a reply (docs/API.md); NULL for none
+    consulted       TEXT   -- JSON list of the agent ids Aide asked for this reply; NULL for none
 );
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, id);
 
@@ -47,7 +49,8 @@ CREATE TABLE IF NOT EXISTS pending_actions (
 CREATE TABLE IF NOT EXISTS memory (
     id         INTEGER PRIMARY KEY,
     text       TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    agent      TEXT  -- the one agent that sees it; NULL means shared, every agent sees it
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -87,10 +90,17 @@ class Database:
         if "public_id" not in columns:  # databases created before the app had many chats
             self.conn.execute("ALTER TABLE conversations ADD COLUMN public_id TEXT")
             self.conn.execute("ALTER TABLE conversations ADD COLUMN title TEXT")
+        if "agent" not in columns:  # databases created before agents: every chat is Aide's
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN agent TEXT NOT NULL DEFAULT 'aide'")
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS conversations_public ON conversations(public_id)")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(messages)")}
         if "attachments" not in columns:  # databases created before replies had cards
             self.conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
+        if "consulted" not in columns:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN consulted TEXT")
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(memory)")}
+        if "agent" not in columns:  # databases created before agents: every item is shared
+            self.conn.execute("ALTER TABLE memory ADD COLUMN agent TEXT")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(pending_actions)")}
         if "target" not in columns:  # databases created before actions could be replaced
             self.conn.execute("ALTER TABLE pending_actions ADD COLUMN target TEXT")
@@ -128,24 +138,25 @@ class Database:
         )
         return cur.lastrowid
 
-    def new_app_conversation(self) -> sqlite3.Row:
+    def new_app_conversation(self, agent: str = "aide") -> sqlite3.Row:
         """An app chat: never rotates on idle, lives until deleted."""
         now = utcnow().isoformat()
         public_id = "c_" + secrets.token_hex(6)
         self.conn.execute(
-            "INSERT INTO conversations (channel, started_at, last_active_at, public_id) VALUES ('app', ?, ?, ?)",
-            (now, now, public_id),
+            "INSERT INTO conversations (channel, started_at, last_active_at, public_id, agent) "
+            "VALUES ('app', ?, ?, ?, ?)",
+            (now, now, public_id, agent),
         )
         return self.app_conversation(public_id)
 
     def app_conversation(self, public_id: str) -> sqlite3.Row | None:
         return self.conn.execute(
-            "SELECT id, public_id, title, last_active_at FROM conversations WHERE public_id = ?", (public_id,)
+            "SELECT id, public_id, title, last_active_at, agent FROM conversations WHERE public_id = ?", (public_id,)
         ).fetchone()
 
     def app_conversations(self) -> list[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT id, public_id, title, last_active_at FROM conversations "
+            "SELECT id, public_id, title, last_active_at, agent FROM conversations "
             "WHERE public_id IS NOT NULL ORDER BY last_active_at DESC"
         ).fetchall()
 
@@ -162,6 +173,9 @@ class Database:
     def set_conversation_title(self, conversation_id: int, title: str) -> None:
         self.conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
 
+    def conversation_agent(self, conversation_id: int) -> str:
+        return self.conn.execute("SELECT agent FROM conversations WHERE id = ?", (conversation_id,)).fetchone()["agent"]
+
     def conversation_model(self, conversation_id: int) -> str | None:
         row = self.conn.execute("SELECT model FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
         return row["model"]
@@ -169,13 +183,14 @@ class Database:
     def set_conversation_model(self, conversation_id: int, model: str) -> None:
         self.conn.execute("UPDATE conversations SET model = ? WHERE id = ?", (model, conversation_id))
 
-    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list]]:
-        """(role, content, ts, attachments) per message, oldest first."""
+    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list, list]]:
+        """(role, content, ts, attachments, consulted) per message, oldest first."""
         rows = self.conn.execute(
-            "SELECT role, content, ts, attachments FROM messages WHERE conversation_id = ? ORDER BY id",
+            "SELECT role, content, ts, attachments, consulted FROM messages WHERE conversation_id = ? ORDER BY id",
             (conversation_id,),
         ).fetchall()
-        return [(r["role"], json.loads(r["content"]), r["ts"], json.loads(r["attachments"] or "[]")) for r in rows]
+        return [(r["role"], json.loads(r["content"]), r["ts"], json.loads(r["attachments"] or "[]"),
+                 json.loads(r["consulted"] or "[]")) for r in rows]
 
     def history(self, conversation_id: int) -> list[dict]:
         rows = self.conn.execute(
@@ -185,19 +200,21 @@ class Database:
         return [{"role": r["role"], "content": json.loads(r["content"])} for r in rows]
 
     def append_turn(self, conversation_id: int, channel: str, messages: list[dict],
-                    attachments: list[dict] | None = None) -> None:
+                    attachments: list[dict] | None = None, consulted: list[str] | None = None) -> None:
         """Store a whole turn atomically, so history never ends on an unanswered tool_use.
 
-        `attachments` go with the turn's last message (the final reply).
+        `attachments` and `consulted` go with the turn's last message (the final reply).
         """
         now = utcnow().isoformat()
         last = len(messages) - 1
         with self.conn:
             self.conn.execute("BEGIN")
             self.conn.executemany(
-                "INSERT INTO messages (conversation_id, channel, role, content, ts, attachments) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages (conversation_id, channel, role, content, ts, attachments, consulted) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [(conversation_id, channel, m["role"], json.dumps(m["content"]), now,
-                  json.dumps(attachments) if attachments and i == last else None) for i, m in enumerate(messages)],
+                  json.dumps(attachments) if attachments and i == last else None,
+                  json.dumps(consulted) if consulted and i == last else None) for i, m in enumerate(messages)],
             )
             self.conn.execute(
                 "UPDATE conversations SET last_active_at = ? WHERE id = ?", (now, conversation_id)
@@ -252,18 +269,23 @@ class Database:
 
     # -- memory ------------------------------------------------------------
 
-    def add_memory(self, text: str) -> sqlite3.Row:
+    def add_memory(self, text: str, agent: str | None = None) -> sqlite3.Row:
+        """A shared item, or with `agent`, one only that agent sees."""
         cur = self.conn.execute(
-            "INSERT INTO memory (text, created_at) VALUES (?, ?)", (text, utcnow().isoformat())
+            "INSERT INTO memory (text, created_at, agent) VALUES (?, ?, ?)", (text, utcnow().isoformat(), agent)
         )
         return self.memory_item(cur.lastrowid)
 
     def memory_item(self, memory_id: int) -> sqlite3.Row | None:
-        return self.conn.execute("SELECT id, text, created_at FROM memory WHERE id = ?", (memory_id,)).fetchone()
+        return self.conn.execute("SELECT id, text, created_at, agent FROM memory WHERE id = ?", (memory_id,)).fetchone()
 
-    def memories(self) -> list[sqlite3.Row]:
-        """Newest first."""
-        return self.conn.execute("SELECT id, text, created_at FROM memory ORDER BY id DESC").fetchall()
+    def memories(self, agent: str | None = None) -> list[sqlite3.Row]:
+        """Newest first. All of them, or with `agent`, what that agent sees: the shared items plus its own."""
+        if agent is None:
+            return self.conn.execute("SELECT id, text, created_at, agent FROM memory ORDER BY id DESC").fetchall()
+        return self.conn.execute(
+            "SELECT id, text, created_at, agent FROM memory WHERE agent IS NULL OR agent = ? ORDER BY id DESC", (agent,)
+        ).fetchall()
 
     def delete_memory(self, memory_id: int) -> bool:
         return self.conn.execute("DELETE FROM memory WHERE id = ?", (memory_id,)).rowcount > 0
