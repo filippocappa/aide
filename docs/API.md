@@ -180,7 +180,67 @@ in Chat); the Team chat on the app's home screen shows them all together.
   answer (the agent's reply to Aide), never tool calls.
 - `conversation_id` is Aide's chat the exchange came from, so the app can open it. Deleting that chat deletes its
   team messages too.
-- Read-only: you can't write in the Team chat. To ask someone, talk to Aide or open that agent's chat.
+- Messages you write in the Team chat (below) are in here too: `from: "user"`, and `conversation_id: null` for
+  everything said in the Team chat itself.
+
+**Writing in the Team chat.** `POST /v1/team` with `{"text": "@coach how's my recovery?"}` →
+`{"messages": [ …the new team messages, yours first… ], "pending": [ … ]}`
+- `@id` mentions (`@coach`, `@secretary`; case-insensitive, names work too: `@Coach`) pick who answers, in
+  the order mentioned, at most 3. Without a mention Aide answers; it may ask the others (`ask_agent`), and those
+  asks and answers are team messages like any other.
+- Your message has `from: "user"`, `to: "team"`. A reply in the Team chat has `to: "team"` too. Asks and
+  answers inside a turn keep `from`/`to` as in Team talk above.
+- Each agent answering sees the last 30 team messages (the ones from before plus those already written this
+  turn), its usual instructions, tools and memory (shared plus its own), and knows it's in the group chat: short,
+  only what it adds, no repeating the others. Agents don't start new rounds by mentioning each other.
+- Actions an agent queues join the usual confirmation queue; `pending` is the queue after the turn, as in Chat.
+- `"stream": true` streams it as in Chat: `event: working` with `data: {"agent": "coach"}` when an agent starts
+  writing (the app shows it thinking), `event: team` for each new message as it's done (yours first), then
+  `event: done` with the same body as the plain response, then the stream ends. `event: error` as in Chat.
+- `400` for empty text or an unknown mention (`{"error": "No agent called @bob."}`).
+
+## Routines
+
+A routine is a job an agent runs on a schedule, like Coach's weekly recap or Secretary's Monday mail sweep. Each
+routine has its own chat with its agent: every run posts there as that agent's message, so the agent's card on
+the home screen shows it, and you can reply in that chat to carry on. You make routines in the app, or just by
+asking an agent ("every Sunday at 18 recap my week").
+
+```json
+{"id": 3, "agent": "coach", "title": "Weekly recap",
+ "prompt": "Recap my sleep, training and habits for the week, and suggest one thing for next week.",
+ "time": "18:00", "days": [7], "enabled": true,
+ "conversation_id": "c_7ab…", "next_run": "2026-10-25T18:00:00+02:00", "last_run": null}
+```
+- `time` is `HH:MM` local (`AIDE_TIMEZONE`). `days` are ISO weekdays, 1 = Monday … 7 = Sunday; `[]` means every
+  day. `next_run` is `null` while `enabled` is false.
+- `prompt` is what the agent is asked each run (the user never sees it in the chat). The run uses the agent's
+  instructions, tools and memory (shared plus its own) and that routine chat's history, so it can say "better
+  than last week".
+- `conversation_id` is the routine's chat, created with the routine (`agent` as the routine's, `title` as the
+  routine's, `routine` set, see below). Deleting the routine keeps the chat; deleting the chat deletes the routine.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/routines` | `?agent=coach` (optional) | `{"routines": [ … ]}`, by agent order, then `time`. |
+| `POST /v1/routines` | `{"agent", "title", "prompt", "time", "days", "enabled"}` (`days` default `[]`, `enabled` default true) | the new routine. `400` for an unknown agent, a bad time or an empty prompt. |
+| `PATCH /v1/routines/{id}` | any of `title`, `prompt`, `time`, `days`, `enabled` | the routine. |
+| `DELETE /v1/routines/{id}` | | `{"ok": true}` |
+| `POST /v1/routines/{id}/run` | `{}` | runs it now, as a scheduled run would (also when disabled), and returns `{"routine": …, "conversation_id": "c_7ab…"}` once the message is posted. Can take 30 s. |
+
+- **Each run** posts the agent's reply in the routine's chat, then sends an alert push
+  (`aide.kind: "message"`, `conversation_id`, title "Coach · Weekly recap", body the first line), with a Discord
+  DM as the fallback, as for digests. Actions it queues join the usual confirmation queue, and the push says so.
+- A run missed while the server was down runs once when it's back, if it's less than 2 h late; else it's skipped.
+- **In history**, a message a routine posted has `"routine": {"id": 3, "title": "Weekly recap"}` (absent on others).
+  **In the conversation list**, a routine's chat has `"routine": 3` (absent or `null` on others).
+- **By chat.** Every agent has `routines` tools: list its own, create, change (time, days, prompt, on/off). They
+  run straight away (harmless, like `remember`), and the reply says what was set. Deleting one by chat is queued
+  like other destructive actions. Aide can make routines for any agent; the others only for themselves.
+- **Ideas.** `GET /v1/agents` gains `routine_ideas` per agent (default `[]`): `[{"title", "prompt", "time",
+  "days"}]`, offered by the app as one-tap starting points. E.g. Coach "Weekly recap" (Sun 18:00), Secretary
+  "Mail sweep" (Mon–Fri 09:00), Professor "Review what I studied" (Sun 17:00), Finance "Week's spending" (Sun
+  19:00), Aide "Plan my week" (Sun 20:00). Schedules are weekly patterns only; monthly can come later.
 
 ## Memory
 
