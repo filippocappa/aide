@@ -80,28 +80,30 @@ struct TeamChatView: View {
         }
     }
 
-    /// The message box, with everyone's figure above it: tap one to @mention them.
+    /// What's typed after an "@" at the end of the draft ("" right after the "@"), or nil when not mentioning.
+    private var mentionQuery: String? {
+        let word = draft.split(separator: " ", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+        guard word.hasPrefix("@"), !word.contains("\n") else { return nil }
+        return String(word.dropFirst())
+    }
+
+    /// The agents whose id or name starts with what's typed after the "@".
+    private var suggestions: [Agent] {
+        guard let query = mentionQuery else { return [] }
+        if query.isEmpty { return chat.agents }
+        return chat.agents.filter {
+            $0.id.lowercased().hasPrefix(query.lowercased()) || $0.name.lowercased().hasPrefix(query.lowercased())
+        }
+    }
+
+    /// The message box. Typing "@" shows the matching agents above it: tap one to finish the mention.
     private var composer: some View {
         VStack(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(chat.agents) { agent in
-                        Button { mention(agent) } label: {
-                            HStack(spacing: 5) {
-                                AgentMark(agent: agent, size: 18)
-                                Text("@" + agent.name).font(.footnote.weight(.medium)).foregroundStyle(agent.tint)
-                            }
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(Theme.chip, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Mention \(agent.name)")
-                    }
-                }
-                .padding(.horizontal, 16)
+            if !suggestions.isEmpty {
+                mentionSuggestions.transition(.move(edge: .bottom).combined(with: .opacity))
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Message the team", text: $draft, axis: .vertical)
+                TextField("Message the team, @ to mention", text: $draft, axis: .vertical)
                     .lineLimit(1...5)
                     .focused($focused)
                     .padding(.horizontal, 14).padding(.vertical, 10)
@@ -123,13 +125,34 @@ struct TeamChatView: View {
             .padding(.horizontal, 16)
         }
         .padding(.vertical, 8)
+        .animation(.easeInOut(duration: 0.15), value: suggestions.map(\.id))
         .disabled(!settings.isConfigured)
     }
 
+    private var mentionSuggestions: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(suggestions) { agent in
+                    Button { mention(agent) } label: {
+                        HStack(spacing: 5) {
+                            AgentMark(agent: agent, size: 18)
+                            Text("@" + agent.name).font(.footnote.weight(.medium)).foregroundStyle(agent.tint)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Theme.chip, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Mention \(agent.name)")
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    /// Replaces the "@…" being typed with the agent's full mention.
     private func mention(_ agent: Agent) {
-        let tag = "@" + agent.id
-        guard !draft.localizedCaseInsensitiveContains(tag) else { return }
-        draft = draft.isEmpty || draft.hasSuffix(" ") ? draft + tag + " " : draft + " " + tag + " "
+        guard let query = mentionQuery else { return }
+        draft = String(draft.dropLast(query.count + 1)) + "@" + agent.id + " "
         focused = true
     }
 
