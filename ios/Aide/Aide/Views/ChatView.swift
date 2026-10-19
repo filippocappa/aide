@@ -7,7 +7,6 @@ struct ChatView: View {
     @EnvironmentObject private var digest: DigestViewModel
     @State private var draft = ""
     @State private var showChats = false
-    @State private var showDigest = false
     @State private var tapCount = 0
     @State private var justReplied = false
     @FocusState private var composerFocused: Bool
@@ -55,7 +54,7 @@ struct ChatView: View {
         .background(Theme.background)
         .background(TouchTracker(tapCount: $tapCount))
         .sheet(isPresented: $showChats) { ChatsView() }
-        .sheet(isPresented: $showDigest) { DigestSheet() }
+        .sheet(isPresented: $digest.isPresented) { DigestSheet() }
         .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
         .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
         .onChange(of: voice.isActive) { _, active in if active { composerFocused = false } } // no keyboard in voice
@@ -95,7 +94,7 @@ struct ChatView: View {
                 .disabled(!settings.isConfigured)
             headerButton("sun.horizon", label: "Digest") {
                 digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
-                showDigest = true
+                digest.isPresented = true
             }
                 .disabled(!settings.isConfigured)
             Spacer()
@@ -173,7 +172,7 @@ struct ChatView: View {
     private var digestDetails: some View {
         Button {
             digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
-            showDigest = true
+            digest.isPresented = true
         } label: {
             Label("Details", systemImage: "sun.horizon")
                 .font(.footnote.weight(.semibold))

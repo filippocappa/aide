@@ -4,16 +4,20 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var sync: ReminderSyncService
     @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var push: PushService
     @Environment(\.openURL) private var openURL
 
     @State private var testing = false
     @State private var testResult: (ok: Bool, text: String)?
+    @State private var pushTesting = false
+    @State private var pushResult: (ok: Bool, text: String)?
 
     var body: some View {
         NavigationStack {
             Form {
                 serverSection
                 remindersSection
+                notificationsSection
                 Section {
                     Picker("I speak", selection: $settings.voiceLanguage) {
                         Text("English").tag("en-US")
@@ -116,6 +120,48 @@ struct SettingsView: View {
             Text("Apple Reminders")
         } footer: {
             Text("Aide mirrors its reminders into this one list, and Apple notifies you at the due time. Other lists stay private.")
+        }
+    }
+
+    @ViewBuilder
+    private var notificationsSection: some View {
+        Section {
+            switch push.authorization {
+            case .denied:
+                Text("Notifications are off for Aide.").foregroundStyle(.secondary)
+                Button("Open iOS Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+            case .notDetermined:
+                Button("Allow notifications") { Task { await push.refresh() } }
+            default:
+                LabeledContent("This device", value: push.isRegistered ? "Registered" : "Not registered")
+                Button {
+                    Task {
+                        pushTesting = true
+                        pushResult = await push.sendTest()
+                        pushTesting = false
+                    }
+                } label: {
+                    HStack {
+                        Text("Send a test notification")
+                        if pushTesting { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(pushTesting || !push.isRegistered)
+                if let pushResult {
+                    Label(pushResult.text, systemImage: pushResult.ok ? "checkmark.circle" : "xmark.octagon")
+                        .foregroundStyle(pushResult.ok ? Color.green : Color.red)
+                        .font(.footnote)
+                }
+            }
+            if let error = push.lastError {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text("Aide sends digests and reminders that haven't reached Apple Reminders yet, and quietly syncs reminders in the background. Without push, they go to Discord.")
         }
     }
 

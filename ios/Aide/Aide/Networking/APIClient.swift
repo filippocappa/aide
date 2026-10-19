@@ -125,6 +125,14 @@ final class APIClient {
                        body: SyncRequest(cursor: cursor, changes: changes), timeout: 60)
     }
 
+    func registerDevice(_ device: DeviceRegistration) async throws {
+        let _: OKResponse = try await send("POST", "/v1/devices", body: device)
+    }
+
+    func testPush() async throws -> PushTestResult {
+        try await send("POST", "/v1/devices/test", body: EmptyBody())
+    }
+
     // MARK: Plumbing
 
     private func send<T: Decodable>(

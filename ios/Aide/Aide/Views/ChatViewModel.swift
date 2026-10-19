@@ -41,13 +41,13 @@ final class ChatViewModel: ObservableObject {
     /// A new chat opens with Pebble's digest greeting (docs/API.md, "Opening a chat with it"): the morning
     /// one before 17:00, the evening one after. A digest-only chat you never answered is cleared away first,
     /// so tapping New chat repeatedly doesn't pile them up. If the server can't, it's a blank chat as before.
-    func startNewChat() async {
+    func startNewChat(digest kind: String? = nil) async {
         let unanswered = messages.count == 1 && messages[0].role == .assistant ? conversationID : nil
         reset()
         if let unanswered { try? await api.deleteConversation(unanswered) }
         isOpening = true
         defer { isOpening = false }
-        guard let conversation = try? await api.createConversation(digest: Self.digestKind()),
+        guard let conversation = try? await api.createConversation(digest: kind ?? Self.digestKind()),
               conversationID == nil, messages.isEmpty
         else { return }
         conversationID = conversation.id
@@ -69,7 +69,11 @@ final class ChatViewModel: ObservableObject {
     var startsWithDigest: Bool { messages.first?.role == .assistant }
 
     func open(_ conversation: Conversation) async {
-        conversationID = conversation.id
+        await open(id: conversation.id)
+    }
+
+    func open(id: String) async {
+        conversationID = id
         messages = []
         pending = []
         await loadHistory()

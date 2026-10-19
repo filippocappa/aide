@@ -9,6 +9,8 @@ final class DigestViewModel: ObservableObject {
     }
 
     @Published var kind: Kind = .daily
+    /// The digest sheet is up (from the chat header, the Details link or a reminder notification).
+    @Published var isPresented = false
     @Published private(set) var digest: Digest?
     @Published private(set) var isLoading = false
     /// True once any digest has loaded, so the picker stays when one period has none yet.
