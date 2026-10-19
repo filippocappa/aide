@@ -58,8 +58,38 @@ from the tools the assistant used in that turn, not parsed from its text:
   On Discord the same items are appended to the reply as a list.
 
 `consulted` (always present, default `[]`) lists the agent ids Aide asked during that turn, in order, e.g.
-`["coach"]` (see Agents). The app shows them above the reply as small Pebbles ("Asked Coach"). Cards from a
-consulted agent's tools are in this reply's `attachments`.
+`["coach"]` (see Agents). Cards from a consulted agent's tools are in this reply's `attachments`.
+
+`team` (always present, default `[]`) is what Aide and the agents it asked said to each other during that turn, in
+order: each ask, then that agent's answer. The app draws it above the reply as a small group chat (see Agents,
+"Team talk"). Old apps keep using `consulted`.
+
+```json
+"team": [
+  {"from": "aide", "to": "coach", "text": "Filippo asks if he should go to the gym tonight. He slept 6h and has a full day.", "ts": "2026-10-19T18:02:11+02:00"},
+  {"from": "coach", "to": "aide", "text": "HRV is 12% under his usual. An easy session is fine; skip heavy legs.", "ts": "2026-10-19T18:02:19+02:00"}
+]
+```
+
+**Live, while Aide works.** With `"stream": true` in the body, `POST /v1/chat` answers with `text/event-stream`
+instead of JSON, so the app can show each team message as it happens:
+
+```
+event: team
+data: {"from": "aide", "to": "coach", "text": "…", "ts": "…"}
+
+event: team
+data: {"from": "coach", "to": "aide", "text": "…", "ts": "…"}
+
+event: reply
+data: { the usual /v1/chat body, including the whole "team" }
+```
+- Each event is one `event:` line, one `data:` line of JSON (no line breaks inside), then a blank line.
+- `team` events come as they happen: the ask when Aide sends it (the app then shows that agent thinking), the
+  answer when the agent is done. `reply` is always the last event, and the stream ends after it.
+- A failure after the stream has started is `event: error` with `data: {"error": "…"}`, then the stream ends.
+  Failures before it starts (401, 400…) are plain HTTP errors as usual.
+- A server that doesn't know `stream` answers plain JSON; the app checks `Content-Type` and handles both.
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -68,8 +98,8 @@ consulted agent's tools are in this reply's `attachments`.
 | `POST /v1/new` | `{}` | `{"ok": true}`. Starts a fresh conversation (like `!new`). |
 | `POST /v1/think` | `{}` | `{"ok": true}`. Smarter model for the rest of the conversation (like `!think`). |
 
-`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ]}]}`
-(`attachments` and `consulted` as in `/v1/chat`, `[]` on user messages and plain replies; reminders in them are reloaded as they are now,
+`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}]}`
+(`attachments`, `consulted` and `team` as in `/v1/chat`, `[]` on user messages and plain replies; reminders in them are reloaded as they are now,
 so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said on Discord too. Tool calls and internal notes are left out.
 
 ## Conversations
@@ -132,6 +162,25 @@ a new agent needs no app update.
   ("Coach thinks…"). Actions it queues join the usual confirmation queue; cards from its tools join the reply.
   At most 3 asks per turn, and an asked agent can't ask others.
 - **Discord** talks to Aide, as before.
+
+### Team talk
+
+The agents have a group chat of their own: every ask and every answer, from all of Aide's chats (Discord's
+included), is kept there as a message. In a chat with Aide the same messages show live above Aide's reply (`team`
+in Chat); the Team chat on the app's home screen shows them all together.
+
+`GET /v1/team?limit=100` →
+```json
+{"messages": [
+  {"from": "aide", "to": "coach", "text": "…", "ts": "2026-10-19T18:02:11+02:00", "conversation_id": "c_91f…"},
+  {"from": "coach", "to": "aide", "text": "…", "ts": "2026-10-19T18:02:19+02:00", "conversation_id": "c_91f…"}
+]}
+```
+- The latest `limit` messages, oldest first. `text` is the whole ask (the `request` Aide wrote) or the whole
+  answer (the agent's reply to Aide), never tool calls.
+- `conversation_id` is Aide's chat the exchange came from, so the app can open it. Deleting that chat deletes its
+  team messages too.
+- Read-only: you can't write in the Team chat. To ask someone, talk to Aide or open that agent's chat.
 
 ## Memory
 
