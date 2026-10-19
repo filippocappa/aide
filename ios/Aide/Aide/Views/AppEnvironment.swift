@@ -48,11 +48,13 @@ final class AppEnvironment: ObservableObject {
     /// Launch and return-to-foreground.
     func refreshAll() async {
         guard settings.isConfigured else { return }
+        async let agents: Void = chat.loadAgents()
         async let history: Void = chat.loadHistory()
         async let digestLoad: Void = digest.load()
         async let pushRefresh: Void = push.refresh()
         async let healthUpload = health.upload()
         await sync.sync()
+        await agents
         await history
         await digestLoad
         await pushRefresh

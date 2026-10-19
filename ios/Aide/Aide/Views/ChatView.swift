@@ -76,7 +76,8 @@ struct ChatView: View {
                 .allowsHitTesting(false)
             LivePebble(mood: mood, size: Self.voicePebble, energy: voice.isListening ? voice.level : 0,
                        bounceTrigger: tapCount + chat.messages.count)
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(chat.agent.tint)
+                .animation(.easeInOut(duration: 0.3), value: chat.agentID)
                 // a little bigger while it answers
                 .scaleEffect((voice.isActive ? 1 : Self.headerPebble / Self.voicePebble) * (replying ? 1.3 : 1), anchor: .top)
                 // In the header it reaches up beside the Dynamic Island, level with the buttons.
@@ -99,7 +100,8 @@ struct ChatView: View {
                 .disabled(!settings.isConfigured)
             Spacer()
             headerButton("square.and.pencil", label: "New chat") {
-                Task { await chat.startNewChat() }
+                // Aide's new chats open with the digest greeting; a specialist's start blank.
+                Task { chat.agent.orchestrator ? await chat.startNewChat() : await chat.newChat(with: chat.agent) }
             }
             Menu {
                 Button("Think harder", systemImage: "brain") { Task { await chat.think() } }
@@ -131,6 +133,7 @@ struct ChatView: View {
                     if isEmpty { emptyState }
                     ForEach(chat.messages) { message in
                         VStack(alignment: .leading, spacing: 8) {
+                            if !message.consulted.isEmpty { ConsultedRow(agents: message.consulted.map { chat.agent($0) }) }
                             MessageRow(message: message)
                             if chat.startsWithDigest, message.id == chat.messages.first?.id { digestDetails }
                         }
@@ -188,11 +191,21 @@ struct ChatView: View {
         VStack(spacing: 20) {
             if settings.isConfigured {
                 // The digest lives behind the sun button, so a new chat starts clean.
-                Text(chat.loadError ?? "What can I do for you?").font(.title3.weight(.medium))
+                if let error = chat.loadError {
+                    Text(error).font(.title3.weight(.medium))
+                } else if chat.agent.orchestrator {
+                    Text("What can I do for you?").font(.title3.weight(.medium))
+                } else {
+                    VStack(spacing: 4) {
+                        Text(chat.agent.name).font(.title3.weight(.semibold)).foregroundStyle(chat.agent.tint)
+                        Text(chat.agent.role).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                }
                 VStack(spacing: 8) {
-                    suggestion("What's on my calendar today?", send: true)
-                    suggestion("Remind me to ", send: false)
-                    suggestion("Remember that ", send: false)
+                    ForEach(chat.agent.starters.isEmpty && chat.agent.orchestrator ? Agent.aide.starters : chat.agent.starters,
+                            id: \.self) { starter in
+                        suggestion(starter, send: !starter.hasSuffix(" "))
+                    }
                 }
             } else {
                 Text("Add your server token in Settings to start.").foregroundStyle(.secondary)
@@ -216,7 +229,7 @@ struct ChatView: View {
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message Aide", text: $draft, axis: .vertical)
+            TextField("Message \(chat.agent.name)", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
                 .focused($composerFocused)
                 .padding(.horizontal, 16)
@@ -241,7 +254,7 @@ struct ChatView: View {
             .buttonStyle(.plain)
             .contentShape(Circle())
             .disabled(!canSend && !showsMic)
-            .accessibilityLabel(showsMic ? (voice.isActive ? "Stop voice chat" : "Talk to Aide") : "Send")
+            .accessibilityLabel(showsMic ? (voice.isActive ? "Stop voice chat" : "Talk to \(chat.agent.name)") : "Send")
         }
         // No background of its own: the page's shows through, and an opaque band here would fade
         // out over the voice panel's End button as a visible stripe.
@@ -311,6 +324,24 @@ private struct AttachmentCard: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+/// Above a reply: the specialists Aide asked for it, as small Pebbles in their colours.
+private struct ConsultedRow: View {
+    let agents: [Agent]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: -6) {
+                ForEach(agents) { PebbleMark(size: 20).foregroundStyle($0.tint) }
+            }
+            Text("Asked " + agents.map(\.name).formatted(.list(type: .and)))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 2)
+        .accessibilityElement(children: .combine)
     }
 }
 

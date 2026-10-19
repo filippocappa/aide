@@ -265,3 +265,36 @@ final class HealthTests: XCTestCase {
         XCTAssertNil(try JSONDecoder.api.decode(Habit.self, from: Data(json.utf8)).workouts)
     }
 }
+
+final class AgentTests: XCTestCase {
+    func testAgentsDecodeWithDefaults() throws {
+        let json = #"""
+        {"agents":[{"id":"aide","name":"Aide","role":"Talks to all of them","color":"#34413F","orchestrator":true,"starters":["Remind me to "]},
+                   {"id":"coach","name":"Coach","color":"#E0782F"}]}
+        """#
+        let agents = try JSONDecoder.api.decode(AgentList.self, from: Data(json.utf8)).agents
+        XCTAssertTrue(agents[0].orchestrator)
+        XCTAssertFalse(agents[1].orchestrator)
+        XCTAssertEqual(agents[1].starters, [])
+        XCTAssertEqual(agents[1].role, "")
+        XCTAssertEqual(agents[1].hex, 0xE0782F)
+        XCTAssertNil(Agent(id: "x", name: "X", role: "", color: "orange", orchestrator: false, starters: []).hex)
+    }
+
+    func testConsultedAndAgentFieldsDefault() throws {
+        let reply = try JSONDecoder.api.decode(ChatReply.self, from: Data(#"{"reply":"ok","consulted":["coach"]}"#.utf8))
+        XCTAssertEqual(reply.consulted, ["coach"])
+        let old = try JSONDecoder.api.decode(ChatReply.self, from: Data(#"{"reply":"ok"}"#.utf8))
+        XCTAssertEqual(old.consulted, [])
+        let c = try JSONDecoder.api.decode(Conversation.self, from: Data(#"{"id":"c_1","title":null}"#.utf8))
+        XCTAssertNil(c.agent)
+        let m = try JSONDecoder.api.decode(MemoryItem.self, from: Data(#"{"id":7,"text":"Vegetarian","agent":"coach"}"#.utf8))
+        XCTAssertEqual(m.agent, "coach")
+    }
+
+    func testNewConversationSendsAgentOnlyWhenSet() throws {
+        XCTAssertEqual(String(decoding: try JSONEncoder.api.encode(NewConversation()), as: UTF8.self), "{}")
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(NewConversation(agent: "coach"))) as? [String: Any])
+        XCTAssertEqual(obj["agent"] as? String, "coach")
+    }
+}

@@ -9,9 +9,12 @@ final class ChatViewModel: ObservableObject {
         let text: String
         var isError = false
         var attachments: [Attachment] = []
+        /// Agents Aide asked for this reply.
+        var consulted: [String] = []
     }
 
     private static let conversationKey = "conversationID"
+    private static let agentKey = "agentID"
 
     @Published private(set) var messages: [Message] = []
     @Published private(set) var pending: [PendingAction] = []
@@ -19,6 +22,12 @@ final class ChatViewModel: ObservableObject {
     /// nil is a blank new chat: the server conversation is created when the first message is sent.
     @Published private(set) var conversationID: String? {
         didSet { UserDefaults.standard.set(conversationID, forKey: Self.conversationKey) }
+    }
+    /// Aide first, then the specialists, in the server's order. Just Aide until the server says otherwise.
+    @Published private(set) var agents: [Agent] = [.aide]
+    /// The agent the current chat belongs to.
+    @Published private(set) var agentID: String {
+        didSet { UserDefaults.standard.set(agentID, forKey: Self.agentKey) }
     }
     @Published private(set) var isSending = false
     @Published private(set) var isActing = false
@@ -36,6 +45,20 @@ final class ChatViewModel: ObservableObject {
     init(api: APIClient) {
         self.api = api
         conversationID = UserDefaults.standard.string(forKey: Self.conversationKey)
+        agentID = UserDefaults.standard.string(forKey: Self.agentKey) ?? Agent.aide.id
+    }
+
+    var agent: Agent { agent(agentID) }
+    var orchestrator: Agent { agents.first { $0.orchestrator } ?? .aide }
+
+    /// An unknown id (an agent the server dropped) shows as Aide.
+    func agent(_ id: String?) -> Agent {
+        agents.first { $0.id == id } ?? orchestrator
+    }
+
+    func loadAgents() async {
+        guard let list = try? await api.agents(), !list.isEmpty else { return } // older server: Aide alone
+        agents = list
     }
 
     // MARK: Conversations
@@ -46,6 +69,7 @@ final class ChatViewModel: ObservableObject {
     func startNewChat(digest kind: String? = nil) async {
         let unanswered = messages.count == 1 && messages[0].role == .assistant ? conversationID : nil
         reset()
+        agentID = orchestrator.id
         if let unanswered { try? await api.deleteConversation(unanswered) }
         isOpening = true
         defer { isOpening = false }
@@ -56,6 +80,15 @@ final class ChatViewModel: ObservableObject {
         conversationID = conversation.id
         openedDigest = kind
         await loadHistory()
+    }
+
+    /// A blank chat with a specialist (or Aide, without the digest greeting). The server conversation is created
+    /// with the first message.
+    func newChat(with agent: Agent) async {
+        let unanswered = messages.count == 1 && messages[0].role == .assistant ? conversationID : nil
+        reset()
+        agentID = agent.id
+        if let unanswered { try? await api.deleteConversation(unanswered) }
     }
 
     /// The digest that fits the time of day: "daily" (morning) before 17:00, "evening" after.
@@ -79,6 +112,8 @@ final class ChatViewModel: ObservableObject {
 
     func open(id: String) async {
         if id != conversationID { openedDigest = nil }
+        if !conversations.contains(where: { $0.id == id }) { await loadConversations() } // e.g. from a notification
+        agentID = conversations.first { $0.id == id }?.agent ?? orchestrator.id
         conversationID = id
         messages = []
         pending = []
@@ -111,7 +146,8 @@ final class ChatViewModel: ObservableObject {
             let history = try await api.history(limit: 200, conversationID: id)
             guard !isSending, !isActing, id == conversationID else { return }
             let loaded = history.messages.map {
-                Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, attachments: $0.attachments)
+                Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, attachments: $0.attachments,
+                        consulted: $0.consulted)
             }
             // Keep the existing rows when nothing changed, so a refresh doesn't replay the pop-in animation.
             // Attachments count: a reminder ticked elsewhere should show as ticked.
@@ -137,7 +173,8 @@ final class ChatViewModel: ObservableObject {
         do {
             if conversationID == nil { conversationID = try await newConversationID() }
             let reply = try await api.chat(text, conversationID: conversationID)
-            messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments))
+            messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments,
+                                    consulted: reply.consulted))
             pending = reply.pending
             if let id = reply.conversationId { conversationID = id }
             isSending = false
@@ -151,7 +188,7 @@ final class ChatViewModel: ObservableObject {
     /// A server without conversations yet answers 404; chat then falls back to the one shared conversation.
     private func newConversationID() async throws -> String? {
         do {
-            return try await api.createConversation().id
+            return try await api.createConversation(agent: agent.orchestrator ? nil : agentID).id
         } catch APIError.server(let status, _) where status == 404 || status == 405 {
             return nil
         }
