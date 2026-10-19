@@ -14,6 +14,8 @@ struct ChatReply: Decodable {
     let attachments: [Attachment]
     /// Agents Aide asked during the turn (docs/API.md, "Agents").
     let consulted: [String]
+    /// What Aide and those agents said to each other.
+    let team: [TeamMessage]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -22,9 +24,38 @@ struct ChatReply: Decodable {
         conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
         attachments = Attachment.known(try c.decodeIfPresent([Attachment].self, forKey: .attachments))
         consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
+        team = try c.decodeIfPresent([TeamMessage].self, forKey: .team) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments, consulted }
+    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments, consulted, team }
 }
+
+/// One message in the agents' group chat: an ask from Aide, or an agent's answer (docs/API.md, "Team talk").
+struct TeamMessage: Decodable, Hashable {
+    let from: String
+    let to: String
+    let text: String
+    var ts: String?
+    /// Aide's chat it came from; only in `GET /v1/team`.
+    var conversationId: String?
+}
+
+struct TeamList: Decodable { let messages: [TeamMessage] }
+struct TeamPost: Encodable { let text: String; var stream: Bool? }
+/// What `POST /v1/team` adds: your message first, then the answers.
+struct TeamReply: Decodable {
+    let messages: [TeamMessage]
+    let pending: [PendingAction]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        messages = try c.decodeIfPresent([TeamMessage].self, forKey: .messages) ?? []
+        pending = try c.decodeIfPresent([PendingAction].self, forKey: .pending) ?? []
+    }
+    private enum CodingKeys: String, CodingKey { case messages, pending }
+}
+
+/// `event: error` in a streamed chat.
+struct StreamError: Decodable { let error: String }
 
 /// Cards under a reply, built by the server from the tools that turn used (docs/API.md, "Chat").
 enum Attachment: Decodable, Hashable {
@@ -65,7 +96,7 @@ struct EmptyBody: Encodable {}
 /// `digest` and `agent` nil send `{}`: a blank chat with Aide.
 struct NewConversation: Encodable { var digest: String?; var agent: String? }
 /// `conversationId` nil keeps the old behaviour: the one shared conversation.
-struct ChatRequest: Encodable { let text: String; var conversationId: String? }
+struct ChatRequest: Encodable { let text: String; var conversationId: String?; var stream: Bool? }
 struct ConversationBody: Encodable { var conversationId: String? }
 /// `agent` nil: shared by every agent.
 struct MemoryRequest: Encodable { let text: String; var agent: String? }
@@ -80,6 +111,8 @@ struct Conversation: Decodable, Identifiable, Hashable {
     let title: String?
     let preview: String?
     let updatedAt: String?
+    /// The routine this chat belongs to (docs/API.md, "Routines").
+    var routine: Int? = nil
 }
 struct ConversationList: Decodable { let conversations: [Conversation] }
 
@@ -99,16 +132,26 @@ struct HistoryMessage: Decodable {
     /// Reminders in here are in their current state: ticked or deleted since.
     let attachments: [Attachment]
     let consulted: [String]
+    let team: [TeamMessage]
+    /// Set when a routine posted it.
+    let routine: RoutineTag?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        routine = try c.decodeIfPresent(RoutineTag.self, forKey: .routine)
         role = try c.decode(String.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         ts = try c.decodeIfPresent(String.self, forKey: .ts)
         attachments = Attachment.known(try c.decodeIfPresent([Attachment].self, forKey: .attachments))
         consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
+        team = try c.decodeIfPresent([TeamMessage].self, forKey: .team) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted }
+    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine }
+}
+
+struct RoutineTag: Decodable, Hashable {
+    let id: Int
+    let title: String
 }
 
 /// Aide (the orchestrator) or one of the specialists (docs/API.md, "Agents").
@@ -121,9 +164,13 @@ struct Agent: Decodable, Identifiable, Hashable {
     let orchestrator: Bool
     /// Empty-chat suggestions; one ending in a space goes into the text field instead of being sent.
     let starters: [String]
+    /// One-tap starting points for its routines.
+    var routineIdeas: [RoutineIdea] = []
 
-    init(id: String, name: String, role: String, color: String, orchestrator: Bool, starters: [String]) {
+    init(id: String, name: String, role: String, color: String, orchestrator: Bool, starters: [String],
+         routineIdeas: [RoutineIdea] = []) {
         (self.id, self.name, self.role, self.color, self.orchestrator, self.starters) = (id, name, role, color, orchestrator, starters)
+        self.routineIdeas = routineIdeas
     }
 
     init(from decoder: Decoder) throws {
@@ -134,8 +181,9 @@ struct Agent: Decodable, Identifiable, Hashable {
         color = try c.decodeIfPresent(String.self, forKey: .color) ?? "#34413F"
         orchestrator = try c.decodeIfPresent(Bool.self, forKey: .orchestrator) ?? false
         starters = try c.decodeIfPresent([String].self, forKey: .starters) ?? []
+        routineIdeas = try c.decodeIfPresent([RoutineIdea].self, forKey: .routineIdeas) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case id, name, role, color, orchestrator, starters }
+    private enum CodingKeys: String, CodingKey { case id, name, role, color, orchestrator, starters, routineIdeas }
 
     /// What the app shows when the server has no agents yet: Aide alone, as before.
     static let aide = Agent(id: "aide", name: "Aide", role: "Talks to all of them", color: "#34413F", orchestrator: true,
@@ -149,6 +197,69 @@ struct Agent: Decodable, Identifiable, Hashable {
     }
 }
 struct AgentList: Decodable { let agents: [Agent] }
+
+/// A job an agent runs on a schedule, posting in its own chat (docs/API.md, "Routines").
+struct Routine: Decodable, Identifiable, Hashable {
+    let id: Int
+    let agent: String
+    var title: String
+    var prompt: String
+    /// "HH:MM", local time.
+    var time: String
+    /// ISO weekdays, 1 = Monday … 7 = Sunday; empty means every day.
+    var days: [Int]
+    var enabled: Bool
+    var conversationId: String?
+    var nextRun: String?
+    var lastRun: String?
+}
+struct RoutineList: Decodable { let routines: [Routine] }
+struct RoutineRun: Decodable { let routine: Routine; let conversationId: String? }
+
+/// What the app sends to create a routine (with `agent`) or change one (without).
+struct RoutineDraft: Encodable, Hashable {
+    var agent: String?
+    var title: String
+    var prompt: String
+    var time: String
+    var days: [Int]
+    var enabled: Bool
+}
+
+struct RoutineIdea: Decodable, Hashable {
+    let title: String
+    let prompt: String
+    let time: String
+    let days: [Int]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decode(String.self, forKey: .title)
+        prompt = try c.decode(String.self, forKey: .prompt)
+        time = try c.decodeIfPresent(String.self, forKey: .time) ?? "09:00"
+        days = try c.decodeIfPresent([Int].self, forKey: .days) ?? []
+    }
+    private enum CodingKeys: String, CodingKey { case title, prompt, time, days }
+}
+
+enum Schedule {
+    /// "Every day at 09:00", "Weekdays at 09:00", "Sundays at 18:00", "Mon, Wed and Fri at 07:30".
+    static func label(time: String, days: [Int]) -> String {
+        let set = Set(days)
+        let when: String
+        switch set {
+        case [], Set(1...7): when = "Every day"
+        case Set(1...5): when = "Weekdays"
+        case [6, 7]: when = "Weekends"
+        default:
+            // The symbols start on Sunday, so ISO 7 (Sunday) % 7 lands on 0.
+            let names = DateFormatter(), sorted = set.sorted()
+            when = sorted.count == 1 ? names.weekdaySymbols[sorted[0] % 7] + "s"
+                : sorted.map { names.shortWeekdaySymbols[$0 % 7] }.formatted(.list(type: .and))
+        }
+        return "\(when) at \(time)"
+    }
+}
 
 struct HistoryResponse: Decodable { let messages: [HistoryMessage] }
 

@@ -11,6 +11,10 @@ final class ChatViewModel: ObservableObject {
         var attachments: [Attachment] = []
         /// Agents Aide asked for this reply.
         var consulted: [String] = []
+        /// What Aide and those agents said to each other on the way.
+        var team: [TeamMessage] = []
+        /// Set when a routine posted it.
+        var routine: RoutineTag?
     }
 
     private static let conversationKey = "conversationID"
@@ -36,6 +40,16 @@ final class ChatViewModel: ObservableObject {
     /// The digest kind this chat was opened with, so Details shows the same one. Nil for chats opened later.
     @Published private(set) var openedDigest: String?
     @Published private(set) var loadError: String?
+    /// A chat is on screen, pushed over the chat list. Opening or starting a chat sets it.
+    @Published var isChatOpen = false
+    /// The team talk of the reply on its way, message by message as it streams in.
+    @Published private(set) var liveTeam: [TeamMessage] = []
+    /// The agents' group chat, oldest first (docs/API.md, "Team talk").
+    @Published private(set) var team: [TeamMessage] = []
+    /// The agent writing in the Team chat right now.
+    @Published private(set) var teamWorking: String?
+    @Published private(set) var isPostingTeam = false
+    @Published private(set) var routines: [Routine] = []
 
     /// Called after the server may have changed reminders or events.
     var onServerChange: (() async -> Void)?
@@ -70,6 +84,7 @@ final class ChatViewModel: ObservableObject {
         let unanswered = messages.count == 1 && messages[0].role == .assistant ? conversationID : nil
         reset()
         agentID = orchestrator.id
+        isChatOpen = true
         if let unanswered { try? await api.deleteConversation(unanswered) }
         isOpening = true
         defer { isOpening = false }
@@ -88,7 +103,23 @@ final class ChatViewModel: ObservableObject {
         let unanswered = messages.count == 1 && messages[0].role == .assistant ? conversationID : nil
         reset()
         agentID = agent.id
+        isChatOpen = true
         if let unanswered { try? await api.deleteConversation(unanswered) }
+    }
+
+    /// Aide's new chats open with the digest greeting; a specialist's start blank.
+    func startChat(with agent: Agent) async {
+        agent.orchestrator ? await startNewChat() : await newChat(with: agent)
+    }
+
+    /// Carry on with the agent's latest chat, or start one if there's none yet.
+    func talk(to agent: Agent) async {
+        if let latest = chats(with: agent).first { await open(latest) } else { await startChat(with: agent) }
+    }
+
+    /// The agent's chats, newest first.
+    func chats(with agent: Agent) -> [Conversation] {
+        conversations.filter { self.agent($0.agent).id == agent.id }
     }
 
     /// The digest that fits the time of day: "daily" (morning) before 17:00, "evening" after.
@@ -117,6 +148,7 @@ final class ChatViewModel: ObservableObject {
         conversationID = id
         messages = []
         pending = []
+        isChatOpen = true
         await loadHistory()
     }
 
@@ -128,6 +160,78 @@ final class ChatViewModel: ObservableObject {
         } catch {
             conversations = []
         }
+    }
+
+    /// An older server has no team chat: it stays empty.
+    func loadTeam() async {
+        team = (try? await api.team()) ?? []
+    }
+
+    /// Writes in the Team chat. Your message shows at once; the answers come in one by one, with whoever is
+    /// writing shown as thinking. A failure shows as a note from Aide, like in a chat.
+    func postTeam(_ raw: String) async {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isPostingTeam else { return }
+        team.append(TeamMessage(from: "user", to: "team", text: text, ts: Wire.local(Date())))
+        isPostingTeam = true
+        defer { isPostingTeam = false; teamWorking = nil }
+        do {
+            let reply = try await api.postTeam(text) { [weak self] event in
+                guard let self else { return }
+                switch event {
+                case .working(let agent): teamWorking = agent
+                case .team(let message) where message.from != "user": team.append(message)
+                default: break
+                }
+            }
+            pending = reply.pending
+            await loadTeam()
+            await onServerChange?()
+        } catch {
+            team.append(TeamMessage(from: orchestrator.id, to: "team", text: error.localizedDescription))
+        }
+    }
+
+    // MARK: Routines
+
+    func routines(of agent: Agent) -> [Routine] { routines.filter { $0.agent == agent.id } }
+
+    /// An older server has no routines: the list stays empty.
+    func loadRoutines() async {
+        routines = (try? await api.routines()) ?? []
+    }
+
+    /// Creates the routine (no id) or saves changes to it. Throws so the editor can show what went wrong.
+    func save(_ draft: RoutineDraft, id: Int?) async throws {
+        if let id {
+            var changes = draft
+            changes.agent = nil
+            let saved = try await api.updateRoutine(id, changes)
+            if let i = routines.firstIndex(where: { $0.id == id }) { routines[i] = saved }
+        } else {
+            routines.append(try await api.createRoutine(draft))
+            await loadConversations() // it came with its own chat
+        }
+    }
+
+    func setEnabled(_ routine: Routine, _ enabled: Bool) async {
+        let draft = RoutineDraft(title: routine.title, prompt: routine.prompt, time: routine.time, days: routine.days,
+                                 enabled: enabled)
+        try? await save(draft, id: routine.id)
+    }
+
+    func delete(_ routine: Routine) async {
+        routines.removeAll { $0.id == routine.id }
+        try? await api.deleteRoutine(routine.id)
+        await loadRoutines()
+    }
+
+    /// Runs it now; returns the chat it posted in.
+    func run(_ routine: Routine) async throws -> String? {
+        let result = try await api.runRoutine(routine.id)
+        if let i = routines.firstIndex(where: { $0.id == routine.id }) { routines[i] = result.routine }
+        await loadConversations()
+        return result.conversationId ?? result.routine.conversationId
     }
 
     func delete(_ conversation: Conversation) async {
@@ -147,12 +251,12 @@ final class ChatViewModel: ObservableObject {
             guard !isSending, !isActing, id == conversationID else { return }
             let loaded = history.messages.map {
                 Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, attachments: $0.attachments,
-                        consulted: $0.consulted)
+                        consulted: $0.consulted, team: $0.team, routine: $0.routine)
             }
             // Keep the existing rows when nothing changed, so a refresh doesn't replay the pop-in animation.
             // Attachments count: a reminder ticked elsewhere should show as ticked.
             func content(_ list: [Message]) -> [String] {
-                list.map { "\($0.role == .user ? "u" : "a")|\($0.text)|\($0.attachments.hashValue)" }
+                list.map { "\($0.role == .user ? "u" : "a")|\($0.text)|\($0.attachments.hashValue)|\($0.team.count)" }
             }
             if content(loaded) != content(messages.filter { !$0.isError }) {
                 messages = loaded
@@ -172,15 +276,19 @@ final class ChatViewModel: ObservableObject {
         isSending = true
         do {
             if conversationID == nil { conversationID = try await newConversationID() }
-            let reply = try await api.chat(text, conversationID: conversationID)
+            let reply = try await api.chatLive(text, conversationID: conversationID) { [weak self] in
+                self?.liveTeam.append($0)
+            }
             messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments,
-                                    consulted: reply.consulted))
+                                    consulted: reply.consulted, team: reply.team.isEmpty ? liveTeam : reply.team))
             pending = reply.pending
             if let id = reply.conversationId { conversationID = id }
+            liveTeam = []
             isSending = false
             await onServerChange?()
         } catch {
-            messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
+            messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true, team: liveTeam))
+            liveTeam = []
             isSending = false
         }
     }

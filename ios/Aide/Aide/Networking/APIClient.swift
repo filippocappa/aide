@@ -40,6 +40,81 @@ final class APIClient {
         try await send("POST", "/v1/chat", body: ChatRequest(text: text, conversationId: conversationID), timeout: 120)
     }
 
+    /// The chat, streamed: `onTeam` gets each message Aide and the agents send each other while Aide works
+    /// (docs/API.md, "Chat"). A server without streaming answers plain JSON: same reply, nothing live.
+    func chatLive(_ text: String, conversationID: String? = nil,
+                  onTeam: @escaping @MainActor (TeamMessage) -> Void) async throws -> ChatReply {
+        let body = try JSONEncoder.api.encode(ChatRequest(text: text, conversationId: conversationID, stream: true))
+        return try await stream("/v1/chat", body: body, onEvent: { if case .team(let message) = $0 { onTeam(message) } }) { event in
+            if case .reply(let reply) = event { return reply }
+            return nil
+        }
+    }
+
+    /// POSTs `body` asking for `text/event-stream`, hands each event to `onEvent` until `final` picks the last one.
+    /// A server that answers plain JSON instead gets that decoded as the result.
+    private func stream<T: Decodable>(_ path: String, body: Data, onEvent: @escaping @MainActor (EventStream.Event) -> Void,
+                                      final: (EventStream.Event) -> T?) async throws -> T {
+        var req = try request("POST", path, query: [], auth: true, timeout: 120, body: body)
+        req.setValue("text/event-stream, application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (bytes, response) = try await session.bytes(for: req)
+            guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
+            let type = http.value(forHTTPHeaderField: "Content-Type") ?? ""
+            guard (200..<300).contains(http.statusCode), type.hasPrefix("text/event-stream") else {
+                var data = Data()
+                for try await byte in bytes { data.append(byte) }
+                return try decode(data, http)
+            }
+            var stream = EventStream()
+            for try await line in bytes.lines {
+                guard let event = try stream.feed(line) else { continue }
+                if let result = final(event) { return result }
+                onEvent(event)
+            }
+            throw APIError.transport("The server stopped before answering.")
+        } catch let error as URLError {
+            throw APIError.transport(Self.describe(error))
+        }
+    }
+
+    func team(limit: Int = 100) async throws -> [TeamMessage] {
+        let list: TeamList = try await send("GET", "/v1/team", query: [URLQueryItem(name: "limit", value: String(limit))])
+        return list.messages
+    }
+
+    /// Writes in the Team chat, streamed: `onEvent` gets each agent starting to write and each new message.
+    func postTeam(_ text: String, onEvent: @escaping @MainActor (EventStream.Event) -> Void) async throws -> TeamReply {
+        let body = try JSONEncoder.api.encode(TeamPost(text: text, stream: true))
+        return try await stream("/v1/team", body: body, onEvent: onEvent) { event in
+            if case .done(let reply) = event { return reply }
+            return nil
+        }
+    }
+
+    func routines(agent: String? = nil) async throws -> [Routine] {
+        let query = agent.map { [URLQueryItem(name: "agent", value: $0)] } ?? []
+        let list: RoutineList = try await send("GET", "/v1/routines", query: query)
+        return list.routines
+    }
+
+    func createRoutine(_ draft: RoutineDraft) async throws -> Routine {
+        try await send("POST", "/v1/routines", body: draft)
+    }
+
+    func updateRoutine(_ id: Int, _ draft: RoutineDraft) async throws -> Routine {
+        try await send("PATCH", "/v1/routines/\(id)", body: draft)
+    }
+
+    func deleteRoutine(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/routines/\(id)", body: EmptyBody())
+    }
+
+    /// Runs it now and returns once its message is posted, which can take 30 s.
+    func runRoutine(_ id: Int) async throws -> RoutineRun {
+        try await send("POST", "/v1/routines/\(id)/run", body: EmptyBody(), timeout: 120)
+    }
+
     func confirm() async throws -> ActionResult {
         try await send("POST", "/v1/confirm", body: EmptyBody(), timeout: 120)
     }
@@ -195,7 +270,10 @@ final class APIClient {
             throw APIError.transport(Self.describe(error))
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
+        return try decode(data, http)
+    }
 
+    private func decode<T: Decodable>(_ data: Data, _ http: HTTPURLResponse) throws -> T {
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw APIError.unauthorized }
             let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error
@@ -220,6 +298,40 @@ final class APIClient {
 }
 
 private struct ErrorBody: Decodable { let error: String }
+
+/// Reads a streamed chat (`text/event-stream`) line by line. Each event has one `data:` line of JSON, handled
+/// as soon as it arrives: the line reader drops the blank lines that end an event.
+struct EventStream {
+    enum Event { case team(TeamMessage), reply(ChatReply), working(agent: String), done(TeamReply) }
+    private struct Working: Decodable { let agent: String }
+    private var name = "message"
+
+    mutating func feed(_ line: String) throws -> Event? {
+        if line.hasPrefix("event:") {
+            name = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+            return nil
+        }
+        guard line.hasPrefix("data:") else { return nil } // comments (":"), ids, retry
+        let data = Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)
+        defer { name = "message" }
+        do {
+            switch name {
+            case "team": return .team(try JSONDecoder.api.decode(TeamMessage.self, from: data))
+            case "reply": return .reply(try JSONDecoder.api.decode(ChatReply.self, from: data))
+            case "working": return .working(agent: try JSONDecoder.api.decode(Working.self, from: data).agent)
+            case "done": return .done(try JSONDecoder.api.decode(TeamReply.self, from: data))
+            case "error":
+                let message = (try? JSONDecoder.api.decode(StreamError.self, from: data))?.error ?? "Something went wrong."
+                throw APIError.server(status: 500, message: message)
+            default: return nil
+            }
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.badResponse
+        }
+    }
+}
 
 private extension String {
     func trimmingSuffix(_ suffix: String) -> String {

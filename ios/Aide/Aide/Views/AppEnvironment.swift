@@ -50,12 +50,14 @@ final class AppEnvironment: ObservableObject {
         guard settings.isConfigured else { return }
         async let agents: Void = chat.loadAgents()
         async let history: Void = chat.loadHistory()
+        async let conversations: Void = chat.loadConversations()
         async let digestLoad: Void = digest.load()
         async let pushRefresh: Void = push.refresh()
         async let healthUpload = health.upload()
         await sync.sync()
         await agents
         await history
+        await conversations
         await digestLoad
         await pushRefresh
         _ = await healthUpload

@@ -5,9 +5,12 @@ struct ChatView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var voice: VoiceController
     @EnvironmentObject private var digest: DigestViewModel
+    @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
-    @State private var showChats = false
-    @State private var tapCount = 0
+    @State private var showPastChats = false
+    /// Picked in Past chats; run once the sheet is gone.
+    @State private var pastChoice: PastChatsSheet.Choice?
+    @State private var showRoutines = false
     @State private var justReplied = false
     @FocusState private var composerFocused: Bool
 
@@ -52,9 +55,21 @@ struct ChatView: View {
         .animation(.spring(response: 0.6, dampingFraction: 0.78), value: voice.isActive)
         .animation(.spring(response: 0.5, dampingFraction: 0.6), value: replying)
         .background(Theme.background)
-        .background(TouchTracker(tapCount: $tapCount))
-        .sheet(isPresented: $showChats) { ChatsView() }
-        .sheet(isPresented: $digest.isPresented) { DigestSheet() }
+        .toolbar(.hidden, for: .navigationBar) // Pebble and its buttons are the header
+        .sheet(isPresented: $showPastChats, onDismiss: {
+            guard let picked = pastChoice else { return }
+            pastChoice = nil
+            Task { await chat.run(picked) }
+        }) {
+            PastChatsSheet(agent: chat.agent) { pastChoice = $0; showPastChats = false }
+        }
+        .sheet(isPresented: $showRoutines, onDismiss: {
+            guard let picked = pastChoice else { return }
+            pastChoice = nil
+            Task { await chat.run(picked) }
+        }) {
+            RoutinesSheet(agent: chat.agent) { pastChoice = $0; showRoutines = false }
+        }
         .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
         .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
         .onChange(of: voice.isActive) { _, active in if active { composerFocused = false } } // no keyboard in voice
@@ -74,10 +89,8 @@ struct ChatView: View {
                 .ignoresSafeArea(edges: .top)
                 .opacity(voice.isActive ? 0 : 1)
                 .allowsHitTesting(false)
-            LivePebble(mood: mood, size: Self.voicePebble, energy: voice.isListening ? voice.level : 0,
-                       bounceTrigger: tapCount + chat.messages.count)
-                .foregroundStyle(chat.agent.tint)
-                .animation(.easeInOut(duration: 0.3), value: chat.agentID)
+            HeaderPebble(mood: mood, size: Self.voicePebble, energy: voice.isListening ? voice.level : 0,
+                         messages: chat.messages.count, agent: chat.agent)
                 // a little bigger while it answers
                 .scaleEffect((voice.isActive ? 1 : Self.headerPebble / Self.voicePebble) * (replying ? 1.3 : 1), anchor: .top)
                 // In the header it reaches up beside the Dynamic Island, level with the buttons.
@@ -91,19 +104,12 @@ struct ChatView: View {
     /// Chat controls on either side of Pebble.
     private var buttons: some View {
         HStack(spacing: 8) {
-            headerButton("list.bullet", label: "Chats") { showChats = true }
-                .disabled(!settings.isConfigured)
-            headerButton("sun.horizon", label: "Digest") {
-                digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
-                digest.isPresented = true
-            }
-                .disabled(!settings.isConfigured)
+            headerButton("chevron.left", label: "Chats") { dismiss() }
             Spacer()
-            headerButton("square.and.pencil", label: "New chat") {
-                // Aide's new chats open with the digest greeting; a specialist's start blank.
-                Task { chat.agent.orchestrator ? await chat.startNewChat() : await chat.newChat(with: chat.agent) }
-            }
             Menu {
+                Button("New chat", systemImage: "square.and.pencil") { Task { await chat.startChat(with: chat.agent) } }
+                Button("Past chats", systemImage: "clock") { showPastChats = true }
+                Button("Routines", systemImage: "alarm") { showRoutines = true }
                 Button("Think harder", systemImage: "brain") { Task { await chat.think() } }
             } label: {
                 headerIcon("ellipsis")
@@ -133,7 +139,17 @@ struct ChatView: View {
                     if isEmpty { emptyState }
                     ForEach(chat.messages) { message in
                         VStack(alignment: .leading, spacing: 8) {
-                            if !message.consulted.isEmpty { ConsultedRow(agents: message.consulted.map { chat.agent($0) }) }
+                            if let routine = message.routine {
+                                Label(routine.title, systemImage: "alarm")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 2)
+                            }
+                            if !message.team.isEmpty {
+                                TeamThread(messages: message.team)
+                            } else if !message.consulted.isEmpty {
+                                ConsultedRow(agents: message.consulted.map { chat.agent($0) })
+                            }
                             MessageRow(message: message)
                             if chat.startsWithDigest, message.id == chat.messages.first?.id { digestDetails }
                         }
@@ -144,7 +160,11 @@ struct ChatView: View {
                             removal: .opacity))
                     }
                     if chat.isOpening { ThinkingRow(label: "Getting your digest…") }
-                    if chat.isSending { ThinkingRow() }
+                    if chat.isSending, !chat.liveTeam.isEmpty {
+                        TeamThread(messages: chat.liveTeam, live: true).transition(.opacity)
+                    }
+                    // While an agent works on its answer, the thread shows it thinking instead.
+                    if chat.isSending, chat.liveTeam.last?.from != chat.orchestrator.id { ThinkingRow() }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 16)
@@ -157,6 +177,7 @@ struct ChatView: View {
             .onTapGesture { composerFocused = false }
             .onChange(of: chat.messages) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
+            .onChange(of: chat.liveTeam) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.isSending) { _, sending in
                 scrollToBottom(proxy)
                 if !sending, chat.messages.last?.role == .assistant, chat.messages.last?.isError == false {
@@ -334,7 +355,7 @@ private struct ConsultedRow: View {
     var body: some View {
         HStack(spacing: 6) {
             HStack(spacing: -6) {
-                ForEach(agents) { PebbleMark(size: 20).foregroundStyle($0.tint) }
+                ForEach(agents) { AgentMark(agent: $0, size: 22) }
             }
             Text("Asked " + agents.map(\.name).formatted(.list(type: .and)))
                 .font(.caption.weight(.medium))
@@ -342,6 +363,67 @@ private struct ConsultedRow: View {
         }
         .padding(.horizontal, 2)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// What Aide and the agents it asked said to each other, as a little group chat above Aide's reply. While Aide is
+/// still working it fills in live, with the asked agent thinking until its answer comes. Tap to read it all.
+private struct TeamThread: View {
+    @EnvironmentObject private var chat: ChatViewModel
+    let messages: [TeamMessage]
+    var live = false
+    @State private var expanded = false
+
+    /// The agent Aide asked last, still working on its answer.
+    private var working: Agent? {
+        guard live, let last = messages.last, last.from == chat.orchestrator.id else { return nil }
+        return chat.agent(last.to)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Team", systemImage: "person.3.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(Array(messages.enumerated()), id: \.offset) { _, message in
+                row(message).transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            if let working {
+                HStack(spacing: 10) {
+                    LivePebble(mood: "thinking", size: 26, figure: working.figure)
+                        .foregroundStyle(working.tint)
+                        .allowsHitTesting(false)
+                    Text("\(working.name) is thinking…").font(.footnote).foregroundStyle(.secondary)
+                }
+                .transition(.opacity)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture { withAnimation(.snappy) { expanded.toggle() } }
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: messages.count)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(expanded ? "Shows less" : "Shows all of it")
+    }
+
+    private func row(_ message: TeamMessage) -> some View {
+        let from = chat.agent(message.from), to = chat.agent(message.to)
+        return HStack(alignment: .top, spacing: 10) {
+            AgentMark(agent: from, size: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(from.name).foregroundStyle(from.tint)
+                    Image(systemName: "arrow.right").imageScale(.small).foregroundStyle(.tertiary)
+                    Text(to.name).foregroundStyle(.secondary)
+                }
+                .font(.caption.weight(.semibold))
+                Text(message.text.markdown)
+                    .font(.callout)
+                    .lineLimit(expanded ? nil : 4)
+            }
+        }
     }
 }
 
@@ -359,7 +441,7 @@ private struct ThinkingRow: View {
 }
 
 /// Actions waiting for the user's yes, worded by the server's code rather than the model.
-private struct PendingCard: View {
+struct PendingCard: View {
     @EnvironmentObject private var chat: ChatViewModel
 
     var body: some View {
@@ -381,6 +463,37 @@ private struct PendingCard: View {
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.top, 6)
+    }
+}
+
+/// The chat's Pebble, bouncing at every touch on screen and every new message. The touch count lives here, not in
+/// ChatView: a touch that re-rendered the whole chat would rebuild the ••• menu while it's open, and the menu would
+/// drop the tap on its item.
+private struct HeaderPebble: View {
+    let mood: String
+    let size: CGFloat
+    let energy: CGFloat
+    let messages: Int
+    let agent: Agent
+    @State private var tapCount = 0
+
+    var body: some View {
+        LivePebble(mood: mood, size: size, energy: energy, bounceTrigger: tapCount + messages, figure: agent.figure)
+            .foregroundStyle(agent.tint)
+            .animation(.easeInOut(duration: 0.3), value: agent.id)
+            .background(TouchTracker(tapCount: $tapCount))
+    }
+}
+
+/// With the navigation bar hidden, UIKit turns off the swipe from the left edge that goes back. This keeps it.
+extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
+    override open func viewDidLoad() {
+        super.viewDidLoad()
+        interactivePopGestureRecognizer?.delegate = self
+    }
+
+    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        viewControllers.count > 1
     }
 }
 

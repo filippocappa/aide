@@ -57,7 +57,7 @@ struct MemoryView: View {
                 Section {
                     rows(items.filter { $0.agent == id })
                 } header: {
-                    Label { Text(agent.name) } icon: { PebbleMark(size: 16).foregroundStyle(agent.tint) }
+                    Label { Text(agent.name) } icon: { AgentMark(agent: agent, size: 18) }
                 } footer: {
                     Text("Only \(agent.name) reads these.")
                 }

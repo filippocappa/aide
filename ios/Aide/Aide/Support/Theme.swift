@@ -64,15 +64,27 @@ extension Agent {
     }
 }
 
-/// Pebble from the asset catalog, tinted by the surrounding foreground style.
+/// Pebble (or one of its family) at rest, still, tinted by the surrounding foreground style.
 struct PebbleMark: View {
     var size: CGFloat = 28
+    var figure: Figure = .pebble
     var body: some View {
-        Image("Pebble")
-            .resizable()
-            .scaledToFit()
+        FigureShape(figure: figure, face: "calm", scale: 1)
             .frame(width: size, height: size)
     }
+}
+
+/// An agent's figure in its colour, still.
+struct AgentMark: View {
+    let agent: Agent
+    var size: CGFloat = 28
+    var body: some View {
+        PebbleMark(size: size, figure: agent.figure).foregroundStyle(agent.tint)
+    }
+}
+
+extension Agent {
+    var figure: Figure { Figure(agent: id) }
 }
 
 extension String {

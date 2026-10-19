@@ -83,8 +83,8 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            ChatView()
-                .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
+            ChatsView()
+                .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                 .tag(Tab.chat)
             HabitsView()
                 .tabItem { Label("Habits", systemImage: "flame") }
