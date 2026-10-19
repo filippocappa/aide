@@ -17,6 +17,7 @@ from .digest import DigestService, digest_schedule
 from .gmail import Gmail
 from .habits import HabitStore
 from .icloud import ICloudCalendar
+from .push import Push
 from .reminders import ReminderStore
 from .scheduler import reminder_fallback
 from .tools import ToolRegistry
@@ -52,6 +53,11 @@ def main() -> None:
     db = Database(settings.db_path)
     reminders = ReminderStore(db.conn)
     habits = HabitStore(db.conn, settings.timezone)
+    push = Push(db.conn, settings.apns_key_path, settings.apns_key_id, settings.apns_team_id, settings.apns_bundle_id)
+    if push.enabled:
+        reminders.on_change.append(push.request_sync)
+    elif not (settings.apns_key_path and settings.apns_key_id and settings.apns_team_id):
+        log.warning("APNS_KEY_PATH / APNS_KEY_ID / APNS_TEAM_ID not set: push notifications off, Discord only")
 
     tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits)]
     cal = None
@@ -96,11 +102,11 @@ def main() -> None:
     async def run() -> None:
         jobs = [
             bot.start(settings.discord_token),
-            reminder_fallback(reminders, bot.notify_owner, settings.timezone),
-            digest_schedule(digest, bot.notify_owner),
+            reminder_fallback(reminders, bot.notify_owner, settings.timezone, push),
+            digest_schedule(digest, bot.notify_owner, push),
         ]
         if settings.api_token:
-            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest)
+            app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
@@ -110,6 +116,7 @@ def main() -> None:
         try:
             await asyncio.gather(*jobs)
         finally:
+            await push.close()
             await bot.close()
 
     try:

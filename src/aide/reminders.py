@@ -8,6 +8,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from typing import Callable
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reminders (
@@ -60,6 +61,8 @@ class ReminderStore:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.conn.executescript(SCHEMA)
+        # Called after a server-side change (not the phone's own sync), e.g. to send a silent sync push.
+        self.on_change: list[Callable[[], None]] = []
         # Times are compared as strings, so they must all be UTC. Rows written before _save normalised them:
         for r in self.conn.execute("SELECT id, due_at, modified_at FROM reminders WHERE due_at NOT LIKE '%+00:00' "
                                    "OR modified_at NOT LIKE '%+00:00'").fetchall():
@@ -144,7 +147,9 @@ class ReminderStore:
         rem = Reminder(str(uuid.uuid4()), title, notes, due_at, False, None, utcnow())
         with self.conn:
             self.conn.execute("BEGIN")
-            return self._save(rem)
+            self._save(rem)
+        self._changed()
+        return rem
 
     def update(self, reminder_id: str, **changes) -> Reminder:
         with self.conn:
@@ -152,7 +157,13 @@ class ReminderStore:
             rem = self.get(reminder_id)
             if rem is None or rem.deleted:
                 raise KeyError(f"no reminder with id {reminder_id}")
-            return self._save(replace(rem, **changes, modified_at=utcnow()))
+            rem = self._save(replace(rem, **changes, modified_at=utcnow()))
+        self._changed()
+        return rem
+
+    def _changed(self) -> None:
+        for callback in self.on_change:
+            callback()
 
     def delete(self, reminder_id: str) -> Reminder:
         return self.update(reminder_id, deleted=True)

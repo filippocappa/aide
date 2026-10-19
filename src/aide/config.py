@@ -35,6 +35,10 @@ class Settings:
     tavily_api_key: str | None
     google_maps_api_key: str | None
     home_address: str | None
+    apns_key_path: str | None
+    apns_key_id: str | None
+    apns_team_id: str | None
+    apns_bundle_id: str
 
 
 def _required(name: str) -> str:
@@ -75,4 +79,8 @@ def load_settings() -> Settings:
         tavily_api_key=os.environ.get("TAVILY_API_KEY", "").strip() or None,
         google_maps_api_key=os.environ.get("GOOGLE_MAPS_API_KEY", "").strip() or None,
         home_address=os.environ.get("AIDE_HOME_ADDRESS", "").strip() or None,
+        apns_key_path=os.environ.get("APNS_KEY_PATH", "").strip() or None,
+        apns_key_id=os.environ.get("APNS_KEY_ID", "").strip() or None,
+        apns_team_id=os.environ.get("APNS_TEAM_ID", "").strip() or None,
+        apns_bundle_id=os.environ.get("APNS_BUNDLE_ID", "").strip() or "com.filippocappa.aide",
     )
