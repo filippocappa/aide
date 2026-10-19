@@ -107,7 +107,7 @@ Shortcuts Sleep → Waking Up automation, the `wake` digest with sleep and recov
 habits. Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
 (live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
 implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for sleep), the `wake` digest with a
-time-aware greeting and leave-by time (Maps, transit, from `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
+time-aware greeting and leave-by times (Maps: walk and transit, arriving 10 min early, home and per-place mode from memory, else `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
 sections in `wake` and `daily`, the read-only `health` tool. No real health data uploaded yet.
 
 **Next:** try push live, then Discord becomes optional. Later for health: bedtime nudge in the evening digest,
