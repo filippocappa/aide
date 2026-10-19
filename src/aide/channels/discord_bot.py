@@ -94,7 +94,7 @@ class AideBot(discord.Client):
 
         async with message.channel.typing():
             try:
-                reply, attachments, _ = await self.agent.respond(CHANNEL, text)
+                reply, attachments, *_ = await self.agent.respond(CHANNEL, text)
                 reply = with_cards(reply, attachments)
             except anthropic.RateLimitError:
                 reply = "I'm being rate limited right now. Try again in a minute."

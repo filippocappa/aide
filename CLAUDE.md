@@ -116,7 +116,9 @@ Professor, Coach and Finance (`ask_agent`), each with its own chats, tools, memo
 (agent row in the chat list, tinted Pebble, starters, "Asked Coach" above replies, memory per agent). Server
 (live): definitions and prompts in `agents.py`, `GET /v1/agents`, `agent` on conversations and memory, each chat
 answered by its agent with its own tools and memory (shared plus its own; Aide sees shared only), `ask_agent` for
-Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Discord stays on Aide. Not yet tried
+Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Team talk: every ask and answer is
+stored (`team` in chat and history, `GET /v1/team`), and `"stream": true` on `/v1/chat` sends them live as
+server-sent events (checked through `tailscale serve`, not buffered). Discord stays on Aide. Not yet tried
 from the app.
 
 **Next:** try push live, then Discord becomes optional. Later for health: bedtime nudge in the evening digest,

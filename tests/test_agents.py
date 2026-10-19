@@ -275,3 +275,103 @@ def test_a_specialist_cannot_ask_others(env):
     assert body["consulted"] == ["coach"]
     coach_result = agent.client.requests[2]["messages"][-1]["content"][0]
     assert coach_result["is_error"] and "unknown tool" in coach_result["content"]
+
+
+# -- team talk -------------------------------------------------------------------
+
+
+def ask(agent_id, request):
+    return calls(("ask_agent", {"agent": agent_id, "request": request}))
+
+
+def team_lines(team):
+    return [(t["from"], t["to"], t["text"]) for t in team]
+
+
+def test_team_messages_are_in_chat_history_and_the_team_chat(env):
+    client, agent, _ = env([ask("coach", "Gym tonight? Slept 6h."), done("Easy session is fine."),
+                            done("Coach says go easy."), done("Gym chat"),
+                            ask("finance", "Budget for a bike?"), done("Save 50 a month."), done("Finance says 50.")])
+    cid = new_chat(client, "aide")
+    body = client.post("/v1/chat", json={"text": "gym tonight?", "conversation_id": cid}, headers=AUTH).json()
+    expected = [("aide", "coach", "Gym tonight? Slept 6h."), ("coach", "aide", "Easy session is fine.")]
+    assert team_lines(body["team"]) == expected and body["consulted"] == ["coach"]
+    assert all(t["ts"].endswith(("+01:00", "+02:00")) for t in body["team"])
+    client.post("/v1/chat", json={"text": "bike budget?"}, headers=AUTH)  # the shared conversation
+
+    history = client.get("/v1/history", params={"conversation_id": cid}, headers=AUTH).json()["messages"]
+    assert [team_lines(m["team"]) for m in history] == [[], expected]
+
+    team = client.get("/v1/team", headers=AUTH).json()["messages"]
+    assert [(t["from"], t["conversation_id"]) for t in team] == [("aide", cid), ("coach", cid),
+                                                                ("aide", "main"), ("finance", "main")]
+    assert [t["text"] for t in client.get("/v1/team?limit=2", headers=AUTH).json()["messages"]] == [
+        "Budget for a bike?", "Save 50 a month."]  # the latest, oldest first
+
+    client.delete(f"/v1/conversations/{cid}", headers=AUTH)
+    assert [t["conversation_id"] for t in client.get("/v1/team", headers=AUTH).json()["messages"]] == ["main"] * 2
+
+
+def test_plain_replies_have_an_empty_team(env):
+    client, _, _ = env([done("hi")])
+    assert client.post("/v1/chat", json={"text": "hi"}, headers=AUTH).json()["team"] == []
+    assert [m["team"] for m in client.get("/v1/history", headers=AUTH).json()["messages"]] == [[], []]
+
+
+async def test_team_messages_are_announced_as_they_happen(env):
+    _, agent, _ = env([ask("coach", "Gym?"), done("Go easy."), done("Coach says go easy.")])
+    seen, at_request = [], []
+    create = agent.client._create
+
+    async def spy(**kwargs):
+        at_request.append(len(seen))
+        return await create(**kwargs)
+    agent.client.beta.messages.create = spy
+    turn = await agent.respond("main", "gym?", on_team=seen.append)
+    assert at_request == [0, 1, 2]  # the ask is out before Coach starts, the answer before Aide's reply
+    assert seen == turn.team and team_lines(seen) == [("aide", "coach", "Gym?"), ("coach", "aide", "Go easy.")]
+
+
+def events(response):
+    """(event, data) pairs, checking the wire format: one event line, one data line, a blank line."""
+    import json
+    blocks = response.text.split("\n\n")
+    assert blocks[-1] == ""
+    out = []
+    for block in blocks[:-1]:
+        event, data = block.split("\n")
+        assert event.startswith("event: ") and data.startswith("data: ")
+        out.append((event.removeprefix("event: "), json.loads(data.removeprefix("data: "))))
+    return out
+
+
+def test_streamed_chat_sends_team_then_the_reply(env):
+    client, agent, store = env()
+    rem = store.create("Bins", None)
+    agent.client.responses = [ask("secretary", "Delete Bins\nplease"),
+                              calls(("delete_reminder", {"reminder_id": rem.id})), done("Queued it.\nDone."),
+                              done("Secretary queued it.")]
+    r = client.post("/v1/chat", json={"text": "delete bins", "stream": True}, headers=AUTH)
+    assert r.headers["content-type"].startswith("text/event-stream")
+    got = events(r)
+    assert [e for e, _ in got] == ["team", "team", "reply"]
+    assert got[0][1]["text"] == "Delete Bins\nplease" and got[1][1]["from"] == "secretary"
+    reply = got[2][1]
+    assert reply["reply"] == "Secretary queued it." and reply["team"] == [got[0][1], got[1][1]]
+    assert len(reply["pending"]) == 1  # the usual queue: nothing deleted until !yes
+    assert store.get(rem.id) and not store.get(rem.id).deleted
+
+
+def test_streamed_chat_without_asks_is_just_the_reply(env):
+    client, _, _ = env([done("hi")])
+    got = events(client.post("/v1/chat", json={"text": "hi", "stream": True}, headers=AUTH))
+    assert [e for e, _ in got] == ["reply"] and got[0][1]["team"] == []
+
+
+def test_streamed_chat_errors(env):
+    client, _, _ = env([])  # no scripted response: the turn fails after the stream starts
+    got = events(client.post("/v1/chat", json={"text": "hi", "stream": True}, headers=AUTH))
+    assert got == [("error", {"error": "Something went wrong on the server. It's in the logs."})]
+    assert client.post("/v1/chat", json={"text": "hi", "stream": True, "conversation_id": "c_nope"},
+                       headers=AUTH).status_code == 404  # before the stream: plain HTTP error
+    assert client.post("/v1/chat", json={"text": " ", "stream": True}, headers=AUTH).status_code == 400

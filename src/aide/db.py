@@ -55,6 +55,18 @@ CREATE TABLE IF NOT EXISTS memory (
     agent      TEXT  -- the one agent that sees it; NULL means shared, every agent sees it
 );
 
+-- The agents' group chat: each ask_agent request and the answer, tied to the reply they were for.
+CREATE TABLE IF NOT EXISTS team_messages (
+    id              INTEGER PRIMARY KEY,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+    message_id      INTEGER NOT NULL REFERENCES messages(id),  -- Aide's reply in that turn
+    sender          TEXT NOT NULL,  -- agent id
+    recipient       TEXT NOT NULL,
+    text            TEXT NOT NULL,
+    ts              TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS team_messages_message ON team_messages(message_id);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id     INTEGER PRIMARY KEY,
     ts     TEXT NOT NULL,
@@ -168,6 +180,7 @@ class Database:
             row = self.app_conversation(public_id)
             if row is None:
                 return False
+            self.conn.execute("DELETE FROM team_messages WHERE conversation_id = ?", (row["id"],))
             self.conn.execute("DELETE FROM messages WHERE conversation_id = ?", (row["id"],))
             self.conn.execute("DELETE FROM conversations WHERE id = ?", (row["id"],))
         return True
@@ -185,14 +198,33 @@ class Database:
     def set_conversation_model(self, conversation_id: int, model: str) -> None:
         self.conn.execute("UPDATE conversations SET model = ? WHERE id = ?", (model, conversation_id))
 
-    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list, list]]:
-        """(role, content, ts, attachments, consulted) per message, oldest first."""
+    def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list, list, list]]:
+        """(role, content, ts, attachments, consulted, team) per message, oldest first."""
         rows = self.conn.execute(
-            "SELECT role, content, ts, attachments, consulted FROM messages WHERE conversation_id = ? ORDER BY id",
+            "SELECT id, role, content, ts, attachments, consulted FROM messages WHERE conversation_id = ? ORDER BY id",
             (conversation_id,),
         ).fetchall()
+        team: dict[int, list[dict]] = {}
+        for t in self.conn.execute(
+            "SELECT message_id, sender, recipient, text, ts FROM team_messages WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        ):
+            team.setdefault(t["message_id"], []).append(
+                {"from": t["sender"], "to": t["recipient"], "text": t["text"], "ts": t["ts"]})
         return [(r["role"], json.loads(r["content"]), r["ts"], json.loads(r["attachments"] or "[]"),
-                 json.loads(r["consulted"] or "[]")) for r in rows]
+                 json.loads(r["consulted"] or "[]"), team.get(r["id"], [])) for r in rows]
+
+    def team_messages(self, limit: int) -> list[dict]:
+        """The latest `limit` team messages from every chat, oldest first, with the chat's public id
+        (the channel name for the shared conversation)."""
+        rows = self.conn.execute(
+            "SELECT * FROM (SELECT t.id, t.sender, t.recipient, t.text, t.ts, "
+            "COALESCE(c.public_id, c.channel) AS conversation FROM team_messages t "
+            "JOIN conversations c ON c.id = t.conversation_id ORDER BY t.id DESC LIMIT ?) ORDER BY id",
+            (limit,),
+        ).fetchall()
+        return [{"from": r["sender"], "to": r["recipient"], "text": r["text"], "ts": r["ts"],
+                 "conversation_id": r["conversation"]} for r in rows]
 
     def history(self, conversation_id: int) -> list[dict]:
         rows = self.conn.execute(
@@ -202,10 +234,11 @@ class Database:
         return [{"role": r["role"], "content": json.loads(r["content"])} for r in rows]
 
     def append_turn(self, conversation_id: int, channel: str, messages: list[dict],
-                    attachments: list[dict] | None = None, consulted: list[str] | None = None) -> None:
+                    attachments: list[dict] | None = None, consulted: list[str] | None = None,
+                    team: list[dict] | None = None) -> None:
         """Store a whole turn atomically, so history never ends on an unanswered tool_use.
 
-        `attachments` and `consulted` go with the turn's last message (the final reply).
+        `attachments`, `consulted` and `team` ({from, to, text, ts}) go with the turn's last message (the final reply).
         """
         now = utcnow().isoformat()
         last = len(messages) - 1
@@ -218,6 +251,13 @@ class Database:
                   json.dumps(attachments) if attachments and i == last else None,
                   json.dumps(consulted) if consulted and i == last else None) for i, m in enumerate(messages)],
             )
+            if team:
+                reply_id = self.conn.execute(
+                    "SELECT MAX(id) FROM messages WHERE conversation_id = ?", (conversation_id,)).fetchone()[0]
+                self.conn.executemany(
+                    "INSERT INTO team_messages (conversation_id, message_id, sender, recipient, text, ts) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    [(conversation_id, reply_id, t["from"], t["to"], t["text"], t["ts"]) for t in team])
             self.conn.execute(
                 "UPDATE conversations SET last_active_at = ? WHERE id = ?", (now, conversation_id)
             )
