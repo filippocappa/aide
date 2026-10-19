@@ -80,7 +80,7 @@ def test_chat_returns_reply_and_pending(env):
     rem = store.open()[0]
     assert r.json() == {"reply": "ok", "pending": [], "conversation_id": "main",
                         "attachments": [{"type": "reminders", "reminders": [reminder_json(rem, ROME)]}],
-                        "consulted": []}
+                        "consulted": [], "team": []}
 
     client2, _, _ = env([call("delete_reminder", reminder_id=rem.id), done("queued")])
     body = client2.post("/v1/chat", json={"text": "delete it"}, headers=AUTH).json()

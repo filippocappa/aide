@@ -2,6 +2,7 @@
 
 import asyncio
 import hmac
+import json
 import logging
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -9,10 +10,10 @@ from zoneinfo import ZoneInfo
 import anthropic
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..agent import CONVERSATION, Agent, UnknownConversation
+from ..agent import CONVERSATION, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, check_agent
 from ..db import Database
 from ..digest import DigestService, check_kind
@@ -32,6 +33,7 @@ VERSION = "0.2.0"
 class ChatIn(BaseModel):
     text: str
     conversation_id: str | None = None  # None: the conversation shared with Discord
+    stream: bool = False  # answer as text/event-stream, with team talk as it happens
 
 
 class ConversationIn(BaseModel):
@@ -106,6 +108,14 @@ class SyncIn(BaseModel):
     changes: list[ReminderChange] = []
 
 
+UNAVAILABLE = "The assistant is unavailable right now. Try again."
+
+
+def sse(event: str, data: dict) -> str:
+    """One server-sent event: json.dumps escapes line breaks, so data stays on one line."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | None,
                tz: ZoneInfo, token: str, habits: HabitStore | None = None,
                digest: DigestService | None = None, push: Push | None = None,
@@ -130,7 +140,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.exception_handler(anthropic.APIError)
     async def upstream_error(_: Request, exc: anthropic.APIError):
         log.error("Claude API error: %s", exc)
-        return JSONResponse({"error": "The assistant is unavailable right now. Try again."}, status_code=502)
+        return JSONResponse({"error": UNAVAILABLE}, status_code=502)
 
     @app.exception_handler(UnknownConversation)
     async def unknown_conversation(_: Request, exc: UnknownConversation):
@@ -157,6 +167,16 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"id": c["id"], "agent": c["agent"], "title": c["title"], "preview": c["preview"],
                 "updated_at": local(c["updated_at"])}
 
+    def team_json(t: dict) -> dict:
+        return {**t, "ts": local(t["ts"])}
+
+    def chat_json(conversation: str, turn: Turn) -> dict:
+        return {"reply": turn.reply, "pending": pending(), "conversation_id": conversation,
+                "attachments": turn.attachments, "consulted": turn.consulted,
+                "team": [team_json(t) for t in turn.team]}
+
+    turns: set[asyncio.Task] = set()  # streamed turns, held so they finish even if the app hangs up
+
     def memory_json(m) -> dict:
         return {"id": m["id"], "text": m["text"], "agent": m["agent"], "created_at": local(m["created_at"])}
 
@@ -170,9 +190,36 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if not text:
             raise HTTPException(400, "text is empty")
         conversation = body.conversation_id or CONVERSATION
-        reply, attachments, consulted = await agent.respond(CONVERSATION, text, conversation)
-        return {"reply": reply, "pending": pending(), "conversation_id": conversation, "attachments": attachments,
-                "consulted": consulted}
+        if not body.stream:
+            return chat_json(conversation, await agent.respond(CONVERSATION, text, conversation))
+        if conversation != CONVERSATION and db.app_conversation(conversation) is None:
+            raise UnknownConversation(f"no conversation {conversation}")  # a plain 404, before the stream starts
+
+        events: asyncio.Queue = asyncio.Queue()
+        task = asyncio.create_task(agent.respond(CONVERSATION, text, conversation,
+                                                 lambda t: events.put_nowait(sse("team", team_json(t)))))
+        turns.add(task)
+
+        def finished(t: asyncio.Task) -> None:
+            turns.discard(t)
+            if not t.cancelled() and t.exception():
+                log.error("streamed turn failed", exc_info=t.exception())
+            events.put_nowait(None)
+        task.add_done_callback(finished)
+
+        async def stream():
+            while (event := await events.get()) is not None:
+                yield event
+            if task.cancelled() or task.exception():
+                error = task.cancelled() or task.exception()
+                yield sse("error", {"error": UNAVAILABLE if isinstance(error, anthropic.APIError)
+                                    else "Something went wrong on the server. It's in the logs."})
+            else:
+                yield sse("reply", chat_json(conversation, task.result()))
+
+        # No caching or proxy buffering, so each event reaches the app as it's sent.
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
     async def confirm():
@@ -195,12 +242,17 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.get("/v1/history", dependencies=[Depends(auth)])
     async def history(limit: int = 50, conversation_id: str | None = None):
         messages = agent.visible_history(CONVERSATION, max(1, min(limit, 500)), conversation_id)
-        for m in messages:  # reminders as they are now, so a reload shows ticks made since
+        for m in messages:
+            m["team"] = [team_json(t) for t in m["team"]]  # reminders as they are now, so a reload shows ticks made since
             for a in m["attachments"]:
                 if a["type"] == "reminders":
                     a["reminders"] = [reminder_json(r, tz) if (r := store.get(old["id"])) else old
                                       for old in a["reminders"]]
         return {"messages": messages}
+
+    @app.get("/v1/team", dependencies=[Depends(auth)])
+    async def team(limit: int = 100):
+        return {"messages": [team_json(t) for t in db.team_messages(max(1, min(limit, 500)))]}
 
     @app.get("/v1/conversations", dependencies=[Depends(auth)])
     async def conversations():

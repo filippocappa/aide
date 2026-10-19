@@ -7,6 +7,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
+from typing import Callable, NamedTuple
 from zoneinfo import ZoneInfo
 
 import anthropic
@@ -36,6 +37,13 @@ Reply with the title only: no quotes, no full stop."""
 
 class UnknownConversation(LookupError):
     pass
+
+
+class Turn(NamedTuple):
+    reply: str
+    attachments: list[dict]  # cards: the reminders and events the turn's tools showed
+    consulted: list[str]  # agents Aide asked, in order
+    team: list[dict]  # what Aide and those agents said to each other: {from, to, text, ts (UTC)}
 
 
 class Agent:
@@ -68,6 +76,8 @@ class Agent:
         self._conversation: str | None = None  # app chat of the turn in progress, None for the shared one
         self._attachments: list[dict] = []  # cards from the turn in progress
         self._consulted: list[str] = []  # agents asked in the turn in progress
+        self._team: list[dict] = []  # its team messages
+        self._on_team: Callable[[dict], None] | None = None  # told about each one as it happens
         self._model = model  # model of the turn in progress; asked agents use it too
         self.model = model
         self.smart_model = smart_model or model
@@ -140,7 +150,7 @@ class Agent:
 
     def _visible(self, conversation_id: int) -> list[dict]:
         out = []
-        for role, content, ts, attachments, consulted in self.db.history_with_ts(conversation_id):
+        for role, content, ts, attachments, consulted, team in self.db.history_with_ts(conversation_id):
             if role == "user":
                 if not isinstance(content, str) or content.startswith(("[The user replied", _OPENED)):
                     continue  # tool results, confirm/cancel notes, the note before a digest greeting
@@ -150,7 +160,8 @@ class Agent:
             else:
                 text = "\n\n".join(b["text"] for b in content if b.get("type") == "text").strip()
             if text:
-                out.append({"role": role, "text": text, "ts": ts, "attachments": attachments, "consulted": consulted})
+                out.append({"role": role, "text": text, "ts": ts, "attachments": attachments, "consulted": consulted,
+                            "team": team})
         return out
 
     def pending(self, channel: str) -> list[str]:
@@ -214,10 +225,12 @@ class Agent:
         """Answer in the shared conversation, or in the app chat `conversation`."""
         return (await self.respond(channel, text, conversation))[0]
 
-    async def respond(self, channel: str, text: str,
-                      conversation: str | None = None) -> tuple[str, list[dict], list[str]]:
-        """Like reply, plus the turn's attachments (the reminders and events its tools showed, as cards)
-        and the agents Aide asked. The conversation's own agent answers."""
+    async def respond(self, channel: str, text: str, conversation: str | None = None,
+                      on_team: Callable[[dict], None] | None = None) -> Turn:
+        """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
+
+        `on_team` gets each team message as it happens: an ask when Aide sends it, the answer when it's back.
+        """
         conversation = self._key(channel, conversation)
         async with self._lock:
             conversation_id = self._resolve(channel, conversation)
@@ -230,17 +243,27 @@ class Agent:
                 lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
                 stamped += f"{_QUEUE_MARK}\n{lines}]"
             self._channel, self._conversation, self._model = channel, conversation, model
-            self._attachments, self._consulted = [], []
+            self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
             agent = self.db.conversation_agent(conversation_id)
             turn: list[dict] = [{"role": "user", "content": stamped}]
-            reply = await self._run(agent, channel, model, history, turn)
-            attachments, consulted = _merge(self._attachments), list(self._consulted)
+            try:
+                reply = await self._run(agent, channel, model, history, turn)
+            finally:
+                self._on_team = None
+            attachments, consulted, team = _merge(self._attachments), list(self._consulted), list(self._team)
             # Saved only after the loop completes: a crash mid-turn leaves history consistent.
             self.db.append_turn(conversation_id, channel if conversation is None else "app", turn, attachments,
-                                consulted)
+                                consulted, team)
             if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
                 self.db.set_conversation_title(conversation_id, await self._title(text, reply))
-            return reply, attachments, consulted
+            return Turn(reply, attachments, consulted, team)
+
+    def _say(self, sender: str, recipient: str, text: str) -> None:
+        """One team message of the turn in progress."""
+        message = {"from": sender, "to": recipient, "text": text, "ts": utcnow().isoformat()}
+        self._team.append(message)
+        if self._on_team:
+            self._on_team(message)
 
     def _ask_tool(self) -> Tool:
         async def ask_agent(agent: str, request: str) -> str:
@@ -249,9 +272,11 @@ class Agent:
             if len(self._consulted) >= MAX_ASKS:
                 raise ValueError(f"already asked {MAX_ASKS} times this turn; answer with what you have")
             self._consulted.append(agent)  # before any await, so parallel asks keep their order
+            self._say(ORCHESTRATOR, agent, request)
             # One stateless turn: the specialist sees only the request, and nothing is stored in its chats.
             turn = [{"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] [Asked by Aide] {request}"}]
             answer = await self._run(agent, self._channel, self._model, [], turn)
+            self._say(agent, ORCHESTRATOR, answer)
             return f"{AGENTS[agent].name} answered:\n{answer}"
 
         names = "; ".join(f"{a}: {AGENTS[a].role.lower()}" for a in SPECIALISTS)
