@@ -16,6 +16,13 @@ struct DigestSettingsView: View {
             if let binding = Binding($settings) {
                 // One list, details only for the ones that are on.
                 Section {
+                    if binding.wrappedValue.wake != nil {
+                        DigestRow(title: "When I wake up", detail: "How you slept, then your day",
+                                  isOn: Binding(get: { binding.wrappedValue.wake?.enabled ?? false },
+                                                set: { binding.wrappedValue.wake?.enabled = $0 })) {
+                            EmptyView()
+                        }
+                    }
                     DigestRow(title: "Morning", detail: "Your day ahead", isOn: binding.daily.enabled) {
                         TimeRow(time: binding.daily.time)
                     }

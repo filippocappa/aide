@@ -3,9 +3,13 @@ import Foundation
 @MainActor
 final class DigestViewModel: ObservableObject {
     enum Kind: String, CaseIterable, Identifiable {
-        case daily, evening, weekly, monthly
+        case wake, daily, evening, weekly, monthly
         var id: String { rawValue }
-        var label: String { switch self { case .daily: "Morning"; case .evening: "Evening"; case .weekly: "Week"; case .monthly: "Month" } }
+        var label: String {
+            switch self {
+            case .wake: "Wake-up"; case .daily: "Morning"; case .evening: "Evening"; case .weekly: "Week"; case .monthly: "Month"
+            }
+        }
     }
 
     @Published var kind: Kind = .daily

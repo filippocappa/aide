@@ -19,6 +19,7 @@ struct AideApp: App {
                 .environmentObject(env.digest)
                 .environmentObject(env.voice)
                 .environmentObject(env.push)
+                .environmentObject(env.health)
                 .tint(Theme.accent)
                 .fontDesign(.rounded)
                 .task { await env.refreshAll() }
@@ -31,11 +32,13 @@ struct AideApp: App {
 
 /// APNs callbacks: the device token, silent sync pushes, and taps on notifications.
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
-    @MainActor lazy var env = AppEnvironment()
+    @MainActor var env: AppEnvironment { .shared }
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // HealthKit's background wake-ups only reach observers set up during launch.
+        Task { await env.health.startObserving() }
         return true
     }
 

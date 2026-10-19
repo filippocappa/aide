@@ -169,3 +169,99 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(obj, ["token": "ab", "environment": "sandbox", "name": "iPhone"])
     }
 }
+
+final class HealthTests: XCTestCase {
+    private var calendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Europe/Rome")!
+        return c
+    }()
+
+    /// 2026-10-19 at h:m in Rome; negative hours or hours past 23 roll over to the days around it.
+    private func at(_ h: Int, _ m: Int = 0) -> Date {
+        let midnight = calendar.date(from: DateComponents(year: 2026, month: 10, day: 19))!
+        return midnight.addingTimeInterval(TimeInterval(h * 3600 + m * 60))
+    }
+
+    private func seg(_ stage: SleepSegment.Stage, _ from: (Int, Int), _ to: (Int, Int)) -> SleepSegment {
+        SleepSegment(stage: stage, start: at(from.0, from.1), end: at(to.0, to.1))
+    }
+
+    func testWatchNightUsesStagesAndIgnoresPhoneDuplicates() throws {
+        let segments = [
+            seg(.inBed, (-1, 30), (8, 0)),
+            seg(.asleep, (0, 0), (7, 30)), // iPhone, same night
+            seg(.core, (0, 10), (2, 0)),
+            seg(.deep, (2, 0), (3, 0)),
+            seg(.awake, (3, 0), (3, 20)),
+            seg(.rem, (3, 20), (4, 20)),
+            seg(.core, (4, 20), (7, 40)),
+        ]
+        let night = try XCTUnwrap(SleepSummary.night(endingOn: at(12), from: segments, calendar: calendar))
+        XCTAssertEqual(Wire.parse(night.bedtime), at(0, 10))
+        XCTAssertEqual(Wire.parse(night.wake), at(7, 40))
+        XCTAssertEqual(night.inBedMin, 450)
+        XCTAssertEqual(night.asleepMin, 430)
+        XCTAssertEqual(night.awakeMin, 20)
+        XCTAssertEqual(night.deepMin, 60)
+        XCTAssertEqual(night.remMin, 60)
+        XCTAssertEqual(night.coreMin, 310)
+    }
+
+    func testNapIsNotTheNightAndShortGapsJoin() throws {
+        let segments = [
+            seg(.asleep, (-1, 0), (3, 0)),
+            seg(.asleep, (3, 40), (7, 0)), // 40 min gap: same night
+            seg(.asleep, (14, 0), (14, 40)), // nap
+        ]
+        let night = try XCTUnwrap(SleepSummary.night(endingOn: at(12), from: segments, calendar: calendar))
+        XCTAssertEqual(Wire.parse(night.bedtime), at(-1))
+        XCTAssertEqual(Wire.parse(night.wake), at(7))
+        XCTAssertEqual(night.asleepMin, 440)
+        XCTAssertNil(night.deepMin)
+    }
+
+    func testNightEndingTheDayBeforeIsNotThisDays() {
+        let segments = [seg(.core, (-24, 0), (-17, 0))] // ended 07:00 on the 18th
+        XCTAssertNil(SleepSummary.night(endingOn: at(12), from: segments, calendar: calendar))
+    }
+
+    func testHealthDayEncodesSnakeCaseAndLeavesOutMissing() throws {
+        let day = HealthDay(date: "2026-10-19", restingHr: 52, hrvMs: 61.5, wristTempC: 35.91, steps: 8432)
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(day)) as? [String: Any])
+        XCTAssertEqual(obj["resting_hr"] as? Int, 52)
+        XCTAssertEqual(obj["hrv_ms"] as? Double, 61.5)
+        XCTAssertEqual(obj["wrist_temp_c"] as? Double, 35.91)
+        XCTAssertNil(obj["sleep"])
+        XCTAssertEqual((obj["workouts"] as? [Any])?.count, 0)
+    }
+
+    func testDigestDecodesSleepAndRecovery() throws {
+        let json = #"""
+        {"kind":"wake","greeting":"Morning.","sections":[
+          {"type":"sleep","title":"Last night","usual_asleep_min":438,"sleep":{"bedtime":"2026-10-19T00:12:00+02:00",
+           "wake":"2026-10-19T07:41:00+02:00","asleep_min":412,"in_bed_min":449,"awake_min":37,"deep_min":58,"core_min":251,"rem_min":103}},
+          {"type":"recovery","title":"Recovery","level":"good","summary":"HRV above your usual.","hrv_ms":61.5,"hrv_usual_ms":55.0,
+           "resting_hr":52,"resting_hr_usual":54}]}
+        """#
+        let digest = try JSONDecoder.api.decode(Digest.self, from: Data(json.utf8))
+        guard case .sleep(let night, let usual) = digest.sections[0].content else { return XCTFail() }
+        XCTAssertEqual(night.asleepMin, 412)
+        XCTAssertEqual(usual, 438)
+        guard case .recovery(let r) = digest.sections[1].content else { return XCTFail() }
+        XCTAssertEqual(r.level, "good")
+        XCTAssertEqual(r.restingHrUsual, 54)
+    }
+
+    func testSleepCardWording() {
+        XCTAssertEqual(SleepCard.duration(412), "6h 52m")
+        XCTAssertEqual(SleepCard.duration(45), "45m")
+        XCTAssertEqual(SleepCard.compare(400, 440), "40m under your usual 7h 20m")
+        XCTAssertEqual(SleepCard.compare(445, 440), "About your usual")
+    }
+
+    func testHabitWithoutWorkoutsFromOlderServer() throws {
+        let json = #"{"id":3,"name":"Gym","cadence":{"type":"daily"},"streak":0,"done_today":false,"last_done":null}"#
+        XCTAssertNil(try JSONDecoder.api.decode(Habit.self, from: Data(json.utf8)).workouts)
+    }
+}

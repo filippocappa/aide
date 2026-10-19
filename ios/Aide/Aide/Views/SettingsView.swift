@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 
 struct SettingsView: View {
@@ -5,6 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject private var sync: ReminderSyncService
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
+    @EnvironmentObject private var health: HealthService
     @Environment(\.openURL) private var openURL
 
     @State private var testing = false
@@ -18,6 +20,7 @@ struct SettingsView: View {
                 serverSection
                 remindersSection
                 notificationsSection
+                healthSection
                 Section {
                     Picker("I speak", selection: $settings.voiceLanguage) {
                         Text("English").tag("en-US")
@@ -163,6 +166,37 @@ struct SettingsView: View {
         } footer: {
             Text("Aide sends digests and reminders that haven't reached Apple Reminders yet, and quietly syncs reminders in the background. Without push, they go to Discord.")
         }
+    }
+
+    @ViewBuilder
+    private var healthSection: some View {
+        Section {
+            if !health.isAvailable {
+                Text("Apple Health isn't available on this device.").foregroundStyle(.secondary)
+            } else if !health.hasAsked {
+                Button("Allow Apple Health") { Task { await health.requestAccess() } }
+            } else {
+                LabeledContent("Last sent", value: health.lastUpload?.formatted(date: .abbreviated, time: .shortened) ?? "Not yet")
+                Button {
+                    Task { await health.upload() }
+                } label: {
+                    HStack {
+                        Text("Send now")
+                        if health.isUploading { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(health.isUploading || !settings.isConfigured)
+                ShortcutsLink()
+            }
+            if let error = health.lastError {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+            }
+        } header: {
+            Text("Apple Health")
+        } footer: {
+            Text("Aide gets one summary a day: sleep, heart rate, HRV, steps and workouts. For the wake-up briefing, add an automation in Shortcuts: Sleep → Waking Up → Run Immediately → Aide's \"I'm up\". What Aide may read is in the Health app, Sharing → Apps.")
+        }
+        .task { await health.refreshStatus() }
     }
 
     private func testConnection() async {
