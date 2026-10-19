@@ -30,6 +30,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `push.py`: APNs sender and the devices table (off without `APNS_*` in `.env`; then Discord only).
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
+- `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -118,8 +119,15 @@ Professor, Coach and Finance (`ask_agent`), each with its own chats, tools, memo
 answered by its agent with its own tools and memory (shared plus its own; Aide sees shared only), `ask_agent` for
 Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Team talk: every ask and answer is
 stored (`team` in chat and history, `GET /v1/team`), and `"stream": true` on `/v1/chat` sends them live as
-server-sent events (checked through `tailscale serve`, not buffered). Discord stays on Aide. Not yet tried
-from the app.
+server-sent events (checked through `tailscale serve`, not buffered). Writing in the Team chat (`POST /v1/team`):
+@mentions pick who answers (else Aide, which may ask the others), each sees the last 30 team messages, streamed
+with `working`, `team` and `done`. Discord stays on Aide. Not yet tried from the app.
+
+**Done, server (live), app not yet built:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
+and `run`, a chat per routine (`routine` on conversation rows and on the messages a run posts), the scheduler
+(30 s tick, a run missed by less than 2 h runs once after startup), an alert push per run with a Discord DM as the
+fallback, `routines` tools for every agent (Aide for anyone, the others their own; deleting is queued), and
+`routine_ideas` on `/v1/agents`.
 
 **Next:** try push live, then Discord becomes optional. Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).

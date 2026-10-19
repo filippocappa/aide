@@ -8,7 +8,7 @@ from datetime import timedelta
 import anthropic
 import uvicorn
 
-from .agent import Agent
+from .agent import CONVERSATION, Agent
 from .channels.api import create_app
 from .channels.discord_bot import AideBot
 from .config import OPENROUTER_BASE_URL, load_settings
@@ -20,6 +20,7 @@ from .health import HealthStore
 from .icloud import ICloudCalendar
 from .push import Push
 from .reminders import ReminderStore
+from .routines import routine_schedule
 from .scheduler import reminder_fallback
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
@@ -113,10 +114,11 @@ def main() -> None:
             bot.start(settings.discord_token),
             reminder_fallback(reminders, bot.notify_owner, settings.timezone, push),
             digest_schedule(digest, bot.notify_owner, push),
+            routine_schedule(agent, CONVERSATION, push, bot.notify_owner),
         ]
         if settings.api_token:
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
-                             health, wake)
+                             health, wake, bot.notify_owner)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

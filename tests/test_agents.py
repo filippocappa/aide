@@ -85,7 +85,12 @@ def test_agents_endpoint_matches_the_contract(env):
     assert [a["id"] for a in agents] == ["aide", "secretary", "professor", "coach", "finance"]
     assert [a["orchestrator"] for a in agents] == [True, False, False, False, False]
     assert agents[3] == {"id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#E0782F",
-                         "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?"]}
+                         "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?"],
+                         "routine_ideas": [{"title": "Weekly recap", "prompt": AGENTS["coach"].routine_ideas[0]["prompt"],
+                                            "time": "18:00", "days": [7]}]}
+    assert [(i["title"], i["time"], i["days"]) for a in agents for i in a["routine_ideas"]] == [
+        ("Plan my week", "20:00", [7]), ("Mail sweep", "09:00", [1, 2, 3, 4, 5]),
+        ("Review what I studied", "17:00", [7]), ("Weekly recap", "18:00", [7]), ("Week's spending", "19:00", [7])]
     assert all(a["color"].startswith("#") and len(a["color"]) == 7 for a in agents)
     assert client.get("/v1/agents").status_code == 401
 
@@ -103,10 +108,12 @@ def test_tool_sets_follow_the_table(env):
     _, agent, _ = env()
     names = {a: {t.name for t in agent.registries[a]} for a in AGENTS}
     assert names["aide"] >= {"health", "create_event", "send_mail", "create_reminder", "ask_agent", "remember"}
+    routines = {"list_routines", "create_routine", "update_routine", "delete_routine"}
     assert names["coach"] == {"health", "list_habits", "list_events", "web_search", "fetch_page",
-                              "get_current_time", "remember", "forget", "cancel_queued"}
+                              "get_current_time", "remember", "forget", "cancel_queued", *routines}
     assert names["professor"] == names["finance"] == {"web_search", "fetch_page", "get_current_time", "remember",
-                                                      "forget", "cancel_queued"}
+                                                      "forget", "cancel_queued", *routines}
+    assert all(routines <= names[a] for a in AGENTS)
     assert {"create_event", "send_mail", "create_reminder", "find_places"} <= names["secretary"]
     assert "health" not in names["secretary"]
     assert all("ask_agent" not in names[a] for a in SPECIALISTS)
@@ -375,3 +382,84 @@ def test_streamed_chat_errors(env):
     assert client.post("/v1/chat", json={"text": "hi", "stream": True, "conversation_id": "c_nope"},
                        headers=AUTH).status_code == 404  # before the stream: plain HTTP error
     assert client.post("/v1/chat", json={"text": " ", "stream": True}, headers=AUTH).status_code == 400
+
+
+# -- writing in the Team chat ----------------------------------------------------
+
+
+def team_rows(messages):
+    return [(m["from"], m["to"], m["text"], m["conversation_id"]) for m in messages]
+
+
+def test_without_a_mention_aide_answers_in_the_team_chat(env):
+    client, agent, _ = env([ask("coach", "Gym?"), done("Go easy."), done("Done."),
+                            done("Coach says go easy tonight.")])
+    client.post("/v1/chat", json={"text": "gym?"}, headers=AUTH)  # earlier team talk, from Aide's chat
+    body = client.post("/v1/team", json={"text": "what should I eat tonight?"}, headers=AUTH).json()
+    assert team_rows(body["messages"]) == [("user", "team", "what should I eat tonight?", None),
+                                           ("aide", "team", "Coach says go easy tonight.", None)]
+    assert body["pending"] == [] and body["messages"][0]["ts"].endswith(("+01:00", "+02:00"))
+    request = agent.client.requests[-1]
+    assert request["system"][0]["text"] == AGENTS["aide"].prompt and "ask_agent" in tool_names(request)
+    context = request["messages"][0]["content"][0]["text"]
+    assert "[Team chat] You are Aide" in context and "Aide → Coach: Gym?" in context
+    assert context.index("Coach → Aide: Go easy.") < context.index("User → Everyone: what should I eat tonight?")
+    team = client.get("/v1/team", headers=AUTH).json()["messages"]
+    assert team_rows(team)[-2:] == team_rows(body["messages"])
+    assert [t["conversation_id"] for t in team[:2]] == ["main", "main"]
+
+
+def test_mentions_pick_who_answers_in_order(env):
+    client, agent, _ = env([done("Sleep is fine."), done("Budget allows it.")])
+    body = client.post("/v1/team", json={"text": "@Finance @coach can I do a ski trip? mail me at a@b.com"},
+                       headers=AUTH).json()
+    assert [m["from"] for m in body["messages"]] == ["user", "finance", "coach"]
+    finance, coach = agent.client.requests
+    assert finance["system"][0]["text"] == AGENTS["finance"].prompt and coach["system"][0]["text"] == AGENTS["coach"].prompt
+    assert "Finance → Everyone: Sleep is fine." in coach["messages"][0]["content"][0]["text"]  # sees what was said
+    assert all("ask_agent" not in tool_names(r) for r in agent.client.requests)
+
+
+def test_at_most_three_mentions():
+    from aide.agents import mentions
+    assert mentions("@coach @finance @secretary @professor @coach hi") == ["coach", "finance", "secretary"]
+    assert mentions("@COACH and @Coach") == ["coach"] and mentions("a@b.com") == [] and mentions("no one") == []
+
+
+def test_team_chat_errors(env):
+    client, agent, _ = env()
+    r = client.post("/v1/team", json={"text": "@bob hi"}, headers=AUTH)
+    assert r.status_code == 400 and r.json() == {"error": "No agent called @bob."}
+    assert client.post("/v1/team", json={"text": "  "}, headers=AUTH).status_code == 400
+    assert client.post("/v1/team", json={"text": "@bob", "stream": True}, headers=AUTH).status_code == 400
+    assert client.post("/v1/team", json={"text": "hi"}).status_code == 401
+    assert client.get("/v1/team", headers=AUTH).json()["messages"] == []  # nothing stored for a refused message
+
+
+def test_actions_queued_in_the_team_chat_join_the_queue(env):
+    client, agent, store = env()
+    rem = store.create("Bins", None)
+    agent.client.responses = [calls(("delete_reminder", {"reminder_id": rem.id})), done("Queued deleting Bins.")]
+    body = client.post("/v1/team", json={"text": "@secretary delete bins"}, headers=AUTH).json()
+    assert len(body["pending"]) == 1 and not store.get(rem.id).deleted
+    client.post("/v1/confirm", json={}, headers=AUTH)
+    assert store.get(rem.id).deleted
+    assert client.get("/v1/history", headers=AUTH).json()["messages"] == []  # no note lands in the shared chat
+
+
+def test_streamed_team_chat(env):
+    client, _, _ = env([ask("coach", "Recovery?"), done("HRV is up."), done("Coach says you're recovered.")])
+    got = events(client.post("/v1/team", json={"text": "how am I doing?", "stream": True}, headers=AUTH))
+    assert [(e, d.get("agent") or d.get("from")) for e, d in got[:-1]] == [
+        ("team", "user"), ("working", "aide"), ("team", "aide"), ("working", "coach"), ("team", "coach"),
+        ("team", "aide")]
+    event, body = got[-1]
+    assert event == "done" and body["messages"] == [d for e, d in got if e == "team"] and body["pending"] == []
+    assert [(m["from"], m["to"]) for m in body["messages"]] == [
+        ("user", "team"), ("aide", "coach"), ("coach", "aide"), ("aide", "team")]
+
+
+def test_streamed_team_chat_errors(env):
+    client, _, _ = env([])
+    got = events(client.post("/v1/team", json={"text": "hi", "stream": True}, headers=AUTH))
+    assert [e for e, _ in got] == ["team", "working", "error"]

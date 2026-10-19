@@ -12,10 +12,12 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 
-from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, check_agent
+from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, check_agent, mentions
 from .db import Database, utcnow
+from .routines import RoutineStore
 from .tools import Tool, ToolRegistry
 from .tools.memory import memory_tools
+from .tools.routines import routine_tools
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,8 @@ PENDING_TTL = timedelta(minutes=30)  # an unconfirmed action expires after this
 EPHEMERAL = {"type": "ephemeral"}
 
 MAX_ASKS = 3  # ask_agent calls per turn
+TEAM = "team"  # the Team chat: recipient of what's said there, and the queue's tag for actions queued from it
+TEAM_CONTEXT = 30  # team messages an agent answering in the Team chat sees
 SYSTEM_PROMPT = AGENTS[ORCHESTRATOR].prompt  # byte-stable per agent (agents.py), so each caches
 
 TITLE_PROMPT = """Write a title of two to five words for a chat that starts with the exchange below. \
@@ -61,7 +65,8 @@ class Agent:
     ):
         self.client = client
         self.db = db
-        # One registry per agent: its share of the server's tools, plus memory and cancel_queued.
+        self.routines = RoutineStore(db, tz)
+        # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued.
         # The orchestrator's has every tool, so it also runs whatever any agent queued.
         cancel = self._cancel_tool()
         self.registries: dict[str, ToolRegistry] = {}
@@ -70,7 +75,8 @@ class Agent:
             own = [t for t in tools if allowed is None or t.name in allowed]
             extra = [self._ask_tool()] if a.orchestrator else []
             self.registries[a.id] = ToolRegistry(
-                [*own, *memory_tools(db, a.id, scoped=not a.orchestrator), cancel, *extra])
+                [*own, *memory_tools(db, a.id, scoped=not a.orchestrator),
+                 *routine_tools(self.routines, a.id, any_agent=a.orchestrator), cancel, *extra])
         self.tools = self.registries[ORCHESTRATOR]
         self._channel = ""  # channel of the turn in progress; set under the lock
         self._conversation: str | None = None  # app chat of the turn in progress, None for the shared one
@@ -114,10 +120,10 @@ class Agent:
             self.db.new_conversation(channel)
             shared = self.db.latest_conversation(channel)
         idle = utcnow() - datetime.fromisoformat(shared["last_active_at"]) >= self.idle
-        rows = [{"id": channel, "agent": ORCHESTRATOR, "title": SHARED_TITLE,
+        rows = [{"id": channel, "agent": ORCHESTRATOR, "title": SHARED_TITLE, "routine": None,
                  "internal": None if idle else shared["id"], "updated_at": shared["last_active_at"]}]
-        rows += [{"id": r["public_id"], "agent": r["agent"], "title": r["title"], "internal": r["id"],
-                  "updated_at": r["last_active_at"]} for r in self.db.app_conversations()]
+        rows += [{"id": r["public_id"], "agent": r["agent"], "title": r["title"], "routine": r["routine"],
+                  "internal": r["id"], "updated_at": r["last_active_at"]} for r in self.db.app_conversations()]
         rows.sort(key=lambda r: r["updated_at"], reverse=True)
         for r in rows:
             internal = r.pop("internal")
@@ -135,7 +141,7 @@ class Agent:
             self.db.append_turn(row["id"], "app", [{"role": "user", "content": note},
                                                    {"role": "assistant", "content": [{"type": "text", "text": opening}]}])
             row = self.db.app_conversation(row["public_id"])
-        return {"id": row["public_id"], "agent": row["agent"], "title": None, "preview": opening,
+        return {"id": row["public_id"], "agent": row["agent"], "title": None, "routine": None, "preview": opening,
                 "updated_at": row["last_active_at"]}
 
     def delete_conversation(self, channel: str, conversation: str) -> None:
@@ -150,18 +156,20 @@ class Agent:
 
     def _visible(self, conversation_id: int) -> list[dict]:
         out = []
-        for role, content, ts, attachments, consulted, team in self.db.history_with_ts(conversation_id):
+        for role, content, ts, attachments, consulted, team, routine in self.db.history_with_ts(conversation_id):
             if role == "user":
                 if not isinstance(content, str) or content.startswith(("[The user replied", _OPENED)):
                     continue  # tool results, confirm/cancel notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
+                if text.startswith(_ROUTINE):
+                    continue  # a routine's prompt: the user never sees it
             elif isinstance(content, str):
                 text = content
             else:
                 text = "\n\n".join(b["text"] for b in content if b.get("type") == "text").strip()
             if text:
                 out.append({"role": role, "text": text, "ts": ts, "attachments": attachments, "consulted": consulted,
-                            "team": team})
+                            "team": team, **({"routine": routine} if routine else {})})
         return out
 
     def pending(self, channel: str) -> list[str]:
@@ -236,16 +244,9 @@ class Agent:
             conversation_id = self._resolve(channel, conversation)
             model = self.db.conversation_model(conversation_id) or self.model
             history = self.db.history(conversation_id)
-            # Stamped so the model never reuses a stale time from earlier in the conversation,
-            # and shown the real queue, which may differ from what it remembers queuing.
-            stamped = f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] {text}"
-            if queued := self.db.pending_actions(channel, PENDING_TTL):
-                lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
-                stamped += f"{_QUEUE_MARK}\n{lines}]"
-            self._channel, self._conversation, self._model = channel, conversation, model
-            self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
+            self._start(channel, conversation, model, on_team)
             agent = self.db.conversation_agent(conversation_id)
-            turn: list[dict] = [{"role": "user", "content": stamped}]
+            turn: list[dict] = [{"role": "user", "content": self._stamp(channel, text)}]
             try:
                 reply = await self._run(agent, channel, model, history, turn)
             finally:
@@ -257,6 +258,80 @@ class Agent:
             if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
                 self.db.set_conversation_title(conversation_id, await self._title(text, reply))
             return Turn(reply, attachments, consulted, team)
+
+    def _stamp(self, channel: str, text: str) -> str:
+        """Stamped so the model never reuses a stale time from earlier in the conversation,
+        and shown the real queue, which may differ from what it remembers queuing."""
+        stamped = f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] {text}"
+        if queued := self.db.pending_actions(channel, PENDING_TTL):
+            lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
+            stamped += f"{_QUEUE_MARK}\n{lines}]"
+        return stamped
+
+    def _start(self, channel: str, conversation: str | None, model: str,
+               on_team: Callable[[dict], None] | None = None) -> None:
+        """Reset the per-turn state. Called under the lock."""
+        self._channel, self._conversation, self._model = channel, conversation, model
+        self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
+
+    async def run_routine(self, channel: str, routine: dict) -> tuple[str, int]:
+        """One run of a routine: its agent answers the hidden prompt in the routine's chat, with that chat's history.
+        Returns the reply and how many actions it queued."""
+        async with self._lock:
+            conversation = routine["public_id"]
+            conversation_id = self._resolve(channel, conversation)
+            model = self.db.conversation_model(conversation_id) or self.model
+            history = self.db.history(conversation_id)
+            before = {a["id"] for a in self.db.pending_actions(channel, PENDING_TTL)}
+            self._start(channel, conversation, model)
+            note = (f"{_ROUTINE} \"{routine['title']}\". The user set this up to run on a schedule and isn't in "
+                    "the chat right now: write the message they'll read here.]\n" + routine["prompt"])
+            turn: list[dict] = [{"role": "user", "content": self._stamp(channel, note)}]
+            reply = await self._run(routine["agent"], channel, model, history, turn)
+            self.db.append_turn(conversation_id, "app", turn, _merge(self._attachments), list(self._consulted),
+                                list(self._team), {"id": routine["id"], "title": routine["title"]})
+            self.routines.mark_run(routine["id"])
+            queued = [a for a in self.db.pending_actions(channel, PENDING_TTL) if a["id"] not in before]
+            return reply, len(queued)
+
+    async def team_chat(self, channel: str, text: str, on_working: Callable[[str], None] | None = None,
+                        on_team: Callable[[dict], None] | None = None) -> list[dict]:
+        """The user writes in the Team chat: the @mentioned agents answer in turn (else Aide, which may ask the
+        others). Every message is stored as it's said. Returns the new ones, the user's first."""
+        answering = mentions(text) or [ORCHESTRATOR]
+        new: list[dict] = []
+
+        def said(message: dict) -> None:
+            self.db.add_team_message(message)
+            new.append(message)
+            if on_team:
+                on_team(message)
+            if message["from"] == ORCHESTRATOR and message["to"] in AGENTS and on_working:
+                on_working(message["to"])  # an ask: that agent is now working on it
+
+        async with self._lock:
+            self._start(channel, TEAM, self.model, said)
+            said({"from": "user", "to": TEAM, "text": text, "ts": utcnow().isoformat()})
+            try:
+                await self._team_answers(channel, answering, said, on_working)
+            finally:
+                self._on_team = None
+            return new
+
+    async def _team_answers(self, channel: str, answering: list[str], said: Callable[[dict], None],
+                            on_working: Callable[[str], None] | None) -> None:
+        for agent in answering:
+            if on_working:
+                on_working(agent)
+            lines = "\n".join(f"{_who(t['from'])} → {_who(t['to'])}: {t['text']}"
+                               for t in self.db.team_messages(TEAM_CONTEXT))
+            note = (f"[Team chat] You are {AGENTS[agent].name}, in the group chat the user shares with all of "
+                    "their assistants. The latest messages, oldest first:\n" + lines + "\n\n"
+                    "Answer the user's last message as yourself, for the group: short, only what you add, "
+                    "without repeating what the others said. Don't bring the others in by mentioning them.]")
+            turn: list[dict] = [{"role": "user", "content": self._stamp(channel, note)}]
+            reply = await self._run(agent, channel, self.model, [], turn)
+            said({"from": agent, "to": TEAM, "text": reply, "ts": utcnow().isoformat()})
 
     def _say(self, sender: str, recipient: str, text: str) -> None:
         """One team message of the turn in progress."""
@@ -428,6 +503,11 @@ def _merge(attachments: list[dict]) -> list[dict]:
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
 _OPENED = "[The user opened a new chat in the app"
+_ROUTINE = "[Scheduled routine"
+
+
+def _who(agent: str) -> str:
+    return "User" if agent == "user" else "Everyone" if agent == TEAM else AGENTS[agent].name if agent in AGENTS else agent
 
 
 def _with_cache_breakpoint(messages: list[dict]) -> list[dict]:

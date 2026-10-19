@@ -4,12 +4,14 @@ Each agent has its own system prompt and tool set. Prompts are built once from f
 byte-stable and caches on its own.
 """
 
+import re
 from dataclasses import dataclass
 
 ORCHESTRATOR = "aide"
 
 # Tools every agent gets, whatever its domain.
-COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued")
+COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued",
+                "list_routines", "create_routine", "update_routine", "delete_routine")
 CALENDAR_READ = ("list_calendars", "list_events", "search_events")
 CALENDAR = (*CALENDAR_READ, "create_event", "move_event", "delete_event")
 REMINDERS = ("create_reminder", "list_reminders", "update_reminder", "complete_reminder", "delete_reminder")
@@ -30,10 +32,16 @@ class AgentDef:
     prompt: str
     tools: tuple[str, ...] | None  # None: every tool the server has (the orchestrator)
     orchestrator: bool = False
+    routine_ideas: tuple[dict, ...] = ()  # one-tap starting points in the app: {title, prompt, time, days}
 
     def as_json(self) -> dict:
         return {"id": self.id, "name": self.name, "role": self.role, "color": self.color,
-                "orchestrator": self.orchestrator, "starters": list(self.starters)}
+                "orchestrator": self.orchestrator, "starters": list(self.starters),
+                "routine_ideas": [dict(i, days=list(i["days"])) for i in self.routine_ideas]}
+
+
+def _idea(title: str, prompt: str, time: str, days: tuple[int, ...]) -> dict:
+    return {"title": title, "prompt": prompt, "time": time, "days": days}
 
 
 # -- prompt fragments ------------------------------------------------------------
@@ -117,6 +125,16 @@ starts with "[Asked by Aide]", there is no chat to continue: answer the request 
 Aide passes it on."""
 
 
+_ROUTINES = """- Routines: jobs you run on a schedule ("every Sunday at 18 recap my week"), each with its own chat. \
+Manage yours with list_routines, create_routine and update_routine; they run straight away, so say what you set \
+(days and time). Deleting one is queued. Write the prompt as the instruction for each run. A message that starts \
+with "[Scheduled routine" is one of those runs: the user isn't in the chat then, so write the message they'll read \
+there, and don't ask questions you need answered before going on."""
+
+_ROUTINES_ANY = """- You can make routines for any of the specialists too: give each to the one whose work it is (a training \
+recap is Coach's, a mail sweep Secretary's), and keep for yourself the ones that span everything."""
+
+
 def _prompt(intro: str, *rules: str) -> str:
     return intro + "\n\n" + "\n".join(rules)
 
@@ -127,14 +145,14 @@ AIDE_PROMPT = _prompt(
     "You are Aide, a personal assistant for one person. You help them manage their calendar, reminders, mail and "
     "habits through chat, and look things up on the web and on maps. You also lead a small team of specialists "
     "and ask them when a question needs them.",
-    _BASICS, _CALENDAR, _MAIL, _HABITS, _HEALTH, _CARDS, _MEMORY_SHARED, _WEB, _MAPS, _ASK,
+    _BASICS, _CALENDAR, _MAIL, _HABITS, _HEALTH, _CARDS, _MEMORY_SHARED, _WEB, _MAPS, _ASK, _ROUTINES, _ROUTINES_ANY,
 )
 
 SECRETARY_PROMPT = _prompt(
     "You are Secretary, one of the user's assistants: their calendar, reminders and mail. You are efficient: "
     "you get the day organised in as few words as possible, notice clashes and loose ends, and propose the "
     "next step instead of asking open questions.",
-    _BASICS, _CALENDAR, _MAIL, _CARDS, _MEMORY_SCOPED, _WEB, _MAPS, _ASKED,
+    _BASICS, _CALENDAR, _MAIL, _CARDS, _MEMORY_SCOPED, _WEB, _MAPS, _ASKED, _ROUTINES,
 )
 
 PROFESSOR_PROMPT = _prompt(
@@ -142,7 +160,7 @@ PROFESSOR_PROMPT = _prompt(
     "explain step by step, starting from what the user already knows, with a small example where it helps. "
     "After a longer explanation, check understanding with one short question. Study plans are concrete: "
     "topics, order and time per session, working back from the exam date.",
-    _BASICS, _QUEUE, _MEMORY_SCOPED, _WEB, _ASKED,
+    _BASICS, _QUEUE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES,
 )
 
 COACH_PROMPT = _prompt(
@@ -151,7 +169,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day, but not change it.",
-    _BASICS, _QUEUE, _HEALTH, _HABITS, _MEMORY_SCOPED, _WEB, _ASKED,
+    _BASICS, _QUEUE, _HEALTH, _HABITS, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES,
 )
 
 FINANCE_PROMPT = _prompt(
@@ -160,22 +178,33 @@ FINANCE_PROMPT = _prompt(
     "remember (your own scope) and keep the numbers straight; when they're missing, ask. Budgets are simple and "
     "concrete. You give no investment advice beyond general principles (an emergency fund, diversification, "
     "low fees, not betting money you need), and you never recommend specific securities.",
-    _BASICS, _QUEUE, _MEMORY_SCOPED, _WEB, _ASKED,
+    _BASICS, _QUEUE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES,
 )
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
-             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, None, orchestrator=True),
+             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, None, orchestrator=True,
+             routine_ideas=(_idea("Plan my week", "Look at my calendar, reminders and habits for the coming week and "
+                                  "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
     AgentDef("secretary", "Secretary", "Calendar, reminders and mail", "#3B6FD8",
              ("What's on my calendar today?", "Any mail I need to answer?", "Remind me to "),
-             SECRETARY_PROMPT, (*CALENDAR, *REMINDERS, *MAIL, *MAPS, *WEB)),
+             SECRETARY_PROMPT, (*CALENDAR, *REMINDERS, *MAIL, *MAPS, *WEB),
+             routine_ideas=(_idea("Mail sweep", "Go through my unread mail: what needs an answer from me today, what "
+                                  "can wait, and anything with a date to put in the calendar.", "09:00",
+                                  (1, 2, 3, 4, 5)),)),
     AgentDef("professor", "Professor", "Study and lectures", "#7A4FD0",
-             ("Explain ", "Make me a study plan for "), PROFESSOR_PROMPT, WEB),
+             ("Explain ", "Make me a study plan for "), PROFESSOR_PROMPT, WEB,
+             routine_ideas=(_idea("Review what I studied", "Ask me what I studied this week, then quiz me on it with "
+                                  "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training and habits", "#E0782F",
              ("How did I sleep this week?", "Should I train hard today?"),
-             COACH_PROMPT, (*HEALTH, *HABITS, *CALENDAR_READ, *WEB)),
+             COACH_PROMPT, (*HEALTH, *HABITS, *CALENDAR_READ, *WEB),
+             routine_ideas=(_idea("Weekly recap", "Recap my sleep, training and habits for the week, and suggest one "
+                                  "thing for next week.", "18:00", (7,)),)),
     AgentDef("finance", "Finance", "Money and budgets", "#B8921C",
-             ("Help me set a monthly budget", "I spent "), FINANCE_PROMPT, WEB),
+             ("Help me set a monthly budget", "I spent "), FINANCE_PROMPT, WEB,
+             routine_ideas=(_idea("Week's spending", "Ask me what I spent this week, then compare it with my budget "
+                                  "and say where I stand.", "19:00", (7,)),)),
 )}
 
 SPECIALISTS = tuple(a for a in AGENTS if not AGENTS[a].orchestrator)
@@ -186,3 +215,20 @@ def check_agent(agent_id: str | None) -> str:
     if agent_id not in AGENTS:
         raise ValueError(f"unknown agent {agent_id!r}; expected one of {', '.join(AGENTS)}")
     return agent_id
+
+
+MAX_MENTIONS = 3
+_MENTION = re.compile(r"(?<![\w@])@(\w+)")
+
+
+def mentions(text: str) -> list[str]:
+    """The agent ids @mentioned in a Team chat message, in order, at most 3. ValueError for an unknown one."""
+    by_name = {k.casefold(): a.id for a in AGENTS.values() for k in (a.id, a.name)}
+    out: list[str] = []
+    for word in _MENTION.findall(text):
+        found = by_name.get(word.casefold())
+        if found is None:
+            raise ValueError(f"No agent called @{word}.")
+        if found not in out:
+            out.append(found)
+    return out[:MAX_MENTIONS]
