@@ -1,4 +1,8 @@
-"""Memory tools. Remembering runs immediately; forgetting waits for the user's !yes."""
+"""Memory tools. Remembering runs immediately; forgetting waits for the user's !yes.
+
+Each agent gets its own pair: it sees and dedupes against the shared items plus its own. Aide saves shared items
+only; a specialist picks the scope (docs/API.md, "Memory").
+"""
 
 import re
 from difflib import SequenceMatcher
@@ -22,14 +26,15 @@ def _words(text: str) -> list[str]:
     return [w for w in re.findall(r"\w+", text.casefold().replace("'", "")) if w not in STOPWORDS]
 
 
-def memory_tools(db: Database) -> list[Tool]:
-    def find(memory_id: int):
+def memory_tools(db: Database, agent: str = "aide", scoped: bool = False) -> list[Tool]:
+    """`scoped`: the agent can save items of its own, not only shared ones."""
+    def find(memory_id: int, visible: bool = False):
         item = db.memory_item(memory_id)
-        if item is None:
+        if item is None or visible and item["agent"] not in (None, agent):
             raise KeyError(f"no memory with id {memory_id}")
         return item
 
-    async def remember(text: str) -> str:
+    async def remember(text: str, scope: str = "shared") -> str:
         text = " ".join(text.split())
         if not text:
             raise ValueError("nothing to remember")
@@ -37,7 +42,8 @@ def memory_tools(db: Database) -> list[Tool]:
             raise ValueError(f"keep it under {MAX_LENGTH} characters")
         new = set(_words(text))
         leaving = db.memories_being_forgotten()  # a correction: the old fact is on its way out
-        for item in db.memories():
+        owner = agent if scoped and scope == "own" else None
+        for item in db.memories(agent):
             if item["id"] in leaving:
                 continue
             old = set(_words(item["text"]))
@@ -49,7 +55,7 @@ def memory_tools(db: Database) -> list[Tool]:
             if SequenceMatcher(None, " ".join(_words(item["text"])), " ".join(_words(text))).ratio() >= SIMILAR:
                 return (f"Not saved: a very similar fact is already saved: [{item['id']}] {item['text']}. "
                         f"If the user is correcting it, queue forget for [{item['id']}] and then remember the new one.")
-        item = db.add_memory(text)
+        item = db.add_memory(text, owner)
         return f"Remembered: [{item['id']}] {item['text']}"
 
     async def forget(memory_id: int) -> str:
@@ -58,13 +64,18 @@ def memory_tools(db: Database) -> list[Tool]:
         return f"Forgot: {item['text']}"
 
     async def describe_forget(memory_id: int) -> str:
-        return f"Forget '{find(memory_id)['text']}'"
+        return f"Forget '{find(memory_id, visible=True)['text']}'"
 
+    properties = {"text": {"type": "string"}}
+    if scoped:
+        properties["scope"] = {"type": "string", "enum": ["shared", "own"],
+                               "description": "shared: any assistant can use it (name, home, routines); "
+                                              "own: only you need it"}
     return [
         Tool("remember", "Save a short, lasting fact about the user (a preference, a name, a routine) so you know "
              "it in every future chat. Check the saved facts first and don't save one that's already there. "
              "One fact per call, written as a plain note. Runs immediately; a duplicate is not saved twice.",
-             {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"],
+             {"type": "object", "properties": properties, "required": list(properties),
               "additionalProperties": False}, remember),
         Tool("forget", "Delete a remembered fact, by the id shown in the memory list. Needs the user's confirmation: "
              "it is queued, and runs only when the user replies !yes.",
