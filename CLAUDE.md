@@ -74,7 +74,7 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 ## Roadmap
 
-Where things stand (2026-10-19):
+Where things stand (2026-10-19, evening):
 
 **Done, server (Ubuntu, live):**
 - Core: Discord bot, agent loop, systemd service; iCloud Calendar; Gmail (read, search; send and reply after
@@ -121,13 +121,24 @@ Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Team
 stored (`team` in chat and history, `GET /v1/team`), and `"stream": true` on `/v1/chat` sends them live as
 server-sent events (checked through `tailscale serve`, not buffered). Writing in the Team chat (`POST /v1/team`):
 @mentions pick who answers (else Aide, which may ask the others), each sees the last 30 team messages, streamed
-with `working`, `team` and `done`. Discord stays on Aide. Not yet tried from the app.
+with `working`, `team` and `done`. Discord stays on Aide. App (455ffcb): the "Your team" home grid, a drawn
+figure per agent (`Support/Figure.swift`), team talk streamed live above Aide's reply, the Team chat on the home
+screen with a message box and @mention chips. Not yet tried on the phone.
 
-**Done, server (live), app not yet built:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
+**Done, both sides, not yet tried live:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
 and `run`, a chat per routine (`routine` on conversation rows and on the messages a run posts), the scheduler
 (30 s tick, a run missed by less than 2 h runs once after startup), an alert push per run with a Discord DM as the
 fallback, `routines` tools for every agent (Aide for anyone, the others their own; deleting is queued), and
-`routine_ideas` on `/v1/agents`.
+`routine_ideas` on `/v1/agents`. App (455ffcb, `Views/RoutinesView.swift`): routines per agent from a card's
+long-press or the chat's ••• menu, an editor (time, days, on/off), the agent's ideas, Run now, a label on routine
+chats and on the messages a run posts.
 
-**Next:** try push live, then Discord becomes optional. Later for health: bedtime nudge in the evening digest,
+**Next** (filed as GitHub issues, #11 first):
+1. Try it all on the phone (#11): the ••• menu fix, team grid, team talk, Team chat, routines; then push with the
+   `.p8` key (#1), and Discord becomes optional.
+2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
+   proactive specialists (#13), a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
+3. The Professor gets the study agent (#3) and exam mode (#4). Finance still has no data source (memory only).
+
+Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
