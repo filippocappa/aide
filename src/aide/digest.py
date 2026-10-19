@@ -384,7 +384,9 @@ class DigestService:
 
     async def _travel_plan(self, event: dict) -> tuple[str | None, str | None]:
         """(home, mode for this place) from memory, falling back to AIDE_HOME_ADDRESS and no fixed mode."""
-        notes = [r["text"] for r in self.conn.execute("SELECT text FROM memory WHERE agent IS NULL ORDER BY id DESC")]
+        # Shared items plus Secretary's own: travel is its domain ("I always walk to uni").
+        notes = [r["text"] for r in self.conn.execute(
+            "SELECT text FROM memory WHERE agent IS NULL OR agent = 'secretary' ORDER BY id DESC")]
         if not notes:
             return self.home, None
         ask = (f"Configured home: {self.home or 'none'}\nPlace: {event['location']} (event: {event['title']})\n\n"

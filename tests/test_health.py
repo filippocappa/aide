@@ -282,13 +282,13 @@ async def test_wake_greeting_knows_time_sleep_and_when_to_leave(world):
     assert [s["type"] for s in d["sections"]][:2] == ["sleep", "recovery"]
 
 
-async def leave_line(world, maps, responses=(), memories=()):
+async def leave_line(world, maps, responses=(), memories=(), agent=None):
     """The leave-by line the wake greeting's model is given, for a 9:30 lecture at Città Studi."""
     lecture = MORNING.replace(hour=9, minute=30)
     w = world([*responses, done("Morning.")], [CalEvent("e1", "Uni", "Lecture", lecture,
                                                         lecture + timedelta(hours=2), "Città Studi")], maps)
     for m in memories:
-        w.db.add_memory(m)
+        w.db.add_memory(m, agent)
     await w.digest.generate("wake", MORNING)
     prompt = w.model.requests[-1]["messages"][0]["content"]
     return next(line for line in prompt.splitlines() if line.startswith("Next:")), w
@@ -308,6 +308,17 @@ async def test_memory_gives_home_and_mode(world):
     assert maps.bodies[0]["origin"] == {"address": "Via Verdi 5, Milano"}
     ask = w.model.requests[0]["messages"][0]["content"]
     assert "I always walk to uni" in ask and "Città Studi" in ask and "JSON" in w.model.requests[0]["system"]
+
+
+async def test_memory_from_secretary_reaches_the_briefing(world):
+    _, w = await leave_line(world, Maps(walk=12), [done('{"home": null, "mode": "walk"}')],
+                            ["I always walk to uni"], agent="secretary")
+    assert "I always walk to uni" in w.model.requests[0]["messages"][0]["content"]
+
+
+async def test_other_agents_memory_stays_out_of_the_briefing(world):
+    _, w = await leave_line(world, Maps(), [], ["Runs to uni on Fridays"], agent="coach")
+    assert len(w.model.requests) == 1  # Coach's notes aren't read: no travel lookup, only the greeting
 
 
 async def test_memory_without_travel_facts_or_unreadable(world):
