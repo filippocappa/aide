@@ -35,10 +35,6 @@ targets:
         # Silent pushes wake the app to sync reminders (docs/API.md, Push).
         UIBackgroundModes:
           - remote-notification
-    entitlements:
-      path: Aide/Aide.entitlements
-      properties:
-        aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.filippocappa.aide

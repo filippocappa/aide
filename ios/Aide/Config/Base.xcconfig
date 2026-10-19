@@ -1,2 +1,9 @@
 // Your signing team lives in Signing.local.xcconfig (git-ignored) so regenerating the project keeps it.
+
+// Push needs the paid team: a Personal Team can't sign the aps-environment entitlement. So it's off unless
+// Signing.local.xcconfig turns it on (see the .example file).
+AIDE_ENTITLEMENTS =
+
 #include? "Signing.local.xcconfig"
+
+CODE_SIGN_ENTITLEMENTS = $(AIDE_ENTITLEMENTS)
