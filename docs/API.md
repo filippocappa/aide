@@ -95,9 +95,10 @@ Short facts Aide keeps between chats (preferences, names, routines). The server 
 
 ## Digest
 
-A summary the server builds on a schedule: morning (`daily`), evening, weekly or monthly. Its greeting opens a new chat (`POST /v1/conversations` with `digest`), the app shows the cards behind a "Details" link, and the server also sends it as a push notification and/or a Discord DM (see Push). Sections are structured, so the app draws cards instead of parsing text.
+A summary the server builds on a schedule: morning (`daily`), evening, weekly or monthly, plus the wake-up
+briefing (`wake`), which runs when the user gets up instead of at a set time (see Apple Health). Its greeting opens a new chat (`POST /v1/conversations` with `digest`), the app shows the cards behind a "Details" link, and the server also sends it as a push notification and/or a Discord DM (see Push). Sections are structured, so the app draws cards instead of parsing text.
 
-`GET /v1/digest?kind=daily` (`daily` default, `evening`, `weekly`, `monthly`) →
+`GET /v1/digest?kind=daily` (`daily` default, `wake`, `evening`, `weekly`, `monthly`) →
 ```json
 {
   "kind": "daily",
@@ -108,6 +109,9 @@ A summary the server builds on a schedule: morning (`daily`), evening, weekly or
     {"type": "mail", "title": "Mail", "items": [{"id": "…", "from": "Dr. Rossi", "subject": "Appointment", "preview": "…", "received_at": "…", "unread": true}]},
     {"type": "reminders", "title": "Due today", "reminders": [ /* Reminder objects, plus "overdue": true | false */ ]},
     {"type": "habits", "title": "Habits", "habits": [ /* Habit objects, see below */ ]},
+    {"type": "sleep", "title": "Last night", "sleep": { /* Sleep object, see Apple Health */ }, "usual_asleep_min": 438},
+    {"type": "recovery", "title": "Recovery", "level": "good", "summary": "HRV above your usual, resting heart rate normal.",
+     "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54},
     {"type": "text", "title": "Looking ahead", "text": "free-form markdown"}
   ]
 }
@@ -143,19 +147,32 @@ The app skips section types it doesn't know. `404` if none has been generated ye
   model fails, the greeting is a plain one from code and there's no `text` section.
 - **Sections can be missing:** `mail`, `reminders` and `habits` are left out when empty; `calendar` and `mail`
   when the source isn't set up or is down. `calendar` is kept when empty (nothing scheduled).
+- **Sleep and recovery** (in `wake` and `daily` only, first in the list, live like the other data sections):
+  `sleep` is last night (the stored health day for the digest's date) and appears once that night has been
+  uploaded. `usual_asleep_min` is the median `asleep_min` of the 30 days before, or `null` with fewer than 7
+  nights. `recovery` compares last night's `hrv_ms` and that day's `resting_hr` with their medians over the 30
+  days before. It's left out until there are 14 days of both. `level` is set by code, not the model: `low` if HRV
+  is under 85% of usual or resting HR is 5 or more above usual, `good` if HRV is at or above usual and resting HR
+  at or below usual, otherwise `normal`. `summary` is one plain sentence from code. Both are comparisons with
+  the user's own usual numbers, not medical advice, and are worded that way.
 - **Schedule:** each enabled kind runs at its time. If the server was off then, it catches up within 6 hours,
   otherwise skips that one. A scheduled digest is also sent as a Discord DM when `discord` is true; `POST
   /v1/digest/run` isn't (you're looking at it). `day` 29–31 means the last day in shorter months.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/digest/run` | `{"kind": "daily"}` | The freshly generated digest (can take 5–30 s). |
-| `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "evening": {"enabled": true, "time": "22:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}, "discord": true}` (times in the server zone, `weekday` 1 = Monday) |
-| `PUT /v1/digest/settings` | the same object (all of it; `evening` may be missing from older clients: keep its current value) | the saved settings; `400` if a time isn't `HH:MM` or a field is missing or out of range |
+| `POST /v1/digest/run` | `{"kind": "daily"}` | The freshly generated digest (can take 5–30 s). For `wake` it's a test run: it doesn't count as the day's wake-up and isn't pushed. |
+| `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "wake": {"enabled": true}, "evening": {"enabled": true, "time": "22:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}, "discord": true}` (times in the server zone, `weekday` 1 = Monday; `wake` has no time, it runs when you get up) |
+| `PUT /v1/digest/settings` | the same object (all of it; `evening` and `wake` may be missing from older clients: keep their current values) | the saved settings; `400` if a time isn't `HH:MM` or a field is missing or out of range |
 
 ## Habits
 
-Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …]}`.
+Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"]}`.
+
+`workouts` (default `[]`) lists the Apple Watch workout types that check the habit by themselves (see Apple Health,
+"Workout types"; `"any"` matches every type). When a health upload has a workout of a listed type that lasted at
+least 10 minutes, the server checks the habit for the workout's local date. Each workout (by its `id`) checks a
+habit at most once, so if you undo the check, a later upload of the same workout doesn't redo it.
 
 `history` is every local date the habit was checked in the last 26 weeks (182 days, today included), newest first,
 for a GitHub-style grid. Every endpoint that returns a Habit includes it, `POST /v1/habits/{id}/check` too, and
@@ -164,7 +181,8 @@ so does the `habits` digest section.
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/habits` | | `{"habits": [Habit]}` |
-| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}}` | the new Habit |
+| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "workouts": ["strength"]}` (`workouts` optional) | the new Habit |
+| `PATCH /v1/habits/{id}` | any of `name`, `cadence`, `workouts` | the updated Habit |
 | `POST /v1/habits/{id}/check` | `{"date": "2026-10-18"}` (optional, default today; send `"done": false` to undo) | the updated Habit |
 | `DELETE /v1/habits/{id}` | | `{"ok": true}` |
 
@@ -174,6 +192,104 @@ while it's still in progress. Names are unique, ignoring case (a duplicate is `4
 `400`; an unknown id is `404`.
 
 The assistant also gets tools to add, check and list habits (deleting is queued for confirmation).
+
+## Apple Health
+
+The app reads Apple Health on the phone (sleep from the Apple Watch, heart rate, HRV, wrist temperature, steps,
+workouts) and sends **one summary per local day**. Raw samples never leave the phone. (`GET /v1/health` is still
+the server's liveness check; these routes sit under it and need the token like everything else.)
+
+### Health day
+
+```json
+{
+  "date": "2026-10-19",
+  "sleep": {
+    "bedtime": "2026-10-19T00:12:00+02:00",
+    "wake": "2026-10-19T07:41:00+02:00",
+    "asleep_min": 412, "in_bed_min": 449, "awake_min": 37,
+    "deep_min": 58, "core_min": 251, "rem_min": 103
+  },
+  "resting_hr": 52,
+  "hrv_ms": 61.5,
+  "respiratory_rate": 14.2,
+  "wrist_temp_c": 35.91,
+  "steps": 8432,
+  "active_kcal": 512,
+  "exercise_min": 41,
+  "workouts": [
+    {"id": "6B1F0C2E-…", "type": "strength", "start": "2026-10-19T18:30:00+02:00",
+     "end": "2026-10-19T19:22:00+02:00", "minutes": 52, "kcal": 310}
+  ]
+}
+```
+- **Missing or `null` means no data** for that field. Every number may be missing.
+- `date` is the local calendar day. `steps`, `active_kcal`, `exercise_min` and `workouts` cover 00:00–24:00.
+- `sleep` is the night that **ended** that morning: the longest stretch of sleep that ends between 18:00 the
+  evening before and 18:00 on `date`, with gaps under an hour counted as part of it. Naps are left out. `bedtime`
+  is when sleep started, `wake` when it ended, `in_bed_min` = `wake` − `bedtime`, `asleep_min` = the sleep stages
+  added up, `awake_min` = time awake in between. `deep_min`, `core_min` and `rem_min` are `null` without a Watch.
+- `resting_hr` (bpm) is Apple's resting heart rate for that day. `hrv_ms` is the average HRV (SDNN, Apple's
+  measure) during that night's sleep, or over the day if there's none from the night. `respiratory_rate`
+  (breaths/min) and `wrist_temp_c` (absolute °C, Series 8 and later) are averages over the night. The server
+  compares them with the user's own past numbers; Apple's "baseline" isn't available to apps.
+- `workouts[].id` is the HealthKit workout UUID: stable, so re-sending the same workout is harmless.
+
+### Workout types
+
+`strength`, `run`, `walk`, `hike`, `cycle`, `swim`, `hiit`, `yoga`, `pilates`, `core`, `dance`, `climb`,
+`row`, `elliptical`, `stairs`, `cardio`, `martial_arts`, `sport` (team and racket sports), `other`. More may be
+added; treat an unknown one like `other`.
+
+### Endpoints
+
+| Endpoint | Body / query | Response |
+|---|---|---|
+| `POST /v1/health/days` | `{"days": [Health day]}` (up to 90) | `{"ok": true, "saved": 7, "checked": [Habit]}`: `checked` = habits this upload checked through workouts |
+| `GET /v1/health/days` | `?from=2026-10-01&to=2026-10-19` (both optional; default the last 30 days) | `{"days": [Health day]}`, newest first |
+| `POST /v1/wake` | `{"at": "2026-10-19T07:42:10+02:00", "source": "shortcut", "day": Health day \| null}` | `{"started": true}`, or `{"started": false, "reason": "already"}` (`already`, `off`, `outside_hours`) |
+
+- **Uploads replace by `date`.** A day that's sent again overwrites the stored one, because data arrives late
+  (the Watch syncs the night after you wake, steps keep counting all day). So the app re-sends recent days:
+  - on launch and on returning to the foreground: the last 7 days;
+  - the first time (and whenever Health access is newly granted): the last 60 days, so baselines and "usual"
+    numbers work from the first morning;
+  - when HealthKit wakes the app in the background with new sleep or a new workout (right away) or new steps
+    (at most hourly): the last 2 days.
+
+### Wake-up briefing
+
+A digest of kind `wake`, sent once per day when the user gets up. It comes **in addition to** the scheduled
+morning digest, which runs at its time as before.
+
+- **Wake signals.** Either of these, whichever comes first:
+  1. `POST /v1/wake` from the app. iOS runs it from a Shortcuts automation (Sleep → "Waking Up" → Aide "I'm up").
+     `day` is today's Health day if the app could read it (it can't while the phone is locked); it's saved as if
+     it came from `/v1/health/days`. `source` is `shortcut` or `app` (the "I'm up" action run by hand).
+  2. A `/v1/health/days` upload whose entry for today has `sleep.wake` in the last 3 hours. That counts as a
+     wake-up at `sleep.wake`, so the briefing still comes without the Shortcut, just later (when the Watch syncs).
+- **Once a day.** The first wake signal of a local day starts the briefing. Later ones return `already`. A signal
+  outside 03:00–15:00 local returns `outside_hours`, and with `wake.enabled` false in the digest settings it
+  returns `off`.
+- **Waiting for the sleep data.** If there's no sleep for today yet when the signal comes, the server waits up to
+  10 minutes for an upload that has it, then goes ahead anyway. The sections are live, so the sleep card appears
+  in Details once the night arrives, even if the greeting didn't mention it.
+- **Contents:** the `daily` sections for today (calendar, mail since last evening, reminders, habits), with
+  `sleep` and `recovery` first. The greeting is spoken and knows the time: when you got up, how you slept compared
+  with usual, recovery in a few words, then what's next and when to leave. Example: *"Morning. You're up at 8:10
+  after 6h40, a bit under your usual, and your body looks recovered. Lecture at 9:30 in Città Studi: leave by 8:55
+  by tram. Giulia replied about Saturday."* Travel time comes from Google Maps (`travel_time`, from home) when the
+  next event has a location and Maps is set up; otherwise the greeting just gives the time.
+- **Delivery:** a `digest` push with `"digest": "wake"` (title "Good morning"), and a Discord DM when the digest
+  settings' `discord` is true, like the scheduled digests.
+- **Opening it:** `POST /v1/conversations` with `{"digest": "wake"}` uses today's wake greeting. If there's none
+  today, it does what `daily` does. `GET /v1/digest?kind=wake` returns the latest one (`404` before the first).
+
+### In chat
+
+The assistant gets a read-only `health` tool over the stored days: sleep, resting heart rate, HRV, steps and
+workouts for a date range, with averages, so "how did I sleep this week?" or "when did I last work out?" works.
+Its answers are plain text; there are no health attachments yet.
 
 ## Today
 
@@ -276,7 +392,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 |---|---|---|---|---|
 | `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server | | (not shown) the app runs a reminders sync |
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
-| `digest` | alert | a scheduled digest is ready | `digest` (`daily`, `evening`, `weekly`, `monthly`) | opens a new chat with that digest (`POST /v1/conversations` with `digest`) |
+| `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens a new chat with that digest (`POST /v1/conversations` with `digest`) |
 | `message` | alert | Aide writes first (future use: briefings, leave-now alerts) | `conversation_id` | opens that conversation |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
