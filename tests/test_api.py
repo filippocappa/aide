@@ -301,6 +301,15 @@ def test_reminders_carry_their_list(env):
     assert store.lists() == ["Reminders", "Groceries"]  # and doesn't wipe the lists
 
 
+def test_a_reminder_from_before_lists_learns_its_list(env):
+    client, _, store = env()
+    rem = store.create("Call mum")  # list unknown, and the phone's copy isn't newer
+    stale = {"id": rem.id, "apple_id": "apple-2", "title": "Call mum", "list": "Reminders",
+             "modified_at": iso(rem.modified_at - timedelta(minutes=1))}
+    client.post("/v1/reminders/sync", json={"changes": [stale]}, headers=AUTH)
+    assert store.get(rem.id).list == "Reminders"
+
+
 async def test_agents_use_lists(env):
     _, agent, store = env()
     store.set_lists(["Reminders", "Groceries"], "Reminders")
