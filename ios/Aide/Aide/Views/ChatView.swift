@@ -75,9 +75,11 @@ struct ChatView: View {
         }) {
             RoutinesSheet(agent: chat.agent) { pastChoice = $0; showRoutines = false }
         }
-        .onChange(of: voice.transcript) { _, text in if voice.isListening { draft = text } }
-        .onChange(of: voice.isListening) { _, listening in if !listening { draft = "" } }
-        .onChange(of: voice.isActive) { _, active in if active { composerFocused = false } } // no keyboard in voice
+        .onChange(of: voice.isActive) { _, active in
+            if active { composerFocused = false } // no keyboard in voice
+            UIApplication.shared.isIdleTimerDisabled = active // locking would cut off the microphone
+        }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 
     private static let voiceHeader: CGFloat = 330
@@ -105,6 +107,10 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: voice.isActive ? Self.voiceHeader : Self.headerHeight, alignment: .top)
                 .opacity(isEmpty && !voice.isActive ? 0 : 1)
+                // In a voice chat, tapping Pebble while it listens sends what you said without waiting for the pause.
+                .simultaneousGesture(TapGesture().onEnded {
+                    if voice.phase == .waiting || voice.phase == .hearing { voice.sendNow() }
+                })
             if !voice.isActive { buttons.transition(.opacity) }
         }
     }

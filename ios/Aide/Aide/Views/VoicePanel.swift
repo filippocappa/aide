@@ -1,39 +1,48 @@
 import SwiftUI
 
-/// The voice-chat half of the chat screen: status, the words said so far, and an End button.
-/// Pebble itself stays above, grown big.
+/// The voice-chat half of the chat screen: status, this turn's words, and End.
+/// Pebble itself stays above, grown big (tap it to send without waiting for the pause). Everything comes from the voice turn's `phase`, so nothing from an
+/// earlier turn shows while you talk.
 struct VoicePanel: View {
     @EnvironmentObject private var voice: VoiceController
     @EnvironmentObject private var chat: ChatViewModel
 
     private var status: String {
-        if voice.isListening { return voice.transcript.isEmpty ? "Listening…" : "Listening" }
-        if voice.isTranscribing { return "Writing it down…" }
-        if voice.isSpeaking { return "Speaking" }
-        if chat.isSending { return "Thinking…" }
-        return " "
+        switch voice.phase {
+        case .off: " "
+        case .waiting: "Listening…"
+        case .hearing: "Listening"
+        case .transcribing: "Writing it down…"
+        case .thinking: "Thinking…"
+        case .speaking: "Speaking"
+        }
     }
 
-    private var lastUser: ChatViewModel.Message? { chat.messages.last { $0.role == .user } }
-    private var lastReply: ChatViewModel.Message? { chat.messages.last { $0.role == .assistant } }
+    /// Aide's answer this turn: as it's written, then the reply itself while it's read out.
+    private var reply: ChatViewModel.Message? {
+        let live = chat.liveReply.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !live.isEmpty, voice.phase == .thinking || voice.phase == .speaking {
+            return ChatViewModel.Message(role: .assistant, text: live)
+        }
+        guard voice.phase == .speaking || voice.phase == .waiting && !voice.said.isEmpty else { return nil }
+        return chat.messages.last { $0.role == .assistant }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Text(status).font(.subheadline).foregroundStyle(.secondary).padding(.bottom, 12)
 
-            // What was said, so you can read as well as hear.
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if voice.isListening, !voice.transcript.isEmpty {
-                        line("You", voice.transcript)
-                    } else if let u = lastUser {
-                        line("You", u.text)
-                    }
-                    if !voice.isListening || voice.transcript.isEmpty, let r = lastReply, lastUser != nil {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(chat.agent.name).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            RichText(text: r.text, isError: r.isError)
-                        }
+                    switch voice.phase {
+                    case .off: EmptyView()
+                    case .hearing:
+                        if !voice.transcript.isEmpty { line("You", voice.transcript) }
+                    case .waiting:
+                        // The turn before, faded, until you start talking.
+                        exchange.opacity(0.45)
+                    case .transcribing, .thinking, .speaking:
+                        exchange
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -53,6 +62,17 @@ struct VoicePanel: View {
                     .background(Theme.accent, in: Capsule())
             }
             .padding(.vertical, 18)
+        }
+    }
+
+    @ViewBuilder
+    private var exchange: some View {
+        if !voice.said.isEmpty { line("You", voice.said) }
+        if let reply {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(chat.agent.name).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                RichText(text: reply.text, isError: reply.isError)
+            }
         }
     }
 

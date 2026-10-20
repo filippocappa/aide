@@ -16,13 +16,20 @@ import SwiftUI
 ///
 /// Replies play through the same audio engine as the microphone, with voice processing on, so echo
 /// cancellation removes Aide's own voice from what it hears.
+///
+/// You're talking when the live preview hears words or `SpeechDetector` hears your voice over the room's noise.
+/// Each turn goes through `phase`, which is all the voice panel shows. `VoiceLog` keeps a diary for tuning.
 @MainActor
 final class VoiceController: ObservableObject {
     @Published private(set) var isListening = false
     @Published private(set) var isSpeaking = false
+    /// Your words as you say them (the live preview).
     @Published private(set) var transcript = ""
-    /// The recording is with the server, being written down.
-    @Published private(set) var isTranscribing = false
+    /// Where this turn is: waiting for you, hearing you, writing it down, thinking, or Aide speaking.
+    enum Phase { case off, waiting, hearing, transcribing, thinking, speaking }
+    @Published private(set) var phase = Phase.off
+    /// What you said in the latest turn, once it's sent: the preview's words, then the server's.
+    @Published private(set) var said = ""
     /// 0…1 microphone loudness while listening.
     @Published private(set) var level: CGFloat = 0
     @Published var error: String?
@@ -37,14 +44,12 @@ final class VoiceController: ObservableObject {
 
     /// How long a pause has to be before what you said is sent.
     private static let pauseBeforeSending: TimeInterval = 2.4
-    /// How long it waits for you to start talking before ending the voice chat.
-    private static let giveUpAfter: TimeInterval = 10
+    /// Apple's recogniser only: how long it waits for you to start talking before ending the voice chat.
+    /// Recording for the server waits until you tap End.
+    private static let giveUpAfter: TimeInterval = 30
     /// Recording for the server: how long a silence ends what you're saying, and the longest it records.
-    private static let silenceBeforeSending: TimeInterval = 1.4
+    private static let silenceBeforeSending: TimeInterval = 1.8
     private static let longestRecording: TimeInterval = 60
-    /// Microphone level (0…1) that counts as talking; higher while Aide talks, so its echo doesn't.
-    private static let talking: CGFloat = 0.12
-    private static let talkingOver: CGFloat = 0.3
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -76,17 +81,27 @@ final class VoiceController: ObservableObject {
     private var recording = false
     /// The server answered that it can't transcribe: Apple's recogniser from then on.
     private var serverOff = false
-    /// While recording: you've started talking, when you were last heard, and how many loud buffers in a row.
+    /// While recording: you've started talking, and when you were last heard (loud, or new words).
     private var heardSpeech = false
     private var lastLoud = Date()
-    private var loudRun = 0
+    private var detector = SpeechDetector()
+    /// The live preview: words from recognitions that already ended this turn, the current one's, and when it began.
+    private var previewEarlier = ""
+    private var previewNow = ""
+    private var previewStartedAt = Date()
+    /// For the once-a-second line in the log: the loudest buffer, how many buffers came, the biggest raw sample.
+    private var loudest = -100.0
+    private var buffers = 0
+    private var biggest: Float = 0
+    private var loggedAt = Date()
+    private var configObserver: NSObjectProtocol?
 
     var isActive: Bool { isListening || isSpeaking || conversation }
 
     // MARK: Listening
 
     func toggle() async {
-        if isActive { stopAll() } else { conversation = true; await startListening() }
+        if isActive { stopAll() } else { conversation = true; said = ""; await startListening() }
     }
 
     func stopAll() {
@@ -137,14 +152,19 @@ final class VoiceController: ObservableObject {
         isListening = true
         lastChange = Date()
         startedAt = Date()
+        if !isSpeaking { phase = .waiting }
         task = recognizer.recognitionTask(with: req) { [weak self] result, err in
             Task { @MainActor in
                 guard let self, self.isListening, self.feed.request === req else { return }
                 if let result {
                     let text = result.bestTranscription.formattedString
                     if text != self.transcript { self.transcript = text; self.lastChange = Date() }
+                    if !self.isSpeaking, !text.isEmpty { self.phase = .hearing }
                     // You started talking over it: stop and listen. A lone sound isn't enough.
-                    if self.isSpeaking, text.trimmingCharacters(in: .whitespaces).count >= 3 { self.stopSpeaking() }
+                    if self.isSpeaking, text.trimmingCharacters(in: .whitespaces).count >= 3 {
+                        self.stopSpeaking()
+                        self.phase = .hearing
+                    }
                     if result.isFinal { self.isSpeaking ? self.relisten() : self.finishListening(send: true) }
                 } else if err != nil {
                     // While it talks, a recogniser that gave up ("no speech") just starts over.
@@ -159,38 +179,79 @@ final class VoiceController: ObservableObject {
 
     /// Records for the server until you pause (`heard` decides when you're talking).
     private func startRecording() {
+        VoiceLog.note(isSpeaking ? "listening while Aide speaks" : "your turn")
         feed.recorder = PCMRecorder(input: engine.inputNode.outputFormat(forBus: 0))
         recording = true
         heardSpeech = false
-        loudRun = 0
+        detector.newTurn()
         transcript = ""
+        previewEarlier = ""
+        previewNow = ""
         error = nil
         isListening = true
         startedAt = Date()
-        if !isSpeaking { startPreview() }
+        if !isSpeaking { phase = .waiting; startPreview() }
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
     }
 
-    /// While recording: Apple's recogniser, on the phone, shows what it hears as you talk. Only to show: what's
-    /// sent is the server's transcript. Not while Aide talks (it would show Aide), and not without permission.
+    /// While recording: Apple's recogniser, on the phone, shows what it hears as you talk, and its words tell that
+    /// you're talking. What's sent is the server's transcript. Not while Aide talks (it would hear Aide), and not
+    /// without permission.
     private func startPreview() {
-        guard recording, feed.request == nil, SFSpeechRecognizer.authorizationStatus() == .authorized,
+        guard recording, feed.request == nil else { return }
+        guard SFSpeechRecognizer.authorizationStatus() == .authorized,
               let recognizer = SFSpeechRecognizer(locale: Locale(identifier: languageCode())), recognizer.isAvailable
-        else { return }
+        else { VoiceLog.note("no live preview: speech recognition is off or unavailable"); return }
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
         self.recognizer = recognizer
         feed.request = req
-        task = recognizer.recognitionTask(with: req) { [weak self] result, _ in
-            guard let text = result?.bestTranscription.formattedString else { return }
+        previewStartedAt = Date()
+        task = recognizer.recognitionTask(with: req) { [weak self] result, err in
+            let text = result?.bestTranscription.formattedString
+            let ended = err != nil || result?.isFinal == true
+            let why = err?.localizedDescription ?? "finished"
             Task { @MainActor in
                 guard let self, self.recording, self.feed.request === req else { return }
-                self.transcript = text
+                if let text { self.previewHeard(text) }
+                if ended { self.previewEnded(why) }
             }
         }
+    }
+
+    /// New words are the surest sign you're talking, however quietly.
+    private func previewHeard(_ text: String) {
+        previewNow = text
+        let all = [previewEarlier, text].filter { !$0.isEmpty }.joined(separator: " ")
+        guard all != transcript else { return }
+        transcript = all
+        guard !isSpeaking, !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        if !heardSpeech { youStarted("words") }
+        lastLoud = Date()
+    }
+
+    /// Apple ends a recognition after a few seconds of silence, and after about a minute anyway: start another,
+    /// keeping the words so far. One that ends straight away (offline, say) waits a second before the next.
+    private func previewEnded(_ why: String) {
+        VoiceLog.note("preview ended (\(why)), starting another")
+        previewEarlier = [previewEarlier, previewNow].filter { !$0.isEmpty }.joined(separator: " ")
+        previewNow = ""
+        stopPreview()
+        let quick = Date().timeIntervalSince(previewStartedAt) < 1
+        Task {
+            if quick { try? await Task.sleep(for: .seconds(1)) }
+            guard recording, !isSpeaking else { return }
+            startPreview()
+        }
+    }
+
+    private func youStarted(_ how: String) {
+        heardSpeech = true
+        phase = .hearing
+        VoiceLog.note("heard you: \(how)")
     }
 
     private func stopPreview() {
@@ -199,18 +260,21 @@ final class VoiceController: ObservableObject {
         feed.request = nil
     }
 
-    /// Each microphone buffer's level, while recording: is that you talking? Over Aide's voice it takes a louder
-    /// quarter second to count, and then Aide stops and the recording keeps what you'd started to say.
-    private func heard(_ level: CGFloat) {
+    /// Each microphone buffer, while recording: is that you talking? Over Aide's voice it takes louder and longer
+    /// to count, and then Aide stops and the recording keeps what you'd started to say.
+    private func heard(level: CGFloat, db: Double, duration: TimeInterval, peak: Float) {
         self.level = level
+        buffers += 1
+        biggest = max(biggest, peak)
         guard isListening, recording else { return }
-        let loud = level > (isSpeaking ? Self.talkingOver : Self.talking)
-        loudRun = loud ? loudRun + 1 : 0
+        let talking = detector.feed(db, duration: duration, strict: isSpeaking)
+        loudest = max(loudest, db)
         if isSpeaking {
-            if loudRun >= 12 {
+            if talking {
+                VoiceLog.note("you talked over Aide (\(Int(db)) dB)")
                 stopSpeaking()
                 feed.recorder?.keepLast(0.8)
-                heardSpeech = true
+                youStarted("over Aide")
                 lastLoud = Date()
                 startPreview()
             } else {
@@ -218,20 +282,41 @@ final class VoiceController: ObservableObject {
             }
             return
         }
-        if loudRun >= 3 { heardSpeech = true }
-        if loud, heardSpeech { lastLoud = Date() }
+        if talking {
+            if !heardSpeech { youStarted("voice, \(Int(db)) dB over a bar of \(Int(detector.bar))") }
+            lastLoud = Date()
+        }
+        // Before you're heard, the last 20 s: no long silence, but all of it if you tap Send having been missed.
+        if !heardSpeech { feed.recorder?.keepLast(20) }
     }
 
-    /// Sends after a pause; gives up if nothing was said. While Aide talks only an interruption counts.
+    /// You're done: send what you've said now, without waiting for the pause.
+    func sendNow() {
+        guard isListening, !isSpeaking else { return }
+        VoiceLog.note("send now")
+        finishListening(send: true, force: true)
+    }
+
+    /// Sends after a pause. Apple's recogniser gives up if nothing was said. While Aide talks only an interruption
+    /// counts.
     private func tick() {
+        if recording, Date().timeIntervalSince(loggedAt) >= 1 {
+            VoiceLog.note("loudest \(Int(loudest)) dB, noise \(Int(detector.noise ?? -100)), bar \(Int(detector.bar)), "
+                          + "talking bar \(Int(detector.talkingBar)), "
+                          + "\(heardSpeech ? "heard" : "waiting"), preview \(feed.request == nil ? "off" : "on"), "
+                          + "\(buffers) buffers, biggest sample \(String(format: "%.6f", biggest)), "
+                          + "engine \(engine.isRunning ? "running" : "stopped")")
+            loudest = -100
+            buffers = 0
+            biggest = 0
+            loggedAt = Date()
+        }
         guard isListening, !isSpeaking else { return }
         if recording {
             let now = Date()
             if heardSpeech, now.timeIntervalSince(lastLoud) > Self.silenceBeforeSending
                 || (feed.recorder?.duration ?? 0) > Self.longestRecording {
                 finishListening(send: true)
-            } else if !heardSpeech, now.timeIntervalSince(startedAt) > Self.giveUpAfter {
-                stopAll()
             }
             return
         }
@@ -240,7 +325,8 @@ final class VoiceController: ObservableObject {
         else if transcript.isEmpty, Date().timeIntervalSince(startedAt) > Self.giveUpAfter { stopAll() }
     }
 
-    private func finishListening(send: Bool) {
+    /// `force`: send the recording even though nothing in it counted as talking (you tapped Send).
+    private func finishListening(send: Bool, force: Bool = false) {
         guard isListening else { return }
         timer?.invalidate(); timer = nil
         if recording {
@@ -250,9 +336,16 @@ final class VoiceController: ObservableObject {
             recording = false
             isListening = false
             level = 0
-            if send, heardSpeech, let wav = recorder?.wav() {
+            VoiceLog.note("stopped recording: send \(send), heard \(heardSpeech), "
+                          + "\(String(format: "%.1f", recorder?.duration ?? 0)) s, preview \(transcript.split(separator: " ").count) words")
+            if send, heardSpeech || force, let wav = recorder?.wav() {
+                said = transcript
+                transcript = ""
+                phase = .transcribing
                 Task { await transcribeAndSend(wav) }
-            } else if !send {
+            } else if send {
+                listenAgain() // nothing to send: keep listening
+            } else {
                 conversation = false
                 stopSpeaking()
                 teardown()
@@ -267,6 +360,8 @@ final class VoiceController: ObservableObject {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = ""
         if send, !text.isEmpty {
+            said = text
+            phase = .thinking
             Task { await onUtterance?(text) }
         } else if !send {
             conversation = false
@@ -278,14 +373,20 @@ final class VoiceController: ObservableObject {
     /// The recording to the server, and what it heard on to the chat. Nothing heard: listen again.
     private func transcribeAndSend(_ wav: Data) async {
         guard let transcribe else { return }
-        isTranscribing = true
         do {
             let text = try await transcribe(wav).trimmingCharacters(in: .whitespacesAndNewlines)
-            isTranscribing = false
+            VoiceLog.note("transcribed \(wav.count / 1000) KB: \(text.split(separator: " ").count) words")
             guard conversation else { return } // ended meanwhile
-            if text.isEmpty { listenAgain() } else { await onUtterance?(text) }
+            if text.isEmpty {
+                said = ""
+                listenAgain()
+            } else {
+                said = text
+                phase = .thinking
+                await onUtterance?(text)
+            }
         } catch {
-            isTranscribing = false
+            VoiceLog.note("transcribing failed: \(error.localizedDescription)")
             guard conversation else { return }
             if case APIError.server(status: 503, _) = error {
                 serverOff = true
@@ -324,6 +425,12 @@ final class VoiceController: ObservableObject {
     /// Microphone in and replies out through one engine, for the whole voice conversation.
     private func startEngine() throws {
         guard !engine.isRunning else { return }
+        if configObserver == nil {
+            configObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.engineChanged() }
+            }
+        }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
@@ -341,16 +448,34 @@ final class VoiceController: ObservableObject {
             recorder?.append(buffer)
             guard let samples = buffer.floatChannelData?[0] else { return }
             let n = Int(buffer.frameLength)
-            var sum: Float = 0
-            for i in stride(from: 0, to: n, by: 4) { sum += samples[i] * samples[i] }
-            let rms = sqrt(sum / Float(max(1, n / 4)))
-            Task { @MainActor in self?.heard(CGFloat(min(1, rms * 9))) }
+            let db = SpeechDetector.decibels(samples, count: n)
+            let duration = Double(n) / buffer.format.sampleRate
+            let level = CGFloat(min(1, 9 * pow(10, db / 20))) // the Pebble's pulse
+            var peak: Float = 0
+            for i in stride(from: 0, to: n, by: 4) { peak = max(peak, abs(samples[i])) }
+            Task { @MainActor in self?.heard(level: level, db: db, duration: duration, peak: peak) }
         }
         engine.prepare()
         try engine.start()
+        detector.reset()
+        let route = session.currentRoute.inputs.map { "\($0.portType.rawValue) \($0.portName)" }.joined(separator: ", ")
+        VoiceLog.note("microphone on: \(input.outputFormat(forBus: 0)), input \(route.isEmpty ? "none" : route), "
+                      + "\(session.category.rawValue) \(session.mode.rawValue), \(Int(session.sampleRate)) Hz, "
+                      + "voice processing \(input.isVoiceProcessingEnabled), muted \(input.isVoiceProcessingInputMuted), "
+                      + "permission \(AVAudioApplication.shared.recordPermission.rawValue)")
+    }
+
+    /// iOS changed the audio setup (voice processing coming up, a route change, a call) and stopped the engine:
+    /// without this the microphone just goes quiet. Start it again, recording on where it was.
+    private func engineChanged() {
+        VoiceLog.note("audio setup changed, engine \(engine.isRunning ? "running" : "stopped")")
+        guard conversation, !engine.isRunning else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        do { try startEngine() } catch { VoiceLog.note("couldn't restart the microphone: \(error.localizedDescription)") }
     }
 
     private func teardown() {
+        phase = .off
         player.stop()
         stopPreview()
         feed.recorder = nil
@@ -427,6 +552,7 @@ final class VoiceController: ObservableObject {
             buffersPlaying = 0
             speechWritten = false
             isSpeaking = true
+            phase = .speaking
             listenAgain()
         }
         if !writing { writeNext() }
@@ -486,6 +612,10 @@ final class VoiceController: ObservableObject {
         lastChange = Date()
         startedAt = Date()
         feed.recorder?.keepLast(0)
+        transcript = ""
+        previewEarlier = ""
+        previewNow = ""
+        if isListening { phase = .waiting; VoiceLog.note("your turn") }
         startPreview()
         listenAgain()
     }
@@ -559,15 +689,16 @@ final class PCMRecorder: @unchecked Sendable {
     static let sampleRate = 16_000.0
     private let lock = NSLock()
     private let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true)!
-    private let converter: AVAudioConverter?
+    private var converter: AVAudioConverter? // only touched on the audio thread after init
     private var samples = Data()
 
     init(input: AVAudioFormat) {
         converter = AVAudioConverter(from: input, to: format)
     }
 
-    /// On the audio thread.
+    /// On the audio thread. A microphone restarted in another format gets a new converter.
     func append(_ buffer: AVAudioPCMBuffer) {
+        if converter?.inputFormat != buffer.format { converter = AVAudioConverter(from: buffer.format, to: format) }
         guard let converter else { return }
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * Self.sampleRate / buffer.format.sampleRate) + 64
         guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return }
