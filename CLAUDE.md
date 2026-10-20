@@ -47,13 +47,13 @@ Rules that matter here:
 
 ## iOS app (MacBook)
 
-SwiftUI, iOS 17+, Xcode project in `ios/Aide/`. Paid Apple Developer Program account (bought 2026-10-18;
-enrolment may still be finishing), so:
+SwiftUI, iOS 17+, Xcode project in `ios/Aide/`. Paid Apple Developer Program account (active since
+2026-10-20; team `6HCM796G2T`), so:
 - Sign with the paid team, not "Personal Team". Installs last a year, and TestFlight is available.
-- **Push notifications** (APNs): built on both sides, live once the `.p8` key exists. `PushService` registers the
+- **Push notifications** (APNs): live since 2026-10-20 (key `79B9MDBW26` on `cappa`, in `~/.config/aide/`). `PushService` registers the
   device token, silent `sync` pushes run the reminders sync, taps route through `AppEnvironment.open(_:)`.
 - Push is opt-in per Mac: `AIDE_ENTITLEMENTS = Aide/Aide.entitlements` in `ios/Aide/Config/Signing.local.xcconfig`
-  (see the `.example`). A Personal Team can't sign it, so leave it out until the paid team is active.
+  (see the `.example`). This MacBook has it on. A Personal Team can't sign it.
 - The team ID goes in `Signing.local.xcconfig`, not in Xcode's Signing tab: `xcodegen generate` rewrites the project.
 - Develop against the **Simulator** (no signing needed). Install on the phone only to try it for real.
 
@@ -96,12 +96,11 @@ Where things stand (2026-10-19, evening):
 greeting as the first chat message with a Details sheet, digest settings, reminder and event cards with tick
 boxes in chat from `attachments`, the habit grid from `history` (9f24ec4).
 
-**Done, both sides, not yet tried live:** push (issue #1). Server: devices endpoints, APNs sender, silent `sync`
+**Done, live (2026-10-20):** push (#1). Server: devices endpoints, APNs sender, silent `sync`
 on server-side reminder changes, `reminder` and `digest` alerts with Discord as the fallback. App: device
 registration, background sync on silent pushes, taps open the digest chat, the conversation or Details, and
-Settings → Notifications with a test button. Needs the `.p8` key (README.md, "Push notifications") once the
-developer enrolment finishes; then install on the phone and send a test. App unit tests not yet run (this Mac
-had no Simulator runtime on 2026-10-19).
+Settings → Notifications with a test button. The test push reached the phone. App unit tests not yet run (this
+Mac has no Simulator runtime yet).
 
 **Done, both sides, not yet tried live:** Apple Health (#2), contract in `docs/API.md` ("Apple Health"). App:
 daily health summaries with a 60-day backfill, HealthKit background delivery, the "I'm up" App Intent for a
@@ -123,7 +122,8 @@ server-sent events (checked through `tailscale serve`, not buffered). Writing in
 @mentions pick who answers (else Aide, which may ask the others), each sees the last 30 team messages, streamed
 with `working`, `team` and `done`. Discord stays on Aide. App (455ffcb): the "Your team" home grid, a drawn
 figure per agent (`Support/Figure.swift`), team talk streamed live above Aide's reply, the Team chat on the home
-screen with a message box and @mention chips. Not yet tried on the phone.
+screen with a message box and @mention suggestions while typing "@". Being tried on the phone (#11); a follow-up
+without a mention should go to whoever answered last (#16, server).
 
 **Done, both sides, not yet tried live:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
 and `run`, a chat per routine (`routine` on conversation rows and on the messages a run posts), the scheduler
@@ -134,8 +134,10 @@ long-press or the chat's ••• menu, an editor (time, days, on/off), the age
 chats and on the messages a run posts.
 
 **Next** (filed as GitHub issues, #11 first):
-1. Try it all on the phone (#11): the ••• menu fix, team grid, team talk, Team chat, routines; then push with the
-   `.p8` key (#1), and Discord becomes optional.
+1. Try it all on the phone (#11): the ••• menu fix, team grid, team talk, Team chat, routines. Push is live, so
+   Discord is now optional.
+   Reminders sync only one Apple Reminders list, so lists like groceries are invisible to the agents (to decide:
+   sync several lists, each reminder carrying its list).
 2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
    proactive specialists (#13), a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
 3. The Professor gets the study agent (#3) and exam mode (#4). Finance still has no data source (memory only).
