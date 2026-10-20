@@ -28,12 +28,39 @@ class FakeClient:
     def __init__(self, responses):
         self.responses = list(responses)
         self.requests = []
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create, stream=self._stream))
 
     async def _create(self, **kwargs):
         self.requests.append(kwargs)
         stop_reason, content = self.responses.pop(0)
         return SimpleNamespace(stop_reason=stop_reason, content=content)
+
+    def _stream(self, **kwargs):
+        return FakeStream(self._create(**kwargs))
+
+
+class FakeStream:
+    """messages.stream(): each text block as a block start, then its words one by one."""
+
+    def __init__(self, response):
+        self.pending = response
+
+    async def __aenter__(self):
+        self.response = await self.pending
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def __aiter__(self):
+        for block in self.response.content:
+            yield SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type=block.type))
+            if block.type == "text":
+                for i, word in enumerate(block.text.split(" ")):
+                    yield SimpleNamespace(type="text", text=word if i == 0 else " " + word)
+
+    async def get_final_message(self):
+        return self.response
 
 
 def done(text):
@@ -362,9 +389,12 @@ def test_streamed_chat_sends_team_then_the_reply(env):
     r = client.post("/v1/chat", json={"text": "delete bins", "stream": True}, headers=AUTH)
     assert r.headers["content-type"].startswith("text/event-stream")
     got = events(r)
-    assert [e for e, _ in got] == ["team", "team", "reply"]
+    assert [e for e, _ in got] == ["team", "team", "text", "text", "text", "reply"]
     assert got[0][1]["text"] == "Delete Bins\nplease" and got[1][1]["from"] == "secretary"
-    reply = got[2][1]
+    # Only Aide's own reply is streamed, not Secretary's answer, and it starts a fresh draft after the ask.
+    assert [d for _, d in got[2:5]] == [{"delta": "Secretary", "restart": True}, {"delta": " queued", "restart": False},
+                                        {"delta": " it.", "restart": False}]
+    reply = got[5][1]
     assert reply["reply"] == "Secretary queued it." and reply["team"] == [got[0][1], got[1][1]]
     assert len(reply["pending"]) == 1  # the usual queue: nothing deleted until !yes
     assert store.get(rem.id) and not store.get(rem.id).deleted
@@ -373,7 +403,20 @@ def test_streamed_chat_sends_team_then_the_reply(env):
 def test_streamed_chat_without_asks_is_just_the_reply(env):
     client, _, _ = env([done("hi")])
     got = events(client.post("/v1/chat", json={"text": "hi", "stream": True}, headers=AUTH))
-    assert [e for e, _ in got] == ["reply"] and got[0][1]["team"] == []
+    assert got[0] == ("text", {"delta": "hi", "restart": False})
+    assert [e for e, _ in got] == ["text", "reply"] and got[1][1]["team"] == []
+
+
+def test_streamed_text_starts_over_after_tools(env):
+    """Text before a tool call is a draft: the round after the tools replaces it, and the reply is only that."""
+    client, agent, _ = env([("tool_use", [Block(type="text", text="Let me check."),
+                                          Block(type="tool_use", id="t0", name="list_events", input={})]),
+                            ("end_turn", [Block(type="text", text="Free"), Block(type="text", text="all day.")])])
+    got = events(client.post("/v1/chat", json={"text": "busy?", "stream": True}, headers=AUTH))
+    texts = [d for e, d in got if e == "text"]
+    assert [d["restart"] for d in texts] == [False, False, False, True, False, False, False]
+    assert "".join(d["delta"] for d in texts[3:]) == "Free\n\nall day."
+    assert got[-1][1]["reply"] == "Free\n\nall day."
 
 
 def test_streamed_chat_errors(env):

@@ -72,7 +72,7 @@ order: each ask, then that agent's answer. The app draws it above the reply as a
 ```
 
 **Live, while Aide works.** With `"stream": true` in the body, `POST /v1/chat` answers with `text/event-stream`
-instead of JSON, so the app can show each team message as it happens:
+instead of JSON, so the app can show each team message as it happens, and the reply as it's written:
 
 ```
 event: team
@@ -81,12 +81,23 @@ data: {"from": "aide", "to": "coach", "text": "…", "ts": "…"}
 event: team
 data: {"from": "coach", "to": "aide", "text": "…", "ts": "…"}
 
+event: text
+data: {"delta": "Coach says", "restart": true}
+
+event: text
+data: {"delta": " go easy tonight.", "restart": false}
+
 event: reply
 data: { the usual /v1/chat body, including the whole "team" }
 ```
 - Each event is one `event:` line, one `data:` line of JSON (no line breaks inside), then a blank line.
 - `team` events come as they happen: the ask when Aide sends it (the app then shows that agent thinking), the
   answer when the agent is done. `reply` is always the last event, and the stream ends after it.
+- `text` events are the chat's own agent writing its reply, a few words at a time (`delta`, append it). Only that
+  agent's: the answers it gets from the others come as `team`. Text written before it uses a tool ("Let me
+  check.") streams too; when it writes again after the tool, the first event has `"restart": true` (possibly with
+  an empty `delta`): drop the draft and start over. Speaking it aloud as it comes is fine; already spoken stays
+  spoken. `reply` has the final text: show that one. A server without `text` events just sends `reply`.
 - A failure after the stream has started is `event: error` with `data: {"error": "…"}`, then the stream ends.
   Failures before it starts (401, 400…) are plain HTTP errors as usual.
 - A server that doesn't know `stream` answers plain JSON; the app checks `Content-Type` and handles both.
