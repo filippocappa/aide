@@ -146,7 +146,8 @@ long-press or the chat's ••• menu, an editor (time, days, on/off), the age
 chats and on the messages a run posts.
 
 **Next** (filed as GitHub issues, #11 first):
-1. Try it all on the phone (#11): voice (tune the pause and loudness thresholds in `VoiceController`), streamed
+1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
+   `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
    replies, reminder lists, the team grid, Team chat, routines. Push is live, so Discord is now optional.
 2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
    proactive specialists (#13), a Goals flow per specialist (#14), digests in a feed instead of chat (#15).

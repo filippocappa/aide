@@ -56,6 +56,48 @@ final class ModelTests: XCTestCase {
         XCTAssertNil(try JSONDecoder.api.decode(Reminder.self, from: Data(#"{"id":"b","title":"x"}"#.utf8)).list)
     }
 
+    private static let buffer = 1024.0 / 48_000 // one microphone buffer
+
+    /// Feeds `db` for `seconds`; true if any buffer counted as talking.
+    private func feed(_ d: inout SpeechDetector, _ db: (Int) -> Double, for seconds: Double, strict: Bool = false) -> Bool {
+        var talking = false
+        for i in 0..<Int(seconds / Self.buffer) where d.feed(db(i), duration: Self.buffer, strict: strict) { talking = true }
+        return talking
+    }
+
+    func testSpeechDetectorHearsYouAfterASilence() {
+        var d = SpeechDetector()
+        XCTAssertFalse(feed(&d, { _ in -70 }, for: 5), "a quiet room isn't talking")
+        XCTAssertTrue(feed(&d, { _ in -42 }, for: 0.3), "a normal voice after it is")
+        XCTAssertFalse(feed(&d, { _ in -70 }, for: 1), "and quiet again isn't")
+    }
+
+    func testSpeechDetectorIgnoresTheStartFansAndClicks() {
+        var d = SpeechDetector()
+        XCTAssertFalse(feed(&d, { _ in -20 }, for: 0.25), "the moment the microphone starts doesn't count")
+        d.reset()
+        XCTAssertFalse(feed(&d, { -45 + Double($0 % 5) - 2 }, for: 6), "a steady fan isn't talking")
+        XCTAssertFalse(feed(&d, { _ in -10 }, for: 0.05), "a click isn't")
+        XCTAssertTrue(feed(&d, { _ in -25 }, for: 0.3), "a voice over the fan is")
+    }
+
+    func testTheRoomBetweenSentencesDoesntKeepTheTurnOpen() {
+        var d = SpeechDetector()
+        XCTAssertFalse(feed(&d, { _ in -75 }, for: 3))
+        XCTAssertTrue(feed(&d, { _ in -20 }, for: 1), "you, close to the phone")
+        XCTAssertFalse(feed(&d, { $0 % 3 == 0 ? -52 : -60 }, for: 2), "a TV or people between your sentences")
+        XCTAssertTrue(feed(&d, { _ in -35 }, for: 0.3), "your next sentence, a bit quieter")
+        d.newTurn()
+        XCTAssertFalse(feed(&d, { _ in -60 }, for: 0.2), "a new turn starts from the room's noise again, not your voice")
+    }
+
+    func testTalkingOverAideTakesMore() {
+        var d = SpeechDetector()
+        XCTAssertFalse(feed(&d, { _ in -70 }, for: 2))
+        XCTAssertFalse(feed(&d, { _ in -56 }, for: 0.5, strict: true), "Aide's echo isn't you")
+        XCTAssertTrue(feed(&d, { _ in -35 }, for: 0.5, strict: true), "a clear voice over it is")
+    }
+
     func testSyncResponseAcceptsNumericCursor() throws {
         let r = try JSONDecoder.api.decode(SyncResponse.self, from: Data(#"{"cursor":1720,"reminders":[]}"#.utf8))
         XCTAssertEqual(r.cursor, "1720")

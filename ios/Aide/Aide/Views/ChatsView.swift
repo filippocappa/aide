@@ -7,6 +7,7 @@ struct ChatsView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var digest: DigestViewModel
+    @EnvironmentObject private var env: AppEnvironment
     @State private var pastChats: Agent?
     @State private var routinesFor: Agent?
     @State private var infoFor: Agent?
@@ -120,10 +121,17 @@ struct ChatsView: View {
     /// Simulator screenshots: `-previewOpen team` opens the Team chat, `-previewOpen coach` Coach's latest chat,
     /// `-previewOpen new:coach` a blank one (nothing is sent until you write).
     private func openForPreview() async {
+        // On the phone, launched over the cable with `-voiceTest YES`: a voice chat with Aide, to try voice from the Mac.
+        if UserDefaults.standard.bool(forKey: "voiceTest") {
+            await chat.newChat(with: chat.orchestrator)
+            await env.voice.toggle()
+            return
+        }
         guard settings.isPreview, let target = UserDefaults.standard.string(forKey: "previewOpen") else { return }
         if target == "team" { showTeam = true; return }
         if target.hasPrefix("info:") { infoFor = chat.agent(String(target.dropFirst(5))); return }
         if target.hasPrefix("new:") { await chat.newChat(with: chat.agent(String(target.dropFirst(4)))); return }
+        if target == "voice" { await chat.newChat(with: chat.orchestrator); await env.voice.toggle(); return }
         await chat.talk(to: chat.agent(target))
     }
     #endif
