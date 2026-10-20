@@ -250,7 +250,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if conversation != CONVERSATION and db.app_conversation(conversation) is None:
             raise UnknownConversation(f"no conversation {conversation}")  # a plain 404, before the stream starts
         return streamed(
-            lambda emit: agent.respond(CONVERSATION, text, conversation, lambda t: emit("team", team_json(t))),
+            lambda emit: agent.respond(CONVERSATION, text, conversation, lambda t: emit("team", team_json(t)),
+                                       lambda delta, restart: emit("text", {"delta": delta, "restart": restart})),
             lambda turn: sse("reply", chat_json(conversation, turn)))
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])

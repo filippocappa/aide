@@ -234,10 +234,13 @@ class Agent:
         return (await self.respond(channel, text, conversation))[0]
 
     async def respond(self, channel: str, text: str, conversation: str | None = None,
-                      on_team: Callable[[dict], None] | None = None) -> Turn:
+                      on_team: Callable[[dict], None] | None = None,
+                      on_text: Callable[[str, bool], None] | None = None) -> Turn:
         """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
 
         `on_team` gets each team message as it happens: an ask when Aide sends it, the answer when it's back.
+        `on_text` gets the reply as it's written, piece by piece, and True with the first piece of a model round
+        after one that called tools: the draft starts over (the reply is the last round's text).
         """
         conversation = self._key(channel, conversation)
         async with self._lock:
@@ -248,7 +251,7 @@ class Agent:
             agent = self.db.conversation_agent(conversation_id)
             turn: list[dict] = [{"role": "user", "content": self._stamp(channel, text)}]
             try:
-                reply = await self._run(agent, channel, model, history, turn)
+                reply = await self._run(agent, channel, model, history, turn, on_text)
             finally:
                 self._on_team = None
             attachments, consulted, team = _merge(self._attachments), list(self._consulted), list(self._team)
@@ -383,9 +386,14 @@ class Agent:
             return fallback
         return title[:60] if title else fallback
 
-    async def _run(self, agent: str, channel: str, model: str, history: list[dict], turn: list[dict]) -> str:
+    async def _run(self, agent: str, channel: str, model: str, history: list[dict], turn: list[dict],
+                   on_text: Callable[[str, bool], None] | None = None) -> str:
+        restart = False  # the text so far came before a tool call: the draft starts over
         for _ in range(MAX_TOOL_ROUNDS):
-            response = await self._create(agent, model, history + turn)
+            if on_text:
+                response = await self._stream(agent, model, history + turn, on_text, restart)
+            else:
+                response = await self._create(agent, model, history + turn)
             # Store blocks exactly as returned (thinking blocks included, even when empty).
             turn.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
             text = "\n\n".join(b.text for b in response.content if b.type == "text").strip()
@@ -393,6 +401,7 @@ class Agent:
             match response.stop_reason:
                 case "tool_use":
                     turn.append({"role": "user", "content": await self._run_tools(agent, channel, response.content)})
+                    restart = True
                 case "pause_turn":
                     continue
                 case "refusal":
@@ -415,11 +424,30 @@ class Agent:
         return "I stopped after too many steps. Try asking in a simpler way."
 
     async def _create(self, agent: str, model: str, messages: list[dict]):
+        return await self.client.beta.messages.create(**self._request(agent, model, messages))
+
+    async def _stream(self, agent: str, model: str, messages: list[dict], on_text: Callable[[str, bool], None],
+                      restart: bool):
+        """Like _create, telling `on_text` the text as it comes. Text blocks in one response are joined
+        with a blank line, as in _run."""
+        written = False
+        async with self.client.beta.messages.stream(**self._request(agent, model, messages)) as stream:
+            async for event in stream:
+                if event.type == "content_block_start" and event.content_block.type == "text" and written:
+                    on_text("\n\n", False)
+                elif event.type == "text" and event.text:
+                    on_text(event.text, restart and not written)
+                    written = True
+            if restart and not written:
+                on_text("", True)  # a round with no text still clears the draft before it
+            return await stream.get_final_message()
+
+    def _request(self, agent: str, model: str, messages: list[dict]) -> dict:
         extra = {}
         if self.server_fallback and "haiku" not in model:  # Haiku has no server-side fallback
             # On a safety decline, retry server-side on Anthropic's recommended model.
             extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
-        return await self.client.beta.messages.create(
+        return dict(
             model=model,
             max_tokens=16000,
             # Two cache breakpoints: tools + system, and the conversation so far.
