@@ -21,7 +21,14 @@ CREATE TABLE IF NOT EXISTS reminders (
     modified_at TEXT NOT NULL,              -- last content change, either side (UTC)
     deleted     INTEGER NOT NULL DEFAULT 0, -- tombstone
     notified    INTEGER NOT NULL DEFAULT 0, -- Discord fallback already sent
-    seq         INTEGER NOT NULL            -- server change counter, for sync cursors
+    seq         INTEGER NOT NULL,           -- server change counter, for sync cursors
+    list        TEXT                        -- the Apple Reminders list it's in, by name; NULL: the default one
+);
+-- The phone's Apple Reminders lists, as of its last sync.
+CREATE TABLE IF NOT EXISTS reminder_lists (
+    name       TEXT PRIMARY KEY,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    position   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS reminders_seq ON reminders(seq);
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(due_at) WHERE completed = 0 AND deleted = 0;
@@ -55,11 +62,15 @@ class Reminder:
     apple_id: str | None
     modified_at: datetime
     deleted: bool = False
+    list: str | None = None
 
 
 class ReminderStore:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
+        if self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'reminders'").fetchone() and not any(
+                c["name"] == "list" for c in self.conn.execute("PRAGMA table_info(reminders)")):
+            self.conn.execute("ALTER TABLE reminders ADD COLUMN list TEXT")  # before reminder lists
         self.conn.executescript(SCHEMA)
         # Called after a server-side change (not the phone's own sync), e.g. to send a silent sync push.
         self.on_change: list[Callable[[], None]] = []
@@ -77,6 +88,7 @@ class ReminderStore:
             id=r["id"], title=r["title"], notes=r["notes"],
             due_at=parse_time(r["due_at"]), completed=bool(r["completed"]),
             apple_id=r["apple_id"], modified_at=parse_time(r["modified_at"]), deleted=bool(r["deleted"]),
+            list=r["list"],
         )
 
     def get(self, reminder_id: str) -> Reminder | None:
@@ -87,13 +99,40 @@ class ReminderStore:
         r = self.conn.execute("SELECT * FROM reminders WHERE apple_id = ?", (apple_id,)).fetchone()
         return self._row(r) if r else None
 
-    def open(self) -> list[Reminder]:
-        """Not completed, not deleted; ordered by due time, undated last."""
+    def open(self, list: str | None = None) -> list[Reminder]:
+        """Not completed, not deleted, in every list or just `list`; ordered by due time, undated last."""
         rows = self.conn.execute(
             "SELECT * FROM reminders WHERE completed = 0 AND deleted = 0 "
-            "ORDER BY due_at IS NULL, due_at, title"
+            "AND (:list IS NULL OR list = :list OR (list IS NULL AND :list = :default)) "
+            "ORDER BY due_at IS NULL, due_at, title", {"list": list, "default": self.default_list()}
         ).fetchall()
         return [self._row(r) for r in rows]
+
+    # -- lists -------------------------------------------------------------
+
+    def lists(self) -> list[str]:
+        """The phone's lists, in its order. Empty until an app that knows about lists has synced."""
+        return [r["name"] for r in self.conn.execute("SELECT name FROM reminder_lists ORDER BY position")]
+
+    def default_list(self) -> str | None:
+        r = self.conn.execute("SELECT name FROM reminder_lists WHERE is_default = 1").fetchone()
+        return r["name"] if r else None
+
+    def set_lists(self, names: list[str], default: str | None) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM reminder_lists")
+            self.conn.executemany("INSERT OR IGNORE INTO reminder_lists (name, is_default, position) VALUES (?, ?, ?)",
+                                  [(n, int(n == default), i) for i, n in enumerate(names)])
+
+    def resolve_list(self, name: str) -> str:
+        """A list the phone has, by name (any case). ValueError naming the lists for anything else."""
+        known = self.lists()
+        if not known:
+            raise ValueError("The phone hasn't shared its Reminders lists yet: leave out the list.")
+        found = next((k for k in known if k.casefold() == name.strip().casefold()), None)
+        if found is None:
+            raise ValueError(f"No Reminders list called {name!r}. The lists are: {', '.join(known)}.")
+        return found
 
     def due_before(self, end: datetime) -> list[Reminder]:
         """Open reminders due before `end` (overdue included)."""
@@ -125,26 +164,27 @@ class ReminderStore:
         old = self.get(rem.id)
         renotify = old is None or old.due_at != rem.due_at
         self.conn.execute(
-            """INSERT INTO reminders (id, title, notes, due_at, completed, apple_id, modified_at, deleted, notified, seq)
+            """INSERT INTO reminders (id, title, notes, due_at, completed, apple_id, modified_at, deleted, notified, seq,
+                                      list)
                VALUES (:id, :title, :notes, :due_at, :completed, :apple_id, :modified_at, :deleted, 0,
-                       (SELECT COALESCE(MAX(seq), 0) + 1 FROM reminders))
+                       (SELECT COALESCE(MAX(seq), 0) + 1 FROM reminders), :list)
                ON CONFLICT(id) DO UPDATE SET
                  title = excluded.title, notes = excluded.notes, due_at = excluded.due_at,
                  completed = excluded.completed, apple_id = excluded.apple_id,
-                 modified_at = excluded.modified_at, deleted = excluded.deleted,
+                 modified_at = excluded.modified_at, deleted = excluded.deleted, list = excluded.list,
                  notified = CASE WHEN :renotify THEN 0 ELSE notified END, seq = excluded.seq""",
             {
                 "id": rem.id, "title": rem.title, "notes": rem.notes,
                 "due_at": _utc(rem.due_at),
                 "completed": int(rem.completed), "apple_id": rem.apple_id,
                 "modified_at": _utc(rem.modified_at), "deleted": int(rem.deleted),
-                "renotify": int(renotify),
+                "renotify": int(renotify), "list": rem.list,
             },
         )
         return rem
 
-    def create(self, title: str, due_at: datetime | None = None, notes: str = "") -> Reminder:
-        rem = Reminder(str(uuid.uuid4()), title, notes, due_at, False, None, utcnow())
+    def create(self, title: str, due_at: datetime | None = None, notes: str = "", list: str | None = None) -> Reminder:
+        rem = Reminder(str(uuid.uuid4()), title, notes, due_at, False, None, utcnow(), list=list)
         with self.conn:
             self.conn.execute("BEGIN")
             self._save(rem)
@@ -170,8 +210,12 @@ class ReminderStore:
 
     # -- sync --------------------------------------------------------------
 
-    def sync(self, cursor: int | None, changes: list[dict]) -> tuple[int, list[Reminder]]:
-        """Apply the phone's changes, then return (new cursor, reminders the phone must apply)."""
+    def sync(self, cursor: int | None, changes: list[dict], lists: list[str] | None = None,
+             default_list: str | None = None) -> tuple[int, list[Reminder]]:
+        """Apply the phone's changes, then return (new cursor, reminders the phone must apply).
+        `lists`: the phone's Apple Reminders lists, when it sends them."""
+        if lists is not None:
+            self.set_lists(lists, default_list)
         start = cursor or 0
         touched: dict[str, Reminder] = {}
         with self.conn:
@@ -193,10 +237,13 @@ class ReminderStore:
             apple_id=c.get("apple_id"),
             modified_at=parse_time(c["modified_at"]),
             deleted=bool(c.get("deleted")),
+            list=c.get("list"),
         )
         current = self.get(incoming.id) if incoming.id else None
         if current is None and incoming.apple_id:
             current = self.by_apple_id(incoming.apple_id)  # a retry of a sync whose reply was lost
+        if "list" not in c and current is not None:
+            incoming = replace(incoming, list=current.list)  # an app from before lists: the list stays
         if current is None:
             return self._save(replace(incoming, id=incoming.id or str(uuid.uuid4())))
 

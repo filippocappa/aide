@@ -522,7 +522,8 @@ The server keeps the master list. Apple Reminders on the phone is a mirror the a
   "completed": false,
   "apple_id": "x-apple-reminder://…",    // EKReminder.calendarItemExternalIdentifier, or null if not on the phone yet
   "modified_at": "2026-10-18T11:20:00Z", // when the content last changed, on either side (UTC)
-  "deleted": false                       // tombstone: delete it on the phone too
+  "deleted": false,                      // tombstone: delete it on the phone too
+  "list": "Groceries"                    // its Apple Reminders list, by name; null: the default list
 }
 ```
 
@@ -532,11 +533,13 @@ The server keeps the master list. Apple Reminders on the phone is a mirror the a
 ```json
 {
   "cursor": "1712",   // from the previous sync; null on the first sync
+  "lists": ["Reminders", "Groceries"],  // every Apple Reminders list on the phone, in its order
+  "default_list": "Reminders",          // where reminders without a list go
   "changes": [        // reminders changed on the phone since the last sync
     {"id": "6f1c2e…" , "apple_id": "x-apple-…", "title": "…", "notes": "", "due_at": "…",
-     "completed": true, "modified_at": "2026-10-18T11:25:03Z", "deleted": false},
+     "completed": true, "modified_at": "2026-10-18T11:25:03Z", "deleted": false, "list": "Reminders"},
     {"id": null, "apple_id": "x-apple-…", "title": "Buy milk", "notes": "", "due_at": null,
-     "completed": false, "modified_at": "2026-10-18T11:26:10Z", "deleted": false}
+     "completed": false, "modified_at": "2026-10-18T11:26:10Z", "deleted": false, "list": "Groceries"}
   ]
 }
 ```
@@ -559,7 +562,13 @@ The server keeps the master list. Apple Reminders on the phone is a mirror the a
 
 **When to sync:** on app launch, on returning to the foreground, after every chat reply (the assistant may have created reminders), and on pull-to-refresh.
 
-**Which list:** the app syncs **one** Apple Reminders list, chosen in Settings (default: the system default list). Reminders in other lists stay private to the phone.
+**Which lists:** every Apple Reminders list. Each reminder carries its list by name (`list`), so the agents can
+put one in a list ("milk to Groceries"), move it, or look at one list. The app sends `lists` and `default_list`
+with every sync, and the agents may only use those names. Moving a reminder to another list on the phone is a
+change like any other. A reminder with `list: null`, or a list the phone no longer has, goes to `default_list`
+(the one chosen in Settings, else the system default), and the app then reports where it went. A change without
+`list` (an app from before lists) leaves the reminder's list as it is, and a sync without `lists` keeps the last
+ones.
 
 **Notification rule (server side):** at `due_at`, if a reminder is still not completed and has no `apple_id` (it never reached the phone), the server sends a `reminder` push (see Push), or a Discord DM if no push was delivered. Otherwise Apple Reminders notifies, and the server stays quiet.
 

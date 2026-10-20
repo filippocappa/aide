@@ -121,6 +121,7 @@ class ReminderChange(BaseModel):
     completed: bool = False
     modified_at: str
     deleted: bool = False
+    list: str | None = None
 
 
 class DeviceIn(BaseModel):
@@ -132,6 +133,8 @@ class DeviceIn(BaseModel):
 class SyncIn(BaseModel):
     cursor: str | None = None
     changes: list[ReminderChange] = []
+    lists: list[str] | None = None  # the phone's Apple Reminders lists, by name
+    default_list: str | None = None
 
 
 UNAVAILABLE = "The assistant is unavailable right now. Try again."
@@ -479,7 +482,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             cursor = int(body.cursor) if body.cursor else None
         except ValueError:
             raise HTTPException(400, "cursor must be the value returned by the last sync")
-        new_cursor, changed = store.sync(cursor, [c.model_dump() for c in body.changes])
+        # exclude_unset: a change without "list" (an app from before lists) leaves the list as it is.
+        new_cursor, changed = store.sync(cursor, [c.model_dump(exclude_unset=True) for c in body.changes],
+                                         body.lists, body.default_list)
         return {"cursor": str(new_cursor), "reminders": [reminder_json(r, tz) for r in changed]}
 
     def save_days(days: list[dict]) -> tuple[list[dict], list[dict]]:
