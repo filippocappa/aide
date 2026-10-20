@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+# Voice chats' speech to text: about a second for a sentence, Italian and English alike.
+TRANSCRIBE_MODEL = "google/gemini-3.5-flash-lite"
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ class Settings:
     apns_key_id: str | None
     apns_team_id: str | None
     apns_bundle_id: str
+    transcribe_model: str = TRANSCRIBE_MODEL
 
 
 def _required(name: str) -> str:
@@ -83,4 +86,5 @@ def load_settings() -> Settings:
         apns_key_id=os.environ.get("APNS_KEY_ID", "").strip() or None,
         apns_team_id=os.environ.get("APNS_TEAM_ID", "").strip() or None,
         apns_bundle_id=os.environ.get("APNS_BUNDLE_ID", "").strip() or "com.filippocappa.aide",
+        transcribe_model=os.environ.get("AIDE_TRANSCRIBE_MODEL", "").strip() or TRANSCRIBE_MODEL,
     )

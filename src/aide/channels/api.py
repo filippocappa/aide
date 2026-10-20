@@ -9,13 +9,14 @@ from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 import anthropic
+import httpx
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..agent import CONVERSATION, Agent, Turn, UnknownConversation
-from ..agents import AGENTS, check_agent, mentions
+from ..agents import AGENTS, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
 from ..habits import HabitStore
@@ -25,6 +26,7 @@ from ..push import Push
 from ..reminders import ReminderStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
+from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..wake import WakeService
 
 log = logging.getLogger(__name__)
@@ -144,7 +146,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                tz: ZoneInfo, token: str, habits: HabitStore | None = None,
                digest: DigestService | None = None, push: Push | None = None,
                health: HealthStore | None = None, wake: WakeService | None = None,
-               notify: Callable[[str], Awaitable[bool]] | None = None) -> FastAPI:
+               notify: Callable[[str], Awaitable[bool]] | None = None,
+               transcriber: Transcriber | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -351,7 +354,29 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/agents", dependencies=[Depends(auth)])
     async def agents():
-        return {"agents": [a.as_json() for a in AGENTS.values()]}
+        out = []
+        for a in AGENTS.values():
+            tools = [t.name for t in agent.registries[a.id]]
+            out.append({**a.as_json(), "prompt": a.prompt, "tools": tools, "connectors": connectors(tools)})
+        return {"agents": out}
+
+    @app.post("/v1/transcribe", dependencies=[Depends(auth)])
+    async def transcribe(request: Request, language: str | None = Query(default=None, max_length=20)):
+        if transcriber is None:
+            raise HTTPException(503, "transcription needs OPENROUTER_API_KEY on the server")
+        fmt = AUDIO_FORMATS.get(request.headers.get("content-type", "").split(";")[0].strip().lower())
+        if fmt is None:
+            raise HTTPException(415, "send the recording as audio/wav, audio/mpeg or audio/mp4")
+        audio = await request.body()
+        if not audio:
+            raise HTTPException(400, "the recording is empty")
+        if len(audio) > MAX_AUDIO:
+            raise HTTPException(413, "the recording is too long")
+        try:
+            return {"text": await transcriber(audio, fmt, language)}
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
+            log.error("transcription failed: %s", e)
+            raise HTTPException(502, "couldn't transcribe that, try again")
 
     @app.delete("/v1/conversations/{conversation_id}", dependencies=[Depends(auth)])
     async def delete_conversation(conversation_id: str):

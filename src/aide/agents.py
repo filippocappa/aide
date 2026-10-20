@@ -10,8 +10,8 @@ from dataclasses import dataclass
 ORCHESTRATOR = "aide"
 
 # Tools every agent gets, whatever its domain.
-COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued",
-                "list_routines", "create_routine", "update_routine", "delete_routine")
+ROUTINES = ("list_routines", "create_routine", "update_routine", "delete_routine")
+COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", *ROUTINES)
 CALENDAR_READ = ("list_calendars", "list_events", "search_events")
 CALENDAR = (*CALENDAR_READ, "create_event", "move_event", "delete_event")
 REMINDERS = ("create_reminder", "list_reminders", "update_reminder", "complete_reminder", "delete_reminder")
@@ -196,7 +196,7 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
              ("Explain ", "Make me a study plan for "), PROFESSOR_PROMPT, WEB,
              routine_ideas=(_idea("Review what I studied", "Ask me what I studied this week, then quiz me on it with "
                                   "a few short questions.", "17:00", (7,)),)),
-    AgentDef("coach", "Coach", "Sleep, training and habits", "#E0782F",
+    AgentDef("coach", "Coach", "Sleep, training and habits", "#23A26D",
              ("How did I sleep this week?", "Should I train hard today?"),
              COACH_PROMPT, (*HEALTH, *HABITS, *CALENDAR_READ, *WEB),
              routine_ideas=(_idea("Weekly recap", "Recap my sleep, training and habits for the week, and suggest one "
@@ -208,6 +208,31 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
 )}
 
 SPECIALISTS = tuple(a for a in AGENTS if not AGENTS[a].orchestrator)
+
+# What the app shows as an agent's connectors: (id, name, its tools, the ones that change something).
+_CONNECTORS = (
+    ("calendar", "iCloud Calendar", CALENDAR, {"create_event", "move_event", "delete_event"}),
+    ("reminders", "Reminders", REMINDERS, {"create_reminder", "update_reminder", "complete_reminder", "delete_reminder"}),
+    ("mail", "Gmail", MAIL, {"send_mail", "reply_mail"}),
+    ("health", "Apple Health", HEALTH, set()),
+    ("habits", "Habits", HABITS, {"add_habit", "check_habit", "delete_habit"}),
+    ("web", "Web search", WEB, set()),
+    ("maps", "Google Maps", MAPS, set()),
+    ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),
+    ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
+    ("team", "The team", ("ask_agent",), {"ask_agent"}),
+)
+
+
+def connectors(tool_names: list[str]) -> list[dict]:
+    """The connectors behind these tools, in a fixed order: each with the tools it has here and whether it
+    can only read. A connector with no tools here (no key set, or not this agent's) is left out."""
+    have = set(tool_names)
+    out = []
+    for cid, name, group, writes in _CONNECTORS:
+        if tools := [t for t in group if t in have]:
+            out.append({"id": cid, "name": name, "read_only": not writes & have, "tools": tools})
+    return out
 
 
 def check_agent(agent_id: str | None) -> str:
