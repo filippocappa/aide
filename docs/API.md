@@ -214,8 +214,9 @@ in Chat); the Team chat on the app's home screen shows them all together.
 **Writing in the Team chat.** `POST /v1/team` with `{"text": "@coach how's my recovery?"}` →
 `{"messages": [ …the new team messages, yours first… ], "pending": [ … ]}`
 - `@id` mentions (`@coach`, `@secretary`; case-insensitive, names work too: `@Coach`) pick who answers, in
-  the order mentioned, at most 3. Without a mention Aide answers; it may ask the others (`ask_agent`), and those
-  asks and answers are team messages like any other.
+  the order mentioned, at most 3. Without a mention it's a follow-up: whoever answered your previous Team chat
+  message answers again, if you sent that within the last 30 minutes. Otherwise Aide answers; it may ask the
+  others (`ask_agent`), and those asks and answers are team messages like any other. `@aide` always goes to Aide.
 - Your message has `from: "user"`, `to: "team"`. A reply in the Team chat has `to: "team"` too. Asks and
   answers inside a turn keep `from`/`to` as in Team talk above.
 - Each agent answering sees the last 30 team messages (the ones from before plus those already written this
