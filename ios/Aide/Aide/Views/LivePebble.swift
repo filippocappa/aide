@@ -44,6 +44,7 @@ struct LivePebble: View {
             let eyes = FigureShape.openEyes(for: face)
             FigureShape(figure: figure, face: face, look: eyes?.look ?? .zero, radius: eyes?.radius ?? 10,
                         openness: lids * Self.blink(at: t, still: still))
+            .shaded()
             .frame(width: size, height: size)
             .scaleEffect(x: 1 + breath, y: 1 - breath, anchor: .bottom)
             .rotationEffect(.degrees(wobble + sway + tilt))

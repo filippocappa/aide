@@ -10,6 +10,7 @@ struct TeamChatView: View {
     let open: (String) -> Void
     @State private var draft = ""
     @FocusState private var focused: Bool
+    @Environment(\.dismiss) private var dismiss
 
     private var working: Agent? { chat.teamWorking.map { chat.agent($0) } }
 
@@ -19,16 +20,37 @@ struct TeamChatView: View {
             if !chat.pending.isEmpty { PendingCard() }
             composer
         }
+        .overlay(alignment: .top) { header }
         .background(Theme.background)
-        .navigationTitle("Team chat")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
         .task { await chat.loadTeam() }
+    }
+
+    private static let headerHeight: CGFloat = 56
+
+    private var header: some View {
+        ZStack(alignment: .top) {
+            HeaderBackdrop()
+                .ignoresSafeArea(edges: .top)
+                .frame(height: Self.headerHeight + 28)
+                .allowsHitTesting(false)
+            HStack {
+                Button { dismiss() } label: { HeaderIcon(name: "chevron.left") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Chats")
+                Spacer()
+            }
+            .overlay { Text("Team chat").font(.headline) }
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+        }
     }
 
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 24) {
                     if chat.team.isEmpty { empty }
                     ForEach(Array(chat.team.enumerated()), id: \.offset) { index, message in
                         if let day = dayLabel(at: index) {
@@ -52,7 +74,7 @@ struct TeamChatView: View {
                             }
                             Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
                         }
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .transition(.opacity.combined(with: .offset(y: 10)))
                     }
                     if let working {
                         HStack(spacing: 10) {
@@ -69,10 +91,11 @@ struct TeamChatView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: chat.team.count)
+                .animation(.easeOut(duration: 0.28), value: chat.team.count)
                 .animation(.easeInOut(duration: 0.2), value: chat.teamWorking)
             }
             .defaultScrollAnchor(.bottom)
+            .contentMargins(.top, Self.headerHeight, for: .scrollContent) // starts below the header, scrolls under it
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await chat.loadTeam() }
             .onChange(of: chat.team.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
@@ -100,31 +123,17 @@ struct TeamChatView: View {
     private var composer: some View {
         VStack(spacing: 8) {
             if !suggestions.isEmpty {
-                mentionSuggestions.transition(.move(edge: .bottom).combined(with: .opacity))
+                mentionSuggestions.transition(.opacity.combined(with: .offset(y: 10)))
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField("Message the team, @ to mention", text: $draft, axis: .vertical)
-                    .lineLimit(1...5)
-                    .focused($focused)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                Button {
+            MessageBox("Message the team, @ to mention", text: $draft, focused: $focused) {
+                SendButton(enabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.isPostingTeam) {
                     let text = draft
                     draft = ""
                     Task { await chat.postTeam(text) }
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Theme.onAccent)
-                        .frame(width: 40, height: 40)
-                        .background(Theme.accent, in: Circle())
                 }
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || chat.isPostingTeam)
-                .accessibilityLabel("Send")
             }
-            .padding(.horizontal, 16)
         }
-        .padding(.vertical, 8)
+        .padding(.top, 8)
         .animation(.easeInOut(duration: 0.15), value: suggestions.map(\.id))
         .disabled(!settings.isConfigured)
     }
@@ -136,7 +145,7 @@ struct TeamChatView: View {
                     Button { mention(agent) } label: {
                         HStack(spacing: 5) {
                             AgentMark(agent: agent, size: 18)
-                            Text("@" + agent.name).font(.footnote.weight(.medium)).foregroundStyle(agent.tint)
+                            Text("@" + agent.name).font(.footnote.weight(.medium))
                         }
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .background(Theme.chip, in: Capsule())
@@ -185,7 +194,7 @@ struct TeamChatView: View {
     }
 }
 
-/// One agent's message: who sent it (to whom, inside one of Aide's turns), in a soft wash of its colour.
+/// One agent's message: who sent it (to whom, inside one of Aide's turns), next to its figure.
 private struct TeamBubble: View {
     let message: TeamMessage
     let from: Agent
@@ -197,25 +206,19 @@ private struct TeamBubble: View {
             AgentMark(agent: from, size: 32)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
-                    Text(from.name).foregroundStyle(from.tint)
+                    Text(from.name)
                     if let to {
                         Image(systemName: "arrow.right").imageScale(.small).foregroundStyle(.tertiary)
                         Text(to.name).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
                     if let date = message.ts.flatMap(Wire.parse) {
-                        Text(date.formatted(date: .omitted, time: .shortened)).foregroundStyle(.tertiary)
+                        Text(date.formatted(date: .omitted, time: .shortened)).font(.caption).foregroundStyle(.tertiary)
                     }
                 }
-                .font(.caption.weight(.semibold))
-                Text(message.text.markdown)
-                    .font(.callout)
-                    .textSelection(.enabled)
+                .font(.subheadline.weight(.semibold))
+                RichText(text: message.text).font(.callout)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(from.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .accessibilityElement(children: .combine)
     }

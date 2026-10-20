@@ -6,8 +6,8 @@ import SwiftUI
 enum Figure: Equatable {
     /// Aide: the wide, smooth stone.
     case pebble
-    /// Secretary: a speech bubble, for mail and messages.
-    case bubble
+    /// Secretary: a tidy rounded square, like a note card.
+    case card
     /// Professor: a tall gumdrop.
     case dome
     /// Coach: a ball.
@@ -17,7 +17,7 @@ enum Figure: Equatable {
 
     init(agent id: String?) {
         switch id {
-        case "secretary": self = .bubble
+        case "secretary": self = .card
         case "professor": self = .dome
         case "coach": self = .ball
         case "finance": self = .ingot
@@ -28,10 +28,10 @@ enum Figure: Equatable {
     var body: Path {
         switch self {
         case .pebble: Self.pebbleBody
-        case .bubble: Self.bubbleBody
         case .dome: Self.domeBody
         case .ball: Self.ballBody
         case .ingot: Self.ingotBody
+        case .card: Self.cardBody
         }
     }
 
@@ -39,10 +39,10 @@ enum Figure: Equatable {
     private var eyes: (y: CGFloat, dx: CGFloat, scale: CGFloat) {
         switch self {
         case .pebble: (124, 28, 1)
-        case .bubble: (116, 28, 1)
         case .dome: (128, 25, 0.92)
         case .ball: (120, 30, 1.05)
         case .ingot: (138, 27, 0.95)
+        case .card: (122, 28, 1)
         }
     }
 
@@ -50,7 +50,7 @@ enum Figure: Equatable {
     var gaze: CGSize {
         switch self {
         case .pebble, .ingot: .zero
-        case .bubble: CGSize(width: -4, height: 0)
+        case .card: CGSize(width: -4, height: 0)
         case .dome: CGSize(width: 0, height: 4)
         case .ball: CGSize(width: 4, height: -4)
         }
@@ -61,7 +61,7 @@ enum Figure: Equatable {
     var motion: (tempo: Double, bounce: CGFloat, phase: Double) {
         switch self {
         case .pebble: (1, 1, 0)
-        case .bubble: (1.1, 1, 1.3)
+        case .card: (1.1, 1, 1.3)
         case .dome: (0.8, 0.8, 2.9)
         case .ball: (1.25, 1.6, 0.7)
         case .ingot: (0.9, 0.6, 2.1)
@@ -103,15 +103,6 @@ enum Figure: Equatable {
 
     private static let pebbleBody = Path(roundedRect: CGRect(x: 48, y: 62, width: 160, height: 136), cornerRadius: 68)
 
-    private static let bubbleBody: Path = {
-        var tail = Path()
-        tail.move(to: CGPoint(x: 70, y: 160))
-        tail.addQuadCurve(to: CGPoint(x: 54, y: 206), control: CGPoint(x: 72, y: 192))
-        tail.addQuadCurve(to: CGPoint(x: 112, y: 180), control: CGPoint(x: 88, y: 204))
-        tail.closeSubpath()
-        return Path(roundedRect: CGRect(x: 50, y: 56, width: 156, height: 132), cornerRadius: 56).union(tail)
-    }()
-
     private static let domeBody: Path = {
         var p = Path()
         p.move(to: CGPoint(x: 60, y: 122))
@@ -122,6 +113,10 @@ enum Figure: Equatable {
         p.closeSubpath()
         return p
     }()
+
+    /// A tidy rounded square, like a note card.
+    private static let cardBody = Path(roundedRect: CGRect(x: 58, y: 58, width: 140, height: 140), cornerRadius: 46,
+                                       style: .continuous)
 
     private static let ballBody = Path(ellipseIn: CGRect(x: 54, y: 54, width: 148, height: 148))
 
@@ -143,6 +138,15 @@ struct FigureShape: Shape {
     var openness: CGFloat = 1
     /// How much the artwork is scaled about the centre of its tile: 1.2 for the live one, 1 for the small mark.
     var scale: CGFloat = 1.2
+
+    /// The figure in the surrounding colour, lit from above: a soft highlight on top and a little shade below,
+    /// so it reads as a smooth object rather than a flat cut-out.
+    func shaded() -> some View {
+        overlay(fill(LinearGradient(stops: [.init(color: .white.opacity(0.3), location: 0),
+                                            .init(color: .white.opacity(0), location: 0.55),
+                                            .init(color: .black.opacity(0.12), location: 1)],
+                                    startPoint: .top, endPoint: .bottom)))
+    }
 
     /// Eye placement for the expressions with open eyes; nil for the closed-eyed ones.
     static func openEyes(for face: String) -> (look: CGSize, radius: CGFloat)? {
@@ -170,3 +174,4 @@ struct FigureShape: Shape {
             .translatedBy(x: -128, y: -128))
     }
 }
+

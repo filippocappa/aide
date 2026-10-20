@@ -38,10 +38,21 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(speakReplies, forKey: Keys.speakReplies) }
     }
 
+    #if DEBUG
+    /// Simulator screenshots: the token comes from the launch environment (`SIMCTL_CHILD_AIDE_TOKEN`) and is never
+    /// saved, and the phone's side (reminders sync, Health, push) stays off so a simulator can't touch real data.
+    let isPreview = ProcessInfo.processInfo.environment["AIDE_TOKEN"] != nil
+    #else
+    let isPreview = false
+    #endif
+
     init() {
         let defaults = UserDefaults.standard
         serverURL = defaults.string(forKey: Keys.serverURL) ?? Self.defaultServerURL
         token = Keychain.get(Keys.token) ?? ""
+        #if DEBUG
+        if let previewToken = ProcessInfo.processInfo.environment["AIDE_TOKEN"] { token = previewToken }
+        #endif
         reminderListID = defaults.string(forKey: Keys.reminderListID) ?? ""
         voiceLanguage = defaults.string(forKey: Keys.voiceLanguage) ?? "en-US"
         speakReplies = defaults.object(forKey: Keys.speakReplies) as? Bool ?? true

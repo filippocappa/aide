@@ -54,7 +54,7 @@ struct HabitsView: View {
                         if let history = habit.history { HabitGrid(done: Set(history)) }
                     }
                     .padding(.vertical, 4)
-                    .listRowBackground(Theme.card)
+                    .listRowBackground(Theme.row)
                 }
                 .onDelete { offsets in
                     let doomed = offsets.map { habits[$0] }
@@ -62,7 +62,7 @@ struct HabitsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Theme.background)
+            .background(Theme.grouped)
             .navigationTitle("Habits")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -165,7 +165,7 @@ private struct HabitSheet: View {
                 if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
             }
             .scrollContentBackground(.hidden)
-            .background(Theme.background)
+            .background(Theme.grouped)
             .navigationTitle(habit == nil ? "New habit" : "Edit habit")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -217,7 +217,7 @@ private struct WorkoutPicker: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Theme.background)
+        .background(Theme.grouped)
         .navigationTitle("Workouts")
         .navigationBarTitleDisplayMode(.inline)
     }

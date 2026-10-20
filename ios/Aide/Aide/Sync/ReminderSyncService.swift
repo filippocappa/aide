@@ -11,12 +11,15 @@ struct ReminderList: Identifiable, Hashable {
 struct SnapshotEntry: Codable, Equatable {
     var serverID: String
     var modifiedAt: Date
-    /// Created from a server reminder: the server doesn't know its apple_id yet.
+    /// Created from a server reminder: the server doesn't know its apple_id (or its list) yet.
     var needsReport: Bool
+    /// The list it was in. Nil for entries from before every list synced.
+    var list: String?
 }
 
 struct SyncState: Codable, Equatable {
     var cursor: String?
+    /// Unused since every list syncs; kept so older saved state still decodes.
     var listID: String?
     var entries: [String: SnapshotEntry] = [:]
 }
@@ -26,13 +29,14 @@ enum SyncError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noList: "No Reminders list to sync. Pick one in Settings."
+        case .noList: "No Reminders list to sync. Make one in the Reminders app."
         case .fetchFailed: "Couldn't read Apple Reminders."
         }
     }
 }
 
-/// Mirrors the server's reminders into one Apple Reminders list (docs/API.md, "Reminders").
+/// Mirrors the server's reminders into Apple Reminders, every list (docs/API.md, "Reminders"). Each reminder
+/// carries its list by name; one without a list, or in a list the phone doesn't have, goes to the default list.
 @MainActor
 final class ReminderSyncService: ObservableObject {
     @Published private(set) var authorization: EKAuthorizationStatus
@@ -129,13 +133,10 @@ final class ReminderSyncService: ObservableObject {
     }
 
     private func syncPass() async throws {
-        guard let calendar = resolveCalendar() else { throw SyncError.noList }
-        if state.listID != calendar.calendarIdentifier {
-            // A different list means the old snapshot says nothing about this one.
-            state = SyncState(cursor: nil, listID: calendar.calendarIdentifier, entries: [:])
-        }
+        guard let fallback = resolveCalendar() else { throw SyncError.noList }
+        let calendars = store.calendars(for: .reminder)
 
-        let local = try await fetchReminders(in: calendar)
+        let local = try await fetchReminders()
         var localByID: [String: EKReminder] = [:]
         for r in local {
             let ext: String? = r.calendarItemExternalIdentifier
@@ -146,10 +147,15 @@ final class ReminderSyncService: ObservableObject {
         var changes: [ReminderChange] = []
         for (ext, r) in localByID {
             let entry = state.entries[ext]
-            if entry == nil && r.isCompleted { continue } // don't import the list's history
+            if entry == nil && r.isCompleted { continue } // don't import the lists' history
             let modified = r.lastModifiedDate ?? r.creationDate ?? Date()
-            if let entry, !entry.needsReport, modified.timeIntervalSince(entry.modifiedAt) <= 0.5 { continue }
-            changes.append(change(from: r, appleID: ext, serverID: entry?.serverID))
+            let edited = modified.timeIntervalSince(entry?.modifiedAt ?? .distantPast) > 0.5
+            let moved = entry?.list != r.calendar?.title
+            if let entry, !entry.needsReport, !edited, !moved { continue }
+            var c = change(from: r, appleID: ext, serverID: entry?.serverID)
+            // Moved to another list since the last sync: that's newer than anything the server has.
+            if let entry, entry.list != nil, moved, !edited { c.modifiedAt = Wire.utc(Date()) }
+            changes.append(c)
         }
         for (ext, entry) in state.entries where localByID[ext] == nil {
             changes.append(ReminderChange(
@@ -157,12 +163,13 @@ final class ReminderSyncService: ObservableObject {
                 completed: false, modifiedAt: Wire.utc(Date()), deleted: true))
         }
 
-        let response = try await api.syncReminders(cursor: state.cursor, changes: changes)
+        let response = try await api.syncReminders(cursor: state.cursor, changes: changes,
+                                                   lists: calendars.map(\.title), defaultList: fallback.title)
 
-        for c in changes where !c.deleted { state.entries[c.appleId]?.needsReport = false }
+        for c in changes where !c.deleted { state.entries[c.appleId]?.needsReport = false; state.entries[c.appleId]?.list = c.list }
 
         // Server → phone
-        var touched: [(ek: EKReminder, serverID: String, serverAppleID: String?)] = []
+        var touched: [(ek: EKReminder, serverID: String, serverAppleID: String?, serverList: String?)] = []
         for server in response.reminders {
             let known = server.appleId
                 ?? state.entries.first(where: { $0.value.serverID == server.id })?.key
@@ -178,9 +185,11 @@ final class ReminderSyncService: ObservableObject {
                 ek = EKReminder(eventStore: store)
             }
             guard let ek else { continue }
-            if ek.calendar?.calendarIdentifier != calendar.calendarIdentifier { ek.calendar = calendar }
-            if apply(server, to: ek) || ek.isNew { try store.save(ek, commit: false) }
-            touched.append((ek, server.id, server.appleId))
+            let calendar = list(named: server.list, in: calendars) ?? fallback
+            let moved = ek.calendar?.calendarIdentifier != calendar.calendarIdentifier
+            if moved { ek.calendar = calendar }
+            if apply(server, to: ek) || moved || ek.isNew { try store.save(ek, commit: false) }
+            touched.append((ek, server.id, server.appleId, server.list))
         }
         try store.commit()
 
@@ -188,9 +197,10 @@ final class ReminderSyncService: ObservableObject {
         for t in touched {
             let ext: String? = t.ek.calendarItemExternalIdentifier
             guard let ext else { continue }
+            let list = t.ek.calendar?.title
             state.entries[ext] = SnapshotEntry(
                 serverID: t.serverID, modifiedAt: t.ek.lastModifiedDate ?? Date(),
-                needsReport: t.serverAppleID != ext)
+                needsReport: t.serverAppleID != ext || t.serverList != list, list: list)
         }
         state.cursor = response.cursor
         persist()
@@ -205,8 +215,15 @@ final class ReminderSyncService: ObservableObject {
         return store.defaultCalendarForNewReminders()
     }
 
-    private func fetchReminders(in calendar: EKCalendar) async throws -> [EKReminder] {
-        let predicate = store.predicateForReminders(in: [calendar])
+    /// A list by name, any case, that can take reminders.
+    private func list(named name: String?, in calendars: [EKCalendar]) -> EKCalendar? {
+        guard let name else { return nil }
+        return calendars.first { $0.allowsContentModifications && $0.title.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// Every reminder in every list.
+    private func fetchReminders() async throws -> [EKReminder] {
+        let predicate = store.predicateForReminders(in: nil)
         return try await withCheckedThrowingContinuation { cont in
             store.fetchReminders(matching: predicate) { result in
                 if let result { cont.resume(returning: result) } else { cont.resume(throwing: SyncError.fetchFailed) }
@@ -226,7 +243,7 @@ final class ReminderSyncService: ObservableObject {
         ReminderChange(
             id: serverID, appleId: appleID, title: r.title ?? "", notes: r.notes ?? "",
             dueAt: dueDate(of: r).map(Wire.local), completed: r.isCompleted,
-            modifiedAt: Wire.utc(r.lastModifiedDate ?? Date()), deleted: false)
+            modifiedAt: Wire.utc(r.lastModifiedDate ?? Date()), deleted: false, list: r.calendar?.title)
     }
 
     /// Makes `r` match the server's version. Returns whether anything changed.

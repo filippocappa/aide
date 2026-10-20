@@ -8,6 +8,7 @@ struct VoicePanel: View {
 
     private var status: String {
         if voice.isListening { return voice.transcript.isEmpty ? "Listening…" : "Listening" }
+        if voice.isTranscribing { return "Writing it down…" }
         if voice.isSpeaking { return "Speaking" }
         if chat.isSending { return "Thinking…" }
         return " "
@@ -30,7 +31,7 @@ struct VoicePanel: View {
                     }
                     if !voice.isListening || voice.transcript.isEmpty, let r = lastReply, lastUser != nil {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Aide").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            Text(chat.agent.name).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                             RichText(text: r.text, isError: r.isError)
                         }
                     }

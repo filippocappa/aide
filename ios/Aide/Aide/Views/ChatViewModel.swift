@@ -37,6 +37,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var isActing = false
     /// A new chat is waiting for its digest greeting.
     @Published private(set) var isOpening = false
+    /// An existing chat's history is on its way: the page stays blank rather than flashing the empty state.
+    @Published private(set) var isLoadingHistory = false
     /// The digest kind this chat was opened with, so Details shows the same one. Nil for chats opened later.
     @Published private(set) var openedDigest: String?
     @Published private(set) var loadError: String?
@@ -44,6 +46,8 @@ final class ChatViewModel: ObservableObject {
     @Published var isChatOpen = false
     /// The team talk of the reply on its way, message by message as it streams in.
     @Published private(set) var liveTeam: [TeamMessage] = []
+    /// The reply on its way, as it's written. Replaced by the finished reply.
+    @Published private(set) var liveReply = ""
     /// The agents' group chat, oldest first (docs/API.md, "Team talk").
     @Published private(set) var team: [TeamMessage] = []
     /// The agent writing in the Team chat right now.
@@ -107,9 +111,9 @@ final class ChatViewModel: ObservableObject {
         if let unanswered { try? await api.deleteConversation(unanswered) }
     }
 
-    /// Aide's new chats open with the digest greeting; a specialist's start blank.
+    /// New chats start blank, Aide's too. The digest greeting opens a chat only from its notification.
     func startChat(with agent: Agent) async {
-        agent.orchestrator ? await startNewChat() : await newChat(with: agent)
+        await newChat(with: agent)
     }
 
     /// Carry on with the agent's latest chat, or start one if there's none yet.
@@ -149,6 +153,8 @@ final class ChatViewModel: ObservableObject {
         messages = []
         pending = []
         isChatOpen = true
+        isLoadingHistory = true
+        defer { isLoadingHistory = false }
         await loadHistory()
     }
 
@@ -269,26 +275,35 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: Messages
 
-    func send(_ raw: String) async {
+    /// Sends a message; the reply shows as it's written. `onDraft` gets the draft each time it grows, and true
+    /// when it started over (text written before a tool call is dropped).
+    func send(_ raw: String, onDraft: ((String, Bool) -> Void)? = nil) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isSending, !isOpening else { return }
         messages.append(Message(role: .user, text: text))
         isSending = true
+        liveReply = ""
         do {
             if conversationID == nil { conversationID = try await newConversationID() }
-            let reply = try await api.chatLive(text, conversationID: conversationID) { [weak self] in
+            let reply = try await api.chatLive(text, conversationID: conversationID, onText: { [weak self] delta, restart in
+                guard let self else { return }
+                liveReply = restart ? delta : liveReply + delta
+                onDraft?(liveReply, restart)
+            }, onTeam: { [weak self] in
                 self?.liveTeam.append($0)
-            }
+            })
             messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments,
                                     consulted: reply.consulted, team: reply.team.isEmpty ? liveTeam : reply.team))
             pending = reply.pending
             if let id = reply.conversationId { conversationID = id }
             liveTeam = []
+            liveReply = ""
             isSending = false
             await onServerChange?()
         } catch {
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true, team: liveTeam))
             liveTeam = []
+            liveReply = ""
             isSending = false
         }
     }

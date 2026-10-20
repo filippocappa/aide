@@ -40,12 +40,20 @@ final class APIClient {
         try await send("POST", "/v1/chat", body: ChatRequest(text: text, conversationId: conversationID), timeout: 120)
     }
 
-    /// The chat, streamed: `onTeam` gets each message Aide and the agents send each other while Aide works
-    /// (docs/API.md, "Chat"). A server without streaming answers plain JSON: same reply, nothing live.
+    /// The chat, streamed: `onTeam` gets each message Aide and the agents send each other while Aide works,
+    /// `onText` each piece of the reply as it's written, true when the draft starts over (docs/API.md, "Chat").
+    /// A server without streaming answers plain JSON: same reply, nothing live.
     func chatLive(_ text: String, conversationID: String? = nil,
+                  onText: @escaping @MainActor (String, Bool) -> Void = { _, _ in },
                   onTeam: @escaping @MainActor (TeamMessage) -> Void) async throws -> ChatReply {
         let body = try JSONEncoder.api.encode(ChatRequest(text: text, conversationId: conversationID, stream: true))
-        return try await stream("/v1/chat", body: body, onEvent: { if case .team(let message) = $0 { onTeam(message) } }) { event in
+        return try await stream("/v1/chat", body: body, onEvent: { event in
+            switch event {
+            case .team(let message): onTeam(message)
+            case .text(let delta, let restart): onText(delta, restart)
+            default: break
+            }
+        }) { event in
             if case .reply(let reply) = event { return reply }
             return nil
         }
@@ -149,6 +157,16 @@ final class APIClient {
         return list.agents
     }
 
+    /// Speech to text on the server (docs/API.md, "Voice"): a WAV recording in, what was said out.
+    func transcribe(wav: Data, language: String) async throws -> String {
+        var req = try request("POST", "/v1/transcribe", query: [URLQueryItem(name: "language", value: language)],
+                              auth: true, timeout: 30, body: nil)
+        req.httpBody = wav
+        req.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
+        let reply: Transcript = try await perform(req)
+        return reply.text
+    }
+
     func deleteConversation(_ id: String) async throws {
         let _: OKResponse = try await send("DELETE", "/v1/conversations/\(id)", body: EmptyBody())
     }
@@ -212,9 +230,10 @@ final class APIClient {
         return try await send("GET", "/v1/today", query: query)
     }
 
-    func syncReminders(cursor: String?, changes: [ReminderChange]) async throws -> SyncResponse {
+    func syncReminders(cursor: String?, changes: [ReminderChange], lists: [String] = [],
+                       defaultList: String? = nil) async throws -> SyncResponse {
         try await send("POST", "/v1/reminders/sync",
-                       body: SyncRequest(cursor: cursor, changes: changes), timeout: 60)
+                       body: SyncRequest(cursor: cursor, changes: changes, lists: lists, defaultList: defaultList), timeout: 60)
     }
 
     func registerDevice(_ device: DeviceRegistration) async throws {
@@ -298,12 +317,16 @@ final class APIClient {
 }
 
 private struct ErrorBody: Decodable { let error: String }
+private struct Transcript: Decodable { let text: String }
 
 /// Reads a streamed chat (`text/event-stream`) line by line. Each event has one `data:` line of JSON, handled
 /// as soon as it arrives: the line reader drops the blank lines that end an event.
 struct EventStream {
-    enum Event { case team(TeamMessage), reply(ChatReply), working(agent: String), done(TeamReply) }
+    enum Event {
+        case team(TeamMessage), text(delta: String, restart: Bool), reply(ChatReply), working(agent: String), done(TeamReply)
+    }
     private struct Working: Decodable { let agent: String }
+    private struct Text: Decodable { let delta: String; var restart: Bool? }
     private var name = "message"
 
     mutating func feed(_ line: String) throws -> Event? {
@@ -318,6 +341,9 @@ struct EventStream {
             switch name {
             case "team": return .team(try JSONDecoder.api.decode(TeamMessage.self, from: data))
             case "reply": return .reply(try JSONDecoder.api.decode(ChatReply.self, from: data))
+            case "text":
+                let text = try JSONDecoder.api.decode(Text.self, from: data)
+                return .text(delta: text.delta, restart: text.restart ?? false)
             case "working": return .working(agent: try JSONDecoder.api.decode(Working.self, from: data).agent)
             case "done": return .done(try JSONDecoder.api.decode(TeamReply.self, from: data))
             case "error":
