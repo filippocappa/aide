@@ -84,10 +84,11 @@ def test_agents_endpoint_matches_the_contract(env):
     agents = client.get("/v1/agents", headers=AUTH).json()["agents"]
     assert [a["id"] for a in agents] == ["aide", "secretary", "professor", "coach", "finance"]
     assert [a["orchestrator"] for a in agents] == [True, False, False, False, False]
-    assert agents[3] == {"id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#E0782F",
-                         "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?"],
-                         "routine_ideas": [{"title": "Weekly recap", "prompt": AGENTS["coach"].routine_ideas[0]["prompt"],
-                                            "time": "18:00", "days": [7]}]}
+    coach = {k: v for k, v in agents[3].items() if k not in ("prompt", "tools", "connectors")}
+    assert coach == {"id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#23A26D",
+                     "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?"],
+                     "routine_ideas": [{"title": "Weekly recap", "prompt": AGENTS["coach"].routine_ideas[0]["prompt"],
+                                        "time": "18:00", "days": [7]}]}
     assert [(i["title"], i["time"], i["days"]) for a in agents for i in a["routine_ideas"]] == [
         ("Plan my week", "20:00", [7]), ("Mail sweep", "09:00", [1, 2, 3, 4, 5]),
         ("Review what I studied", "17:00", [7]), ("Weekly recap", "18:00", [7]), ("Week's spending", "19:00", [7])]
@@ -463,3 +464,24 @@ def test_streamed_team_chat_errors(env):
     client, _, _ = env([])
     got = events(client.post("/v1/team", json={"text": "hi", "stream": True}, headers=AUTH))
     assert [e for e, _ in got] == ["team", "working", "error"]
+
+
+def test_agents_show_their_prompt_and_connectors(env):
+    client, agent, _ = env()
+    agents = {a["id"]: a for a in client.get("/v1/agents", headers=AUTH).json()["agents"]}
+    assert agents["coach"]["prompt"] == AGENTS["coach"].prompt
+    assert set(agents["coach"]["tools"]) == {t.name for t in agent.registries["coach"]}
+    coach = {c["id"]: c for c in agents["coach"]["connectors"]}
+    assert list(coach) == ["calendar", "health", "habits", "web", "memory", "routines"]
+    assert coach["calendar"] == {"id": "calendar", "name": "iCloud Calendar", "read_only": True, "tools": ["list_events"]}
+    assert coach["health"]["read_only"] and not coach["memory"]["read_only"]
+    assert "team" in {c["id"] for c in agents["aide"]["connectors"]}
+    assert "team" not in {c["id"] for c in agents["professor"]["connectors"]}
+
+
+def test_connectors_mark_what_can_only_read():
+    from aide.agents import connectors
+    assert connectors(["search_mail", "read_mail"]) == [
+        {"id": "mail", "name": "Gmail", "read_only": True, "tools": ["search_mail", "read_mail"]}]
+    assert connectors(["send_mail"])[0]["read_only"] is False
+    assert connectors(["get_current_time", "cancel_queued"]) == []

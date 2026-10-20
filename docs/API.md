@@ -98,6 +98,15 @@ data: { the usual /v1/chat body, including the whole "team" }
 | `POST /v1/new` | `{}` | `{"ok": true}`. Starts a fresh conversation (like `!new`). |
 | `POST /v1/think` | `{}` | `{"ok": true}`. Smarter model for the rest of the conversation (like `!think`). |
 
+### Voice
+
+`POST /v1/transcribe` (optional `?language=it-IT`, the phone's speech language, a hint only) with the recording as
+the body and `Content-Type: audio/wav` (16 kHz mono 16-bit is plenty), `audio/mp4` (AAC, `.m4a`) or `audio/mpeg`
+→ `{"text": "Domani alle 9 ho il dentista"}`, or `{"text": ""}` when nothing was said. An audio model transcribes
+it (about a second a sentence), in whatever language was spoken, Italian and English mixed included. Send the text
+on with `/v1/chat` as usual. 400 for an empty body, 413 over 10 MB, 415 for another type, 502 if the model failed
+(try again), 503 when the server has no OpenRouter key (then use the phone's own recogniser).
+
 `GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}]}`
 (`attachments`, `consulted` and `team` as in `/v1/chat`, `[]` on user messages and plain replies; reminders in them are reloaded as they are now,
 so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said on Discord too. Tool calls and internal notes are left out.
@@ -135,7 +144,7 @@ a new agent needs no app update.
    "starters": ["What's on my calendar today?", "Any mail I need to answer?", "Remind me to "]},
   {"id": "professor", "name": "Professor", "role": "Study and lectures", "color": "#7A4FD0",
    "starters": ["Explain ", "Make me a study plan for "]},
-  {"id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#E0782F",
+  {"id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#23A26D",
    "starters": ["How did I sleep this week?", "Should I train hard today?"]},
   {"id": "finance", "name": "Finance", "role": "Money and budgets", "color": "#B8921C",
    "starters": ["Help me set a monthly budget", "I spent "]}
@@ -145,6 +154,14 @@ a new agent needs no app update.
 - `color` is Pebble's colour on light backgrounds (`#RRGGBB`). The app may lighten it in dark mode.
 - `starters` are suggestions for an empty chat. One that ends in a space goes into the text field for you to
   finish; any other is sent as it is.
+- Each agent also has (left out above for length) what it runs on, for an info screen in the app:
+  - `prompt`: its instructions, the fixed system prompt, as one text. Memory is separate (see Memory).
+  - `tools`: the names of the tools it has on this server right now (web and maps only when their keys are set).
+  - `connectors`: those tools grouped by what they reach, in a fixed order, each
+    `{"id": "calendar", "name": "iCloud Calendar", "read_only": true, "tools": ["list_calendars", "list_events", "search_events"]}`.
+    Ids: `calendar`, `reminders`, `mail`, `health`, `habits`, `web`, `maps`, `memory`, `routines`, `team`
+    (Aide's `ask_agent`). `read_only` is true when none of its tools here change anything. A connector it doesn't
+    have here is left out. Show `name`; an unknown `id` is fine.
 
 **What each one does** (server side; the app only shows them):
 
