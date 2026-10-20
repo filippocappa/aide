@@ -12,7 +12,7 @@ def reminder_json(r: Reminder, tz: ZoneInfo) -> dict:
         "id": r.id, "title": r.title, "notes": r.notes,
         "due_at": r.due_at.astimezone(tz).isoformat() if r.due_at else None,
         "completed": r.completed, "apple_id": r.apple_id,
-        "modified_at": r.modified_at.isoformat().replace("+00:00", "Z"), "deleted": r.deleted,
+        "modified_at": r.modified_at.isoformat().replace("+00:00", "Z"), "deleted": r.deleted, "list": r.list,
     }
 
 

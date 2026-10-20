@@ -286,6 +286,40 @@ def test_phone_attaches_apple_id_then_server_stays_quiet(env):
     assert store.unsynced_due(datetime.now(timezone.utc)) == []  # Apple alerts now, not Discord
 
 
+def test_reminders_carry_their_list(env):
+    client, _, store = env()
+    lists = {"lists": ["Reminders", "Groceries"], "default_list": "Reminders"}
+    change = {"id": None, "apple_id": "apple-1", "title": "Milk", "list": "Groceries", "modified_at": "2026-10-18T11:26:10Z"}
+    body = client.post("/v1/reminders/sync", json={**lists, "changes": [change]}, headers=AUTH).json()
+    rid = body["reminders"][0]["id"]
+    assert body["reminders"][0]["list"] == "Groceries"
+    assert store.lists() == ["Reminders", "Groceries"] and store.default_list() == "Reminders"
+    # An app from before lists sends no "list": the reminder stays where it is.
+    old = {"id": rid, "apple_id": "apple-1", "title": "Oat milk", "modified_at": "2026-10-18T11:30:00Z"}
+    client.post("/v1/reminders/sync", json={"changes": [old]}, headers=AUTH)
+    assert store.get(rid).list == "Groceries" and store.get(rid).title == "Oat milk"
+    assert store.lists() == ["Reminders", "Groceries"]  # and doesn't wipe the lists
+
+
+async def test_agents_use_lists(env):
+    _, agent, store = env()
+    store.set_lists(["Reminders", "Groceries"], "Reminders")
+    tools = agent.registries["aide"]
+    out, err = await agent._execute("create_reminder", {"title": "Eggs", "list": "groceries"}, tools)
+    assert not err and "· Groceries" in out
+    out, err = await agent._execute("create_reminder", {"title": "Call mum"}, tools)
+    assert not err and "· Groceries" not in out and "Reminders" not in out.split("\n")[0]
+    out, _ = await agent._execute("list_reminders", {"list": "Groceries"}, tools)
+    assert out.startswith("Lists: Reminders (default), Groceries") and "Eggs" in out and "Call mum" not in out
+    out, _ = await agent._execute("list_reminders", {"list": "Reminders"}, tools)  # the default list has the list-less
+    assert "Call mum" in out and "Eggs" not in out
+    out, err = await agent._execute("create_reminder", {"title": "x", "list": "Work"}, tools)
+    assert err and "The lists are: Reminders, Groceries" in out
+    eggs = next(r for r in store.open() if r.title == "Eggs")
+    out, err = await agent._execute("update_reminder", {"reminder_id": eggs.id, "list": "Reminders"}, tools)
+    assert not err and store.get(eggs.id).list == "Reminders"
+
+
 def test_newer_edit_wins_and_older_edit_loses(env):
     client, _, store = env()
     rem = store.create("Old title")
@@ -413,7 +447,7 @@ def test_listing_reminders_attaches_them_and_history_keeps_them_up_to_date(env):
     (att,) = body["attachments"]
     assert att["type"] == "reminders" and [r["id"] for r in att["reminders"]] == [a.id, b.id]
     assert set(att["reminders"][0]) == {"id", "title", "notes", "due_at", "completed", "apple_id", "modified_at",
-                                        "deleted"}  # the same Reminder object as /v1/reminders/sync
+                                        "deleted", "list"}  # the same Reminder object as /v1/reminders/sync
     store.update(a.id, completed=True)  # ticked in the app afterwards
     user, reply = client.get("/v1/history", headers=AUTH).json()["messages"]
     assert user["attachments"] == []
