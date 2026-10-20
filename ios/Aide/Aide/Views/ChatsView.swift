@@ -9,6 +9,7 @@ struct ChatsView: View {
     @EnvironmentObject private var digest: DigestViewModel
     @State private var pastChats: Agent?
     @State private var routinesFor: Agent?
+    @State private var infoFor: Agent?
     /// Picked in Past chats; run once the sheet is gone, so the push isn't lost in its dismissal.
     @State private var choice: PastChatsSheet.Choice?
     @State private var showTeam = false
@@ -19,6 +20,7 @@ struct ChatsView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
+                    header
                     if !settings.isConfigured {
                         Text("Add your server token in Settings to start.")
                             .foregroundStyle(.secondary)
@@ -37,16 +39,11 @@ struct ChatsView: View {
                 .padding(.bottom, 16)
             }
             .background(Theme.background)
-            .navigationTitle("Your team")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
-                        digest.isPresented = true
-                    } label: { Image(systemName: "sun.horizon") }
-                        .accessibilityLabel("Digest")
-                        .disabled(!settings.isConfigured)
-                }
+            // Its own header rather than a navigation bar: the chats hide the bar, and a bar coming back as a
+            // chat closes appears all at once instead of sliding in with the page.
+            .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .top) { // the status bar over a solid strip, not over scrolling cards
+                Theme.background.frame(height: 0).ignoresSafeArea(edges: .top)
             }
             .navigationDestination(isPresented: $chat.isChatOpen) { ChatView() }
             .navigationDestination(isPresented: $showTeam) {
@@ -58,8 +55,14 @@ struct ChatsView: View {
             .sheet(item: $routinesFor, onDismiss: runChoice) { agent in
                 RoutinesSheet(agent: agent) { choice = $0; routinesFor = nil }
             }
+            .sheet(item: $infoFor) { AgentInfoSheet(agent: $0) }
             .refreshable { await load() }
-            .task { await load() }
+            .task {
+                await load()
+                #if DEBUG
+                await openForPreview()
+                #endif
+            }
             // Back from a chat: its preview may have changed.
             .onChange(of: chat.isChatOpen) { _, open in if !open { Task { await load() } } }
             .onChange(of: showTeam) { _, shown in
@@ -74,6 +77,22 @@ struct ChatsView: View {
         .sheet(isPresented: $digest.isPresented) { DigestSheet() }
     }
 
+    private var header: some View {
+        HStack(alignment: .center) {
+            Text("Your team").font(.largeTitle.bold())
+            Spacer()
+            Button {
+                digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
+                digest.isPresented = true
+            } label: { HeaderIcon(name: "sun.horizon") }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Digest")
+                .disabled(!settings.isConfigured)
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+
     private func card(_ agent: Agent, wide: Bool) -> some View {
         AgentCard(agent: agent, latest: chat.chats(with: agent).first, wide: wide, mood: settings.isConfigured ? "awake" : "sleeping") {
             Task { await chat.talk(to: agent) }
@@ -83,6 +102,7 @@ struct ChatsView: View {
             Button("New chat", systemImage: "square.and.pencil") { Task { await chat.startChat(with: agent) } }
             Button("Past chats", systemImage: "clock") { pastChats = agent }
             Button("Routines", systemImage: "alarm") { routinesFor = agent }
+            Button("About \(agent.name)", systemImage: "info.circle") { infoFor = agent }
         }
     }
 
@@ -96,6 +116,18 @@ struct ChatsView: View {
         await routines
     }
 
+    #if DEBUG
+    /// Simulator screenshots: `-previewOpen team` opens the Team chat, `-previewOpen coach` Coach's latest chat,
+    /// `-previewOpen new:coach` a blank one (nothing is sent until you write).
+    private func openForPreview() async {
+        guard settings.isPreview, let target = UserDefaults.standard.string(forKey: "previewOpen") else { return }
+        if target == "team" { showTeam = true; return }
+        if target.hasPrefix("info:") { infoFor = chat.agent(String(target.dropFirst(5))); return }
+        if target.hasPrefix("new:") { await chat.newChat(with: chat.agent(String(target.dropFirst(4)))); return }
+        await chat.talk(to: chat.agent(target))
+    }
+    #endif
+
     private func runChoice() {
         guard let picked = choice else { return }
         choice = nil
@@ -103,7 +135,7 @@ struct ChatsView: View {
     }
 }
 
-/// One teammate: alive, in a soft wash of its colour, with the last line of its latest chat (or what it does,
+/// One teammate: alive in its colour on a plain card, with the last line of its latest chat (or what it does,
 /// before you've talked).
 private struct AgentCard: View {
     let agent: Agent
@@ -117,23 +149,25 @@ private struct AgentCard: View {
             Group {
                 if wide {
                     HStack(spacing: 14) {
-                        figure(84)
-                        text
+                        figure(60)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(alignment: .firstTextBaseline) { name; Spacer(minLength: 4); time }
+                            line(2)
+                        }
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        figure(64).frame(maxWidth: .infinity)
-                        text
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top) { figure(44); Spacer(minLength: 4); time }
+                        VStack(alignment: .leading, spacing: 3) { name; line(2) }
                         Spacer(minLength: 0)
                     }
-                    .frame(minHeight: 172, alignment: .top)
+                    .frame(minHeight: 128, alignment: .top)
                 }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(agent.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(CardPress())
         .accessibilityElement(children: .combine)
@@ -146,24 +180,25 @@ private struct AgentCard: View {
             .allowsHitTesting(false)
     }
 
-    private var text: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(agent.name).font(.headline).foregroundStyle(agent.tint)
-                Spacer(minLength: 4)
-                if let date = latest?.updatedAt.flatMap(Wire.parse) {
-                    Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Text(line)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(wide ? 2 : 3)
-                .multilineTextAlignment(.leading)
+    private var name: some View {
+        Text(agent.name).font(.headline)
+    }
+
+    @ViewBuilder private var time: some View {
+        if let date = latest?.updatedAt.flatMap(Wire.parse) {
+            Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.tertiary)
         }
     }
 
-    private var line: String {
+    private func line(_ lines: Int) -> some View {
+        Text(preview)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(lines, reservesSpace: true)
+            .multilineTextAlignment(.leading)
+    }
+
+    private var preview: String {
         if let preview = latest?.preview, !preview.isEmpty { return preview }
         return agent.role.isEmpty ? "Say hi" : agent.role
     }
@@ -191,7 +226,7 @@ private struct TeamCard: View {
                         Text("Team chat").font(.headline)
                         Spacer(minLength: 4)
                         if let date = latest?.ts.flatMap(Wire.parse) {
-                            Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.secondary)
+                            Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.tertiary)
                         }
                     }
                     Text(latest.map { "\(name($0.from)): \($0.text)" } ?? "Talk to all of them at once")
@@ -203,8 +238,8 @@ private struct TeamCard: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(CardPress())
         .accessibilityElement(children: .combine)
@@ -212,12 +247,13 @@ private struct TeamCard: View {
     }
 }
 
-/// Cards shrink a little under the finger.
+/// Cards give a little under the finger, without bouncing back.
 private struct CardPress: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
@@ -237,7 +273,7 @@ struct PastChatsSheet: View {
                         .font(.body.weight(.medium))
                         .foregroundStyle(agent.tint)
                 }
-                .listRowBackground(Theme.card)
+                .listRowBackground(Theme.row)
                 Section {
                     let chats = chat.chats(with: agent)
                     if chats.isEmpty {
@@ -245,7 +281,7 @@ struct PastChatsSheet: View {
                     }
                     ForEach(chats) { c in
                         Button { choose(.open(c)) } label: { ConversationRow(conversation: c) }
-                            .listRowBackground(c.id == chat.conversationID ? Theme.chip : Theme.card)
+                            .listRowBackground(c.id == chat.conversationID ? Theme.chip : Theme.row)
                     }
                     .onDelete { offsets in
                         let doomed = offsets.map { chats[$0] }
@@ -254,12 +290,12 @@ struct PastChatsSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Theme.background)
+            .background(Theme.grouped)
             .navigationTitle(agent.name)
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
-        .presentationBackground(Theme.background)
+        .presentationBackground(Theme.grouped)
     }
 }
 

@@ -21,7 +21,6 @@ struct AideApp: App {
                 .environmentObject(env.push)
                 .environmentObject(env.health)
                 .tint(Theme.accent)
-                .fontDesign(.rounded)
                 .task { await env.refreshAll() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { Task { await env.refreshAll() } }
@@ -38,7 +37,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
         // HealthKit's background wake-ups only reach observers set up during launch.
-        Task { await env.health.startObserving() }
+        Task { if !env.settings.isPreview { await env.health.startObserving() } }
         return true
     }
 
@@ -93,7 +92,15 @@ struct ContentView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)
         }
-        .onAppear { if !settings.isConfigured { tab = .settings } }
+        .onAppear {
+            if !settings.isConfigured { tab = .settings }
+            #if DEBUG
+            // Simulator screenshots: `-previewTab habits` or `settings`.
+            if settings.isPreview, let name = UserDefaults.standard.string(forKey: "previewTab") {
+                tab = name == "habits" ? .habits : name == "settings" ? .settings : .chat
+            }
+            #endif
+        }
         // onReceive also sees a route set before this view existed (a tap that launched the app).
         .onReceive(push.$route.compactMap { $0 }) { route in
             push.route = nil

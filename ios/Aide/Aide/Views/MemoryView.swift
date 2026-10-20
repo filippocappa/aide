@@ -64,7 +64,7 @@ struct MemoryView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Theme.background)
+        .background(Theme.grouped)
         .navigationTitle("Memory")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

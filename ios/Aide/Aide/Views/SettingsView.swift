@@ -26,7 +26,7 @@ struct SettingsView: View {
                         Text("English").tag("en-US")
                         Text("Italiano").tag("it-IT")
                     }
-                    Toggle("Read replies aloud", isOn: $settings.speakReplies)
+                    Toggle("Read replies aloud", isOn: $settings.speakReplies).tint(Theme.toggle)
                 } header: {
                     Text("Voice")
                 } footer: {
@@ -42,8 +42,7 @@ struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .tint(Theme.toggle)
-            .background(Theme.background)
+            .background(Theme.grouped)
             .navigationTitle("Settings")
             .onChange(of: settings.reminderListID) { _, _ in Task { await sync.sync() } }
         }
@@ -92,7 +91,7 @@ struct SettingsView: View {
     private var remindersSection: some View {
         Section {
             if sync.hasAccess {
-                Picker("List", selection: $settings.reminderListID) {
+                Picker("New reminders go to", selection: $settings.reminderListID) {
                     Text("Default list").tag("")
                     ForEach(sync.lists) { Text($0.title).tag($0.id) }
                 }
@@ -122,7 +121,7 @@ struct SettingsView: View {
         } header: {
             Text("Apple Reminders")
         } footer: {
-            Text("Aide mirrors its reminders into this one list, and Apple notifies you at the due time. Other lists stay private.")
+            Text("Aide and the team see every list, and can add to any of them (\"milk to Groceries\"). A reminder without a list goes to the one above. Apple notifies you at the due time.")
         }
     }
 

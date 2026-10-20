@@ -28,7 +28,7 @@ struct RoutinesSheet: View {
                         } label: {
                             RoutineRow(routine: routine, tint: agent.tint)
                         }
-                        .listRowBackground(Theme.card)
+                        .listRowBackground(Theme.row)
                     }
                     .onDelete { offsets in
                         let doomed = offsets.map { routines[$0] }
@@ -41,7 +41,7 @@ struct RoutinesSheet: View {
                             .font(.body.weight(.medium))
                             .foregroundStyle(agent.tint)
                     }
-                    .listRowBackground(Theme.card)
+                    .listRowBackground(Theme.row)
                 }
                 if !ideas.isEmpty {
                     Section("Ideas") {
@@ -55,19 +55,19 @@ struct RoutinesSheet: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                             }
-                            .listRowBackground(Theme.card)
+                            .listRowBackground(Theme.row)
                         }
                     }
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Theme.background)
+            .background(Theme.grouped)
             .navigationTitle("\(agent.name)'s routines")
             .navigationBarTitleDisplayMode(.inline)
             .task { await chat.loadRoutines() }
         }
         .presentationDetents([.medium, .large])
-        .presentationBackground(Theme.background)
+        .presentationBackground(Theme.grouped)
     }
 }
 
@@ -140,7 +140,7 @@ struct RoutineEditor: View {
                         .scrollContentBackground(.hidden)
                 }
             }
-            .listRowBackground(Theme.card)
+            .listRowBackground(Theme.row)
             Section {
                 DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
                 DayPicker(days: $days, tint: agent.tint)
@@ -148,7 +148,7 @@ struct RoutineEditor: View {
             } footer: {
                 Text(Schedule.label(time: Self.string(from: time), days: days.sorted()))
             }
-            .listRowBackground(Theme.card)
+            .listRowBackground(Theme.row)
             if let routine {
                 Section {
                     Button {
@@ -163,15 +163,15 @@ struct RoutineEditor: View {
                         Task { await chat.delete(routine); dismiss() }
                     }
                 }
-                .listRowBackground(Theme.card)
+                .listRowBackground(Theme.row)
                 .disabled(isBusy)
             }
             if let error {
-                Text(error).foregroundStyle(.red).listRowBackground(Theme.card)
+                Text(error).foregroundStyle(.red).listRowBackground(Theme.row)
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Theme.background)
+        .background(Theme.grouped)
         .navigationTitle(routine == nil ? "New routine" : routine!.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

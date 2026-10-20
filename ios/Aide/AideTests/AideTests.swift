@@ -41,6 +41,21 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(c["modified_at"] as? String, "2026-10-18T11:26:10Z")
     }
 
+    func testSyncSendsListsAndEachReminderItsList() throws {
+        let change = ReminderChange(id: nil, appleId: "x-apple", title: "Milk", notes: "", dueAt: nil, completed: false,
+                                    modifiedAt: "2026-10-18T11:26:10Z", deleted: false, list: "Groceries")
+        let data = try JSONEncoder.api.encode(SyncRequest(cursor: "3", changes: [change], lists: ["Reminders", "Groceries"],
+                                                          defaultList: "Reminders"))
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(obj["lists"] as? [String], ["Reminders", "Groceries"])
+        XCTAssertEqual(obj["default_list"] as? String, "Reminders")
+        XCTAssertEqual((obj["changes"] as? [[String: Any]])?.first?["list"] as? String, "Groceries")
+        let r = try JSONDecoder.api.decode(Reminder.self, from: Data(
+            #"{"id":"a","title":"Milk","list":"Groceries","modified_at":"2026-10-18T11:26:10Z"}"#.utf8))
+        XCTAssertEqual(r.list, "Groceries")
+        XCTAssertNil(try JSONDecoder.api.decode(Reminder.self, from: Data(#"{"id":"b","title":"x"}"#.utf8)).list)
+    }
+
     func testSyncResponseAcceptsNumericCursor() throws {
         let r = try JSONDecoder.api.decode(SyncResponse.self, from: Data(#"{"cursor":1720,"reminders":[]}"#.utf8))
         XCTAssertEqual(r.cursor, "1720")
@@ -127,14 +142,25 @@ final class APIClientTests: XCTestCase {
             event: team
             data: {"from": "coach", "to": "aide", "text": "Easy session."}
 
+            event: text
+            data: {"delta": "Coach says", "restart": true}
+
+            event: text
+            data: {"delta": " easy."}
+
             event: reply
             data: {"reply": "Coach says easy.", "team": [{"from": "aide", "to": "coach", "text": "Gym tonight?"}, {"from": "coach", "to": "aide", "text": "Easy session."}]}
 
             """)
         }
         var live: [TeamMessage] = []
-        let reply = try await makeClient().chatLive("gym?", conversationID: "c_1") { live.append($0) }
+        var draft: [(String, Bool)] = []
+        let reply = try await makeClient().chatLive("gym?", conversationID: "c_1", onText: { draft.append(($0, $1)) }) {
+            live.append($0)
+        }
         XCTAssertEqual(live.map(\.from), ["aide", "coach"])
+        XCTAssertEqual(draft.map(\.0), ["Coach says", " easy."])
+        XCTAssertEqual(draft.map(\.1), [true, false])
         XCTAssertEqual(reply.reply, "Coach says easy.")
         XCTAssertEqual(reply.team, live)
         XCTAssertEqual(body?["stream"] as? Bool, true)
@@ -360,7 +386,7 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(Figure(agent: "someone-new"), .pebble) // an agent the app doesn't know yet
         XCTAssertEqual(Figure(agent: nil), .pebble)
         // Every figure fits its tile at the live size (scaled 1.2 about the centre).
-        for figure in [Figure.pebble, .bubble, .dome, .ball, .ingot] {
+        for figure in [Figure.pebble, .card, .dome, .ball, .ingot] {
             let box = figure.body.boundingRect
             XCTAssertGreaterThanOrEqual((box.minX - 128) * 1.2 + 128, 0, "\(figure)")
             XCTAssertLessThanOrEqual((box.maxX - 128) * 1.2 + 128, 256, "\(figure)")
@@ -381,6 +407,45 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(agents[1].role, "")
         XCTAssertEqual(agents[1].hex, 0xE0782F)
         XCTAssertNil(Agent(id: "x", name: "X", role: "", color: "orange", orchestrator: false, starters: []).hex)
+        XCTAssertEqual(agents[1].prompt, "")
+        XCTAssertEqual(agents[1].connectors, [])
+    }
+
+    func testAgentsDecodeTheirPromptAndConnectors() throws {
+        let json = #"""
+        {"agents":[{"id":"coach","name":"Coach","color":"#23A26D","prompt":"You are Coach.","tools":["health","list_events"],
+                    "connectors":[{"id":"calendar","name":"iCloud Calendar","read_only":true,"tools":["list_events"]}]}]}
+        """#
+        let coach = try JSONDecoder.api.decode(AgentList.self, from: Data(json.utf8)).agents[0]
+        XCTAssertEqual(coach.prompt, "You are Coach.")
+        XCTAssertEqual(coach.tools, ["health", "list_events"])
+        XCTAssertEqual(coach.connectors, [.init(id: "calendar", name: "iCloud Calendar", readOnly: true, tools: ["list_events"])])
+    }
+}
+
+final class VoiceTests: XCTestCase {
+    @MainActor func testRepliesAreReadOutInWholeSentences() {
+        func spoken(_ s: String) -> String? { VoiceController.lastSentenceEnd(in: s[...]).map { String(s[..<$0]) } }
+        XCTAssertNil(spoken("Your next class is at 10"))
+        XCTAssertNil(spoken("Your next class is at 10.")) // the space after it hasn't arrived yet
+        XCTAssertNil(spoken("At 10.30 you"))
+        XCTAssertEqual(spoken("Sleep was short. Go easy. Tomor"), "Sleep was short. Go easy.")
+        XCTAssertEqual(spoken("Today:\n- gym"), "Today:\n")
+    }
+
+    func testRecordingsAreSentAsWAV() {
+        let pcm = Data([1, 0, 2, 0, 3, 0, 4, 0])
+        let wav = PCMRecorder.wav(pcm)
+        XCTAssertEqual(wav.count, 44 + pcm.count)
+        XCTAssertEqual(String(decoding: wav[0..<4], as: UTF8.self), "RIFF")
+        XCTAssertEqual(String(decoding: wav[8..<16], as: UTF8.self), "WAVEfmt ")
+        func le32(_ at: Int) -> UInt32 { wav[at..<at + 4].enumerated().reduce(0) { $0 | UInt32($1.element) << (8 * $1.offset) } }
+        XCTAssertEqual(le32(4), UInt32(36 + pcm.count))
+        XCTAssertEqual(le32(24), 16_000) // sample rate
+        XCTAssertEqual(le32(28), 32_000) // bytes a second: mono, 16-bit
+        XCTAssertEqual(String(decoding: wav[36..<40], as: UTF8.self), "data")
+        XCTAssertEqual(le32(40), UInt32(pcm.count))
+        XCTAssertEqual(wav.suffix(pcm.count), pcm)
     }
 
     func testConsultedAndAgentFieldsDefault() throws {

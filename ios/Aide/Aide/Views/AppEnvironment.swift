@@ -31,11 +31,19 @@ final class AppEnvironment: ObservableObject {
         // The assistant may have created reminders or moved events: sync.
         voice.languageCode = { [weak settings] in settings?.voiceLanguage ?? "en-US" }
         voice.speaksReplies = { [weak settings] in settings?.speakReplies ?? true }
+        voice.transcribe = { [weak settings] wav in
+            try await api.transcribe(wav: wav, language: settings?.voiceLanguage ?? "en-US")
+        }
         voice.onUtterance = { [weak self] text in
             guard let self else { return }
-            await self.chat.send(text)
+            // You talked over a reply that's still being written: yours goes once it's in.
+            while self.chat.isSending { try? await Task.sleep(for: .milliseconds(100)) }
+            let spoken = self.voice.replyStarted()
+            await self.chat.send(text) { draft, restarted in
+                self.voice.replyGrew(spoken, draft: draft, restarted: restarted)
+            }
             if let reply = self.chat.messages.last, reply.role == .assistant, !reply.isError {
-                self.voice.speak(reply.text)
+                self.voice.replyDone(spoken, reply.text)
             } else {
                 self.voice.stopAll()
             }
@@ -48,6 +56,14 @@ final class AppEnvironment: ObservableObject {
     /// Launch and return-to-foreground.
     func refreshAll() async {
         guard settings.isConfigured else { return }
+        if settings.isPreview {
+            async let agents: Void = chat.loadAgents()
+            async let conversations: Void = chat.loadConversations()
+            await chat.loadHistory()
+            await agents
+            await conversations
+            return
+        }
         async let agents: Void = chat.loadAgents()
         async let history: Void = chat.loadHistory()
         async let conversations: Void = chat.loadConversations()

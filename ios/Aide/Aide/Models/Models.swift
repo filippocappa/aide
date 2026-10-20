@@ -166,6 +166,18 @@ struct Agent: Decodable, Identifiable, Hashable {
     let starters: [String]
     /// One-tap starting points for its routines.
     var routineIdeas: [RoutineIdea] = []
+    /// What it runs on, for its info screen: its instructions, its tools here, and those grouped by what they reach.
+    var prompt = ""
+    var tools: [String] = []
+    var connectors: [Connector] = []
+
+    struct Connector: Decodable, Hashable, Identifiable {
+        let id: String
+        let name: String
+        /// None of its tools here change anything.
+        let readOnly: Bool
+        let tools: [String]
+    }
 
     init(id: String, name: String, role: String, color: String, orchestrator: Bool, starters: [String],
          routineIdeas: [RoutineIdea] = []) {
@@ -182,8 +194,13 @@ struct Agent: Decodable, Identifiable, Hashable {
         orchestrator = try c.decodeIfPresent(Bool.self, forKey: .orchestrator) ?? false
         starters = try c.decodeIfPresent([String].self, forKey: .starters) ?? []
         routineIdeas = try c.decodeIfPresent([RoutineIdea].self, forKey: .routineIdeas) ?? []
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
+        tools = try c.decodeIfPresent([String].self, forKey: .tools) ?? []
+        connectors = try c.decodeIfPresent([Connector].self, forKey: .connectors) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case id, name, role, color, orchestrator, starters, routineIdeas }
+    private enum CodingKeys: String, CodingKey {
+        case id, name, role, color, orchestrator, starters, routineIdeas, prompt, tools, connectors
+    }
 
     /// What the app shows when the server has no agents yet: Aide alone, as before.
     static let aide = Agent(id: "aide", name: "Aide", role: "Talks to all of them", color: "#34413F", orchestrator: true,
@@ -309,6 +326,8 @@ struct Reminder: Codable, Identifiable, Hashable {
     var deleted: Bool
     /// Set in digests: due time has passed (the server lists only the last 48 h of those).
     var overdue: Bool
+    /// Its Apple Reminders list, by name. Nil: the default list.
+    var list: String?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -321,8 +340,11 @@ struct Reminder: Codable, Identifiable, Hashable {
         modifiedAt = try c.decodeIfPresent(String.self, forKey: .modifiedAt) ?? ""
         deleted = try c.decodeIfPresent(Bool.self, forKey: .deleted) ?? false
         overdue = try c.decodeIfPresent(Bool.self, forKey: .overdue) ?? false
+        list = try c.decodeIfPresent(String.self, forKey: .list)
     }
-    private enum CodingKeys: String, CodingKey { case id, title, notes, dueAt, completed, appleId, modifiedAt, deleted, overdue }
+    private enum CodingKeys: String, CodingKey {
+        case id, title, notes, dueAt, completed, appleId, modifiedAt, deleted, overdue, list
+    }
 
     var dueDate: Date? { dueAt.flatMap(Wire.parse) }
 }
@@ -542,6 +564,7 @@ struct ReminderChange: Encodable, Equatable {
     var completed: Bool
     var modifiedAt: String
     var deleted: Bool
+    var list: String?
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -553,20 +576,26 @@ struct ReminderChange: Encodable, Equatable {
         try c.encode(completed, forKey: .completed)
         try c.encode(modifiedAt, forKey: .modifiedAt)
         try c.encode(deleted, forKey: .deleted)
+        try c.encodeIfPresent(list, forKey: .list)
     }
-    private enum CodingKeys: String, CodingKey { case id, appleId, title, notes, dueAt, completed, modifiedAt, deleted }
+    private enum CodingKeys: String, CodingKey { case id, appleId, title, notes, dueAt, completed, modifiedAt, deleted, list }
 }
 
 struct SyncRequest: Encodable {
     var cursor: String?
     var changes: [ReminderChange]
+    /// Every Apple Reminders list on the phone, by name, and the one reminders without a list go to.
+    var lists: [String] = []
+    var defaultList: String?
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(cursor, forKey: .cursor)
         try c.encode(changes, forKey: .changes)
+        try c.encode(lists, forKey: .lists)
+        try c.encode(defaultList, forKey: .defaultList)
     }
-    private enum CodingKeys: String, CodingKey { case cursor, changes }
+    private enum CodingKeys: String, CodingKey { case cursor, changes, lists, defaultList }
 }
 
 struct SyncResponse: Decodable {

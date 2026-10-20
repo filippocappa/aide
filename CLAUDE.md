@@ -74,7 +74,7 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 ## Roadmap
 
-Where things stand (2026-10-19, evening):
+Where things stand (2026-10-20):
 
 **Done, server (Ubuntu, live):**
 - Core: Discord bot, agent loop, systemd service; iCloud Calendar; Gmail (read, search; send and reply after
@@ -95,6 +95,19 @@ Where things stand (2026-10-19, evening):
 **Done, app (Mac):** iOS app v1 (chat, Today, reminders sync, settings), voice chat, habits tab, digest
 greeting as the first chat message with a Details sheet, digest settings, reminder and event cards with tick
 boxes in chat from `attachments`, the habit grid from `history` (9f24ec4).
+
+**Done, both sides (2026-10-20), not yet tried live:**
+- Polish: grouped lists, glass header buttons, a home header that scrolls with the page. New chats start blank;
+  the digest greeting opens a chat only from its notification. Secretary is a rounded card, Coach is emerald.
+- About each agent (card long-press or the chat's ••• menu): its connectors (`connectors` on `/v1/agents`),
+  read-only or not, and its instructions (`prompt`).
+- Voice: the server transcribes (`POST /v1/transcribe`, Gemini Flash Lite via OpenRouter, Italian and English
+  mixed), with Apple's recogniser only as a live preview of your words, or as the fallback.
+- Streamed replies: `text` events on a streamed `/v1/chat`. The chat shows the reply as it's written, and voice
+  reads it out a sentence at a time.
+- Team chat: a follow-up without a mention goes to whoever answered last, within 30 min (#16).
+- Reminders in every Apple Reminders list, each carrying its `list`. Agents can add to a list, move a
+  reminder and filter by list. Settings picks where reminders without a list go.
 
 **Done, live (2026-10-20):** push (#1). Server: devices endpoints, APNs sender, silent `sync`
 on server-side reminder changes, `reminder` and `digest` alerts with Discord as the fallback. App: device
@@ -122,8 +135,7 @@ server-sent events (checked through `tailscale serve`, not buffered). Writing in
 @mentions pick who answers (else Aide, which may ask the others), each sees the last 30 team messages, streamed
 with `working`, `team` and `done`. Discord stays on Aide. App (455ffcb): the "Your team" home grid, a drawn
 figure per agent (`Support/Figure.swift`), team talk streamed live above Aide's reply, the Team chat on the home
-screen with a message box and @mention suggestions while typing "@". Being tried on the phone (#11); a follow-up
-without a mention should go to whoever answered last (#16, server).
+screen with a message box and @mention suggestions while typing "@". Being tried on the phone (#11).
 
 **Done, both sides, not yet tried live:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
 and `run`, a chat per routine (`routine` on conversation rows and on the messages a run posts), the scheduler
@@ -134,10 +146,8 @@ long-press or the chat's ••• menu, an editor (time, days, on/off), the age
 chats and on the messages a run posts.
 
 **Next** (filed as GitHub issues, #11 first):
-1. Try it all on the phone (#11): the ••• menu fix, team grid, team talk, Team chat, routines. Push is live, so
-   Discord is now optional.
-   Reminders sync only one Apple Reminders list, so lists like groceries are invisible to the agents (to decide:
-   sync several lists, each reminder carrying its list).
+1. Try it all on the phone (#11): voice (tune the pause and loudness thresholds in `VoiceController`), streamed
+   replies, reminder lists, the team grid, Team chat, routines. Push is live, so Discord is now optional.
 2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
    proactive specialists (#13), a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
 3. The Professor gets the study agent (#3) and exam mode (#4). Finance still has no data source (memory only).

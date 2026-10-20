@@ -58,7 +58,7 @@ struct DigestSettingsView: View {
         }
         .scrollContentBackground(.hidden)
         .tint(Theme.toggle)
-        .background(Theme.background)
+        .background(Theme.grouped)
         .navigationTitle("Digests")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
