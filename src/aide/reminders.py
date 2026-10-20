@@ -255,6 +255,8 @@ class ReminderStore:
         else:
             winner = current
         final = replace(winner, id=current.id, apple_id=apple_id)
+        if final.list is None and incoming.list is not None:
+            final = replace(final, list=incoming.list)  # synced before lists: the phone says which one it's in
         return self._save(final) if final != current else current
 
     # -- Discord fallback --------------------------------------------------
