@@ -453,6 +453,26 @@ def test_without_a_mention_aide_answers_in_the_team_chat(env):
     assert [t["conversation_id"] for t in team[:2]] == ["main", "main"]
 
 
+def test_a_follow_up_goes_to_whoever_answered(env):
+    """#16: no mention, and the last message was answered by Secretary not long ago: Secretary answers again."""
+    client, agent, _ = env([done("Milk and eggs?"), done("Found them in Reminders."), done("Hi!")])
+    client.post("/v1/team", json={"text": "@secretary what do I need at the supermarket?"}, headers=AUTH)
+    body = client.post("/v1/team", json={"text": "it's in the reminders"}, headers=AUTH).json()
+    assert [m["from"] for m in body["messages"]] == ["user", "secretary"]
+    assert agent.client.requests[-1]["system"][0]["text"] == AGENTS["secretary"].prompt
+    # @aide always goes back to Aide.
+    body = client.post("/v1/team", json={"text": "@aide thanks"}, headers=AUTH).json()
+    assert [m["from"] for m in body["messages"]] == ["user", "aide"]
+
+
+def test_an_old_conversation_goes_back_to_aide(env):
+    client, agent, _ = env([done("Milk."), done("Morning!")])
+    client.post("/v1/team", json={"text": "@secretary shopping list?"}, headers=AUTH)
+    agent.db.conn.execute("UPDATE team_messages SET ts = '2026-01-01T08:00:00+00:00'")
+    body = client.post("/v1/team", json={"text": "good morning"}, headers=AUTH).json()
+    assert [m["from"] for m in body["messages"]] == ["user", "aide"]
+
+
 def test_mentions_pick_who_answers_in_order(env):
     client, agent, _ = env([done("Sleep is fine."), done("Budget allows it.")])
     body = client.post("/v1/team", json={"text": "@Finance @coach can I do a ski trip? mail me at a@b.com"},

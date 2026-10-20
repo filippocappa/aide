@@ -33,6 +33,7 @@ EPHEMERAL = {"type": "ephemeral"}
 MAX_ASKS = 3  # ask_agent calls per turn
 TEAM = "team"  # the Team chat: recipient of what's said there, and the queue's tag for actions queued from it
 TEAM_CONTEXT = 30  # team messages an agent answering in the Team chat sees
+FOLLOW_UP = timedelta(minutes=30)  # a Team chat message without a mention goes to who answered the last one, this soon
 SYSTEM_PROMPT = AGENTS[ORCHESTRATOR].prompt  # byte-stable per agent (agents.py), so each caches
 
 TITLE_PROMPT = """Write a title of two to five words for a chat that starts with the exchange below. \
@@ -299,9 +300,10 @@ class Agent:
 
     async def team_chat(self, channel: str, text: str, on_working: Callable[[str], None] | None = None,
                         on_team: Callable[[dict], None] | None = None) -> list[dict]:
-        """The user writes in the Team chat: the @mentioned agents answer in turn (else Aide, which may ask the
+        """The user writes in the Team chat: the @mentioned agents answer in turn. Without a mention it's a
+        follow-up to whoever answered the last message, if that was recent, else Aide answers (and may ask the
         others). Every message is stored as it's said. Returns the new ones, the user's first."""
-        answering = mentions(text) or [ORCHESTRATOR]
+        answering = mentions(text) or self._follow_up() or [ORCHESTRATOR]
         new: list[dict] = []
 
         def said(message: dict) -> None:
@@ -320,6 +322,18 @@ class Agent:
             finally:
                 self._on_team = None
             return new
+
+    def _follow_up(self) -> list[str]:
+        """Who answered the user's last Team chat message, in order, if it was sent within FOLLOW_UP."""
+        said = [t for t in self.db.team_messages(TEAM_CONTEXT) if t["conversation_id"] is None]
+        last = next((i for i in range(len(said) - 1, -1, -1) if said[i]["from"] == "user"), None)
+        if last is None or utcnow() - datetime.fromisoformat(said[last]["ts"]) > FOLLOW_UP:
+            return []
+        out: list[str] = []
+        for t in said[last + 1:]:
+            if t["to"] == TEAM and t["from"] in AGENTS and t["from"] not in out:
+                out.append(t["from"])
+        return out
 
     async def _team_answers(self, channel: str, answering: list[str], said: Callable[[dict], None],
                             on_working: Callable[[str], None] | None) -> None:
