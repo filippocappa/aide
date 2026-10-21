@@ -304,6 +304,8 @@ final class PushTests: XCTestCase {
     }
 
     func testSilentTestAndUnknownPushesDontRoute() {
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "moodle"]]), .moodle(login: false))
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "moodle", "login": true]]), .moodle(login: true))
         XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "sync"]]))
         XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "test"]]))
         XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "something-new"]]))

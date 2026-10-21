@@ -829,3 +829,63 @@ extension JSONEncoder {
         return e
     }()
 }
+
+// MARK: Moodle and the Obsidian vault (docs/API.md, "Moodle", "Obsidian vault")
+
+struct MoodleStatus: Decodable {
+    let enabled: Bool
+    var site: String?
+    var connected = false
+    var user: String?
+    var lastSync: String?
+    var error: String?
+    var courses: [MoodleCourse] = []
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        site = try c.decodeIfPresent(String.self, forKey: .site)
+        connected = try c.decodeIfPresent(Bool.self, forKey: .connected) ?? false
+        user = try c.decodeIfPresent(String.self, forKey: .user)
+        lastSync = try c.decodeIfPresent(String.self, forKey: .lastSync)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        courses = try c.decodeIfPresent([MoodleCourse].self, forKey: .courses) ?? []
+    }
+    private enum CodingKeys: String, CodingKey { case enabled, site, connected, user, lastSync, error, courses }
+}
+
+struct MoodleCourse: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    /// The Aide course it's synced into; nil: not synced.
+    var course: Int?
+    /// "auto" or "user"; nil before anything was matched.
+    var matched: String?
+    var files: Int?
+}
+
+/// Where the login starts, and the scheme its last address uses.
+struct MoodleLogin: Decodable { let url: String; let scheme: String }
+struct MoodleConnect: Encodable { let url: String }
+/// `course` nil is sent as null: don't sync this one.
+struct MoodleMatch: Encodable {
+    let course: Int?
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(course, forKey: .course)
+    }
+    private enum CodingKeys: String, CodingKey { case course }
+}
+
+/// The courses from `GET /v1/study`, only what the Moodle screen needs.
+struct StudyOverview: Decodable { let courses: [StudyCourse] }
+struct StudyCourse: Decodable, Identifiable, Hashable { let id: Int; let name: String }
+
+/// What Obsidian's Remotely Save plugin needs.
+struct VaultSetup: Decodable {
+    let enabled: Bool
+    var url: String?
+    var user: String?
+    var password: String?
+    var vault: String?
+}

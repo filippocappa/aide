@@ -302,6 +302,40 @@ final class APIClient {
         try await send("POST", "/v1/devices/test", body: EmptyBody())
     }
 
+    func moodle() async throws -> MoodleStatus {
+        try await send("GET", "/v1/moodle")
+    }
+
+    func moodleLogin() async throws -> MoodleLogin {
+        try await send("POST", "/v1/moodle/login", body: EmptyBody())
+    }
+
+    /// The address the login ended on; the server checks it and keeps the token. It also syncs, so it can be slow.
+    func moodleConnect(_ url: String) async throws -> MoodleStatus {
+        try await send("POST", "/v1/moodle/connect", body: MoodleConnect(url: url), timeout: 60)
+    }
+
+    func moodleLogout() async throws -> MoodleStatus {
+        try await send("DELETE", "/v1/moodle", body: EmptyBody())
+    }
+
+    /// Starts a sync in the background; `lastSync` changes when it's done.
+    func moodleSync() async throws -> MoodleStatus {
+        try await send("POST", "/v1/moodle/sync", body: EmptyBody())
+    }
+
+    func matchMoodleCourse(_ id: Int, course: Int?) async throws -> MoodleCourse {
+        try await send("PATCH", "/v1/moodle/courses/\(id)", body: MoodleMatch(course: course))
+    }
+
+    func study() async throws -> StudyOverview {
+        try await send("GET", "/v1/study")
+    }
+
+    func vault() async throws -> VaultSetup {
+        try await send("GET", "/v1/vault")
+    }
+
     // MARK: Plumbing
 
     private func send<T: Decodable>(

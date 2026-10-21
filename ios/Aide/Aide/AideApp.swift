@@ -105,8 +105,14 @@ struct ContentView: View {
         .onReceive(push.$route.compactMap { $0 }) { route in
             push.route = nil
             guard settings.isConfigured else { return }
-            tab = .chat
+            if case .moodle = route {} else { tab = .chat } // Moodle opens as a sheet over any tab
             Task { await env.open(route) }
+        }
+        .sheet(isPresented: $env.showMoodle) {
+            NavigationStack {
+                MoodleView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { env.showMoodle = false } } }
+            }
         }
     }
 }

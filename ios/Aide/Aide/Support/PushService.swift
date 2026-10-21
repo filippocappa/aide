@@ -6,6 +6,8 @@ enum PushRoute: Equatable {
     case today
     case digest(String)
     case conversation(String)
+    /// New course files, or (`login`) the Moodle login has expired.
+    case moodle(login: Bool)
 
     /// nil for silent pushes, test pushes and kinds this version doesn't know.
     init?(userInfo: [AnyHashable: Any]) {
@@ -16,6 +18,7 @@ enum PushRoute: Equatable {
         case "message":
             guard let id = aide["conversation_id"] as? String else { return nil }
             self = .conversation(id)
+        case "moodle": self = .moodle(login: aide["login"] as? Bool ?? false)
         default: return nil
         }
     }

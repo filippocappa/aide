@@ -33,6 +33,14 @@ struct SettingsView: View {
                     Text("Tap the microphone in a chat to talk. Aide answers out loud and keeps listening until you tap stop.")
                 }
                 Section {
+                    NavigationLink("Moodle") { MoodleView() }
+                    NavigationLink("Obsidian") { ObsidianView() }
+                } header: {
+                    Text("Study")
+                } footer: {
+                    Text("Course PDFs from the university's Moodle, and Aide's notes in an Obsidian vault.")
+                }
+                Section {
                     NavigationLink("Digests") { DigestSettingsView() }
                     NavigationLink("What Aide remembers") { MemoryView() }
                 }
