@@ -130,7 +130,11 @@ async def built(nb) -> list[dict]:
     p = await started(nb)
     nb.client.responses.append({"The IS-LM model": [done(PAGE), done('{"1": "A"}')], "Crowding out": done(CROWDING)})
     assert nb.api.post(f"/v1/proposals/{p['public_id']}/apply", json={}, headers=AUTH).status_code == 202
+    writing = nb.api.get(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).json()["writing"]
+    assert writing["id"] == p["public_id"] and writing["progress"] == {"done": 0, "total": 2}
     await drain(nb)
+    after = nb.api.get(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).json()
+    assert after["writing"] is None and nb.notebook.proposal(p["public_id"])["done"] == 2
     return nb.notebook.topics(nb.macro["id"])
 
 
@@ -149,6 +153,10 @@ async def test_starting_writes_the_introduction_and_proposes_topics(nb):
     assert p["items"][1]["sources"] == [{"file": nb.file["id"], "pages": [3]}]  # the made-up file is dropped
     assert nb.notebook.topics(nb.macro["id"]) == []  # nothing written before the user's OK
     messages = chat_messages(nb)
+    chats = nb.api.get("/v1/conversations", headers=AUTH).json()["conversations"]
+    # The app finds the course's progress from its chat.
+    assert {c["id"]: c["course"] for c in chats}[nb.study.chat(nb.macro["id"])] == nb.macro["id"]
+    assert {c["course"] for c in chats} == {nb.macro["id"], None}
     assert [m["role"] for m in messages] == ["assistant"]  # the note with the proposal's id stays hidden
     assert "1. **The IS-LM model**: Goods and money markets together." in messages[0]["text"]
     assert "Shall I write them?" in messages[0]["text"] and len(nb.push.messages) == 1
@@ -317,6 +325,55 @@ async def test_old_tool_results_are_cut_in_the_replayed_history(nb, tmp_path):
     assert request["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
     stored = [m for m in nb.db.history(nb.db.app_conversation(chat)["id"]) if isinstance(m["content"], list)]
     assert any(b.get("content") == full for m in stored for b in m["content"])  # the database keeps it whole
+
+
+async def test_figures_are_drawn_from_the_slides_and_read_back(nb):
+    p = await started(nb)
+    fid = nb.file["id"]
+    page = PAGE.replace("It slopes down.", "It slopes down.\n\nFIGURE: Week 3 slides.pdf, p. 1 | The IS curve sloping down"
+                        "\nFIGURE: Nowhere.pdf, p. 2 | made up\n**FIGURE:** week 3 slides, p. 9 | out of range")
+    nb.client.responses.append({"The IS-LM model": [done(page), done('{"1": "A"}')], "Crowding out": done(CROWDING)})
+    nb.api.post(f"/v1/proposals/{p['public_id']}/apply", headers=AUTH)
+    await drain(nb)
+    request = next(r for r in nb.client.requests if "Topic: The IS-LM model\n" in sent(r))
+    marks = [b["text"] for b in request["messages"][-1]["content"][:4] if b["type"] == "text"]
+    assert sorted(marks) == ["[Week 3 slides.pdf, p. 1]", "[Week 3 slides.pdf, p. 2]"]  # each image after its mark
+    t = nb.notebook.find_topic("The IS-LM model")
+    assert f"It slopes down.\n\n![The IS curve sloping down](figure:{fid}/1)\n\n### The LM curve" in t["body"]
+    assert "made up" not in t["body"] and "out of range" not in t["body"]
+
+    await nb.vault.sync()
+    root = nb.vault.folder / "Aide/macroeconomics"
+    image, page_file = root / "Images/Week 3 slides p1.jpg", root / "01 The IS-LM model.md"
+    assert image.read_bytes()[:2] == b"\xff\xd8"
+    text = page_file.read_text()
+    assert "![[Aide/macroeconomics/Images/Week 3 slides p1.jpg]]\n*The IS curve sloping down*" in text
+    page_file.write_text(text.replace("*The IS curve sloping down*", "*IS, my caption*"))
+    assert nb.vault.pull() == 1
+    body = nb.notebook.topic(t["public_id"])["body"]
+    assert f"![IS, my caption](figure:{fid}/1)" in body and "Images/" not in body
+    # A figure no topic shows any more goes from the vault.
+    nb.notebook.set_body(t["id"], body.replace(f"![IS, my caption](figure:{fid}/1)", ""))
+    await nb.vault.sync()
+    assert not image.exists() and "Images/" not in page_file.read_text()
+
+
+async def test_figures_for_pages_already_written(nb):
+    is_lm, _ = await built(nb)
+    fid = nb.file["id"]
+    nb.client.responses += [
+        done(json.dumps([{"after": "Explanation › The LM curve", "file": "Week 3 slides.pdf", "page": 2,
+                          "caption": "LM sloping up"},
+                         {"after": "Nowhere", "file": "Week 3 slides.pdf", "page": 1, "caption": "lost"}])),
+        done("[]")]
+    nb.notebook.enqueue(nb.macro["id"], "figures")
+    await drain(nb)
+    first = nb.client.requests[-2]
+    assert len(images(first)) == 2 and "Explanation › The LM curve" in sent(first)
+    assert "investment and so output" not in sent(first)  # headings only, not the page
+    body = nb.notebook.topic(is_lm["public_id"])["body"]
+    assert f"the interest rate.\n\n![LM sloping up](figure:{fid}/2)\n\n## Formulas" in body and "lost" not in body
+    assert chat_messages(nb)[-1]["text"] == "Added slide figures to the notes: The IS-LM model (1). They're in Obsidian."
 
 
 async def test_a_disputed_answer_key_is_looked_at_again(nb):

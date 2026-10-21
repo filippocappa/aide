@@ -59,8 +59,14 @@ struct ChatView: View {
                 }
             }
             header
+            if let writing = chat.writing, !voice.isActive {
+                NotebookBar(progress: writing)
+                    .padding(.top, Self.headerHeight + 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
         .animation(.spring(response: 0.6, dampingFraction: 0.78), value: voice.isActive)
+        .animation(.easeInOut(duration: 0.3), value: chat.writing)
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: replying)
         .animation(.easeInOut(duration: 0.3), value: isEmpty)
         .background(Theme.background)
@@ -709,5 +715,35 @@ struct HeaderBackdrop: View {
             LinearGradient(colors: [Theme.background, Theme.background.opacity(0)], startPoint: .top, endPoint: .bottom)
                 .frame(height: 28)
         }
+    }
+}
+
+/// Under Pebble in a course's chat while its notebook is being written: how many topics are done, filling up as each
+/// one finishes (docs/API.md, "Notebook"). Topics take a few minutes each, so the spinner shows it's still going.
+private struct NotebookBar: View {
+    let progress: NotebookProgress
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Writing the notes").font(.footnote.weight(.semibold))
+                Spacer()
+                if progress.total > 0 {
+                    Text("\(progress.done) of \(progress.total)")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+        }
+        .tint(Theme.accent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.line, lineWidth: 0.5))
+        .padding(.horizontal, 16)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Writing the notes, \(progress.done) of \(progress.total) topics done")
     }
 }

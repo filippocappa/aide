@@ -58,6 +58,9 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var teamWorking: String?
     @Published private(set) var isPostingTeam = false
     @Published private(set) var routines: [Routine] = []
+    /// The course notebook being written, when this is the course's chat: the progress bar (docs/API.md, "Notebook").
+    @Published private(set) var writing: NotebookProgress?
+    private var notebookWatch: Task<Void, Never>?
 
     /// Called after the server may have changed reminders or events.
     var onServerChange: (() async -> Void)?
@@ -140,6 +143,7 @@ final class ChatViewModel: ObservableObject {
         conversationID = nil
         messages = []
         pending = []
+        stopWatchingNotebook()
     }
 
     /// The chat opened with the digest: its first message is Aide's (every other chat starts with yours).
@@ -160,6 +164,38 @@ final class ChatViewModel: ObservableObject {
         isLoadingHistory = true
         defer { isLoadingHistory = false }
         await loadHistory()
+        watchNotebook()
+    }
+
+    // MARK: Notebook progress
+
+    /// While the course's notebook is being written, asks how far it is every few seconds. When it's done the bar
+    /// goes and the history reloads, for Professor's message with the result. Nothing for other chats, or an older
+    /// server.
+    func watchNotebook() {
+        stopWatchingNotebook()
+        guard let id = conversationID, let course = conversations.first(where: { $0.id == id })?.course else { return }
+        notebookWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let status = try? await self?.api.notebook(course: course),
+                      let self, self.conversationID == id, !Task.isCancelled else { return }
+                guard let proposal = status.writing else {
+                    if self.writing != nil {
+                        self.writing = nil
+                        await self.loadHistory()
+                    }
+                    return
+                }
+                self.writing = proposal.progress ?? NotebookProgress(done: 0, total: 0)
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
+    }
+
+    private func stopWatchingNotebook() {
+        notebookWatch?.cancel()
+        notebookWatch = nil
+        writing = nil
     }
 
     func loadConversations() async {
@@ -310,6 +346,7 @@ final class ChatViewModel: ObservableObject {
             liveTeam = []
             liveReply = ""
             isSending = false
+            if writing == nil { watchNotebook() } // "yes" to a proposal starts the writing
             await onServerChange?()
         } catch {
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true, team: liveTeam))

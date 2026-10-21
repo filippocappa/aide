@@ -87,12 +87,12 @@ async def pdf_pages(path: Path) -> list[str]:
     return [re.sub(r"[ \t]+\n", "\n", re.sub(r"\n{3,}", "\n\n", p)).strip() for p in pages]
 
 
-async def page_image(path: Path, page: int) -> bytes:
-    """One page as a JPEG, IMAGE_SIDE pixels on its longest side. pdftoppm writes to a file: given "-" for the
+async def page_image(path: Path, page: int, side: int = IMAGE_SIDE) -> bytes:
+    """One page as a JPEG, `side` pixels on its longest side. pdftoppm writes to a file: given "-" for the
     name, it makes a file called "-.jpg" rather than writing to stdout."""
     with tempfile.TemporaryDirectory(prefix="aide-page-") as tmp:
         out = Path(tmp) / "page"
-        await _run("pdftoppm", "-jpeg", "-jpegopt", "quality=80", "-scale-to", str(IMAGE_SIDE),
+        await _run("pdftoppm", "-jpeg", "-jpegopt", "quality=80", "-scale-to", str(side),
                    "-f", str(page), "-l", str(page), "-singlefile", str(path), str(out))
         try:
             return out.with_suffix(".jpg").read_bytes()
