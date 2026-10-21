@@ -61,6 +61,7 @@ struct StreamError: Decodable { let error: String }
 enum Attachment: Decodable, Hashable {
     case reminders([Reminder])
     case events([CalendarEvent])
+    case meals([Meal])
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -68,10 +69,11 @@ enum Attachment: Decodable, Hashable {
         switch try c.decode(String.self, forKey: .type) {
         case "reminders": self = .reminders(try c.decode([Reminder].self, forKey: .reminders))
         case "events": self = .events(try c.decode([CalendarEvent].self, forKey: .events))
+        case "meals": self = .meals(try c.decode([Meal].self, forKey: .meals))
         default: self = .unknown
         }
     }
-    private enum CodingKeys: String, CodingKey { case type, reminders, events }
+    private enum CodingKeys: String, CodingKey { case type, reminders, events, meals }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
         (list ?? []).filter { $0 != .unknown }
@@ -95,8 +97,9 @@ struct HealthResponse: Decodable { let ok: Bool; let version: String }
 struct EmptyBody: Encodable {}
 /// `digest` and `agent` nil send `{}`: a blank chat with Aide.
 struct NewConversation: Encodable { var digest: String?; var agent: String? }
-/// `conversationId` nil keeps the old behaviour: the one shared conversation.
-struct ChatRequest: Encodable { let text: String; var conversationId: String?; var stream: Bool? }
+/// `conversationId` nil keeps the old behaviour: the one shared conversation. `photos` nil when there are none.
+struct ChatRequest: Encodable { let text: String; var conversationId: String?; var stream: Bool?; var photos: [String]? }
+struct PhotoUpload: Decodable { let id: String }
 struct ConversationBody: Encodable { var conversationId: String? }
 /// `agent` nil: shared by every agent.
 struct MemoryRequest: Encodable { let text: String; var agent: String? }
@@ -135,10 +138,13 @@ struct HistoryMessage: Decodable {
     let team: [TeamMessage]
     /// Set when a routine posted it.
     let routine: RoutineTag?
+    /// Photo ids sent with a user message (docs/API.md, "Photos").
+    let photos: [String]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         routine = try c.decodeIfPresent(RoutineTag.self, forKey: .routine)
+        photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? []
         role = try c.decode(String.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         ts = try c.decodeIfPresent(String.self, forKey: .ts)
@@ -146,7 +152,7 @@ struct HistoryMessage: Decodable {
         consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
         team = try c.decodeIfPresent([TeamMessage].self, forKey: .team) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine }
+    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine, photos }
 }
 
 struct RoutineTag: Decodable, Hashable {
@@ -408,6 +414,159 @@ enum WorkoutType {
     static func label(_ id: String) -> String { all.first { $0.id == id }?.label ?? id }
 }
 
+// MARK: - Food
+
+/// A meal Coach logged, its numbers the model's estimates (docs/API.md, "Food").
+struct Meal: Decodable, Identifiable, Hashable {
+    let id: Int
+    var name: String
+    var eatenAt: String
+    var calories: Int
+    var proteinG: Int
+    var carbsG: Int
+    var fatG: Int
+    /// Photo id, nil without one.
+    var photo: String?
+    var notes: String
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Meal"
+        eatenAt = try c.decodeIfPresent(String.self, forKey: .eatenAt) ?? ""
+        calories = try c.number(.calories) ?? 0
+        proteinG = try c.number(.proteinG) ?? 0
+        carbsG = try c.number(.carbsG) ?? 0
+        fatG = try c.number(.fatG) ?? 0
+        photo = try c.decodeIfPresent(String.self, forKey: .photo)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+    }
+    private enum CodingKeys: String, CodingKey { case id, name, eatenAt, calories, proteinG, carbsG, fatG, photo, notes }
+
+    var eatenDate: Date? { Wire.parse(eatenAt) }
+}
+
+/// What was eaten in a day.
+struct FoodTotals: Decodable, Hashable {
+    var calories = 0
+    var proteinG = 0
+    var carbsG = 0
+    var fatG = 0
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        calories = try c.number(.calories) ?? 0
+        proteinG = try c.number(.proteinG) ?? 0
+        carbsG = try c.number(.carbsG) ?? 0
+        fatG = try c.number(.fatG) ?? 0
+    }
+    private enum CodingKeys: String, CodingKey { case calories, proteinG, carbsG, fatG }
+}
+
+/// Daily goals; nil is no goal. Saved with every key, so clearing one sends null.
+struct FoodGoals: Codable, Hashable {
+    var calories: Int?
+    var proteinG: Int?
+    var carbsG: Int?
+    var fatG: Int?
+
+    init(calories: Int? = nil, proteinG: Int? = nil, carbsG: Int? = nil, fatG: Int? = nil) {
+        (self.calories, self.proteinG, self.carbsG, self.fatG) = (calories, proteinG, carbsG, fatG)
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        calories = try c.number(.calories)
+        proteinG = try c.number(.proteinG)
+        carbsG = try c.number(.carbsG)
+        fatG = try c.number(.fatG)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(calories, forKey: .calories)
+        try c.encode(proteinG, forKey: .proteinG)
+        try c.encode(carbsG, forKey: .carbsG)
+        try c.encode(fatG, forKey: .fatG)
+    }
+    private enum CodingKeys: String, CodingKey { case calories, proteinG, carbsG, fatG }
+}
+
+/// `GET /v1/food`: one day's meals, by time.
+struct FoodDay: Decodable {
+    let date: String
+    var meals: [Meal]
+    var totals: FoodTotals
+    var goals: FoodGoals
+
+    init(date: String) {
+        (self.date, meals, totals, goals) = (date, [], FoodTotals(), FoodGoals())
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = try c.decodeIfPresent(String.self, forKey: .date) ?? ""
+        meals = try c.decodeIfPresent([Meal].self, forKey: .meals) ?? []
+        totals = try c.decodeIfPresent(FoodTotals.self, forKey: .totals) ?? FoodTotals()
+        goals = try c.decodeIfPresent(FoodGoals.self, forKey: .goals) ?? FoodGoals()
+    }
+    private enum CodingKeys: String, CodingKey { case date, meals, totals, goals }
+}
+
+/// A day in `GET /v1/food/days`: its totals and how many meals.
+struct FoodDaySummary: Decodable, Hashable {
+    let date: String
+    let totals: FoodTotals
+    let meals: Int
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = try c.decode(String.self, forKey: .date)
+        totals = try c.decodeIfPresent(FoodTotals.self, forKey: .totals) ?? FoodTotals()
+        meals = try c.number(.meals) ?? 0
+    }
+    private enum CodingKeys: String, CodingKey { case date, totals, meals }
+}
+struct FoodDayList: Decodable { let days: [FoodDaySummary] }
+
+/// `POST /v1/food/log`: photos, words or both. `date` nil is today.
+struct FoodLogRequest: Encodable { var photos: [String] = []; var text: String?; var date: String? }
+struct FoodLogReply: Decodable {
+    let reply: String
+    /// What Coach logged or changed; empty when it only asked something.
+    let meals: [Meal]
+    let conversationId: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        reply = try c.decodeIfPresent(String.self, forKey: .reply) ?? ""
+        meals = try c.decodeIfPresent([Meal].self, forKey: .meals) ?? []
+        conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
+    }
+    private enum CodingKeys: String, CodingKey { case reply, meals, conversationId }
+}
+
+/// The body of `PATCH /v1/food/meals/{id}`: the edit sheet sends every field.
+struct MealChanges: Encodable, Equatable {
+    var name: String
+    var eatenAt: String
+    var calories: Int
+    var proteinG: Int
+    var carbsG: Int
+    var fatG: Int
+    var notes: String
+}
+
+private extension KeyedDecodingContainer {
+    /// A whole number the server might send as 650 or 650.0; nil when missing or null.
+    func number(_ key: Key) throws -> Int? {
+        if let n = try? decodeIfPresent(Int.self, forKey: key) { return n }
+        return try decodeIfPresent(Double.self, forKey: key).map { Int($0.rounded()) }
+    }
+}
+
 // MARK: - Apple Health
 
 /// The night that ended on a health day's date (docs/API.md, "Health day").
@@ -557,7 +716,6 @@ struct DigestSettings: Codable, Equatable {
     var evening: DigestSchedule?
     var weekly: DigestSchedule
     var monthly: DigestSchedule
-    var discord: Bool
 }
 
 // MARK: - Reminder sync

@@ -7,7 +7,7 @@ Personal AI assistant for one person (Filippo): calendar, reminders, habits and 
 
 | Machine | Works on | Runs |
 |---|---|---|
-| **Ubuntu desktop** (`cappa`, always on) | the server: `src/`, `tests/`, `deploy/` | the Aide service (Discord bot + HTTP API) |
+| **Ubuntu desktop** (`cappa`, always on) | the server: `src/`, `tests/`, `deploy/` | the Aide service (HTTP API, scheduler) |
 | **MacBook** | the iOS app: `ios/` | Xcode, the iOS Simulator |
 
 Both machines run Claude Code on the same GitHub repo (`filippocappa/aide`).
@@ -25,9 +25,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `agents.py`: the agents (Aide and the specialists): prompts, tool sets, colours, starters.
 - `db.py`: SQLite (WAL) at `data/aide.db`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
-- `channels/discord_bot.py` and `channels/api.py` (FastAPI, the app's API): two adapters over one agent and one shared conversation.
-- `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (the Discord fallback).
-- `push.py`: APNs sender and the devices table (off without `APNS_*` in `.env`; then Discord only).
+- `channels/api.py` (FastAPI): the app's API, the only way in since the Discord bot was removed (2026-10-21).
+- `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (a push for reminders not yet on the phone).
+- `push.py`: APNs sender and the devices table (off without `APNS_*` in `.env`; then nothing is pushed).
+- `photos.py`: photos for chat and food, files in `data/photos/` (backed up once each). `food.py`: meals and food goals.
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
@@ -40,7 +41,7 @@ journalctl --user -u aide -f        # logs
 ```
 
 Rules that matter here:
-- **Destructive or outward-facing actions are queued in code** and run only after the user's `!yes` (Discord) or `POST /v1/confirm` (app). Never let the model execute them directly.
+- **Destructive or outward-facing actions are queued in code** and run only after the user's `POST /v1/confirm` (Confirm in the app). Never let the model execute them directly.
 - Each user message is stamped with local time and the live queue. The model shouldn't rely on remembered times or queue state.
 - Secrets live in `.env` only (git-ignored). Never commit or print them.
 - Times: store UTC, talk to the user in `AIDE_TIMEZONE` (Europe/Rome).
@@ -65,9 +66,9 @@ xcodebuild -scheme Aide -destination 'platform=iOS Simulator,name=iPhone 16' tes
 (Check `xcrun simctl list devices available` if that simulator name doesn't exist.)
 
 What the app does, v1:
-1. **Chat** with Aide. Same conversation as Discord, so you can start on one and continue on the other.
+1. **Chat** with Aide and the specialists, with photos.
 2. **Today:** today's calendar events and reminders.
-3. **Reminders sync** with Apple Reminders through EventKit. The app is the only part that can touch Apple Reminders. Each synced reminder gets an EventKit alarm at its due time, so **Apple** notifies the user even with the app closed. Until push exists, reminders that haven't reached the phone are sent as Discord DMs.
+3. **Reminders sync** with Apple Reminders through EventKit. The app is the only part that can touch Apple Reminders. Each synced reminder gets an EventKit alarm at its due time, so **Apple** notifies the user even with the app closed. Reminders that haven't reached the phone are pushed.
 4. **Settings:** server URL and API token, kept in the Keychain. Never hardcode them.
 
 The app reaches the server over Tailscale (the phone needs the Tailscale app). Everything is in `docs/API.md`.
@@ -77,14 +78,13 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 Where things stand (2026-10-20):
 
 **Done, server (Ubuntu, live):**
-- Core: Discord bot, agent loop, systemd service; iCloud Calendar; Gmail (read, search; send and reply after
+- Core: agent loop, systemd service (the Discord bot was removed 2026-10-21); iCloud Calendar; Gmail (read, search; send and reply after
   confirmation; one-time setup in README.md, "Gmail").
-- HTTP API v1, all of `docs/API.md`: chat with many conversations and memory, reminders store and sync, Discord
-  fallback for reminders not yet on the phone.
+- HTTP API v1, all of `docs/API.md`: chat with many conversations and memory, reminders store and sync, a push
+  for reminders not yet on the phone.
 - Nightly backups to `~/aide-backups` (user timer, 14 daily + 8 weekly; restore notes in README.md).
 - Habits with streaks and a 26-week `history` for the app's grid.
-- Digests: morning (`daily`), evening, weekly, monthly, on the schedule in the digest settings, also sent as
-  Discord DMs. Data sections are rebuilt live on every read; only the greeting (a short spoken note) is stored.
+- Digests: morning (`daily`), evening, weekly, monthly, on the schedule in the digest settings, also pushed. Data sections are rebuilt live on every read; only the greeting (a short spoken note) is stored.
   Reminders: due in the period plus today's overdue. Mail: today's inbox. A new chat can open with the
   greeting (`POST /v1/conversations` with `digest`). Background in `docs/digest-v2.md` (built, both sides).
 - Chat `attachments`: reminder and event cards from the turn's tool calls, in `/v1/chat` and `/v1/history`.
@@ -110,7 +110,7 @@ boxes in chat from `attachments`, the habit grid from `history` (9f24ec4).
   reminder and filter by list. Settings picks where reminders without a list go.
 
 **Done, live (2026-10-20):** push (#1). Server: devices endpoints, APNs sender, silent `sync`
-on server-side reminder changes, `reminder` and `digest` alerts with Discord as the fallback. App: device
+on server-side reminder changes, `reminder` and `digest` alerts. App: device
 registration, background sync on silent pushes, taps open the digest chat, the conversation or Details, and
 Settings → Notifications with a test button. The test push reached the phone. App unit tests not yet run (this
 Mac has no Simulator runtime yet).
@@ -133,14 +133,13 @@ Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Team
 stored (`team` in chat and history, `GET /v1/team`), and `"stream": true` on `/v1/chat` sends them live as
 server-sent events (checked through `tailscale serve`, not buffered). Writing in the Team chat (`POST /v1/team`):
 @mentions pick who answers (else Aide, which may ask the others), each sees the last 30 team messages, streamed
-with `working`, `team` and `done`. Discord stays on Aide. App (455ffcb): the "Your team" home grid, a drawn
+with `working`, `team` and `done`. App (455ffcb): the "Your team" home grid, a drawn
 figure per agent (`Support/Figure.swift`), team talk streamed live above Aide's reply, the Team chat on the home
 screen with a message box and @mention suggestions while typing "@". Being tried on the phone (#11).
 
 **Done, both sides, not yet tried live:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
 and `run`, a chat per routine (`routine` on conversation rows and on the messages a run posts), the scheduler
-(30 s tick, a run missed by less than 2 h runs once after startup), an alert push per run with a Discord DM as the
-fallback, `routines` tools for every agent (Aide for anyone, the others their own; deleting is queued), and
+(30 s tick, a run missed by less than 2 h runs once after startup), an alert push per run, `routines` tools for every agent (Aide for anyone, the others their own; deleting is queued), and
 `routine_ideas` on `/v1/agents`. App (455ffcb, `Views/RoutinesView.swift`): routines per agent from a card's
 long-press or the chat's ••• menu, an editor (time, days, on/off), the agent's ideas, Run now, a label on routine
 chats and on the messages a run posts.
@@ -152,10 +151,17 @@ watches, set up once: Secretary "Mail that needs you" and "Tomorrow", Coach "Rec
 tonight". App: a "Keeps an eye on" group in the routines sheet, the editor's "Only when something needs you",
 Check now. Live on the server; the first "Tomorrow" note reached the phone.
 
+**Done, both sides (2026-10-21):** photos and food (contract in `docs/API.md`, "Photos" and "Food"). Photos go
+up with `POST /v1/photos` and ride on a chat message (up to 4); the model sees a chat's last 3 as images
+(checked live through OpenRouter). Food: Coach (and Aide) log meals from a photo or a description with estimated
+calories and macros, correctable in chat; `meals` cards; daily goals. The app's Habits tab became Health: food
+for the day (ring, macros, meals, "Log a meal" through `POST /v1/food/log` into Coach's "Food log" chat) above
+the habits. Aide now sees every specialist's memory, marked with its name.
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
-   replies, reminder lists, the team grid, Team chat, routines. Push is live, so Discord is now optional.
+   replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
 2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
    a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
 3. The Professor gets the study agent (#3) and exam mode (#4). Finance still has no data source (memory only).

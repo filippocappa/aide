@@ -15,6 +15,10 @@ final class ChatViewModel: ObservableObject {
         var team: [TeamMessage] = []
         /// Set when a routine posted it.
         var routine: RoutineTag?
+        /// Photo ids sent with it, from the server.
+        var photos: [String] = []
+        /// Photos sent from here, shown before they're uploaded.
+        var localPhotos: [Data] = []
     }
 
     private static let conversationKey = "conversationID"
@@ -258,12 +262,15 @@ final class ChatViewModel: ObservableObject {
             guard !isSending, !isActing, id == conversationID else { return }
             let loaded = history.messages.map {
                 Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, attachments: $0.attachments,
-                        consulted: $0.consulted, team: $0.team, routine: $0.routine)
+                        consulted: $0.consulted, team: $0.team, routine: $0.routine, photos: $0.photos)
             }
             // Keep the existing rows when nothing changed, so a refresh doesn't replay the pop-in animation.
             // Attachments count: a reminder ticked elsewhere should show as ticked.
             func content(_ list: [Message]) -> [String] {
-                list.map { "\($0.role == .user ? "u" : "a")|\($0.text)|\($0.attachments.hashValue)|\($0.team.count)" }
+                list.map {
+                    "\($0.role == .user ? "u" : "a")|\($0.text)|\($0.attachments.hashValue)|\($0.team.count)"
+                        + "|\(max($0.photos.count, $0.localPhotos.count))"
+                }
             }
             if content(loaded) != content(messages.filter { !$0.isError }) {
                 messages = loaded
@@ -277,16 +284,19 @@ final class ChatViewModel: ObservableObject {
     // MARK: Messages
 
     /// Sends a message; the reply shows as it's written. `onDraft` gets the draft each time it grows, and true
-    /// when it started over (text written before a tool call is dropped).
-    func send(_ raw: String, onDraft: ((String, Bool) -> Void)? = nil) async {
+    /// when it started over (text written before a tool call is dropped). Photos go up first; the text may then
+    /// be empty.
+    func send(_ raw: String, photos: [PickedPhoto] = [], onDraft: ((String, Bool) -> Void)? = nil) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isSending, !isOpening else { return }
-        messages.append(Message(role: .user, text: text))
+        guard !text.isEmpty || !photos.isEmpty, !isSending, !isOpening else { return }
+        messages.append(Message(role: .user, text: text, localPhotos: photos.map(\.jpeg)))
         isSending = true
         liveReply = ""
         do {
+            var ids: [String] = []
+            for photo in photos { ids.append(try await api.uploadPhoto(photo.jpeg)) }
             if conversationID == nil { conversationID = try await newConversationID() }
-            let reply = try await api.chatLive(text, conversationID: conversationID, onText: { [weak self] delta, restart in
+            let reply = try await api.chatLive(text, photos: ids, conversationID: conversationID, onText: { [weak self] delta, restart in
                 guard let self else { return }
                 liveReply = restart ? delta : liveReply + delta
                 onDraft?(liveReply, restart)

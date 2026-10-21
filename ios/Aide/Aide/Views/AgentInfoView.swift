@@ -86,6 +86,7 @@ private struct ConnectorRow: View {
         case "mail": "envelope"
         case "health": "heart"
         case "habits": "flame"
+        case "food": "fork.knife"
         case "web": "globe"
         case "maps": "map"
         case "memory": "brain"

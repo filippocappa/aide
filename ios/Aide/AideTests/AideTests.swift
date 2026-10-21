@@ -562,3 +562,126 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(obj["agent"] as? String, "coach")
     }
 }
+
+final class FoodTests: XCTestCase {
+    private let meal = #"""
+    {"id":12,"name":"Pasta al pomodoro","eaten_at":"2026-10-21T13:10:00+02:00","calories":650,
+     "protein_g":20,"carbs_g":110.0,"fat_g":15,"photo":"p_3f9a","notes":"about 120 g dry pasta"}
+    """#
+
+    func testMealDecodes() throws {
+        let m = try JSONDecoder.api.decode(Meal.self, from: Data(meal.utf8))
+        XCTAssertEqual(m.id, 12)
+        XCTAssertEqual(m.name, "Pasta al pomodoro")
+        XCTAssertEqual(m.calories, 650)
+        XCTAssertEqual(m.carbsG, 110) // a whole number sent as 110.0
+        XCTAssertEqual(m.photo, "p_3f9a")
+        XCTAssertNotNil(m.eatenDate)
+        XCTAssertEqual(MealRow.macros(m), "P 20 g · C 110 g · F 15 g")
+    }
+
+    func testFoodDayWithoutGoalsAndMealWithoutPhoto() throws {
+        let json = #"""
+        {"date":"2026-10-21","meals":[{"id":1,"name":"Apple","eaten_at":"2026-10-21T10:00:00+02:00","calories":80,
+          "protein_g":0,"carbs_g":21,"fat_g":0,"photo":null,"notes":""}],
+         "totals":{"calories":80,"protein_g":0,"carbs_g":21,"fat_g":0},
+         "goals":{"calories":null,"protein_g":140,"carbs_g":null,"fat_g":null}}
+        """#
+        let day = try JSONDecoder.api.decode(FoodDay.self, from: Data(json.utf8))
+        XCTAssertEqual(day.meals.count, 1)
+        XCTAssertNil(day.meals[0].photo)
+        XCTAssertEqual(day.totals.carbsG, 21)
+        XCTAssertNil(day.goals.calories)
+        XCTAssertEqual(day.goals.proteinG, 140)
+    }
+
+    func testGoalsSaveEveryKeySoClearingSendsNull() throws {
+        let data = try JSONEncoder.api.encode(FoodGoals(calories: 2200))
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(obj["calories"] as? Int, 2200)
+        XCTAssertTrue(obj["protein_g"] is NSNull)
+        XCTAssertTrue(obj["fat_g"] is NSNull)
+    }
+
+    func testFoodDaysDecode() throws {
+        let json = #"""
+        {"days":[{"date":"2026-10-20","totals":{"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0},"meals":0},
+                 {"date":"2026-10-21","totals":{"calories":1840,"protein_g":96,"carbs_g":210,"fat_g":61},"meals":3}]}
+        """#
+        let days = try JSONDecoder.api.decode(FoodDayList.self, from: Data(json.utf8)).days
+        XCTAssertEqual(days.map(\.date), ["2026-10-20", "2026-10-21"])
+        XCTAssertEqual(days[1].meals, 3)
+        XCTAssertEqual(days[1].totals.calories, 1840)
+    }
+
+    func testMealsAttachmentAndUnknownOnesSkipped() throws {
+        let json = #"{"reply":"Logged.","attachments":[{"type":"meals","meals":[\#(meal)]},{"type":"places","places":[]}]}"#
+        let reply = try JSONDecoder.api.decode(ChatReply.self, from: Data(json.utf8))
+        XCTAssertEqual(reply.attachments.count, 1)
+        guard case .meals(let meals) = reply.attachments[0] else { return XCTFail("expected meals") }
+        XCTAssertEqual(meals.first?.name, "Pasta al pomodoro")
+    }
+
+    func testHistoryCarriesPhotos() throws {
+        let json = #"""
+        {"messages":[{"role":"user","text":"","photos":["p_1","p_2"]},{"role":"assistant","text":"Nice pasta."}]}
+        """#
+        let history = try JSONDecoder.api.decode(HistoryResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(history.messages[0].photos, ["p_1", "p_2"])
+        XCTAssertEqual(history.messages[1].photos, [])
+    }
+
+    func testChatSendsPhotosOnlyWhenThereAreSome() throws {
+        let with = try JSONEncoder.api.encode(ChatRequest(text: "", photos: ["p_1"]))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: with) as? [String: Any])?["photos"] as? [String], ["p_1"])
+        let without = try JSONEncoder.api.encode(ChatRequest(text: "hi"))
+        XCTAssertNil((try JSONSerialization.jsonObject(with: without) as? [String: Any])?["photos"])
+    }
+
+    func testFoodLogLeavesOutTodayAndText() throws {
+        let data = try JSONEncoder.api.encode(FoodLogRequest(photos: ["p_1"]))
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(obj["photos"] as? [String], ["p_1"])
+        XCTAssertNil(obj["date"])
+        XCTAssertNil(obj["text"])
+    }
+
+    func testPhotosShrinkToTheLongestSide() throws {
+        XCTAssertEqual(PhotoPrep.fitted(CGSize(width: 4000, height: 3000)), CGSize(width: 1568, height: 1176))
+        XCTAssertEqual(PhotoPrep.fitted(CGSize(width: 3000, height: 4000)), CGSize(width: 1176, height: 1568))
+        XCTAssertEqual(PhotoPrep.fitted(CGSize(width: 800, height: 600)), CGSize(width: 800, height: 600))
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let big = UIGraphicsImageRenderer(size: CGSize(width: 4000, height: 3000), format: format).image { ctx in
+            UIColor.orange.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 4000, height: 3000))
+        }
+        let fromCamera = try XCTUnwrap(PhotoPrep.jpeg(big).flatMap(UIImage.init(data:)))
+        XCTAssertEqual(fromCamera.size.width * fromCamera.scale, 1568)
+        XCTAssertEqual(fromCamera.size.height * fromCamera.scale, 1176)
+
+        let fromLibrary = try XCTUnwrap(big.pngData().flatMap(PhotoPrep.jpeg).flatMap(UIImage.init(data:)))
+        XCTAssertEqual(max(fromLibrary.size.width, fromLibrary.size.height) * fromLibrary.scale, 1568)
+    }
+}
+
+@MainActor
+final class PhotoAPITests: XCTestCase {
+    func testUploadSendsJPEGAndKeepsItForShowing() async throws {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [StubURLProtocol.self]
+        let api = APIClient(session: URLSession(configuration: cfg),
+                            config: { APIConfig(baseURL: URL(string: "https://aide.test")!, token: "secret") })
+        var seen: [URLRequest] = []
+        StubURLProtocol.handler = { seen.append($0); return (200, #"{"id":"p_9"}"#) }
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        let id = try await api.uploadPhoto(jpeg)
+        XCTAssertEqual(id, "p_9")
+        XCTAssertEqual(seen.first?.url?.path, "/v1/photos")
+        XCTAssertEqual(seen.first?.value(forHTTPHeaderField: "Content-Type"), "image/jpeg")
+        let shown = try await api.photo("p_9")
+        XCTAssertEqual(shown, jpeg)
+        XCTAssertEqual(seen.count, 1) // from memory, no download
+    }
+}

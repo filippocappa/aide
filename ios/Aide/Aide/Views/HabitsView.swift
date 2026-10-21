@@ -1,99 +1,40 @@
 import SwiftUI
 
-/// Habits: tick them off, add new ones, tap one to edit it, swipe to delete. The assistant can do the same from chat.
-struct HabitsView: View {
-    @EnvironmentObject private var env: AppEnvironment
-    @EnvironmentObject private var settings: AppSettings
-    @State private var habits: [Habit] = []
-    @State private var loaded = false
-    @State private var error: String?
-    @State private var adding = false
-    @State private var editing: Habit?
+/// A habit in the Health tab: tick it, tap the rest to edit it, and its last 26 weeks underneath.
+struct HabitRow: View {
+    let habit: Habit
+    let toggle: () -> Void
+    let edit: () -> Void
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 14) {
+                Button(action: toggle) {
+                    Image(systemName: habit.doneToday ? "checkmark.circle.fill" : "circle").font(.title2)
                 }
-                if habits.isEmpty && loaded && error == nil {
-                    VStack(spacing: 6) {
-                        Text("No habits yet").font(.headline)
-                        Text("Tap + to add one, or tell Aide in chat: \"add a gym habit, three times a week\".")
-                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity).padding(.vertical, 24)
-                    .listRowBackground(Color.clear)
-                }
-                ForEach(habits) { habit in
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 14) {
-                            Button { Task { await toggle(habit) } } label: {
-                                Image(systemName: habit.doneToday ? "checkmark.circle.fill" : "circle").font(.title2)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(Theme.accent)
-                            .accessibilityLabel(habit.doneToday ? "Undo \(habit.name)" : "Mark \(habit.name) done")
-                            Button { editing = habit } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(habit.name).font(.body.weight(.medium))
-                                        Text(Self.detail(habit)).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if habit.streak > 0 {
-                                        Label("\(habit.streak)", systemImage: "flame.fill")
-                                            .font(.subheadline.weight(.semibold)).foregroundStyle(Color.orange)
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("Edit")
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.accent)
+                .accessibilityLabel(habit.doneToday ? "Undo \(habit.name)" : "Mark \(habit.name) done")
+                Button(action: edit) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(habit.name).font(.body.weight(.medium))
+                            Text(Self.detail(habit)).font(.caption).foregroundStyle(.secondary)
                         }
-                        if let history = habit.history { HabitGrid(done: Set(history)) }
+                        Spacer()
+                        if habit.streak > 0 {
+                            Label("\(habit.streak)", systemImage: "flame.fill")
+                                .font(.subheadline.weight(.semibold)).foregroundStyle(Color.orange)
+                        }
                     }
-                    .padding(.vertical, 4)
-                    .listRowBackground(Theme.row)
+                    .contentShape(Rectangle())
                 }
-                .onDelete { offsets in
-                    let doomed = offsets.map { habits[$0] }
-                    Task { for h in doomed { await remove(h) } }
-                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Edit")
             }
-            .scrollContentBackground(.hidden)
-            .background(Theme.grouped)
-            .navigationTitle("Habits")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Add habit", systemImage: "plus") { adding = true }.disabled(!settings.isConfigured)
-                }
-            }
-            .sheet(isPresented: $adding) { HabitSheet(habit: nil) { await add($0) } }
-            .sheet(item: $editing) { habit in HabitSheet(habit: habit) { await update(habit, $0) } }
-            .refreshable { await load() }
-            .task { await load() }
+            if let history = habit.history { HabitGrid(done: Set(history)) }
         }
-    }
-
-    private func load() async {
-        guard settings.isConfigured else { return }
-        do { habits = try await env.api.habits(); error = nil } catch { self.error = error.localizedDescription }
-        loaded = true
-    }
-
-    private func toggle(_ habit: Habit) async {
-        do {
-            let updated = try await env.api.checkHabit(habit.id, done: !habit.doneToday)
-            if let i = habits.firstIndex(where: { $0.id == habit.id }) { habits[i] = updated }
-        } catch { self.error = error.localizedDescription }
-    }
-
-    private func remove(_ habit: Habit) async {
-        do {
-            try await env.api.deleteHabit(habit.id)
-            habits.removeAll { $0.id == habit.id }
-        } catch { self.error = error.localizedDescription }
+        .padding(.vertical, 4)
     }
 
     /// "Every day · Strength from the Watch"
@@ -102,27 +43,10 @@ struct HabitsView: View {
         let names = workouts.contains("any") ? "Any workout" : workouts.map(WorkoutType.label).formatted(.list(type: .or))
         return "\(habit.cadenceText) · \(names) from the Watch"
     }
-
-    private func update(_ habit: Habit, _ changes: HabitNew) async -> String? {
-        do {
-            let updated = try await env.api.updateHabit(habit.id, changes)
-            if let i = habits.firstIndex(where: { $0.id == habit.id }) { habits[i] = updated }
-            return nil
-        } catch APIError.server(let status, _) where status == 404 || status == 405 {
-            return "The server can't edit habits yet."
-        } catch { return error.localizedDescription }
-    }
-
-    private func add(_ habit: HabitNew) async -> String? {
-        do {
-            habits.append(try await env.api.addHabit(habit))
-            return nil
-        } catch { return error.localizedDescription }
-    }
 }
 
 /// Adding a habit, or editing one (`habit` set).
-private struct HabitSheet: View {
+struct HabitSheet: View {
     let habit: Habit?
     /// Returns an error message, or nil when saved.
     let save: (HabitNew) async -> String?
