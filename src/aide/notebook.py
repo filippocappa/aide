@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     material   TEXT NOT NULL DEFAULT '[]',  -- what it's about: [{"file": "f_…"}, {"lecture": "l_…"}]
     items      TEXT NOT NULL,  -- [{"topic": "t_…" or null, "title", "summary", "add", "sources", "after"}]
     chosen     TEXT,  -- {"items": [1, 3], "note": "…"}: what the user agreed to
+    done       INTEGER NOT NULL DEFAULT 0,  -- while applying: topics finished
     result     TEXT,  -- what applying it did, a line
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -83,8 +84,10 @@ STATUSES = ("pending", "applying", "applied", "declined", "superseded", "failed"
 MAP_LINE = 90  # characters of a page's first line in the material map
 MAP_CHARS = 60_000  # the material map, at most; past that, lines get shorter
 TOPIC_CHARS = 120_000  # a topic's pages' text, at most
-TOPIC_IMAGES = 8  # pages with the least text that go along as images
-IMAGE_TEXT = 300  # a page with less text than this is mostly a picture
+TOPIC_IMAGES = 4  # pages with the least text that go along as images: a third of macro's first build was images
+IMAGE_TEXT = 150  # a page with less text than this is mostly a picture (a graph)
+FIGURE_CANDIDATES = 6  # pages looked at when adding figures to a page already written
+TOPIC_IMAGE_SIDE = 1000  # pixels: a graph reads fine, at about 1,000 tokens instead of 2,500
 PARALLEL = 3  # topics written at once
 CARDS = "===CARDS==="
 
@@ -101,6 +104,8 @@ class NotebookStore:
         self.conn = study.conn
         self.tz = study.tz
         self.conn.executescript(SCHEMA)
+        if "done" not in {r[1] for r in self.conn.execute("PRAGMA table_info(proposals)")}:
+            self.conn.execute("ALTER TABLE proposals ADD COLUMN done INTEGER NOT NULL DEFAULT 0")
         self.on_job: list[Callable[[], None]] = []  # the worker's kick
 
     # -- topics ------------------------------------------------------------------------
@@ -284,11 +289,16 @@ class NotebookStore:
             "SELECT * FROM proposals" + (" WHERE " + " AND ".join(where) if where else "")
             + " ORDER BY id DESC LIMIT 50", tuple(where.values()))]
 
+    def topic_done(self, proposal_id: int) -> None:
+        """One more of an applying proposal's topics finished: for the app's progress bar."""
+        self.conn.execute("UPDATE proposals SET done = done + 1 WHERE id = ?", (proposal_id,))
+
     def set_proposal(self, proposal_id: int, status: str, chosen: dict | None = None, result: str | None = None) -> dict:
         assert status in STATUSES
         fields: dict = {"status": status, "updated_at": utcnow().isoformat()}
         if chosen is not None:
             fields["chosen"] = json.dumps(chosen)
+            fields["done"] = 0
         if result is not None:
             fields["result"] = result
         self.conn.execute(f"UPDATE proposals SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
@@ -386,9 +396,10 @@ class NotebookStore:
                 return text[:MAP_CHARS * 2]
             width //= 2
 
-    async def material_for(self, sources: list[dict], budget: int = TOPIC_CHARS) -> tuple[str, list[bytes]]:
+    async def material_for(self, sources: list[dict], budget: int = TOPIC_CHARS,
+                           most: int = TOPIC_IMAGES) -> tuple[str, list[tuple[str, bytes]]]:
         """The text of the sources' pages (each marked [file, p. N]) and lectures' notes, and images of the pages
-        with the least text, at most TOPIC_IMAGES."""
+        with the least text, at most `most`, each with its mark."""
         parts, pictures = [], []
         for s in sources:
             if "file" in s and (f := self.files.get(s["file"])):
@@ -400,12 +411,29 @@ class NotebookStore:
                 when = datetime.fromisoformat(lec["recorded_at"]).astimezone(self.tz)
                 parts.append(f"[Lecture notes, {when:%a %d %b}: {lec['title'] or 'untitled'}]\n{lec['notes']}")
         images = []
-        for _, f, n in sorted(pictures, key=lambda p: p[0])[:TOPIC_IMAGES]:
+        for _, f, n in sorted(pictures, key=lambda p: p[0])[:most]:
             try:
-                images.append(await page_image(self.files.path(f), n))
+                images.append((f"[{f['name']}, p. {n}]", await page_image(self.files.path(f), n, TOPIC_IMAGE_SIDE)))
             except PdfError:
                 log.warning("couldn't draw page %d of %s", n, f["public_id"])
         return "\n\n".join(p for p in parts if p)[:budget], images
+
+    def figures_in(self, body: str, sources: list[dict]) -> str:
+        """The model's "FIGURE: file name, p. 12 | caption" lines as figures, ![caption](figure:f_…/12), when they
+        name a page of the topic's files; others are dropped. The vault draws the page into the page."""
+        files = [f for s in sources if "file" in s and (f := self.files.get(s["file"]))]
+        names = {}
+        for f in files:
+            names[f["name"].casefold()] = names[f["name"].casefold().removesuffix(".pdf")] = f
+
+        def sub(m: re.Match) -> str:
+            f = names.get(m.group(1).strip().strip("[]\"'").casefold())
+            page = int(m.group(2))
+            if f is None or not 1 <= page <= f["pages"]:
+                return ""
+            caption = " ".join((m.group(3) or "").replace("[", "(").replace("]", ")").split())
+            return f"![{caption}](figure:{f['public_id']}/{page})"
+        return re.sub(r"\n{3,}", "\n\n", _FIGURE_LINE.sub(sub, body)).strip()
 
     def check_sources(self, sources, course_id: int) -> list[dict]:
         """The model's sources, kept only where they name this course's files (pages in range) or lectures."""
@@ -453,6 +481,8 @@ class NotebookStore:
                            "sources": self.source_names(it.get("sources") or [])}
                           for i, it in enumerate(p["items"], 1)],
                 "material": self.source_names(p["material"]), "result": p["result"],
+                "progress": {"done": p["done"], "total": len(p["chosen"]["items"])}
+                if p["status"] == "applying" and p["chosen"] else None,
                 "created_at": self.study.local(p["created_at"])}
 
     def notebook_json(self, course_id: int) -> dict:
@@ -460,6 +490,7 @@ class NotebookStore:
         return {"course": course_id, "started": self.started(course_id), "busy": self.busy(course_id),
                 "exam": intro["exam"] if intro else None, "introduction": intro["body"] if intro else None,
                 "topics": [self.topic_json(t) for t in self.topics(course_id)],
+                "writing": next((self.proposal_json(p) for p in self.proposals(course_id, "applying")), None),
                 "proposals": [self.proposal_json(p) for p in self.proposals(course_id)]}
 
 
@@ -483,6 +514,16 @@ def sections(body: str) -> list[tuple[str, str]]:
         else:
             out[-1][1].append(line)
     return [(h, "\n".join(lines).strip()) for h, lines in out if h or "".join(lines).strip()]
+
+
+_FIGURE_LINE = re.compile(r"^[ \t]*\**FIGURE:?\**:?[ \t]*(.+?),[ \t]*p(?:age|\.)?[ \t]*(\d+)[ \t]*(?:\|[ \t]*(.*?))?[ \t]*$",
+                          re.M | re.I)
+FIGURE = re.compile(r"!\[([^\]\n]*)\]\(figure:(f_[0-9a-f]+)/(\d+)\)")  # a figure in a stored body
+
+
+def figures(body: str) -> list[tuple[str, str, int]]:
+    """A body's figures: (caption, file id, page)."""
+    return [(m.group(1), m.group(2), int(m.group(3))) for m in FIGURE.finditer(body)]
 
 
 _MCQ = re.compile(r"^\*\*(\d+)\.\*\*.*?(?=^\*\*\d+\.\*\*|^#{1,3} |^===|\Z)", re.M | re.S)
@@ -648,6 +689,12 @@ Questions in the exam's format (below), from the material's level up to the exam
 > [!success]- Answer
 > **B**. Why it's right, and why the tempting wrong option is wrong.
 
+Figures: where a graph or diagram on one of the pages shown to you as images explains something better than \
+words (a curve shifting, a model's diagram, a chart of data), put it in the explanation where it belongs, on a line \
+of its own: FIGURE: <file name>, p. 12 | <a short caption: what it shows>. Explain it in the text too. At most 4, \
+only pages you were shown as images, never one that's mostly text or decoration. A figure already in the page, as \
+![caption](figure:f_…/12), stays exactly as it is.
+
 Cite the material after a point, as (file name, p. 12) or (lecture of 20 Oct). Link other topics of the notebook \
 where they connect, as [[Their title]], using only the titles listed. Use what the material says; where you add \
 something it doesn't (a step it skips, an intuition), keep it short and standard. Markdown: headings, lists, bold, \
@@ -688,6 +735,13 @@ Answer with JSON only, a list (empty when it adds nothing):
 "add": "one line in plain words: what you'd add", "sources": [{"file": "f_…", "pages": "2-4"}] or [{"lecture": \
 "l_…"}], "after": "for a new topic: the t_… it comes after, or null for first"}]"""
 
+
+FIGURES_PROMPT = """You add figures to a topic page of a student's study notes. You get the page's section headings \
+and some pages of the course slides as images, each after its mark [file name, p. 12]. Pick the ones whose graph or \
+diagram explains something better than words (a curve shifting, a model's diagram, a chart of data), at most 4, and \
+the section each belongs at the end of. None that are mostly text, a title or decoration; an empty list is fine.
+Answer with JSON only: [{"after": "a heading exactly as listed", "file": "the file name", "page": 12, "caption": \
+"a short caption: what it shows"}]"""
 
 CHECK_PROMPT = """You are a strong student taking a multiple-choice test on the notes below. For each question pick \
 the one best option, from the notes and what any good textbook says. When two options are equally right, or none \
@@ -744,6 +798,8 @@ class NotebookWorker:
                     await self.triage(course, job["args"]["material"])
                 case "apply":
                     await self.apply(self.store.find_proposal(job["args"]["proposal"]))
+                case "figures":
+                    await self.add_figures(course)
         except Exception as e:
             log.exception("notebook job %s (%s) failed", job["id"], job["kind"])
             error = str(e)[:200] if isinstance(e, (RuntimeError, KeyError, ValueError)) else "something went wrong"
@@ -752,7 +808,7 @@ class NotebookWorker:
                 self.store.set_proposal(p["id"], "failed", result=error)
             if course is not None:
                 what = {"start": "set up the notebook", "outline": "plan the topics", "triage": "look at the new "
-                        "material", "apply": "write the notes"}[job["kind"]]
+                        "material", "apply": "write the notes", "figures": "add the figures"}[job["kind"]]
                 await self._post(course, f"[Notebook: job {job['kind']} failed: {error}]",
                                  f"I couldn't {what}: {error}. It's in the server's logs.")
             return
@@ -882,10 +938,12 @@ class NotebookWorker:
                             await self.write(topic, note)
                         else:
                             await self.merge(self.store.topic(topic["public_id"]), it, note)
+                        self.store.topic_done(p["id"])
                         return None
                     except Exception as e:
                         log.warning("topic %s, attempt %d: %s", topic["public_id"], attempt, e)
                         error = str(e)
+                self.store.topic_done(p["id"])
                 return error
 
         errors = await asyncio.gather(*(one(t, it) for t, it in jobs))
@@ -909,6 +967,7 @@ class NotebookWorker:
         content = self._images(images)
         content.append({"type": "text", "text": self._context(cid, topic, note) + f"\n\nThe material:\n{text}"})
         body, cards = parse_page(await self._ask(TOPIC_PROMPT, content, 16000))
+        body = self.store.figures_in(body, json.loads(topic["sources"]))
         if len(body) < 200:
             raise RuntimeError("the page came back nearly empty")
         body = await self.check_answers(topic, body)
@@ -922,10 +981,51 @@ class NotebookWorker:
         content.append({"type": "text", "text": self._context(cid, topic, note) + f"\n\nWhat to add: {it['add']}"
                         f"\n\nThe page now:\n{topic['body']}\n\nIts cards:\n{cards or '(none)'}\n\nThe new material:\n{text}"})
         body, new_cards = parse_page(await self._ask(MERGE_PROMPT, content, 16000))
+        body = self.store.figures_in(body, json.loads(topic["sources"]) + it["sources"])
         if len(body) < len(topic["body"]) * 0.8:
             raise RuntimeError("the merged page came back shorter than the page")
         body = await self.check_answers(topic, body, topic["body"])
         return self.store.set_body(topic["id"], body, cards=new_cards, sources=it["sources"])
+
+    async def add_figures(self, course: dict) -> None:
+        """Figures for topics written before there were any: for each, the model sees its headings and its most
+        visual pages, and says only where which page goes. Cheap: no page is rewritten."""
+        if self.vault is not None:
+            self.vault.pull()
+        added = []
+        for topic in self.store.topics(course["id"]):
+            if not topic["body"] or figures(topic["body"]):
+                continue
+            _, images = await self.store.material_for(json.loads(topic["sources"]), budget=0, most=FIGURE_CANDIDATES)
+            if not images:
+                continue
+            heads = [h for h, _ in sections(topic["body"]) if h]
+            content = self._images(images) + [{"type": "text", "text": (
+                f"Topic: {topic['title']}\n\nThe page's sections:\n" + "\n".join(heads))}]
+            try:
+                answer = parse_json(await self._ask(FIGURES_PROMPT, content, 1500))
+            except Exception as e:
+                log.warning("figures for %s skipped: %s", topic["public_id"], e)
+                continue
+            body = topic["body"]
+            n = 0
+            for it in (answer if isinstance(answer, list) else [])[:4]:
+                if not isinstance(it, dict) or str(it.get("after", "")) not in heads:
+                    continue
+                line = self.store.figures_in(f"FIGURE: {it.get('file')}, p. {it.get('page')} | {it.get('caption') or ''}",
+                                             json.loads(topic["sources"]))
+                span = _span(body, it["after"])
+                if not line or not span or line in body:
+                    continue
+                lines = body.splitlines()
+                lines.insert(span[1], f"\n{line}\n")
+                body, n = "\n".join(lines), n + 1
+            if n:
+                self.store.set_body(topic["id"], re.sub(r"\n{3,}", "\n\n", body))
+                added.append(f"{topic['title']} ({n})")
+        if added:
+            await self._post(course, "[Notebook: figures added]",
+                             f"Added slide figures to the notes: {', '.join(added)}. They're in Obsidian.")
 
     def _context(self, cid: int, topic: dict, note: str) -> str:
         intro = self.store.intro(cid)
@@ -943,9 +1043,14 @@ class NotebookWorker:
     # -- helpers ------------------------------------------------------------------------------
 
     @staticmethod
-    def _images(images: list[bytes]) -> list[dict]:
-        return [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
-                                             "data": base64.b64encode(i).decode()}} for i in images]
+    def _images(images: list[tuple[str, bytes]]) -> list[dict]:
+        """Each page image after its mark, so the model can name it for a figure."""
+        out = []
+        for mark, data in images:
+            out += [{"type": "text", "text": mark},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                 "data": base64.b64encode(data).decode()}}]
+        return out
 
     async def check_answers(self, topic: dict, body: str, old: str = "") -> str:
         """The page's new multiple-choice questions answered blind by the cheap model; where it picks another

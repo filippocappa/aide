@@ -332,6 +332,10 @@ final class APIClient {
         try await send("GET", "/v1/study")
     }
 
+    func notebook(course: Int) async throws -> NotebookStatus {
+        try await send("GET", "/v1/notebook", query: [URLQueryItem(name: "course", value: String(course))])
+    }
+
     func vault() async throws -> VaultSetup {
         try await send("GET", "/v1/vault")
     }

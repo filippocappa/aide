@@ -268,8 +268,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return datetime.fromisoformat(utc_iso).astimezone(tz).replace(microsecond=0).isoformat()
 
     def conversation_json(c: dict) -> dict:
+        course = db.conn.execute("SELECT id FROM courses WHERE chat = ?", (c["id"],)).fetchone()
         return {"id": c["id"], "agent": c["agent"], "title": c["title"], "routine": c["routine"],
-                "preview": c["preview"], "updated_at": local(c["updated_at"])}
+                "course": course[0] if course else None, "preview": c["preview"], "updated_at": local(c["updated_at"])}
 
     def team_json(t: dict) -> dict:
         return {**t, "ts": local(t["ts"])}

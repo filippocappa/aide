@@ -549,7 +549,8 @@ The server keeps an Obsidian vault of the notes and files (since 2026-10-21), se
 Remotely Save plugin syncs to the phone and the Mac (README, "Obsidian"). Everything Aide writes is under `Aide/` in
 the vault, a folder per course:
 - with a notebook (below): `00 Introduction.md` (the exam, how to prepare, the topics, lectures and files), a page
-  per topic (`01 The IS-LM model.md`) and `Cards/` with each topic's flashcards for the Spaced Repetition plugin;
+  per topic (`01 The IS-LM model.md`), `Cards/` with each topic's flashcards for the Spaced Repetition plugin and
+  `Images/` with the slides the topics show as figures;
   otherwise an index page named after the course (lectures, files, the next exam);
 - `Sources/` with a page per lecture (`2026-10-21 The IS-LM model.md`: properties, the notes, "Expanded:" the
   topics it went into, the transcript folded), and `Files/` with the PDFs.
@@ -579,14 +580,19 @@ and posts the result in the same chat.
 |---|---|---|
 | `GET /v1/notebook?course=2` | | Notebook. `404` no such course. |
 | `POST /v1/notebook?course=2` | | `202`, Notebook: the Introduction and the outline proposal are on their way. `409` it already has topics. |
-| `GET /v1/topics/{id}` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]` and `sources` (`["Week 3 slides, p. 1–2"]`). `404`. |
+| `GET /v1/topics/{id}` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]` and `sources` (`["Week 3 slides, p. 1–2"]`). `404`. In `body`, a figure is `![The IS curve shifting right](figure:f_…/12)`: page 12 of that study file, with its caption. |
 | `GET /v1/proposals?course=2&status=pending` | | `{"proposals": [Proposal]}`; both optional; `status` `pending` (default) or `all`. |
 | `POST /v1/proposals/{id}/apply` | `{"items": [1, 3], "note": "keep it short"}`, both optional (all items) | `202`, the Proposal, `status` `applying`. `400` an item out of range; `409` not pending. |
 | `POST /v1/proposals/{id}/decline` | | the Proposal, `declined`. `409` not pending. |
 
 Notebook: `{"course": 2, "started": true, "busy": false, "exam": "20–35 multiple-choice questions, −0.25 for a wrong
-answer…" or null, "introduction": "markdown" or null, "topics": [Topic], "proposals": [Proposal]}` (`busy`: being
-written; pending proposals only).
+answer…" or null, "introduction": "markdown" or null, "topics": [Topic], "proposals": [Proposal], "writing": Proposal
+or null}` (`busy`: being written; pending proposals only; `writing`: the proposal being applied, with its `progress`).
+
+**Progress.** A course's chat has `"course": 2` in the conversation list (`null` on other chats). While a proposal
+is applied, `GET /v1/notebook?course=` has it as `writing`, with `"progress": {"done": 4, "total": 11}` (topics
+finished, failed ones included; `progress` is null on proposals not being applied). The app polls it every few
+seconds while the course's chat is open and `writing` isn't null; when it turns null, the result is in the chat.
 
 Topic: `{"id": "t_…", "course": 2, "position": 1, "title": "The IS-LM model", "summary": "one line" or null,
 "written": true, "sections": ["Explanation", "Key terms", …], "questions": 5, "cards": 12, "edited": false,
@@ -595,7 +601,8 @@ Topic: `{"id": "t_…", "course": 2, "position": 1, "title": "The IS-LM model", 
 Proposal: `{"id": "p_…", "course": 2, "kind": "outline" | "update", "status": "pending" | "applying" | "applied" |
 "declined" | "superseded" | "failed", "items": [{"n": 1, "topic": "t_…" or null (a new topic), "title": "…", "add":
 "what it would write", "sources": ["Problem set 2, p. 1"]}], "material": ["Problem set 2"], "result": "Updated The
-IS-LM model." or null, "created_at": "…"}`. A new outline supersedes a pending one.
+IS-LM model." or null, "progress": {"done": 4, "total": 11} or null, "created_at": "…"}`. A new outline supersedes a
+pending one.
 
 ## Habits
 

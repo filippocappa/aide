@@ -2,8 +2,8 @@
 webdav.py serves it, so Obsidian on the phone and the Mac syncs it (the Remotely Save plugin, over Tailscale).
 
 Everything Aide writes is under Aide/ in the vault, one folder per course:
-- with a notebook (notebook.py): "00 Introduction.md", a page per topic ("01 The IS-LM model.md"), and Cards/ with
-  the topic's flashcards for the Spaced Repetition plugin;
+- with a notebook (notebook.py): "00 Introduction.md", a page per topic ("01 The IS-LM model.md"), Cards/ with
+  the topic's flashcards for the Spaced Repetition plugin, and Images/ with the slides the topics show as figures;
 - otherwise an index page named after the course;
 - and in every course, Sources/ with a page per lecture, and Files/ with the PDFs.
 
@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from .material import page_image
+from .notebook import FIGURE, figures
 from .study import StudyStore
 
 log = logging.getLogger(__name__)
@@ -32,8 +34,8 @@ log = logging.getLogger(__name__)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS vault_files (
     path TEXT PRIMARY KEY,  -- relative to the vault
-    ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id, intro:, topic: or cards:
-    sha  TEXT NOT NULL  -- of what Aide wrote (a PDF: its version, size and time)
+    ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id, intro:, topic:, cards: or figure:
+    sha  TEXT NOT NULL  -- of what Aide wrote (a PDF: its version, size and time; an image: its size and version)
 );
 """
 
@@ -41,6 +43,8 @@ ROOT = "Aide"
 INTERVAL = 60  # seconds between syncs when nothing kicks one
 _BAD = re.compile(r'[\\/:*?"<>|#^\[\]]+')  # not in file names, or they break Obsidian's links
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?\]\]")
+_EMBED = re.compile(r"!\[\[([^\]|]+\.jpg)(?:\|[^\]]*)?\]\](?:[ \t]*\n\*([^*\n]*)\*)?")
+FIGURE_SIDE = 1400  # pixels: a slide drawn for a page, sharp on a laptop
 
 
 @dataclass
@@ -51,6 +55,7 @@ class Item:
     source: Path | None = None  # a PDF to copy
     version: str = ""  # the PDF's
     cards: list[str] = field(default_factory=list)  # a cards file: its card lines, added to what's there
+    page: tuple[Path, int] | None = None  # an image: this page of this PDF, drawn
 
 
 def _file_name(name: str) -> str:
@@ -94,14 +99,32 @@ def _links_in(body: str, titles: dict[str, str]) -> str:
     return _WIKILINK.sub(sub, body)
 
 
-def topic_body(page: str, titles: dict[str, str]) -> str:
+def _figures_out(body: str, images: dict[tuple[str, int], str]) -> str:
+    """![caption](figure:f_…/12) as the drawn page embedded, its caption in italics under it."""
+    def sub(m: re.Match) -> str:
+        path = images.get((m.group(2), int(m.group(3))))
+        if path is None:
+            return m.group(0)
+        return f"![[{path}]]" + (f"\n*{m.group(1)}*" if m.group(1) else "")
+    return FIGURE.sub(sub, body)
+
+
+def _figures_in(body: str, figures: dict[str, str]) -> str:
+    """The reverse: an embedded figure (by path or file name) and the caption under it, as ![caption](figure:…)."""
+    def sub(m: re.Match) -> str:
+        ref = figures.get(m.group(1).strip().casefold())
+        return m.group(0) if ref is None else f"![{(m.group(2) or '').strip()}]({ref})"
+    return _EMBED.sub(sub, body)
+
+
+def topic_body(page: str, titles: dict[str, str], figures: dict[str, str] | None = None) -> str:
     """A topic page's body: without its frontmatter and its "# " title."""
     if page.startswith("---\n") and (end := page.find("\n---", 4)) >= 0:
         page = page[end + 4:]
     page = page.lstrip("\n")
     if page.startswith("# "):
         page = page.partition("\n")[2]
-    return _links_in(page.strip(), titles)
+    return _links_in(_figures_in(page.strip(), figures or {}), titles)
 
 
 def _question(line: str) -> str | None:
@@ -163,6 +186,9 @@ class Vault:
         if self.notebook is None:
             return 0
         changed, titles = 0, None
+        figures = {}  # an embedded image's path and file name → figure:f_…/12
+        for rec in self.conn.execute("SELECT path, ref FROM vault_files WHERE ref LIKE 'figure:%'"):
+            figures[rec["path"].casefold()] = figures[rec["path"].rsplit("/", 1)[-1].casefold()] = rec["ref"]
         for rec in self.conn.execute("SELECT * FROM vault_files WHERE ref LIKE 'topic:%'").fetchall():
             disk = self.folder / rec["path"]
             if not disk.exists():
@@ -171,7 +197,7 @@ class Vault:
             if _sha(data) == rec["sha"] or (topic := self.notebook.topic(rec["ref"][6:])) is None:
                 continue
             titles = titles if titles is not None else self._titles()
-            body = topic_body(data.decode(errors="replace"), titles)
+            body = topic_body(data.decode(errors="replace"), titles, figures)
             if not body:
                 continue  # emptied: left as the user made it, like any edited page
             if body != topic["body"]:
@@ -223,8 +249,17 @@ class Vault:
             topic_paths |= paths
             topics = [t for t in self.notebook.topics(cid) if t["id"] in paths]
             by_title = {t["title"].casefold(): paths[t["id"]] for t in topics}
+            images: dict[tuple[str, int], str] = {}
             for t in topics:
-                items.append(Item(paths[t["id"]], f"topic:{t['public_id']}", self._topic(t, course, by_title)))
+                for _, fid, n in figures(t["body"]):
+                    f = study.files.get(fid)
+                    if f is None or (fid, n) in images:
+                        continue
+                    images[(fid, n)] = f"{folders[cid]}/Images/{_file_name(f['name'].removesuffix('.pdf'))} p{n}.jpg"
+                    items.append(Item(images[(fid, n)], f"figure:{fid}/{n}", page=(study.files.path(f), n),
+                                      version=f"{f['size']}:{f['updated_at']}"))
+            for t in topics:
+                items.append(Item(paths[t["id"]], f"topic:{t['public_id']}", self._topic(t, course, by_title, images)))
                 if cards := json.loads(t["cards"]):
                     items.append(Item(f"{folders[cid]}/Cards/{_file_name(t['title'])}.md", f"cards:{t['public_id']}",
                                       self._cards_head(t, course, paths[t["id"]]),
@@ -292,12 +327,13 @@ class Vault:
             out.append("> [!quote]- Transcript\n" + _quote(lec["transcript"]))
         return "\n\n".join(out) + "\n"
 
-    def _topic(self, t: dict, course: dict, by_title: dict[str, str]) -> str:
+    def _topic(self, t: dict, course: dict, by_title: dict[str, str], images: dict) -> str:
         folder = self._folder(course)
         meta = ["---", f'course: "{_link(f"{folder}/00 Introduction.md", course["name"])}"',
                 f'cards: "{_link(f"{folder}/Cards/{_file_name(t["title"])}.md", "Cards")}"' if json.loads(t["cards"])
                 else None, f"topic: {t['public_id']}", "tags:", "  - topic", f"  - {_tag(course['name'])}", "---"]
-        return "\n".join(m for m in meta if m) + f"\n\n# {t['title']}\n\n{_links_out(t['body'], by_title)}\n"
+        body = _figures_out(_links_out(t["body"], by_title), images)
+        return "\n".join(m for m in meta if m) + f"\n\n# {t['title']}\n\n{body}\n"
 
     def _cards_head(self, t: dict, course: dict, page: str) -> str:
         return f"#flashcards/{_tag(course['name'])}\n\nCards for {_link(page, t['title'])}. Aide adds new ones at the end.\n\n"
@@ -364,7 +400,8 @@ class Vault:
         written = removed = 0
         for item in items:
             rec = records.pop(item.path, None)
-            if await (self._put_cards(item, rec) if item.cards else self._put(item, rec)):
+            put = self._put_cards if item.cards else self._put_page if item.page else self._put
+            if await put(item, rec):
                 written += 1
         for path, rec in records.items():  # what Aide wrote that's no longer wanted
             disk = self.folder / path
@@ -378,7 +415,7 @@ class Vault:
         return {"written": written, "removed": removed}
 
     def _unchanged(self, disk: Path, rec: dict) -> bool:
-        if disk.suffix == ".pdf":
+        if disk.suffix in (".pdf", ".jpg"):
             return disk.stat().st_size == int(rec["sha"].split(":")[0])
         return _sha(disk.read_bytes()) == rec["sha"]
 
@@ -406,6 +443,31 @@ class Vault:
             tmp.write_text(item.text)
         os.replace(tmp, disk)
         self._record(item, want)
+        return True
+
+    async def _put_page(self, item: Item, rec: dict | None) -> bool:
+        """A slide drawn as an image for a figure. Recorded as its size and the PDF's version: drawn again when the
+        PDF changes, left alone when the user replaced it."""
+        disk = self.folder / item.path
+        if rec is not None:
+            if not disk.exists() or not self._unchanged(disk, rec):
+                return False
+            if rec["sha"].split(":", 1)[1] == item.version:
+                return False
+        elif disk.exists():
+            return False  # someone else's file with that name
+        if not item.page[0].exists():
+            return False
+        try:
+            data = await page_image(*item.page, FIGURE_SIDE)
+        except Exception as e:
+            log.warning("vault: couldn't draw %s: %s", item.path, e)
+            return False
+        disk.parent.mkdir(parents=True, exist_ok=True)
+        tmp = disk.with_name(f".{disk.name}.tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, disk)
+        self._record(item, f"{len(data)}:{item.version}")
         return True
 
     async def _put_cards(self, item: Item, rec: dict | None) -> bool:

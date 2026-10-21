@@ -116,6 +116,8 @@ struct Conversation: Decodable, Identifiable, Hashable {
     let updatedAt: String?
     /// The routine this chat belongs to (docs/API.md, "Routines").
     var routine: Int? = nil
+    /// The course this chat is Professor's chat for (docs/API.md, "Notebook").
+    var course: Int? = nil
 }
 struct ConversationList: Decodable { let conversations: [Conversation] }
 
@@ -829,6 +831,13 @@ extension JSONEncoder {
         return e
     }()
 }
+
+// MARK: Course notebooks (docs/API.md, "Notebook")
+
+/// What the app uses of a notebook so far: the proposal being written, for the progress bar in the course's chat.
+struct NotebookStatus: Decodable { var writing: NotebookProposal? }
+struct NotebookProposal: Decodable, Hashable { let id: String; var progress: NotebookProgress? }
+struct NotebookProgress: Decodable, Hashable { let done: Int; let total: Int }
 
 // MARK: Moodle and the Obsidian vault (docs/API.md, "Moodle", "Obsidian vault")
 
