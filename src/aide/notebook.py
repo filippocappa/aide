@@ -357,6 +357,14 @@ class NotebookStore:
         """After a restart: jobs cut off mid-way start over."""
         return self.conn.execute("UPDATE notebook_jobs SET status = 'queued' WHERE status = 'running'").rowcount
 
+    def summary(self, course_id: int) -> dict | None:
+        """For a course's row in the app: null without a notebook."""
+        if not self.started(course_id):
+            return None
+        topics = self.topics(course_id)
+        return {"topics": sum(1 for t in topics if t["body"]), "questions": sum(_questions(t["body"]) for t in topics),
+                "proposals": len(self.proposals(course_id)), "writing": bool(self.proposals(course_id, "applying"))}
+
     def busy(self, course_id: int) -> bool:
         return bool(self.conn.execute("SELECT 1 FROM notebook_jobs WHERE course_id = ? AND status IN "
                                       "('queued', 'running')", (course_id,)).fetchone())

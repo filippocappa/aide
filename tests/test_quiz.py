@@ -93,3 +93,24 @@ def test_questions_and_their_maths_as_plain_text():
     assert plain_math(r"$\pi_t - \pi_{t-1} = -\alpha(u_t - u_n)$") == "πₜ − πₜ₋₁ = −α(uₜ − uₙ)"
     assert plain_math(r"$\Delta Y = \frac{\Delta G}{1-c_1}$, so $\bar i = 5\%$") == "ΔY = ΔG/(1−c₁), so ī = 5%"
     assert plain_math(r"$Y_D$ and $\pi^e_t$ and **bold**") == "Y_D and πᵉₜ and **bold**"
+
+
+def test_the_study_tab_reads_notes_as_plain_text(nb):
+    t = notebook_with_questions(nb)
+    cid = nb.macro["id"]
+    body = t["islm"]["body"] + f"\n\nSee [[Phillips curve]] and [[Phillips curve|the PC]].\n\n" \
+        f"![The IS curve](figure:{nb.file['id']}/1)"
+    nb.notebook.set_body(t["islm"]["id"], body)
+    raw = nb.api.get(f"/v1/topics/{t['islm']['public_id']}", headers=AUTH).json()["body"]
+    assert r"$\frac{1}{1-c_1}$" in raw and "[[Phillips curve]]" in raw
+    plain = nb.api.get(f"/v1/topics/{t['islm']['public_id']}?plain=true", headers=AUTH).json()["body"]
+    assert "1/(1−c₁)" in plain and "See Phillips curve and the PC." in plain
+    assert f"![The IS curve](figure:{nb.file['id']}/1)" in plain  # the app draws it from the page below
+
+    page = nb.api.get(f"/v1/files/{nb.file['id']}/pages/1", headers=AUTH)
+    assert page.status_code == 200 and page.headers["content-type"] == "image/jpeg" and page.content[:2] == b"\xff\xd8"
+    assert nb.api.get(f"/v1/files/{nb.file['id']}/pages/99", headers=AUTH).status_code == 404
+
+    courses = {c["id"]: c for c in nb.api.get("/v1/study", headers=AUTH).json()["courses"]}
+    assert courses[cid]["notebook"] == {"topics": 2, "questions": 6, "proposals": 0, "writing": False}
+    assert all(c["notebook"] is None for i, c in courses.items() if i != cid)

@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import json
 import logging
+import re
 from datetime import date, datetime, time, timedelta
 from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
@@ -28,10 +29,10 @@ from ..push import Push
 from ..reminders import ReminderStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
-from ..material import MAX_FILE, PdfError
+from ..material import MAX_FILE, PdfError, page_image
 from ..moodle import MoodleError, MoodleSync
 from ..notebook import NotebookStore
-from ..quiz import MOST as MOST_QUESTIONS, QuizStore
+from ..quiz import MOST as MOST_QUESTIONS, QuizStore, plain_math
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..wake import WakeService
@@ -97,6 +98,14 @@ class MoodleMatch(BaseModel):
 class ProposalApply(BaseModel):
     items: list[int] | None = None  # numbered from 1; null: all
     note: str | None = Field(default=None, max_length=2000)
+
+
+_WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]")
+
+
+def readable(markdown: str) -> str:
+    """Notes for the app (`plain=true`): maths as Unicode, [[links]] as their text."""
+    return plain_math(_WIKILINK.sub(lambda m: (m.group(2) or m.group(1)).strip(), markdown))
 
 
 class QuizStart(BaseModel):
@@ -633,7 +642,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def study_overview():
         courses = await study.courses()
         on = await study.now()
-        return {"courses": [study.course_json(c) for c in courses], "unfiled": study.unfiled(),
+        return {"courses": [study.course_json(c) | {"notebook": notebook.summary(c["id"])} for c in courses],
+                "unfiled": study.unfiled(),
                 "now": {"course": on[0]["id"], "name": on[0]["name"], "ends": on[1].astimezone(tz).isoformat()}
                 if on else None,
                 "transcription": worker is not None and worker.transcribe is not None}
@@ -706,8 +716,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return JSONResponse(study.as_json(lecture, full=True), status_code=202)
 
     @app.get("/v1/lectures/{lecture_id}", dependencies=[Depends(auth)])
-    async def get_lecture(lecture_id: str, transcript: bool = False):
-        return study.as_json(lecture_or_404(lecture_id), full=True, transcript=transcript)
+    async def get_lecture(lecture_id: str, transcript: bool = False, plain: bool = False):
+        out = study.as_json(lecture_or_404(lecture_id), full=True, transcript=transcript)
+        if plain and out.get("notes"):
+            out["notes"] = readable(out["notes"])
+        return out
 
     @app.patch("/v1/lectures/{lecture_id}", dependencies=[Depends(auth)])
     async def edit_lecture(lecture_id: str, body: LecturePatch):
@@ -793,6 +806,19 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def get_file_pdf(file_id: str):
         f = file_or_404(file_id)
         return FileResponse(study.files.path(f), media_type="application/pdf", filename=f["name"])
+
+    @app.get("/v1/files/{file_id}/pages/{page}", dependencies=[Depends(auth)])
+    async def get_file_page(file_id: str, page: int):
+        """A page drawn as a JPEG: the app's figures in topic pages."""
+        f = file_or_404(file_id)
+        if not 1 <= page <= f["pages"]:
+            raise HTTPException(404, f"{f['name']} has {f['pages']} pages")
+        try:
+            data = await page_image(study.files.path(f), page)
+        except Exception:
+            log.exception("couldn't draw %s p. %d", file_id, page)
+            raise HTTPException(500, "couldn't draw the page")
+        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
     @app.patch("/v1/files/{file_id}", dependencies=[Depends(auth)])
     async def edit_file(file_id: str, body: FilePatch):
@@ -881,8 +907,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return p
 
     @app.get("/v1/notebook", dependencies=[Depends(auth)])
-    async def get_notebook(course: int):
-        return notebook.notebook_json(course_or_404(course))
+    async def get_notebook(course: int, plain: bool = False):
+        out = notebook.notebook_json(course_or_404(course))
+        if plain and out["introduction"]:
+            out["introduction"] = readable(out["introduction"])
+        return out
 
     @app.post("/v1/notebook", dependencies=[Depends(auth)])
     async def start_notebook(course: int):
@@ -893,10 +922,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return JSONResponse(notebook.notebook_json(course), status_code=202)
 
     @app.get("/v1/topics/{topic_id}", dependencies=[Depends(auth)])
-    async def get_topic(topic_id: str):
+    async def get_topic(topic_id: str, plain: bool = False):
         if (t := notebook.topic(topic_id)) is None:
             raise HTTPException(404, f"no topic {topic_id}")
-        return notebook.topic_json(t, full=True)
+        out = notebook.topic_json(t, full=True)
+        if plain:
+            out["body"] = readable(out["body"])
+            out["cards_list"] = [{"q": readable(c["q"]), "a": readable(c["a"])} for c in out["cards_list"]]
+        return out
 
     @app.get("/v1/proposals", dependencies=[Depends(auth)])
     async def list_proposals(course: int | None = None, status: str = "pending"):

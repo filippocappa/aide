@@ -78,13 +78,16 @@ struct ContentView: View {
     @EnvironmentObject private var push: PushService
     @State private var tab = Tab.chat
 
-    enum Tab { case chat, health, settings }
+    enum Tab { case chat, study, health, settings }
 
     var body: some View {
         TabView(selection: $tab) {
             ChatsView()
                 .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                 .tag(Tab.chat)
+            StudyView()
+                .tabItem { Label("Study", systemImage: "book") }
+                .tag(Tab.study)
             HealthView()
                 .tabItem { Label("Health", systemImage: "heart.text.square") }
                 .tag(Tab.health)
@@ -95,9 +98,14 @@ struct ContentView: View {
         .onAppear {
             if !settings.isConfigured { tab = .settings }
             #if DEBUG
-            // Simulator screenshots: `-previewTab health` (or `habits`) or `settings`.
+            // Simulator screenshots: `-previewTab health` (or `habits`), `study` or `settings`.
             if settings.isPreview, let name = UserDefaults.standard.string(forKey: "previewTab") {
-                tab = name == "health" || name == "habits" ? .health : name == "settings" ? .settings : .chat
+                tab = switch name {
+                case "health", "habits": .health
+                case "study": .study
+                case "settings": .settings
+                default: .chat
+                }
             }
             #endif
         }
