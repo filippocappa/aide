@@ -489,7 +489,7 @@ PDFs: slides, handouts, the professor's notes (since 2026-10-21). A file belongs
 lecture, it's that lecture's slides: the notes are written with them (their text and their most visual pages as
 images), and a lecture that already has notes gets them rewritten (the old ones kept for one undo; the chat message
 says "I rewrote the notes…"). A file not attached to a lecture is course material, which Professor searches page by
-page and cites ("p. 34"). Files come from the app (`source` `upload`) or Moodle (`moodle`, later). A Moodle file put
+page and cites ("p. 34"). Files come from the app (`source` `upload`) or Moodle (`moodle`, below). A Moodle file put
 up within 36 hours of a lecture of its course is attached to it by itself (at most 3 per lecture).
 
 File object:
@@ -510,6 +510,38 @@ File object:
 | `DELETE /v1/files/{id}` | | `{"ok": true}` (immediate). The lecture's notes stay as they are. |
 
 Deleting a lecture keeps its files, as course material. Files are in the backups (`~/aide-backups/files`).
+
+### Moodle
+
+The university's Moodle (`AIDE_MOODLE_URL`, UniTo's `https://elearning.unito.it/sme`), since 2026-10-21: the
+server keeps the PDFs of the user's current courses in the study files, every 4 hours and on demand.
+
+**Logging in** goes through the university's single sign-on, in a browser sheet, so the password never reaches
+the app or the server. It's the flow of Moodle's own app:
+1. `POST /v1/moodle/login` gives `{"url": "https://…/admin/tool/mobile/launch.php?…", "scheme": "moodlemobile"}`.
+2. The app opens `url` in an `ASWebAuthenticationSession` with callback scheme `scheme`. The user logs in; Moodle
+   ends on an address starting `moodlemobile://token=`.
+3. The app sends that whole address to `POST /v1/moodle/connect` `{"url": "moodlemobile://token=…"}`. The server
+   checks it was signed for its login (each `login` is good once, for 15 minutes), keeps the token and syncs.
+
+**Courses.** Each current Moodle course (from a month before it starts to a month after it ends) is matched to an
+Aide course (Study): by itself when exactly one Aide course's name is in the Moodle course's name, else by the user.
+Only matched courses are synced. A file the user deletes in Aide isn't downloaded again. When a sync brings at
+most 3 new files for a course and one went up within 36 hours of a lecture, it becomes that lecture's slides and
+the notes are written again.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/moodle` | | `{"enabled": true, "site": "https://elearning.unito.it/sme", "connected": true, "user": "Filippo Cappa", "last_sync": "2026-10-21T14:00:00+02:00" or null, "error": null or "the Moodle login has expired", "courses": [MoodleCourse]}`; `{"enabled": false}` without `AIDE_MOODLE_URL`. Not connected: `user` null, `courses` empty. |
+| `POST /v1/moodle/login` | | `{"url", "scheme"}`, above. `503` not set up. |
+| `POST /v1/moodle/connect` | `{"url": "moodlemobile://token=…"}` | `GET /v1/moodle`'s object. `400` not this server's login (or too old): log in again; `502` Moodle didn't take the token. |
+| `POST /v1/moodle/sync` | | `202`, `GET /v1/moodle`'s object; the sync runs in the background (poll `GET`, `last_sync` changes). `409` not connected. |
+| `PATCH /v1/moodle/courses/{id}` | `{"course": 2}` (an Aide course id; null: don't sync it) | the MoodleCourse. The user's choice is kept over the automatic one. `404` unknown. |
+| `DELETE /v1/moodle` | | `GET /v1/moodle`'s object, logged out. The files stay. |
+
+MoodleCourse: `{"id": 101, "name": "Macroeconomics 2026/27", "course": 2 or null, "matched": "auto" | "user" | null,
+"files": 12}`. New files are pushed (`moodle`); an expired login is pushed once (`moodle` with `login: true`) and shows
+as `error`: log in again.
 
 ### Obsidian vault
 
@@ -767,6 +799,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens a new chat with that digest (`POST /v1/conversations` with `digest`) |
 | `message` | alert | Aide writes first (future use: briefings, leave-now alerts) | `conversation_id` | opens that conversation |
 | `lecture` | alert | a lecture's notes are ready, or it failed (title "Professor · macroeconomics") | `lecture_id` | opens that lecture |
+| `moodle` | alert | a Moodle sync brought new files ("3 new files in macroeconomics"), or the login expired | `login` (true: log in again) | opens Study, or the Moodle login with `login` |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
 ```json

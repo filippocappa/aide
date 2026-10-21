@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 from datetime import timedelta
+from pathlib import Path
 
 import anthropic
 import uvicorn
@@ -11,7 +12,7 @@ import uvicorn
 from .agent import CONVERSATION, Agent
 from .channels.api import create_app
 from .transcribe import Transcriber
-from .config import OPENROUTER_BASE_URL, load_settings
+from .config import OPENROUTER_BASE_URL, load_settings, save_env
 from .db import Database
 from .digest import DigestService, digest_schedule
 from .gmail import Gmail
@@ -24,6 +25,7 @@ from .push import Push
 from .reminders import ReminderStore
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
+from .moodle import MoodleSync
 from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
 from .webdav import USER as WEBDAV_USER
@@ -47,7 +49,7 @@ log = logging.getLogger(__name__)
 def main() -> None:
     # No timestamps: journald adds its own.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    logging.getLogger("httpx2").setLevel(logging.WARNING)  # one line per API call is noise
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per call is noise, and Moodle URLs carry its token
     logging.getLogger("caldav").setLevel(logging.ERROR)  # its warnings dump raw event data
     settings = load_settings()
 
@@ -124,6 +126,8 @@ def main() -> None:
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")
     worker = StudyWorker(study, agent, push, audio_dir, whisper_transcribe if whisper_available() else None)
+    moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push, worker=worker,
+                        save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token))
     vault, vault_info = None, None
     if settings.webdav_password:
         vault = Vault(settings.vault_dir / settings.vault_name, study)
@@ -140,12 +144,13 @@ def main() -> None:
             routine_schedule(agent, CONVERSATION, push),
             worker.run(),
             *([vault.run()] if vault else []),
+            *([moodle.run()] if settings.moodle_url else []),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
-                             health, wake, transcriber, food, study, worker, vault_info)
+                             health, wake, transcriber, food, study, worker, vault_info, moodle)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

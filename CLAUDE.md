@@ -33,7 +33,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
 - `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU.
   `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes, served by
-  `webdav.py` (its own unit, `deploy/aide-webdav.service`, published by `tailscale serve` on 8443).
+  `webdav.py` (its own unit, `deploy/aide-webdav.service`, published by `tailscale serve` on 8443). `moodle.py`:
+  the university Moodle's PDFs into the study files (login through the app; the token in `.env`).
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 

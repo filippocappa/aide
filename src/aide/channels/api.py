@@ -29,6 +29,7 @@ from ..reminders import ReminderStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError
+from ..moodle import MoodleError, MoodleSync
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..wake import WakeService
@@ -81,6 +82,14 @@ class FilePatch(BaseModel):
     name: str | None = None
     course: int | None = None
     lecture: str | None = None  # null: course material
+
+
+class MoodleConnect(BaseModel):
+    url: str = Field(max_length=4000)  # the moodlemobile://token=… address the login ended on
+
+
+class MoodleMatch(BaseModel):
+    course: int | None  # the Aide course; null: don't sync it
 
 
 class LecturePatch(BaseModel):
@@ -202,7 +211,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                health: HealthStore | None = None, wake: WakeService | None = None,
                transcriber: Transcriber | None = None, food: FoodStore | None = None,
                study: StudyStore | None = None, worker: StudyWorker | None = None,
-               vault: dict | None = None) -> FastAPI:
+               vault: dict | None = None, moodle: MoodleSync | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -211,6 +220,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     wake = wake or WakeService(digest, health, tz, push=push)
     food = food or FoodStore(db.conn, tz)
     study = study or StudyStore(db, tz, calendar)
+    moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
     photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
@@ -789,6 +799,52 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if study.files.delete(file_id) is None:
             raise HTTPException(404, f"no file {file_id}")
         return {"ok": True}
+
+    # -- Moodle ----------------------------------------------------------------------
+
+    def moodle_on() -> None:
+        if not moodle.site:
+            raise HTTPException(503, "Moodle isn't set up on the server (AIDE_MOODLE_URL)")
+
+    @app.get("/v1/moodle", dependencies=[Depends(auth)])
+    async def moodle_status():
+        return moodle.status()
+
+    @app.post("/v1/moodle/login", dependencies=[Depends(auth)])
+    async def moodle_login():
+        moodle_on()
+        return moodle.login()
+
+    @app.post("/v1/moodle/connect", dependencies=[Depends(auth)])
+    async def moodle_connect(body: MoodleConnect):
+        moodle_on()
+        try:
+            return await moodle.connect(body.url)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except MoodleError as e:
+            raise HTTPException(502, str(e))
+
+    @app.delete("/v1/moodle", dependencies=[Depends(auth)])
+    async def moodle_logout():
+        moodle.logout()
+        return moodle.status()
+
+    @app.post("/v1/moodle/sync", dependencies=[Depends(auth)])
+    async def moodle_sync():
+        moodle_on()
+        if not moodle.token:
+            raise HTTPException(409, "log in to Moodle first")
+        moodle.kick()
+        return JSONResponse(moodle.status(), status_code=202)
+
+    @app.patch("/v1/moodle/courses/{moodle_id}", dependencies=[Depends(auth)])
+    async def moodle_match(moodle_id: int, body: MoodleMatch):
+        course_or_400(body.course)
+        try:
+            return moodle.course_json(moodle.match(moodle_id, body.course))
+        except KeyError:
+            raise HTTPException(404, f"no Moodle course {moodle_id}")
 
     @app.get("/v1/vault", dependencies=[Depends(auth)])
     async def vault_setup():

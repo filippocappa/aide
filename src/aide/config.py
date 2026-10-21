@@ -1,6 +1,7 @@
 """Settings, read once from the environment (systemd EnvironmentFile or a local .env)."""
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -50,6 +51,22 @@ class Settings:
     webdav_url: str | None = None  # how the phone reaches it, for the app's setup screen
     moodle_url: str | None = None  # https://elearning.unito.it/sme
     moodle_token: str | None = None  # from the app's Moodle login, written here by the server
+
+
+def save_env(env_path: Path, key: str, value: str | None) -> None:
+    """Set key=value in the env file, replacing an existing line and keeping everything else; None removes it.
+    Owner-only, since it holds secrets."""
+    text = env_path.read_text() if env_path.exists() else ""
+    pattern = re.compile(rf"^{re.escape(key)}=.*(\n|$)", re.M)
+    if value is None:
+        text = pattern.sub("", text)
+    else:
+        line = f"{key}={value}\n"
+        text = pattern.sub(lambda _: line, text) if pattern.search(text) else text.rstrip("\n") + f"\n{line}"
+    tmp = env_path.with_name(env_path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.chmod(0o600)
+    os.replace(tmp, env_path)
 
 
 def _required(name: str) -> str:
