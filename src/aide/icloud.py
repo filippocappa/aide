@@ -1,6 +1,7 @@
 """iCloud Calendar over CalDAV. Synchronous: tools call it through asyncio.to_thread."""
 
 import logging
+import threading
 import uuid
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
@@ -74,24 +75,31 @@ class ICloudCalendar:
         # "OSError: [Errno 90] Message too long". Plain HTTPS over TCP works everywhere.
         self.client.session = niquests.Session(multiplexed=self.client.session.multiplexed, disable_http3=True)
         self._calendars: dict[str, caldav.Calendar] | None = None
+        # The first request logs in: iCloud answers 401 and caldav retries with the password. Two threads doing that
+        # at once fail the second one (the password is set by then, so it doesn't retry), as at every startup.
+        self._first = threading.Lock()
         # uid -> (calendar name, URL), remembered from listings. iCloud rejects lookups by UID
         # (412 on the REPORT that event_by_uid sends), so events are fetched by URL instead.
         self._where: dict[str, tuple[str, str]] = {}
 
     def _cals(self) -> dict[str, caldav.Calendar]:
         # Cached for the process lifetime; restart Aide after adding a calendar.
-        if self._calendars is None:
-            def describe(cal):
-                # Reminders lists are calendars too; keep only those that hold events.
-                return cal.get_display_name(), "VEVENT" in cal.get_supported_components()
-
-            cals = self.client.principal().calendars()
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                info = list(pool.map(describe, cals))
-            found = {name: cal for (name, events), cal in zip(info, cals) if events}
-            self._calendars = found
-            log.info("iCloud calendars: %s", ", ".join(found))
+        with self._first:
+            if self._calendars is None:
+                self._calendars = self._discover()
         return self._calendars
+
+    def _discover(self) -> dict[str, caldav.Calendar]:
+        def describe(cal):
+            # Reminders lists are calendars too; keep only those that hold events.
+            return cal.get_display_name(), "VEVENT" in cal.get_supported_components()
+
+        cals = self.client.principal().calendars()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            info = list(pool.map(describe, cals))
+        found = {name: cal for (name, events), cal in zip(info, cals) if events}
+        log.info("iCloud calendars: %s", ", ".join(found))
+        return found
 
     def calendars(self) -> list[str]:
         return list(self._cals())

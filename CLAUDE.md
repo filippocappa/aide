@@ -167,13 +167,24 @@ the habits. Aide now sees every specialist's memory, marked with its name, and a
 only web, maps, memory and routines of its own, and hands the rest to the specialist whose work it is (the
 user's photos go along). Queued actions still run from a registry with every tool (`Agent.tools`).
 
+**Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
+files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and
+the Obsidian vault is served over WebDAV. A notebook per course: an Introduction on the exam, a page per topic
+(explanation, key terms, formulas, worked examples, slide figures, exam-style MCQs with checked keys) and Spaced
+Repetition cards. Every write is proposed in the course's Professor chat first; new material is triaged against
+the outline and merged into the user's latest version, edits in Obsidian included. Sonnet writes, Haiku triages
+and checks the answer keys. App: Moodle and Obsidian setup in Settings, a progress card in the chat while notes
+are written. Live on macroeconomics (11 topics, 25 figures).
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
 2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
    a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
-3. The Professor gets the study agent (#3) and exam mode (#4). Finance still has no data source (memory only).
+3. Exam mode (#4): timed MCQ practice from the notebooks, scored like the real exam. Then a Study tab in the
+   app (notebook pages, proposals with buttons, adding recordings and PDFs). Finance still has no data source
+   (memory only).
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
