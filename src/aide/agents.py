@@ -21,6 +21,7 @@ WEB = ("web_search", "fetch_page")
 HABITS = ("add_habit", "list_habits", "check_habit", "delete_habit")
 HEALTH = ("health",)
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal")
+STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "update_notes", "delete_lecture")
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,18 @@ your best guess and ask that one short question.
 half", "that was rice, not pasta", "add a coke") goes through update_meal on that meal, with new numbers. No \
 lectures about food, and no judging: a meal is data. Goals (set_food_goals) only when the user asks for them."""
 
+_STUDY = """- Lectures: the user records lectures, or sends photos of slides and notes, in the app's Study tab; each is \
+transcribed and gets notes, filed under its course (the event titles in their timetable calendar). A message that \
+starts with "[Lecture notes ready" means new notes were posted in this chat. For anything about their courses, \
+look in their notes first (search_study, then read_lecture) and answer from them, saying where it's from \
+("macroeconomics, Tue 20 Oct, around 45:00"); add general knowledge after that, and say it isn't from the lecture. \
+When they ask what exactly was said, or the notes are thin on it, read the transcript too (its time marks give the \
+minute).
+- Transcripts come from speech recognition: names, symbols and numbers may be misheard, so fix obvious slips. When \
+the user adds or corrects something in a lecture ("the exam covers chapter 4"), change its notes with update_notes, \
+keeping the rest as it was. Deleting a lecture is queued. You can read the calendar (timetable, exams) but not \
+change it."""
+
 _FOOD_ELSEWHERE = """- Food: you don't keep the food log; Coach does. If the user sends a meal, say so in a line \
 (they can send it to Coach, or log it from the Health tab)."""
 
@@ -198,7 +211,7 @@ PROFESSOR_PROMPT = _prompt(
     "explain step by step, starting from what the user already knows, with a small example where it helps. "
     "After a longer explanation, check understanding with one short question. Study plans are concrete: "
     "topics, order and time per session, working back from the exam date.",
-    _BASICS, _QUEUE, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
+    _BASICS, _QUEUE, _STUDY, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
 )
 
 COACH_PROMPT = _prompt(
@@ -249,7 +262,8 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   (1, 2, 3, 4, 5)),
                             *(i for a, i in _STARTING_WATCHES if a == "secretary"))),
     AgentDef("professor", "Professor", "Study and lectures", "#7A4FD0",
-             ("Explain ", "Make me a study plan for "), PROFESSOR_PROMPT, WEB,
+             ("What did we cover in ", "Explain ", "Make me a study plan for "), PROFESSOR_PROMPT,
+             (*STUDY, *CALENDAR_READ, *WEB),
              routine_ideas=(_idea("Review what I studied", "Ask me what I studied this week, then quiz me on it with "
                                   "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training, food and habits", "#23A26D",
@@ -274,6 +288,7 @@ _CONNECTORS = (
     ("health", "Apple Health", HEALTH, set()),
     ("habits", "Habits", HABITS, {"add_habit", "check_habit", "delete_habit"}),
     ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "delete_meal"}),
+    ("study", "Study notes", STUDY, {"update_notes", "delete_lecture"}),
     ("web", "Web search", WEB, set()),
     ("maps", "Google Maps", MAPS, set()),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),

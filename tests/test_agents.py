@@ -147,8 +147,9 @@ def test_tool_sets_follow_the_table(env):
     assert {t.name for t in agent.tools} >= {"create_reminder", "health", "send_mail", "create_event"}  # runs the queue
     assert names["coach"] == {"health", "list_habits", "list_events", "web_search", "fetch_page",
                               "get_current_time", "remember", "forget", "cancel_queued", *routines}
-    assert names["professor"] == names["finance"] == {"web_search", "fetch_page", "get_current_time", "remember",
-                                                      "forget", "cancel_queued", *routines}
+    assert names["finance"] == {"web_search", "fetch_page", "get_current_time", "remember", "forget",
+                                "cancel_queued", *routines}
+    assert names["professor"] == {*names["finance"], "list_events"}  # plus the study tools, which this env hasn't
     assert all(routines <= names[a] for a in AGENTS)
     assert {"create_event", "send_mail", "create_reminder", "find_places"} <= names["secretary"]
     assert "health" not in names["secretary"]

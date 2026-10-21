@@ -157,6 +157,15 @@ class Agent:
         return {"id": row["public_id"], "agent": row["agent"], "title": None, "routine": None, "preview": opening,
                 "updated_at": row["last_active_at"]}
 
+    async def post(self, conversation: str, note: str, text: str) -> None:
+        """A message from the chat's agent that no user turn asked for (a lecture's notes are ready). `note` goes
+        before it as the user turn the API needs: the model reads it, the app doesn't show it."""
+        async with self._lock:
+            conversation_id = self._resolve(CONVERSATION, conversation)
+            self.db.append_turn(conversation_id, "app", [
+                {"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] {note}"},
+                {"role": "assistant", "content": [{"type": "text", "text": text}]}])
+
     def delete_conversation(self, channel: str, conversation: str) -> None:
         if conversation == channel:
             raise ValueError("The shared conversation can't be deleted.")
@@ -174,8 +183,8 @@ class Agent:
                 if not isinstance(content, str) or content.startswith(("[The user replied", _OPENED)):
                     continue  # tool results, confirm/cancel notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
-                if text.startswith(_ROUTINE):
-                    continue  # a routine's prompt: the user never sees it
+                if text.startswith((_ROUTINE, _LECTURE)):
+                    continue  # a routine's prompt, the note before new lecture notes: the user never sees them
                 if photos := _PHOTO.findall(text):
                     out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
                                 "attachments": attachments, "consulted": consulted, "team": team})
@@ -618,6 +627,7 @@ _PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
 _QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
 _OPENED = "[The user opened a new chat in the app"
 _ROUTINE = "[Scheduled routine"
+_LECTURE = "[Lecture notes ready"
 
 
 def _nothing(reply: str) -> bool:

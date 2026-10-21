@@ -40,6 +40,9 @@ class Settings:
     apns_team_id: str | None
     apns_bundle_id: str
     transcribe_model: str = TRANSCRIBE_MODEL
+    study_calendar: str = "Work"  # lectures: a course is an event title in it
+    exam_calendar: str = "Exam"
+    study_skip: tuple[str, ...] = ("study",)  # study-calendar titles that aren't courses (own study blocks)
 
 
 def _required(name: str) -> str:
@@ -83,4 +86,7 @@ def load_settings() -> Settings:
         apns_team_id=os.environ.get("APNS_TEAM_ID", "").strip() or None,
         apns_bundle_id=os.environ.get("APNS_BUNDLE_ID", "").strip() or "com.filippocappa.aide",
         transcribe_model=os.environ.get("AIDE_TRANSCRIBE_MODEL", "").strip() or TRANSCRIBE_MODEL,
+        study_calendar=os.environ.get("AIDE_STUDY_CALENDAR", "").strip() or "Work",
+        exam_calendar=os.environ.get("AIDE_EXAM_CALENDAR", "").strip() or "Exam",
+        study_skip=tuple(s.strip() for s in os.environ.get("AIDE_STUDY_SKIP", "study").split(",") if s.strip()),
     )

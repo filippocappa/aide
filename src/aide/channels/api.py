@@ -28,6 +28,7 @@ from ..push import Push
 from ..reminders import ReminderStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
+from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..wake import WakeService
 
@@ -64,6 +65,20 @@ class FoodGoals(BaseModel):
     protein_g: float | None = None
     carbs_g: float | None = None
     fat_g: float | None = None
+
+
+class LectureIn(BaseModel):
+    photos: list[str] = []
+    text: str = ""
+    course: int | None = None  # None: filed by the timetable event on at recorded_at
+    title: str = ""
+    recorded_at: datetime | None = None  # default now
+
+
+class LecturePatch(BaseModel):
+    title: str | None = None
+    course: int | None = None  # null: unfiled
+    notes: str | None = None
 
 
 class TeamIn(BaseModel):
@@ -177,7 +192,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                tz: ZoneInfo, token: str, habits: HabitStore | None = None,
                digest: DigestService | None = None, push: Push | None = None,
                health: HealthStore | None = None, wake: WakeService | None = None,
-               transcriber: Transcriber | None = None, food: FoodStore | None = None) -> FastAPI:
+               transcriber: Transcriber | None = None, food: FoodStore | None = None,
+               study: StudyStore | None = None, worker: StudyWorker | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -185,6 +201,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
     wake = wake or WakeService(digest, health, tz, push=push)
     food = food or FoodStore(db.conn, tz)
+    study = study or StudyStore(db, tz, calendar)
     photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
@@ -558,6 +575,120 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.put("/v1/food/goals", dependencies=[Depends(auth)])
     async def set_food_goals(body: FoodGoals):
         return food.set_goals(body.model_dump())
+
+    # -- study -------------------------------------------------------------------
+
+    def lecture_or_404(lecture_id: str) -> dict:
+        if (lecture := study.get(lecture_id)) is None:
+            raise HTTPException(404, f"no lecture {lecture_id}")
+        return lecture
+
+    def course_or_400(course_id: int | None) -> int | None:
+        if course_id is not None and study.course(course_id) is None:
+            raise HTTPException(400, f"no course {course_id}")
+        return course_id
+
+    @app.get("/v1/study", dependencies=[Depends(auth)])
+    async def study_overview():
+        courses = await study.courses()
+        on = await study.now()
+        return {"courses": [study.course_json(c) for c in courses], "unfiled": study.unfiled(),
+                "now": {"course": on[0]["id"], "name": on[0]["name"], "ends": on[1].astimezone(tz).isoformat()}
+                if on else None,
+                "transcription": worker is not None and worker.transcribe is not None}
+
+    @app.post("/v1/study/courses/{course_id}/chat", dependencies=[Depends(auth)])
+    async def course_chat(course_id: int):
+        if study.course(course_id) is None:
+            raise HTTPException(404, f"no course {course_id}")
+        return {"conversation_id": study.chat(course_id)}
+
+    @app.get("/v1/lectures", dependencies=[Depends(auth)])
+    async def list_lectures(course: str | None = None, limit: int = 100):
+        limit = max(1, min(limit, 500))
+        if course == "none":
+            rows = study.lectures(unfiled=True, limit=limit)
+        elif course is None:
+            rows = study.lectures(limit=limit)
+        elif course.isdigit():
+            rows = study.lectures(int(course), limit=limit)
+        else:
+            raise HTTPException(400, "course must be a course id or none")
+        return {"lectures": [study.as_json(lec) for lec in rows]}
+
+    @app.post("/v1/lectures", dependencies=[Depends(auth)])
+    async def add_lecture(request: Request, recorded_at: datetime | None = None, course: int | None = None,
+                          title: str = Query("", max_length=100)):
+        kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind == "application/json":
+            body = LectureIn.model_validate(await request.json())
+            for p in body.photos:
+                if photos is None or not photos.exists(p):
+                    raise HTTPException(400, f"no photo {p}")
+            at = body.recorded_at or datetime.now(tz)
+            course_id = course_or_400(body.course)
+            if course_id is None and (found := await study.match(at)):
+                course_id = found["id"]
+            lecture = study.add(at, course_id, body.title, photos=body.photos, text=body.text)
+        else:
+            ext = AUDIO_TYPES.get(kind)
+            if ext is None:
+                raise HTTPException(415, f"send the recording as {', '.join(AUDIO_TYPES)}, or photos and text as JSON")
+            if worker is None or worker.transcribe is None:
+                raise HTTPException(503, "transcription isn't set up on the server")
+            at = recorded_at or datetime.now(tz)
+            if at.tzinfo is None:
+                raise HTTPException(400, "recorded_at needs a UTC offset")
+            course_id = course_or_400(course)
+            public_id = study.new_id()
+            tmp, size = worker.audio_dir / f".{public_id}.tmp", 0
+            try:
+                with tmp.open("wb") as f:  # streamed to disk: a lecture is tens of MB
+                    async for chunk in request.stream():
+                        size += len(chunk)
+                        if size > MAX_LECTURE:
+                            raise HTTPException(413, "the recording is too big")
+                        f.write(chunk)
+                if size == 0:
+                    raise HTTPException(400, "the recording is empty")
+                tmp.rename(worker.audio_dir / (public_id + ext))
+            finally:
+                tmp.unlink(missing_ok=True)
+            if course_id is None and (found := await study.match(at)):
+                course_id = found["id"]
+            lecture = study.add(at, course_id, title, audio=public_id + ext, public_id=public_id)
+        if worker is not None:
+            worker.kick()
+        return JSONResponse(study.as_json(lecture, full=True), status_code=202)
+
+    @app.get("/v1/lectures/{lecture_id}", dependencies=[Depends(auth)])
+    async def get_lecture(lecture_id: str, transcript: bool = False):
+        return study.as_json(lecture_or_404(lecture_id), full=True, transcript=transcript)
+
+    @app.patch("/v1/lectures/{lecture_id}", dependencies=[Depends(auth)])
+    async def edit_lecture(lecture_id: str, body: LecturePatch):
+        lecture_or_404(lecture_id)
+        changes = body.model_dump(exclude_unset=True)
+        return study.as_json(study.update(lecture_id, title=changes.get("title"),
+                                          course_id=course_or_400(changes.get("course")), move="course" in changes,
+                                          notes=changes.get("notes")), full=True)
+
+    @app.delete("/v1/lectures/{lecture_id}", dependencies=[Depends(auth)])
+    async def delete_lecture(lecture_id: str):
+        lecture = study.delete(lecture_id)
+        if lecture is None:
+            raise HTTPException(404, f"no lecture {lecture_id}")
+        if lecture["audio"] and worker is not None:
+            (worker.audio_dir / lecture["audio"]).unlink(missing_ok=True)
+        return {"ok": True}
+
+    @app.post("/v1/lectures/{lecture_id}/retry", dependencies=[Depends(auth)])
+    async def retry_lecture(lecture_id: str):
+        lecture_or_404(lecture_id)
+        lecture = study.retry(lecture_id)
+        if worker is not None:
+            worker.kick()
+        return JSONResponse(study.as_json(lecture, full=True), status_code=202)
 
     @app.get("/v1/digest", dependencies=[Depends(auth)])
     async def latest_digest(kind: str = "daily"):
