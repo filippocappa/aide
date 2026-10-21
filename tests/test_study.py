@@ -1,3 +1,4 @@
+import base64
 import json
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -333,7 +334,8 @@ def test_slides_added_to_a_ready_lecture_rewrite_its_notes(env):
     assert done_["notes"].startswith("With the slides.") and done_["notes_prev"].startswith("How the goods")
     assert done_["title"] == "The IS-LM model"  # the user's (or the first) title stays
     sent = client.requests[-1]["messages"][0]["content"]
-    assert sum(b["type"] == "image" for b in sent) == 3  # every page of a short deck
+    pages = [base64.b64decode(b["source"]["data"]) for b in sent if b["type"] == "image"]
+    assert len(pages) == 3 and all(p.startswith(b"\xff\xd8") for p in pages)  # every page of a short deck, drawn
     assert "Slides, Week 3 slides.pdf (3 pages" in sent[-1]["text"] and "[p. 2]\nLM: liquidity" in sent[-1]["text"]
     assert "rewrote the notes" in push.sent[-1][2]
     assert api.get(f"/v1/lectures/{lecture['id']}", headers=AUTH).json()["files"] == [f["id"]]
