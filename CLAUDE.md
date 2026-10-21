@@ -178,6 +178,10 @@ are written. Live on macroeconomics (11 topics, 25 figures).
 Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's checked MCQs, no model call, missed
 questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
 result in the chat.
+Study tab (both sides): courses with their notebook in brief, a course page with proposals (Apply / Not now), the
+writing progress, Ask Professor, Practice exam, the Introduction and topic pages (notes with figures from
+`GET /v1/files/{id}/pages/{n}`, folded answers, flashcards; `plain=true` reads), lectures, PDFs, and adding a PDF or
+a recording from Files.
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
@@ -185,8 +189,8 @@ result in the chat.
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
 2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
    a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
-3. The rest of #4: quizzes by voice, review sessions on the calendar. A Study tab in the app (notebook pages,
-   proposals with buttons, adding recordings and PDFs). Finance still has no data source (memory only).
+3. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
+   for the other courses. Finance still has no data source (memory only).
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
