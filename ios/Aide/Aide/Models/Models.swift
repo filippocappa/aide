@@ -839,6 +839,71 @@ struct NotebookStatus: Decodable { var writing: NotebookProposal? }
 struct NotebookProposal: Decodable, Hashable { let id: String; var progress: NotebookProgress? }
 struct NotebookProgress: Decodable, Hashable { let done: Int; let total: Int }
 
+// MARK: Practice exams (docs/API.md, "Practice exams")
+
+/// What a course's practice exams can draw on, and the past ones.
+struct QuizBank: Decodable {
+    let course: Int
+    var exam: String?
+    var questions = 0
+    var unseen = 0
+    var toReview = 0
+    var topics: [QuizBankTopic] = []
+    var scoring: QuizScoring?
+    var past: [Quiz] = []
+}
+
+struct QuizBankTopic: Decodable, Identifiable, Hashable { let id: String; let title: String; let questions: Int }
+struct QuizScoring: Decodable { let right: Double; let wrong: Double }
+
+struct Quiz: Decodable, Identifiable {
+    let id: String
+    let course: Int
+    var minutes: Int?
+    var count = 0
+    var startedAt: String?
+    var finishedAt: String?
+    var score: QuizScore?
+    var questions: [QuizQuestion] = []
+}
+
+struct QuizQuestion: Decodable, Identifiable {
+    let n: Int
+    let topic: QuizTopicRef
+    let text: String
+    let options: [QuizOption]
+    // Once finished:
+    var answer: String?
+    var key: String?
+    var correct: Bool?
+    var explanation: String?
+    var id: Int { n }
+}
+
+struct QuizTopicRef: Decodable, Hashable { let id: String; let title: String }
+struct QuizOption: Decodable, Hashable { let letter: String; let text: String }
+
+struct QuizScore: Decodable {
+    let points: Double
+    let max: Double
+    let right: Int
+    let wrong: Int
+    let blank: Int
+    var topics: [QuizTopicScore]?
+}
+
+struct QuizTopicScore: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let right: Int
+    let wrong: Int
+    let blank: Int
+    var total: Int { right + wrong + blank }
+}
+
+struct QuizStartBody: Encodable { let course: Int; let count: Int; let minutes: Int? }
+struct QuizFinishBody: Encodable { let answers: [String: String] }
+
 // MARK: Moodle and the Obsidian vault (docs/API.md, "Moodle", "Obsidian vault")
 
 struct MoodleStatus: Decodable {

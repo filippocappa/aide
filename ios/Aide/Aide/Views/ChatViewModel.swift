@@ -60,6 +60,12 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var routines: [Routine] = []
     /// The course notebook being written, when this is the course's chat: the progress bar (docs/API.md, "Notebook").
     @Published private(set) var writing: NotebookProgress?
+    /// The course whose chat this is (docs/API.md, "Notebook"), for its practice exams.
+    var course: (id: Int, name: String?)? {
+        guard let id = conversationID, let row = conversations.first(where: { $0.id == id }),
+              let course = row.course else { return nil }
+        return (course, row.title)
+    }
     private var notebookWatch: Task<Void, Never>?
 
     /// Called after the server may have changed reminders or events.

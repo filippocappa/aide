@@ -336,6 +336,20 @@ final class APIClient {
         try await send("GET", "/v1/notebook", query: [URLQueryItem(name: "course", value: String(course))])
     }
 
+    func quizBank(course: Int) async throws -> QuizBank {
+        try await send("GET", "/v1/quizzes", query: [URLQueryItem(name: "course", value: String(course))])
+    }
+
+    func startQuiz(course: Int, count: Int, minutes: Int?) async throws -> Quiz {
+        try await send("POST", "/v1/quizzes", body: QuizStartBody(course: course, count: count, minutes: minutes))
+    }
+
+    /// Answers by question number; a question left out is blank.
+    func finishQuiz(_ id: String, answers: [Int: String]) async throws -> Quiz {
+        let body = QuizFinishBody(answers: Dictionary(uniqueKeysWithValues: answers.map { (String($0.key), $0.value) }))
+        return try await send("POST", "/v1/quizzes/\(id)/finish", body: body)
+    }
+
     func vault() async throws -> VaultSetup {
         try await send("GET", "/v1/vault")
     }

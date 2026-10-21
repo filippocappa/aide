@@ -604,6 +604,32 @@ Proposal: `{"id": "p_…", "course": 2, "kind": "outline" | "update", "status": 
 IS-LM model." or null, "progress": {"done": 4, "total": 11} or null, "created_at": "…"}`. A new outline supersedes a
 pending one.
 
+### Practice exams
+
+Since 2026-10-21 (`quiz.py`): a practice exam from a notebook's own multiple-choice questions, scored like the exam
+(right +1, wrong −0.25, blank 0). No model call. Questions last answered wrong or left blank come first, then those
+never seen, then the ones answered right longest ago, spread over the topics, in a shuffled order. The app keeps the
+time (`minutes`) and sends the answers at the end; when it's finished, Professor posts the score and the weakest
+topics in the course's chat (and knows which questions were missed, to go through them there).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/quizzes?course=2` | | Bank. `404` no such course. |
+| `POST /v1/quizzes` | `{"course": 2, "count": 30, "minutes": 45, "topics": ["t_…"]}`; `count` 1–60 (default 30, fewer when the bank is smaller), `minutes` null (default) for untimed, `topics` null for all | `201`, Quiz without keys. `409` the notebook has no questions. |
+| `GET /v1/quizzes/{id}` | | Quiz (with keys once finished). `404`. |
+| `POST /v1/quizzes/{id}/finish` | `{"answers": {"1": "B", "2": null}}`, by question number; left out or null is blank | Quiz, finished. `409` already finished. |
+
+Bank: `{"course": 2, "exam": "20 to 35 multiple-choice questions…" or null, "questions": 65, "unseen": 40,
+"to_review": 6, "topics": [{"id": "t_…", "title": "…", "questions": 6}], "scoring": {"right": 1, "wrong": -0.25,
+"blank": 0}, "past": [Quiz without questions, newest first, finished only]}`.
+
+Quiz: `{"id": "x_…", "course": 2, "minutes": 45 or null, "count": 30, "started_at": "…", "finished_at": "…" or null,
+"score": null or {"points": 22.75, "max": 30, "right": 24, "wrong": 5, "blank": 1, "topics": [{"id": "t_…", "title":
+"…", "right": 1, "wrong": 2, "blank": 0}] (weakest first)}, "questions": [{"n": 1, "topic": {"id": "t_…", "title":
+"…"}, "text": "markdown", "options": [{"letter": "A", "text": "…"}]}]}`. Once finished, each question also has
+`"answer": "B" or null, "key": "C", "correct": false, "explanation": "markdown"`. The notes' LaTeX comes as plain
+Unicode in `text`, `options` and `explanation` ($\pi_{t-1}$ as πₜ₋₁).
+
 ## Habits
 
 Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"]}`.

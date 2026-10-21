@@ -31,6 +31,7 @@ from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError
 from ..moodle import MoodleError, MoodleSync
 from ..notebook import NotebookStore
+from ..quiz import MOST as MOST_QUESTIONS, QuizStore
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..wake import WakeService
@@ -96,6 +97,17 @@ class MoodleMatch(BaseModel):
 class ProposalApply(BaseModel):
     items: list[int] | None = None  # numbered from 1; null: all
     note: str | None = Field(default=None, max_length=2000)
+
+
+class QuizStart(BaseModel):
+    course: int
+    count: int = Field(default=30, ge=1, le=MOST_QUESTIONS)
+    minutes: int | None = Field(default=None, ge=1, le=600)  # null: untimed
+    topics: list[str] | None = None  # topic ids; null: all
+
+
+class QuizFinish(BaseModel):
+    answers: dict[str, str | None] = {}  # {"1": "B"}; a number left out or null is blank
 
 
 class LecturePatch(BaseModel):
@@ -229,6 +241,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     study = study or StudyStore(db, tz, calendar)
     moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
+    quizzes = QuizStore(notebook)
     photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
@@ -909,6 +922,47 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return notebook.proposal_json(notebook.decline(proposal_id))
         except ValueError as e:
             raise HTTPException(409, str(e))
+
+    # -- practice exams ----------------------------------------------------------------
+
+    def quiz_or_404(quiz_id: str) -> dict:
+        if (q := quizzes.quiz(quiz_id)) is None:
+            raise HTTPException(404, f"no practice exam {quiz_id}")
+        return q
+
+    @app.get("/v1/quizzes", dependencies=[Depends(auth)])
+    async def quiz_bank(course: int):
+        return quizzes.bank_json(course_or_404(course))
+
+    @app.post("/v1/quizzes", dependencies=[Depends(auth)])
+    async def start_quiz(body: QuizStart):
+        try:
+            quiz = quizzes.start(course_or_404(body.course), body.count, body.minutes, body.topics)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        return JSONResponse(quizzes.quiz_json(quiz), status_code=201)
+
+    @app.get("/v1/quizzes/{quiz_id}", dependencies=[Depends(auth)])
+    async def get_quiz(quiz_id: str):
+        return quizzes.quiz_json(quiz_or_404(quiz_id))
+
+    @app.post("/v1/quizzes/{quiz_id}/finish", dependencies=[Depends(auth)])
+    async def finish_quiz(quiz_id: str, body: QuizFinish):
+        quiz_or_404(quiz_id)
+        try:
+            quiz = quizzes.finish(quiz_id, body.answers)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        # Professor's note in the course chat; the missed questions go in the note it reads, for "go through them".
+        missed = [f"{n}. {q['text'][:160]} (answered {quiz['answers'][str(n)] or 'blank'}, key {q['key']}; "
+                  f"{q['topic_title']})" for n, q in enumerate(quiz["questions"], 1)
+                  if quiz["answers"][str(n)] != q["key"]]
+        note = "[Practice exam finished in the app." + (" Missed: " + " | ".join(missed) if missed else "") + "]"
+        try:
+            await agent.post(study.chat(quiz["course_id"]), note, quizzes.summary(quiz))
+        except Exception:
+            log.exception("couldn't post a practice exam's result")
+        return quizzes.quiz_json(quiz)
 
     @app.get("/v1/vault", dependencies=[Depends(auth)])
     async def vault_setup():
