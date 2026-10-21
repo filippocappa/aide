@@ -536,6 +536,26 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(RoutineEditor.string(from: RoutineEditor.date(from: "07:05")), "07:05")
     }
 
+    func testWatchesDecodeAndOlderServersHaveNone() throws {
+        let old = try JSONDecoder.api.decode(Routine.self, from: Data(
+            #"{"id":3,"agent":"coach","title":"Recap","prompt":"P","time":"18:00","days":[],"enabled":true}"#.utf8))
+        XCTAssertFalse(old.isWatch)
+        let watch = try JSONDecoder.api.decode(Routine.self, from: Data(
+            #"{"id":4,"agent":"coach","title":"Recovery","prompt":"P","time":"09:00","days":[],"enabled":true,"watch":true}"#.utf8))
+        XCTAssertTrue(watch.isWatch)
+        let agent = try JSONDecoder.api.decode(Agent.self, from: Data(
+            #"{"id":"coach","name":"Coach","routine_ideas":[{"title":"A","prompt":"P"},{"title":"B","prompt":"P","watch":true}]}"#.utf8))
+        XCTAssertEqual(agent.routineIdeas.map(\.watch), [false, true])
+        let silent = try JSONDecoder.api.decode(RoutineRun.self, from: Data(#"""
+        {"routine": {"id":4,"agent":"coach","title":"Recovery","prompt":"P","time":"09:00","days":[],"enabled":true,"watch":true},
+         "conversation_id": "c_4", "spoke": false}
+        """#.utf8))
+        XCTAssertEqual(silent.spoke, false)
+        let draft = String(decoding: try JSONEncoder.api.encode(
+            RoutineDraft(title: "T", prompt: "P", time: "09:00", days: [], enabled: true, watch: true)), as: UTF8.self)
+        XCTAssertTrue(draft.contains(#""watch":true"#))
+    }
+
     func testNewConversationSendsAgentOnlyWhenSet() throws {
         XCTAssertEqual(String(decoding: try JSONEncoder.api.encode(NewConversation()), as: UTF8.self), "{}")
         let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(NewConversation(agent: "coach"))) as? [String: Any])

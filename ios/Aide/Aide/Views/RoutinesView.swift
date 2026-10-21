@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// One agent's routines: jobs it runs on a schedule, each posting in its own chat (docs/API.md, "Routines").
+/// Its watches come first: checks that speak up only when something needs you ("Watches").
 /// Switch them on and off here, tap one to change it, or start from one of the agent's ideas.
 struct RoutinesSheet: View {
     @EnvironmentObject private var chat: ChatViewModel
@@ -16,24 +17,23 @@ struct RoutinesSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                let watches = chat.routines(of: agent).filter(\.isWatch)
+                if !watches.isEmpty {
+                    Section {
+                        rows(watches)
+                    } header: {
+                        Text("Keeps an eye on")
+                    } footer: {
+                        Text("\(agent.name) checks at these times and speaks up only when something needs you.")
+                    }
+                }
                 Section {
-                    let routines = chat.routines(of: agent)
+                    let routines = chat.routines(of: agent).filter { !$0.isWatch }
                     if routines.isEmpty {
                         Text("Nothing yet. \(agent.name) can do something for you on a schedule and post it in its own chat.")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(routines) { routine in
-                        NavigationLink {
-                            RoutineEditor(agent: agent, routine: routine, choose: choose)
-                        } label: {
-                            RoutineRow(routine: routine, tint: agent.tint)
-                        }
-                        .listRowBackground(Theme.row)
-                    }
-                    .onDelete { offsets in
-                        let doomed = offsets.map { routines[$0] }
-                        Task { for r in doomed { await chat.delete(r) } }
-                    }
+                    rows(routines)
                     NavigationLink {
                         RoutineEditor(agent: agent, choose: choose)
                     } label: {
@@ -50,8 +50,15 @@ struct RoutinesSheet: View {
                                 RoutineEditor(agent: agent, idea: idea, choose: choose)
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(idea.title)
-                                    Text(Schedule.label(time: idea.time, days: idea.days))
+                                    Label {
+                                        Text(idea.title)
+                                    } icon: {
+                                        if idea.watch { Image(systemName: "eye").foregroundStyle(agent.tint) }
+                                    }
+                                    .labelStyle(.titleAndIcon)
+                                    Text(idea.watch ? "Only when something needs you · "
+                                         + Schedule.label(time: idea.time, days: idea.days)
+                                         : Schedule.label(time: idea.time, days: idea.days))
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                             }
@@ -68,6 +75,21 @@ struct RoutinesSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(Theme.grouped)
+    }
+
+    private func rows(_ routines: [Routine]) -> some View {
+        ForEach(routines) { routine in
+            NavigationLink {
+                RoutineEditor(agent: agent, routine: routine, choose: choose)
+            } label: {
+                RoutineRow(routine: routine, tint: agent.tint)
+            }
+            .listRowBackground(Theme.row)
+        }
+        .onDelete { offsets in
+            let doomed = offsets.map { routines[$0] }
+            Task { for r in doomed { await chat.delete(r) } }
+        }
     }
 }
 
@@ -107,8 +129,11 @@ struct RoutineEditor: View {
     @State private var time: Date
     @State private var days: Set<Int>
     @State private var enabled: Bool
+    @State private var watch: Bool
     @State private var isBusy = false
     @State private var error: String?
+    /// After Run now on a watch that found nothing.
+    @State private var quiet = false
 
     init(agent: Agent, routine: Routine? = nil, idea: RoutineIdea? = nil, choose: @escaping (PastChatsSheet.Choice) -> Void) {
         self.agent = agent
@@ -119,6 +144,7 @@ struct RoutineEditor: View {
         _time = State(initialValue: Self.date(from: routine?.time ?? idea?.time ?? "09:00"))
         _days = State(initialValue: Set(routine?.days ?? idea?.days ?? []))
         _enabled = State(initialValue: routine?.enabled ?? true)
+        _watch = State(initialValue: routine?.isWatch ?? idea?.watch ?? false)
     }
 
     private var canSave: Bool {
@@ -145,8 +171,11 @@ struct RoutineEditor: View {
                 DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
                 DayPicker(days: $days, tint: agent.tint)
                 Toggle("On", isOn: $enabled).tint(agent.tint)
+                Toggle("Only when something needs you", isOn: $watch).tint(agent.tint)
             } footer: {
-                Text(Schedule.label(time: Self.string(from: time), days: days.sorted()))
+                Text(Schedule.label(time: Self.string(from: time), days: days.sorted())
+                     + (watch ? ". \(agent.name) checks then and posts only if something needs you; it can't change "
+                        + "anything on its own." : "."))
             }
             .listRowBackground(Theme.row)
             if let routine {
@@ -154,7 +183,11 @@ struct RoutineEditor: View {
                     Button {
                         Task { await runNow(routine) }
                     } label: {
-                        Label("Run now", systemImage: "play.fill")
+                        Label(routine.isWatch ? "Check now" : "Run now", systemImage: "play.fill")
+                    }
+                    if quiet {
+                        Label("Nothing needs you right now.", systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
                     }
                     if let id = routine.conversationId {
                         Button { choose(.openID(id)) } label: { Label("Open its chat", systemImage: "bubble.left") }
@@ -188,7 +221,7 @@ struct RoutineEditor: View {
         defer { isBusy = false }
         let draft = RoutineDraft(agent: agent.id, title: title.trimmingCharacters(in: .whitespaces),
                                  prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
-                                 time: Self.string(from: time), days: days.sorted(), enabled: enabled)
+                                 time: Self.string(from: time), days: days.sorted(), enabled: enabled, watch: watch)
         do {
             try await chat.save(draft, id: routine?.id)
             dismiss()
@@ -199,9 +232,10 @@ struct RoutineEditor: View {
 
     private func runNow(_ routine: Routine) async {
         isBusy = true
+        quiet = false
         defer { isBusy = false }
         do {
-            if let id = try await chat.run(routine) { choose(.openID(id)) }
+            if let id = try await chat.run(routine) { choose(.openID(id)) } else { quiet = true }
         } catch {
             self.error = error.localizedDescription
         }

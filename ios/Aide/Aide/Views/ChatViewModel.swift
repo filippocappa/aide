@@ -222,7 +222,7 @@ final class ChatViewModel: ObservableObject {
 
     func setEnabled(_ routine: Routine, _ enabled: Bool) async {
         let draft = RoutineDraft(title: routine.title, prompt: routine.prompt, time: routine.time, days: routine.days,
-                                 enabled: enabled)
+                                 enabled: enabled, watch: routine.isWatch)
         try? await save(draft, id: routine.id)
     }
 
@@ -232,10 +232,11 @@ final class ChatViewModel: ObservableObject {
         await loadRoutines()
     }
 
-    /// Runs it now; returns the chat it posted in.
+    /// Runs it now; returns the chat it posted in, or nil when a watch found nothing to say.
     func run(_ routine: Routine) async throws -> String? {
         let result = try await api.runRoutine(routine.id)
         if let i = routines.firstIndex(where: { $0.id == routine.id }) { routines[i] = result.routine }
+        guard result.spoke != false else { return nil }
         await loadConversations()
         return result.conversationId ?? result.routine.conversationId
     }

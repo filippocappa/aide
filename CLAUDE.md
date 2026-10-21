@@ -145,12 +145,19 @@ fallback, `routines` tools for every agent (Aide for anyone, the others their ow
 long-press or the chat's ••• menu, an editor (time, days, on/off), the agent's ideas, Run now, a label on routine
 chats and on the messages a run posts.
 
+**Done, both sides (2026-10-21):** watches, the proactive specialists (#13, contract in `docs/API.md`,
+"Watches"). A watch is a routine with `watch: true`: it checks on time and posts only when something needs you
+(the model answers `NOTHING` otherwise), read-only during the check, at most 3 notes a day. Four starting
+watches, set up once: Secretary "Mail that needs you" and "Tomorrow", Coach "Recovery check" and "Habits
+tonight". App: a "Keeps an eye on" group in the routines sheet, the editor's "Only when something needs you",
+Check now. Live on the server; the first "Tomorrow" note reached the phone.
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
    replies, reminder lists, the team grid, Team chat, routines. Push is live, so Discord is now optional.
 2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
-   proactive specialists (#13), a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
+   a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
 3. The Professor gets the study agent (#3) and exam mode (#4). Finance still has no data source (memory only).
 
 Later: Later for health: bedtime nudge in the evening digest,

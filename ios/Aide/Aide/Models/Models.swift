@@ -226,12 +226,17 @@ struct Routine: Decodable, Identifiable, Hashable {
     /// ISO weekdays, 1 = Monday … 7 = Sunday; empty means every day.
     var days: [Int]
     var enabled: Bool
+    /// A watch posts only when something needs you ("Watches"); absent from an older server.
+    var watch: Bool?
     var conversationId: String?
     var nextRun: String?
     var lastRun: String?
+
+    var isWatch: Bool { watch == true }
 }
 struct RoutineList: Decodable { let routines: [Routine] }
-struct RoutineRun: Decodable { let routine: Routine; let conversationId: String? }
+/// `spoke` is false when a watch found nothing and posted nothing.
+struct RoutineRun: Decodable { let routine: Routine; let conversationId: String?; let spoke: Bool? }
 
 /// What the app sends to create a routine (with `agent`) or change one (without).
 struct RoutineDraft: Encodable, Hashable {
@@ -241,6 +246,7 @@ struct RoutineDraft: Encodable, Hashable {
     var time: String
     var days: [Int]
     var enabled: Bool
+    var watch = false
 }
 
 struct RoutineIdea: Decodable, Hashable {
@@ -248,6 +254,7 @@ struct RoutineIdea: Decodable, Hashable {
     let prompt: String
     let time: String
     let days: [Int]
+    let watch: Bool
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -255,8 +262,9 @@ struct RoutineIdea: Decodable, Hashable {
         prompt = try c.decode(String.self, forKey: .prompt)
         time = try c.decodeIfPresent(String.self, forKey: .time) ?? "09:00"
         days = try c.decodeIfPresent([Int].self, forKey: .days) ?? []
+        watch = try c.decodeIfPresent(Bool.self, forKey: .watch) ?? false
     }
-    private enum CodingKeys: String, CodingKey { case title, prompt, time, days }
+    private enum CodingKeys: String, CodingKey { case title, prompt, time, days, watch }
 }
 
 enum Schedule {
