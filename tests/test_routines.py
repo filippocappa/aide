@@ -33,7 +33,7 @@ def env():
 
     def make(responses=(), push_works=True):
         agent = Agent(FakeClient(responses), db, ToolRegistry([*reminder_tools(store, ROME), *OTHERS]),
-                      model="m", tz=ROME)
+                      model="m", tz=ROME, delegate=False)
         push = FakePush(push_works)
         client = TestClient(create_app(agent, store, None, ROME, "t", push=push))
         return client, agent, store, push

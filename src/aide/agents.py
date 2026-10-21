@@ -31,7 +31,7 @@ class AgentDef:
     color: str
     starters: tuple[str, ...]
     prompt: str
-    tools: tuple[str, ...] | None  # None: every tool the server has (the orchestrator)
+    tools: tuple[str, ...]  # its share of the server's tools, besides COMMON_TOOLS
     orchestrator: bool = False
     routine_ideas: tuple[dict, ...] = ()  # one-tap starting points in the app: {title, prompt, time, days}
 
@@ -128,17 +128,26 @@ data. Goals (set_food_goals) only when the user asks for them."""
 _FOOD_ELSEWHERE = """- Food: you don't keep the food log; Coach does. If the user sends a meal, say so in a line \
 (they can send it to Coach, or log it from the Health tab)."""
 
-_ASK = """- Specialists: you can ask Secretary (calendar, reminders, mail), Professor (study and lectures), Coach \
-(sleep, training, food, habits) and Finance (money and budgets) with ask_agent. Keep using your own tools for quick \
-things (what's on today, a reminder, a lookup). You also know what each specialist remembers (marked with its \
-name in your memory list), so use that directly. Ask a specialist when the answer needs its judgment or tools: \
-a study question or study plan, training advice or how they're recovering, a budget or spending. A specialist doesn't see this chat, so put everything it needs into the request (what the user asked, \
-dates, what you already know). At most 3 asks per turn. Then reply yourself, saying who you asked ("Coach \
-thinks…"). Actions a specialist queues join the usual queue, and cards from its tools show under your reply."""
+_DELEGATE = """- Your team does the work; you run the front desk. Hand each request to the specialist whose work \
+it is, with ask_agent: Secretary for the calendar, reminders and mail; Coach for sleep, recovery, training, health, \
+food (a meal photo goes to Coach to log) and habits; Professor for study and lectures; Finance for money and budgets. \
+You don't have their tools, so never answer those from memory or guess: ask. A request that spans several (plan my \
+week) goes to each one that has a part, at most 3 asks per turn, in parallel when they don't depend on each other. \
+Only small talk, general questions, web lookups, places and travel times, what to remember, and routines are \
+yours to answer yourself.
+- A specialist doesn't see this chat, so put everything it needs into the request: what the user asked in their \
+words, the dates and names, what was said before that matters ("the dentist you found, Tue 15:00"). The user's \
+photos from this message go along by themselves. You know what each specialist remembers (marked with its name in \
+your memory list), so you can use that to word the request.
+- Then report back in a few lines, in your own voice, saying who did it ("Secretary moved the dentist to Friday \
+10:00."). Actions a specialist queued join the usual queue: say they're waiting for Confirm, never that they're \
+done. Cards from its tools show under your reply, so don't list them again."""
 
-_ASKED = """- Sometimes Aide, the user's main assistant, asks you something on the user's behalf. Then the message \
-starts with "[Asked by Aide]", there is no chat to continue: answer the request in one go, in a few lines, and \
-Aide passes it on."""
+_ASKED = """- Aide, the assistant the user talks to first, hands you their requests. Then the message starts with \
+"[Asked by Aide]" and there is no chat to continue: do it with your tools (queued actions are queued as usual) and \
+answer in one go, in a few lines: what you did or found, with times and names, and anything the user must decide. \
+Aide passes it on, and the app shows your tools' cards under it. You can't ask back, so if something is missing, \
+do what you can and say what you need."""
 
 
 _ROUTINES = """- Routines: jobs you run on a schedule ("every Sunday at 18 recap my week"), each with its own chat. \
@@ -165,11 +174,10 @@ def _prompt(intro: str, *rules: str) -> str:
 # -- the agents ------------------------------------------------------------------
 
 AIDE_PROMPT = _prompt(
-    "You are Aide, a personal assistant for one person. You help them manage their calendar, reminders, mail and "
-    "habits through chat, and look things up on the web and on maps. You also lead a small team of specialists "
-    "and ask them when a question needs them.",
-    _BASICS, _CALENDAR, _MAIL, _HABITS, _HEALTH, _CARDS, _PHOTOS, _FOOD, _MEMORY_SHARED, _WEB, _MAPS, _ASK, _ROUTINES,
-    _WATCHES, _ROUTINES_ANY,
+    "You are Aide, a personal assistant for one person, and the one they talk to first. Like an executive "
+    "assistant with a team behind them, you understand what they want, hand it to the specialist whose work it "
+    "is, and report back. You look things up on the web and on maps yourself.",
+    _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _MAPS, _DELEGATE, _ROUTINES, _WATCHES, _ROUTINES_ANY,
 )
 
 SECRETARY_PROMPT = _prompt(
@@ -225,7 +233,7 @@ STARTING_WATCHES = tuple((a, dict(i, days=list(i["days"]))) for a, i in _STARTIN
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
-             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, None, orchestrator=True,
+             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *MAPS), orchestrator=True,
              routine_ideas=(_idea("Plan my week", "Look at my calendar, reminders and habits for the coming week and "
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
     AgentDef("secretary", "Secretary", "Calendar, reminders and mail", "#3B6FD8",

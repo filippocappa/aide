@@ -40,7 +40,7 @@ def env(tmp_path):
 
     def make(responses=()):
         client = RecordingClient(responses)
-        agent = Agent(client, db, ToolRegistry(food_tools(food, photos, ROME)), model="m", tz=ROME, photos=photos)
+        agent = Agent(client, db, ToolRegistry(food_tools(food, photos, ROME)), model="m", delegate=False, tz=ROME, photos=photos)
         app = create_app(agent, ReminderStore(db.conn), FakeCalendar([]), ROME, TOKEN, food=food)
         return TestClient(app), agent, food, photos, client
     yield make

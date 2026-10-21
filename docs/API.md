@@ -145,7 +145,8 @@ that agent. Chats from before agents existed, digest chats and the first chat ar
 
 ## Agents
 
-Aide is the orchestrator: you can ask it anything, and it asks the specialists when a question needs them. Each
+Aide is the orchestrator, the one you talk to first: it hands each request to the specialist whose work it is
+and reports back (since 2026-10-21 it always delegates, and has no domain tools of its own). Each
 specialist also has its own chats, with its own instructions, tools and memory. The list comes from the server, so
 a new agent needs no app update.
 
@@ -181,14 +182,14 @@ a new agent needs no app update.
 
 | Agent | Tools | Notes |
 |---|---|---|
-| `aide` | all of today's tools, plus `ask_agent` | Keeps the tools it has now, so quick things stay one step. It sees every specialist's memory, and asks a specialist when the answer needs its judgment or tools (a study question, training advice, a budget). |
+| `aide` | web, maps, `ask_agent` | Delegates everything in a specialist's area (calendar, reminders and mail to Secretary; health, food and habits to Coach; …) and answers small talk, web and maps itself. It sees every specialist's memory, to word its requests. Its `connectors` show only its own. |
 | `secretary` | calendar, reminders, mail, maps, web | Today's assistant, focused on the day: schedule, errands, mail. |
 | `professor` | web, `fetch_page` | Explains, plans study, and later gets study notes and lecture audio (#3) and quizzes (#4). |
-| `coach` | Apple Health, habits, calendar (read), web | Sleep, recovery, training, habits. Compares with your own usual numbers; never makes medical claims. |
+| `coach` | Apple Health, habits, food, calendar (read), web | Sleep, recovery, training, food, habits. Compares with your own usual numbers; never makes medical claims. |
 | `finance` | web | No bank data yet: it keeps what you tell it (income, spending, goals) in its own memory. |
 
 - **Asking an agent.** `ask_agent(agent, request)` runs one turn of that agent: its instructions, its tools, the
-  shared memory plus its own, and the request (Aide puts the context it needs into it). It doesn't see Aide's chat
+  shared memory plus its own, and the request (Aide puts the context it needs into it), plus the photos you sent with that message. It doesn't see Aide's chat
   and doesn't write to the agent's own chats. Its answer goes back to Aide, which replies, saying who it asked
   ("Coach thinks…"). Actions it queues join the usual confirmation queue; cards from its tools join the reply.
   At most 3 asks per turn, and an asked agent can't ask others.

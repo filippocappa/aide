@@ -128,7 +128,7 @@ sections in `wake` and `daily`, the read-only `health` tool. No real health data
 Professor, Coach and Finance (`ask_agent`), each with its own chats, tools, memory and Pebble colour. App side built
 (agent row in the chat list, tinted Pebble, starters, "Asked Coach" above replies, memory per agent). Server
 (live): definitions and prompts in `agents.py`, `GET /v1/agents`, `agent` on conversations and memory, each chat
-answered by its agent with its own tools and memory (shared plus its own; Aide sees shared only), `ask_agent` for
+answered by its agent with its own tools and memory (shared plus its own; Aide sees all, marked), `ask_agent` for
 Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Team talk: every ask and answer is
 stored (`team` in chat and history, `GET /v1/team`), and `"stream": true` on `/v1/chat` sends them live as
 server-sent events (checked through `tailscale serve`, not buffered). Writing in the Team chat (`POST /v1/team`):
@@ -156,7 +156,9 @@ up with `POST /v1/photos` and ride on a chat message (up to 4); the model sees a
 (checked live through OpenRouter). Food: Coach (and Aide) log meals from a photo or a description with estimated
 calories and macros, correctable in chat; `meals` cards; daily goals. The app's Habits tab became Health: food
 for the day (ring, macros, meals, "Log a meal" through `POST /v1/food/log` into Coach's "Food log" chat) above
-the habits. Aide now sees every specialist's memory, marked with its name.
+the habits. Aide now sees every specialist's memory, marked with its name, and always delegates: it has
+only web, maps, memory and routines of its own, and hands the rest to the specialist whose work it is (the
+user's photos go along). Queued actions still run from a registry with every tool (`Agent.tools`).
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from

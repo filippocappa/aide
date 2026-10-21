@@ -61,7 +61,7 @@ def db():
 
 def make_agent(db, responses):
     client = FakeClient(responses)
-    return Agent(client, db, TOOLS, model="fast-model", smart_model="smart-model"), client
+    return Agent(client, db, TOOLS, model="fast-model", delegate=False, smart_model="smart-model"), client
 
 
 async def test_plain_reply_is_stored(db):
@@ -156,7 +156,7 @@ async def test_think_switches_model_until_new_conversation(db):
 async def test_message_is_stamped_in_local_time(db):
     from zoneinfo import ZoneInfo
     client = FakeClient([("end_turn", [text("x")])])
-    agent = Agent(client, db, TOOLS, model="m", tz=ZoneInfo("Pacific/Kiritimati"))  # UTC+14
+    agent = Agent(client, db, TOOLS, model="m", delegate=False, tz=ZoneInfo("Pacific/Kiritimati"))  # UTC+14
     await agent.reply("discord", "hi")
     stamp = client.requests[0]["messages"][-1]["content"][0]["text"]
     from datetime import datetime
