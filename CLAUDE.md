@@ -35,6 +35,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes, served by
   `webdav.py` (its own unit, `deploy/aide-webdav.service`, published by `tailscale serve` on 8443). `moodle.py`:
   the university Moodle's PDFs into the study files (login through the app; the token in `.env`).
+- `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
+  built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 

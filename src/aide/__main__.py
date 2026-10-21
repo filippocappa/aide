@@ -26,6 +26,7 @@ from .reminders import ReminderStore
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
 from .moodle import MoodleSync
+from .notebook import NotebookStore, NotebookWorker
 from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
 from .webdav import USER as WEBDAV_USER
@@ -86,7 +87,8 @@ def main() -> None:
     study = StudyStore(db, settings.timezone, cal, settings.study_calendar, settings.exam_calendar,
                        settings.study_skip, settings.db_path.parent / "files")
     audio_dir = settings.db_path.parent / "audio"
-    tools += study_tools(study, settings.timezone, audio_dir)
+    notebook = NotebookStore(study)
+    tools += study_tools(study, settings.timezone, audio_dir, notebook)
     gmail = None
     if settings.gmail_client_id and settings.gmail_client_secret and settings.gmail_refresh_token:
         gmail = Gmail(settings.gmail_client_id, settings.gmail_client_secret, settings.gmail_refresh_token)
@@ -126,11 +128,14 @@ def main() -> None:
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")
     worker = StudyWorker(study, agent, push, audio_dir, whisper_transcribe if whisper_available() else None)
+    worker.notebook = notebook
+    notes = NotebookWorker(notebook, agent, push)
     moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push, worker=worker,
-                        save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token))
+                        save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token), notebook=notebook)
     vault, vault_info = None, None
     if settings.webdav_password:
-        vault = Vault(settings.vault_dir / settings.vault_name, study)
+        vault = Vault(settings.vault_dir / settings.vault_name, study, notebook)
+        notes.vault = vault
         vault_info = {"url": settings.webdav_url, "user": WEBDAV_USER, "password": settings.webdav_password,
                       "vault": settings.vault_name}
     else:
@@ -143,6 +148,7 @@ def main() -> None:
             digest_schedule(digest, push),
             routine_schedule(agent, CONVERSATION, push),
             worker.run(),
+            notes.run(),
             *([vault.run()] if vault else []),
             *([moodle.run()] if settings.moodle_url else []),
         ]
@@ -150,7 +156,8 @@ def main() -> None:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
-                             health, wake, transcriber, food, study, worker, vault_info, moodle)
+                             health, wake, transcriber, food, study, worker, vault_info, moodle,
+                             notebook)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

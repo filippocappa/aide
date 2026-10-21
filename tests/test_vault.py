@@ -7,7 +7,7 @@ from test_api import AUTH
 from test_study import NOTES, NOW, ROME, SLIDES, add_pdf, done, env, upload  # noqa: F401 (env is a fixture)
 
 DAY = f"{NOW.astimezone(ROME):%Y-%m-%d}"
-PAGE = f"Aide/macroeconomics/{DAY} The IS-LM model.md"
+PAGE = f"Aide/macroeconomics/Sources/{DAY} The IS-LM model.md"
 
 
 async def ready(env, tmp_path, *responses):
@@ -27,7 +27,7 @@ async def test_a_lecture_becomes_a_page_with_its_course_and_slides(env, tmp_path
     assert "[[Aide/macroeconomics/macroeconomics|macroeconomics]] · " in page and "## Summary\nIS meets LM." in page
     assert "> [!quote]- Transcript\n> [0:00] Today, the IS-LM model." in page
     index = (vault.folder / "Aide/macroeconomics/macroeconomics.md").read_text()
-    assert f"[[Aide/macroeconomics/{DAY} The IS-LM model|" in index
+    assert f"[[Aide/macroeconomics/Sources/{DAY} The IS-LM model|" in index
     assert "Next exam: " in index and "[[Aide/macroeconomics/Files/Week 3 slides.pdf|Week 3 slides.pdf]]" in index
     assert (vault.folder / "Aide/macroeconomics/Files/Week 3 slides.pdf").read_bytes() == SLIDES
     assert await vault.sync() == {"written": 0, "removed": 0}  # nothing changed
@@ -59,7 +59,7 @@ async def test_a_renamed_or_deleted_lecture_moves_or_removes_its_page(env, tmp_p
     await vault.sync()
     api.patch(f"/v1/lectures/{lecture['id']}", json={"title": "IS: LM?"}, headers=AUTH)
     assert await vault.sync() == {"written": 2, "removed": 1}  # the page and the course index
-    renamed = vault.folder / f"Aide/macroeconomics/{DAY} IS LM.md"
+    renamed = vault.folder / f"Aide/macroeconomics/Sources/{DAY} IS LM.md"
     assert renamed.exists() and not (vault.folder / PAGE).exists()
     api.delete(f"/v1/lectures/{lecture['id']}", headers=AUTH)
     await vault.sync()

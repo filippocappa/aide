@@ -30,6 +30,7 @@ from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError
 from ..moodle import MoodleError, MoodleSync
+from ..notebook import NotebookStore
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..wake import WakeService
@@ -90,6 +91,11 @@ class MoodleConnect(BaseModel):
 
 class MoodleMatch(BaseModel):
     course: int | None  # the Aide course; null: don't sync it
+
+
+class ProposalApply(BaseModel):
+    items: list[int] | None = None  # numbered from 1; null: all
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class LecturePatch(BaseModel):
@@ -211,7 +217,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                health: HealthStore | None = None, wake: WakeService | None = None,
                transcriber: Transcriber | None = None, food: FoodStore | None = None,
                study: StudyStore | None = None, worker: StudyWorker | None = None,
-               vault: dict | None = None, moodle: MoodleSync | None = None) -> FastAPI:
+               vault: dict | None = None, moodle: MoodleSync | None = None,
+               notebook: NotebookStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -221,6 +228,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     food = food or FoodStore(db.conn, tz)
     study = study or StudyStore(db, tz, calendar)
     moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
+    notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
     photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
@@ -845,6 +853,61 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return moodle.course_json(moodle.match(moodle_id, body.course))
         except KeyError:
             raise HTTPException(404, f"no Moodle course {moodle_id}")
+
+    # -- notebooks -------------------------------------------------------------------
+
+    def course_or_404(course_id: int) -> int:
+        if study.course(course_id) is None:
+            raise HTTPException(404, f"no course {course_id}")
+        return course_id
+
+    def proposal_or_404(proposal_id: str) -> dict:
+        if (p := notebook.proposal(proposal_id)) is None:
+            raise HTTPException(404, f"no proposal {proposal_id}")
+        return p
+
+    @app.get("/v1/notebook", dependencies=[Depends(auth)])
+    async def get_notebook(course: int):
+        return notebook.notebook_json(course_or_404(course))
+
+    @app.post("/v1/notebook", dependencies=[Depends(auth)])
+    async def start_notebook(course: int):
+        try:
+            notebook.start(course_or_404(course))
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        return JSONResponse(notebook.notebook_json(course), status_code=202)
+
+    @app.get("/v1/topics/{topic_id}", dependencies=[Depends(auth)])
+    async def get_topic(topic_id: str):
+        if (t := notebook.topic(topic_id)) is None:
+            raise HTTPException(404, f"no topic {topic_id}")
+        return notebook.topic_json(t, full=True)
+
+    @app.get("/v1/proposals", dependencies=[Depends(auth)])
+    async def list_proposals(course: int | None = None, status: str = "pending"):
+        if status not in ("pending", "all"):
+            raise HTTPException(400, "status is pending or all")
+        return {"proposals": [notebook.proposal_json(p) for p in
+                              notebook.proposals(course, None if status == "all" else status)]}
+
+    @app.post("/v1/proposals/{proposal_id}/apply", dependencies=[Depends(auth)])
+    async def apply_proposal(proposal_id: str, body: ProposalApply | None = None):
+        proposal_or_404(proposal_id)
+        body = body or ProposalApply()
+        try:
+            p = notebook.apply(proposal_id, body.items, body.note)
+        except ValueError as e:
+            raise HTTPException(409 if "not waiting" in str(e) else 400, str(e))
+        return JSONResponse(notebook.proposal_json(p), status_code=202)
+
+    @app.post("/v1/proposals/{proposal_id}/decline", dependencies=[Depends(auth)])
+    async def decline_proposal(proposal_id: str):
+        proposal_or_404(proposal_id)
+        try:
+            return notebook.proposal_json(notebook.decline(proposal_id))
+        except ValueError as e:
+            raise HTTPException(409, str(e))
 
     @app.get("/v1/vault", dependencies=[Depends(auth)])
     async def vault_setup():
