@@ -12,16 +12,18 @@ import anthropic
 import httpx
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..agent import CONVERSATION, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
+from ..food import FoodStore, totals
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
 from ..icloud import CalendarBackend
+from ..photos import MAX_BYTES as MAX_PHOTO, TYPES as PHOTO_TYPES, PhotoStore
 from ..push import Push
 from ..reminders import ReminderStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
@@ -35,9 +37,33 @@ VERSION = "0.2.0"
 
 
 class ChatIn(BaseModel):
-    text: str
-    conversation_id: str | None = None  # None: the conversation shared with Discord
+    text: str = ""
+    conversation_id: str | None = None  # None: the first chat, "main"
     stream: bool = False  # answer as text/event-stream, with team talk as it happens
+    photos: list[str] = []  # ids from POST /v1/photos
+
+
+class FoodLogIn(BaseModel):
+    photos: list[str] = []
+    text: str = ""
+    day: date | None = Field(None, alias="date")  # the day it was eaten, default today
+
+
+class MealPatch(BaseModel):
+    name: str | None = None
+    eaten_at: datetime | None = None
+    calories: float | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
+    notes: str | None = None
+
+
+class FoodGoals(BaseModel):
+    calories: float | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
 
 
 class TeamIn(BaseModel):
@@ -151,14 +177,15 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                tz: ZoneInfo, token: str, habits: HabitStore | None = None,
                digest: DigestService | None = None, push: Push | None = None,
                health: HealthStore | None = None, wake: WakeService | None = None,
-               notify: Callable[[str], Awaitable[bool]] | None = None,
-               transcriber: Transcriber | None = None) -> FastAPI:
+               transcriber: Transcriber | None = None, food: FoodStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
     health = health or HealthStore(db.conn, tz)
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
     wake = wake or WakeService(digest, health, tz, push=push)
+    food = food or FoodStore(db.conn, tz)
+    photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
     def auth(authorization: str = Header(default="")) -> None:
@@ -247,16 +274,18 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/chat", dependencies=[Depends(auth)])
     async def chat(body: ChatIn):
         text = body.text.strip()
-        if not text:
+        if not text and not body.photos:
             raise HTTPException(400, "text is empty")
+        agent.check_photos(body.photos)  # a plain 400, before a stream starts
         conversation = body.conversation_id or CONVERSATION
         if not body.stream:
-            return chat_json(conversation, await agent.respond(CONVERSATION, text, conversation))
+            return chat_json(conversation, await agent.respond(CONVERSATION, text, conversation, photos=body.photos))
         if conversation != CONVERSATION and db.app_conversation(conversation) is None:
             raise UnknownConversation(f"no conversation {conversation}")  # a plain 404, before the stream starts
         return streamed(
             lambda emit: agent.respond(CONVERSATION, text, conversation, lambda t: emit("team", team_json(t)),
-                                       lambda delta, restart: emit("text", {"delta": delta, "restart": restart})),
+                                       lambda delta, restart: emit("text", {"delta": delta, "restart": restart}),
+                                       body.photos),
             lambda turn: sse("reply", chat_json(conversation, turn)))
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
@@ -344,7 +373,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/routines/{routine_id}/run", dependencies=[Depends(auth)])
     async def run_routine(routine_id: int):
         r = routine_or_404(routine_id)
-        reply = await deliver(agent, CONVERSATION, r, push, notify)
+        reply = await deliver(agent, CONVERSATION, r, push)
         return {"routine": routines.as_json(routines.get(routine_id)), "conversation_id": r["public_id"],
                 "spoke": reply is not None}
 
@@ -384,6 +413,25 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
             log.error("transcription failed: %s", e)
             raise HTTPException(502, "couldn't transcribe that, try again")
+
+    @app.post("/v1/photos", dependencies=[Depends(auth)])
+    async def upload_photo(request: Request):
+        if photos is None:
+            raise HTTPException(503, "photos aren't set up on the server")
+        kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind not in PHOTO_TYPES:
+            raise HTTPException(415, f"send the photo as {', '.join(PHOTO_TYPES)}")
+        data = await request.body()
+        if len(data) > MAX_PHOTO:
+            raise HTTPException(413, "the photo is too big; send it at most 1568 px on its longest side")
+        return {"id": photos.save(data, kind)}  # empty: ValueError, a 400
+
+    @app.get("/v1/photos/{photo_id}", dependencies=[Depends(auth)])
+    async def get_photo(photo_id: str):
+        if photos is None or (found := photos.load(photo_id)) is None:
+            raise HTTPException(404, f"no photo {photo_id}")
+        data, kind = found
+        return Response(data, media_type=kind, headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
     @app.delete("/v1/conversations/{conversation_id}", dependencies=[Depends(auth)])
     async def delete_conversation(conversation_id: str):
@@ -443,6 +491,73 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if not habits.delete(habit_id):
             raise HTTPException(404, f"no habit {habit_id}")
         return {"ok": True}
+
+    # -- food ------------------------------------------------------------------
+
+    def meal_or_404(meal_id: int) -> dict:
+        if (meal := food.get(meal_id)) is None:
+            raise HTTPException(404, f"no meal {meal_id}")
+        return meal
+
+    def food_day(d: date) -> dict:
+        meals = food.day(d)
+        return {"date": d.isoformat(), "meals": [food.as_json(m) for m in meals], "totals": totals(meals),
+                "goals": food.goals()}
+
+    @app.get("/v1/food", dependencies=[Depends(auth)])
+    async def food_today(day: date | None = Query(None, alias="date")):
+        return food_day(day or food.today())
+
+    @app.get("/v1/food/days", dependencies=[Depends(auth)])
+    async def food_days(start: date | None = Query(None, alias="from"), end: date | None = Query(None, alias="to")):
+        end = end or food.today()
+        start = start or end - timedelta(days=6)
+        if start > end or (end - start).days > 366:
+            raise HTTPException(400, "from must be before to, at most a year apart")
+        return {"days": food.days(start, end)}
+
+    def food_chat() -> str:
+        """Coach's "Food log" chat, made once; made again if it was deleted."""
+        if (public_id := food.chat()) and db.app_conversation(public_id) is not None:
+            return public_id
+        row = db.new_app_conversation("coach")
+        db.set_conversation_title(row["id"], "Food log")
+        food.set_chat(row["public_id"])
+        return row["public_id"]
+
+    @app.post("/v1/food/log", dependencies=[Depends(auth)])
+    async def log_food(body: FoodLogIn):
+        text = body.text.strip()
+        if not text and not body.photos:
+            raise HTTPException(400, "send photos or text")
+        agent.check_photos(body.photos)
+        if body.day and body.day > food.today():
+            raise HTTPException(400, "a meal can't be in the future")
+        if body.day and body.day != food.today():
+            text = "\n".join(filter(None, [text, f"(I ate this on {body.day:%A %d %B}.)"]))
+        conversation = food_chat()
+        turn = await agent.respond(CONVERSATION, text or "Log this.", conversation, photos=body.photos)
+        meals = next((a["meals"] for a in turn.attachments if a["type"] == "meals"), [])
+        return {"reply": turn.reply, "meals": meals, "conversation_id": conversation}
+
+    @app.patch("/v1/food/meals/{meal_id}", dependencies=[Depends(auth)])
+    async def edit_meal(meal_id: int, body: MealPatch):
+        meal_or_404(meal_id)
+        return food.as_json(food.update(meal_id, **body.model_dump(exclude_unset=True)))
+
+    @app.delete("/v1/food/meals/{meal_id}", dependencies=[Depends(auth)])
+    async def delete_meal(meal_id: int):
+        if not food.delete(meal_id):
+            raise HTTPException(404, f"no meal {meal_id}")
+        return {"ok": True}
+
+    @app.get("/v1/food/goals", dependencies=[Depends(auth)])
+    async def food_goals():
+        return food.goals()
+
+    @app.put("/v1/food/goals", dependencies=[Depends(auth)])
+    async def set_food_goals(body: FoodGoals):
+        return food.set_goals(body.model_dump())
 
     @app.get("/v1/digest", dependencies=[Depends(auth)])
     async def latest_digest(kind: str = "daily"):

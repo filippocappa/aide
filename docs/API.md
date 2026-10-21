@@ -23,12 +23,14 @@ The contract between the server (Ubuntu, `src/`) and the iOS app (`ios/`). See C
 
 ## Chat
 
-The conversation is shared with Discord: one assistant, one history, one confirmation queue.
+Omitting `conversation_id` means the first chat (`main`, from before there were many). One confirmation queue for all chats. (There used to be a Discord bot sharing that chat; it was removed on 2026-10-21.)
 
 `POST /v1/chat`
 ```json
 {"text": "move the dentist to Friday at 10"}
 ```
+With photos: `{"text": "", "photos": ["p_3f9a…"]}`. Upload each one first (see Photos); up to 4 per message, and
+`text` may be empty when there are photos. An unknown photo id is `400`.
 → `200`
 ```json
 {
@@ -52,10 +54,10 @@ from the tools the assistant used in that turn, not parsed from its text:
 ```
 - `reminders`: when the assistant listed reminders, or created, changed or completed one, in that turn.
 - `events`: when it listed or searched calendar events.
+- `meals`: when it logged, changed or listed meals (see Food), `{"type": "meals", "meals": [Meal]}`.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
-  On Discord the same items are appended to the reply as a list.
 
 `consulted` (always present, default `[]`) lists the agent ids Aide asked during that turn, in order, e.g.
 `["coach"]` (see Agents). Cards from a consulted agent's tools are in this reply's `attachments`.
@@ -119,16 +121,17 @@ on with `/v1/chat` as usual. 400 for an empty body, 413 over 10 MB, 415 for anot
 (try again), 503 when the server has no OpenRouter key (then use the phone's own recogniser).
 
 `GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}]}`
-(`attachments`, `consulted` and `team` as in `/v1/chat`, `[]` on user messages and plain replies; reminders in them are reloaded as they are now,
-so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said on Discord too. Tool calls and internal notes are left out.
+(`attachments`, `consulted` and `team` as in `/v1/chat`, `[]` on user messages and plain replies; a user message
+sent with photos also has `"photos": ["p_…"]`, absent otherwise; reminders in them are reloaded as they are now,
+so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said before. Tool calls and internal notes are left out.
 
 ## Conversations
 
-The app keeps many chats; Discord stays on the one shared conversation. Every chat endpoint takes an optional `conversation_id`. **Omitted means the shared conversation, exactly as before**, so old clients keep working. Reminders, the confirmation queue and `POST /v1/confirm` / `/v1/cancel` stay global.
+The app keeps many chats. Every chat endpoint takes an optional `conversation_id`. **Omitted means the shared conversation, exactly as before**, so old clients keep working. Reminders, the confirmation queue and `POST /v1/confirm` / `/v1/cancel` stay global.
 
 | Endpoint | Body / query | Response |
 |---|---|---|
-| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the shared (Discord) conversation, titled "Discord" or similar. |
+| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the first chat (`id` `main`), titled "First chat". |
 | `POST /v1/conversations` | `{}`, `{"agent": "coach"}`, or `{"digest": "daily" \| "evening"}` | The new conversation (same shape as a list row, `title: null`). `agent` defaults to `aide`; an unknown one is `400`. With `digest`, the chat is Aide's (`agent` is ignored) and starts with that digest's greeting as Aide's first message: it's in `/v1/history` and `preview`, and the model knows it said it. See Digest. |
 | `DELETE /v1/conversations/{id}` | | `{"ok": true}`. The shared conversation can't be deleted (400). |
 | `POST /v1/chat` | `{"text": "…", "conversation_id": "c_91f…"}` | Same as before, plus `"conversation_id"`. The server sets `title` from the first exchange. |
@@ -138,7 +141,7 @@ The app keeps many chats; Discord stays on the one shared conversation. Every ch
 The app creates a conversation with `POST /v1/conversations` before the first message of each new chat. If that returns 404 or 405 (older server), it falls back to the shared conversation.
 
 Every conversation belongs to one agent (`agent`, see Agents), fixed when it's created. `POST /v1/chat` answers as
-that agent. Chats from before agents existed, digest chats and the shared Discord conversation are `aide`'s.
+that agent. Chats from before agents existed, digest chats and the first chat are `aide`'s.
 
 ## Agents
 
@@ -155,8 +158,8 @@ a new agent needs no app update.
    "starters": ["What's on my calendar today?", "Any mail I need to answer?", "Remind me to "]},
   {"id": "professor", "name": "Professor", "role": "Study and lectures", "color": "#7A4FD0",
    "starters": ["Explain ", "Make me a study plan for "]},
-  {"id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#23A26D",
-   "starters": ["How did I sleep this week?", "Should I train hard today?"]},
+  {"id": "coach", "name": "Coach", "role": "Sleep, training, food and habits", "color": "#23A26D",
+   "starters": ["How did I sleep this week?", "Should I train hard today?", "What have I eaten today?"]},
   {"id": "finance", "name": "Finance", "role": "Money and budgets", "color": "#B8921C",
    "starters": ["Help me set a monthly budget", "I spent "]}
 ]}
@@ -178,7 +181,7 @@ a new agent needs no app update.
 
 | Agent | Tools | Notes |
 |---|---|---|
-| `aide` | all of today's tools, plus `ask_agent` | Keeps the tools it has now, so quick things stay one step. It asks a specialist when the answer needs that specialist's own memory, judgment or tools (a study question, training advice, a budget). |
+| `aide` | all of today's tools, plus `ask_agent` | Keeps the tools it has now, so quick things stay one step. It sees every specialist's memory, and asks a specialist when the answer needs its judgment or tools (a study question, training advice, a budget). |
 | `secretary` | calendar, reminders, mail, maps, web | Today's assistant, focused on the day: schedule, errands, mail. |
 | `professor` | web, `fetch_page` | Explains, plans study, and later gets study notes and lecture audio (#3) and quizzes (#4). |
 | `coach` | Apple Health, habits, calendar (read), web | Sleep, recovery, training, habits. Compares with your own usual numbers; never makes medical claims. |
@@ -189,12 +192,10 @@ a new agent needs no app update.
   and doesn't write to the agent's own chats. Its answer goes back to Aide, which replies, saying who it asked
   ("Coach thinks…"). Actions it queues join the usual confirmation queue; cards from its tools join the reply.
   At most 3 asks per turn, and an asked agent can't ask others.
-- **Discord** talks to Aide, as before.
 
 ### Team talk
 
-The agents have a group chat of their own: every ask and every answer, from all of Aide's chats (Discord's
-included), is kept there as a message. In a chat with Aide the same messages show live above Aide's reply (`team`
+The agents have a group chat of their own: every ask and every answer, from all of Aide's chats, is kept there as a message. In a chat with Aide the same messages show live above Aide's reply (`team`
 in Chat); the Team chat on the app's home screen shows them all together.
 
 `GET /v1/team?limit=100` →
@@ -258,8 +259,7 @@ asking an agent ("every Sunday at 18 recap my week").
 | `POST /v1/routines/{id}/run` | `{}` | runs it now, as a scheduled run would (also when disabled), and returns `{"routine": …, "conversation_id": "c_7ab…", "spoke": true}` once the message is posted. `spoke` is false when a watch found nothing (nothing was posted). Can take 30 s. |
 
 - **Each run** posts the agent's reply in the routine's chat, then sends an alert push
-  (`aide.kind: "message"`, `conversation_id`, title "Coach · Weekly recap", body the first line), with a Discord
-  DM as the fallback, as for digests. Actions it queues join the usual confirmation queue, and the push says so.
+  (`aide.kind: "message"`, `conversation_id`, title "Coach · Weekly recap", body the first line). Actions it queues join the usual confirmation queue, and the push says so.
 - A run missed while the server was down runs once when it's back, if it's less than 2 h late; else it's skipped.
 - **In history**, a message a routine posted has `"routine": {"id": 3, "title": "Weekly recap"}` (absent on others).
   **In the conversation list**, a routine's chat has `"routine": 3` (absent or `null` on others).
@@ -299,7 +299,8 @@ Short facts Aide keeps between chats (preferences, names, routines). The server 
 
 Each item is **shared** (`"agent": null`: about you in general, every agent sees it) or **belongs to one agent**
 (`"agent": "coach"`: only that agent sees it, e.g. training goals for the Coach, courses for the Professor). An
-agent's context has the shared items plus its own. Aide sees only the shared ones and asks specialists for the rest.
+agent's context has the shared items plus its own. Aide sees all of them, each specialist's marked with its name
+(since 2026-10-21), so what you tell Secretary is known when you ask Aide; it can also forget any of them.
 `remember` in Aide's chats saves a shared item. In a specialist's chat the model chooses: shared for facts about
 you that any agent could use (name, home, routines), its own for things only it needs. Items from before agents
 existed are shared. An item saved with `"agent": "aide"` is stored as shared (`null`): Aide has no items of its own.
@@ -313,7 +314,7 @@ existed are shared. An item saved with `"agent": "aide"` is stored as shared (`n
 ## Digest
 
 A summary the server builds on a schedule: morning (`daily`), evening, weekly or monthly, plus the wake-up
-briefing (`wake`), which runs when the user gets up instead of at a set time (see Apple Health). Its greeting opens a new chat (`POST /v1/conversations` with `digest`), the app shows the cards behind a "Details" link, and the server also sends it as a push notification and/or a Discord DM (see Push). Sections are structured, so the app draws cards instead of parsing text.
+briefing (`wake`), which runs when the user gets up instead of at a set time (see Apple Health). Its greeting opens a new chat (`POST /v1/conversations` with `digest`), the app shows the cards behind a "Details" link, and the server also sends it as a push notification (see Push). Sections are structured, so the app draws cards instead of parsing text.
 
 `GET /v1/digest?kind=daily` (`daily` default, `wake`, `evening`, `weekly`, `monthly`) →
 ```json
@@ -358,7 +359,7 @@ The app skips section types it doesn't know. `404` if none has been generated ye
   Giulia about Saturday looks like it wants an answer."*
 - **Opening a chat with it:** `POST /v1/conversations` with `{"digest": "evening"}` (or `daily`; any kind works)
   uses that kind's stored greeting if it still covers the same days as a digest made now would. Otherwise it makes
-  a fresh digest first (5–30 s, not sent to Discord). The app picks `daily` before 17:00 and `evening` after.
+  a fresh digest first (5–30 s, not pushed). The app picks `daily` before 17:00 and `evening` after.
   An unknown kind is `400`.
 - **Only the greeting and the `text` section come from the model.** Everything else is data from code. If the
   model fails, the greeting is a plain one from code and there's no `text` section.
@@ -373,14 +374,56 @@ The app skips section types it doesn't know. `404` if none has been generated ye
   at or below usual, otherwise `normal`. `summary` is one plain sentence from code. Both are comparisons with
   the user's own usual numbers, not medical advice, and are worded that way.
 - **Schedule:** each enabled kind runs at its time. If the server was off then, it catches up within 6 hours,
-  otherwise skips that one. A scheduled digest is also sent as a Discord DM when `discord` is true; `POST
-  /v1/digest/run` isn't (you're looking at it). `day` 29–31 means the last day in shorter months.
+  otherwise skips that one. `day` 29–31 means the last day in shorter months.
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `POST /v1/digest/run` | `{"kind": "daily"}` | The freshly generated digest (can take 5–30 s). For `wake` it's a test run: it doesn't count as the day's wake-up and isn't pushed. |
-| `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "wake": {"enabled": true}, "evening": {"enabled": true, "time": "22:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}, "discord": true}` (times in the server zone, `weekday` 1 = Monday; `wake` has no time, it runs when you get up) |
+| `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "wake": {"enabled": true}, "evening": {"enabled": true, "time": "22:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}}` (times in the server zone, `weekday` 1 = Monday; `wake` has no time, it runs when you get up) |
 | `PUT /v1/digest/settings` | the same object (all of it; `evening` and `wake` may be missing from older clients: keep their current values) | the saved settings; `400` if a time isn't `HH:MM` or a field is missing or out of range |
+
+## Photos
+
+Photos go up first, then their ids go with a chat message (or `POST /v1/food/log`).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/photos` | the image bytes, `Content-Type: image/jpeg` (or `image/png`, `image/webp`) | `{"id": "p_3f9a…"}`. `400` empty, `413` over 3.5 MB, `415` another type. |
+| `GET /v1/photos/{id}` | | the image, with its content type. `404` unknown. |
+
+The app sends JPEG, longest side at most 1568 px (what the model reads best). Photos are kept on the server and in
+its backups. The model sees the last 3 photos of a chat as images; an older
+one is only a mention, `[Photo p_…]`.
+
+## Food
+
+Meals, mostly from photos: the agent names the dish, estimates the portion and works out calories and macros. Coach
+owns food (it sees it next to sleep, training and habits); Aide has the same tools.
+
+Meal object:
+```json
+{"id": 12, "name": "Pasta al pomodoro", "eaten_at": "2026-10-21T13:10:00+02:00", "calories": 650,
+ "protein_g": 20, "carbs_g": 110, "fat_g": 15, "photo": "p_3f9a…", "notes": "about 120 g dry pasta"}
+```
+`photo` is null without one. Numbers are the model's estimates, rounded (calories to 10, grams to 1).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/food?date=2026-10-21` | (default today) | `{"date": "2026-10-21", "meals": [Meal] (by time), "totals": Totals, "goals": Goals}` |
+| `GET /v1/food/days?from=2026-10-15&to=2026-10-21` | (default the last 7 days) | `{"days": [{"date": "2026-10-21", "totals": Totals, "meals": 3}]}`, oldest first, every day included (zeros when empty) |
+| `POST /v1/food/log` | `{"photos": ["p_…"], "text": "half of it", "date": "2026-10-20"}` (`photos` or `text` needed; `text` and `date` optional) | `{"reply": "Pasta al pomodoro, about 650 kcal…", "meals": [Meal], "conversation_id": "c_…"}`: Coach logs it in its "Food log" chat (made once, then reused), so a correction can follow there. `meals` is the meals its tools showed: logged, changed or listed (can be empty when it only asked something). 5–30 s. |
+| `PATCH /v1/food/meals/{id}` | any of `name`, `eaten_at`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `notes` | the Meal |
+| `DELETE /v1/food/meals/{id}` | | `{"ok": true}` (the user deleting from the app: immediate) |
+| `GET /v1/food/goals` | | Goals |
+| `PUT /v1/food/goals` | Goals | Goals |
+
+Totals: `{"calories": 1840, "protein_g": 96, "carbs_g": 210, "fat_g": 61}`. Goals has the same four keys, each a
+number or null (no goal); all null until set, here or by Coach in chat ("aim for 140 g protein").
+
+The agents get `log_meal`, `update_meal`, `list_meals`, `set_food_goals` (immediate) and `delete_meal` (queued).
+They log a meal when a photo shows food you're eating or ate, or when you say what you had, and say the estimate in
+a line so you can correct it. A photo that isn't food is just a photo. Coach's role is now "Sleep, training, food and
+habits" (since 2026-10-21), and the `food` connector ("Food log") shows on Coach and Aide.
 
 ## Habits
 
@@ -502,8 +545,7 @@ morning digest, which runs at its time as before.
   if the walk is 35 minutes or less the greeting can give both ("walk: leave by 8:50, tram: leave by 9:05"),
   otherwise transit only. If memory says how the user gets to that place ("I always walk to uni"), only that
   way is used.
-- **Delivery:** a `digest` push with `"digest": "wake"` (title "Good morning"), and a Discord DM when the digest
-  settings' `discord` is true, like the scheduled digests.
+- **Delivery:** a `digest` push with `"digest": "wake"` (title "Good morning"), like the scheduled digests.
 - **Opening it:** `POST /v1/conversations` with `{"digest": "wake"}` uses today's wake greeting. If there's none
   today, it does what `daily` does. `GET /v1/digest?kind=wake` returns the latest one (`404` before the first).
 
@@ -592,13 +634,13 @@ change like any other. A reminder with `list: null`, or a list the phone no long
 `list` (an app from before lists) leaves the reminder's list as it is, and a sync without `lists` keeps the last
 ones.
 
-**Notification rule (server side):** at `due_at`, if a reminder is still not completed and has no `apple_id` (it never reached the phone), the server sends a `reminder` push (see Push), or a Discord DM if no push was delivered. Otherwise Apple Reminders notifies, and the server stays quiet.
+**Notification rule (server side):** at `due_at`, if a reminder is still not completed and has no `apple_id` (it never reached the phone), the server sends a `reminder` push (see Push), once. Otherwise Apple Reminders notifies, and the server stays quiet.
 
 **Silent sync:** whenever reminders change on the server, it also sends a silent `sync` push, so the phone syncs (and sets the alarms) without the app being opened. iOS may delay or drop silent pushes, so the triggers above still apply.
 
 ## Push
 
-The server notifies the phone through APNs. It sends only when it has a key (`APNS_*` in `.env`) and at least one registered device; otherwise it falls back to Discord DMs, as before.
+The server notifies the phone through APNs. It sends only when it has a key (`APNS_*` in `.env`) and at least one registered device; otherwise nothing is sent and everything is still in the app.
 
 ### Devices
 
@@ -638,6 +680,5 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 {"aps": {"content-available": 1}, "aide": {"kind": "sync"}}
 ```
 - Alert pushes use `thread-id` = the kind, so iOS groups them.
-- A scheduled digest is pushed to every device. The Discord DM still follows the digest settings' `discord` flag,
-  so turning it off leaves just the push.
+- A scheduled digest is pushed to every device.
 - Silent `sync` pushes are coalesced: at most one per 10 seconds, so a burst of changes sends one.

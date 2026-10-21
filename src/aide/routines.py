@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from .agents import AGENTS, STARTING_WATCHES, check_agent
@@ -211,9 +211,8 @@ def first_line(text: str) -> str:
     return next((line.strip() for line in text.splitlines() if line.strip()), text.strip())
 
 
-async def deliver(agent: "Agent", channel: str, routine: dict, push: Push | None,
-                  notify: Callable[[str], Awaitable[bool]] | None) -> str | None:
-    """Run a routine now, post the reply in its chat, then alert: a push, else a Discord DM. Returns the reply,
+async def deliver(agent: "Agent", channel: str, routine: dict, push: Push | None) -> str | None:
+    """Run a routine now, post the reply in its chat, then push it. Returns the reply,
     or None when a watch found nothing that needs the user (then nothing is posted or sent)."""
     reply, queued = await agent.run_routine(channel, routine)
     if reply is None:
@@ -227,15 +226,12 @@ async def deliver(agent: "Agent", channel: str, routine: dict, push: Push | None
             sent = await push.send_message(routine["public_id"], title, body)
         except Exception:
             log.exception("routine %s push failed", routine["id"])
-    if not sent and notify:
-        text = f"**{title}**\n{reply}" + (f"\n\n{note} Reply !yes to run, !no to cancel." if note else "")
-        if not await notify(text):
-            log.warning("routine %s not sent to Discord; it's still in the app", routine["id"])
+    if not sent:
+        log.warning("routine %s not pushed; it's still in the app", routine["id"])
     return reply
 
 
-async def routine_schedule(agent: "Agent", channel: str, push: Push | None,
-                           notify: Callable[[str], Awaitable[bool]] | None) -> None:
+async def routine_schedule(agent: "Agent", channel: str, push: Push | None) -> None:
     """Run each routine at its time, and once after a short outage (less than CATCH_UP late). Watches are skipped
     once today's notes reach WATCH_CAP."""
     store: RoutineStore = agent.routines
@@ -252,7 +248,7 @@ async def routine_schedule(agent: "Agent", channel: str, push: Push | None,
                     log.info("watch %s (%s) skipped: %d notes today already", r["id"], r["title"], WATCH_CAP)
                     continue
                 try:
-                    await deliver(agent, channel, r, push, notify)
+                    await deliver(agent, channel, r, push)
                 except Exception:
                     log.exception("routine %s (%s) failed", r["id"], r["title"])
                     failed[r["id"]] = now

@@ -1,7 +1,7 @@
 """Memory tools. Remembering runs immediately; forgetting waits for the user's !yes.
 
-Each agent gets its own pair: it sees and dedupes against the shared items plus its own. Aide saves shared items
-only; a specialist picks the scope (docs/API.md, "Memory").
+Each agent gets its own pair: a specialist sees and dedupes against the shared items plus its own, and picks the
+scope; Aide sees everything and saves shared items only (docs/API.md, "Memory").
 """
 
 import re
@@ -27,10 +27,11 @@ def _words(text: str) -> list[str]:
 
 
 def memory_tools(db: Database, agent: str = "aide", scoped: bool = False) -> list[Tool]:
-    """`scoped`: the agent can save items of its own, not only shared ones."""
+    """`scoped`: the agent can save items of its own and sees only those plus the shared ones. Unscoped (Aide)
+    sees every agent's."""
     def find(memory_id: int, visible: bool = False):
         item = db.memory_item(memory_id)
-        if item is None or visible and item["agent"] not in (None, agent):
+        if item is None or visible and scoped and item["agent"] not in (None, agent):
             raise KeyError(f"no memory with id {memory_id}")
         return item
 
@@ -43,7 +44,7 @@ def memory_tools(db: Database, agent: str = "aide", scoped: bool = False) -> lis
         new = set(_words(text))
         leaving = db.memories_being_forgotten()  # a correction: the old fact is on its way out
         owner = agent if scoped and scope == "own" else None
-        for item in db.memories(agent):
+        for item in db.memories(agent if scoped else None):
             if item["id"] in leaving:
                 continue
             old = set(_words(item["text"]))

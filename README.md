@@ -1,13 +1,13 @@
 # Aide
 
-Personal assistant over Discord DMs, backed by Claude. See [SPEC.md](SPEC.md) for the full plan.
-Done so far: milestone 1 (agent loop, SQLite history, Discord bot with an owner allowlist, systemd service) and milestone 2 (iCloud Calendar).
+Personal assistant, backed by Claude, that you talk to through the iOS app (`ios/`, over the HTTP API in
+[docs/API.md](docs/API.md)). See [SPEC.md](SPEC.md) for the original plan and CLAUDE.md for where things stand.
 
 ## Layout
 
 ```
 src/aide/
-  __main__.py            entry point: wires settings, db, agent, bot
+  __main__.py            entry point: wires settings, db, agent, API, background jobs
   config.py              settings from the environment
   db.py                  SQLite (WAL): conversations, messages, audit_log
   agent.py               Claude tool-use loop and conversation history
@@ -16,27 +16,26 @@ src/aide/
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
   push.py                APNs pushes and the devices table
   health.py, wake.py     Apple Health days and usual numbers; the wake-up briefing
-  channels/discord_bot.py  Discord adapter (owner DMs only)
+  channels/api.py        the HTTP API the app uses (FastAPI)
 deploy/aide.service      systemd unit
 ```
 
 ## Setup
 
-1. **Discord bot.** In the [Developer Portal](https://discord.com/developers/applications), create an application, add a bot and copy its token. No privileged intents are needed. Invite the bot to any server you're in (OAuth2 → URL Generator → scope `bot`), so Discord lets you DM it.
-2. **Your user ID.** Discord settings → Advanced → Developer Mode, then right-click your name → Copy User ID.
-3. **Env file.** `cp .env.example .env` and fill in your OpenRouter (or Anthropic) key, bot token and owner ID.
-4. **iCloud Calendar (optional).** Create an app-specific password at account.apple.com → Sign-In and Security, and set `ICLOUD_EMAIL` and `ICLOUD_APP_PASSWORD`. Without them the calendar tools are off.
-5. **Gmail (optional).** See [Gmail](#gmail) below. Without it the mail tools are off.
+1. **Env file.** `cp .env.example .env` and fill in your OpenRouter (or Anthropic) key and `AIDE_API_TOKEN`
+   (the app's token).
+2. **iCloud Calendar (optional).** Create an app-specific password at account.apple.com → Sign-In and Security, and set `ICLOUD_EMAIL` and `ICLOUD_APP_PASSWORD`. Without them the calendar tools are off.
+3. **Gmail (optional).** See [Gmail](#gmail) below. Without it the mail tools are off.
    **Web search and Maps (optional)** are in [Web search and Maps](#web-search-and-maps); without their keys those tools are off.
-6. **Run.** `uv sync && uv run aide`. The bot DMs you "Aide is up." once it's connected.
+4. **Push (optional).** See [Push notifications](#push-notifications). Without it nothing reaches the phone
+   unless the app is open.
+5. **Run.** `uv sync && uv run aide`. The API listens on localhost; `tailscale serve` publishes it to the phone.
 
-Aide can list, search and create events on your iCloud calendars right away. Moving or deleting an event is queued: the bot shows exactly what will change, and nothing happens until you reply `!yes` (or `yes`). `!no` cancels, and queued actions expire after 30 minutes. Recurring events are listed but can't be changed yet.
-
-In the DM, type anything to talk to it. `!new` starts a fresh conversation. `!think` (alone or before a message) switches the rest of the conversation from Haiku to Sonnet for harder requests. A new conversation also starts after `AIDE_IDLE_HOURS` (default 6) of silence. That keeps each request small and cheap without editing history.
+Aide can list, search and create events on your iCloud calendars right away. Moving or deleting an event is queued: the app shows exactly what will change, and nothing happens until you confirm. Queued actions expire after 30 minutes. Recurring events are listed but can't be changed yet.
 
 ## Gmail
 
-Aide reads and searches your mail, and sends or replies only after your `!yes`. It uses the Gmail API with
+Aide reads and searches your mail, and sends or replies only after you confirm. It uses the Gmail API with
 two scopes: `gmail.readonly` (read) and `gmail.send` (send as you). It can't delete, archive or label anything.
 
 One-time setup in Google Cloud, by hand:
@@ -70,7 +69,7 @@ access expired, run the script again.
 
 ## Web search and Maps
 
-Read-only tools, so they run without `!yes`. Each one is on only when its key is set.
+Read-only tools, so they run without confirmation. Each one is on only when its key is set.
 
 **Web search (Tavily).** Sign up at [tavily.com](https://tavily.com) (the free plan gives 1,000 searches a
 month), copy the API key from the dashboard into `.env` as `TAVILY_API_KEY`. Aide gets `web_search` and
@@ -95,7 +94,7 @@ Then `systemctl --user restart aide`.
 
 The server sends pushes through APNs (docs/API.md, "Push"): a silent `sync` when reminders change on the
 server, a `reminder` alert for one that never reached the phone, and a `digest` alert for each scheduled
-digest. Without a key, or with no device registered, everything goes to Discord as before.
+digest. Without a key, or with no device registered, nothing is sent; it's all still in the app.
 
 1. [developer.apple.com/account](https://developer.apple.com/account) → **Certificates, IDs & Profiles → Keys**
    → **+**. Name it (e.g. "Aide push"), tick **Apple Push Notifications service (APNs)**, register, and
@@ -151,6 +150,7 @@ copied with SQLite's online backup (safe while Aide is running) and the copy mus
 run fails and no folder is written. The Gmail refresh token lives in `.env`, not the database, so its
 `GMAIL_*` lines go into `gmail.env` next to it (mode 600; the folder is 700). Nothing else from `.env` is copied,
 and none of it is in git. It keeps the newest 14 backups plus the newest of each of the last 8 weeks.
+Photos (`data/photos/`) never change, so they go once into `~/aide-backups/photos/`, which pruning leaves alone.
 
 ```bash
 ln -sf "$PWD/deploy/aide-backup.service" ~/.config/systemd/user/aide-backup.service
@@ -168,18 +168,19 @@ systemctl --user list-timers aide-backup.timer
 systemctl --user stop aide
 mv data data.broken                          # keep the old one until you're sure
 mkdir data && cp ~/aide-backups/2026-10-18/aide.db data/
+cp -r ~/aide-backups/photos data/
 systemctl --user start aide
 ```
 
 The copy is a single self-contained file (no `-wal`/`-shm` needed). If `.env` was lost too, rebuild it from
-`.env.example` and paste in the lines from `gmail.env`; the other secrets (Discord, OpenRouter, iCloud, API
+`.env.example` and paste in the lines from `gmail.env`; the other secrets (OpenRouter, iCloud, API
 token) aren't backed up and have to be re-entered or regenerated. The same goes for the APNs `.p8`: if it's
 lost, revoke it and make a new one (README, "Push notifications"). Devices are in the database, so they come
 back with it.
 
 ## Notes
 
-- LLM: OpenRouter (`OPENROUTER_API_KEY`) or the Anthropic API directly (`ANTHROPIC_API_KEY`). Haiku 5.5 by default, Sonnet 5.5 after `!think`; override with `AIDE_MODEL` / `AIDE_SMART_MODEL`. Voice chats in the app are transcribed by
+- LLM: OpenRouter (`OPENROUTER_API_KEY`) or the Anthropic API directly (`ANTHROPIC_API_KEY`). Haiku 5.5 by default, Sonnet 5.5 after "think harder" in the app (`/v1/think`); override with `AIDE_MODEL` / `AIDE_SMART_MODEL`. Voice chats in the app are transcribed by
   `google/gemini-3.5-flash-lite` over OpenRouter (`AIDE_TRANSCRIBE_MODEL` to change it; off without an OpenRouter key). Prompt caching is on for both; server-side refusal fallback only works direct, and not on Haiku.
 - Each turn is saved to SQLite only after it completes. A crash mid-turn loses that turn but never corrupts history.
 - Every tool call is written to `audit_log`.

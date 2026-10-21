@@ -11,13 +11,14 @@ import uvicorn
 from .agent import CONVERSATION, Agent
 from .channels.api import create_app
 from .transcribe import Transcriber
-from .channels.discord_bot import AideBot
 from .config import OPENROUTER_BASE_URL, load_settings
 from .db import Database
 from .digest import DigestService, digest_schedule
 from .gmail import Gmail
+from .food import FoodStore
 from .habits import HabitStore
 from .health import HealthStore
+from .photos import PhotoStore
 from .icloud import ICloudCalendar
 from .push import Push
 from .reminders import ReminderStore
@@ -26,6 +27,7 @@ from .scheduler import reminder_fallback
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
+from .tools.food import food_tools
 from .tools.habits import habit_tools
 from .tools.health import health_tools
 from .tools.mail import mail_tools
@@ -42,9 +44,6 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx2").setLevel(logging.WARNING)  # one line per API call is noise
     logging.getLogger("caldav").setLevel(logging.ERROR)  # its warnings dump raw event data
-    logging.getLogger("discord.client").addFilter(  # Aide doesn't use voice
-        lambda record: "voice will NOT be supported" not in record.getMessage()
-    )
     settings = load_settings()
 
     if settings.openrouter_api_key:
@@ -59,14 +58,16 @@ def main() -> None:
     reminders = ReminderStore(db.conn)
     habits = HabitStore(db.conn, settings.timezone)
     health = HealthStore(db.conn, settings.timezone)
+    food = FoodStore(db.conn, settings.timezone)
+    photos = PhotoStore(settings.db_path.parent / "photos")
     push = Push(db.conn, settings.apns_key_path, settings.apns_key_id, settings.apns_team_id, settings.apns_bundle_id)
     if push.enabled:
         reminders.on_change.append(push.request_sync)
     elif not (settings.apns_key_path and settings.apns_key_id and settings.apns_team_id):
-        log.warning("APNS_KEY_PATH / APNS_KEY_ID / APNS_TEAM_ID not set: push notifications off, Discord only")
+        log.warning("APNS_KEY_PATH / APNS_KEY_ID / APNS_TEAM_ID not set: push notifications off")
 
     tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits),
-             *health_tools(health, settings.timezone)]
+             *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone)]
     cal = None
     if settings.icloud_email and settings.icloud_app_password:
         cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
@@ -104,26 +105,25 @@ def main() -> None:
         idle=timedelta(hours=settings.idle_hours),
         tz=settings.timezone,
         server_fallback=not settings.openrouter_api_key,
+        photos=photos,
     )
     if added := agent.routines.add_starting_watches():
         log.info("set up the starting watches: %s", ", ".join(r["title"] for r in added))
-    bot = AideBot(agent, settings.discord_owner_id)
     digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail,
                            health, maps, settings.home_address)
 
     async def run() -> None:
-        wake = WakeService(digest, health, settings.timezone, bot.notify_owner, push)
+        wake = WakeService(digest, health, settings.timezone, push)
         jobs = [
-            bot.start(settings.discord_token),
-            reminder_fallback(reminders, bot.notify_owner, settings.timezone, push),
-            digest_schedule(digest, bot.notify_owner, push),
-            routine_schedule(agent, CONVERSATION, push, bot.notify_owner),
+            reminder_fallback(reminders, settings.timezone, push),
+            digest_schedule(digest, push),
+            routine_schedule(agent, CONVERSATION, push),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
-                             health, wake, bot.notify_owner, transcriber)
+                             health, wake, transcriber, food)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
@@ -134,7 +134,6 @@ def main() -> None:
             await asyncio.gather(*jobs)
         finally:
             await push.close()
-            await bot.close()
 
     try:
         asyncio.run(run())

@@ -13,7 +13,7 @@ ExecStart=%h/Developer/aide/.venv/bin/aide
 Restart=always
 RestartSec=5
 # Wait for the network on boot; Restart= covers the rare case it's still not up.
-ExecStartPre=/bin/sh -c 'for i in $(seq 30); do getent hosts discord.com >/dev/null && exit 0; sleep 2; done; exit 0'
+ExecStartPre=/bin/sh -c 'for i in $(seq 30); do getent hosts openrouter.ai >/dev/null && exit 0; sleep 2; done; exit 0'
 
 [Install]
 WantedBy=default.target

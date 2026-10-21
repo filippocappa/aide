@@ -1,8 +1,8 @@
 """Push notifications through APNs. Payloads and devices are in docs/API.md, "Push".
 
 Token-based auth: a JWT signed ES256 with the .p8 key, reused for about 50 minutes (Apple wants it
-refreshed at most every 20 and at least every 60). Without a key, push is off: nothing is sent and
-callers fall back to Discord.
+refreshed at most every 20 and at least every 60). Without a key, push is off: nothing is sent, and
+what was to be pushed stays in the app.
 """
 
 import asyncio

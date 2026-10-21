@@ -1,0 +1,177 @@
+"""Food log: meals with estimated calories and macros, and daily goals. Contract in docs/API.md, "Food".
+
+The numbers are the model's estimates from a photo or a description, so they're rounded: calories to 10,
+grams to 1. Days are local days (AIDE_TIMEZONE); eaten_at is stored in UTC.
+"""
+
+import json
+import sqlite3
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from .db import utcnow
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS meals (
+    id         INTEGER PRIMARY KEY,
+    eaten_at   TEXT NOT NULL,  -- UTC
+    name       TEXT NOT NULL,
+    calories   INTEGER NOT NULL,
+    protein_g  INTEGER NOT NULL,
+    carbs_g    INTEGER NOT NULL,
+    fat_g      INTEGER NOT NULL,
+    photo      TEXT,  -- photo id (photos.py), NULL without one
+    notes      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS meals_eaten ON meals(eaten_at);
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL  -- JSON
+);
+"""
+
+MACROS = ("calories", "protein_g", "carbs_g", "fat_g")
+LIMITS = {"calories": 10_000, "protein_g": 1_000, "carbs_g": 1_000, "fat_g": 1_000}  # per meal, and per goal
+MAX_NAME = 100
+MAX_NOTES = 500
+EDITABLE = ("name", "eaten_at", *MACROS, "notes")
+
+
+def _round(key: str, value: float) -> int:
+    if not 0 <= value <= LIMITS[key]:
+        raise ValueError(f"{key} must be between 0 and {LIMITS[key]}")
+    return int(value / 10 + 0.5) * 10 if key == "calories" else int(value + 0.5)  # halves up, unlike round()
+
+
+class FoodStore:
+    def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo):
+        self.conn = conn
+        self.tz = tz
+        self.conn.executescript(SCHEMA)
+
+    def today(self) -> date:
+        return datetime.now(self.tz).date()
+
+    # -- meals ----------------------------------------------------------------
+
+    def get(self, meal_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM meals WHERE id = ?", (meal_id,)).fetchone()
+        return dict(row) if row else None
+
+    def find(self, meal_id: int) -> dict:
+        if (meal := self.get(meal_id)) is None:
+            raise KeyError(f"no meal {meal_id}")
+        return meal
+
+    def _clean(self, changes: dict) -> dict:
+        out = {}
+        for key, value in changes.items():
+            if key == "name":
+                value = " ".join(str(value).split())
+                if not value or len(value) > MAX_NAME:
+                    raise ValueError(f"name must be 1–{MAX_NAME} characters")
+            elif key == "notes":
+                value = str(value or "").strip()[:MAX_NOTES]
+            elif key == "eaten_at":
+                value = self._eaten_at(value)
+            elif key in MACROS:
+                value = _round(key, value)
+            out[key] = value
+        return out
+
+    def _eaten_at(self, value: datetime | str) -> str:
+        when = datetime.fromisoformat(value) if isinstance(value, str) else value
+        when = when.replace(tzinfo=self.tz) if when.tzinfo is None else when
+        if when > utcnow() + timedelta(hours=1):
+            raise ValueError("a meal can't be in the future")
+        return when.astimezone(ZoneInfo("UTC")).isoformat()
+
+    def add(self, name: str, calories: float, protein_g: float, carbs_g: float, fat_g: float,
+            eaten_at: datetime | str | None = None, photo: str | None = None, notes: str = "") -> dict:
+        clean = self._clean({"name": name, "calories": calories, "protein_g": protein_g, "carbs_g": carbs_g,
+                             "fat_g": fat_g, "notes": notes, "eaten_at": eaten_at or utcnow()})
+        now = utcnow().isoformat()
+        cur = self.conn.execute(
+            "INSERT INTO meals (eaten_at, name, calories, protein_g, carbs_g, fat_g, photo, notes, created_at, "
+            "updated_at) VALUES (:eaten_at, :name, :calories, :protein_g, :carbs_g, :fat_g, :photo, :notes, :now, :now)",
+            {**clean, "photo": photo, "now": now})
+        return self.find(cur.lastrowid)
+
+    def update(self, meal_id: int, **changes) -> dict:
+        self.find(meal_id)
+        unknown = set(changes) - set(EDITABLE)
+        if unknown:
+            raise ValueError(f"can't change {', '.join(sorted(unknown))}")
+        clean = self._clean({k: v for k, v in changes.items() if v is not None})
+        if clean:
+            self.conn.execute(f"UPDATE meals SET {', '.join(f'{c} = ?' for c in clean)}, updated_at = ? WHERE id = ?",
+                              (*clean.values(), utcnow().isoformat(), meal_id))
+        return self.find(meal_id)
+
+    def delete(self, meal_id: int) -> bool:
+        return self.conn.execute("DELETE FROM meals WHERE id = ?", (meal_id,)).rowcount > 0
+
+    def _bounds(self, start: date, end: date) -> tuple[str, str]:
+        """UTC bounds of the local days start..end, both included."""
+        utc = ZoneInfo("UTC")
+        lo = datetime.combine(start, time(), self.tz).astimezone(utc)
+        hi = datetime.combine(end + timedelta(days=1), time(), self.tz).astimezone(utc)
+        return lo.isoformat(), hi.isoformat()
+
+    def day(self, d: date) -> list[dict]:
+        return self.between(d, d)
+
+    def between(self, start: date, end: date) -> list[dict]:
+        lo, hi = self._bounds(start, end)
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM meals WHERE eaten_at >= ? AND eaten_at < ? ORDER BY eaten_at, id", (lo, hi))]
+
+    def local_day(self, meal: dict) -> date:
+        return datetime.fromisoformat(meal["eaten_at"]).astimezone(self.tz).date()
+
+    def days(self, start: date, end: date) -> list[dict]:
+        """Totals for every local day start..end, oldest first, zeros when empty."""
+        by_day: dict[date, list[dict]] = {}
+        for m in self.between(start, end):
+            by_day.setdefault(self.local_day(m), []).append(m)
+        every = (start + timedelta(days=i) for i in range((end - start).days + 1))
+        return [{"date": d.isoformat(), "totals": totals(by_day.get(d, [])), "meals": len(by_day.get(d, []))}
+                for d in every]
+
+    def as_json(self, meal: dict) -> dict:
+        return {"id": meal["id"], "name": meal["name"],
+                "eaten_at": datetime.fromisoformat(meal["eaten_at"]).astimezone(self.tz).replace(microsecond=0).isoformat(),
+                **{k: meal[k] for k in MACROS}, "photo": meal["photo"], "notes": meal["notes"]}
+
+    # -- goals ----------------------------------------------------------------
+
+    def goals(self) -> dict:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = 'food_goals'").fetchone()
+        saved = json.loads(row["value"]) if row else {}
+        return {k: saved.get(k) for k in MACROS}
+
+    def set_goals(self, goals: dict) -> dict:
+        """Replace the goals with `goals`; a missing, null or 0 key means no goal for it."""
+        unknown = set(goals) - set(MACROS)
+        if unknown:
+            raise ValueError(f"unknown goal {', '.join(sorted(unknown))}; expected {', '.join(MACROS)}")
+        clean = {k: _round(k, goals[k]) if goals.get(k) else None for k in MACROS}  # 0 is no goal too
+        self.conn.execute("INSERT INTO settings (key, value) VALUES ('food_goals', ?) "
+                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(clean),))
+        return self.goals()
+
+    # -- a setting the API keeps: Coach's food-log chat -----------------------
+
+    def chat(self) -> str | None:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = 'food_chat'").fetchone()
+        return json.loads(row["value"]) if row else None
+
+    def set_chat(self, public_id: str) -> None:
+        self.conn.execute("INSERT INTO settings (key, value) VALUES ('food_chat', ?) "
+                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(public_id),))
+
+
+def totals(meals: list[dict]) -> dict:
+    return {k: sum(m[k] for m in meals) for k in MACROS}

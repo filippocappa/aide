@@ -16,7 +16,6 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from email.utils import parseaddr
-from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 import anthropic
@@ -35,14 +34,13 @@ log = logging.getLogger(__name__)
 
 KINDS = ("daily", "evening", "weekly", "monthly")  # scheduled; daily is the morning digest, evening before bed
 ALL_KINDS = ("daily", "wake", "evening", "weekly", "monthly")  # wake runs when the user gets up
-SETTING_KEYS = (*ALL_KINDS, "discord")
+SETTING_KEYS = ALL_KINDS
 DEFAULT_SETTINGS = {
     "daily": {"enabled": True, "time": "08:00"},
     "wake": {"enabled": True},
     "evening": {"enabled": True, "time": "22:00"},
     "weekly": {"enabled": True, "weekday": 7, "time": "18:00"},
     "monthly": {"enabled": True, "day": 1, "time": "09:00"},
-    "discord": True,
 }
 EVENING = 17  # a digest made after this hour is about tomorrow onwards
 LOOKAHEAD = {"daily": 3, "wake": 3, "evening": 3, "weekly": 7, "monthly": 14}  # extra days the model sees for "Looking ahead"
@@ -160,7 +158,8 @@ def check_settings(s: dict, current: dict | None = None) -> dict:
             s = {**s, key: (current or DEFAULT_SETTINGS)[key]}
     if not isinstance(s["wake"], dict):
         raise ValueError("wake settings must be an object")
-    out = {"discord": bool(s.get("discord", True)), "wake": {"enabled": bool(s["wake"].get("enabled", True))}}
+    # An older app also sends `discord`: ignored, there's no Discord any more.
+    out = {"wake": {"enabled": bool(s["wake"].get("enabled", True))}}
     for kind in KINDS:
         cfg = s.get(kind)
         if not isinstance(cfg, dict):
@@ -493,7 +492,7 @@ def _round_down(dt: datetime) -> datetime:
     return dt - timedelta(minutes=dt.minute % 5, seconds=dt.second, microseconds=dt.microsecond)
 
 
-# -- as text, for Discord and for the model ------------------------------------
+# -- as text, for the model ------------------------------------
 
 
 def _event_line(e: dict, tz: ZoneInfo) -> str:
@@ -543,9 +542,8 @@ def to_text(greeting: str | None, sections: list[dict], tz: ZoneInfo) -> str:
 # -- schedule ------------------------------------------------------------------
 
 
-async def digest_schedule(service: DigestService, notify: Callable[[str], Awaitable[bool]],
-                          push: Push | None = None) -> None:
-    """Generate each enabled digest at its time (catching up after a short outage), push it and DM it."""
+async def digest_schedule(service: DigestService, push: Push | None = None) -> None:
+    """Generate each enabled digest at its time (catching up after a short outage) and push it."""
     failed: dict[str, datetime] = {}
     while True:
         await asyncio.sleep(TICK)  # first: let startup (the calendar prefetch) finish before catching up
@@ -575,7 +573,5 @@ async def digest_schedule(service: DigestService, notify: Callable[[str], Awaita
                         await push.send_digest(kind, digest["greeting"], period(kind, now).start)
                     except Exception:
                         log.exception("%s digest push failed", kind)
-                if settings["discord"] and not await notify(to_text(digest["greeting"], digest["sections"], service.tz)):
-                    log.warning("%s digest not sent to Discord; it's still in the app", kind)
         except Exception:
             log.exception("digest tick failed")

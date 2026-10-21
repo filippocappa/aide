@@ -140,8 +140,10 @@ def test_settings(env):
     make, _, _ = env
     client, _, _ = make()
     assert client.get("/v1/digest/settings", headers=AUTH).json() == DEFAULT_SETTINGS
-    new = {**DEFAULT_SETTINGS, "weekly": {"enabled": False, "weekday": 1, "time": "07:30"}, "discord": False}
+    new = {**DEFAULT_SETTINGS, "weekly": {"enabled": False, "weekday": 1, "time": "07:30"}}
     assert client.put("/v1/digest/settings", json=new, headers=AUTH).json() == new
+    # An older app still sends `discord`: ignored.
+    assert client.put("/v1/digest/settings", json={**new, "discord": True}, headers=AUTH).json() == new
     assert client.get("/v1/digest/settings", headers=AUTH).json() == new
     for bad in ({**new, "daily": {"enabled": True, "time": "8am"}},
                 {**new, "weekly": {"enabled": True, "weekday": 0, "time": "08:00"}},
@@ -151,29 +153,23 @@ def test_settings(env):
     assert client.get("/v1/digest?kind=yearly", headers=AUTH).status_code == 400
 
 
-async def test_schedule_generates_once_and_sends_to_discord(env, monkeypatch):
+async def test_schedule_generates_once(env, monkeypatch):
     make, _, _ = env
     _, service, _ = make([done("Hello.\n---\n- ahead"), done("unused")])
     now = datetime.now(ROME)
     off = {"enabled": False, "time": "00:00"}
     service.save_settings({"daily": {"enabled": True, "time": f"{now - timedelta(minutes=1):%H:%M}"}, "evening": off,
-                           "weekly": {**off, "weekday": 1}, "monthly": {**off, "day": 1}, "discord": True})
-    sent = []
-
-    async def notify(text):
-        sent.append(text)
-        return True
-
+                           "weekly": {**off, "weekday": 1}, "monthly": {**off, "day": 1}})
     monkeypatch.setattr(digest_mod, "TICK", 0)
-    task = asyncio.create_task(digest_mod.digest_schedule(service, notify))
+    task = asyncio.create_task(digest_mod.digest_schedule(service))
     for _ in range(50):
         await asyncio.sleep(0)
     task.cancel()
-    assert len(sent) == 1 and sent[0].startswith("**Hello.**") and "**Looking ahead**\n- ahead" in sent[0]
     assert service.latest("daily")["greeting"] == "Hello."
+    assert len(service.client.responses) == 1  # generated once, not again on the next ticks
 
 
-def test_discord_text():
+def test_digest_as_text():
     sections = [
         {"type": "calendar", "title": "Today", "events": []},
         {"type": "mail", "title": "Mail", "items": [{"from": "Ann", "subject": "Hi"}]},

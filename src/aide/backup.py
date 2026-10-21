@@ -3,6 +3,9 @@
 Each backup is one folder named by its local date. Databases are copied with SQLite's online backup
 (safe while the service is writing) and checked with integrity_check. The Gmail refresh token lives
 in .env, not the database, so its lines are copied too, readable by the owner only.
+
+Photos (data/photos) never change once saved, so they go to one shared folder, ~/aide-backups/photos,
+and each night copies only the new ones. Pruning dated folders leaves it alone.
 """
 
 import logging
@@ -53,6 +56,21 @@ def gmail_lines(env_file: Path) -> str:
     return "".join(f"{k}={v}\n" for k, v in values.items() if k.startswith("GMAIL_") and v)
 
 
+def mirror_photos(src: Path, dst: Path) -> int:
+    """Copy the photos `dst` doesn't have yet. Returns how many were copied."""
+    if not src.is_dir():
+        return 0
+    dst.mkdir(mode=0o700, exist_ok=True)
+    copied = 0
+    for path in src.iterdir():
+        if path.is_file() and not path.name.startswith(".") and not (dst / path.name).exists():
+            tmp = dst / f".{path.name}.tmp"
+            shutil.copy2(path, tmp)
+            tmp.rename(dst / path.name)
+            copied += 1
+    return copied
+
+
 def backup(data_dir: Path, dest_root: Path, env_file: Path, day: date) -> Path:
     """Write one backup folder for `day`, replacing an earlier one from the same day."""
     if not data_dir.is_dir():
@@ -81,6 +99,7 @@ def backup(data_dir: Path, dest_root: Path, env_file: Path, day: date) -> Path:
     # Swap in only a complete, checked backup.
     shutil.rmtree(final, ignore_errors=True)
     tmp.rename(final)
+    mirror_photos(data_dir / "photos", dest_root / "photos")
     return final
 
 

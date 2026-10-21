@@ -177,51 +177,43 @@ async def test_phone_sync_does_not_trigger_a_sync_push(env):
 
 
 async def run_fallback(store, push, monkeypatch):
-    sent = []
-
-    async def notify(text):
-        sent.append(text)
-        return True
-
     monkeypatch.setattr(scheduler, "TICK", 0)
-    task = asyncio.create_task(scheduler.reminder_fallback(store, notify, ROME, push))
+    task = asyncio.create_task(scheduler.reminder_fallback(store, ROME, push))
     for _ in range(20):
         await asyncio.sleep(0)
     task.cancel()
-    return sent
 
 
-async def test_due_reminder_is_pushed_instead_of_dm(env, monkeypatch):
+async def test_due_reminder_is_pushed(env, monkeypatch):
     db, push, apns = env
     push.register(SANDBOX, "sandbox")
     store = ReminderStore(db.conn)
     rem = store.create("Bins", datetime.now(timezone.utc) - timedelta(minutes=1))
     late = store.create("Pills", datetime(2026, 10, 19, 7, 30, tzinfo=timezone.utc))
-    assert await run_fallback(store, push, monkeypatch) == []
+    await run_fallback(store, push, monkeypatch)
     assert [p["aide"] for p in apns.payloads()] == [{"kind": "reminder", "reminder_id": late.id},
                                                     {"kind": "reminder", "reminder_id": rem.id}]
     assert [p["aps"]["alert"]["body"] for p in apns.payloads()] == ["Late: was due Mon 19 Oct 09:30", ""]
     assert store.unsynced_due(datetime.now(timezone.utc)) == []
 
 
-async def test_dm_when_no_push_was_delivered(env, monkeypatch):
+async def test_a_push_that_fails_is_tried_once(env, monkeypatch):
     db, push, apns = env
     store = ReminderStore(db.conn)
     store.create("Bins", datetime.now(timezone.utc) - timedelta(minutes=1))
-    assert await run_fallback(store, push, monkeypatch) == ["⏰ Bins"]  # no devices
+    await run_fallback(store, push, monkeypatch)  # no devices
     push.register(SANDBOX, "sandbox")
     apns.replies = {SANDBOX: (500, "InternalServerError")}
     store.create("Pills", datetime.now(timezone.utc) - timedelta(hours=1))
-    sent = await run_fallback(store, push, monkeypatch)
-    assert len(sent) == 1 and sent[0].startswith("⏰ Pills\n(late: was due")
-    assert len(apns.requests) == 1
-    assert await run_fallback(store, None, monkeypatch) == []  # both marked sent
+    await run_fallback(store, push, monkeypatch)
+    assert len(apns.requests) == 1  # Bins was already given up on; Pills tried once
+    assert store.unsynced_due(datetime.now(timezone.utc)) == []
 
 
 # -- digest ----------------------------------------------------------------------
 
 
-async def test_scheduled_digest_is_pushed_and_dm_follows_setting(env, monkeypatch):
+async def test_scheduled_digest_is_pushed(env, monkeypatch):
     db, push, apns = env
     push.register(SANDBOX, "sandbox")
     store = ReminderStore(db.conn)
@@ -230,19 +222,12 @@ async def test_scheduled_digest_is_pushed_and_dm_follows_setting(env, monkeypatc
     now = datetime.now(ROME)
     off = {"enabled": False, "time": "00:00"}
     service.save_settings({"daily": {"enabled": True, "time": f"{now - timedelta(minutes=1):%H:%M}"}, "evening": off,
-                           "weekly": {**off, "weekday": 1}, "monthly": {**off, "day": 1}, "discord": False})
-    sent = []
-
-    async def notify(text):
-        sent.append(text)
-        return True
-
+                           "weekly": {**off, "weekday": 1}, "monthly": {**off, "day": 1}})
     monkeypatch.setattr(digest_mod, "TICK", 0)
-    task = asyncio.create_task(digest_mod.digest_schedule(service, notify, push))
+    task = asyncio.create_task(digest_mod.digest_schedule(service, push))
     for _ in range(50):
         await asyncio.sleep(0)
     task.cancel()
-    assert sent == []
     assert apns.payloads() == [{"aps": {"alert": {"title": "Morning", "body": "Hello."}, "sound": "default",
                                         "thread-id": "digest"}, "aide": {"kind": "digest", "digest": "daily"}}]
 
