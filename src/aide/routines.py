@@ -8,11 +8,11 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
-from .agents import AGENTS, check_agent
+from .agents import AGENTS, STARTING_WATCHES, check_agent
 from .db import Database, utcnow
 from .push import Push
 
@@ -24,9 +24,10 @@ log = logging.getLogger(__name__)
 TICK = 30  # seconds
 CATCH_UP = timedelta(hours=2)  # a run missed by less than this (the server was down) still runs, once
 RETRY = timedelta(minutes=10)  # after a failed run
+WATCH_CAP = 3  # watch notes a day, all watches together; later scheduled checks that day are skipped
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _TIME = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
-EDITABLE = ("title", "prompt", "time", "days", "enabled")
+EDITABLE = ("title", "prompt", "time", "days", "enabled", "watch")
 
 
 def check_time(value: str) -> str:
@@ -102,6 +103,7 @@ class RoutineStore:
         r = dict(row)
         r["days"] = json.loads(r["days"])
         r["enabled"] = bool(r["enabled"])
+        r["watch"] = bool(r["watch"])
         return r
 
     _SELECT = "SELECT r.*, c.public_id FROM routines r JOIN conversations c ON c.id = r.conversation_id"
@@ -125,16 +127,31 @@ class RoutineStore:
         return [r for r in rows if agent is None or r["agent"] == agent]
 
     def create(self, agent: str, title: str, prompt: str, time: str, days: list[int] | None = None,  # noqa: A002
-               enabled: bool = True) -> dict:
+               enabled: bool = True, watch: bool = False) -> dict:
         agent, title, prompt = check_agent(agent), _text(title, "title"), _text(prompt, "prompt")
         time, days = check_time(time), check_days(days or [])
         chat = self.db.new_app_conversation(agent)
         self.db.set_conversation_title(chat["id"], title)
         cur = self.conn.execute(
-            "INSERT INTO routines (agent, title, prompt, time, days, enabled, conversation_id, since) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (agent, title, prompt, time, json.dumps(days), int(enabled), chat["id"], utcnow().isoformat()))
+            "INSERT INTO routines (agent, title, prompt, time, days, enabled, conversation_id, since, watch) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (agent, title, prompt, time, json.dumps(days), int(enabled), chat["id"], utcnow().isoformat(),
+             int(watch)))
         return self.get(cur.lastrowid)
+
+    def add_starting_watches(self) -> list[dict]:
+        """Secretary's and Coach's first watches, once per database: deleting one doesn't bring it back."""
+        if not self.db.once("starting-watches"):
+            return []
+        return [self.create(agent, **idea) for agent, idea in STARTING_WATCHES]
+
+    def watch_notes_today(self, now: datetime | None = None) -> int:
+        """Notes posted by watches since local midnight."""
+        midnight = datetime.combine((now or utcnow()).astimezone(self.tz).date(), time(), self.tz)
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE routine IS NOT NULL AND ts >= ? "
+            "AND json_extract(routine, '$.id') IN (SELECT id FROM routines WHERE watch = 1)",
+            (midnight.astimezone(timezone.utc).isoformat(),)).fetchone()[0]
 
     def update(self, routine_id: int, **changes) -> dict:
         r = self.find(routine_id)
@@ -149,6 +166,8 @@ class RoutineStore:
             changes["days"] = json.dumps(check_days(changes["days"]))
         if "enabled" in changes:
             changes["enabled"] = int(bool(changes["enabled"]))
+        if "watch" in changes:
+            changes["watch"] = int(bool(changes["watch"]))
         if {"time", "days", "enabled"} & set(changes):  # a new schedule starts now: no catching up on old slots
             changes["since"] = utcnow().isoformat()
         if changes:
@@ -172,7 +191,7 @@ class RoutineStore:
         def local(dt: datetime | None) -> str | None:
             return dt.astimezone(self.tz).replace(microsecond=0).isoformat() if dt else None
         return {"id": r["id"], "agent": r["agent"], "title": r["title"], "prompt": r["prompt"], "time": r["time"],
-                "days": r["days"], "enabled": r["enabled"], "conversation_id": r["public_id"],
+                "days": r["days"], "enabled": r["enabled"], "watch": r["watch"], "conversation_id": r["public_id"],
                 "next_run": local(self.next_run(r)),
                 "last_run": local(datetime.fromisoformat(r["last_run"]) if r["last_run"] else None)}
 
@@ -180,7 +199,9 @@ class RoutineStore:
         """One line for the agents' tools."""
         nxt = self.next_run(r)
         when = f"next {nxt:%a %d %b %H:%M}" if nxt else "off"
-        return f"[{r['id']}] {AGENTS[r['agent']].name} · {r['title']} · {days_text(r['days'])} at {r['time']} · {when}"
+        kind = " · watch" if r["watch"] else ""
+        return (f"[{r['id']}] {AGENTS[r['agent']].name} · {r['title']}{kind} · {days_text(r['days'])} at {r['time']} "
+                f"· {when}")
 
 
 # -- running -------------------------------------------------------------------
@@ -191,9 +212,12 @@ def first_line(text: str) -> str:
 
 
 async def deliver(agent: "Agent", channel: str, routine: dict, push: Push | None,
-                  notify: Callable[[str], Awaitable[bool]] | None) -> str:
-    """Run a routine now, post the reply in its chat, then alert: a push, else a Discord DM. Returns the reply."""
+                  notify: Callable[[str], Awaitable[bool]] | None) -> str | None:
+    """Run a routine now, post the reply in its chat, then alert: a push, else a Discord DM. Returns the reply,
+    or None when a watch found nothing that needs the user (then nothing is posted or sent)."""
     reply, queued = await agent.run_routine(channel, routine)
+    if reply is None:
+        return None
     title = f"{AGENTS[routine['agent']].name} · {routine['title']}"
     note = f"{queued} action{'s' if queued != 1 else ''} waiting for your OK." if queued else ""
     body = first_line(reply) + (f" ({note})" if note else "")
@@ -212,7 +236,8 @@ async def deliver(agent: "Agent", channel: str, routine: dict, push: Push | None
 
 async def routine_schedule(agent: "Agent", channel: str, push: Push | None,
                            notify: Callable[[str], Awaitable[bool]] | None) -> None:
-    """Run each routine at its time, and once after a short outage (less than CATCH_UP late)."""
+    """Run each routine at its time, and once after a short outage (less than CATCH_UP late). Watches are skipped
+    once today's notes reach WATCH_CAP."""
     store: RoutineStore = agent.routines
     failed: dict[int, datetime] = {}
     while True:
@@ -221,6 +246,10 @@ async def routine_schedule(agent: "Agent", channel: str, push: Push | None,
             now = utcnow()
             for r in store.due(now):
                 if r["id"] in failed and now - failed[r["id"]] < RETRY:
+                    continue
+                if r["watch"] and store.watch_notes_today(now) >= WATCH_CAP:
+                    store.mark_run(r["id"], now)
+                    log.info("watch %s (%s) skipped: %d notes today already", r["id"], r["title"], WATCH_CAP)
                     continue
                 try:
                     await deliver(agent, channel, r, push, notify)

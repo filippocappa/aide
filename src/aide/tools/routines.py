@@ -21,16 +21,18 @@ def routine_tools(store: RoutineStore, agent: str, any_agent: bool = False) -> l
         found = store.all(owner)
         return "\n".join(store.line(r) for r in found) if found else "No routines yet."
 
-    async def create_routine(title: str, prompt: str, time: str, days: list[int], agent: str = agent) -> str:  # noqa: A002
+    async def create_routine(title: str, prompt: str, time: str, days: list[int], agent: str = agent,  # noqa: A002
+                             watch: bool = False) -> str:
         if not any_agent and agent != owner:
             raise ValueError("you can only make routines for yourself")
-        return "Created (its own chat is in the app): " + store.line(store.create(agent, title, prompt, time, days))
+        r = store.create(agent, title, prompt, time, days, watch=watch)
+        return "Created (its own chat is in the app): " + store.line(r)
 
     async def update_routine(routine_id: int, title: str | None = None, prompt: str | None = None,
                              time: str | None = None, days: list[int] | None = None,  # noqa: A002
-                             enabled: bool | None = None) -> str:
+                             enabled: bool | None = None, watch: bool | None = None) -> str:
         store.find(routine_id, owner)
-        r = store.update(routine_id, title=title, prompt=prompt, time=time, days=days, enabled=enabled)
+        r = store.update(routine_id, title=title, prompt=prompt, time=time, days=days, enabled=enabled, watch=watch)
         return "Updated: " + store.line(r)
 
     async def delete_routine(routine_id: int) -> str:
@@ -47,6 +49,8 @@ def routine_tools(store: RoutineStore, agent: str, any_agent: bool = False) -> l
         "time": {"type": "string", "description": "HH:MM, 24-hour, local time"},
         "days": {"type": "array", "items": {"type": "integer"},
                  "description": "ISO weekdays, 1 = Monday … 7 = Sunday; [] for every day"},
+        "watch": {"type": "boolean", "description": "a watch: a check that posts only when something needs the "
+                  "user (else it posts every run)"},
     }
     create = {"title": {"type": "string", "description": "short, e.g. Weekly recap"},
               "prompt": {"type": "string", "description": "what to do on each run, written as an instruction"},
@@ -60,8 +64,8 @@ def routine_tools(store: RoutineStore, agent: str, any_agent: bool = False) -> l
         Tool("create_routine", "Set up a routine: a job run on a schedule (weekly pattern of days and a time), "
              "posting in its own chat each time. Runs immediately.",
              _obj(create, ["title", "prompt", "time", "days"]), create_routine),
-        Tool("update_routine", "Change a routine: its title, prompt, time, days, or turn it off and on (enabled). "
-             "Pass only what changes. Runs immediately.",
+        Tool("update_routine", "Change a routine: its title, prompt, time, days, watch, or turn it off and on "
+             "(enabled). Pass only what changes. Runs immediately.",
              _obj({**rid, "title": {"type": "string"}, "prompt": {"type": "string"}, **schedule,
                    "enabled": {"type": "boolean"}}, ["routine_id"]), update_routine),
         Tool("delete_routine", "Delete a routine (its chat stays). Needs the user's confirmation: it is queued, "

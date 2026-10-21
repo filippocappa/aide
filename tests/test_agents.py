@@ -112,13 +112,17 @@ def test_agents_endpoint_matches_the_contract(env):
     assert [a["id"] for a in agents] == ["aide", "secretary", "professor", "coach", "finance"]
     assert [a["orchestrator"] for a in agents] == [True, False, False, False, False]
     coach = {k: v for k, v in agents[3].items() if k not in ("prompt", "tools", "connectors")}
-    assert coach == {"id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#23A26D",
-                     "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?"],
-                     "routine_ideas": [{"title": "Weekly recap", "prompt": AGENTS["coach"].routine_ideas[0]["prompt"],
-                                        "time": "18:00", "days": [7]}]}
-    assert [(i["title"], i["time"], i["days"]) for a in agents for i in a["routine_ideas"]] == [
-        ("Plan my week", "20:00", [7]), ("Mail sweep", "09:00", [1, 2, 3, 4, 5]),
-        ("Review what I studied", "17:00", [7]), ("Weekly recap", "18:00", [7]), ("Week's spending", "19:00", [7])]
+    assert {**coach, "routine_ideas": coach["routine_ideas"][:1]} == {
+        "id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#23A26D",
+        "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?"],
+        "routine_ideas": [{"title": "Weekly recap", "prompt": AGENTS["coach"].routine_ideas[0]["prompt"],
+                           "time": "18:00", "days": [7], "watch": False}]}
+    assert [(i["title"], i["time"], i["days"], i["watch"]) for a in agents for i in a["routine_ideas"]] == [
+        ("Plan my week", "20:00", [7], False), ("Mail sweep", "09:00", [1, 2, 3, 4, 5], False),
+        ("Mail that needs you", "11:00", [1, 2, 3, 4, 5], True), ("Tomorrow", "18:30", [1, 2, 3, 4, 7], True),
+        ("Review what I studied", "17:00", [7], False), ("Weekly recap", "18:00", [7], False),
+        ("Recovery check", "09:00", [], True), ("Habits tonight", "20:30", [], True),
+        ("Week's spending", "19:00", [7], False)]
     assert all(a["color"].startswith("#") and len(a["color"]) == 7 for a in agents)
     assert client.get("/v1/agents").status_code == 401
 

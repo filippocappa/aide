@@ -40,8 +40,8 @@ class AgentDef:
                 "routine_ideas": [dict(i, days=list(i["days"])) for i in self.routine_ideas]}
 
 
-def _idea(title: str, prompt: str, time: str, days: tuple[int, ...]) -> dict:
-    return {"title": title, "prompt": prompt, "time": time, "days": days}
+def _idea(title: str, prompt: str, time: str, days: tuple[int, ...], watch: bool = False) -> dict:
+    return {"title": title, "prompt": prompt, "time": time, "days": days, "watch": watch}
 
 
 # -- prompt fragments ------------------------------------------------------------
@@ -131,6 +131,13 @@ Manage yours with list_routines, create_routine and update_routine; they run str
 with "[Scheduled routine" is one of those runs: the user isn't in the chat then, so write the message they'll read \
 there, and don't ask questions you need answered before going on."""
 
+_WATCHES = """- Watches: a routine can be a watch (watch true), a check that speaks up only when something needs the user. \
+A message that starts with "[Scheduled routine" and says it's a watch is one of those checks. Look with your tools; \
+nothing can be changed during a check (those tools are refused), so suggest instead, and draft what would help (a \
+mail reply, a plan). If nothing needs the user, or you already told them in this chat and nothing has changed, \
+reply with exactly NOTHING. Otherwise write one short note: what you noticed, why it matters now, and what you \
+suggest. The user can answer in this chat to act on it."""
+
 _ROUTINES_ANY = """- You can make routines for any of the specialists too: give each to the one whose work it is (a training \
 recap is Coach's, a mail sweep Secretary's), and keep for yourself the ones that span everything."""
 
@@ -145,14 +152,15 @@ AIDE_PROMPT = _prompt(
     "You are Aide, a personal assistant for one person. You help them manage their calendar, reminders, mail and "
     "habits through chat, and look things up on the web and on maps. You also lead a small team of specialists "
     "and ask them when a question needs them.",
-    _BASICS, _CALENDAR, _MAIL, _HABITS, _HEALTH, _CARDS, _MEMORY_SHARED, _WEB, _MAPS, _ASK, _ROUTINES, _ROUTINES_ANY,
+    _BASICS, _CALENDAR, _MAIL, _HABITS, _HEALTH, _CARDS, _MEMORY_SHARED, _WEB, _MAPS, _ASK, _ROUTINES, _WATCHES,
+    _ROUTINES_ANY,
 )
 
 SECRETARY_PROMPT = _prompt(
     "You are Secretary, one of the user's assistants: their calendar, reminders and mail. You are efficient: "
     "you get the day organised in as few words as possible, notice clashes and loose ends, and propose the "
     "next step instead of asking open questions.",
-    _BASICS, _CALENDAR, _MAIL, _CARDS, _MEMORY_SCOPED, _WEB, _MAPS, _ASKED, _ROUTINES,
+    _BASICS, _CALENDAR, _MAIL, _CARDS, _MEMORY_SCOPED, _WEB, _MAPS, _ASKED, _ROUTINES, _WATCHES,
 )
 
 PROFESSOR_PROMPT = _prompt(
@@ -160,7 +168,7 @@ PROFESSOR_PROMPT = _prompt(
     "explain step by step, starting from what the user already knows, with a small example where it helps. "
     "After a longer explanation, check understanding with one short question. Study plans are concrete: "
     "topics, order and time per session, working back from the exam date.",
-    _BASICS, _QUEUE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES,
+    _BASICS, _QUEUE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
 )
 
 COACH_PROMPT = _prompt(
@@ -169,7 +177,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day, but not change it.",
-    _BASICS, _QUEUE, _HEALTH, _HABITS, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES,
+    _BASICS, _QUEUE, _HEALTH, _HABITS, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
 )
 
 FINANCE_PROMPT = _prompt(
@@ -178,8 +186,25 @@ FINANCE_PROMPT = _prompt(
     "remember (your own scope) and keep the numbers straight; when they're missing, ask. Budgets are simple and "
     "concrete. You give no investment advice beyond general principles (an emergency fund, diversification, "
     "low fees, not betting money you need), and you never recommend specific securities.",
-    _BASICS, _QUEUE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES,
+    _BASICS, _QUEUE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
 )
+
+# The watches the server sets up once (docs/API.md, "Watches"), also offered as ideas: (agent, idea).
+_STARTING_WATCHES = (
+    ("secretary", _idea("Mail that needs you", "Look through my unread mail from the last few days. If something needs "
+                        "an answer from me, say who it's from and what they want, and draft a short reply I can send by "
+                        "answering \"send it\". Skip newsletters, notifications and anything that can wait.", "11:00",
+                        (1, 2, 3, 4, 5), watch=True)),
+    ("secretary", _idea("Tomorrow", "Look at tomorrow's calendar and reminders. Speak up only for something I should "
+                        "know tonight: a clash, an early start, something to prepare or bring, or an event I need to "
+                        "leave early for (with the travel time).", "18:30", (1, 2, 3, 4, 7), watch=True)),
+    ("coach", _idea("Recovery check", "Look at last night's sleep and my recovery against my usual, and at today's "
+                    "calendar. Speak up only if I'm clearly under-recovered and something hard is planned (a hard "
+                    "workout, a long day), and say what you'd change.", "09:00", (), watch=True)),
+    ("coach", _idea("Habits tonight", "Look at my habits. Speak up only if one isn't done today and its streak would "
+                    "break, with a small way to still do it tonight.", "20:30", (), watch=True)),
+)
+STARTING_WATCHES = tuple((a, dict(i, days=list(i["days"]))) for a, i in _STARTING_WATCHES)
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
@@ -191,7 +216,8 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
              SECRETARY_PROMPT, (*CALENDAR, *REMINDERS, *MAIL, *MAPS, *WEB),
              routine_ideas=(_idea("Mail sweep", "Go through my unread mail: what needs an answer from me today, what "
                                   "can wait, and anything with a date to put in the calendar.", "09:00",
-                                  (1, 2, 3, 4, 5)),)),
+                                  (1, 2, 3, 4, 5)),
+                            *(i for a, i in _STARTING_WATCHES if a == "secretary"))),
     AgentDef("professor", "Professor", "Study and lectures", "#7A4FD0",
              ("Explain ", "Make me a study plan for "), PROFESSOR_PROMPT, WEB,
              routine_ideas=(_idea("Review what I studied", "Ask me what I studied this week, then quiz me on it with "
@@ -200,7 +226,8 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
              ("How did I sleep this week?", "Should I train hard today?"),
              COACH_PROMPT, (*HEALTH, *HABITS, *CALENDAR_READ, *WEB),
              routine_ideas=(_idea("Weekly recap", "Recap my sleep, training and habits for the week, and suggest one "
-                                  "thing for next week.", "18:00", (7,)),)),
+                                  "thing for next week.", "18:00", (7,)),
+                            *(i for a, i in _STARTING_WATCHES if a == "coach"))),
     AgentDef("finance", "Finance", "Money and budgets", "#B8921C",
              ("Help me set a monthly budget", "I spent "), FINANCE_PROMPT, WEB,
              routine_ideas=(_idea("Week's spending", "Ask me what I spent this week, then compare it with my budget "
@@ -222,6 +249,9 @@ _CONNECTORS = (
     ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
     ("team", "The team", ("ask_agent",), {"ask_agent"}),
 )
+
+# Tools that change something: refused while an agent runs a watch (plus cancel_queued, which changes the queue).
+WRITES = frozenset({*(t for *_, writes in _CONNECTORS for t in writes), "cancel_queued"})
 
 
 def connectors(tool_names: list[str]) -> list[dict]:

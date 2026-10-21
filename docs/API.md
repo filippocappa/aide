@@ -238,7 +238,7 @@ asking an agent ("every Sunday at 18 recap my week").
 ```json
 {"id": 3, "agent": "coach", "title": "Weekly recap",
  "prompt": "Recap my sleep, training and habits for the week, and suggest one thing for next week.",
- "time": "18:00", "days": [7], "enabled": true,
+ "time": "18:00", "days": [7], "enabled": true, "watch": false,
  "conversation_id": "c_7ab…", "next_run": "2026-10-25T18:00:00+02:00", "last_run": null}
 ```
 - `time` is `HH:MM` local (`AIDE_TIMEZONE`). `days` are ISO weekdays, 1 = Monday … 7 = Sunday; `[]` means every
@@ -252,10 +252,10 @@ asking an agent ("every Sunday at 18 recap my week").
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/routines` | `?agent=coach` (optional) | `{"routines": [ … ]}`, by agent order, then `time`. |
-| `POST /v1/routines` | `{"agent", "title", "prompt", "time", "days", "enabled"}` (`days` default `[]`, `enabled` default true) | the new routine. `400` for an unknown agent, a bad time or an empty prompt. |
-| `PATCH /v1/routines/{id}` | any of `title`, `prompt`, `time`, `days`, `enabled` | the routine. |
+| `POST /v1/routines` | `{"agent", "title", "prompt", "time", "days", "enabled", "watch"}` (`days` default `[]`, `enabled` default true, `watch` default false) | the new routine. `400` for an unknown agent, a bad time or an empty prompt. |
+| `PATCH /v1/routines/{id}` | any of `title`, `prompt`, `time`, `days`, `enabled`, `watch` | the routine. |
 | `DELETE /v1/routines/{id}` | | `{"ok": true}` |
-| `POST /v1/routines/{id}/run` | `{}` | runs it now, as a scheduled run would (also when disabled), and returns `{"routine": …, "conversation_id": "c_7ab…"}` once the message is posted. Can take 30 s. |
+| `POST /v1/routines/{id}/run` | `{}` | runs it now, as a scheduled run would (also when disabled), and returns `{"routine": …, "conversation_id": "c_7ab…", "spoke": true}` once the message is posted. `spoke` is false when a watch found nothing (nothing was posted). Can take 30 s. |
 
 - **Each run** posts the agent's reply in the routine's chat, then sends an alert push
   (`aide.kind: "message"`, `conversation_id`, title "Coach · Weekly recap", body the first line), with a Discord
@@ -270,6 +270,28 @@ asking an agent ("every Sunday at 18 recap my week").
   "days"}]`, offered by the app as one-tap starting points. E.g. Coach "Weekly recap" (Sun 18:00), Secretary
   "Mail sweep" (Mon–Fri 09:00), Professor "Review what I studied" (Sun 17:00), Finance "Week's spending" (Sun
   19:00), Aide "Plan my week" (Sun 20:00). Schedules are weekly patterns only; monthly can come later.
+  Each idea also has `watch` (see below).
+
+### Watches
+
+A watch is a routine with `"watch": true`: the agent checks on its own and speaks up only when something needs
+you (#13). A mail that needs an answer, with the reply drafted; a clash tomorrow; low recovery before a hard
+workout; a streak about to break.
+
+- **A run** looks with the agent's tools. If nothing needs you, or the agent already said so in that chat and
+  nothing changed, nothing is posted or pushed (`last_run` still moves on), and the chat's history keeps no trace
+  of it. Otherwise its note is posted and alerted like any routine's.
+- **Read-only.** During a watch run every tool that changes something is refused (calendar, reminders, mail,
+  habits, memory, routines, the queue), so nothing is ever queued while you're not looking. The note suggests and
+  drafts; you answer in that chat ("send it") and the usual confirmation follows.
+- **At most 3 watch notes a day** across all watches. After the third, the day's remaining scheduled checks are
+  skipped. `POST /v1/routines/{id}/run` always runs.
+- **The starting watches** are set up by the server once (deleting one doesn't bring it back; it stays among the
+  ideas): Secretary "Mail that needs you" (Mon–Fri 11:00) and "Tomorrow" (Sun–Thu 18:30), Coach "Recovery check"
+  (every day 09:00) and "Habits tonight" (every day 20:30). Professor and Finance have none yet: no data of
+  their own to watch.
+- **By chat.** `create_routine` and `update_routine` take `watch` ("Coach, keep an eye on my sleep").
+- A routine object without `watch` (an older server) is not a watch.
 
 ## Memory
 

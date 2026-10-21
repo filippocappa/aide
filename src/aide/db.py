@@ -81,7 +81,14 @@ CREATE TABLE IF NOT EXISTS routines (
     enabled         INTEGER NOT NULL DEFAULT 1,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id),
     since           TEXT NOT NULL,  -- UTC; only slots after this run (set on create and on schedule changes)
-    last_run        TEXT            -- UTC
+    last_run        TEXT,           -- UTC
+    watch           INTEGER NOT NULL DEFAULT 0  -- 1: posts only when something needs the user
+);
+
+-- Things the server does once per database, like setting up the starting watches.
+CREATE TABLE IF NOT EXISTS done_once (
+    name TEXT PRIMARY KEY,
+    at   TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -150,12 +157,20 @@ class Database:
             self.conn.execute("UPDATE pending_actions SET target = json_extract(args, '$.event_id')")
         if "conversation" not in columns:
             self.conn.execute("ALTER TABLE pending_actions ADD COLUMN conversation TEXT")
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(routines)")}
+        if "watch" not in columns:  # databases created before watches
+            self.conn.execute("ALTER TABLE routines ADD COLUMN watch INTEGER NOT NULL DEFAULT 0")
         # Discord and the app now share one conversation, keyed "main" instead of "discord".
         for table in ("conversations", "messages", "pending_actions"):
             self.conn.execute(f"UPDATE {table} SET channel = 'main' WHERE channel = 'discord'")
 
     def close(self) -> None:
         self.conn.close()
+
+    def once(self, name: str) -> bool:
+        """True the first time it's called with this name for this database, then never again."""
+        return self.conn.execute("INSERT OR IGNORE INTO done_once (name, at) VALUES (?, ?)",
+                                 (name, utcnow().isoformat())).rowcount > 0
 
     # -- conversations -----------------------------------------------------
 

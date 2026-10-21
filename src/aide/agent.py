@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 
-from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, check_agent, mentions
+from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WRITES, check_agent, mentions
 from .db import Database, utcnow
 from .routines import RoutineStore
 from .tools import Tool, ToolRegistry
@@ -85,6 +85,7 @@ class Agent:
         self._consulted: list[str] = []  # agents asked in the turn in progress
         self._team: list[dict] = []  # its team messages
         self._on_team: Callable[[dict], None] | None = None  # told about each one as it happens
+        self._watching = False  # the turn in progress is a watch: tools that change something are refused
         self._model = model  # model of the turn in progress; asked agents use it too
         self.model = model
         self.smart_model = smart_model or model
@@ -277,10 +278,12 @@ class Agent:
         """Reset the per-turn state. Called under the lock."""
         self._channel, self._conversation, self._model = channel, conversation, model
         self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
+        self._watching = False
 
-    async def run_routine(self, channel: str, routine: dict) -> tuple[str, int]:
+    async def run_routine(self, channel: str, routine: dict) -> tuple[str | None, int]:
         """One run of a routine: its agent answers the hidden prompt in the routine's chat, with that chat's history.
-        Returns the reply and how many actions it queued."""
+        Returns the reply and how many actions it queued. A watch that finds nothing returns (None, 0) and leaves
+        no trace in the chat, so its history holds only the notes it posted."""
         async with self._lock:
             conversation = routine["public_id"]
             conversation_id = self._resolve(channel, conversation)
@@ -288,10 +291,18 @@ class Agent:
             history = self.db.history(conversation_id)
             before = {a["id"] for a in self.db.pending_actions(channel, PENDING_TTL)}
             self._start(channel, conversation, model)
-            note = (f"{_ROUTINE} \"{routine['title']}\". The user set this up to run on a schedule and isn't in "
-                    "the chat right now: write the message they'll read here.]\n" + routine["prompt"])
+            if routine.get("watch"):
+                self._watching = True
+                note = (f"{_ROUTINE} \"{routine['title']}\", a watch. The user isn't in the chat: check, and reply "
+                        "NOTHING unless something needs them.]\n" + routine["prompt"])
+            else:
+                note = (f"{_ROUTINE} \"{routine['title']}\". The user set this up to run on a schedule and isn't in "
+                        "the chat right now: write the message they'll read here.]\n" + routine["prompt"])
             turn: list[dict] = [{"role": "user", "content": self._stamp(channel, note)}]
             reply = await self._run(routine["agent"], channel, model, history, turn)
+            if self._watching and _nothing(reply):
+                self.routines.mark_run(routine["id"])
+                return None, 0
             self.db.append_turn(conversation_id, "app", turn, _merge(self._attachments), list(self._consulted),
                                 list(self._team), {"id": routine["id"], "title": routine["title"]})
             self.routines.mark_run(routine["id"])
@@ -501,6 +512,8 @@ class Agent:
     async def _run_tool(self, agent: str, channel: str, name: str, args: dict) -> tuple[str, bool]:
         try:
             tool = self.registries[agent].get(name)  # an agent can only call its own tools
+            if self._watching and (tool.confirm or name in WRITES):
+                return "Not during a check: nothing can be changed now. Suggest it in your note instead.", True
             if not tool.confirm:
                 out, err = await self._execute(name, args, self.registries[agent])
                 if not err and getattr(out, "attachment", None):
@@ -546,6 +559,11 @@ _STAMP = re.compile(r"^\[[^\]]*\] ")
 _QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
 _OPENED = "[The user opened a new chat in the app"
 _ROUTINE = "[Scheduled routine"
+
+
+def _nothing(reply: str) -> bool:
+    """A watch's way of saying nothing needs the user: NOTHING, give or take punctuation and markdown."""
+    return reply.strip().strip(".*_`'\" ").upper() == "NOTHING"
 
 
 def _who(agent: str) -> str:
