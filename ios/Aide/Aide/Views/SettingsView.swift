@@ -163,7 +163,7 @@ struct SettingsView: View {
         } header: {
             Text("Notifications")
         } footer: {
-            Text("Aide sends digests and reminders that haven't reached Apple Reminders yet, and quietly syncs reminders in the background. Without push, they go to Discord.")
+            Text("Aide sends digests and reminders that haven't reached Apple Reminders yet, and quietly syncs reminders in the background.")
         }
     }
 

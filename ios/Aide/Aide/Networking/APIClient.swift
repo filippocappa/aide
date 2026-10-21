@@ -23,6 +23,8 @@ enum APIError: LocalizedError, Equatable {
 final class APIClient {
     private let config: () -> APIConfig?
     private let session: URLSession
+    /// Photos by id: what this app uploaded and what it fetched, so each is loaded once per launch.
+    private var photos: [String: Data] = [:]
 
     init(session: URLSession = .shared, config: @escaping () -> APIConfig?) {
         self.session = session
@@ -42,11 +44,12 @@ final class APIClient {
 
     /// The chat, streamed: `onTeam` gets each message Aide and the agents send each other while Aide works,
     /// `onText` each piece of the reply as it's written, true when the draft starts over (docs/API.md, "Chat").
-    /// A server without streaming answers plain JSON: same reply, nothing live.
-    func chatLive(_ text: String, conversationID: String? = nil,
+    /// A server without streaming answers plain JSON: same reply, nothing live. `photos` are uploaded ids.
+    func chatLive(_ text: String, photos: [String] = [], conversationID: String? = nil,
                   onText: @escaping @MainActor (String, Bool) -> Void = { _, _ in },
                   onTeam: @escaping @MainActor (TeamMessage) -> Void) async throws -> ChatReply {
-        let body = try JSONEncoder.api.encode(ChatRequest(text: text, conversationId: conversationID, stream: true))
+        let body = try JSONEncoder.api.encode(ChatRequest(text: text, conversationId: conversationID, stream: true,
+                                                          photos: photos.isEmpty ? nil : photos))
         return try await stream("/v1/chat", body: body, onEvent: { event in
             switch event {
             case .team(let message): onTeam(message)
@@ -167,6 +170,27 @@ final class APIClient {
         return reply.text
     }
 
+    /// Uploads a JPEG (docs/API.md, "Photos") and returns its id. It's kept here too, so it shows without a download.
+    func uploadPhoto(_ jpeg: Data) async throws -> String {
+        var req = try request("POST", "/v1/photos", query: [], auth: true, timeout: 60, body: nil)
+        req.httpBody = jpeg
+        req.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        let reply: PhotoUpload = try await perform(req)
+        photos[reply.id] = jpeg
+        return reply.id
+    }
+
+    /// A photo's bytes, from memory after the first time.
+    func photo(_ id: String) async throws -> Data {
+        if let data = photos[id] { return data }
+        var req = try request("GET", "/v1/photos/\(id)", query: [], auth: true, timeout: 30, body: nil)
+        req.setValue("image/*", forHTTPHeaderField: "Accept")
+        let (data, http) = try await fetch(req)
+        try check(data, http)
+        photos[id] = data
+        return data
+    }
+
     func deleteConversation(_ id: String) async throws {
         let _: OKResponse = try await send("DELETE", "/v1/conversations/\(id)", body: EmptyBody())
     }
@@ -215,6 +239,40 @@ final class APIClient {
 
     func updateHabit(_ id: Int, _ habit: HabitNew) async throws -> Habit {
         try await send("PATCH", "/v1/habits/\(id)", body: habit)
+    }
+
+    func food(date: Date? = nil) async throws -> FoodDay {
+        let query = date.map { [URLQueryItem(name: "date", value: Wire.dayString($0))] } ?? []
+        return try await send("GET", "/v1/food", query: query)
+    }
+
+    /// Oldest first, every day in the range.
+    func foodDays(from: Date, to: Date) async throws -> [FoodDaySummary] {
+        let list: FoodDayList = try await send("GET", "/v1/food/days", query: [
+            URLQueryItem(name: "from", value: Wire.dayString(from)), URLQueryItem(name: "to", value: Wire.dayString(to)),
+        ])
+        return list.days
+    }
+
+    /// Coach looks at the photos and logs the meal, which can take 30 s.
+    func logFood(_ request: FoodLogRequest) async throws -> FoodLogReply {
+        try await send("POST", "/v1/food/log", body: request, timeout: 120)
+    }
+
+    func updateMeal(_ id: Int, _ changes: MealChanges) async throws -> Meal {
+        try await send("PATCH", "/v1/food/meals/\(id)", body: changes)
+    }
+
+    func deleteMeal(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/food/meals/\(id)", body: EmptyBody())
+    }
+
+    func foodGoals() async throws -> FoodGoals {
+        try await send("GET", "/v1/food/goals")
+    }
+
+    func saveFoodGoals(_ goals: FoodGoals) async throws -> FoodGoals {
+        try await send("PUT", "/v1/food/goals", body: goals)
     }
 
     func uploadHealthDays(_ days: [HealthDay]) async throws -> HealthUploadResult {
@@ -281,6 +339,11 @@ final class APIClient {
     }
 
     private func perform<T: Decodable>(_ req: URLRequest) async throws -> T {
+        let (data, http) = try await fetch(req)
+        return try decode(data, http)
+    }
+
+    private func fetch(_ req: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
         do {
@@ -289,16 +352,20 @@ final class APIClient {
             throw APIError.transport(Self.describe(error))
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
-        return try decode(data, http)
+        return (data, http)
+    }
+
+    /// Throws the server's error for a status outside 2xx.
+    private func check(_ data: Data, _ http: HTTPURLResponse) throws {
+        guard !(200..<300).contains(http.statusCode) else { return }
+        if http.statusCode == 401 { throw APIError.unauthorized }
+        let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error
+            ?? "Server error (\(http.statusCode))."
+        throw APIError.server(status: http.statusCode, message: message)
     }
 
     private func decode<T: Decodable>(_ data: Data, _ http: HTTPURLResponse) throws -> T {
-        guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw APIError.unauthorized }
-            let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error
-                ?? "Server error (\(http.statusCode))."
-            throw APIError.server(status: http.statusCode, message: message)
-        }
+        try check(data, http)
         do {
             return try JSONDecoder.api.decode(T.self, from: data)
         } catch {

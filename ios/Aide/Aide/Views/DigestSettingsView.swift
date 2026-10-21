@@ -49,9 +49,6 @@ struct DigestSettingsView: View {
                         TimeRow(time: binding.monthly.time)
                     }
                 }
-                Section {
-                    Toggle("Also send to Discord", isOn: binding.discord)
-                }
             } else if error == nil {
                 ProgressView()
             }

@@ -13,6 +13,10 @@ struct ChatView: View {
     @State private var showRoutines = false
     @State private var showInfo = false
     @State private var justReplied = false
+    /// Photos to go with the next message, shrunk and ready.
+    @State private var photos: [PickedPhoto] = []
+    @State private var showCamera = false
+    @State private var showLibrary = false
     @FocusState private var composerFocused: Bool
 
     /// Pebble's expression follows what's happening (brand/README.md).
@@ -32,6 +36,8 @@ struct ChatView: View {
     private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending && !chat.isOpening && !chat.isLoadingHistory }
 
     private var replying: Bool { (chat.isSending || chat.isActing) && !voice.isActive }
+
+    private static let maxPhotos = 4
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -80,6 +86,9 @@ struct ChatView: View {
             UIApplication.shared.isIdleTimerDisabled = active // locking would cut off the microphone
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .photoSources(camera: $showCamera, library: $showLibrary, limit: Self.maxPhotos - photos.count) { picked in
+            photos = Array((photos + picked).prefix(Self.maxPhotos))
+        }
     }
 
     private static let voiceHeader: CGFloat = 330
@@ -267,10 +276,67 @@ struct ChatView: View {
         .buttonStyle(.plain)
     }
 
-    /// The message box: Talk starts a voice chat while it's empty, send once there's something to send.
+    /// The message box: Talk starts a voice chat while it's empty, send once there's something to send. Photos to
+    /// send sit above it.
     private var composer: some View {
-        MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused) {
-            if showsMic {
+        VStack(spacing: 0) {
+            if !photos.isEmpty { photoStrip }
+            MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused) {
+                attachMenu
+                sendOrTalk
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: photos)
+    }
+
+    /// Take a photo or pick some, up to four a message.
+    private var attachMenu: some View {
+        Menu {
+            if CameraPicker.isAvailable {
+                Button("Take photo", systemImage: "camera") { showCamera = true }
+            }
+            Button("Choose photos", systemImage: "photo.on.rectangle") { showLibrary = true }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 34, height: 34)
+                .background(Theme.chip, in: Circle())
+        }
+        .disabled(!settings.isConfigured || chat.isSending || photos.count >= Self.maxPhotos)
+        .accessibilityLabel("Add photos")
+    }
+
+    private var photoStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(photos) { photo in
+                    Image(uiImage: photo.preview)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(alignment: .topTrailing) {
+                            Button { photos.removeAll { $0.id == photo.id } } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 18))
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, .black.opacity(0.6))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(3)
+                            .accessibilityLabel("Remove photo")
+                        }
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
+        }
+    }
+
+    @ViewBuilder private var sendOrTalk: some View {
+        if showsMic {
                 Button { Task { await voice.toggle() } } label: {
                     Label("Talk", systemImage: voice.isActive ? "stop.fill" : "waveform")
                         .font(.subheadline.weight(.semibold))
@@ -283,23 +349,23 @@ struct ChatView: View {
                 .accessibilityLabel(voice.isActive ? "Stop voice chat" : "Talk to \(chat.agent.name)")
             } else {
                 SendButton(enabled: canSend) {
-                    let text = draft
+                    let text = draft, sending = photos
                     draft = ""
-                    Task { await chat.send(text) }
+                    photos = []
+                    Task { await chat.send(text, photos: sending) }
                 }
             }
-        }
     }
 
     /// An empty message box offers the microphone instead of send.
     private var showsMic: Bool {
         settings.isConfigured && !chat.isSending && !chat.isOpening
-            && (voice.isActive || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            && (voice.isActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && photos.isEmpty))
     }
 
     private var canSend: Bool {
         settings.isConfigured && !chat.isSending && !chat.isOpening
-            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty)
     }
 }
 
@@ -368,11 +434,16 @@ private struct MessageRow: View {
         if message.role == .user {
             HStack {
                 Spacer(minLength: 56)
-                Text(message.text.markdown)
-                    .textSelection(.enabled)
-                    .foregroundStyle(Theme.userBubbleText)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                VStack(alignment: .trailing, spacing: 6) {
+                    if !message.photos.isEmpty || !message.localPhotos.isEmpty { MessagePhotos(message: message) }
+                    if !message.text.isEmpty {
+                        Text(message.text.markdown)
+                            .textSelection(.enabled)
+                            .foregroundStyle(Theme.userBubbleText)
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }
+                }
             }
         } else {
             VStack(alignment: .leading, spacing: 10) {
@@ -410,7 +481,38 @@ private struct MessageRow: View {
     }
 }
 
-/// The reminders or events a reply was about, as a card: reminders tick off right here.
+/// The photos you sent with a message, above its text: one at its own shape, more as squares two by two.
+private struct MessagePhotos: View {
+    let message: ChatViewModel.Message
+
+    private static let width: CGFloat = 220
+
+    /// The ones sent from here show from memory; the rest come from the server.
+    private var items: [(id: String?, local: Data?)] {
+        message.localPhotos.isEmpty ? message.photos.map { ($0, nil) } : message.localPhotos.map { (nil, $0) }
+    }
+
+    var body: some View {
+        let items = items
+        if items.count == 1 {
+            ServerPhoto(id: items[0].id, local: items[0].local, fit: true)
+                .frame(maxWidth: Self.width, maxHeight: 300)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        } else {
+            let side = (Self.width - 4) / 2
+            LazyVGrid(columns: [GridItem(.fixed(side), spacing: 4), GridItem(.fixed(side), spacing: 4)], spacing: 4) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    ServerPhoto(id: item.id, local: item.local)
+                        .frame(width: side, height: side)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+            .frame(width: Self.width)
+        }
+    }
+}
+
+/// The reminders, events or meals a reply was about, as a card: reminders tick off right here.
 private struct AttachmentCard: View {
     let attachment: Attachment
 
@@ -421,6 +523,8 @@ private struct AttachmentCard: View {
             if !reminders.isEmpty { card { ReminderRows(reminders: reminders) } }
         case .events(let events):
             card { EventRows(events: events) }
+        case .meals(let meals):
+            if !meals.isEmpty { card { ForEach(meals) { MealRow(meal: $0) } } }
         case .unknown:
             EmptyView()
         }
