@@ -105,6 +105,8 @@ def main() -> None:
         tz=settings.timezone,
         server_fallback=not settings.openrouter_api_key,
     )
+    if added := agent.routines.add_starting_watches():
+        log.info("set up the starting watches: %s", ", ".join(r["title"] for r in added))
     bot = AideBot(agent, settings.discord_owner_id)
     digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail,
                            health, maps, settings.home_address)

@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -276,6 +277,127 @@ def test_prompts_explain_routines(env):
     assert all("[Scheduled routine" in agent._system(a)[0]["text"] for a in AGENTS)
     assert "for any of the specialists" in agent._system("aide")[0]["text"]
     assert "for any of the specialists" not in agent._system("coach")[0]["text"]
+
+
+# -- watches ---------------------------------------------------------------------
+
+WATCH = {"agent": "secretary", "title": "Mail that needs you", "prompt": "Check my mail.", "time": "11:00",
+         "days": [1, 2, 3, 4, 5], "watch": True}
+
+
+def test_a_watch_that_finds_nothing_posts_and_sends_nothing(env):
+    client, agent, _, push, dms = env([done("NOTHING.")])
+    r = client.post("/v1/routines", json=WATCH, headers=AUTH).json()
+    assert r["watch"] is True
+    body = client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH).json()
+    assert body["spoke"] is False and body["routine"]["last_run"]
+    assert "a watch" in str(agent.client.requests[0]["messages"])
+    history = client.get("/v1/history", params={"conversation_id": r["conversation_id"]}, headers=AUTH).json()
+    assert history["messages"] == [] and agent.db.history(agent.db.app_conversation(r["conversation_id"])["id"]) == []
+    assert push.sent == [] and dms == []
+
+
+def test_a_watch_that_finds_something_posts_and_pushes(env):
+    client, agent, _, push, _ = env([done("Marco asked about Friday.\nDraft: Friday works, see you at 10.")])
+    r = client.post("/v1/routines", json=WATCH, headers=AUTH).json()
+    body = client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH).json()
+    assert body["spoke"] is True
+    history = client.get("/v1/history", params={"conversation_id": r["conversation_id"]}, headers=AUTH).json()
+    assert [m["text"][:5] for m in history["messages"]] == ["Marco"]  # the check's prompt stays hidden
+    assert push.sent == [(r["conversation_id"], "Secretary · Mail that needs you", "Marco asked about Friday.")]
+
+
+def test_nothing_can_be_changed_during_a_watch(env):
+    client, agent, store, push, _ = env()
+    rem = store.create("Old errand", None)
+    agent.client.responses = [
+        calls(("delete_reminder", {"reminder_id": rem.id}), ("create_reminder", {"title": "New one"}),
+              ("list_reminders", {})),
+        done("One old errand you could drop."),
+    ]
+    r = client.post("/v1/routines", json=WATCH, headers=AUTH).json()
+    client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH)
+    results = agent.client.requests[1]["messages"][-1]["content"]
+    assert [x["is_error"] for x in results] == [True, True, False]
+    assert "Not during a check" in results[0]["content"]
+    assert agent.db.pending_actions("main", timedelta(minutes=30)) == []
+    assert [x.title for x in store.open()] == ["Old errand"]
+    assert push.sent[0][2] == "One old errand you could drop."  # no "waiting for your OK"
+    # An ordinary chat turn afterwards can change things again.
+    agent.client.responses = [calls(("create_reminder", {"title": "Call Marco"})), done("Added.")]
+    client.post("/v1/chat", json={"text": "remind me to call Marco"}, headers=AUTH)
+    assert "Call Marco" in [x.title for x in store.open()]
+
+
+def test_watches_stop_after_three_notes_a_day(env):
+    client, agent, *_ = env()
+    watches = [agent.routines.create(**{**WATCH, "title": f"Watch {i}", "days": []}) for i in range(4)]
+    agent.client.responses = [done(f"Note {i}.") for i in range(3)]
+    now = utcnow()
+    for w in watches[:3]:
+        agent.db.conn.execute("UPDATE routines SET since = ? WHERE id = ?",
+                              ((now - timedelta(days=2)).isoformat(), w["id"]))
+    assert agent.routines.watch_notes_today(now) == 0
+    for w in watches[:3]:
+        client.post(f"/v1/routines/{w['id']}/run", json={}, headers=AUTH)
+    assert agent.routines.watch_notes_today(now) == 3
+    agent.routines.create(**RECAP)  # an ordinary routine's posts don't count
+    assert agent.routines.watch_notes_today(now) == 3
+
+
+async def test_the_scheduler_skips_watches_over_the_cap(env, monkeypatch):
+    import aide.routines as routines
+    _, agent, _, push, _ = env([done("Note.")])
+    w = agent.routines.create(**{**WATCH, "days": []})
+    monkeypatch.setattr(routines.RoutineStore, "watch_notes_today", lambda self, now=None: routines.WATCH_CAP)
+    monkeypatch.setattr(routines.RoutineStore, "due", lambda self, now=None: [self.get(w["id"])])
+    monkeypatch.setattr(routines, "TICK", 0)
+    calls_before = len(agent.client.requests)
+    task = asyncio.create_task(routines.routine_schedule(agent, "main", push, None))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    assert len(agent.client.requests) == calls_before and push.sent == []
+    assert agent.routines.get(w["id"])["last_run"]
+
+
+def test_the_starting_watches_are_set_up_once(env):
+    client, agent, *_ = env()
+    added = agent.routines.add_starting_watches()
+    assert [(r["agent"], r["title"], r["watch"]) for r in added] == [
+        ("secretary", "Mail that needs you", True), ("secretary", "Tomorrow", True),
+        ("coach", "Recovery check", True), ("coach", "Habits tonight", True)]
+    client.delete(f"/v1/routines/{added[0]['id']}", headers=AUTH)
+    assert agent.routines.add_starting_watches() == []
+    assert len(client.get("/v1/routines", headers=AUTH).json()["routines"]) == 3
+    ideas = {a["id"]: a["routine_ideas"] for a in client.get("/v1/agents", headers=AUTH).json()["agents"]}
+    assert [i["title"] for i in ideas["secretary"] if i["watch"]] == ["Mail that needs you", "Tomorrow"]
+    assert not any(i["watch"] for i in ideas["finance"])
+
+
+def test_watch_round_trips_and_old_routines_are_not_watches(env):
+    client, *_ = env()
+    r = client.post("/v1/routines", json=RECAP, headers=AUTH).json()
+    assert r["watch"] is False
+    assert client.patch(f"/v1/routines/{r['id']}", json={"watch": True}, headers=AUTH).json()["watch"] is True
+
+
+async def test_an_agent_sets_up_a_watch_by_chat(env):
+    _, agent, *_ = env()
+    tools = {t.name: t for t in agent.registries["coach"]}
+    out = await tools["create_routine"].handler(title="Sleep watch", prompt="Check my sleep.", time="09:30",
+                                                days=[], watch=True)
+    assert "Sleep watch · watch · every day at 09:30" in out
+    assert all("NOTHING" in agent._system(a)[0]["text"] for a in AGENTS)
+
+
+def test_an_older_database_gets_the_watch_column(tmp_path):
+    path = tmp_path / "old.db"
+    Database(path).close()
+    old = sqlite3.connect(path)
+    old.executescript("ALTER TABLE routines DROP COLUMN watch;")
+    old.close()
+    db = Database(path)
+    assert "watch" in {r["name"] for r in db.conn.execute("PRAGMA table_info(routines)")}
 
 
 # -- older databases -------------------------------------------------------------

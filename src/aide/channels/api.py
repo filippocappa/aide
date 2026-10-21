@@ -52,6 +52,7 @@ class RoutineIn(BaseModel):
     time: str
     days: list[int] = []
     enabled: bool = True
+    watch: bool = False
 
 
 class RoutinePatch(BaseModel):
@@ -60,6 +61,7 @@ class RoutinePatch(BaseModel):
     time: str | None = None
     days: list[int] | None = None
     enabled: bool | None = None
+    watch: bool | None = None
 
 
 class ConversationIn(BaseModel):
@@ -342,8 +344,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/routines/{routine_id}/run", dependencies=[Depends(auth)])
     async def run_routine(routine_id: int):
         r = routine_or_404(routine_id)
-        await deliver(agent, CONVERSATION, r, push, notify)
-        return {"routine": routines.as_json(routines.get(routine_id)), "conversation_id": r["public_id"]}
+        reply = await deliver(agent, CONVERSATION, r, push, notify)
+        return {"routine": routines.as_json(routines.get(routine_id)), "conversation_id": r["public_id"],
+                "spoke": reply is not None}
 
     @app.get("/v1/conversations", dependencies=[Depends(auth)])
     async def conversations():
