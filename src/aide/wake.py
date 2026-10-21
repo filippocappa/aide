@@ -9,10 +9,10 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Awaitable, Callable
+from typing import Callable
 from zoneinfo import ZoneInfo
 
-from .digest import DigestService, to_text
+from .digest import DigestService
 from .health import HealthStore
 from .push import Push
 
@@ -24,13 +24,11 @@ WAIT = 600  # seconds to wait for last night's sleep
 
 
 class WakeService:
-    def __init__(self, digest: DigestService, health: HealthStore, tz: ZoneInfo,
-                 notify: Callable[[str], Awaitable[bool]] | None = None, push: Push | None = None,
+    def __init__(self, digest: DigestService, health: HealthStore, tz: ZoneInfo, push: Push | None = None,
                  clock: Callable[[], datetime] | None = None):
         self.digest = digest
         self.health = health
         self.tz = tz
-        self.notify = notify
         self.push = push
         self.now = clock or (lambda: datetime.now(tz))
         self._running: str | None = None  # local date of a briefing being made
@@ -101,9 +99,6 @@ class WakeService:
                     await self.push.send_digest("wake", digest["greeting"])
                 except Exception:
                     log.exception("wake-up push failed")
-            if self.notify and self.digest.settings()["discord"]:
-                if not await self.notify(to_text(digest["greeting"], digest["sections"], self.tz)):
-                    log.warning("wake-up briefing not sent to Discord; it's still in the app")
         except Exception:
             log.exception("wake-up briefing failed")  # not marked done: a later signal today tries again
         finally:

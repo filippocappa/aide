@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     apple_id    TEXT UNIQUE,                -- set once the reminder is on the phone
     modified_at TEXT NOT NULL,              -- last content change, either side (UTC)
     deleted     INTEGER NOT NULL DEFAULT 0, -- tombstone
-    notified    INTEGER NOT NULL DEFAULT 0, -- Discord fallback already sent
+    notified    INTEGER NOT NULL DEFAULT 0, -- the fallback push was already tried
     seq         INTEGER NOT NULL,           -- server change counter, for sync cursors
     list        TEXT                        -- the Apple Reminders list it's in, by name; NULL: the default one
 );
@@ -160,7 +160,7 @@ class ReminderStore:
     # -- writing -----------------------------------------------------------
 
     def _save(self, rem: Reminder) -> Reminder:
-        """Insert or replace, bumping seq. Clears the Discord-sent flag if the due time moved."""
+        """Insert or replace, bumping seq. Clears the fallback-tried flag if the due time moved."""
         old = self.get(rem.id)
         renotify = old is None or old.due_at != rem.due_at
         self.conn.execute(
@@ -259,10 +259,10 @@ class ReminderStore:
             final = replace(final, list=incoming.list)  # synced before lists: the phone says which one it's in
         return self._save(final) if final != current else current
 
-    # -- Discord fallback --------------------------------------------------
+    # -- fallback push, for reminders not on the phone ----------------------
 
     def unsynced_due(self, now: datetime) -> list[Reminder]:
-        """Due, open, never reached the phone, and not yet sent to Discord."""
+        """Due, open, never reached the phone, and no fallback push tried yet."""
         rows = self.conn.execute(
             "SELECT * FROM reminders WHERE completed = 0 AND deleted = 0 AND notified = 0 "
             "AND apple_id IS NULL AND due_at <= ? ORDER BY due_at",

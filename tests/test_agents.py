@@ -113,8 +113,9 @@ def test_agents_endpoint_matches_the_contract(env):
     assert [a["orchestrator"] for a in agents] == [True, False, False, False, False]
     coach = {k: v for k, v in agents[3].items() if k not in ("prompt", "tools", "connectors")}
     assert {**coach, "routine_ideas": coach["routine_ideas"][:1]} == {
-        "id": "coach", "name": "Coach", "role": "Sleep, training and habits", "color": "#23A26D",
-        "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?"],
+        "id": "coach", "name": "Coach", "role": "Sleep, training, food and habits", "color": "#23A26D",
+        "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?",
+                                            "What have I eaten today?"],
         "routine_ideas": [{"title": "Weekly recap", "prompt": AGENTS["coach"].routine_ideas[0]["prompt"],
                            "time": "18:00", "days": [7], "watch": False}]}
     assert [(i["title"], i["time"], i["days"], i["watch"]) for a in agents for i in a["routine_ideas"]] == [
@@ -213,14 +214,14 @@ def test_memory_api_takes_and_returns_the_agent(env):
     assert agent.db.memory_item(aide["id"])["agent"] is None
 
 
-def test_each_agent_sees_shared_memory_plus_its_own(env):
+def test_specialists_see_shared_memory_plus_their_own_and_aide_sees_all(env):
     _, agent, _ = env()
     agent.db.add_memory("Vegetarian")
     agent.db.add_memory("Marathon in April", "coach")
     agent.db.add_memory("Saving for a bike", "finance")
     aide = agent._system("aide")[-1]["text"]
     coach = agent._system("coach")[-1]["text"]
-    assert "Vegetarian" in aide and "Marathon" not in aide and "bike" not in aide
+    assert "] Vegetarian" in aide and "(Coach's) Marathon in April" in aide and "(Finance's) Saving for a bike" in aide
     assert "(shared) Vegetarian" in coach and "(yours) Marathon in April" in coach and "bike" not in coach
 
 
@@ -246,6 +247,15 @@ async def test_specialist_cannot_forget_another_agents_memory(env):
     forget = next(t for t in agent.registries["coach"] if t.name == "forget")
     with pytest.raises(KeyError):
         await forget.describe(memory_id=item["id"])
+    aide_forget = next(t for t in agent.registries["aide"] if t.name == "forget")
+    assert await aide_forget.describe(memory_id=item["id"]) == "Forget 'Saving for a bike'"
+
+
+async def test_aide_doesnt_save_what_a_specialist_already_knows(env):
+    _, agent, _ = env()
+    agent.db.add_memory("Business law is in Novoli", "secretary")
+    remember = next(t for t in agent.registries["aide"] if t.name == "remember")
+    assert (await remember.handler(text="Business law is in Novoli")).startswith("Already saved")
 
 
 # -- ask_agent -------------------------------------------------------------------

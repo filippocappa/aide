@@ -1,6 +1,5 @@
 from datetime import timedelta
 
-from aide.channels.discord_bot import split_message
 from aide.db import Database
 
 
@@ -15,17 +14,6 @@ def test_idle_conversation_rolls_over():
     first = db.current_conversation("discord", timedelta(hours=6))
     assert db.current_conversation("discord", timedelta(hours=6)) == first
     assert db.current_conversation("discord", timedelta(0)) != first
-
-
-def test_split_message_respects_limit():
-    text = ("word " * 30 + "\n\n") * 40
-    chunks = split_message(text, limit=200)
-    assert all(len(c) <= 200 for c in chunks)
-    assert "".join(chunks).replace("\n", "").replace(" ", "") == text.replace("\n", "").replace(" ", "")
-
-
-def test_split_message_hard_cuts_long_lines():
-    assert split_message("x" * 450, limit=200) == ["x" * 200, "x" * 200, "x" * 50]
 
 
 def test_migrates_pre_think_database(tmp_path):

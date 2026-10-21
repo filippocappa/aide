@@ -113,7 +113,7 @@ def test_today_lists_events_and_due_reminders(env):
     assert body["reminders"][1]["due_at"] == "2026-10-20T17:00:00+02:00"
 
 
-def test_shared_conversation_with_discord_key(env):
+def test_the_first_chat_is_the_default(env):
     client, agent, _ = env([done("hi")])
     client.post("/v1/chat", json={"text": "hello"}, headers=AUTH)
     assert [m["text"] for m in agent.visible_history(CONVERSATION)] == ["hello", "hi"]
@@ -123,16 +123,16 @@ def test_shared_conversation_with_discord_key(env):
 
 
 def test_conversations_list_includes_the_shared_one(env):
-    client, _, _ = env([done("hi from discord")])
+    client, _, _ = env([done("hi there")])
     client.post("/v1/chat", json={"text": "hello"}, headers=AUTH)
     rows = client.get("/v1/conversations", headers=AUTH).json()["conversations"]
-    assert [(r["id"], r["title"], r["preview"]) for r in rows] == [("main", "Discord", "hi from discord")]
+    assert [(r["id"], r["title"], r["preview"]) for r in rows] == [("main", "First chat", "hi there")]
     assert rows[0]["updated_at"].endswith(("+01:00", "+02:00"))
 
 
 def test_app_conversation_is_separate_and_gets_a_title(env):
     client, agent, _ = env([done("shared reply"), done("Friday 10:00 it is."), done("Dentist on Friday")])
-    client.post("/v1/chat", json={"text": "on discord"}, headers=AUTH)
+    client.post("/v1/chat", json={"text": "in the first chat"}, headers=AUTH)
     new = client.post("/v1/conversations", json={}, headers=AUTH).json()
     assert new["id"].startswith("c_") and new["title"] is None and new["preview"] is None
     body = client.post("/v1/chat", json={"text": "dentist friday 10", "conversation_id": new["id"]},
@@ -142,10 +142,10 @@ def test_app_conversation_is_separate_and_gets_a_title(env):
     app_msgs = client.get(f"/v1/history?conversation_id={new['id']}", headers=AUTH).json()["messages"]
     assert [m["text"] for m in app_msgs] == ["dentist friday 10", "Friday 10:00 it is."]
     shared = client.get("/v1/history", headers=AUTH).json()["messages"]
-    assert [m["text"] for m in shared] == ["on discord", "shared reply"]
+    assert [m["text"] for m in shared] == ["in the first chat", "shared reply"]
 
     rows = client.get("/v1/conversations", headers=AUTH).json()["conversations"]
-    assert [(r["id"], r["title"]) for r in rows] == [(new["id"], "Dentist on Friday"), ("main", "Discord")]
+    assert [(r["id"], r["title"]) for r in rows] == [(new["id"], "Dentist on Friday"), ("main", "First chat")]
 
 
 def test_title_falls_back_to_the_first_message(env):
@@ -192,7 +192,7 @@ def test_queue_is_global_and_results_go_to_the_chat_that_queued(env):
     cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
     body = client.post("/v1/chat", json={"text": "delete bins", "conversation_id": cid}, headers=AUTH).json()
     assert [p["summary"] for p in body["pending"]] == ["Delete reminder 'Bins'"]
-    assert agent.pending(CONVERSATION) == ["Delete reminder 'Bins'"]  # Discord sees it too
+    assert agent.pending(CONVERSATION) == ["Delete reminder 'Bins'"]  # the first chat sees it too
 
     assert client.post("/v1/confirm", json={}, headers=AUTH).json()["result"] == "✓ Deleted reminder: Bins"
     app_conv = agent.db.app_conversation(cid)["id"]
@@ -366,30 +366,6 @@ def test_bad_cursor_and_naive_time_are_400(env):
     assert r.status_code == 400 and "offset" in r.json()["error"]
 
 
-# -- Discord fallback ----------------------------------------------------------
-
-
-async def test_fallback_notifies_once_and_retries_failures(monkeypatch):
-    import asyncio
-    from aide import scheduler
-    db = Database(":memory:")
-    store = ReminderStore(db.conn)
-    store.create("Pills", datetime.now(timezone.utc) - timedelta(hours=1))
-    sent, results = [], [False, True]
-
-    async def notify(text):
-        sent.append(text)
-        return results.pop(0) if results else True
-
-    monkeypatch.setattr(scheduler, "TICK", 0)
-    task = asyncio.create_task(scheduler.reminder_fallback(store, notify, ROME))
-    for _ in range(20):
-        await asyncio.sleep(0)
-    task.cancel()
-    assert len(sent) == 2  # first DM failed, retried once, then marked sent
-    assert sent[0].startswith("⏰ Pills") and "late" in sent[0]
-
-
 # -- memory duplicates ---------------------------------------------------------
 
 
@@ -496,17 +472,6 @@ def test_listing_events_attaches_event_objects():
     assert body["attachments"] == [{"type": "events", "events": [{
         "id": "e1", "title": "Dentist", "calendar": "Home", "start": "2026-10-20T15:00:00+02:00",
         "end": "2026-10-20T16:00:00+02:00", "all_day": False, "location": "", "recurring": False}]}]
-
-
-def test_discord_gets_the_cards_as_a_list():
-    from aide.channels.discord_bot import with_cards
-    db = Database(":memory:")
-    store = ReminderStore(db.conn)
-    rem = store.create("Bins", datetime(2026, 10, 20, 9, tzinfo=ROME))
-    done_ = store.update(store.create("Milk").id, completed=True)
-    out = with_cards("Two.", [{"type": "reminders", "reminders": [reminder_json(rem, ROME), reminder_json(done_, ROME)]}])
-    assert out == "Two.\n\n**Reminders**\n• Tue 20 Oct 09:00 Bins\n• Milk ✓"
-    assert with_cards("hi", []) == "hi"
 
 
 def test_system_prompt_says_the_app_shows_cards(env):

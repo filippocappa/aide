@@ -1,9 +1,10 @@
 """Agent core: runs the Claude tool-use loop and owns conversation history.
 
-Knows nothing about Discord or iOS; channel adapters call `Agent.reply(channel, text)`.
+Knows nothing about iOS; the API calls `Agent.reply(channel, text)`.
 """
 
 import asyncio
+import base64
 import logging
 import re
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ import anthropic
 
 from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WRITES, check_agent, mentions
 from .db import Database, utcnow
+from .photos import PhotoStore
 from .routines import RoutineStore
 from .tools import Tool, ToolRegistry
 from .tools.memory import memory_tools
@@ -21,16 +23,18 @@ from .tools.routines import routine_tools
 
 log = logging.getLogger(__name__)
 
-# Discord and the iOS app share one conversation (and one confirmation queue).
+# The first chat, from before the app kept many (and one confirmation queue).
 # The app can also open its own chats; the queue stays global across all of them.
 CONVERSATION = "main"
-SHARED_TITLE = "Discord"
+SHARED_TITLE = "First chat"
 
 MAX_TOOL_ROUNDS = 12
 PENDING_TTL = timedelta(minutes=30)  # an unconfirmed action expires after this
 EPHEMERAL = {"type": "ephemeral"}
 
 MAX_ASKS = 3  # ask_agent calls per turn
+MAX_PHOTOS = 4  # per message
+SEEN_PHOTOS = 3  # the model sees a chat's latest photos as images; older ones only as their [Photo id] line
 TEAM = "team"  # the Team chat: recipient of what's said there, and the queue's tag for actions queued from it
 TEAM_CONTEXT = 30  # team messages an agent answering in the Team chat sees
 FOLLOW_UP = timedelta(minutes=30)  # a Team chat message without a mention goes to who answered the last one, this soon
@@ -46,7 +50,7 @@ class UnknownConversation(LookupError):
 
 class Turn(NamedTuple):
     reply: str
-    attachments: list[dict]  # cards: the reminders and events the turn's tools showed
+    attachments: list[dict]  # cards: the reminders, events and meals the turn's tools showed
     consulted: list[str]  # agents Aide asked, in order
     team: list[dict]  # what Aide and those agents said to each other: {from, to, text, ts (UTC)}
 
@@ -63,9 +67,11 @@ class Agent:
         idle: timedelta = timedelta(hours=6),
         tz: ZoneInfo = ZoneInfo("UTC"),
         server_fallback: bool = False,
+        photos: PhotoStore | None = None,
     ):
         self.client = client
         self.db = db
+        self.photos = photos
         self.routines = RoutineStore(db, tz)
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued.
         # The orchestrator's has every tool, so it also runs whatever any agent queued.
@@ -130,7 +136,7 @@ class Agent:
         for r in rows:
             internal = r.pop("internal")
             last = self._visible(internal)[-1:] if internal else []
-            r["preview"] = last[0]["text"] if last else None
+            r["preview"] = (last[0]["text"] or "Photo") if last else None
         return rows
 
     def new_conversation(self, opening: str | None = None, agent: str = ORCHESTRATOR) -> dict:
@@ -165,6 +171,10 @@ class Agent:
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
                 if text.startswith(_ROUTINE):
                     continue  # a routine's prompt: the user never sees it
+                if photos := _PHOTO.findall(text):
+                    out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
+                                "attachments": attachments, "consulted": consulted, "team": team})
+                    continue
             elif isinstance(content, str):
                 text = content
             else:
@@ -237,8 +247,12 @@ class Agent:
 
     async def respond(self, channel: str, text: str, conversation: str | None = None,
                       on_team: Callable[[dict], None] | None = None,
-                      on_text: Callable[[str, bool], None] | None = None) -> Turn:
+                      on_text: Callable[[str, bool], None] | None = None,
+                      photos: list[str] | tuple[str, ...] = ()) -> Turn:
         """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
+
+        `photos` are ids from the photo store, sent with the text (which may then be empty). The message stores a
+        [Photo id] line for each, and the model sees the latest ones as images (_with_photos).
 
         `on_team` gets each team message as it happens: an ask when Aide sends it, the answer when it's back.
         `on_text` gets the reply as it's written, piece by piece, and True with the first piece of a model round
@@ -251,7 +265,9 @@ class Agent:
             history = self.db.history(conversation_id)
             self._start(channel, conversation, model, on_team)
             agent = self.db.conversation_agent(conversation_id)
-            turn: list[dict] = [{"role": "user", "content": self._stamp(channel, text)}]
+            self.check_photos(photos)
+            body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
+            turn: list[dict] = [{"role": "user", "content": self._stamp(channel, body)}]
             try:
                 reply = await self._run(agent, channel, model, history, turn, on_text)
             finally:
@@ -263,6 +279,14 @@ class Agent:
             if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
                 self.db.set_conversation_title(conversation_id, await self._title(text, reply))
             return Turn(reply, attachments, consulted, team)
+
+    def check_photos(self, photos: list[str] | tuple[str, ...]) -> None:
+        """ValueError (a 400 in the API) unless every id is a stored photo."""
+        if len(photos) > MAX_PHOTOS:
+            raise ValueError(f"at most {MAX_PHOTOS} photos per message")
+        for p in photos:
+            if self.photos is None or not self.photos.exists(p):
+                raise ValueError(f"no photo {p}")
 
     def _stamp(self, channel: str, text: str) -> str:
         """Stamped so the model never reuses a stale time from earlier in the conversation,
@@ -396,7 +420,8 @@ class Agent:
 
     async def _title(self, text: str, reply: str) -> str:
         """A short name for a new app chat. Falls back to the start of the first message."""
-        fallback = text if len(text) <= 40 else text[:40].rsplit(" ", 1)[0] + "…"
+        text = text or "(sent a photo)"
+        fallback = "Photo" if text == "(sent a photo)" else text if len(text) <= 40 else text[:40].rsplit(" ", 1)[0] + "…"
         try:
             response = await self.client.beta.messages.create(
                 model=self.model,
@@ -478,18 +503,41 @@ class Agent:
             # Two cache breakpoints: tools + system, and the conversation so far.
             system=self._system(agent),
             tools=self.registries[agent].definitions(),
-            messages=_with_cache_breakpoint(messages),
+            messages=_with_cache_breakpoint(self._with_photos(messages)),
             output_config={"effort": self.effort},
             **extra,
         )
 
+    def _with_photos(self, messages: list[dict]) -> list[dict]:
+        """Copy of messages where the latest SEEN_PHOTOS photos are images, next to the [Photo id] lines that
+        name them. Stored history keeps only the lines."""
+        out, left = list(messages), SEEN_PHOTOS
+        for i in range(len(out) - 1, -1, -1):
+            if left == 0 or self.photos is None:
+                break
+            m = out[i]
+            if m["role"] != "user" or not isinstance(m["content"], str) or not (ids := _PHOTO.findall(m["content"])):
+                continue
+            images = []
+            for photo_id in ids[-left:]:
+                if loaded := self.photos.load(photo_id):
+                    data, media_type = loaded
+                    images.append({"type": "image", "source": {"type": "base64", "media_type": media_type,
+                                                               "data": base64.b64encode(data).decode()}})
+            left -= min(left, len(ids))
+            out[i] = {**m, "content": [*images, {"type": "text", "text": m["content"]}]}  # images first reads best
+        return out
+
     def _system(self, agent: str = ORCHESTRATOR) -> list[dict]:
         system = [{"type": "text", "text": AGENTS[agent].prompt, "cache_control": EPHEMERAL}]
-        if memories := self.db.memories(agent):
+        orchestrator = AGENTS[agent].orchestrator
+        if memories := self.db.memories(None if orchestrator else agent):
             # Its own cached block: it changes rarely, and the prompt above stays byte-stable.
-            # Aide sees only shared items; a specialist sees the shared ones plus its own, marked.
-            if AGENTS[agent].orchestrator:
-                lines = "\n".join(f"[{m['id']}] {m['text']}" for m in reversed(memories))
+            # Aide sees everything, each specialist's items marked; a specialist sees the shared ones plus its own.
+            if orchestrator:
+                lines = "\n".join(f"[{m['id']}] {m['text']}" if m["agent"] is None else
+                                  f"[{m['id']}] ({AGENTS[m['agent']].name}'s) {m['text']}"
+                                  for m in reversed(memories) if m["agent"] is None or m["agent"] in AGENTS)
             else:
                 lines = "\n".join(f"[{m['id']}] ({'shared' if m['agent'] is None else 'yours'}) {m['text']}"
                                   for m in reversed(memories))
@@ -546,7 +594,7 @@ def _merge(attachments: list[dict]) -> list[dict]:
     """One attachment per type, in the order first shown; an item shown twice keeps its place and latest state."""
     merged: dict[str, dict[str, dict]] = {}
     for a in attachments:
-        key = {"reminders": "reminders", "events": "events"}.get(a["type"])
+        key = {"reminders": "reminders", "events": "events", "meals": "meals"}.get(a["type"])
         if key is None:
             continue
         items = merged.setdefault(a["type"], {})
@@ -556,6 +604,7 @@ def _merge(attachments: list[dict]) -> list[dict]:
 
 
 _STAMP = re.compile(r"^\[[^\]]*\] ")
+_PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
 _QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
 _OPENED = "[The user opened a new chat in the app"
 _ROUTINE = "[Scheduled routine"

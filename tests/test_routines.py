@@ -34,13 +34,9 @@ def env():
     def make(responses=(), push_works=True):
         agent = Agent(FakeClient(responses), db, ToolRegistry([*reminder_tools(store, ROME), *OTHERS]),
                       model="m", tz=ROME)
-        push, dms = FakePush(push_works), []
-
-        async def notify(text):
-            dms.append(text)
-            return True
-        client = TestClient(create_app(agent, store, None, ROME, "t", push=push, notify=notify))
-        return client, agent, store, push, dms
+        push = FakePush(push_works)
+        client = TestClient(create_app(agent, store, None, ROME, "t", push=push))
+        return client, agent, store, push
     yield make
     db.close()
 
@@ -165,7 +161,7 @@ def test_a_new_or_rescheduled_routine_does_not_run_for_a_slot_already_past(env):
 
 
 def test_a_run_posts_in_the_chat_and_pushes(env):
-    client, agent, _, push, dms = env([done("Good week: 4 of 5 sessions.\nMore sleep next week."),
+    client, agent, _, push = env([done("Good week: 4 of 5 sessions.\nMore sleep next week."),
                                        done("Better than last week.")])
     r = client.post("/v1/routines", json=RECAP, headers=AUTH).json()
     body = client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH).json()
@@ -178,7 +174,6 @@ def test_a_run_posts_in_the_chat_and_pushes(env):
     assert [(m["role"], m.get("routine")) for m in history["messages"]] == [
         ("assistant", {"id": r["id"], "title": "Weekly recap"})]  # the prompt stays hidden
     assert push.sent == [(r["conversation_id"], "Coach · Weekly recap", "Good week: 4 of 5 sessions.")]
-    assert dms == []
     assert conversations(client)[r["conversation_id"]]["preview"].startswith("Good week")
 
     client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH)  # the next run sees the chat so far
@@ -198,7 +193,7 @@ def test_a_disabled_routine_still_runs_on_request(env):
 
 
 def test_queued_actions_wait_and_the_push_says_so(env):
-    client, agent, store, push, _ = env()
+    client, agent, store, push = env()
     rem = store.create("Old errand", None)
     agent.client.responses = [calls(("delete_reminder", {"reminder_id": rem.id})), done("Cleared one old errand.")]
     r = client.post("/v1/routines", json={**RECAP, "agent": "secretary", "title": "Tidy up"}, headers=AUTH).json()
@@ -209,16 +204,11 @@ def test_queued_actions_wait_and_the_push_says_so(env):
     assert store.get(rem.id).deleted
 
 
-async def test_discord_is_the_fallback(env):
-    _, agent, _, push, dms = env([done("Recap.\nDetails.")], push_works=False)
+async def test_a_routine_whose_push_fails_stays_in_its_chat(env):
+    _, agent, _, push = env([done("Recap.\nDetails.")], push_works=False)
     r = agent.routines.create(**RECAP)
-    await deliver(agent, "main", r, push, lambda text: _append(dms, text))
-    assert len(push.sent) == 1 and dms == ["**Coach · Weekly recap**\nRecap.\nDetails."]
-
-
-async def _append(dms, text):
-    dms.append(text)
-    return True
+    assert await deliver(agent, "main", r, push) == "Recap.\nDetails."
+    assert len(push.sent) == 1 and agent.routines.get(r["id"])["last_run"]
 
 
 # -- by chat ---------------------------------------------------------------------
@@ -286,7 +276,7 @@ WATCH = {"agent": "secretary", "title": "Mail that needs you", "prompt": "Check 
 
 
 def test_a_watch_that_finds_nothing_posts_and_sends_nothing(env):
-    client, agent, _, push, dms = env([done("NOTHING.")])
+    client, agent, _, push = env([done("NOTHING.")])
     r = client.post("/v1/routines", json=WATCH, headers=AUTH).json()
     assert r["watch"] is True
     body = client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH).json()
@@ -294,11 +284,11 @@ def test_a_watch_that_finds_nothing_posts_and_sends_nothing(env):
     assert "a watch" in str(agent.client.requests[0]["messages"])
     history = client.get("/v1/history", params={"conversation_id": r["conversation_id"]}, headers=AUTH).json()
     assert history["messages"] == [] and agent.db.history(agent.db.app_conversation(r["conversation_id"])["id"]) == []
-    assert push.sent == [] and dms == []
+    assert push.sent == []
 
 
 def test_a_watch_that_finds_something_posts_and_pushes(env):
-    client, agent, _, push, _ = env([done("Marco asked about Friday.\nDraft: Friday works, see you at 10.")])
+    client, agent, _, push = env([done("Marco asked about Friday.\nDraft: Friday works, see you at 10.")])
     r = client.post("/v1/routines", json=WATCH, headers=AUTH).json()
     body = client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH).json()
     assert body["spoke"] is True
@@ -308,7 +298,7 @@ def test_a_watch_that_finds_something_posts_and_pushes(env):
 
 
 def test_nothing_can_be_changed_during_a_watch(env):
-    client, agent, store, push, _ = env()
+    client, agent, store, push = env()
     rem = store.create("Old errand", None)
     agent.client.responses = [
         calls(("delete_reminder", {"reminder_id": rem.id}), ("create_reminder", {"title": "New one"}),
@@ -347,13 +337,13 @@ def test_watches_stop_after_three_notes_a_day(env):
 
 async def test_the_scheduler_skips_watches_over_the_cap(env, monkeypatch):
     import aide.routines as routines
-    _, agent, _, push, _ = env([done("Note.")])
+    _, agent, _, push = env([done("Note.")])
     w = agent.routines.create(**{**WATCH, "days": []})
     monkeypatch.setattr(routines.RoutineStore, "watch_notes_today", lambda self, now=None: routines.WATCH_CAP)
     monkeypatch.setattr(routines.RoutineStore, "due", lambda self, now=None: [self.get(w["id"])])
     monkeypatch.setattr(routines, "TICK", 0)
     calls_before = len(agent.client.requests)
-    task = asyncio.create_task(routines.routine_schedule(agent, "main", push, None))
+    task = asyncio.create_task(routines.routine_schedule(agent, "main", push))
     await asyncio.sleep(0.05)
     task.cancel()
     assert len(agent.client.requests) == calls_before and push.sent == []

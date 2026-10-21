@@ -68,7 +68,7 @@ def world():
     db = Database(":memory:")
     store, habits, health = ReminderStore(db.conn), HabitStore(db.conn, ROME), HealthStore(db.conn, ROME)
 
-    def make(responses=(), events=(), maps=None, clock=lambda: MORNING, notify=None):
+    def make(responses=(), events=(), maps=None, clock=lambda: MORNING):
         client = FakeClient(responses)
         client.requests = []
         create = client.beta.messages.create
@@ -81,7 +81,7 @@ def world():
         digest = DigestService(db.conn, client, "m", ROME, store, habits, cal, None, health, maps,
                                "Via Roma 1, Milano" if maps else None)
         push = Push()
-        wake = WakeService(digest, health, ROME, notify, push, clock)
+        wake = WakeService(digest, health, ROME, push, clock)
         agent = Agent(client, db, ToolRegistry([]), model="m", tz=ROME)
         app = create_app(agent, store, cal, ROME, TOKEN, habits, digest, health=health, wake=wake)
         return SimpleNamespace(db=db, http=TestClient(app), app=app, digest=digest, wake=wake, push=push, model=client,
@@ -223,7 +223,7 @@ def test_wake_setting(world):
     old_app = {k: v for k, v in DEFAULT_SETTINGS.items() if k not in ("wake", "evening")}
     assert w.http.put("/v1/digest/settings", json=old_app, headers=AUTH).json()["wake"] == {"enabled": False}
     assert list(w.http.get("/v1/digest/settings", headers=AUTH).json()) == [
-        "daily", "wake", "evening", "weekly", "monthly", "discord"]
+        "daily", "wake", "evening", "weekly", "monthly"]
 
 
 # -- the wake-up briefing ----------------------------------------------------------
@@ -254,14 +254,8 @@ async def test_wake_signal_rules(world):
 async def test_wake_greeting_knows_time_sleep_and_when_to_leave(world):
     lecture = MORNING.replace(hour=9, minute=30)
     maps = Maps(walk=23, transit=15)
-    sent = []
-
-    async def notify(text):
-        sent.append(text)
-        return True
-
     w = world([done("Morning.\n---\n- x")], [CalEvent("e1", "Uni", "Lecture", lecture, lecture + timedelta(hours=2),
-                                                      "Città Studi")], maps, notify=notify)
+                                                      "Città Studi")], maps)
     history(w.health, 14)
     w.health.save([night(TODAY, 400, hrv_ms=61.5, resting_hr=52)])
     assert w.wake.signal(MORNING.replace(minute=10))[0]
@@ -277,7 +271,7 @@ async def test_wake_greeting_knows_time_sleep_and_when_to_leave(world):
                     "travelMode": "WALK"}
     arrive = datetime.fromisoformat(transit["arrivalTime"].replace("Z", "+00:00")).astimezone(ROME)
     assert transit["travelMode"] == "TRANSIT" and arrive == lecture - timedelta(minutes=10)
-    assert sent and sent[0].startswith("**Morning.**")
+    assert w.push.sent == [("wake", "Morning.")]
     d = w.digest.latest("wake")
     assert [s["type"] for s in d["sections"]][:2] == ["sleep", "recovery"]
 

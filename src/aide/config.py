@@ -18,8 +18,6 @@ class Settings:
     # Exactly one of these is set: OpenRouter takes priority if both are.
     openrouter_api_key: str | None
     anthropic_api_key: str | None
-    discord_token: str
-    discord_owner_id: int
     timezone: ZoneInfo
     db_path: Path
     model: str
@@ -63,8 +61,6 @@ def load_settings() -> Settings:
     return Settings(
         openrouter_api_key=openrouter_key,
         anthropic_api_key=None if openrouter_key else anthropic_key,
-        discord_token=_required("DISCORD_TOKEN"),
-        discord_owner_id=int(_required("DISCORD_OWNER_ID")),
         timezone=ZoneInfo(os.environ.get("AIDE_TIMEZONE", "UTC")),
         db_path=Path(os.environ.get("AIDE_DB_PATH", "./data/aide.db")),
         model=os.environ.get("AIDE_MODEL") or haiku,
