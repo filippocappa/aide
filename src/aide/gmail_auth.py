@@ -12,7 +12,6 @@ import argparse
 import base64
 import hashlib
 import os
-import re
 import secrets
 import sys
 import threading
@@ -24,6 +23,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+from .config import save_env as _save
 from .gmail import API, SCOPES, TOKEN_URL
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -57,16 +57,6 @@ def _wait_for_redirect(port: int) -> str:
     finally:
         server.shutdown()
     return got["url"]
-
-
-def _save(env_path: Path, key: str, value: str) -> None:
-    """Set key=value in the env file, replacing an existing line, keeping everything else."""
-    text = env_path.read_text() if env_path.exists() else ""
-    line = f"{key}={value}"
-    pattern = re.compile(rf"^{re.escape(key)}=.*$", re.M)
-    text = pattern.sub(lambda _: line, text) if pattern.search(text) else text.rstrip("\n") + f"\n{line}\n"
-    env_path.write_text(text)
-    env_path.chmod(0o600)
 
 
 def main() -> None:

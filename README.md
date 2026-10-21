@@ -149,6 +149,13 @@ plugin, over Tailscale. Pages you edit in Obsidian are yours: Aide doesn't touch
 devices too. To rebuild Aide's pages, delete `Aide/` and the `vault_files` rows (else Aide takes them for pages you
 deleted, and leaves them gone).
 
+## Moodle
+
+Course PDFs from the university's Moodle, every 4 hours (docs/API.md, "Moodle"). Set `AIDE_MOODLE_URL` in `.env`
+(UniTo: `https://elearning.unito.it/sme`), restart, then log in from the app (Study → Moodle): it's the university's
+own login page, so the password stays with you; the server keeps only Moodle's token, as `MOODLE_TOKEN` in `.env`.
+Logging out in the app removes it.
+
 ## Tests
 
 ```
