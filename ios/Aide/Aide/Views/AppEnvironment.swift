@@ -14,6 +14,8 @@ final class AppEnvironment: ObservableObject {
     let push: PushService
     let health: HealthService
     let voice = VoiceController()
+    /// The Moodle screen as a sheet, from a `moodle` notification.
+    @Published var showMoodle = false
 
     private init() {
         let settings = AppSettings()
@@ -90,6 +92,8 @@ final class AppEnvironment: ObservableObject {
             await chat.startNewChat(digest: kind)
         case .conversation(let id):
             await chat.open(id: id)
+        case .moodle:
+            showMoodle = true
         }
     }
 
