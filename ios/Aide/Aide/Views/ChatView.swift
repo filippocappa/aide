@@ -12,6 +12,7 @@ struct ChatView: View {
     @State private var pastChoice: PastChatsSheet.Choice?
     @State private var showRoutines = false
     @State private var showInfo = false
+    @State private var showPractice = false
     @State private var justReplied = false
     /// Photos to go with the next message, shrunk and ready.
     @State private var photos: [PickedPhoto] = []
@@ -73,6 +74,11 @@ struct ChatView: View {
         .toolbar(.hidden, for: .navigationBar) // Pebble and its buttons are the header
         .toolbar(.hidden, for: .tabBar) // a chat has the whole screen
         .sheet(isPresented: $showInfo) { AgentInfoSheet(agent: chat.agent) }
+        .fullScreenCover(isPresented: $showPractice, onDismiss: {
+            Task { await chat.loadHistory() } // Professor's note on the result
+        }) {
+            if let course = chat.course { PracticeExamView(course: course.id, courseName: course.name) }
+        }
         .sheet(isPresented: $showPastChats, onDismiss: {
             guard let picked = pastChoice else { return }
             pastChoice = nil
@@ -139,6 +145,9 @@ struct ChatView: View {
                 Button("New chat", systemImage: "square.and.pencil") { Task { await chat.startChat(with: chat.agent) } }
                 Button("Past chats", systemImage: "clock") { showPastChats = true }
                 Button("Routines", systemImage: "alarm") { showRoutines = true }
+                if chat.course != nil {
+                    Button("Practice exam", systemImage: "checklist") { showPractice = true }
+                }
                 Button("Think harder", systemImage: "brain") { Task { await chat.think() } }
                 Button("About \(chat.agent.name)", systemImage: "info.circle") { showInfo = true }
             } label: {
