@@ -175,6 +175,9 @@ Repetition cards. Every write is proposed in the course's Professor chat first; 
 the outline and merged into the user's latest version, edits in Obsidian included. Sonnet writes, Haiku triages
 and checks the answer keys. App: Moodle and Obsidian setup in Settings, a progress card in the chat while notes
 are written. Live on macroeconomics (11 topics, 25 figures).
+Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's checked MCQs, no model call, missed
+questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
+result in the chat.
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
@@ -182,9 +185,8 @@ are written. Live on macroeconomics (11 topics, 25 figures).
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
 2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
    a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
-3. Exam mode (#4): timed MCQ practice from the notebooks, scored like the real exam. Then a Study tab in the
-   app (notebook pages, proposals with buttons, adding recordings and PDFs). Finance still has no data source
-   (memory only).
+3. The rest of #4: quizzes by voice, review sessions on the calendar. A Study tab in the app (notebook pages,
+   proposals with buttons, adding recordings and PDFs). Finance still has no data source (memory only).
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
