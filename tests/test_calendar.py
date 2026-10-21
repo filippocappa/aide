@@ -131,7 +131,7 @@ class FakeClient:
 
 def agent_with(tools, responses):
     db = Database(":memory:")
-    return Agent(FakeClient(responses), db, tools, model="m"), db
+    return Agent(FakeClient(responses), db, tools, model="m", delegate=False), db
 
 
 def call(name, **input):

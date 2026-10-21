@@ -55,7 +55,7 @@ def env():
     db = Database(":memory:")
     store = ReminderStore(db.conn)
     def make(responses=(), events=()):
-        agent = Agent(FakeClient(responses), db, ToolRegistry(reminder_tools(store, ROME)), model="m", tz=ROME)
+        agent = Agent(FakeClient(responses), db, ToolRegistry(reminder_tools(store, ROME)), model="m", delegate=False, tz=ROME)
         app = create_app(agent, store, FakeCalendar(list(events)), ROME, TOKEN)
         return TestClient(app), agent, store
     yield make
@@ -466,7 +466,7 @@ def test_listing_events_attaches_event_objects():
             return ["Home"]
     tools = ToolRegistry(calendar_tools(Cal([ev]), ROME))
     agent = Agent(FakeClient([call("list_events", start_date="2026-10-20", end_date="2026-10-20"), done("One.")]),
-                  db, tools, model="m", tz=ROME)
+                  db, tools, model="m", delegate=False, tz=ROME)
     app = create_app(agent, ReminderStore(db.conn), Cal([ev]), ROME, TOKEN)
     body = TestClient(app).post("/v1/chat", json={"text": "tuesday?"}, headers=AUTH).json()
     assert body["attachments"] == [{"type": "events", "events": [{

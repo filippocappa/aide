@@ -68,28 +68,33 @@ class Agent:
         tz: ZoneInfo = ZoneInfo("UTC"),
         server_fallback: bool = False,
         photos: PhotoStore | None = None,
+        delegate: bool = True,
     ):
         self.client = client
         self.db = db
         self.photos = photos
         self.routines = RoutineStore(db, tz)
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued.
-        # The orchestrator's has every tool, so it also runs whatever any agent queued.
+        # Aide delegates: it has only its own few tools and ask_agent, and the specialists do the work.
+        # (delegate=False gives it every tool, as before; the tests use that to drive tools through Aide.)
         cancel = self._cancel_tool()
         self.registries: dict[str, ToolRegistry] = {}
         for a in AGENTS.values():
-            allowed = None if a.tools is None else {*a.tools, *COMMON_TOOLS}
+            allowed = None if a.orchestrator and not delegate else {*a.tools, *COMMON_TOOLS}
             own = [t for t in tools if allowed is None or t.name in allowed]
             extra = [self._ask_tool()] if a.orchestrator else []
             self.registries[a.id] = ToolRegistry(
                 [*own, *memory_tools(db, a.id, scoped=not a.orchestrator),
                  *routine_tools(self.routines, a.id, any_agent=a.orchestrator), cancel, *extra])
-        self.tools = self.registries[ORCHESTRATOR]
+        # Every tool, to run whatever any agent queued once the user confirms.
+        self.tools = ToolRegistry([*tools, *memory_tools(db, ORCHESTRATOR, scoped=False),
+                                   *routine_tools(self.routines, ORCHESTRATOR, any_agent=True), cancel])
         self._channel = ""  # channel of the turn in progress; set under the lock
         self._conversation: str | None = None  # app chat of the turn in progress, None for the shared one
         self._attachments: list[dict] = []  # cards from the turn in progress
         self._consulted: list[str] = []  # agents asked in the turn in progress
         self._team: list[dict] = []  # its team messages
+        self._photos: tuple[str, ...] = ()  # photos the user sent with the turn in progress; asked agents see them
         self._on_team: Callable[[dict], None] | None = None  # told about each one as it happens
         self._watching = False  # the turn in progress is a watch: tools that change something are refused
         self._model = model  # model of the turn in progress; asked agents use it too
@@ -264,6 +269,7 @@ class Agent:
             model = self.db.conversation_model(conversation_id) or self.model
             history = self.db.history(conversation_id)
             self._start(channel, conversation, model, on_team)
+            self._photos = tuple(photos)
             agent = self.db.conversation_agent(conversation_id)
             self.check_photos(photos)
             body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
@@ -302,7 +308,7 @@ class Agent:
         """Reset the per-turn state. Called under the lock."""
         self._channel, self._conversation, self._model = channel, conversation, model
         self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
-        self._watching = False
+        self._watching, self._photos = False, ()
 
     async def run_routine(self, channel: str, routine: dict) -> tuple[str | None, int]:
         """One run of a routine: its agent answers the hidden prompt in the routine's chat, with that chat's history.
@@ -400,8 +406,10 @@ class Agent:
                 raise ValueError(f"already asked {MAX_ASKS} times this turn; answer with what you have")
             self._consulted.append(agent)  # before any await, so parallel asks keep their order
             self._say(ORCHESTRATOR, agent, request)
-            # One stateless turn: the specialist sees only the request, and nothing is stored in its chats.
-            turn = [{"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] [Asked by Aide] {request}"}]
+            # One stateless turn: the specialist sees only the request (and the turn's photos), and nothing is
+            # stored in its chats.
+            photos = "".join(f"\n[Photo {p}]" for p in self._photos)
+            turn = [{"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] [Asked by Aide] {request}{photos}"}]
             answer = await self._run(agent, self._channel, self._model, [], turn)
             self._say(agent, ORCHESTRATOR, answer)
             return f"{AGENTS[agent].name} answered:\n{answer}"
@@ -409,8 +417,9 @@ class Agent:
         names = "; ".join(f"{a}: {AGENTS[a].role.lower()}" for a in SPECIALISTS)
         return Tool(
             "ask_agent",
-            f"Ask one of your specialists ({names}) and get their answer back. They don't see this chat: put "
-            "the question and all the context they need into request. Actions they queue join the usual queue. "
+            f"Hand work to one of your specialists ({names}) and get their answer back. They don't see this chat: "
+            "put what the user wants and all the context they need into request (they do see the photos the user "
+            "sent with this message). Actions they queue join the usual queue. "
             f"At most {MAX_ASKS} asks per turn.",
             {"type": "object", "properties": {"agent": {"type": "string", "enum": list(SPECIALISTS)},
                                               "request": {"type": "string"}},

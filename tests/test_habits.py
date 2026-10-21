@@ -42,7 +42,7 @@ def api():
     db = Database(":memory:")
     habits = HabitStore(db.conn, ROME)
     def make(responses=()):
-        agent = Agent(FakeClient(responses), db, ToolRegistry(habit_tools(habits)), model="m", tz=ROME)
+        agent = Agent(FakeClient(responses), db, ToolRegistry(habit_tools(habits)), model="m", delegate=False, tz=ROME)
         app = create_app(agent, ReminderStore(db.conn), FakeCalendar([]), ROME, TOKEN, habits)
         return TestClient(app), agent, habits
     yield make

@@ -140,8 +140,11 @@ def test_each_agent_has_its_own_stable_prompt(env):
 def test_tool_sets_follow_the_table(env):
     _, agent, _ = env()
     names = {a: {t.name for t in agent.registries[a]} for a in AGENTS}
-    assert names["aide"] >= {"health", "create_event", "send_mail", "create_reminder", "ask_agent", "remember"}
     routines = {"list_routines", "create_routine", "update_routine", "delete_routine"}
+    # Aide delegates: besides the common tools, only the web, maps and ask_agent.
+    assert names["aide"] == {"web_search", "fetch_page", "find_places", "ask_agent", "get_current_time", "remember",
+                             "forget", "cancel_queued", *routines}
+    assert {t.name for t in agent.tools} >= {"create_reminder", "health", "send_mail", "create_event"}  # runs the queue
     assert names["coach"] == {"health", "list_habits", "list_events", "web_search", "fetch_page",
                               "get_current_time", "remember", "forget", "cancel_queued", *routines}
     assert names["professor"] == names["finance"] == {"web_search", "fetch_page", "get_current_time", "remember",
@@ -299,8 +302,24 @@ def test_a_specialists_cards_and_queued_actions_join_aides_turn(env):
     assert [r["id"] for r in body["attachments"][0]["reminders"]] == [rem.id]
     assert len(body["pending"]) == 1 and "Bins" in body["pending"][0]["summary"]
     assert store.get(rem.id) is not None  # not yet
-    client.post("/v1/confirm", json={}, headers=AUTH)
+    client.post("/v1/confirm", json={}, headers=AUTH)  # Aide hasn't the tool, but the confirmation still runs it
     assert store.get(rem.id).deleted
+
+
+def test_the_users_photos_go_along_to_the_asked_agent(env, tmp_path):
+    from aide.photos import PhotoStore
+    _, agent, _ = env()
+    agent.photos = PhotoStore(tmp_path)
+    photo = agent.photos.save(b"\xff\xd8jpeg", "image/jpeg")
+    agent.client.responses = [
+        calls(("ask_agent", {"agent": "coach", "request": "Log the meal in the photo"})),
+        done("Pasta, about 650 kcal."),
+        done("Coach logged it: pasta, about 650 kcal."),
+    ]
+    client = TestClient(create_app(agent, ReminderStore(agent.db.conn), None, ROME, "t"))
+    client.post("/v1/chat", json={"text": "lunch", "photos": [photo]}, headers=AUTH)
+    asked = agent.client.requests[1]["messages"][-1]["content"]
+    assert asked[0]["type"] == "image" and f"[Photo {photo}]" in asked[1]["text"]
 
 
 def test_at_most_three_asks_per_turn(env):

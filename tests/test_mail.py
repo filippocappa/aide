@@ -191,7 +191,7 @@ async def test_sending_waits_for_confirmation(google):
     args = {"to": "anna@example.com", "subject": "Friday", "body": "See you at 8."}
     client = FakeClient([("tool_use", [Block(type="tool_use", id="t1", name="send_mail", input=args)]),
                          ("end_turn", [Block(type="text", text="Queued.")])])
-    agent = Agent(client, db, ToolRegistry(list(tools_for(google).values())), model="m", tz=ROME)
+    agent = Agent(client, db, ToolRegistry(list(tools_for(google).values())), model="m", delegate=False, tz=ROME)
     await agent.reply("main", "tell anna see you at 8")
     assert google.sent == []
     assert agent.pending("main") == ['Send email to anna@example.com, subject "Friday":\nSee you at 8.']
@@ -205,7 +205,7 @@ async def test_cancel_sends_nothing(google):
     args = {"message_id": "m1", "body": "No thanks."}
     client = FakeClient([("tool_use", [Block(type="tool_use", id="t1", name="reply_mail", input=args)]),
                          ("end_turn", [Block(type="text", text="Queued.")])])
-    agent = Agent(client, db, ToolRegistry(list(tools_for(google).values())), model="m", tz=ROME)
+    agent = Agent(client, db, ToolRegistry(list(tools_for(google).values())), model="m", delegate=False, tz=ROME)
     await agent.reply("main", "say no to anna")
     await agent.cancel("main")
     assert await agent.confirm("main") == "Nothing is waiting for confirmation."
