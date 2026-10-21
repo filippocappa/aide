@@ -834,10 +834,62 @@ extension JSONEncoder {
 
 // MARK: Course notebooks (docs/API.md, "Notebook")
 
-/// What the app uses of a notebook so far: the proposal being written, for the progress bar in the course's chat.
-struct NotebookStatus: Decodable { var writing: NotebookProposal? }
-struct NotebookProposal: Decodable, Hashable { let id: String; var progress: NotebookProgress? }
+/// A course's notebook (docs/API.md, "Notebook"). The course chat's progress bar only needs `writing`.
+struct NotebookStatus: Decodable {
+    var writing: NotebookProposal?
+    var started: Bool?
+    var busy: Bool?
+    var exam: String?
+    var introduction: String?
+    var topics: [NotebookTopic]?
+    var proposals: [NotebookProposal]?
+}
+
+struct NotebookProposal: Decodable, Hashable, Identifiable {
+    let id: String
+    var progress: NotebookProgress?
+    var kind: String?
+    var status: String?
+    var items: [ProposalItem]?
+    var material: [String]?
+    var result: String?
+}
+
+struct ProposalItem: Decodable, Hashable, Identifiable {
+    let n: Int
+    var topic: String?
+    let title: String
+    var add: String?
+    var sources: [String]?
+    var id: Int { n }
+}
+
 struct NotebookProgress: Decodable, Hashable { let done: Int; let total: Int }
+
+struct NotebookTopic: Decodable, Hashable, Identifiable {
+    let id: String
+    let position: Int
+    let title: String
+    var summary: String?
+    var written: Bool?
+    var questions: Int?
+    var cards: Int?
+    var edited: Bool?
+}
+
+/// A topic page, as `GET /v1/topics/{id}?plain=true`: maths as Unicode, links as text.
+struct TopicPage: Decodable {
+    let id: String
+    let title: String
+    var summary: String?
+    var body: String?
+    var cardsList: [Flashcard]?
+    var sources: [String]?
+}
+
+struct Flashcard: Decodable, Hashable { let q: String; let a: String }
+
+struct ProposalApplyBody: Encodable { var items: [Int]? }
 
 // MARK: Practice exams (docs/API.md, "Practice exams")
 
@@ -952,8 +1004,70 @@ struct MoodleMatch: Encodable {
 }
 
 /// The courses from `GET /v1/study`, only what the Moodle screen needs.
-struct StudyOverview: Decodable { let courses: [StudyCourse] }
-struct StudyCourse: Decodable, Identifiable, Hashable { let id: Int; let name: String }
+struct StudyOverview: Decodable {
+    let courses: [StudyCourse]
+    var unfiled: Int?
+    var now: StudyNow?
+    var transcription: Bool?
+}
+
+struct StudyNow: Decodable, Hashable { let course: Int; let name: String; var ends: String? }
+
+struct StudyCourse: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    var lectures: Int?
+    var files: Int?
+    var lastLecture: String?
+    var nextExam: StudyExam?
+    var chat: String?
+    var notebook: CourseNotebook?
+
+    /// "macroeconomics" as "Macroeconomics".
+    var title: String { name.prefix(1).uppercased() + name.dropFirst() }
+}
+
+struct StudyExam: Decodable, Hashable { let date: String; let title: String }
+
+/// A course's notebook in brief; nil when it has none.
+struct CourseNotebook: Decodable, Hashable {
+    let topics: Int
+    var questions: Int?
+    var proposals: Int?
+    var writing: Bool?
+}
+
+struct Lecture: Decodable, Identifiable, Hashable {
+    let id: String
+    var course: Int?
+    var title: String?
+    var recordedAt: String?
+    var durationS: Int?
+    var hasAudio: Bool?
+    let status: String
+    var error: String?
+    var summary: String?
+    var notes: String?
+
+    var isWorking: Bool { ["queued", "transcribing", "writing"].contains(status) }
+}
+
+struct LectureList: Decodable { let lectures: [Lecture] }
+
+struct StudyFile: Decodable, Identifiable, Hashable {
+    let id: String
+    var course: Int?
+    var lecture: String?
+    let name: String
+    var section: String?
+    var size: Int?
+    var pages: Int?
+    var scanned: Bool?
+    var source: String?
+}
+
+struct StudyFileList: Decodable { let files: [StudyFile] }
+struct CourseChat: Decodable { let conversationId: String }
 
 /// What Obsidian's Remotely Save plugin needs.
 struct VaultSetup: Decodable {

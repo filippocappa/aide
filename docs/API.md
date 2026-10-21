@@ -463,14 +463,16 @@ Lecture object:
 | `GET /v1/lectures?course=2` | `course` an id, `none` for the unfiled, or left out for all; `limit` (default 100) | `{"lectures": [Lecture]}`, newest first |
 | `POST /v1/lectures?recorded_at=2026-10-21T06:02:00Z&course=2&title=…` | the recording as the raw body, `Content-Type: audio/mp4` (or `audio/m4a`, `audio/x-m4a`, `audio/aac`, `audio/mpeg`, `audio/wav`, `audio/x-wav`), up to 400 MB | the Lecture, `202`, `queued`. `recorded_at` (with an offset; `Z` is safest in a query) is when the recording started, default now; `course` and `title` are optional (no `course`: filed by the calendar). `400` empty, bad `course` or no offset; `413` too big; `415` another type; `503` no transcription on this server. |
 | `POST /v1/lectures` | JSON `{"photos": ["p_…"], "files": ["f_…"], "text": "…", "course": 2, "title": "…", "recorded_at": "…"}`, photos (up to 10, from `POST /v1/photos`), files (from `POST /v1/files`, which become its slides and move to its course) or text needed | the Lecture, `202`. `400` unknown photo or file. |
-| `GET /v1/lectures/{id}?transcript=true` | | the Lecture. `404` unknown. |
+| `GET /v1/lectures/{id}?transcript=true&plain=true` | | the Lecture. `404` unknown. `plain=true`: `notes` for reading in the app (below, Notebook). |
 | `PATCH /v1/lectures/{id}` | any of `title`, `course` (null: unfiled), `notes` | the Lecture. New notes keep the old ones for one undo, on the server. |
 | `DELETE /v1/lectures/{id}` | | `{"ok": true}`, the recording too (the user deleting from the app: immediate) |
 | `POST /v1/lectures/{id}/retry` | | the Lecture, `202`, `queued` again. `400` unless it `failed`. |
 
 Course: `{"id": 2, "name": "macroeconomics", "lectures": 5, "files": 3, "last_lecture": "2026-10-21T08:02:00+02:00" or
-null, "next_exam": {"date": "2026-11-10T09:00:00+01:00", "title": "Macroeconomics exam"} or null, "chat": "c_…" or null}`.
-`files` counts its files (since 2026-10-21).
+null, "next_exam": {"date": "2026-11-10T09:00:00+01:00", "title": "Macroeconomics exam"} or null, "chat": "c_…" or null,
+"notebook": {"topics": 11, "questions": 65, "proposals": 1, "writing": false} or null}`.
+`files` counts its files (since 2026-10-21). `notebook` is null until the course's notebook is started (below);
+`topics` counts the written ones, `proposals` the pending ones, `writing` is true while one is applied.
 `chat` is null until the course has a chat; then the app opens it, else asks for one with the POST above.
 
 The ready message in the course chat comes from Professor ("Notes from Tuesday's macroeconomics lecture…"); the
@@ -506,6 +508,7 @@ File object:
 | `GET /v1/files?course=2&lecture=l_…` | both optional | `{"files": [File]}`, by section, then name |
 | `GET /v1/files/{id}` | | the File. `404` unknown. |
 | `GET /v1/files/{id}/pdf` | | the PDF itself |
+| `GET /v1/files/{id}/pages/{n}` | | page `n` (from 1) drawn as a JPEG: a figure in the notes. `404` unknown file or no such page. |
 | `PATCH /v1/files/{id}` | any of `name`, `course` (null: unfiled), `lecture` (null: course material again) | the File. Attaching it to a lecture rewrites that lecture's notes. |
 | `DELETE /v1/files/{id}` | | `{"ok": true}` (immediate). The lecture's notes stay as they are. |
 
@@ -578,9 +581,9 @@ and posts the result in the same chat.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/notebook?course=2` | | Notebook. `404` no such course. |
+| `GET /v1/notebook?course=2&plain=true` | | Notebook. `404` no such course. |
 | `POST /v1/notebook?course=2` | | `202`, Notebook: the Introduction and the outline proposal are on their way. `409` it already has topics. |
-| `GET /v1/topics/{id}` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]` and `sources` (`["Week 3 slides, p. 1–2"]`). `404`. In `body`, a figure is `![The IS curve shifting right](figure:f_…/12)`: page 12 of that study file, with its caption. |
+| `GET /v1/topics/{id}?plain=true` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]` and `sources` (`["Week 3 slides, p. 1–2"]`). `404`. In `body`, a figure is `![The IS curve shifting right](figure:f_…/12)`: page 12 of that study file, with its caption. |
 | `GET /v1/proposals?course=2&status=pending` | | `{"proposals": [Proposal]}`; both optional; `status` `pending` (default) or `all`. |
 | `POST /v1/proposals/{id}/apply` | `{"items": [1, 3], "note": "keep it short"}`, both optional (all items) | `202`, the Proposal, `status` `applying`. `400` an item out of range; `409` not pending. |
 | `POST /v1/proposals/{id}/decline` | | the Proposal, `declined`. `409` not pending. |
@@ -588,6 +591,9 @@ and posts the result in the same chat.
 Notebook: `{"course": 2, "started": true, "busy": false, "exam": "20–35 multiple-choice questions, −0.25 for a wrong
 answer…" or null, "introduction": "markdown" or null, "topics": [Topic], "proposals": [Proposal], "writing": Proposal
 or null}` (`busy`: being written; pending proposals only; `writing`: the proposal being applied, with its `progress`).
+
+**`plain=true`** (on the notebook, a topic and a lecture): the notes as the app shows them. LaTeX becomes plain
+Unicode ($\pi_{t-1}$ as πₜ₋₁) and `[[links]]` their text. Without it, the markdown is as in the vault.
 
 **Progress.** A course's chat has `"course": 2` in the conversation list (`null` on other chats). While a proposal
 is applied, `GET /v1/notebook?course=` has it as `writing`, with `"progress": {"done": 4, "total": 11}` (topics

@@ -25,6 +25,12 @@ final class APIClient {
     private let session: URLSession
     /// Photos by id: what this app uploaded and what it fetched, so each is loaded once per launch.
     private var photos: [String: Data] = [:]
+    /// Study PDFs and page images by path; dropped first under memory pressure.
+    private let fileCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.totalCostLimit = 150_000_000
+        return cache
+    }()
 
     init(session: URLSession = .shared, config: @escaping () -> APIConfig?) {
         self.session = session
@@ -334,6 +340,96 @@ final class APIClient {
 
     func notebook(course: Int) async throws -> NotebookStatus {
         try await send("GET", "/v1/notebook", query: [URLQueryItem(name: "course", value: String(course))])
+    }
+
+    // MARK: Study (docs/API.md, "Study", "Study files", "Notebook")
+
+    /// The notebook as the Study tab shows it: maths as Unicode, links as text.
+    func notebookPage(course: Int) async throws -> NotebookStatus {
+        try await send("GET", "/v1/notebook", query: [URLQueryItem(name: "course", value: String(course)),
+                                                      URLQueryItem(name: "plain", value: "true")])
+    }
+
+    func startNotebook(course: Int) async throws -> NotebookStatus {
+        try await send("POST", "/v1/notebook?course=\(course)", body: EmptyBody())
+    }
+
+    func topic(_ id: String) async throws -> TopicPage {
+        try await send("GET", "/v1/topics/\(id)", query: [URLQueryItem(name: "plain", value: "true")])
+    }
+
+    /// `items` nil: all of them.
+    func applyProposal(_ id: String, items: [Int]?) async throws -> NotebookProposal {
+        try await send("POST", "/v1/proposals/\(id)/apply", body: ProposalApplyBody(items: items))
+    }
+
+    func declineProposal(_ id: String) async throws -> NotebookProposal {
+        try await send("POST", "/v1/proposals/\(id)/decline", body: EmptyBody())
+    }
+
+    func lectures(course: Int) async throws -> [Lecture] {
+        let list: LectureList = try await send("GET", "/v1/lectures",
+                                               query: [URLQueryItem(name: "course", value: String(course))])
+        return list.lectures
+    }
+
+    func lecture(_ id: String) async throws -> Lecture {
+        try await send("GET", "/v1/lectures/\(id)", query: [URLQueryItem(name: "plain", value: "true")])
+    }
+
+    func files(course: Int) async throws -> [StudyFile] {
+        let list: StudyFileList = try await send("GET", "/v1/files",
+                                                 query: [URLQueryItem(name: "course", value: String(course))])
+        return list.files
+    }
+
+    func courseChat(_ course: Int) async throws -> String {
+        let chat: CourseChat = try await send("POST", "/v1/study/courses/\(course)/chat", body: EmptyBody())
+        return chat.conversationId
+    }
+
+    /// A file's PDF, or one page of it drawn as a JPEG (a figure in the notes), kept in memory once fetched.
+    func fileData(_ id: String, page: Int? = nil) async throws -> Data {
+        let path = page.map { "/v1/files/\(id)/pages/\($0)" } ?? "/v1/files/\(id)/pdf"
+        if let data = fileCache.object(forKey: path as NSString) { return data as Data }
+        var req = try request("GET", path, query: [], auth: true, timeout: 120, body: nil)
+        req.setValue(page == nil ? "application/pdf" : "image/jpeg", forHTTPHeaderField: "Accept")
+        let (data, http) = try await fetch(req)
+        try check(data, http)
+        fileCache.setObject(data as NSData, forKey: path as NSString, cost: data.count)
+        return data
+    }
+
+    /// A PDF from Files into the course's material.
+    func uploadPDF(_ file: URL, name: String, course: Int) async throws -> StudyFile {
+        var req = try request("POST", "/v1/files", query: [URLQueryItem(name: "course", value: String(course)),
+                                                           URLQueryItem(name: "name", value: name)],
+                              auth: true, timeout: 600, body: nil)
+        req.setValue("application/pdf", forHTTPHeaderField: "Content-Type")
+        return try await upload(req, file)
+    }
+
+    /// A lecture recording from Files: transcribed and written up on the server.
+    func uploadRecording(_ file: URL, type: String, course: Int, recordedAt: Date) async throws -> Lecture {
+        let when = ISO8601DateFormatter().string(from: recordedAt) // UTC, with Z
+        var req = try request("POST", "/v1/lectures", query: [URLQueryItem(name: "course", value: String(course)),
+                                                              URLQueryItem(name: "recorded_at", value: when)],
+                              auth: true, timeout: 1800, body: nil)
+        req.setValue(type, forHTTPHeaderField: "Content-Type")
+        return try await upload(req, file)
+    }
+
+    /// Sends a file as the raw body, from disk: a recording can be hundreds of MB.
+    private func upload<T: Decodable>(_ req: URLRequest, _ file: URL) async throws -> T {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.upload(for: req, fromFile: file)
+        } catch let error as URLError {
+            throw APIError.transport(Self.describe(error))
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
+        return try decode(data, http)
     }
 
     func quizBank(course: Int) async throws -> QuizBank {
