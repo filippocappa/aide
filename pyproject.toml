@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "anthropic>=1.0",
     "caldav>=3.5.0",
+    "cheroot>=10",
     "cryptography>=50.0.2",
     "fastapi>=0.143.5",
     "h2>=4.4.1",
@@ -14,6 +15,7 @@ dependencies = [
     "pyjwt>=2.15.1",
     "python-dotenv>=1.0",
     "uvicorn>=0.54.0",
+    "wsgidav>=4.3",
 ]
 
 [project.optional-dependencies]

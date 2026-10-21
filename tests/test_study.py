@@ -259,3 +259,118 @@ def test_whisper_output_becomes_paragraphs_a_minute_apart():
 def test_the_study_connector_can_change_notes():
     assert connectors(list(STUDY)) == [{"id": "study", "name": "Study notes", "read_only": False,
                                         "tools": list(STUDY)}]
+
+
+# -- files ---------------------------------------------------------------------------
+
+
+def make_pdf(path, pages: list[str]) -> bytes:
+    """A real PDF with these pages of text (pdftotext must read it), written by hand: one Helvetica text line each."""
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", None, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    kids = []
+    for text in pages:
+        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+        objs.append(f"<< /Length {len(stream)} >>\nstream\n{stream.decode()}\nendstream")
+        objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {len(objs)} 0 R "
+                    "/Resources << /Font << /F1 3 0 R >> >> >>")
+        kids.append(f"{len(objs)} 0 R")
+    objs[1] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>"
+    out, offsets = b"%PDF-1.4\n", []
+    for i, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n{body}\nendobj\n".encode()
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += "".join(f"{o:010d} 00000 n \n" for o in offsets).encode()
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    if path is not None:
+        path.write_bytes(out)
+    return out
+
+
+SLIDES = make_pdf(None, ["The IS curve: investment equals saving, a long first slide with plenty of words",
+                         "LM: liquidity preference equals money supply, on the second slide of the deck",
+                         "Crowding out: when government spending raises the interest rate"])
+
+
+def add_pdf(api, data=SLIDES, **query):
+    return api.post("/v1/files", params={"name": "Week 3 slides", **query}, content=data,
+                    headers={**AUTH, "Content-Type": "application/pdf"})
+
+
+def test_a_pdf_is_read_page_by_page_and_searched(env):
+    api, study, *_ = env()
+    api.get("/v1/study", headers=AUTH)
+    law = study.course_by_name("business law")["id"]
+    r = add_pdf(api, course=law)
+    assert r.status_code == 201
+    f = r.json()
+    assert (f["name"], f["pages"], f["course"], f["lecture"], f["source"], f["scanned"]) == \
+           ("Week 3 slides.pdf", 3, law, None, "upload", False)
+    assert api.get(f"/v1/files/{f['id']}/pdf", headers=AUTH).content == SLIDES
+    found = study.files.search("crowding interest", law)
+    assert [(x["public_id"], x["page"]) for x in found] == [(f["id"], 3)] and "«Crowding»" in found[0]["snippet"]
+    assert study.files.search("crowding", law + 1) == []
+    assert api.get(f"/v1/files?course={law}", headers=AUTH).json()["files"][0]["id"] == f["id"]
+    assert {c["name"]: c["files"] for c in api.get("/v1/study", headers=AUTH).json()["courses"]}["business law"] == 1
+    assert add_pdf(api, b"not a pdf").status_code == 400
+    assert add_pdf(api, b"").status_code == 400
+    assert api.post("/v1/files", content=SLIDES, headers={**AUTH, "Content-Type": "image/png"}).status_code == 415
+    assert api.patch(f"/v1/files/{f['id']}", json={"name": "Handout"}, headers=AUTH).json()["name"] == "Handout.pdf"
+    assert api.delete(f"/v1/files/{f['id']}", headers=AUTH).json() == {"ok": True}
+    assert study.files.search("crowding") == [] and api.get(f"/v1/files/{f['id']}", headers=AUTH).status_code == 404
+
+
+def test_slides_added_to_a_ready_lecture_rewrite_its_notes(env):
+    api, study, worker, push, client = env([done(NOTES), done("# Better\nWith the slides.\n\n## Summary\nIS, LM.")])
+    lecture = upload(api).json()
+    _run(worker)
+    f = add_pdf(api, lecture=lecture["id"]).json()
+    assert f["lecture"] == lecture["id"] and f["course"] == lecture["course"]
+    assert study.find(lecture["id"])["status"] == "queued"
+    done_ = _run(worker)
+    assert worker.transcribe.calls == [worker.audio_dir / f"{lecture['id']}.m4a"]  # not transcribed again
+    assert done_["notes"].startswith("With the slides.") and done_["notes_prev"].startswith("How the goods")
+    assert done_["title"] == "The IS-LM model"  # the user's (or the first) title stays
+    sent = client.requests[-1]["messages"][0]["content"]
+    assert sum(b["type"] == "image" for b in sent) == 3  # every page of a short deck
+    assert "Slides, Week 3 slides.pdf (3 pages" in sent[-1]["text"] and "[p. 2]\nLM: liquidity" in sent[-1]["text"]
+    assert "rewrote the notes" in push.sent[-1][2]
+    assert api.get(f"/v1/lectures/{lecture['id']}", headers=AUTH).json()["files"] == [f["id"]]
+    # Deleting the lecture keeps the slides, as course material.
+    api.delete(f"/v1/lectures/{lecture['id']}", headers=AUTH)
+    assert api.get(f"/v1/files/{f['id']}", headers=AUTH).json()["lecture"] is None
+
+
+def test_a_lecture_from_files_alone(env):
+    api, study, worker, _, client = env([done(NOTES)])
+    f = add_pdf(api).json()
+    r = api.post("/v1/lectures", json={"files": [f["id"]], "recorded_at": z(NOW)}, headers=AUTH)
+    assert r.status_code == 202 and r.json()["files"] == [f["id"]]
+    assert study.files.get(f["id"])["course_id"] == r.json()["course"]  # filed with the lecture
+    assert _run(worker)["status"] == "ready" and worker.transcribe.calls == []
+    assert api.post("/v1/lectures", json={"files": ["f_000000000000"]}, headers=AUTH).status_code == 400
+
+
+async def test_moodle_slides_near_a_lecture_are_attached(env, tmp_path):
+    api, study, worker, *_ = env([done(NOTES)])
+    macro = (await study.match(NOW))["id"]
+    pdf = tmp_path / "s.pdf"
+    make_pdf(pdf, ["Slides for today"])
+    f = await study.files.add(pdf, "IS-LM.pdf", macro, source="moodle", source_key="https://m/1",
+                              source_time=int((NOW - timedelta(hours=3)).timestamp()))
+    upload(api)
+    lecture = await worker.process(study.next_queued())
+    assert study.files.get(f["public_id"])["lecture_id"] == lecture["id"]
+
+
+async def test_professor_reads_files(env, tmp_path):
+    api, study, worker, _, client = env()
+    api.get("/v1/study", headers=AUTH)
+    f = add_pdf(api, course=study.course_by_name("macroeconomics")["id"]).json()
+    client.responses = [call("search_study", query="liquidity"), call("read_file", file_id=f["id"], first_page=2,
+                                                                      last_page=3), done("p. 2")]
+    await worker.agent.respond(CONVERSATION, "what's LM?")
+    searched, read = (m["content"][0]["content"] for m in client.requests[2]["messages"][-3::2])
+    assert f"[{f['id']}] Week 3 slides.pdf, p. 2" in searched
+    assert "[p. 2]\nLM: liquidity" in read and "[p. 1]" not in read

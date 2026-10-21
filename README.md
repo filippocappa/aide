@@ -119,6 +119,36 @@ and App Store builds production; the server picks the host from what each device
 `GET /v1/devices`, and send a test with `POST /v1/devices/test`. One key works for both hosts and doesn't
 expire; revoking it in the portal stops all pushes.
 
+## Obsidian
+
+Aide writes the study notes and files into an Obsidian vault on this server (`data/obsidian/Uni`, everything under
+`Aide/`), and serves it over WebDAV, so Obsidian syncs it to the phone and the Mac with the free **Remotely Save**
+plugin, over Tailscale. Pages you edit in Obsidian are yours: Aide doesn't touch them again.
+
+**Server, once:**
+1. In `.env`: `AIDE_WEBDAV_PASSWORD` (generate one: `python3 -c "import secrets; print(secrets.token_urlsafe(18))"`)
+   and `AIDE_WEBDAV_URL=https://<this machine>.<tailnet>.ts.net:8443`. Optional: `AIDE_VAULT_NAME` (default `Uni`),
+   `AIDE_VAULT_DIR` (default `data/obsidian`), `AIDE_WEBDAV_PORT` (default 8789).
+2. The WebDAV service, next to Aide's:
+   ```bash
+   ln -sf "$PWD/deploy/aide-webdav.service" ~/.config/systemd/user/aide-webdav.service
+   systemctl --user daemon-reload
+   systemctl --user enable --now aide-webdav
+   sudo tailscale serve --bg --https=8443 http://127.0.0.1:8789   # tailnet only, with a real certificate
+   systemctl --user restart aide
+   ```
+
+**Each device** (phone and Mac; Tailscale on):
+1. Install Obsidian, create a vault named **Uni** (the same name as `AIDE_VAULT_NAME`).
+2. Settings → Community plugins → turn them on → Browse → **Remotely Save** → Install → Enable.
+3. Remotely Save's settings: remote service **WebDAV**; address, user and password as the app shows them (Settings
+   → Obsidian), or from `GET /v1/vault`; auth type **basic**; depth "supports depth 1". Check the connection.
+4. Sync on start and every few minutes (Remotely Save's "schedule for auto run"), or tap its sync icon.
+
+`data/obsidian` isn't in the nightly backups: Aide's pages come from the database, and your own pages are on your
+devices too. To rebuild Aide's pages, delete `Aide/` and the `vault_files` rows (else Aide takes them for pages you
+deleted, and leaves them gone).
+
 ## Tests
 
 ```
@@ -154,7 +184,9 @@ copied with SQLite's online backup (safe while Aide is running) and the copy mus
 run fails and no folder is written. The Gmail refresh token lives in `.env`, not the database, so its
 `GMAIL_*` lines go into `gmail.env` next to it (mode 600; the folder is 700). Nothing else from `.env` is copied,
 and none of it is in git. It keeps the newest 14 backups plus the newest of each of the last 8 weeks.
-Photos (`data/photos/`) never change, so they go once into `~/aide-backups/photos/`, which pruning leaves alone.
+Photos (`data/photos/`) never change, so they go once into `~/aide-backups/photos/`, which pruning leaves alone;
+study PDFs (`data/files/`) go the same way into `~/aide-backups/files/`. Lecture recordings (`data/audio/`) aren't
+backed up (their transcripts are).
 
 ```bash
 ln -sf "$PWD/deploy/aide-backup.service" ~/.config/systemd/user/aide-backup.service
@@ -172,7 +204,7 @@ systemctl --user list-timers aide-backup.timer
 systemctl --user stop aide
 mv data data.broken                          # keep the old one until you're sure
 mkdir data && cp ~/aide-backups/2026-10-18/aide.db data/
-cp -r ~/aide-backups/photos data/
+cp -r ~/aide-backups/photos ~/aide-backups/files data/
 systemctl --user start aide
 ```
 

@@ -12,7 +12,7 @@ import anthropic
 import httpx
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..agent import CONVERSATION, Agent, Turn, UnknownConversation
@@ -28,6 +28,7 @@ from ..push import Push
 from ..reminders import ReminderStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
+from ..material import MAX_FILE, PdfError
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..wake import WakeService
@@ -69,10 +70,17 @@ class FoodGoals(BaseModel):
 
 class LectureIn(BaseModel):
     photos: list[str] = []
+    files: list[str] = []  # PDFs from POST /v1/files: the lecture's slides
     text: str = ""
     course: int | None = None  # None: filed by the timetable event on at recorded_at
     title: str = ""
     recorded_at: datetime | None = None  # default now
+
+
+class FilePatch(BaseModel):
+    name: str | None = None
+    course: int | None = None
+    lecture: str | None = None  # null: course material
 
 
 class LecturePatch(BaseModel):
@@ -193,7 +201,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                digest: DigestService | None = None, push: Push | None = None,
                health: HealthStore | None = None, wake: WakeService | None = None,
                transcriber: Transcriber | None = None, food: FoodStore | None = None,
-               study: StudyStore | None = None, worker: StudyWorker | None = None) -> FastAPI:
+               study: StudyStore | None = None, worker: StudyWorker | None = None,
+               vault: dict | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -625,11 +634,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             for p in body.photos:
                 if photos is None or not photos.exists(p):
                     raise HTTPException(400, f"no photo {p}")
+            for f in body.files:
+                if study.files.get(f) is None:
+                    raise HTTPException(400, f"no file {f}")
             at = body.recorded_at or datetime.now(tz)
             course_id = course_or_400(body.course)
             if course_id is None and (found := await study.match(at)):
                 course_id = found["id"]
-            lecture = study.add(at, course_id, body.title, photos=body.photos, text=body.text)
+            lecture = study.add(at, course_id, body.title, photos=body.photos, text=body.text, files=body.files)
         else:
             ext = AUDIO_TYPES.get(kind)
             if ext is None:
@@ -689,6 +701,99 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if worker is not None:
             worker.kick()
         return JSONResponse(study.as_json(lecture, full=True), status_code=202)
+
+    # -- study files ---------------------------------------------------------------
+
+    def file_or_404(file_id: str) -> dict:
+        if (f := study.files.get(file_id)) is None:
+            raise HTTPException(404, f"no file {file_id}")
+        return f
+
+    def file_json(f: dict) -> dict:
+        lecture = study.lecture_row(f["lecture_id"]) if f["lecture_id"] else None
+        return study.files.as_json(f, lecture["public_id"] if lecture else None)
+
+    @app.post("/v1/files", dependencies=[Depends(auth)])
+    async def add_file(request: Request, course: int | None = None, lecture: str | None = None,
+                       name: str = Query("Untitled.pdf", max_length=300)):
+        kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind != "application/pdf":
+            raise HTTPException(415, "send the file as application/pdf")
+        course_id = course_or_400(course)
+        target = lecture_or_404(lecture) if lecture else None
+        if target is not None:
+            course_id = target["course_id"] if course_id is None else course_id
+        public_id = study.files.new_id()
+        tmp, size = study.files.folder / f".{public_id}.tmp", 0
+        try:
+            with tmp.open("wb") as out:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_FILE:
+                        raise HTTPException(413, "the file is too big")
+                    out.write(chunk)
+            if size == 0:
+                raise HTTPException(400, "the file is empty")
+            try:
+                f = await study.files.add(tmp, name, course_id, target["id"] if target else None,
+                                          public_id=public_id)
+            except PdfError as e:
+                raise HTTPException(400, str(e))
+        finally:
+            tmp.unlink(missing_ok=True)
+        if target is not None:
+            study.rewrite(target["id"])
+            if worker is not None:
+                worker.kick()
+        return JSONResponse(file_json(f), status_code=201)
+
+    @app.get("/v1/files", dependencies=[Depends(auth)])
+    async def list_files(course: int | None = None, lecture: str | None = None):
+        target = lecture_or_404(lecture) if lecture else None
+        rows = study.files.files(course, target["id"] if target else None)
+        return {"files": [file_json(f) for f in rows]}
+
+    @app.get("/v1/files/{file_id}", dependencies=[Depends(auth)])
+    async def get_file(file_id: str):
+        return file_json(file_or_404(file_id))
+
+    @app.get("/v1/files/{file_id}/pdf", dependencies=[Depends(auth)])
+    async def get_file_pdf(file_id: str):
+        f = file_or_404(file_id)
+        return FileResponse(study.files.path(f), media_type="application/pdf", filename=f["name"])
+
+    @app.patch("/v1/files/{file_id}", dependencies=[Depends(auth)])
+    async def edit_file(file_id: str, body: FilePatch):
+        f = file_or_404(file_id)
+        changes = body.model_dump(exclude_unset=True)
+        fields: dict = {}
+        if changes.get("name") is not None:
+            fields["name"] = changes["name"]
+        if "course" in changes:
+            fields["course_id"] = course_or_400(changes["course"])
+        target = None
+        if "lecture" in changes:
+            target = lecture_or_404(changes["lecture"]) if changes["lecture"] else None
+            fields["lecture_id"] = target["id"] if target else None
+            if target and "course" not in changes and target["course_id"] is not None:
+                fields["course_id"] = target["course_id"]
+        f = study.files.update(file_id, **fields)
+        if target is not None:
+            study.rewrite(target["id"])
+            if worker is not None:
+                worker.kick()
+        return file_json(f)
+
+    @app.delete("/v1/files/{file_id}", dependencies=[Depends(auth)])
+    async def delete_file(file_id: str):
+        if study.files.delete(file_id) is None:
+            raise HTTPException(404, f"no file {file_id}")
+        return {"ok": True}
+
+    @app.get("/v1/vault", dependencies=[Depends(auth)])
+    async def vault_setup():
+        """What Obsidian's Remotely Save needs to sync the vault (webdav.py), or enabled false."""
+        return {"enabled": True, **vault} if vault else {"enabled": False}
 
     @app.get("/v1/digest", dependencies=[Depends(auth)])
     async def latest_digest(kind: str = "daily"):

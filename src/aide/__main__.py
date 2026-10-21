@@ -25,6 +25,8 @@ from .reminders import ReminderStore
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
 from .study import StudyStore, StudyWorker, whisper_transcribe
+from .vault import Vault
+from .webdav import USER as WEBDAV_USER
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
@@ -80,7 +82,7 @@ def main() -> None:
     else:
         log.warning("ICLOUD_EMAIL / ICLOUD_APP_PASSWORD not set: calendar tools disabled")
     study = StudyStore(db, settings.timezone, cal, settings.study_calendar, settings.exam_calendar,
-                       settings.study_skip)
+                       settings.study_skip, settings.db_path.parent / "files")
     audio_dir = settings.db_path.parent / "audio"
     tools += study_tools(study, settings.timezone, audio_dir)
     gmail = None
@@ -122,6 +124,13 @@ def main() -> None:
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")
     worker = StudyWorker(study, agent, push, audio_dir, whisper_transcribe if whisper_available() else None)
+    vault, vault_info = None, None
+    if settings.webdav_password:
+        vault = Vault(settings.vault_dir / settings.vault_name, study)
+        vault_info = {"url": settings.webdav_url, "user": WEBDAV_USER, "password": settings.webdav_password,
+                      "vault": settings.vault_name}
+    else:
+        log.info("AIDE_WEBDAV_PASSWORD not set: no Obsidian vault")
 
     async def run() -> None:
         wake = WakeService(digest, health, settings.timezone, push)
@@ -130,12 +139,13 @@ def main() -> None:
             digest_schedule(digest, push),
             routine_schedule(agent, CONVERSATION, push),
             worker.run(),
+            *([vault.run()] if vault else []),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
-                             health, wake, transcriber, food, study, worker)
+                             health, wake, transcriber, food, study, worker, vault_info)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

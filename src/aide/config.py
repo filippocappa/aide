@@ -43,6 +43,13 @@ class Settings:
     study_calendar: str = "Work"  # lectures: a course is an event title in it
     exam_calendar: str = "Exam"
     study_skip: tuple[str, ...] = ("study",)  # study-calendar titles that aren't courses (own study blocks)
+    vault_dir: Path = Path("./data/obsidian")  # what WebDAV serves; the vault is the folder vault_name in it
+    vault_name: str = "Uni"
+    webdav_password: str | None = None  # no password: no vault
+    webdav_port: int = 8789
+    webdav_url: str | None = None  # how the phone reaches it, for the app's setup screen
+    moodle_url: str | None = None  # https://elearning.unito.it/sme
+    moodle_token: str | None = None  # from the app's Moodle login, written here by the server
 
 
 def _required(name: str) -> str:
@@ -89,4 +96,11 @@ def load_settings() -> Settings:
         study_calendar=os.environ.get("AIDE_STUDY_CALENDAR", "").strip() or "Work",
         exam_calendar=os.environ.get("AIDE_EXAM_CALENDAR", "").strip() or "Exam",
         study_skip=tuple(s.strip() for s in os.environ.get("AIDE_STUDY_SKIP", "study").split(",") if s.strip()),
+        vault_dir=Path(os.environ.get("AIDE_VAULT_DIR", "").strip() or "./data/obsidian"),
+        vault_name=os.environ.get("AIDE_VAULT_NAME", "").strip() or "Uni",
+        webdav_password=os.environ.get("AIDE_WEBDAV_PASSWORD", "").strip() or None,
+        webdav_port=int(os.environ.get("AIDE_WEBDAV_PORT", "8789")),
+        webdav_url=os.environ.get("AIDE_WEBDAV_URL", "").strip() or None,
+        moodle_url=os.environ.get("AIDE_MOODLE_URL", "").strip().rstrip("/") or None,
+        moodle_token=os.environ.get("MOODLE_TOKEN", "").strip() or None,
     )

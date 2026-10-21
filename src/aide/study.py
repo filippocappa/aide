@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 from .db import Database, utcnow
 from .icloud import CalendarBackend, CalEvent
+from .material import FileStore
 from .photos import PhotoStore
 from .whisper import cuda_libs
 
@@ -124,7 +125,8 @@ def paragraphs(output: str) -> tuple[str, str | None, int | None]:
 
 class StudyStore:
     def __init__(self, db: Database, tz: ZoneInfo, calendar: CalendarBackend | None = None,
-                 study_calendar: str = "Work", exam_calendar: str = "Exam", skip: tuple[str, ...] = ("study",)):
+                 study_calendar: str = "Work", exam_calendar: str = "Exam", skip: tuple[str, ...] = ("study",),
+                 files_dir: Path | None = None):
         self.db = db
         self.conn = db.conn
         self.tz = tz
@@ -134,6 +136,7 @@ class StudyStore:
         self.skip = {s.casefold() for s in skip}
         self._cached: tuple[float, list[CalEvent]] | None = None
         self.conn.executescript(SCHEMA)
+        self.files = FileStore(db, tz, files_dir)  # after SCHEMA: its tables point at courses and lectures
 
     # -- the calendar ----------------------------------------------------------
 
@@ -233,11 +236,14 @@ class StudyStore:
         return "l_" + secrets.token_hex(6)
 
     def add(self, recorded_at: datetime, course_id: int | None = None, title: str = "", audio: str | None = None,
-            photos: list[str] | tuple[str, ...] = (), text: str = "", public_id: str | None = None) -> dict:
+            photos: list[str] | tuple[str, ...] = (), text: str = "", public_id: str | None = None,
+            files: list[str] | tuple[str, ...] = ()) -> dict:
+        """A new lecture, queued. `files` are ids of PDFs that become its slides."""
         if course_id is not None and self.course(course_id) is None:
             raise ValueError(f"no course {course_id}")
-        if not (audio or photos or text.strip()):
-            raise ValueError("a lecture needs a recording, photos or text")
+        if not (audio or photos or text.strip() or files):
+            raise ValueError("a lecture needs a recording, photos, files or text")
+        slides = [self.files.find(f) for f in files]
         if len(photos) > MAX_PHOTOS:
             raise ValueError(f"at most {MAX_PHOTOS} photos per lecture")
         if len(text) > MAX_TEXT:
@@ -251,11 +257,18 @@ class StudyStore:
             (public_id or self.new_id(), course_id, _title(title), recorded_at.astimezone(timezone.utc).isoformat(),
              audio, json.dumps(list(photos)), text.strip(), now, now))
         lecture = self._row(cur.lastrowid)
+        for f in slides:
+            self.files.update(f["public_id"], lecture_id=lecture["id"],
+                              course_id=f["course_id"] if course_id is None else course_id)
         self._index(lecture)
         return lecture
 
     def _row(self, row_id: int) -> dict:
         return dict(self.conn.execute("SELECT * FROM lectures WHERE id = ?", (row_id,)).fetchone())
+
+    def lecture_row(self, row_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM lectures WHERE id = ?", (row_id,)).fetchone()
+        return dict(row) if row else None
 
     def get(self, public_id: str) -> dict | None:
         if not _ID.match(public_id or ""):
@@ -294,9 +307,13 @@ class StudyStore:
         return self._set(lecture_id, transcript=transcript, language=language, duration_s=duration)
 
     def set_notes(self, lecture_id: int, notes: str, title: str | None = None) -> dict:
-        """The worker's notes, and the title they suggest when the lecture has none."""
+        """The worker's notes, and the title they suggest when the lecture has none. Notes written again keep
+        the old ones in notes_prev."""
+        old = self._row(lecture_id)
         fields = {"notes": notes.strip(), "status": "ready", "error": None}
-        if title and not self._row(lecture_id)["title"]:
+        if old["notes"]:
+            fields["notes_prev"] = old["notes"]
+        if title and not old["title"]:
             fields["title"] = _title(title)
         return self._set(lecture_id, **fields)
 
@@ -326,8 +343,17 @@ class StudyStore:
             raise ValueError("only a failed lecture can be retried")
         return self.set_status(lecture["id"], "queued")
 
+    def rewrite(self, lecture_id: int) -> dict:
+        """New slides for a lecture whose notes are done (or failed): its notes are written again, from the
+        transcript it has; one in progress picks them up anyway."""
+        lecture = self._row(lecture_id)
+        if lecture["status"] in ("ready", "failed"):
+            lecture = self.set_status(lecture_id, "queued")
+        return lecture
+
     def delete(self, public_id: str) -> dict | None:
-        """Removes the lecture; returns it (the caller removes its recording), None if there was none."""
+        """Removes the lecture; returns it (the caller removes its recording), None if there was none. Its
+        slides stay, as course material."""
         lecture = self.get(public_id)
         if lecture is None:
             return None
@@ -374,6 +400,7 @@ class StudyStore:
                "recorded_at": self.local(lecture["recorded_at"]), "duration_s": lecture["duration_s"],
                "photos": json.loads(lecture["photos"]), "has_audio": lecture["audio"] is not None,
                "status": lecture["status"], "error": lecture["error"], "summary": summary(lecture["notes"]),
+               "files": [f["public_id"] for f in self.files.files(lecture_id=lecture["id"])],
                "updated_at": self.local(lecture["updated_at"])}
         if full:
             out |= {"notes": lecture["notes"], "text": lecture["text"], "language": lecture["language"]}
@@ -383,7 +410,7 @@ class StudyStore:
 
     def course_json(self, c: dict) -> dict:
         exam: CalEvent | None = c["next_exam"]
-        return {"id": c["id"], "name": c["name"], "lectures": c["lectures"],
+        return {"id": c["id"], "name": c["name"], "lectures": c["lectures"], "files": self.files.count(c["id"]),
                 "last_lecture": self.local(c["last_lecture"]) if c["last_lecture"] else None,
                 "next_exam": {"date": exam.start.astimezone(self.tz).isoformat(), "title": exam.title} if exam else None,
                 "chat": self.course_chat(c)}
@@ -409,8 +436,9 @@ def summary(notes: str) -> str | None:
 # -- notes ---------------------------------------------------------------------------
 
 NOTES_PROMPT = """You write study notes for a university student from one lecture: a transcript made by speech \
-recognition, photos of slides, a board or their own notes, and what they typed, in any mix. Write the notes in the \
-language of the lecture.
+recognition, the lecture's slides (their text page by page, marked [p. 3], and their most visual pages as images), \
+photos of slides, a board or their own notes, and what they typed, in any mix. Write the notes in the language of \
+the lecture.
 
 Start with a line "# " and a title of two to six words for the topic, then one sentence saying what the lecture \
 covered. Then these sections, as "## " headings, in this order, leaving out any with nothing in it:
@@ -429,7 +457,9 @@ Five to eight questions an exam could ask about this lecture, from recall to app
 Words or passages the transcript got wrong or cut, and what they probably were. Leave it out if all was clear.
 
 Speech recognition mishears names, symbols and numbers: fix the obvious slips silently and list only the real \
-doubts. Where it helps the student find a passage, put the transcript's time mark after a point, like (12:30). \
+doubts; where there are slides, take terms, formulas and figures from them. With both, the slides give the \
+structure and the transcript what the lecturer explained and stressed beyond them: keep that. Where it helps the \
+student find a passage, put the transcript's time mark (12:30) or the slide (p. 14) after a point. \
 Use what the lecturer said and showed; add nothing from outside the lecture, except to fix an evident mistake, \
 which you then point out. Plain markdown: headings, lists, bold. No tables."""
 
@@ -471,7 +501,7 @@ class StudyWorker:
         lid = lecture["id"]
         started = clock.monotonic()
         try:
-            if lecture["audio"]:
+            if lecture["audio"] and not lecture["transcript"]:  # a rewrite with new slides has one
                 if self.transcribe is None:
                     raise RuntimeError("transcription isn't set up on the server")
                 lecture = self.store.set_status(lid, "transcribing")
@@ -481,6 +511,10 @@ class StudyWorker:
                 self.store.set_transcript(lid, text, language, duration)
                 log.info("lecture %s transcribed in %.0f s", lecture["public_id"], clock.monotonic() - started)
             lecture = self.store.set_status(lid, "writing")
+            if lecture["course_id"] and not self.store.files.files(lecture_id=lid):
+                for f in self.store.files.slides_for(lecture["course_id"], datetime.fromisoformat(lecture["recorded_at"])):
+                    self.store.files.update(f["public_id"], lecture_id=lid)  # the slides Moodle had for it
+            rewrite = bool(lecture["notes"])
             title, notes = await self.write_notes(lecture)
             lecture = self.store.set_notes(lid, notes, title)
         except Exception as e:
@@ -490,7 +524,7 @@ class StudyWorker:
             await self._alert(lecture, f"Couldn't make notes from this lecture: {lecture['error']}")
             return lecture
         log.info("lecture %s ready in %.0f s", lecture["public_id"], clock.monotonic() - started)
-        await self._post(lecture)
+        await self._post(lecture, rewrite)
         return lecture
 
     def _course_name(self, lecture: dict) -> str | None:
@@ -511,6 +545,12 @@ class StudyWorker:
             transcript = "\n\n".join(f"(Working notes, part {i + 1})\n{n}" for i, n in enumerate(noted))
         content: list[dict] = [*self._images(json.loads(lecture["photos"]))]
         body = "\n".join(head)
+        for f in self.store.files.files(lecture_id=lecture["id"]):
+            text, images = await self.store.files.for_notes(f)
+            content += [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                     "data": base64.b64encode(i).decode()}} for i in images]
+            body += f"\n\nSlides, {f['name']} ({f['pages']} pages; the images above include its most visual " \
+                    f"pages):\n{text or '(no text layer: a scan, read the images)'}"
         if lecture["text"]:
             body += f"\n\nWhat the student typed:\n{lecture['text']}"
         if transcript:
@@ -540,11 +580,20 @@ class StudyWorker:
             raise RuntimeError("the notes came back empty")
         return text
 
-    async def _post(self, lecture: dict) -> None:
+    async def _post(self, lecture: dict, rewrite: bool = False) -> None:
         """A note in the course's Professor chat, and a push that opens the lecture."""
         name = self._course_name(lecture)
         when = datetime.fromisoformat(lecture["recorded_at"]).astimezone(self.store.tz)
         what = lecture["title"] or "the lecture"
+        if rewrite:
+            which = f"{when:%A}'s {name} lecture" if name else f"the {when:%A} lecture"
+            text = f"I rewrote the notes of {which}, \"{what}\", with the slides."
+            if lecture["course_id"]:
+                await self.agent.post(self.store.chat(lecture["course_id"]),
+                                      f"[Lecture notes ready: lecture {lecture['public_id']} rewritten with its slides.]",
+                                      text)
+            await self._alert(lecture, text)
+            return
         if lecture["course_id"]:
             line = summary(lecture["notes"]) or ""
             text = f"Notes from {when:%A}'s {name} lecture, \"{what}\", are ready. {line}".strip()

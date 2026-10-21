@@ -5,7 +5,10 @@ Each backup is one folder named by its local date. Databases are copied with SQL
 in .env, not the database, so its lines are copied too, readable by the owner only.
 
 Photos (data/photos) never change once saved, so they go to one shared folder, ~/aide-backups/photos,
-and each night copies only the new ones. Pruning dated folders leaves it alone.
+and each night copies only the new ones. Study files (data/files, PDFs) go the same way to ~/aide-backups/files
+(a Moodle file changed there keeps its name, so the backup keeps the first version; Moodle has the rest).
+Pruning dated folders leaves both alone. Lecture recordings (data/audio) aren't backed up: they're large, and
+their transcripts are in the database.
 """
 
 import logging
@@ -100,6 +103,7 @@ def backup(data_dir: Path, dest_root: Path, env_file: Path, day: date) -> Path:
     shutil.rmtree(final, ignore_errors=True)
     tmp.rename(final)
     mirror_photos(data_dir / "photos", dest_root / "photos")
+    mirror_photos(data_dir / "files", dest_root / "files")
     return final
 
 
