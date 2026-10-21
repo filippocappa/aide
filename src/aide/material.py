@@ -88,9 +88,16 @@ async def pdf_pages(path: Path) -> list[str]:
 
 
 async def page_image(path: Path, page: int) -> bytes:
-    """One page as a JPEG, IMAGE_SIDE pixels on its longest side."""
-    return await _run("pdftoppm", "-jpeg", "-jpegopt", "quality=80", "-scale-to", str(IMAGE_SIDE),
-                      "-f", str(page), "-l", str(page), "-singlefile", str(path), "-")
+    """One page as a JPEG, IMAGE_SIDE pixels on its longest side. pdftoppm writes to a file: given "-" for the
+    name, it makes a file called "-.jpg" rather than writing to stdout."""
+    with tempfile.TemporaryDirectory(prefix="aide-page-") as tmp:
+        out = Path(tmp) / "page"
+        await _run("pdftoppm", "-jpeg", "-jpegopt", "quality=80", "-scale-to", str(IMAGE_SIDE),
+                   "-f", str(page), "-l", str(page), "-singlefile", str(path), str(out))
+        try:
+            return out.with_suffix(".jpg").read_bytes()
+        except FileNotFoundError:
+            raise PdfError(f"page {page} couldn't be drawn") from None
 
 
 class FileStore:
