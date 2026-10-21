@@ -159,6 +159,9 @@ class Push:
     async def send_message(self, conversation_id: str, title: str, body: str) -> bool:
         return await self._alert("message", title, body, conversation_id=conversation_id)
 
+    async def send_lecture(self, lecture_id: str, title: str, body: str) -> bool:
+        return await self._alert("lecture", title, body, lecture_id=lecture_id)
+
     async def send_test(self) -> tuple[int, int]:
         return await self.send({"aps": {"alert": {"title": "Aide", "body": "Push notifications work."},
                                         "sound": "default", "thread-id": "test"}, "aide": {"kind": "test"}})

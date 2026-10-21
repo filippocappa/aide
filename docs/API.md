@@ -426,6 +426,62 @@ They log a meal when a photo shows food you're eating or ate, or when you say wh
 a line so you can correct it. A photo that isn't food is just a photo. Coach's role is now "Sleep, training, food and
 habits" (since 2026-10-21), and the `food` connector ("Food log") shows on Coach and Aide.
 
+## Study
+
+Lectures and their notes, for Professor (since 2026-10-21). A lecture is a recording, photos of slides or notes,
+or text, or a mix. The server transcribes a recording with Whisper on its GPU, then writes notes. When they're
+ready, Professor posts a message in the course's chat and a `lecture` push goes out.
+
+**Courses** are the event titles in the study calendar (`AIDE_STUDY_CALENDAR`, default `Work`) that come up at least
+3 times from 120 days back to 120 days ahead (a one-off appointment isn't a course), less the titles in
+`AIDE_STUDY_SKIP` (comma-separated, default `study`: your own study blocks). A course that has lectures stays when its
+events end. A lecture is filed under the course whose
+event is on when the recording starts (or starts within 15 minutes of it); otherwise it's unfiled (`course` null)
+and the app asks. Exams come from `AIDE_EXAM_CALENDAR` (default `Exam`): an exam is a course's when its title
+contains the course's name, in any case ("Macroeconomics exam").
+
+Lecture object:
+```json
+{"id": "l_3f9a1c2b4d5e", "course": 2, "title": "The IS-LM model", "recorded_at": "2026-10-21T08:02:00+02:00",
+ "duration_s": 5340, "photos": [], "has_audio": true, "status": "ready", "error": null,
+ "summary": "How the goods and money markets settle together.", "updated_at": "2026-10-21T11:20:00+02:00"}
+```
+- `status`: `queued`, `transcribing` (only with a recording), `writing`, `ready` or `failed`. `error` is a short
+  reason, when `failed`. A 90-minute lecture takes a few minutes.
+- `title`: the user's, or the one the notes suggest when it was empty. `summary` is the notes' first line, for lists
+  (null before they're written).
+- The single-lecture GET and every write add `notes` (markdown), `text` (what the user typed with it) and `language`
+  (`en`, `it`, …, from the recording). `?transcript=true` adds `transcript`: paragraphs starting with time marks,
+  `[12:30] …`.
+- Notes always have the same sections, as `## ` headings, any left out when empty: Summary, Key concepts,
+  Definitions, Formulas and examples, Questions to check yourself, Unclear in the recording.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/study` | | `{"courses": [Course], "unfiled": 1, "now": {"course": 2, "name": "macroeconomics", "ends": "2026-10-21T11:00:00+02:00"} or null, "transcription": true}`. `now` is the lecture on now (the recorder shows it). `transcription` false: the server can't take recordings (photos and text still work). |
+| `POST /v1/study/courses/{id}/chat` | | `{"conversation_id": "c_…"}`: the course's Professor chat, made the first time (and again if deleted). `404` unknown course. |
+| `GET /v1/lectures?course=2` | `course` an id, `none` for the unfiled, or left out for all; `limit` (default 100) | `{"lectures": [Lecture]}`, newest first |
+| `POST /v1/lectures?recorded_at=2026-10-21T06:02:00Z&course=2&title=…` | the recording as the raw body, `Content-Type: audio/mp4` (or `audio/m4a`, `audio/x-m4a`, `audio/aac`, `audio/mpeg`, `audio/wav`, `audio/x-wav`), up to 400 MB | the Lecture, `202`, `queued`. `recorded_at` (with an offset; `Z` is safest in a query) is when the recording started, default now; `course` and `title` are optional (no `course`: filed by the calendar). `400` empty, bad `course` or no offset; `413` too big; `415` another type; `503` no transcription on this server. |
+| `POST /v1/lectures` | JSON `{"photos": ["p_…"], "text": "…", "course": 2, "title": "…", "recorded_at": "…"}`, photos (up to 10, from `POST /v1/photos`) or text needed | the Lecture, `202` |
+| `GET /v1/lectures/{id}?transcript=true` | | the Lecture. `404` unknown. |
+| `PATCH /v1/lectures/{id}` | any of `title`, `course` (null: unfiled), `notes` | the Lecture. New notes keep the old ones for one undo, on the server. |
+| `DELETE /v1/lectures/{id}` | | `{"ok": true}`, the recording too (the user deleting from the app: immediate) |
+| `POST /v1/lectures/{id}/retry` | | the Lecture, `202`, `queued` again. `400` unless it `failed`. |
+
+Course: `{"id": 2, "name": "macroeconomics", "lectures": 5, "last_lecture": "2026-10-21T08:02:00+02:00" or null,
+"next_exam": {"date": "2026-11-10T09:00:00+01:00", "title": "Macroeconomics exam"} or null, "chat": "c_…" or null}`.
+`chat` is null until the course has a chat; then the app opens it, else asks for one with the POST above.
+
+The ready message in the course chat comes from Professor ("Notes from Tuesday's macroeconomics lecture…"); the
+model's note before it is hidden from `/v1/history`. A lecture with no course gets the push but no chat message.
+Recordings stay on the server until the lecture is deleted; they aren't in the backups (the notes and transcripts
+are).
+
+Professor gets `list_courses`, `list_lectures`, `read_lecture`, `search_study` (every word, accents ignored, with
+snippets), `update_notes` (immediate, keeps the previous version) and `delete_lecture` (queued), plus
+`list_events` to read the timetable and exams. Its `study` connector is "Study notes". Aide hands study questions
+to Professor.
+
 ## Habits
 
 Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"]}`.
@@ -668,6 +724,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
 | `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens a new chat with that digest (`POST /v1/conversations` with `digest`) |
 | `message` | alert | Aide writes first (future use: briefings, leave-now alerts) | `conversation_id` | opens that conversation |
+| `lecture` | alert | a lecture's notes are ready, or it failed (title "Professor · macroeconomics") | `lecture_id` | opens that lecture |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
 ```json

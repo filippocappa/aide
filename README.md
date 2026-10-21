@@ -29,7 +29,11 @@ deploy/aide.service      systemd unit
    **Web search and Maps (optional)** are in [Web search and Maps](#web-search-and-maps); without their keys those tools are off.
 4. **Push (optional).** See [Push notifications](#push-notifications). Without it nothing reaches the phone
    unless the app is open.
-5. **Run.** `uv sync && uv run aide`. The API listens on localhost; `tailscale serve` publishes it to the phone.
+5. **Lecture transcription (optional).** On a box with an NVIDIA GPU and `ffmpeg`, `uv sync --extra whisper` adds
+   faster-whisper and the CUDA libraries (about 2 GB); the model (about 1.6 GB) downloads on the first lecture.
+   Without it, lectures from photos and text still work.
+6. **Run.** `uv sync && uv run aide` (`uv sync --extra whisper` on the server). The API listens on localhost;
+   `tailscale serve` publishes it to the phone.
 
 Aide can list, search and create events on your iCloud calendars right away. Moving or deleting an event is queued: the app shows exactly what will change, and nothing happens until you confirm. Queued actions expire after 30 minutes. Recurring events are listed but can't be changed yet.
 

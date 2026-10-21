@@ -24,6 +24,7 @@ from .push import Push
 from .reminders import ReminderStore
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
+from .study import StudyStore, StudyWorker, whisper_transcribe
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
@@ -34,7 +35,9 @@ from .tools.mail import mail_tools
 from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
+from .tools.study import study_tools
 from .wake import WakeService
+from .whisper import available as whisper_available
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +79,10 @@ def main() -> None:
         tools += calendar_tools(cal, settings.timezone, settings.default_calendar)
     else:
         log.warning("ICLOUD_EMAIL / ICLOUD_APP_PASSWORD not set: calendar tools disabled")
+    study = StudyStore(db, settings.timezone, cal, settings.study_calendar, settings.exam_calendar,
+                       settings.study_skip)
+    audio_dir = settings.db_path.parent / "audio"
+    tools += study_tools(study, settings.timezone, audio_dir)
     gmail = None
     if settings.gmail_client_id and settings.gmail_client_secret and settings.gmail_refresh_token:
         gmail = Gmail(settings.gmail_client_id, settings.gmail_client_secret, settings.gmail_refresh_token)
@@ -112,18 +119,23 @@ def main() -> None:
     digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail,
                            health, maps, settings.home_address)
 
+    if not whisper_available():
+        log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")
+    worker = StudyWorker(study, agent, push, audio_dir, whisper_transcribe if whisper_available() else None)
+
     async def run() -> None:
         wake = WakeService(digest, health, settings.timezone, push)
         jobs = [
             reminder_fallback(reminders, settings.timezone, push),
             digest_schedule(digest, push),
             routine_schedule(agent, CONVERSATION, push),
+            worker.run(),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
-                             health, wake, transcriber, food)
+                             health, wake, transcriber, food, study, worker)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

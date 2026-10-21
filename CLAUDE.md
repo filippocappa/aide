@@ -31,11 +31,13 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `photos.py`: photos for chat and food, files in `data/photos/` (backed up once each). `food.py`: meals and food goals.
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
+- `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
 uv run pytest                       # tests; keep them green
+uv sync --extra whisper             # after a pull that changed dependencies (the extra: Whisper on the GPU)
 systemctl --user restart aide       # deploy after changes (it runs from this checkout)
 journalctl --user -u aide -f        # logs
 ```

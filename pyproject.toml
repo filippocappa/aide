@@ -16,6 +16,14 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
+[project.optional-dependencies]
+# Lecture transcription on the GPU (study.py, whisper.py). Only the server box installs it: uv sync --extra whisper
+whisper = [
+    "faster-whisper>=1.1",
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12>=9,<10",
+]
+
 [project.scripts]
 aide = "aide.__main__:main"
 
