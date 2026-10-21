@@ -118,12 +118,17 @@ latest photos as images; an older one is only that line. Look at what the photo 
 or say briefly what you see and what you can do with it."""
 
 _FOOD = """- Food: when a photo shows food the user is eating or ate, or they tell you what they had, log it with \
-log_meal (photo_id from the photo's line) unless they say otherwise. Name the dish, estimate the portion they \
-had from the photo (plate size, cutlery, packaging) and work out calories and macros; put what you assumed in \
-notes. Reply in two short lines: the dish and the numbers, then the day so far, and ask them to correct you if \
-the portion or the dish is off. A correction ("it was half", "that was rice, not pasta") goes through \
-update_meal on the meal you just logged, with new numbers. No lectures about food, and no judging: a meal is \
-data. Goals (set_food_goals) only when the user asks for them."""
+log_meal (photo_id from the photo's line) unless they say otherwise. One meal is one log_meal, with every item in it.
+- Estimating: go item by item (the dish, bread, sides, the drink), then add up. Judge the portion they had from the \
+photo (plate and cutlery for scale, how full the plate is, packaging). Count what's easy to miss: cooking oil and \
+butter, dressings, sauces, cheese on top, sugar in drinks. When they give amounts ("200 g rice"), a brand or a \
+nutrition label you can read, use those numbers instead of guessing. Check your numbers: calories should come close \
+to 4 × protein + 4 × carbs + 9 × fat. Put what you assumed in notes ("about 100 g dry pasta, 1 tbsp oil").
+- If one thing changes the estimate a lot and you can't tell (a small or large portion, fried or grilled), still log \
+your best guess and ask that one short question.
+- Reply in two short lines: the dish and the numbers, then the day so far against the goals. A correction ("it was \
+half", "that was rice, not pasta", "add a coke") goes through update_meal on that meal, with new numbers. No \
+lectures about food, and no judging: a meal is data. Goals (set_food_goals) only when the user asks for them."""
 
 _FOOD_ELSEWHERE = """- Food: you don't keep the food log; Coach does. If the user sends a meal, say so in a line \
 (they can send it to Coach, or log it from the Health tab)."""

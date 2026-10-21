@@ -266,7 +266,8 @@ class Agent:
         conversation = self._key(channel, conversation)
         async with self._lock:
             conversation_id = self._resolve(channel, conversation)
-            model = self.db.conversation_model(conversation_id) or self.model
+            # A photo turn gets the smart model: judging a portion from a photo needs it. Asked agents use it too.
+            model = self.smart_model if photos else self.db.conversation_model(conversation_id) or self.model
             history = self.db.history(conversation_id)
             self._start(channel, conversation, model, on_team)
             self._photos = tuple(photos)

@@ -40,7 +40,8 @@ def env(tmp_path):
 
     def make(responses=()):
         client = RecordingClient(responses)
-        agent = Agent(client, db, ToolRegistry(food_tools(food, photos, ROME)), model="m", delegate=False, tz=ROME, photos=photos)
+        agent = Agent(client, db, ToolRegistry(food_tools(food, photos, ROME)), model="m", smart_model="smart",
+                      tz=ROME, photos=photos, delegate=False)
         app = create_app(agent, ReminderStore(db.conn), FakeCalendar([]), ROME, TOKEN, food=food)
         return TestClient(app), agent, food, photos, client
     yield make
@@ -88,12 +89,16 @@ def test_chat_with_a_photo_logs_the_meal(env):
     [attachment] = body["attachments"]
     assert attachment["type"] == "meals" and attachment["meals"][0]["name"] == "Pasta al pomodoro"
     # The model saw the photo as an image, with the line naming it.
+    assert [r["model"] for r in client.requests] == ["smart", "smart"]  # a photo turn gets the smart model
     first = client.requests[0]["messages"][-1]["content"]
     assert first[0]["type"] == "image" and base64.b64decode(first[0]["source"]["data"]) == JPEG
     assert f"[Photo {photo}]" in first[1]["text"]
     # History shows the photo, not the line.
     user = api2.get("/v1/history", headers=AUTH).json()["messages"][0]
     assert user["text"] == "" and user["photos"] == [photo]
+    api3, _, _, _, client = env([done("ok")])
+    api3.post("/v1/chat", json={"text": "it was half"}, headers=AUTH)
+    assert client.requests[0]["model"] == "m"
 
 
 def test_only_the_last_three_photos_are_images(env):
