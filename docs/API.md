@@ -450,8 +450,8 @@ Lecture object:
   reason, when `failed`. A 90-minute lecture takes a few minutes.
 - `title`: the user's, or the one the notes suggest when it was empty. `summary` is the notes' first line, for lists
   (null before they're written).
-- The single-lecture GET and every write add `notes` (markdown), `text` (what the user typed with it) and `language`
-  (`en`, `it`, …, from the recording). `?transcript=true` adds `transcript`: paragraphs starting with time marks,
+- The single-lecture GET and every write add `notes` (markdown), `text` (what the user typed with it), `language`
+  (`en`, `it`, …, from the recording) and `files`: the ids of its slides (Study files, below; since 2026-10-21). `?transcript=true` adds `transcript`: paragraphs starting with time marks,
   `[12:30] …`.
 - Notes always have the same sections, as `## ` headings, any left out when empty: Summary, Key concepts,
   Definitions, Formulas and examples, Questions to check yourself, Unclear in the recording.
@@ -462,14 +462,15 @@ Lecture object:
 | `POST /v1/study/courses/{id}/chat` | | `{"conversation_id": "c_…"}`: the course's Professor chat, made the first time (and again if deleted). `404` unknown course. |
 | `GET /v1/lectures?course=2` | `course` an id, `none` for the unfiled, or left out for all; `limit` (default 100) | `{"lectures": [Lecture]}`, newest first |
 | `POST /v1/lectures?recorded_at=2026-10-21T06:02:00Z&course=2&title=…` | the recording as the raw body, `Content-Type: audio/mp4` (or `audio/m4a`, `audio/x-m4a`, `audio/aac`, `audio/mpeg`, `audio/wav`, `audio/x-wav`), up to 400 MB | the Lecture, `202`, `queued`. `recorded_at` (with an offset; `Z` is safest in a query) is when the recording started, default now; `course` and `title` are optional (no `course`: filed by the calendar). `400` empty, bad `course` or no offset; `413` too big; `415` another type; `503` no transcription on this server. |
-| `POST /v1/lectures` | JSON `{"photos": ["p_…"], "text": "…", "course": 2, "title": "…", "recorded_at": "…"}`, photos (up to 10, from `POST /v1/photos`) or text needed | the Lecture, `202` |
+| `POST /v1/lectures` | JSON `{"photos": ["p_…"], "files": ["f_…"], "text": "…", "course": 2, "title": "…", "recorded_at": "…"}`, photos (up to 10, from `POST /v1/photos`), files (from `POST /v1/files`, which become its slides and move to its course) or text needed | the Lecture, `202`. `400` unknown photo or file. |
 | `GET /v1/lectures/{id}?transcript=true` | | the Lecture. `404` unknown. |
 | `PATCH /v1/lectures/{id}` | any of `title`, `course` (null: unfiled), `notes` | the Lecture. New notes keep the old ones for one undo, on the server. |
 | `DELETE /v1/lectures/{id}` | | `{"ok": true}`, the recording too (the user deleting from the app: immediate) |
 | `POST /v1/lectures/{id}/retry` | | the Lecture, `202`, `queued` again. `400` unless it `failed`. |
 
-Course: `{"id": 2, "name": "macroeconomics", "lectures": 5, "last_lecture": "2026-10-21T08:02:00+02:00" or null,
-"next_exam": {"date": "2026-11-10T09:00:00+01:00", "title": "Macroeconomics exam"} or null, "chat": "c_…" or null}`.
+Course: `{"id": 2, "name": "macroeconomics", "lectures": 5, "files": 3, "last_lecture": "2026-10-21T08:02:00+02:00" or
+null, "next_exam": {"date": "2026-11-10T09:00:00+01:00", "title": "Macroeconomics exam"} or null, "chat": "c_…" or null}`.
+`files` counts its files (since 2026-10-21).
 `chat` is null until the course has a chat; then the app opens it, else asks for one with the POST above.
 
 The ready message in the course chat comes from Professor ("Notes from Tuesday's macroeconomics lecture…"); the
@@ -478,9 +479,50 @@ Recordings stay on the server until the lecture is deleted; they aren't in the b
 are).
 
 Professor gets `list_courses`, `list_lectures`, `read_lecture`, `search_study` (every word, accents ignored, with
-snippets), `update_notes` (immediate, keeps the previous version) and `delete_lecture` (queued), plus
-`list_events` to read the timetable and exams. Its `study` connector is "Study notes". Aide hands study questions
-to Professor.
+snippets; notes, transcripts and file pages), `list_files`, `read_file` (by page range), `update_notes` (immediate,
+keeps the previous version) and `delete_lecture` (queued), plus `list_events` to read the timetable and exams. Its
+`study` connector is "Study notes". Aide hands study questions to Professor.
+
+### Study files
+
+PDFs: slides, handouts, the professor's notes (since 2026-10-21). A file belongs to a course (or none). Attached to a
+lecture, it's that lecture's slides: the notes are written with them (their text and their most visual pages as
+images), and a lecture that already has notes gets them rewritten (the old ones kept for one undo; the chat message
+says "I rewrote the notes…"). A file not attached to a lecture is course material, which Professor searches page by
+page and cites ("p. 34"). Files come from the app (`source` `upload`) or Moodle (`moodle`, later). A Moodle file put
+up within 36 hours of a lecture of its course is attached to it by itself (at most 3 per lecture).
+
+File object:
+```json
+{"id": "f_3f9a1c2b4d5e", "course": 2, "lecture": "l_…" or null, "name": "Week 3 slides.pdf", "section": "",
+ "size": 2481920, "pages": 42, "scanned": false, "source": "upload", "added_at": "2026-10-21T12:00:00+02:00"}
+```
+- `scanned`: no text layer (a scan); it can't be searched or read as text, but a lecture still sees its pages.
+- `section`: where it was on Moodle ("Week 3"), else empty.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/files?course=2&lecture=l_…&name=Week%203%20slides.pdf` | the PDF as the raw body, `Content-Type: application/pdf`, up to 100 MB | the File, `201`. `lecture` makes it the lecture's slides (and takes the lecture's course when `course` is left out). `name` gets `.pdf` if missing. `400` empty, not a PDF, bad `course`; `404` unknown lecture; `413` too big; `415` another type. |
+| `GET /v1/files?course=2&lecture=l_…` | both optional | `{"files": [File]}`, by section, then name |
+| `GET /v1/files/{id}` | | the File. `404` unknown. |
+| `GET /v1/files/{id}/pdf` | | the PDF itself |
+| `PATCH /v1/files/{id}` | any of `name`, `course` (null: unfiled), `lecture` (null: course material again) | the File. Attaching it to a lecture rewrites that lecture's notes. |
+| `DELETE /v1/files/{id}` | | `{"ok": true}` (immediate). The lecture's notes stay as they are. |
+
+Deleting a lecture keeps its files, as course material. Files are in the backups (`~/aide-backups/files`).
+
+### Obsidian vault
+
+The server keeps an Obsidian vault of the notes and files (since 2026-10-21), served over WebDAV, which Obsidian's
+Remotely Save plugin syncs to the phone and the Mac (README, "Obsidian"). Everything Aide writes is under `Aide/` in
+the vault: a folder per course with a page per lecture (`2026-10-21 The IS-LM model.md`: properties, the notes,
+the transcript folded), an index page (lectures, files, the next exam) and `Files/` with the PDFs. A page the user
+edits or deletes in Obsidian is theirs from then on: Aide doesn't change it or bring it back. It syncs within a
+minute of a change.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/vault` | | `{"enabled": true, "url": "https://your-machine.your-tailnet.ts.net:8443", "user": "aide", "password": "…", "vault": "Uni"}`, what Remotely Save's WebDAV settings need (the vault in Obsidian must be named as `vault` says, since Remotely Save syncs a vault with the folder of its name); or `{"enabled": false}`. `url` may be null when the server doesn't know it. |
 
 ## Habits
 

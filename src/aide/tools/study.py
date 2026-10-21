@@ -1,5 +1,5 @@
-"""Study tools, for Professor: courses, lectures and their notes. Reading and changing notes run immediately;
-deleting a lecture waits for the user's !yes."""
+"""Study tools, for Professor: courses, lectures and their notes, and the course files (slides, handouts). Reading
+and changing notes run immediately; deleting a lecture waits for the user's !yes."""
 
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +9,7 @@ from ..study import StudyStore
 from . import Tool
 
 TRANSCRIPT_CHARS = 60_000  # read_lecture's transcript, at most
+FILE_CHARS = 40_000  # read_file's text, at most
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -40,13 +41,17 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None) 
             raise ValueError(f"no course called {name!r}; list_courses has their names")
         return course["id"]
 
+    def file_line(f: dict) -> str:
+        where = f["section"] or ("slides of a lecture" if f["lecture_id"] else "course material")
+        return f"[{f['public_id']}] {f['name']} · {f['pages']} pages · {where}" + (" · a scan" if f["scanned"] else "")
+
     async def list_courses() -> str:
         courses = await store.courses()
         if not courses:
             return "No courses yet: they come from the study calendar, and none were found."
         lines = []
         for c in courses:
-            parts = [c["name"], f"{c['lectures']} lecture(s)"]
+            parts = [c["name"], f"{c['lectures']} lecture(s)", f"{store.files.count(c['id'])} file(s)"]
             if exam := c["next_exam"]:
                 parts.append(f"next exam {exam.start.astimezone(tz):%a %d %b %Y %H:%M} ({exam.title})")
             lines.append(" · ".join(parts))
@@ -61,6 +66,8 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None) 
     async def read_lecture(lecture_id: str, transcript: bool = False) -> str:
         lecture = store.find(lecture_id)
         out = [line(lecture).split("\n")[0]]
+        if slides := store.files.files(lecture_id=lecture["id"]):
+            out.append("Slides: " + "; ".join(file_line(f) for f in slides))
         if lecture["text"]:
             out.append(f"What the user typed with it:\n{lecture['text']}")
         out.append(f"Notes:\n{lecture['notes']}" if lecture["notes"] else "No notes yet.")
@@ -72,10 +79,32 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None) 
         return "\n\n".join(out)
 
     async def search_study(query: str, course: str | None = None) -> str:
-        found = store.search(query, await course_id(course))
-        if not found:
-            return f"Nothing in the notes or transcripts matches {query!r}."
-        return "\n".join(f"{line(lec).split(chr(10))[0]}\n    {lec['snippet']}" for lec in found)
+        cid = await course_id(course)
+        lectures, pages = store.search(query, cid), store.files.search(query, cid)
+        if not lectures and not pages:
+            return f"Nothing in the notes, transcripts or course files matches {query!r}."
+        out = [f"{line(lec).split(chr(10))[0]}\n    {lec['snippet']}" for lec in lectures]
+        out += [f"[{p['public_id']}] {p['name']}, p. {p['page']}\n    {p['snippet']}" for p in pages]
+        return "\n".join(out)
+
+    async def list_files(course: str | None = None) -> str:
+        files = store.files.files(await course_id(course))
+        if not files:
+            return "No files yet: the user adds them in the Study tab, or they come from Moodle."
+        by_course: dict[int | None, list[str]] = {}
+        for f in files:
+            by_course.setdefault(f["course_id"], []).append(file_line(f))
+        return "\n\n".join(f"{(store.course(c) or {}).get('name', 'unfiled')}:\n" + "\n".join(lines)
+                           for c, lines in by_course.items())
+
+    async def read_file(file_id: str, first_page: int = 1, last_page: int | None = None) -> str:
+        f = store.files.find(file_id)
+        if f["scanned"]:
+            return f"{file_line(f)}\nIt's a scan with no text layer, so it can't be read here."
+        text = store.files.text(f, max(1, first_page), last_page)
+        if len(text) > FILE_CHARS:
+            text = text[:FILE_CHARS] + "\n(cut here: read the next pages on their own)"
+        return f"{file_line(f)}\n\n{text or '(no text on those pages)'}"
 
     async def update_notes(lecture_id: str, notes: str) -> str:
         lecture = store.update(lecture_id, notes=notes)
@@ -103,9 +132,15 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None) 
              "notes.", _obj(course, []), list_lectures),
         Tool("read_lecture", "Read a lecture's notes, and with transcript true its transcript too (time marks like "
              "[12:30]).", _obj({**lid, "transcript": {"type": "boolean"}}, ["lecture_id"]), read_lecture),
-        Tool("search_study", "Search every lecture's notes and transcript for words (all must appear), best "
-             "matches first, each with a snippet.",
+        Tool("search_study", "Search every lecture's notes and transcript, and the course files page by page, for "
+             "words (all must appear), best matches first, each with a snippet.",
              _obj({"query": {"type": "string"}, **course}, ["query"]), search_study),
+        Tool("list_files", "List the course files (slides, handouts, the professor's notes: PDFs from the user or "
+             "Moodle), each with its id in brackets.", _obj(course, []), list_files),
+        Tool("read_file", "Read a file's text, page by page (each starts with [p. N]); for a long one, a range of "
+             "pages.", _obj({"file_id": {"type": "string", "description": "The id in brackets, f_…"},
+                             "first_page": {"type": "integer"}, "last_page": {"type": "integer"}}, ["file_id"]),
+             read_file),
         Tool("update_notes", "Replace a lecture's notes with a new full version (markdown, same sections), to add "
              "or fix something the user asked for. Keep everything else as it was. Runs immediately; the previous "
              "version is kept.", _obj({**lid, "notes": {"type": "string"}}, ["lecture_id", "notes"]), update_notes),

@@ -21,7 +21,8 @@ WEB = ("web_search", "fetch_page")
 HABITS = ("add_habit", "list_habits", "check_habit", "delete_habit")
 HEALTH = ("health",)
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal")
-STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "update_notes", "delete_lecture")
+STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
+         "delete_lecture")
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,10 @@ look in their notes first (search_study, then read_lecture) and answer from them
 ("macroeconomics, Tue 20 Oct, around 45:00"); add general knowledge after that, and say it isn't from the lecture. \
 When they ask what exactly was said, or the notes are thin on it, read the transcript too (its time marks give the \
 minute).
+- Course files: slides, handouts and the professor's notes (PDFs the user adds, or that come from Moodle). A \
+lecture's slides are already in its notes; the rest is course material, which search_study searches page by page \
+and read_file reads. Cite the page ("business law handout, p. 34"). For a question the lectures don't cover, look \
+in the files before general knowledge.
 - Transcripts come from speech recognition: names, symbols and numbers may be misheard, so fix obvious slips. When \
 the user adds or corrects something in a lecture ("the exam covers chapter 4"), change its notes with update_notes, \
 keeping the rest as it was. Deleting a lecture is queued. You can read the calendar (timetable, exams) but not \
