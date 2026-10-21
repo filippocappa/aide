@@ -547,14 +547,55 @@ as `error`: log in again.
 
 The server keeps an Obsidian vault of the notes and files (since 2026-10-21), served over WebDAV, which Obsidian's
 Remotely Save plugin syncs to the phone and the Mac (README, "Obsidian"). Everything Aide writes is under `Aide/` in
-the vault: a folder per course with a page per lecture (`2026-10-21 The IS-LM model.md`: properties, the notes,
-the transcript folded), an index page (lectures, files, the next exam) and `Files/` with the PDFs. A page the user
-edits or deletes in Obsidian is theirs from then on: Aide doesn't change it or bring it back. It syncs within a
-minute of a change.
+the vault, a folder per course:
+- with a notebook (below): `00 Introduction.md` (the exam, how to prepare, the topics, lectures and files), a page
+  per topic (`01 The IS-LM model.md`) and `Cards/` with each topic's flashcards for the Spaced Repetition plugin;
+  otherwise an index page named after the course (lectures, files, the next exam);
+- `Sources/` with a page per lecture (`2026-10-21 The IS-LM model.md`: properties, the notes, "Expanded:" the
+  topics it went into, the transcript folded), and `Files/` with the PDFs.
+
+A page the user edits or deletes in Obsidian is theirs from then on: Aide doesn't change it or bring it back.
+Except topic pages: the user's edits are read back into the notebook, and Aide's next change builds on them. And
+cards files, which Aide only adds new cards to, at the end. It syncs within a minute of a change.
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/vault` | | `{"enabled": true, "url": "https://your-machine.your-tailnet.ts.net:8443", "user": "aide", "password": "…", "vault": "Uni"}`, what Remotely Save's WebDAV settings need (the vault in Obsidian must be named as `vault` says, since Remotely Save syncs a vault with the folder of its name); or `{"enabled": false}`. `url` may be null when the server doesn't know it. |
+
+### Notebook
+
+A course's notes by topic, since 2026-10-21 (`notebook.py`): an Introduction on the exam and a page per topic, each
+with an explanation, key terms, formulas, worked examples, exam-style multiple-choice questions (answers folded) and
+flashcards, built from the course's PDFs and lectures. In the vault as above.
+
+**Nothing is written without the user's OK.** Starting a notebook writes the Introduction (from the Moodle course
+page and the exam calendar) and proposes the topics; new material for a course with a notebook (a Moodle file, a
+lecture's notes) gets a proposal of which topics to expand or add. Each proposal is posted in the course's chat
+(Professor), with a push (`message`), and answered there ("yes", "only 1 and 3", "also stress the graphs"), or
+through the endpoints below. A proposal waits until it's answered; applying runs in the background (a few minutes)
+and posts the result in the same chat.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/notebook?course=2` | | Notebook. `404` no such course. |
+| `POST /v1/notebook?course=2` | | `202`, Notebook: the Introduction and the outline proposal are on their way. `409` it already has topics. |
+| `GET /v1/topics/{id}` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]` and `sources` (`["Week 3 slides, p. 1–2"]`). `404`. |
+| `GET /v1/proposals?course=2&status=pending` | | `{"proposals": [Proposal]}`; both optional; `status` `pending` (default) or `all`. |
+| `POST /v1/proposals/{id}/apply` | `{"items": [1, 3], "note": "keep it short"}`, both optional (all items) | `202`, the Proposal, `status` `applying`. `400` an item out of range; `409` not pending. |
+| `POST /v1/proposals/{id}/decline` | | the Proposal, `declined`. `409` not pending. |
+
+Notebook: `{"course": 2, "started": true, "busy": false, "exam": "20–35 multiple-choice questions, −0.25 for a wrong
+answer…" or null, "introduction": "markdown" or null, "topics": [Topic], "proposals": [Proposal]}` (`busy`: being
+written; pending proposals only).
+
+Topic: `{"id": "t_…", "course": 2, "position": 1, "title": "The IS-LM model", "summary": "one line" or null,
+"written": true, "sections": ["Explanation", "Key terms", …], "questions": 5, "cards": 12, "edited": false,
+"updated_at": "…"}` (`edited`: the user changed it in Obsidian).
+
+Proposal: `{"id": "p_…", "course": 2, "kind": "outline" | "update", "status": "pending" | "applying" | "applied" |
+"declined" | "superseded" | "failed", "items": [{"n": 1, "topic": "t_…" or null (a new topic), "title": "…", "add":
+"what it would write", "sources": ["Problem set 2, p. 1"]}], "material": ["Problem set 2"], "result": "Updated The
+IS-LM model." or null, "created_at": "…"}`. A new outline supersedes a pending one.
 
 ## Habits
 

@@ -34,6 +34,8 @@ EPHEMERAL = {"type": "ephemeral"}
 
 MAX_ASKS = 3  # ask_agent calls per turn
 MAX_PHOTOS = 4  # per message
+OLD_RESULT = 1500  # a tool result from an earlier turn longer than this is replayed cut short
+OLD_RESULT_KEPT = 300  # characters of it kept
 SEEN_PHOTOS = 3  # the model sees a chat's latest photos as images; older ones only as their [Photo id] line
 TEAM = "team"  # the Team chat: recipient of what's said there, and the queue's tag for actions queued from it
 TEAM_CONTEXT = 30  # team messages an agent answering in the Team chat sees
@@ -183,8 +185,8 @@ class Agent:
                 if not isinstance(content, str) or content.startswith(("[The user replied", _OPENED)):
                     continue  # tool results, confirm/cancel notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
-                if text.startswith((_ROUTINE, _LECTURE)):
-                    continue  # a routine's prompt, the note before new lecture notes: the user never sees them
+                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK)):
+                    continue  # a routine's prompt, the note before new lecture notes or a notebook proposal
                 if photos := _PHOTO.findall(text):
                     out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
                                 "attachments": attachments, "consulted": consulted, "team": team})
@@ -458,6 +460,7 @@ class Agent:
     async def _run(self, agent: str, channel: str, model: str, history: list[dict], turn: list[dict],
                    on_text: Callable[[str, bool], None] | None = None) -> str:
         restart = False  # the text so far came before a tool call: the draft starts over
+        history = _cut_old_results(history)
         for _ in range(MAX_TOOL_ROUNDS):
             if on_text:
                 response = await self._stream(agent, model, history + turn, on_text, restart)
@@ -628,6 +631,7 @@ _QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
 _OPENED = "[The user opened a new chat in the app"
 _ROUTINE = "[Scheduled routine"
 _LECTURE = "[Lecture notes ready"
+_NOTEBOOK = "[Notebook"
 
 
 def _nothing(reply: str) -> bool:
@@ -637,6 +641,32 @@ def _nothing(reply: str) -> bool:
 
 def _who(agent: str) -> str:
     return "User" if agent == "user" else "Everyone" if agent == TEAM else AGENTS[agent].name if agent in AGENTS else agent
+
+
+def _cut_old_results(history: list[dict]) -> list[dict]:
+    """Copy of earlier turns with long tool results cut to their start: a file read three questions ago needn't be
+    paid for on every turn after. The model can call the tool again. Stored history keeps them whole."""
+    def cut(text: str) -> str:
+        if len(text) <= OLD_RESULT:
+            return text
+        return f"{text[:OLD_RESULT_KEPT]}\n[… {len(text) - OLD_RESULT_KEPT:,} more characters cut from this old " \
+               "result; call the tool again if you need them]"
+
+    out = []
+    for m in history:
+        if m["role"] == "user" and isinstance(m["content"], list) and any(
+                b.get("type") == "tool_result" for b in m["content"]):
+            blocks = []
+            for b in m["content"]:
+                if b.get("type") == "tool_result" and isinstance(b.get("content"), str):
+                    b = {**b, "content": cut(b["content"])}
+                elif b.get("type") == "tool_result" and isinstance(b.get("content"), list):
+                    b = {**b, "content": [{**c, "text": cut(c["text"])} if c.get("type") == "text" else c
+                                          for c in b["content"]]}
+                blocks.append(b)
+            m = {**m, "content": blocks}
+        out.append(m)
+    return out
 
 
 def _with_cache_breakpoint(messages: list[dict]) -> list[dict]:

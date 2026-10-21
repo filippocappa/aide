@@ -1,19 +1,27 @@
 """The Obsidian vault on this server: Aide writes the study notes and files into it as markdown and PDFs, and
 webdav.py serves it, so Obsidian on the phone and the Mac syncs it (the Remotely Save plugin, over Tailscale).
 
-Everything Aide writes is under Aide/ in the vault: one folder per course, with a page per lecture, an index page
-and the course's files. Aide only changes what it wrote: a file the user edited (its hash isn't the one Aide wrote)
-or deleted is theirs from then on, and Aide leaves it alone. Renamed or deleted lectures move or remove their page,
-when it's unedited.
+Everything Aide writes is under Aide/ in the vault, one folder per course:
+- with a notebook (notebook.py): "00 Introduction.md", a page per topic ("01 The IS-LM model.md"), and Cards/ with
+  the topic's flashcards for the Spaced Repetition plugin;
+- otherwise an index page named after the course;
+- and in every course, Sources/ with a page per lecture, and Files/ with the PDFs.
+
+Aide only changes what it wrote: a file the user edited (its hash isn't the one Aide wrote) or deleted is theirs
+from then on, and Aide leaves it alone. Two exceptions. A topic page is shared: the user's edits are read back into
+the notebook (pull), Aide's later changes build on them and are written over the page. A cards file is only ever
+added to, a line per new card, since the plugin writes its review data into it. Renamed or deleted lectures and
+topics move or remove their page, when it's unedited.
 """
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +32,7 @@ log = logging.getLogger(__name__)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS vault_files (
     path TEXT PRIMARY KEY,  -- relative to the vault
-    ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id
+    ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id, intro:, topic: or cards:
     sha  TEXT NOT NULL  -- of what Aide wrote (a PDF: its version, size and time)
 );
 """
@@ -32,6 +40,7 @@ CREATE TABLE IF NOT EXISTS vault_files (
 ROOT = "Aide"
 INTERVAL = 60  # seconds between syncs when nothing kicks one
 _BAD = re.compile(r'[\\/:*?"<>|#^\[\]]+')  # not in file names, or they break Obsidian's links
+_WIKILINK = re.compile(r"\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?\]\]")
 
 
 @dataclass
@@ -41,6 +50,7 @@ class Item:
     text: str | None = None  # markdown, or
     source: Path | None = None  # a PDF to copy
     version: str = ""  # the PDF's
+    cards: list[str] = field(default_factory=list)  # a cards file: its card lines, added to what's there
 
 
 def _file_name(name: str) -> str:
@@ -63,10 +73,46 @@ def _link(path: str, label: str) -> str:
     return f"[[{path.removesuffix('.md')}|{label}]]"
 
 
+def _links_out(body: str, paths: dict[str, str]) -> str:
+    """[[Topic title]] in a topic's body as a link Obsidian resolves: [[Aide/course/03 Topic title|Topic title]]."""
+    def sub(m: re.Match) -> str:
+        path = paths.get(m.group(1).strip().casefold())
+        if path is None:
+            return m.group(0)
+        return f"[[{path.removesuffix('.md')}{m.group(2) or ''}|{m.group(3) or m.group(1).strip()}]]"
+    return _WIKILINK.sub(sub, body)
+
+
+def _links_in(body: str, titles: dict[str, str]) -> str:
+    """The reverse, for a page read back: a link to a topic's page (by path or name) becomes [[Topic title]]."""
+    def sub(m: re.Match) -> str:
+        title = titles.get(m.group(1).strip().casefold())
+        if title is None:
+            return m.group(0)
+        label = m.group(3)
+        return f"[[{title}{m.group(2) or ''}" + (f"|{label}]]" if label and label != title else "]]")
+    return _WIKILINK.sub(sub, body)
+
+
+def topic_body(page: str, titles: dict[str, str]) -> str:
+    """A topic page's body: without its frontmatter and its "# " title."""
+    if page.startswith("---\n") and (end := page.find("\n---", 4)) >= 0:
+        page = page[end + 4:]
+    page = page.lstrip("\n")
+    if page.startswith("# "):
+        page = page.partition("\n")[2]
+    return _links_in(page.strip(), titles)
+
+
+def _question(line: str) -> str | None:
+    return line.split("::", 1)[0].strip().casefold() if "::" in line else None
+
+
 class Vault:
-    def __init__(self, folder: Path, study: StudyStore):
+    def __init__(self, folder: Path, study: StudyStore, notebook=None):
         self.folder = folder
         self.study = study
+        self.notebook = notebook  # NotebookStore, or None: no notebook pages
         self.conn = study.conn
         self.conn.executescript(SCHEMA)
         self._wake = asyncio.Event()
@@ -87,6 +133,55 @@ class Vault:
                 pass
             self._wake.clear()
 
+    # -- the notebook's pages ------------------------------------------------------------
+
+    def _folder(self, course: dict) -> str:
+        return f"{ROOT}/{_file_name(course['name'])}"
+
+    def _topic_paths(self, course: dict) -> dict[int, str]:
+        """The written topics' pages, numbered in order: {topic row id: path}."""
+        if self.notebook is None:
+            return {}
+        written = [t for t in self.notebook.topics(course["id"]) if t["body"]]
+        return {t["id"]: f"{self._folder(course)}/{n:02d} {_file_name(t['title'])}.md" for n, t in enumerate(written, 1)}
+
+    def _titles(self) -> dict[str, str]:
+        """Every topic page's path and name (casefolded, no .md) → the topic's title: for reading links back."""
+        out = {}
+        if self.notebook is None:
+            return out
+        for row in self.conn.execute("SELECT DISTINCT course_id FROM topics").fetchall():
+            if course := self.study.course(row[0]):
+                titles = {t["id"]: t["title"] for t in self.notebook.topics(course["id"])}
+                for tid, path in self._topic_paths(course).items():
+                    stem = path.removesuffix(".md")
+                    out[stem.casefold()] = out[stem.rsplit("/", 1)[1].casefold()] = titles[tid]
+        return out
+
+    def pull(self) -> int:
+        """Topic pages the user changed, read back into the notebook. How many."""
+        if self.notebook is None:
+            return 0
+        changed, titles = 0, None
+        for rec in self.conn.execute("SELECT * FROM vault_files WHERE ref LIKE 'topic:%'").fetchall():
+            disk = self.folder / rec["path"]
+            if not disk.exists():
+                continue
+            data = disk.read_bytes()
+            if _sha(data) == rec["sha"] or (topic := self.notebook.topic(rec["ref"][6:])) is None:
+                continue
+            titles = titles if titles is not None else self._titles()
+            body = topic_body(data.decode(errors="replace"), titles)
+            if not body:
+                continue  # emptied: left as the user made it, like any edited page
+            if body != topic["body"]:
+                self.notebook.set_body(topic["id"], body, by_user=True)
+                changed += 1
+            self.conn.execute("UPDATE vault_files SET sha = ? WHERE path = ?", (_sha(data), rec["path"]))
+        if changed:
+            log.info("vault: read back %d edited topic page(s)", changed)
+        return changed
+
     # -- what the vault should hold ----------------------------------------------------
 
     async def render(self) -> list[Item]:
@@ -96,11 +191,15 @@ class Vault:
         live = {c["id"]: c for c in await study.courses()}
         rows = [lec for lec in study.lectures(limit=100_000) if lec["notes"]]
         all_files = study.files.files()
+        noted = set()
+        if self.notebook is not None:
+            noted = {r[0] for r in self.conn.execute("SELECT course_id FROM course_intros UNION "
+                                                     "SELECT course_id FROM topics WHERE body != ''")}
         courses = {}
-        for cid in sorted({r["course_id"] for r in (*rows, *all_files)} - {None}):
+        for cid in sorted(({r["course_id"] for r in (*rows, *all_files)} | noted) - {None}):
             if stored := study.course(cid):
                 courses[cid] = {"next_exam": None, **stored, **live.get(cid, {})}
-        folders = {cid: f"{ROOT}/{_file_name(c['name'])}" for cid, c in courses.items()}
+        folders = {cid: self._folder(c) for cid, c in courses.items()}
         items: list[Item] = []
         file_paths: dict[int, str] = {}
         taken: dict[str, set[str]] = {}
@@ -115,27 +214,52 @@ class Vault:
             file_paths[f["id"]] = f"{folder}/Files/{name}"
             items.append(Item(file_paths[f["id"]], f["public_id"], source=study.files.path(f),
                               version=f"{f['size']}:{f['updated_at']}"))
+        # The notebook: topic pages and their cards, and which lectures each topic was built from.
+        topic_paths: dict[int, str] = {}
+        expanded: dict[str, list[str]] = {}  # lecture public id → links to the topics it went into
+        for cid in noted & courses.keys():
+            course = courses[cid]
+            paths = self._topic_paths(course)
+            topic_paths |= paths
+            topics = [t for t in self.notebook.topics(cid) if t["id"] in paths]
+            by_title = {t["title"].casefold(): paths[t["id"]] for t in topics}
+            for t in topics:
+                items.append(Item(paths[t["id"]], f"topic:{t['public_id']}", self._topic(t, course, by_title)))
+                if cards := json.loads(t["cards"]):
+                    items.append(Item(f"{folders[cid]}/Cards/{_file_name(t['title'])}.md", f"cards:{t['public_id']}",
+                                      self._cards_head(t, course, paths[t["id"]]),
+                                      cards=[f"{q}::{a}" for q, a in cards]))
+                for s in json.loads(t["sources"]):
+                    if "lecture" in s:
+                        expanded.setdefault(s["lecture"], []).append(_link(paths[t["id"]], t["title"]))
         lecture_paths: dict[int, str] = {}
         for lec in sorted(rows, key=lambda r: (r["recorded_at"], r["id"])):
             folder = folders.get(lec["course_id"], f"{ROOT}/Unfiled")
             when = datetime.fromisoformat(lec["recorded_at"]).astimezone(tz)
             stem = f"{when:%Y-%m-%d} {_file_name(lec['title'] or 'Lecture')}"
-            path, n = f"{folder}/{stem}.md", 2
+            path, n = f"{folder}/Sources/{stem}.md", 2
             while path in lecture_paths.values():
-                path, n = f"{folder}/{stem} {n}.md", n + 1
+                path, n = f"{folder}/Sources/{stem} {n}.md", n + 1
             lecture_paths[lec["id"]] = path
         for lec in rows:
+            course = courses.get(lec["course_id"])
+            index = (f"{folders[course['id']]}/00 Introduction.md" if course["id"] in noted else
+                     f"{folders[course['id']]}/{_file_name(course['name'])}.md") if course else None
             items.append(Item(lecture_paths[lec["id"]], lec["public_id"],
-                              self._lecture(lec, courses.get(lec["course_id"]), folders, file_paths)))
+                              self._lecture(lec, course, index, file_paths, expanded.get(lec["public_id"], []))))
         for cid, c in courses.items():
             lectures = [lec for lec in rows if lec["course_id"] == cid]
             files = [f for f in all_files if f["course_id"] == cid]
-            if lectures or files:
+            if cid in noted:
+                items.append(Item(f"{folders[cid]}/00 Introduction.md", f"intro:{cid}",
+                                  self._introduction(c, topic_paths, lectures, lecture_paths, files, file_paths)))
+            elif lectures or files:
                 items.append(Item(f"{folders[cid]}/{_file_name(c['name'])}.md", f"course:{cid}",
                                   self._course(c, lectures, lecture_paths, files, file_paths)))
         return items
 
-    def _lecture(self, lec: dict, course: dict | None, folders: dict, file_paths: dict) -> str:
+    def _lecture(self, lec: dict, course: dict | None, index: str | None, file_paths: dict,
+                 expanded: list[str]) -> str:
         tz = self.study.tz
         when = datetime.fromisoformat(lec["recorded_at"]).astimezone(tz)
         name = course["name"] if course else None
@@ -149,8 +273,8 @@ class Vault:
             meta.append(f"  - {_tag(name)}")
         meta.append("---")
         head = [f"{when:%a %d %b %Y, %H:%M}"]
-        if name:
-            head.insert(0, _link(f"{folders[course['id']]}/{_file_name(name)}.md", name))
+        if name and index:
+            head.insert(0, _link(index, name))
         if lec["duration_s"]:
             m = round(lec["duration_s"] / 60)
             head.append(f"{m // 60} h {m % 60:02d} min" if m >= 60 else f"{m} min")
@@ -159,12 +283,59 @@ class Vault:
         if slides:
             out.append("Slides: " + ", ".join(_link(file_paths[f["id"]], f["name"]) for f in slides
                                               if f["id"] in file_paths))
+        if expanded:
+            out.append("Expanded: " + ", ".join(expanded))
         out.append(lec["notes"])
         if lec["text"]:
             out.append("> [!note]- What you typed\n" + _quote(lec["text"]))
         if lec["transcript"]:
             out.append("> [!quote]- Transcript\n" + _quote(lec["transcript"]))
         return "\n\n".join(out) + "\n"
+
+    def _topic(self, t: dict, course: dict, by_title: dict[str, str]) -> str:
+        folder = self._folder(course)
+        meta = ["---", f'course: "{_link(f"{folder}/00 Introduction.md", course["name"])}"',
+                f'cards: "{_link(f"{folder}/Cards/{_file_name(t["title"])}.md", "Cards")}"' if json.loads(t["cards"])
+                else None, f"topic: {t['public_id']}", "tags:", "  - topic", f"  - {_tag(course['name'])}", "---"]
+        return "\n".join(m for m in meta if m) + f"\n\n# {t['title']}\n\n{_links_out(t['body'], by_title)}\n"
+
+    def _cards_head(self, t: dict, course: dict, page: str) -> str:
+        return f"#flashcards/{_tag(course['name'])}\n\nCards for {_link(page, t['title'])}. Aide adds new ones at the end.\n\n"
+
+    def _introduction(self, c: dict, topic_paths: dict, lectures: list[dict], lecture_paths: dict,
+                      files: list[dict], file_paths: dict) -> str:
+        tz = self.study.tz
+        intro = self.notebook.intro(c["id"])
+        out = [f"---\ntags:\n  - course\n  - {_tag(c['name'])}\n---", f"# {c['name']}"]
+        if exam := c["next_exam"]:
+            out.append(f"Next exam: {exam.start.astimezone(tz):%a %d %b %Y, %H:%M} ({exam.title})")
+        if intro:
+            out.append(intro["body"])
+        topics = self.notebook.topics(c["id"])
+        if topics:
+            lines = []
+            for n, t in enumerate(topics, 1):
+                name = _link(topic_paths[t["id"]], t["title"]) if t["id"] in topic_paths else f"{t['title']} (not written yet)"
+                lines.append(f"{n}. {name}" + (f": {t['summary']}" if t["summary"] else ""))
+            out.append("## Topics\n" + "\n".join(lines))
+        if lectures:
+            lines = []
+            for lec in sorted(lectures, key=lambda r: r["recorded_at"]):
+                when = datetime.fromisoformat(lec["recorded_at"]).astimezone(tz)
+                lines.append(f"- {_link(lecture_paths[lec['id']], f'{when:%a %d %b}: ' + (lec['title'] or 'Lecture'))}")
+            out.append("## Lectures\n" + "\n".join(lines))
+        if files:
+            out.append("## Files\n" + self._file_list(files, file_paths))
+        out.append("*Written by Aide. Edit a topic page and Aide builds on your version; edit this page and Aide "
+                   "leaves it as you made it.*")
+        return "\n\n".join(out) + "\n"
+
+    @staticmethod
+    def _file_list(files: list[dict], file_paths: dict) -> str:
+        sections: dict[str, list[str]] = {}
+        for f in files:
+            sections.setdefault(f["section"], []).append(f"- {_link(file_paths[f['id']], f['name'])} · {f['pages']} pages")
+        return "\n\n".join((f"### {s}\n" if s else "") + "\n".join(lines) for s, lines in sections.items())
 
     def _course(self, c: dict, lectures: list[dict], lecture_paths: dict, files: list[dict], file_paths: dict) -> str:
         tz = self.study.tz
@@ -178,25 +349,22 @@ class Vault:
                 lines.append(f"- {_link(lecture_paths[lec['id']], f'{when:%a %d %b}: ' + (lec['title'] or 'Lecture'))}")
             out.append("## Lectures\n" + "\n".join(lines))
         if files:
-            sections: dict[str, list[str]] = {}
-            for f in files:
-                sections.setdefault(f["section"], []).append(
-                    f"- {_link(file_paths[f['id']], f['name'])} · {f['pages']} pages")
-            out.append("## Files\n" + "\n\n".join((f"### {s}\n" if s else "") + "\n".join(lines)
-                                                  for s, lines in sections.items()))
+            out.append("## Files\n" + self._file_list(files, file_paths))
         out.append("*Written by Aide. Edit a page and Aide leaves it as you made it.*")
         return "\n\n".join(out) + "\n"
 
     # -- writing ---------------------------------------------------------------------
 
     async def sync(self) -> dict[str, int]:
-        """Brings the vault in line with the study store. Returns how many files were written and removed."""
+        """Brings the vault in line with the study store, after reading back the user's topic edits. Returns how
+        many files were written and removed."""
+        self.pull()
         items = await self.render()
         records = {r["path"]: dict(r) for r in self.conn.execute("SELECT * FROM vault_files")}
         written = removed = 0
         for item in items:
             rec = records.pop(item.path, None)
-            if await self._put(item, rec):
+            if await (self._put_cards(item, rec) if item.cards else self._put(item, rec)):
                 written += 1
         for path, rec in records.items():  # what Aide wrote that's no longer wanted
             disk = self.folder / path
@@ -238,6 +406,32 @@ class Vault:
             tmp.write_text(item.text)
         os.replace(tmp, disk)
         self._record(item, want)
+        return True
+
+    async def _put_cards(self, item: Item, rec: dict | None) -> bool:
+        """A cards file: written whole the first time; after that only new cards are added at the end, so the
+        plugin's review data on the others stays."""
+        disk = self.folder / item.path
+        if not disk.exists():
+            if rec is not None:
+                return False  # the user deleted it
+            text = item.text + "\n".join(item.cards) + "\n"
+        else:
+            text = disk.read_text(errors="replace")
+            if rec is None and not text.startswith(item.text.split("\n", 1)[0]):
+                return False  # someone else's file with that name
+            have = {q for line in text.splitlines() if (q := _question(line))}
+            new = [c for c in item.cards if _question(c) not in have]
+            if not new:
+                if rec is None:
+                    self._record(item, _sha(text.encode()))
+                return False
+            text = text + ("" if text.endswith("\n") else "\n") + "\n".join(new) + "\n"
+        disk.parent.mkdir(parents=True, exist_ok=True)
+        tmp = disk.with_name(f".{disk.name}.tmp")
+        tmp.write_text(text)
+        os.replace(tmp, disk)
+        self._record(item, _sha(text.encode()))
         return True
 
     def _record(self, item: Item, sha: str) -> None:

@@ -480,6 +480,7 @@ class StudyWorker:
         self.audio_dir = audio_dir
         self.transcribe = transcribe  # None: no Whisper on this server, so recordings aren't accepted
         self.photos: PhotoStore | None = agent.photos
+        self.notebook = None  # NotebookStore, set after: a lecture's first notes are offered to its course's notebook
         self._wake = asyncio.Event()
         audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -525,6 +526,8 @@ class StudyWorker:
             return lecture
         log.info("lecture %s ready in %.0f s", lecture["public_id"], clock.monotonic() - started)
         await self._post(lecture, rewrite)
+        if self.notebook is not None and lecture["course_id"] and not rewrite:
+            self.notebook.new_material(lecture["course_id"], [{"lecture": lecture["public_id"]}])
         return lecture
 
     def _course_name(self, lecture: dict) -> str | None:

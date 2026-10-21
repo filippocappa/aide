@@ -22,7 +22,8 @@ HABITS = ("add_habit", "list_habits", "check_habit", "delete_habit")
 HEALTH = ("health",)
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
-         "delete_lecture")
+         "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
+         "start_notebook")
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,17 @@ your best guess and ask that one short question.
 half", "that was rice, not pasta", "add a coke") goes through update_meal on that meal, with new numbers. No \
 lectures about food, and no judging: a meal is data. Goals (set_food_goals) only when the user asks for them."""
 
-_STUDY = """- Lectures: the user records lectures, or sends photos of slides and notes, in the app's Study tab; each is \
+_STUDY = """- Notebooks: a course can have a notebook, its notes by topic (in their Obsidian vault too), each topic with \
+an explanation, key terms, formulas, worked examples, exam-style questions and flashcards, and an Introduction on \
+the exam. For anything about a course that has one, start there: notebook gives the outline (cheap), read_topic one \
+section of a topic; search_study also finds topic sections. Don't read whole topics or whole files when a section \
+or a page answers it: it costs the user. Open questions (to write out, not multiple choice) only when they ask.
+- Nothing goes into a notebook without the user's OK. Aide proposes (a message starting "[Notebook proposal" in \
+this chat carries its id): when they answer, call apply_proposal with what they agreed to (all, or the numbers; \
+their extra wishes as note) or decline_proposal; if they're unclear, ask. A change they ask for themselves ("add \
+that the exam covers chapter 4") goes through edit_topic, on that one section. start_notebook when they want a \
+course's notebook set up.
+- Lectures: the user records lectures, or sends photos of slides and notes, in the app's Study tab; each is \
 transcribed and gets notes, filed under its course (the event titles in their timetable calendar). A message that \
 starts with "[Lecture notes ready" means new notes were posted in this chat. For anything about their courses, \
 look in their notes first (search_study, then read_lecture) and answer from them, saying where it's from \
@@ -293,7 +304,8 @@ _CONNECTORS = (
     ("health", "Apple Health", HEALTH, set()),
     ("habits", "Habits", HABITS, {"add_habit", "check_habit", "delete_habit"}),
     ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "delete_meal"}),
-    ("study", "Study notes", STUDY, {"update_notes", "delete_lecture"}),
+    ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
+                                     "edit_topic", "start_notebook"}),
     ("web", "Web search", WEB, set()),
     ("maps", "Google Maps", MAPS, set()),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),

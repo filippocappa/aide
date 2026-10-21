@@ -123,7 +123,8 @@ expire; revoking it in the portal stops all pushes.
 
 Aide writes the study notes and files into an Obsidian vault on this server (`data/obsidian/Uni`, everything under
 `Aide/`), and serves it over WebDAV, so Obsidian syncs it to the phone and the Mac with the free **Remotely Save**
-plugin, over Tailscale. Pages you edit in Obsidian are yours: Aide doesn't touch them again.
+plugin, over Tailscale. Pages you edit in Obsidian are yours: Aide doesn't touch them again. Except a course
+notebook's topic pages: Aide reads your edits back and builds on them when it adds new material.
 
 **Server, once:**
 1. In `.env`: `AIDE_WEBDAV_PASSWORD` (generate one: `python3 -c "import secrets; print(secrets.token_urlsafe(18))"`)
@@ -144,6 +145,9 @@ plugin, over Tailscale. Pages you edit in Obsidian are yours: Aide doesn't touch
 3. Remotely Save's settings: remote service **WebDAV**; address, user and password as the app shows them (Settings
    → Obsidian), or from `GET /v1/vault`; auth type **basic**; depth "supports depth 1". Check the connection.
 4. Sync on start and every few minutes (Remotely Save's "schedule for auto run"), or tap its sync icon.
+5. For the flashcards: Community plugins → Browse → **Spaced Repetition** → Install → Enable. In its settings, set
+   the flashcard tags to `#flashcards` (the default) and the inline separator to `::`. Each course's cards are in
+   `Aide/<course>/Cards/`, tagged `#flashcards/<course>`; review them from the command palette ("Review flashcards").
 
 `data/obsidian` isn't in the nightly backups: Aide's pages come from the database, and your own pages are on your
 devices too. To rebuild Aide's pages, delete `Aide/` and the `vault_files` rows (else Aide takes them for pages you

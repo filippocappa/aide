@@ -72,6 +72,10 @@ class FakeMoodle:
                 return httpx.Response(200, json=self.courses)
             if fn == "core_course_get_contents":
                 return httpx.Response(200, json=self.contents[int(form["courseid"])])
+            if fn == "mod_forum_get_forum_discussions":
+                assert form["forumid"] == "80"
+                return httpx.Response(200, json={"discussions": [
+                    {"subject": "Textbook &amp; slides", "message": "<p>Blanchard, <b>Macroeconomics</b>, 8th ed.</p>"}]})
         if "/webservice/pluginfile.php/" in request.url.path:
             if request.url.params.get("token") != self.token:
                 return httpx.Response(403, json={"error": "invalidtoken"})
@@ -113,6 +117,20 @@ def test_the_token_must_be_signed_for_the_passport():
                 "https://elearning.unito.it/?token=x", callback("abc", token="")):
         with pytest.raises(ValueError):
             token_from(bad, SITE, "abc")
+
+
+def test_courses_are_matched_by_their_words():
+    aide = [{"id": 3, "name": "maths for economics II"}, {"id": 4, "name": "business law"},
+            {"id": 5, "name": "macroeconomics"}]
+
+    def guess(name):
+        return MoodleSync._guess({"name": name, "short": ""}, aide)
+    assert guess("SEM0251 - MATHEMATICS FOR ECONOMICS II") == 3
+    assert guess("SEM0246 - MATHEMATICS FOR ECONOMICS I") is None
+    assert guess("SEM0164 BUSINESS LAW 2026/2027 ") == 4
+    assert guess("SEM0250 - PRIVATE LAW") is None
+    assert guess("SEM0252 - MACROECONOMICS") == 5
+    assert guess("SEM0247 - MICROECONOMICS") is None
 
 
 def test_logging_in_through_the_app(env):
@@ -176,6 +194,24 @@ async def test_a_sync_brings_the_pdfs_of_matched_courses(env):
     await moodle.sync()
     assert moodle.conn.execute("SELECT course_id FROM moodle_courses WHERE moodle_id = 101").fetchone()[0] is None
     assert api.patch("/v1/moodle/courses/5", json={"course": None}, headers=AUTH).status_code == 404
+
+
+async def test_the_course_page_is_kept_as_text_for_the_notebook(env):
+    api, moodle, server, *_ = env()
+    server.contents[101] = [
+        {"name": "EXAM", "summary": "<p>20 to 35 multiple-choice questions,<br>&minus;0.25 for a wrong one.</p>",
+         "modules": [{"id": 10, "name": "Consumption &amp; Investment", "contents": [pdf(10, "C&amp;I.pdf")]},
+                     {"id": 11, "name": "", "modname": "label", "description": "<p>Office hours: Thu 11:30</p>"}]},
+        {"name": "Notices", "modules": [
+            {"id": 12, "name": "Announcements", "modname": "forum", "instance": 80, "description": ""},
+            {"id": 13, "name": "Questions", "modname": "forum", "instance": 81},
+            {"id": 14, "name": "Hidden quiz", "modname": "quiz", "uservisible": False}]}]
+    await moodle.sync()
+    assert [f["name"] for f in moodle.files.files()] == ["Consumption & Investment.pdf"]
+    text = moodle.conn.execute("SELECT text FROM moodle_courses WHERE moodle_id = 101").fetchone()[0]
+    assert text.startswith("## EXAM\n20 to 35 multiple-choice questions,\n−0.25 for a wrong one.")
+    assert "Office hours: Thu 11:30" in text and "- Questions (forum)" in text and "Hidden quiz" not in text
+    assert "- Announcements (forum)\n\n### Textbook & slides\nBlanchard, Macroeconomics, 8th ed." in text
 
 
 async def test_slides_put_up_near_a_lecture_rewrite_its_notes(env):

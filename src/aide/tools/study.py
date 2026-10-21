@@ -1,22 +1,27 @@
-"""Study tools, for Professor: courses, lectures and their notes, and the course files (slides, handouts). Reading
-and changing notes run immediately; deleting a lecture waits for the user's !yes."""
+"""Study tools, for Professor: courses, lectures and their notes, the course files (slides, handouts), and the
+course notebooks (notebook.py). Reading and changing notes run immediately; deleting a lecture waits for the user's
+!yes. A notebook is read the way code is searched: its outline first, then one section, never the whole of it."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from ..notebook import NotebookStore, sections
 from ..study import StudyStore
 from . import Tool
 
 TRANSCRIPT_CHARS = 60_000  # read_lecture's transcript, at most
 FILE_CHARS = 40_000  # read_file's text, at most
+TOPIC_CHARS = 8_000  # read_topic gives a longer page as its opening and a list of sections
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None) -> list[Tool]:
+def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
+                notebook: NotebookStore | None = None) -> list[Tool]:
     def when(lecture: dict) -> str:
         return f"{datetime.fromisoformat(lecture['recorded_at']).astimezone(tz):%a %d %b %Y %H:%M}"
 
@@ -80,10 +85,12 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None) 
 
     async def search_study(query: str, course: str | None = None) -> str:
         cid = await course_id(course)
+        topics = notebook.search(query, cid) if notebook else []
         lectures, pages = store.search(query, cid), store.files.search(query, cid)
-        if not lectures and not pages:
-            return f"Nothing in the notes, transcripts or course files matches {query!r}."
-        out = [f"{line(lec).split(chr(10))[0]}\n    {lec['snippet']}" for lec in lectures]
+        if not topics and not lectures and not pages:
+            return f"Nothing in the notebooks, notes, transcripts or course files matches {query!r}."
+        out = [f"[{t['public_id']}] {t['title']} › {t['heading'] or '(opening)'}\n    {t['snippet']}" for t in topics]
+        out += [f"{line(lec).split(chr(10))[0]}\n    {lec['snippet']}" for lec in lectures]
         out += [f"[{p['public_id']}] {p['name']}, p. {p['page']}\n    {p['snippet']}" for p in pages]
         return "\n".join(out)
 
@@ -123,8 +130,102 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None) 
         return f"Delete the {course_name(lecture)} lecture '{lecture['title'] or '(no title)'}' ({when(lecture)}), " \
                "with its notes and recording"
 
+    async def course_row(name: str) -> dict:
+        return store.course(await course_id(name))
+
+    async def notebook_outline(course: str) -> str:
+        c = await course_row(course)
+        if not notebook.started(c["id"]):
+            return f"{c['name']} has no notebook yet. start_notebook sets one up: it proposes the topics first."
+        out = [f"The {c['name']} notebook."]
+        if (intro := notebook.intro(c["id"])) and intro["exam"]:
+            out.append(f"Exam: {intro['exam']}")
+        out.append(notebook.outline(c["id"]) or "No topics yet.")
+        if waiting := notebook.proposals(c["id"]):
+            out.append("Waiting for the user's answer: " + "; ".join(
+                f"{p['public_id']} ({p['kind']}, {len(p['items'])} items)" for p in waiting))
+        if notebook.busy(c["id"]):
+            out.append("Being written right now, in the background.")
+        return "\n\n".join(out)
+
+    async def read_topic(topic: str, section: str | None = None) -> str:
+        t = notebook.find_topic(topic)
+        head = f"[{t['public_id']}] {t['title']}"
+        if not t["body"]:
+            return f"{head} isn't written yet."
+        heads = [h for h, _ in sections(t["body"]) if h]
+        if section:
+            text = notebook.section(t, section)
+            if text is None:
+                return f"{head} has no section {section!r}. Its sections: {'; '.join(heads)}"
+            return f"{head}\n\n{text}"
+        if len(t["body"]) <= TOPIC_CHARS:
+            return f"{head}\nFrom: {'; '.join(notebook.source_names(json.loads(t['sources'])))}\n\n{t['body']}"
+        opening = next((text for h, text in sections(t["body"]) if not h), "")
+        return (f"{head}\n\n{opening}\n\nThe page is long ({len(t['body']):,} characters): read a section by its "
+                f"heading. Sections: {'; '.join(heads)}")
+
+    def proposal_text(p: dict) -> str:
+        name = (store.course(p["course_id"]) or {}).get("name", "?")
+        lines = [f"{p['public_id']} · {name} · {p['kind']} · {p['status']}"]
+        for n, it in enumerate(p["items"], 1):
+            verb = "expand" if it.get("topic") else "new topic" if p["kind"] == "update" else "topic"
+            lines.append(f"  {n}. {verb} {it['title']}: {it.get('add') or it.get('summary') or ''}")
+        return "\n".join(lines)
+
+    async def proposals(course: str | None = None) -> str:
+        waiting = notebook.proposals(await course_id(course))
+        return "\n\n".join(proposal_text(p) for p in waiting) if waiting else "No proposals are waiting."
+
+    async def apply_proposal(proposal: str, items: list[int] | None = None, note: str | None = None) -> str:
+        p = notebook.apply(proposal, items, note)
+        name = store.course(p["course_id"])["name"]
+        return (f"Under way, in the background: {len(p['chosen']['items'])} topic(s) of the {name} notebook. It "
+                f"takes a few minutes; the result is posted in the {name} chat, with a notification. Tell the user.")
+
+    async def decline_proposal(proposal: str) -> str:
+        notebook.decline(proposal)
+        return "Declined: nothing was changed."
+
+    async def edit_topic(topic: str, section: str, text: str) -> str:
+        t = notebook.replace_section(notebook.find_topic(topic), section, text)
+        return f"Changed the section {section!r} of {t['title']}. The previous version is kept."
+
+    async def start_notebook(course: str) -> str:
+        c = await course_row(course)
+        notebook.start(c["id"])
+        return (f"Started: the {c['name']} Introduction is being written from the course page, then the topics are "
+                f"planned from the material and proposed in the {c['name']} chat for the user's OK (a few minutes). "
+                "Nothing goes into the notes before that.")
+
     lid = {"lecture_id": {"type": "string", "description": "The id in brackets, l_…"}}
     course = {"course": {"type": "string", "description": "A course name from list_courses; omit for all"}}
+    one_course = {"course": {"type": "string", "description": "A course name from list_courses"}}
+    tid = {"topic": {"type": "string", "description": "The topic's id in brackets, t_…, or its title"}}
+    pid = {"proposal": {"type": "string", "description": "The proposal's id, p_…"}}
+    notebook_tools = [
+        Tool("notebook", "A course notebook's outline: the exam in a line, then each topic with its id, title, "
+             "summary, subtopics and how many questions and cards it has, and proposals waiting for the user. No "
+             "text: start here, then read_topic what you need.", _obj(one_course, ["course"]), notebook_outline),
+        Tool("read_topic", "Read a notebook topic: one section by its heading (Explanation, Key terms, Formulas, "
+             "Worked examples, Exam-style questions, or a subtopic), or the whole page when it's short.",
+             _obj({**tid, "section": {"type": "string"}}, ["topic"]), read_topic),
+        Tool("proposals", "The notebook proposals waiting for the user's answer: what Aide would write or add, item "
+             "by item, numbered.", _obj(course, []), proposals),
+        Tool("apply_proposal", "The user agreed to a proposal: write it, all of it or the items they chose (by "
+             "number), with what they asked for besides as note (\"stress the graphs\", \"merge 3 and 4\"). Runs "
+             "in the background.", _obj({**pid, "items": {"type": "array", "items": {"type": "integer"}},
+                                         "note": {"type": "string"}}, ["proposal"]), apply_proposal),
+        Tool("decline_proposal", "The user doesn't want a proposal: drop it.", _obj(pid, ["proposal"]),
+             decline_proposal),
+        Tool("edit_topic", "Replace one section of a topic page with new text (its heading is kept; a new section "
+             "when there's none by that name), for a change the user asked for. Runs immediately; the previous "
+             "version is kept.", _obj({**tid, "section": {"type": "string"}, "text": {"type": "string"}},
+                                      ["topic", "section", "text"]), edit_topic),
+        Tool("start_notebook", "Set up a course's notebook: an Introduction (the exam, how to prepare) written now, "
+             "and the topics proposed to the user, from all the course's material. Runs in the background.",
+             _obj(one_course, ["course"]), start_notebook),
+    ] if notebook else []
     return [
         Tool("list_courses", "List the user's courses (from their timetable calendar), with how many lectures each "
              "has and the next exam.", _obj({}, []), list_courses),
@@ -147,4 +248,5 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None) 
         Tool("delete_lecture", "Delete a lecture with its notes and recording. Needs the user's confirmation: it is "
              "queued, and runs only when the user replies !yes.", _obj(lid, ["lecture_id"]), delete_lecture,
              confirm=True, describe=describe_delete, target_arg="lecture_id"),
+        *notebook_tools,
     ]

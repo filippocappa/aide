@@ -8,15 +8,19 @@ The app hands that address over, the server checks the signature and keeps the t
 
 Syncing: every 4 hours, and on demand. For each current Moodle course matched to an Aide course, the PDFs in its
 sections are downloaded, only new or changed ones. A file the user deleted in Aide stays deleted. A few new files
-close to a lecture become its slides, and its notes are written again with them.
+close to a lecture become its slides, and its notes are written again with them. The course page's own text
+(section summaries, labels, the announcement and textbook forums) is kept too, for the notebook's Introduction, and
+new files go to the notebook (notebook.py), which proposes what to add from them.
 """
 
 import asyncio
 import base64
 import hashlib
 import hmac
+import html
 import json
 import logging
+import re
 import secrets
 import time
 from collections.abc import Callable
@@ -40,7 +44,8 @@ CREATE TABLE IF NOT EXISTS moodle_courses (
     mapped    TEXT,  -- who matched it: 'auto', or 'user' (whose choice, NULL too, is kept)
     starts    INTEGER NOT NULL DEFAULT 0,  -- epoch seconds, 0 when Moodle has none
     ends      INTEGER NOT NULL DEFAULT 0,
-    seen      INTEGER NOT NULL DEFAULT 1  -- still in the user's Moodle courses
+    seen      INTEGER NOT NULL DEFAULT 1,  -- still in the user's Moodle courses
+    text      TEXT NOT NULL DEFAULT ''  -- the course page's text: sections, labels, notices (for the notebook)
 );
 CREATE TABLE IF NOT EXISTS moodle_files (
     key     TEXT PRIMARY KEY,  -- moodle course/module/path/name
@@ -55,6 +60,10 @@ SCHEME = "moodlemobile"
 EVERY = timedelta(hours=4)
 PASSPORT_TTL = 15 * 60  # seconds to finish logging in
 MARGIN = timedelta(days=30)  # a course is current from a month before it starts to a month after it ends
+COURSE_TEXT = 40_000  # characters of a course page's text kept
+FORUM_POSTS = 8  # newest discussions read per forum
+FORUM_POST = 2000  # characters of each
+_FORUMS = re.compile(r"announce|annunc|avvis|news|notizi|textbook|book|libr|testi|exam|esam", re.I)
 
 
 class MoodleError(Exception):
@@ -135,6 +144,24 @@ def token_from(callback: str, site: str, passport: str) -> str:
     return parts[1]
 
 
+def _words(name: str) -> list[str]:
+    return re.findall(r"\w+", name.casefold())
+
+
+def _same(a: str, b: str) -> bool:
+    a, b = sorted((a, b), key=len)
+    stem = a[:-1] if len(a) > 4 and a.endswith("s") else a
+    return a == b or (len(stem) >= 4 and b.startswith(stem))
+
+
+def _text(markup: str | None) -> str:
+    """Moodle's HTML as plain text, keeping its lines and lists."""
+    t = re.sub(r"(?i)<br\s*/?>|</p>|</li>|</div>|</h\d>|</tr>", "\n", markup or "")
+    t = re.sub(r"(?i)<li[^>]*>", "- ", t)
+    t = html.unescape(re.sub(r"<[^>]+>", "", t))
+    return re.sub(r"\n\s*\n+", "\n\n", re.sub(r"[ \t\xa0]+", " ", t)).strip()
+
+
 def _pdf(content: dict) -> bool:
     return content.get("type") == "file" and (content.get("mimetype") == "application/pdf"
                                               or content.get("filename", "").lower().endswith(".pdf"))
@@ -143,11 +170,18 @@ def _pdf(content: dict) -> bool:
 class MoodleSync:
     def __init__(self, study: StudyStore, site: str | None, token: str | None,
                  save_token: Callable[[str | None], None] = lambda _: None, push=None, worker=None,
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None, notebook=None):
         self.study = study
         self.files = study.files
         self.conn = study.conn
         self.conn.executescript(SCHEMA)
+        if "text" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(moodle_courses)")}:
+            self.conn.execute("ALTER TABLE moodle_courses ADD COLUMN text TEXT NOT NULL DEFAULT ''")
+        for r in self.conn.execute("SELECT id, name, section FROM study_files WHERE source = 'moodle' AND "
+                                   "(name LIKE '%&%;%' OR section LIKE '%&%;%')").fetchall():
+            self.conn.execute("UPDATE study_files SET name = ?, section = ? WHERE id = ?",  # synced before unescaping
+                              (html.unescape(r["name"]), html.unescape(r["section"]), r["id"]))
+        self.notebook = notebook  # NotebookStore: new files are offered to the course's notebook
         self.site = site.rstrip("/") if site else None
         self.token = token
         self.save_token = save_token
@@ -273,9 +307,12 @@ class MoodleSync:
 
     @staticmethod
     def _guess(row: dict, aide: list[dict]) -> int | None:
-        """The Aide course whose name is in the Moodle course's, if exactly one is."""
-        moodle = f"{row['name']} {row['short']}".casefold()
-        hits = [c["id"] for c in aide if c["name"].casefold() in moodle]
+        """The Aide course whose every word is in the Moodle course's name, if exactly one is. Words match when
+        equal, or when the shorter, without a plural s, begins the longer and has 4 letters or more ("maths" and
+        "MATHEMATICS"); short ones like "II" must be equal, so "Mathematics for Economics I" isn't a match."""
+        moodle = _words(f"{row['name']} {row['short']}")
+        hits = [c["id"] for c in aide if (words := _words(c["name"]))
+                and all(any(_same(w, m) for m in moodle) for w in words)]
         return hits[0] if len(hits) == 1 else None
 
     # -- syncing -------------------------------------------------------------------
@@ -332,6 +369,8 @@ class MoodleSync:
             self._set("error", None)
             for course_id, files in new.items():
                 self._attach(course_id, files)
+                if self.notebook is not None:
+                    self.notebook.new_material(course_id, [{"file": f["public_id"]} for f in files])
             count = sum(len(fs) for fs in new.values())
             if count:
                 await self._announce(new)
@@ -340,10 +379,15 @@ class MoodleSync:
 
     async def _sync_course(self, client: MoodleClient, row: dict) -> list[tuple[dict, bool]]:
         out = []
+        page: list[str] = []  # the course page's text
         for section in await client.call("core_course_get_contents", courseid=row["moodle_id"]):
+            section["name"] = html.unescape(section.get("name") or "")
+            page.append(f"## {section['name']}" + (f"\n{summary}" if (summary := _text(section.get("summary"))) else ""))
             for module in section.get("modules", []):
                 if module.get("uservisible") is False:
                     continue
+                module["name"] = html.unescape(module.get("name") or "")
+                page.append(await self._module_text(client, module))
                 pdfs = [c for c in module.get("contents") or [] if _pdf(c)]
                 for c in pdfs:
                     key = f"{row['moodle_id']}/{module['id']}{c.get('filepath') or '/'}{c['filename']}"
@@ -354,11 +398,35 @@ class MoodleSync:
                     if (c.get("filesize") or 0) > MAX_FILE:
                         log.info("Moodle file too big to keep: %s", c["filename"])
                         continue
-                    name = module.get("name") if len(pdfs) == 1 and module.get("name") else c["filename"]
+                    name = module["name"] if len(pdfs) == 1 and module["name"] else html.unescape(c["filename"])
                     if f := await self._fetch(client, c, key, stamp, name, row["course_id"],
                                               section.get("name") or ""):
                         out.append((f, seen is None))
+        text = "\n\n".join(p for p in page if p)[:COURSE_TEXT]
+        self.conn.execute("UPDATE moodle_courses SET text = ? WHERE moodle_id = ?", (text, row["moodle_id"]))
         return out
+
+    async def _module_text(self, client: MoodleClient, module: dict) -> str:
+        """A module on the course page as text: a label's text, a forum's latest posts when it's one for notices
+        or textbooks, else its name and kind."""
+        kind = module.get("modname") or ""
+        if kind == "label":
+            return _text(module.get("description"))
+        line = f"- {module['name']}" + (f" ({kind})" if kind else "") + (f": {d}" if (d := _text(module.get("description"))) else "")
+        if kind != "forum" or not _FORUMS.search(module["name"]) or not module.get("instance"):
+            return line
+        try:
+            found = await client.call("mod_forum_get_forum_discussions", forumid=module["instance"],
+                                      sortorder=1, perpage=FORUM_POSTS)
+        except LoginNeeded:
+            raise
+        except MoodleError as e:
+            log.info("Moodle forum %s not read: %s", module["name"], e)
+            return line
+        discussions = (found.get("discussions") if isinstance(found, dict) else None) or []
+        posts = [f"### {html.unescape(d.get('subject') or d.get('name') or '')}\n{_text(d.get('message'))[:FORUM_POST]}"
+                 for d in discussions[:FORUM_POSTS]]
+        return "\n\n".join([line, *posts])
 
     async def _fetch(self, client: MoodleClient, content: dict, key: str, stamp: int, name: str, course_id: int,
                      section: str) -> dict | None:
