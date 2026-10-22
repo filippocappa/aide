@@ -236,6 +236,23 @@ final class APIClient {
         let _: OKResponse = try await send("DELETE", "/v1/memory/\(id)", body: EmptyBody())
     }
 
+    func sendLocation(_ fix: LocationFix) async throws {
+        let _: OKResponse = try await send("POST", "/v1/location", body: fix)
+    }
+
+    func transitAlerts() async throws -> [TransitAlert] {
+        let list: TransitAlertList = try await send("GET", "/v1/transit/alerts")
+        return list.alerts
+    }
+
+    func updateTransitAlert(_ id: Int, _ patch: TransitAlertPatch) async throws -> TransitAlert {
+        try await send("PATCH", "/v1/transit/alerts/\(id)", body: patch)
+    }
+
+    func deleteTransitAlert(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/transit/alerts/\(id)", body: EmptyBody())
+    }
+
     func digest(kind: String) async throws -> Digest {
         try await send("GET", "/v1/digest", query: [URLQueryItem(name: "kind", value: kind)])
     }

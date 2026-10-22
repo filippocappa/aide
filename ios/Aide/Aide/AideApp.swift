@@ -20,6 +20,7 @@ struct AideApp: App {
                 .environmentObject(env.voice)
                 .environmentObject(env.push)
                 .environmentObject(env.health)
+                .environmentObject(env.location)
                 .tint(Theme.accent)
                 .task { await env.refreshAll() }
                 .onChange(of: scenePhase) { _, phase in
@@ -38,6 +39,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         // HealthKit's background wake-ups only reach observers set up during launch.
         Task { if !env.settings.isPreview { await env.health.startObserving() } }
+        // A significant move relaunches the app in the background only if monitoring starts again at launch.
+        if !env.settings.isPreview { env.location.start() }
         return true
     }
 
@@ -49,9 +52,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         env.push.didFailToRegister(error)
     }
 
-    /// A silent `sync` push: bring Apple Reminders up to date, so the alarms are set before they're due.
+    /// Silent pushes. `sync`: bring Apple Reminders up to date, so the alarms are set before they're due.
+    /// `location`: a tram alert wants to know how far the stop is.
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        if PushRoute.isLocation(userInfo), env.settings.isConfigured {
+            Task { completionHandler(await env.location.sendFresh() ? .newData : .failed) }
+            return
+        }
         guard PushRoute.isSync(userInfo), env.settings.isConfigured else { return completionHandler(.noData) }
         Task {
             await env.sync.sync()
