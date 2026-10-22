@@ -86,6 +86,8 @@ struct CourseView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
     @State private var notebook: NotebookStatus?
+    @State private var writer: NotesWriter?
+    @State private var note: String?
     @State private var lectures: [Lecture] = []
     @State private var files: [StudyFile] = []
     @State private var error: String?
@@ -108,8 +110,14 @@ struct CourseView: View {
             if let busy {
                 HStack(spacing: 10) { ProgressView(); Text(busy).foregroundStyle(.secondary) }
             }
+            if let note {
+                Label(note, systemImage: "photo.on.rectangle").font(.footnote).foregroundStyle(.secondary)
+            }
             ForEach(notebook?.proposals ?? []) { proposal in
                 Section { ProposalCard(proposal: proposal, act: act) }
+            }
+            if let pause = writer?.paused, pause.course == nil || pause.course == course.id {
+                Section { WriterPauseCard(pause: pause) { writer = $0 } }
             }
             if let writing = notebook?.writing {
                 Section { WritingRow(progress: writing.progress) }
@@ -159,6 +167,11 @@ struct CourseView: View {
                 Menu {
                     Button("Add a PDF", systemImage: "doc.badge.plus") { importing = .pdf }
                     Button("Add a recording", systemImage: "waveform.badge.plus") { importing = .recording }
+                    if !(notebook?.topics ?? []).isEmpty {
+                        Button("Find figures in the slides", systemImage: "photo.on.rectangle") {
+                            Task { await findFigures() }
+                        }
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -189,6 +202,7 @@ struct CourseView: View {
             while !Task.isCancelled, notebook?.writing != nil {
                 try? await Task.sleep(for: .seconds(4))
                 if let fresh = try? await env.api.notebookPage(course: course.id) { notebook = fresh }
+                if let fresh = try? await env.api.notesWriter() { writer = fresh }
             }
         }
     }
@@ -236,6 +250,7 @@ struct CourseView: View {
             async let ls = env.api.lectures(course: course.id)
             async let fs = env.api.files(course: course.id)
             (notebook, lectures, files) = try await (nb, ls, fs)
+            writer = try? await env.api.notesWriter()
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -250,6 +265,16 @@ struct CourseView: View {
                 _ = try await env.api.declineProposal(proposal.id)
             }
             await load()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func findFigures() async {
+        do {
+            notebook = try await env.api.findFigures(course: course.id)
+            note = "Professor is looking at every slide. New figures go into the topics, and a note comes in the course chat."
+            error = nil
         } catch {
             self.error = error.localizedDescription
         }
@@ -387,5 +412,126 @@ private struct WritingRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: Who writes the notes (docs/API.md, "Who writes the notes")
+
+/// Settings → Study: the user's Claude plan (through Claude Code on the server) or OpenRouter, and the plan's use.
+struct NotesWriterView: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @State private var writer: NotesWriter?
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+            }
+            if let writer {
+                if let paused = writer.paused {
+                    Section { WriterPauseCard(pause: paused) { self.writer = $0 } }
+                }
+                Section {
+                    Picker("Write notes with", selection: Binding(get: { writer.engine }, set: { new in
+                        Task { await set(new) }
+                    })) {
+                        Text("Your Claude plan").tag("claude")
+                        Text("OpenRouter").tag("openrouter")
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                    .disabled(writer.available == false)
+                } footer: {
+                    Text(writer.available == false
+                         ? "Claude Code isn't installed on the server, so notes are written through OpenRouter."
+                         : "Lecture notes, notebook pages and the slide scan. With your plan, Sonnet writes and Haiku "
+                           + "reads, with no extra cost; when its limit is reached, Professor asks whether to wait or "
+                           + "finish on OpenRouter (paid). Chat always uses OpenRouter.")
+                }
+                if let usage = writer.usage {
+                    Section("Your plan") {
+                        if let w = usage.fiveHour { UsageRow(title: "5-hour window", window: w) }
+                        if let w = usage.sevenDay { UsageRow(title: "This week", window: w) }
+                    }
+                }
+                if let until = writer.openrouterUntil.flatMap(Wire.parse) {
+                    Section {
+                        Text("On OpenRouter until \(until.formatted(date: .omitted, time: .shortened)), when the plan resets.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if error == nil {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+        }
+        .navigationTitle("Who writes the notes")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do { writer = try await env.api.notesWriter(); error = nil } catch { self.error = error.localizedDescription }
+    }
+
+    private func set(_ engine: String) async {
+        do { writer = try await env.api.setNotesWriter(engine); error = nil } catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct UsageRow: View {
+    let title: String
+    let window: PlanWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(Int(((window.used ?? 0) * 100).rounded()))% used").foregroundStyle(.secondary)
+            }
+            ProgressView(value: min(max(window.used ?? 0, 0), 1)).tint((window.used ?? 0) > 0.85 ? .orange : Theme.toggle)
+            if let resets = window.resets {
+                Text("Resets \(resets.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// A notes job paused on the plan's limit: wait for the reset, or finish on OpenRouter until then.
+struct WriterPauseCard: View {
+    let pause: WriterPause
+    let answered: (NotesWriter) -> Void
+    @EnvironmentObject private var env: AppEnvironment
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Your Claude plan's limit is reached", systemImage: "pause.circle").font(.headline)
+            Text(detail).font(.subheadline).foregroundStyle(.secondary)
+            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            HStack {
+                Button("Wait for reset") { Task { await decide("wait") } }
+                    .buttonStyle(.bordered)
+                Button("Finish on OpenRouter") { Task { await decide("openrouter") } }
+                    .buttonStyle(.borderedProminent).tint(Theme.toggle)
+            }
+            .disabled(busy)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var detail: String {
+        let when = pause.resets.map { " It resets \($0.formatted(.relative(presentation: .named)))." } ?? ""
+        return "The notes being written are paused." + when + " OpenRouter is paid."
+    }
+
+    private func decide(_ use: String) async {
+        busy = true
+        defer { busy = false }
+        do { answered(try await env.api.decideWriter(use)) } catch { self.error = error.localizedDescription }
     }
 }

@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import Callable
 
 from .db import utcnow
+from .engine import course_var
 from .material import PdfError, page_image
 from .study import StudyStore, summary
 
@@ -72,11 +73,18 @@ CREATE TABLE IF NOT EXISTS proposals (
 CREATE TABLE IF NOT EXISTS notebook_jobs (
     id         INTEGER PRIMARY KEY,
     course_id  INTEGER NOT NULL,
-    kind       TEXT NOT NULL,  -- start, outline, triage, apply
+    kind       TEXT NOT NULL,  -- start, outline, triage, apply, figures
     args       TEXT NOT NULL DEFAULT '{}',
     status     TEXT NOT NULL DEFAULT 'queued',  -- queued, running, done, failed
     error      TEXT,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS page_looks (  -- what each slide shows, from one look at it: the figures to pick from
+    file_id INTEGER NOT NULL,
+    page    INTEGER NOT NULL,
+    figure  INTEGER NOT NULL,  -- 1: a graph, diagram or chart worth showing in the notes
+    what    TEXT,
+    PRIMARY KEY (file_id, page)
 );
 """
 
@@ -84,9 +92,13 @@ STATUSES = ("pending", "applying", "applied", "declined", "superseded", "failed"
 MAP_LINE = 90  # characters of a page's first line in the material map
 MAP_CHARS = 60_000  # the material map, at most; past that, lines get shorter
 TOPIC_CHARS = 120_000  # a topic's pages' text, at most
-TOPIC_IMAGES = 4  # pages with the least text that go along as images: a third of macro's first build was images
+TOPIC_IMAGES = 6  # pages that go along as images: the scan's figures first, else the ones with the least text
+LEAST_TEXT_IMAGES = 4  # of those, at most this many picked by little text, for files not scanned yet
 IMAGE_TEXT = 150  # a page with less text than this is mostly a picture (a graph)
-FIGURE_CANDIDATES = 6  # pages looked at when adding figures to a page already written
+FIGURE_CANDIDATES = 8  # pages looked at when adding figures to a page already written
+MOST_FIGURES = 4  # on a topic page
+SCAN_BATCH = 8  # slides a call, in the scan
+SCAN_SIDE = 640  # pixels: enough to tell a graph from a bullet list, about 400 tokens a page
 TOPIC_IMAGE_SIDE = 1000  # pixels: a graph reads fine, at about 1,000 tokens instead of 2,500
 PARALLEL = 3  # topics written at once
 CARDS = "===CARDS==="
@@ -404,22 +416,51 @@ class NotebookStore:
                 return text[:MAP_CHARS * 2]
             width //= 2
 
-    async def material_for(self, sources: list[dict], budget: int = TOPIC_CHARS,
-                           most: int = TOPIC_IMAGES) -> tuple[str, list[tuple[str, bytes]]]:
-        """The text of the sources' pages (each marked [file, p. N]) and lectures' notes, and images of the pages
-        with the least text, at most `most`, each with its mark."""
-        parts, pictures = [], []
+    # -- the slide scan ------------------------------------------------------------------------------
+
+    def looks(self, file_id: int) -> dict[int, bool]:
+        """A file's scanned pages: page → whether it has a figure worth showing. Empty: not scanned."""
+        return {r[0]: bool(r[1]) for r in self.conn.execute(
+            "SELECT page, figure FROM page_looks WHERE file_id = ?", (file_id,))}
+
+    def unscanned(self, course_id: int) -> list[tuple[dict, list[int]]]:
+        out = []
+        for f in self.files.files(course_id):
+            seen = self.looks(f["id"])
+            if missing := [n for n in range(1, (f["pages"] or 0) + 1) if n not in seen]:
+                out.append((f, missing))
+        return out
+
+    def set_looks(self, file_id: int, looks: list[tuple[int, bool, str]]) -> None:
+        self.conn.executemany("INSERT OR REPLACE INTO page_looks (file_id, page, figure, what) VALUES (?, ?, ?, ?)",
+                              [(file_id, n, int(fig), what) for n, fig, what in looks])
+        self.conn.commit()
+
+    async def material_for(self, sources: list[dict], budget: int = TOPIC_CHARS, most: int = TOPIC_IMAGES,
+                           skip: set[tuple[str, int]] = frozenset()) -> tuple[str, list[tuple[str, bytes]]]:
+        """The text of the sources' pages (each marked [file, p. N]) and lectures' notes, and images of pages
+        that may make figures, at most `most`, each with its mark: the scan's figures (spread over the topic's
+        pages when there are more), else, in files not scanned yet, the pages with the least text. Pages in
+        `skip` (file id, page) are left out: figures the page already has."""
+        parts, scanned, unscanned = [], [], []
         for s in sources:
             if "file" in s and (f := self.files.get(s["file"])):
                 wanted = set(s.get("pages") or range(1, f["pages"] + 1))
                 pages = [(n, t) for n, t in self.files.pages(f) if n in wanted]
                 parts.append("\n\n".join(f"[{f['name']}, p. {n}]\n{t}" for n, t in pages if t))
-                pictures += [(len(t), f, n) for n, t in pages if len(t) < IMAGE_TEXT]
+                pages = [(n, t) for n, t in pages if (f["public_id"], n) not in skip]
+                if looks := self.looks(f["id"]):
+                    scanned += [(f, n) for n, _ in pages if looks.get(n)]
+                else:
+                    unscanned += [(len(t), f, n) for n, t in pages if len(t) < IMAGE_TEXT]
             elif "lecture" in s and (lec := self.study.get(s["lecture"])) and lec["notes"]:
                 when = datetime.fromisoformat(lec["recorded_at"]).astimezone(self.tz)
                 parts.append(f"[Lecture notes, {when:%a %d %b}: {lec['title'] or 'untitled'}]\n{lec['notes']}")
+        if len(scanned) > most:
+            scanned = [scanned[i * len(scanned) // most] for i in range(most)]
+        least = [(f, n) for _, f, n in sorted(unscanned, key=lambda p: p[0])][:min(LEAST_TEXT_IMAGES, most)]
         images = []
-        for _, f, n in sorted(pictures, key=lambda p: p[0])[:most]:
+        for f, n in (scanned + least)[:most]:
             try:
                 images.append((f"[{f['name']}, p. {n}]", await page_image(self.files.path(f), n, TOPIC_IMAGE_SIDE)))
             except PdfError:
@@ -751,6 +792,13 @@ the section each belongs at the end of. None that are mostly text, a title or de
 Answer with JSON only: [{"after": "a heading exactly as listed", "file": "the file name", "page": 12, "caption": \
 "a short caption: what it shows"}]"""
 
+SCAN_PROMPT = """You sort a course's slides for a student's notes. Each slide comes as an image after its mark [p. 12]. \
+For each, say whether it has a graph, diagram or chart of data that explains something better than words (a curve \
+shifting, a model's diagram, a timeline, a table of data worth seeing), whatever text is on it too. Not a figure: \
+bullet points only, a title page, a photo or logo for decoration, plain equations.
+Answer with JSON only, every slide: [{"page": 12, "figure": true, "what": "the IS curve shifting right"}] ("what" \
+in a few words, empty when there's no figure)."""
+
 CHECK_PROMPT = """You are a strong student taking a multiple-choice test on the notes below. For each question pick \
 the one best option, from the notes and what any good textbook says. When two options are equally right, or none \
 is, answer "?".
@@ -774,6 +822,7 @@ class NotebookWorker:
         self.agent = agent  # the model client and the smart model, and posting in the course chat
         self.push = push
         self.vault = vault  # set after: reads the user's edits back before a merge, kicked after changes
+        self.engine = None  # Engine, set after: OpenRouter or the user's Claude plan; None calls OpenRouter directly
         self._wake = asyncio.Event()
         store.on_job.append(self.kick)
 
@@ -794,6 +843,7 @@ class NotebookWorker:
     async def process(self, job: dict) -> None:
         self.store.set_job(job["id"], "running")
         course = self.study.course(job["course_id"])
+        course_var.set(job["course_id"])
         try:
             if course is None:
                 raise RuntimeError("the course is gone")
@@ -807,7 +857,7 @@ class NotebookWorker:
                 case "apply":
                     await self.apply(self.store.find_proposal(job["args"]["proposal"]))
                 case "figures":
-                    await self.add_figures(course)
+                    await self.add_figures(course, again=job["args"].get("again", False))
         except Exception as e:
             log.exception("notebook job %s (%s) failed", job["id"], job["kind"])
             error = str(e)[:200] if isinstance(e, (RuntimeError, KeyError, ValueError)) else "something went wrong"
@@ -927,6 +977,7 @@ class NotebookWorker:
         picked = [p["items"][i - 1] for i in chosen["items"]]
         if self.vault is not None:
             self.vault.pull()  # the user's latest edits, before building on them
+        await self.scan(course)
         jobs: list[tuple[dict, dict]] = []  # (topic, item)
         for it in picked:
             if it.get("topic") and (topic := self.store.topic(it["topic"])):
@@ -995,21 +1046,55 @@ class NotebookWorker:
         body = await self.check_answers(topic, body, topic["body"])
         return self.store.set_body(topic["id"], body, cards=new_cards, sources=it["sources"])
 
-    async def add_figures(self, course: dict) -> None:
-        """Figures for topics written before there were any: for each, the model sees its headings and its most
-        visual pages, and says only where which page goes. Cheap: no page is rewritten."""
+    async def scan(self, course: dict) -> int:
+        """One look at each of the course's slides not seen yet (the cheap model, a few at a time, small): which
+        have a figure worth showing, whatever their text. Those become the figures' candidates. A batch that fails
+        stays unscanned, and its file falls back to the pages with the least text."""
+        done = 0
+        for f, missing in self.store.unscanned(course["id"]):
+            for i in range(0, len(missing), SCAN_BATCH):
+                batch, content = missing[i:i + SCAN_BATCH], []
+                try:
+                    for n in batch:
+                        content += self._images([(f"[p. {n}]", await page_image(self.store.files.path(f), n, SCAN_SIDE))])
+                    content.append({"type": "text", "text": f"Slides from {f['name']}: p. {', '.join(map(str, batch))}"})
+                    answer = parse_json(await self._ask(SCAN_PROMPT, content, 200 + 60 * len(batch),
+                                                        model=self.agent.model))
+                except Exception as e:
+                    log.warning("scan of %s p. %d–%d skipped: %s", f["public_id"], batch[0], batch[-1], e)
+                    continue
+                seen = {int(it["page"]): it for it in answer if isinstance(it, dict) and str(it.get("page")).isdigit()} \
+                    if isinstance(answer, list) else {}
+                self.store.set_looks(f["id"], [(n, bool(seen.get(n, {}).get("figure")),
+                                                str(seen.get(n, {}).get("what") or "")[:200]) for n in batch])
+                done += len(batch)
+        if done:
+            log.info("scanned %d slide(s) of %s", done, course["name"])
+        return done
+
+    async def add_figures(self, course: dict, again: bool = False) -> None:
+        """Figures for topics written before there were any (with `again`, also for topics that have some, from
+        the pages they don't show yet): for each, the model sees its headings and its likeliest pages, and says only
+        where which page goes. Cheap: no page is rewritten."""
         if self.vault is not None:
             self.vault.pull()
+        await self.scan(course)
         added = []
         for topic in self.store.topics(course["id"]):
-            if not topic["body"] or figures(topic["body"]):
+            have = figures(topic["body"] or "")
+            room = MOST_FIGURES - len(have)
+            if not topic["body"] or (have and not again) or room <= 0:
                 continue
-            _, images = await self.store.material_for(json.loads(topic["sources"]), budget=0, most=FIGURE_CANDIDATES)
+            _, images = await self.store.material_for(json.loads(topic["sources"]), budget=0, most=FIGURE_CANDIDATES,
+                                                      skip={(fid, page) for _, fid, page in have})
             if not images:
                 continue
             heads = [h for h, _ in sections(topic["body"]) if h]
-            content = self._images(images) + [{"type": "text", "text": (
-                f"Topic: {topic['title']}\n\nThe page's sections:\n" + "\n".join(heads))}]
+            text = f"Topic: {topic['title']}\n\nThe page's sections:\n" + "\n".join(heads)
+            if have:
+                text += ("\n\nFigures the page already has: " + "; ".join(c or "untitled" for c, _, _ in have)
+                         + f". Add only ones that show something these don't, at most {room}.")
+            content = self._images(images) + [{"type": "text", "text": text}]
             try:
                 answer = parse_json(await self._ask(FIGURES_PROMPT, content, 1500))
             except Exception as e:
@@ -1017,7 +1102,7 @@ class NotebookWorker:
                 continue
             body = topic["body"]
             n = 0
-            for it in (answer if isinstance(answer, list) else [])[:4]:
+            for it in (answer if isinstance(answer, list) else [])[:room]:
                 if not isinstance(it, dict) or str(it.get("after", "")) not in heads:
                     continue
                 line = self.store.figures_in(f"FIGURE: {it.get('file')}, p. {it.get('page')} | {it.get('caption') or ''}",
@@ -1034,6 +1119,9 @@ class NotebookWorker:
         if added:
             await self._post(course, "[Notebook: figures added]",
                              f"Added slide figures to the notes: {', '.join(added)}. They're in Obsidian.")
+        elif again:
+            await self._post(course, "[Notebook: figures checked]",
+                             "I looked at the slides: no topic was missing a figure worth adding.")
 
     def _context(self, cid: int, topic: dict, note: str) -> str:
         intro = self.store.intro(cid)
@@ -1093,6 +1181,9 @@ class NotebookWorker:
         return body
 
     async def _ask(self, system: str, content: list[dict], max_tokens: int, model: str | None = None) -> str:
+        if self.engine is not None:
+            fast = model is not None and model != self.agent.smart_model
+            return await self.engine.ask(system, content, max_tokens, fast=fast)
         response = await self.agent.client.beta.messages.create(
             model=model or self.agent.smart_model, max_tokens=max_tokens, system=system,
             messages=[{"role": "user", "content": content}])

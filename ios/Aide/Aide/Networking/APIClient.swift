@@ -367,6 +367,24 @@ final class APIClient {
         try await send("POST", "/v1/proposals/\(id)/decline", body: EmptyBody())
     }
 
+    /// Who writes the notes: the user's Claude plan or OpenRouter (docs/API.md, "Who writes the notes").
+    func notesWriter() async throws -> NotesWriter {
+        try await send("GET", "/v1/writer")
+    }
+
+    func setNotesWriter(_ engine: String) async throws -> NotesWriter {
+        try await send("PUT", "/v1/writer", body: WriterChoice(engine: engine))
+    }
+
+    /// The answer to a job paused on the plan's limit: "wait" or "openrouter".
+    func decideWriter(_ use: String) async throws -> NotesWriter {
+        try await send("POST", "/v1/writer/decide", body: WriterDecision(use: use))
+    }
+
+    func findFigures(course: Int) async throws -> NotebookStatus {
+        try await send("POST", "/v1/notebook/figures?course=\(course)", body: EmptyBody())
+    }
+
     func lectures(course: Int) async throws -> [Lecture] {
         let list: LectureList = try await send("GET", "/v1/lectures",
                                                query: [URLQueryItem(name: "course", value: String(course))])

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from ..engine import Engine
 from ..notebook import NotebookStore, sections
 from ..study import StudyStore
 from . import Tool
@@ -21,7 +22,7 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 
 def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
-                notebook: NotebookStore | None = None) -> list[Tool]:
+                notebook: NotebookStore | None = None, engine: Engine | None = None) -> list[Tool]:
     def when(lecture: dict) -> str:
         return f"{datetime.fromisoformat(lecture['recorded_at']).astimezone(tz):%a %d %b %Y %H:%M}"
 
@@ -198,6 +199,40 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
                 f"planned from the material and proposed in the {c['name']} chat for the user's OK (a few minutes). "
                 "Nothing goes into the notes before that.")
 
+    async def find_figures(course: str) -> str:
+        c = await course_row(course)
+        if not notebook.topics(c["id"]):
+            return f"The {c['name']} notebook has no topics yet."
+        notebook.enqueue(c["id"], "figures", again=True)
+        return (f"Under way: every {c['name']} slide gets one look (once; new ones later), then figures go into the "
+                "topics that miss good ones. Nothing is rewritten. The result comes in the course chat.")
+
+    async def notes_writer(engine_choice: str | None = None, limit_answer: str | None = None) -> str:
+        if engine is None:
+            return "Notes are written through OpenRouter; there's no other choice on this server."
+        out = []
+        if limit_answer:
+            try:
+                engine.decide(limit_answer)
+                out.append("Finishing on OpenRouter until the plan resets." if limit_answer == "openrouter"
+                           else "Waiting for the plan to reset; the job carries on by itself then.")
+            except LookupError:
+                out.append("Nothing was waiting on the plan's limit.")
+        if engine_choice:
+            if engine_choice == "claude" and not engine.available:
+                return "Claude Code isn't installed on the server, so the plan can't be used."
+            engine.set_engine(engine_choice)
+            out.append("From now on notes are written with " +
+                       ("the user's Claude plan (Claude Code)." if engine_choice == "claude" else "OpenRouter (paid)."))
+        s = engine.status()
+        out.append("Writer: " + ("the Claude plan" if s["engine"] == "claude" else "OpenRouter") + ".")
+        for name, w in (s["usage"] or {}).items():
+            if w.get("used") is not None:
+                out.append(f"Plan {name.replace('_', '-')} window: {round(w['used'] * 100)}% used.")
+        if s["paused"]:
+            out.append("A job is paused on the plan's limit, waiting for the user: wait, or OpenRouter.")
+        return " ".join(out)
+
     lid = {"lecture_id": {"type": "string", "description": "The id in brackets, l_…"}}
     course = {"course": {"type": "string", "description": "A course name from list_courses; omit for all"}}
     one_course = {"course": {"type": "string", "description": "A course name from list_courses"}}
@@ -225,6 +260,15 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         Tool("start_notebook", "Set up a course's notebook: an Introduction (the exam, how to prepare) written now, "
              "and the topics proposed to the user, from all the course's material. Runs in the background.",
              _obj(one_course, ["course"]), start_notebook),
+        Tool("find_figures", "Look at every slide of a course once and add figures (graphs, diagrams) to the topics "
+             "that miss good ones, when the user wants more pictures in the notes. Runs in the background; nothing is "
+             "rewritten.", _obj(one_course, ["course"]), find_figures),
+        Tool("notes_writer", "Who writes the study notes: the user's Claude plan (Claude Code on the server, no extra "
+             "cost) or OpenRouter (paid). Without arguments it says which, and how much of the plan is used. "
+             "engine_choice switches it when the user asks; limit_answer is their answer when a job is paused on "
+             "the plan's limit: wait for the reset, or finish on OpenRouter.",
+             _obj({"engine_choice": {"type": "string", "enum": ["claude", "openrouter"]},
+                   "limit_answer": {"type": "string", "enum": ["wait", "openrouter"]}}, []), notes_writer),
     ] if notebook else []
     return [
         Tool("list_courses", "List the user's courses (from their timetable calendar), with how many lectures each "

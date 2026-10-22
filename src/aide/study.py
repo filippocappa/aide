@@ -25,6 +25,7 @@ from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 from .db import Database, utcnow
+from .engine import course_var
 from .icloud import CalendarBackend, CalEvent
 from .material import FileStore
 from .photos import PhotoStore
@@ -481,6 +482,7 @@ class StudyWorker:
         self.transcribe = transcribe  # None: no Whisper on this server, so recordings aren't accepted
         self.photos: PhotoStore | None = agent.photos
         self.notebook = None  # NotebookStore, set after: a lecture's first notes are offered to its course's notebook
+        self.engine = None  # Engine, set after: OpenRouter or the user's Claude plan; None calls OpenRouter directly
         self._wake = asyncio.Event()
         audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -501,6 +503,7 @@ class StudyWorker:
     async def process(self, lecture: dict) -> dict:
         lid = lecture["id"]
         started = clock.monotonic()
+        course_var.set(lecture["course_id"])
         try:
             if lecture["audio"] and not lecture["transcript"]:  # a rewrite with new slides has one
                 if self.transcribe is None:
@@ -575,6 +578,8 @@ class StudyWorker:
         return out
 
     async def _ask(self, system: str, content: list[dict]) -> str:
+        if self.engine is not None:
+            return await self.engine.ask(system, content, 16000)
         response = await self.agent.client.beta.messages.create(
             model=self.agent.smart_model, max_tokens=16000, system=system,
             messages=[{"role": "user", "content": content}])
