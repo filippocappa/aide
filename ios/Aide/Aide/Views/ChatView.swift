@@ -531,7 +531,7 @@ private struct MessagePhotos: View {
     }
 }
 
-/// The reminders, events or meals a reply was about, as a card: reminders tick off right here.
+/// The reminders, events, meals or departures a reply was about, as a card: reminders tick off right here.
 private struct AttachmentCard: View {
     let attachment: Attachment
 
@@ -544,6 +544,8 @@ private struct AttachmentCard: View {
             card { EventRows(events: events) }
         case .meals(let meals):
             if !meals.isEmpty { card { ForEach(meals) { MealRow(meal: $0) } } }
+        case .departures(let boards):
+            VStack(spacing: 10) { ForEach(boards) { DeparturesCard(board: $0) } }
         case .unknown:
             EmptyView()
         }

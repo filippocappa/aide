@@ -391,6 +391,30 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(b.lead, "10 min before")
     }
 
+    func testDeparturesAttachmentDecodes() throws {
+        let json = """
+        [{"type": "departures", "departures": [{
+          "id": "1687:4:Politecnico", "stop": {"id": "1687", "code": "253", "name": "Porta Nuova"},
+          "at": "2026-10-22T06:00:00Z", "distance": 180, "walk": 170, "line": "4",
+          "to": {"name": "Politecnico", "stops": ["812", "813"]},
+          "lines": [{"line": "4", "vehicle": "Tram", "towards": "Falchera", "arrivals": [
+            {"at": "2026-10-22T06:07:00Z", "scheduled": "2026-10-22T06:05:00Z", "live": true, "delay": 120,
+             "to_at": "2026-10-22T06:32:00Z", "to_stop": "813"},
+            {"at": "2026-10-22T06:15:00Z", "scheduled": "2026-10-22T06:15:00Z", "live": false, "delay": null}]}]}]}]
+        """
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .departures(let boards) = attachments[0] else { return XCTFail("expected departures") }
+        let board = try XCTUnwrap(boards.first)
+        XCTAssertEqual(board.stop.code, "253")
+        XCTAssertEqual(board.walk, 170)
+        XCTAssertEqual(board.to?.stops, ["812", "813"])
+        let first = board.lines[0].arrivals[0]
+        XCTAssertEqual(first.delay, 120)
+        XCTAssertEqual(first.arrivesDate?.timeIntervalSince(first.date!), 25 * 60)
+        XCTAssertNil(board.lines[0].arrivals[1].delay)
+        XCTAssertNil(board.lines[0].arrivals[1].toAt)
+    }
+
     func testTransitAlertPatchSendsOnlyWhatChanges() throws {
         func json(_ patch: TransitAlertPatch) throws -> [String: Any] {
             try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(patch)) as? [String: Any])

@@ -217,12 +217,16 @@ take `ids` to answer one action at a time. App (`Views/ActivityView.swift`): a b
 screen, a sheet with "Waiting for you" (each answered there), "Coming up" and the feed by day; an agent card's
 "Activity" shows that agent's alone.
 
-**Done, both sides (2026-10-22), not yet tried on the phone:** GTT tram alerts (contract in `docs/API.md`, "Transit
+**Done, both sides (2026-10-22), live on the phone:** GTT tram alerts (contract in `docs/API.md`, "Transit
 (GTT)"). Server (live): GTT's timetable and live feed (GTT takes ~20 s to answer, so it refreshes in the background;
 the metro has no live data), transit tools for Aide and Secretary (stops, arrivals near the phone or at a stop,
 alerts: a weekday commute or a one-off), a watcher that pushes a time-sensitive "Tram 4 in 7 min: leave now" when
 the tram is the walk from the phone plus 2 min away (or N min before). App: `LocationService` (significant moves,
 Always, a fix on a silent `location` push), Settings → Getting around (location, Tram alerts list and editor).
+Departure cards (`departures` attachment, `GET /v1/transit/departures`): per stop, each line's badge, direction,
+minutes, live delay or timetable, the next ones, the walk and when to leave; with a destination (a stop, or any place
+through Maps: its stops within 400 m) only direct lines, with the time there. The app's `DeparturesCard` counts down
+and fetches the board again every 30 s while on screen (cards under 3 h old).
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
