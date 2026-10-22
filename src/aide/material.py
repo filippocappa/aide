@@ -59,6 +59,7 @@ SLIDES_PER_LECTURE = 3  # at most this many are attached by themselves (a term's
 PICTURE_SIDE = 100  # pixels: a smaller embedded image is an icon, not a picture
 DRAWN_SHAPES = 6  # a page with at least this many drawn shapes may hold a diagram, a chart or a table
 DRAWN_OVER_USUAL = 1.3  # ... and at least this many times its file's usual page (a template's boxes repeat)
+USUAL_PAGES = 4  # a file needs this many pages to have a usual one
 
 _ID = re.compile(r"^f_[0-9a-f]{12}$")
 _WORD = re.compile(r"\w+")
@@ -118,11 +119,12 @@ async def visual_pages(path: Path, pages: int) -> set[int]:
         out = Path(tmp) / "pages.svg"
         await _run("pdftocairo", "-svg", str(path), str(out))
         svg = out.read_text(errors="replace")
+    drawn = re.findall(r"<page>(.*?)</page>", svg, flags=re.S) or [svg]  # one page: no <page> around it
     shapes = [len(re.findall(r"<path\b", re.sub(r"<(defs|clipPath|mask|pattern)\b.*?</\1>", "", page, flags=re.S)))
-              for page in re.findall(r"<page>(.*?)</page>", svg, flags=re.S)]
+              for page in drawn]
     if len(shapes) != pages:
         raise PdfError(f"the SVG has {len(shapes)} pages, not {pages}")
-    usual = sorted(shapes)[len(shapes) // 2] if shapes else 0
+    usual = sorted(shapes)[len(shapes) // 2] if len(shapes) >= USUAL_PAGES else 0
     return found | {n for n, count in enumerate(shapes, 1) if count >= max(DRAWN_SHAPES, DRAWN_OVER_USUAL * usual)}
 
 
