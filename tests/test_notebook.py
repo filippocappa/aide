@@ -180,10 +180,11 @@ async def test_the_app_sees_what_professor_is_doing(nb):
 
     def scan(pages):
         seen.append(nb.api.get(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).json()["step"])
-        return [{"page": n, "figure": False} for n in pages]
+        return []
     nb.client.scan = scan
     await built(nb)  # and, done, no step
-    assert seen == ["Looking for figures in the slides: 0 of 3"]
+    # Each topic's slides are looked at as it's written, not the course's up front.
+    assert len(seen) == 2 and all(s.startswith("Writing ") for s in seen)
 
 
 async def test_applying_the_outline_writes_each_topic_from_its_own_pages(nb):
@@ -425,13 +426,13 @@ async def test_the_slide_scan_picks_the_figures_whatever_their_text(nb):
     is_lm, _ = await built(nb)  # its scan answer couldn't be read: nothing scanned yet
     fid = nb.file["id"]
     nb.client.scans.clear()
-    nb.client.scan = lambda pages: [{"page": n, "figure": n == 2, "what": "the LM curve" if n == 2 else ""}
-                                    for n in pages]
+    nb.client.scan = lambda pages: [{"page": 2, "what": "the LM curve"}] if 2 in pages else []
     nb.client.responses.append(done(json.dumps([{"after": "Explanation › The LM curve", "file": "Week 3 slides.pdf",
                                                  "page": 2, "caption": "LM sloping up"}])))
     assert nb.api.post(f"/v1/notebook/figures?course={nb.macro['id']}", headers=AUTH).status_code == 202
     await drain(nb)
-    assert len(nb.client.scans) == 1 and len(images(nb.client.scans[0])) == 3  # every slide, once, in one call
+    # Each topic's own slides, once: The IS-LM model's two, then Crowding out's one.
+    assert [len(images(r)) for r in nb.client.scans] == [2, 1]
     request = nb.client.requests[-1]
     assert len(images(request)) == 1  # only the slide with a figure; Crowding out's slide has none: no call
     body = nb.notebook.topic(is_lm["public_id"])["body"]
@@ -441,7 +442,7 @@ async def test_the_slide_scan_picks_the_figures_whatever_their_text(nb):
     before = len(nb.client.requests)
     nb.notebook.enqueue(nb.macro["id"], "figures", again=True)
     await drain(nb)
-    assert len(nb.client.scans) == 1 and len(nb.client.requests) == before
+    assert len(nb.client.scans) == 2 and len(nb.client.requests) == before
     nb.notebook.set_looks(nb.notebook.files.get(fid)["id"], [(1, True, "the IS curve")])
     nb.client.responses.append(done("[]"))
     nb.notebook.enqueue(nb.macro["id"], "figures", again=True)
@@ -450,6 +451,17 @@ async def test_the_slide_scan_picks_the_figures_whatever_their_text(nb):
     assert len(images(request)) == 1 and "Figures the page already has: LM sloping up. Add only ones that show " \
         "something these don't, at most 3." in sent(request)
     assert nb.api.post("/v1/notebook/figures?course=999", headers=AUTH).status_code == 404
+
+
+async def test_the_scan_sends_only_slides_that_may_hold_a_figure(nb):
+    words = "\n".join(["A bullet point with plenty of words on the rules of the course"] * 3)
+    data = make_pdf(None, [words, words, "A chart"], shapes=[0, 8, 0])  # p. 2 draws boxes, p. 3 is short of text
+    f = add_pdf(nb.api, data=data, course=nb.macro["id"]).json()
+    nb.client.scan = lambda pages: [{"page": 2, "what": "a tree of the accounting books"}]
+    assert await nb.worker.scan([{"file": f["id"], "pages": [1, 2, 3]}]) == 2
+    assert [len(images(r)) for r in nb.client.scans] == [2]  # the bullet list is marked without a call
+    assert nb.notebook.looks(nb.notebook.files.get(f["id"])["id"]) == {1: False, 2: True, 3: False}
+    assert await nb.worker.scan([{"file": f["id"]}]) == 0 and len(nb.client.scans) == 1  # never twice
 
 
 def test_money_and_sentence_formulas_made_safe_for_obsidian():

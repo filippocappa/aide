@@ -646,10 +646,10 @@ Unicode ($\pi_{t-1}$ as πₜ₋₁) and `[[links]]` their text. Without it, the
 
 **Progress.** A course's chat has `"course": 2` in the conversation list (`null` on other chats). While a proposal
 is applied, `GET /v1/notebook?course=` has it as `writing`, with `"progress": {"done": 4, "total": 11}` (topics
-finished, failed ones included; `progress` is null on proposals not being applied). Before the first topic, the
-slides are looked at for figures, so `progress` can stay at 0 for a while: `step` says so ("Looking for figures in
-the slides: 40 of 230"). The app polls it every few seconds while the course's chat is open and `writing` isn't
-null; when it turns null, the result is in the chat.
+finished, failed ones included; `progress` is null on proposals not being applied). `step` says which topics are
+being written ("Writing The IS-LM model, Crowding out"); each topic's slides are looked at for figures as it's
+written, so nothing holds up the first. The app polls it every few seconds while the course's chat is open and
+`writing` isn't null; when it turns null, the result is in the chat.
 
 Topic: `{"id": "t_…", "course": 2, "position": 1, "title": "The IS-LM model", "summary": "one line" or null,
 "written": true, "sections": ["Explanation", "Key terms", …], "questions": 5, "cards": 12, "edited": false,

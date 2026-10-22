@@ -265,12 +265,17 @@ def test_the_study_connector_can_change_notes():
 # -- files ---------------------------------------------------------------------------
 
 
-def make_pdf(path, pages: list[str]) -> bytes:
-    """A real PDF with these pages of text (pdftotext must read it), written by hand: one Helvetica text line each."""
+def make_pdf(path, pages: list[str], shapes: list[int] | None = None) -> bytes:
+    """A real PDF with these pages of text (pdftotext must read it), written by hand: Helvetica, a line each (or
+    one per "\\n"), and on each page as many filled boxes as `shapes` says (a diagram, to the scan's filter)."""
     objs = ["<< /Type /Catalog /Pages 2 0 R >>", None, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
     kids = []
-    for text in pages:
-        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    shapes = shapes or [0] * len(pages)
+    for i, text in enumerate(pages):
+        boxes = "".join(f" {72 + 40 * k} 600 30 20 re f" for k in range(shapes[i]))
+        lines = " T* ".join(f"({line}) Tj" for line in text.split("\n"))
+        leading = " 14 TL" if "\n" in text else ""
+        stream = f"BT /F1 12 Tf{leading} 72 720 Td {lines} ET{boxes}".encode()
         objs.append(f"<< /Length {len(stream)} >>\nstream\n{stream.decode()}\nendstream")
         objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {len(objs)} 0 R "
                     "/Resources << /Font << /F1 3 0 R >> >> >>")

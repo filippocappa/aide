@@ -913,7 +913,7 @@ struct NotebookStatus: Decodable {
     var writing: NotebookProposal?
     var started: Bool?
     var busy: Bool?
-    /// What Professor is doing now, while `busy`: "Looking for figures in the slides: 40 of 230".
+    /// What Professor is doing now, while `busy`: "Writing The IS-LM model, Crowding out".
     var step: String?
     var exam: String?
     var introduction: String?
