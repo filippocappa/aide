@@ -45,6 +45,8 @@ from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
 from .tools.study import study_tools
+from .tools.transit import transit_tools
+from .transit import AlertStore, AlertWatcher, Live, Location, Timetable, Transit, Walks
 from .wake import WakeService
 from .whisper import available as whisper_available
 
@@ -114,6 +116,16 @@ def main() -> None:
             log.warning("AIDE_HOME_ADDRESS not set: Maps tools need an explicit origin")
     else:
         log.warning("GOOGLE_MAPS_API_KEY not set: Maps tools disabled")
+    location = Location(db.conn, push)
+    transit = alerts = watcher = None
+    if settings.gtt:
+        timetable = Timetable(settings.db_path.parent / "gtt.db", settings.timezone)
+        transit = Transit(timetable, Live())
+        alerts = AlertStore(db.conn, settings.timezone, timetable)
+        watcher = AlertWatcher(alerts, transit, location, Walks(maps), push)
+        tools += transit_tools(transit, alerts, location)
+    else:
+        log.info("AIDE_GTT off: no GTT tools or tram alerts")
 
     objectives = ObjectiveStore(db.conn, settings.timezone, habits, food, health, reminders)
     planner = ObjectivePlanner(objectives, engine, db, cal, study, notebook)
@@ -186,13 +198,14 @@ def main() -> None:
             reader.run(),
             *([vault.run()] if vault else []),
             *([moodle.run()] if settings.moodle_url else []),
+            *([transit.timetable.run(), watcher.run()] if transit else []),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
-                             notebook, engine, objectives, planner)
+                             notebook, engine, objectives, planner, location, alerts)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

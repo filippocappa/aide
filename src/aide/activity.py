@@ -34,6 +34,8 @@ LABELS = {
     "create_routine": "Made a routine", "update_routine": "Changed a routine", "delete_routine": "Deleted a routine",
     "add_objective": "Added an objective", "update_objective": "Changed an objective",
     "accept_objectives": "Accepted objectives", "plan_objectives": "Planned objectives",
+    "add_transit_alert": "Set a tram alert", "update_transit_alert": "Changed a tram alert",
+    "delete_transit_alert": "Deleted a tram alert",
     "cancel_queued": "Cancelled queued actions",
 }
 

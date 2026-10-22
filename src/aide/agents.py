@@ -18,6 +18,8 @@ CALENDAR = (*CALENDAR_READ, "create_event", "move_event", "delete_event")
 REMINDERS = ("create_reminder", "list_reminders", "update_reminder", "complete_reminder", "delete_reminder")
 MAIL = ("search_mail", "list_unread", "read_mail", "read_thread", "send_mail", "reply_mail")
 MAPS = ("find_places", "travel_time")
+TRANSIT = ("transit_stops", "transit_arrivals", "list_transit_alerts", "add_transit_alert", "update_transit_alert",
+           "delete_transit_alert")
 WEB = ("web_search", "fetch_page")
 HABITS = ("add_habit", "list_habits", "check_habit", "delete_habit")
 HEALTH = ("health",)
@@ -113,6 +115,13 @@ use travel_time (by train or bus is mode transit). Both start from the user's ho
 if your memory has a home address, pass it, since it's newer than the configured one. Always give the Google Maps \
 link from the result."""
 
+_TRANSIT = """- GTT (Turin's trams, buses and metro): transit_arrivals says when the next ones come, live; with no stop it \
+looks near the user's phone. A tram alert (add_transit_alert) pushes "your 4 is 9 min away, leave now" on the \
+phone: a one-off for the next tram, or a commute on set days around a time. By default it fires when it's time to \
+leave (the walk from where the phone is, plus 2 minutes); "tell me when it's 10 minutes away" is minutes 10. Each \
+side of the road is its own stop, so when a name matches several, ask which direction (or take the stop number \
+from memory, where "my stop" may be saved), and remember the user's usual stops."""
+
 _HEALTH = """- Health: the health tool reads the user's Apple Health summaries (sleep, resting heart rate, HRV, steps, \
 workouts). Compare with the user's own usual numbers, never with population norms, and never make medical claims \
 or diagnoses; if something looks worrying, suggest they talk to a doctor."""
@@ -172,8 +181,8 @@ it is, with ask_agent: Secretary for the calendar, reminders and mail; Coach for
 food (a meal photo goes to Coach to log) and habits; Professor for study and lectures; Finance for money and budgets. \
 You don't have their tools, so never answer those from memory or guess: ask. A request that spans several (plan my \
 week) goes to each one that has a part, at most 3 asks per turn, in parallel when they don't depend on each other. \
-Only small talk, general questions, web lookups, places and travel times, what to remember, and routines are \
-yours to answer yourself.
+Only small talk, general questions, web lookups, places and travel times, GTT trams and tram alerts, what to \
+remember, and routines are yours to answer yourself.
 - A specialist doesn't see this chat, so put everything it needs into the request: what the user asked in their \
 words, the dates and names, what was said before that matters ("the dentist you found, Tue 15:00"). The user's \
 photos from this message go along by themselves. You know what each specialist remembers (marked with its name in \
@@ -227,7 +236,7 @@ AIDE_PROMPT = _prompt(
     "You are Aide, a personal assistant for one person, and the one they talk to first. Like an executive "
     "assistant with a team behind them, you understand what they want, hand it to the specialist whose work it "
     "is, and report back. You look things up on the web and on maps yourself.",
-    _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _MAPS, _DELEGATE, _ROUTINES, _WATCHES, _ROUTINES_ANY,
+    _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _MAPS, _TRANSIT, _DELEGATE, _ROUTINES, _WATCHES, _ROUTINES_ANY,
     _OBJECTIVES, _OBJECTIVES_ANY,
 )
 
@@ -235,7 +244,7 @@ SECRETARY_PROMPT = _prompt(
     "You are Secretary, one of the user's assistants: their calendar, reminders and mail. You are efficient: "
     "you get the day organised in as few words as possible, notice clashes and loose ends, and propose the "
     "next step instead of asking open questions.",
-    _BASICS, _CALENDAR, _MAIL, _CARDS, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _ASKED, _ROUTINES,
+    _BASICS, _CALENDAR, _MAIL, _CARDS, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _TRANSIT, _ASKED, _ROUTINES,
     _WATCHES, _OBJECTIVES,
 )
 
@@ -284,12 +293,12 @@ STARTING_WATCHES = tuple((a, dict(i, days=list(i["days"]))) for a, i in _STARTIN
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
-             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *MAPS), orchestrator=True,
+             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *MAPS, *TRANSIT), orchestrator=True,
              routine_ideas=(_idea("Plan my week", "Look at my calendar, reminders and habits for the coming week and "
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
     AgentDef("secretary", "Secretary", "Calendar, reminders and mail", "#3B6FD8",
              ("What's on my calendar today?", "Any mail I need to answer?", "Remind me to "),
-             SECRETARY_PROMPT, (*CALENDAR, *REMINDERS, *MAIL, *MAPS, *WEB),
+             SECRETARY_PROMPT, (*CALENDAR, *REMINDERS, *MAIL, *MAPS, *TRANSIT, *WEB),
              routine_ideas=(_idea("Mail sweep", "Go through my unread mail: what needs an answer from me today, what "
                                   "can wait, and anything with a date to put in the calendar.", "09:00",
                                   (1, 2, 3, 4, 5)),
@@ -326,6 +335,7 @@ _CONNECTORS = (
                                      "notes_writer"}),
     ("web", "Web search", WEB, set()),
     ("maps", "Google Maps", MAPS, set()),
+    ("transit", "GTT", TRANSIT, {"add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),
     ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
     ("objectives", "Objectives", OBJECTIVES, {"add_objective", "update_objective", "accept_objectives",

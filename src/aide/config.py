@@ -51,6 +51,7 @@ class Settings:
     webdav_url: str | None = None  # how the phone reaches it, for the app's setup screen
     moodle_url: str | None = None  # https://elearning.unito.it/sme
     moodle_token: str | None = None  # from the app's Moodle login, written here by the server
+    gtt: bool = True  # Turin's GTT: stops, live arrivals and tram alerts (AIDE_GTT=0 turns it off)
 
 
 def save_env(env_path: Path, key: str, value: str | None) -> None:
@@ -120,4 +121,5 @@ def load_settings() -> Settings:
         webdav_url=os.environ.get("AIDE_WEBDAV_URL", "").strip() or None,
         moodle_url=os.environ.get("AIDE_MOODLE_URL", "").strip().rstrip("/") or None,
         moodle_token=os.environ.get("MOODLE_TOKEN", "").strip() or None,
+        gtt=os.environ.get("AIDE_GTT", "1").strip() not in ("0", "false", "no", "off"),
     )
