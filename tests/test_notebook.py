@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from aide.agent import CONVERSATION, Agent
 from aide.channels.api import create_app
 from aide.db import Database
+from aide.material import visual_pages
 from aide.notebook import SCAN_PROMPT, NotebookStore, NotebookWorker, parse_page, sections
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
@@ -173,6 +174,26 @@ async def test_starting_writes_the_introduction_and_proposes_topics(nb):
     assert nb.api.get(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).json()["proposals"][0]["items"][1] == \
         {"n": 2, "topic": None, "title": "Crowding out", "add": "Spending and the interest rate.",
          "sources": ["Week 3 slides, p. 3"]}
+
+
+async def test_the_introduction_reads_what_the_files_say_about_the_exam(nb):
+    info = make_pdf(None, ["Exam: 15 multiple choice questions, 1 point each, no penalty\nand 1 open question, "
+                           "15 points. Duration: 60 minutes. Mid-terms: 2.", "Office hours on Tuesday"])
+    assert add_pdf(nb.api, data=info, course=nb.macro["id"], name="01 info").status_code == 201
+    await started(nb)
+    intro_request = nb.client.requests[0]
+    assert "[01 info.pdf, p. 1]\nExam: 15 multiple choice questions" in sent(intro_request)
+    # All of an info sheet; of the slides, nothing (they don't talk about the exam).
+    assert "[01 info.pdf, p. 2]\nOffice hours on Tuesday" in sent(intro_request)
+    assert "The IS curve" not in sent(intro_request)
+
+    # Written again on its own when it's wrong: the topics and proposals stay.
+    nb.client.responses.append(done("Exam: 15 multiple choice questions and an open one, no penalty.\n\n## The exam\n…"))
+    nb.notebook.enqueue(nb.macro["id"], "intro")
+    await drain(nb)
+    assert nb.notebook.intro(nb.macro["id"])["exam"].startswith("15 multiple choice")
+    assert len(nb.notebook.proposals(nb.macro["id"])) == 1
+    assert "rewritten the macroeconomics Introduction" in chat_messages(nb)[-1]["text"]
 
 
 async def test_the_app_sees_what_professor_is_doing(nb):
@@ -453,7 +474,7 @@ async def test_the_slide_scan_picks_the_figures_whatever_their_text(nb):
     assert nb.api.post("/v1/notebook/figures?course=999", headers=AUTH).status_code == 404
 
 
-async def test_the_scan_sends_only_slides_that_may_hold_a_figure(nb):
+async def test_the_scan_sends_only_slides_that_may_hold_a_figure(nb, tmp_path):
     words = "\n".join(["A bullet point with plenty of words on the rules of the course"] * 3)
     data = make_pdf(None, [words, words, "A chart"], shapes=[0, 8, 0])  # p. 2 draws boxes, p. 3 is short of text
     f = add_pdf(nb.api, data=data, course=nb.macro["id"]).json()
@@ -462,6 +483,9 @@ async def test_the_scan_sends_only_slides_that_may_hold_a_figure(nb):
     assert [len(images(r)) for r in nb.client.scans] == [2]  # the bullet list is marked without a call
     assert nb.notebook.looks(nb.notebook.files.get(f["id"])["id"]) == {1: False, 2: True, 3: False}
     assert await nb.worker.scan([{"file": f["id"]}]) == 0 and len(nb.client.scans) == 1  # never twice
+    one = tmp_path / "one.pdf"
+    make_pdf(one, [words], shapes=[8])
+    assert await visual_pages(one, 1) == {1}  # one page: pdftocairo's SVG has no <page> around it
 
 
 def test_money_and_sentence_formulas_made_safe_for_obsidian():

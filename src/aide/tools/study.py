@@ -199,13 +199,21 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
                 f"planned from the material and proposed in the {c['name']} chat for the user's OK (a few minutes). "
                 "Nothing goes into the notes before that.")
 
+    async def rewrite_introduction(course: str) -> str:
+        c = await course_row(course)
+        if not notebook.started(c["id"]):
+            return f"{c['name']} has no notebook yet. start_notebook sets one up, Introduction included."
+        notebook.enqueue(c["id"], "intro")
+        return (f"Under way: the {c['name']} Introduction is written again from the course page and what the course "
+                "files say about the exam (a minute or two). The topics stay as they are. It's posted in the course chat.")
+
     async def find_figures(course: str) -> str:
         c = await course_row(course)
         if not notebook.topics(c["id"]):
             return f"The {c['name']} notebook has no topics yet."
         notebook.enqueue(c["id"], "figures", again=True)
-        return (f"Under way: every {c['name']} slide gets one look (once; new ones later), then figures go into the "
-                "topics that miss good ones. Nothing is rewritten. The result comes in the course chat.")
+        return (f"Under way: each {c['name']} topic's slides get one look (once; new ones later), then figures go into "
+                "the topics that miss good ones. Nothing is rewritten. The result comes in the course chat.")
 
     async def notes_writer(engine_choice: str | None = None, limit_answer: str | None = None) -> str:
         if engine is None:
@@ -260,9 +268,13 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         Tool("start_notebook", "Set up a course's notebook: an Introduction (the exam, how to prepare) written now, "
              "and the topics proposed to the user, from all the course's material. Runs in the background.",
              _obj(one_course, ["course"]), start_notebook),
-        Tool("find_figures", "Look at every slide of a course once and add figures (graphs, diagrams) to the topics "
-             "that miss good ones, when the user wants more pictures in the notes. Runs in the background; nothing is "
-             "rewritten.", _obj(one_course, ["course"]), find_figures),
+        Tool("rewrite_introduction", "Write a course notebook's Introduction (the exam, how to prepare, textbook, "
+             "instructors) again, from the course page and the course files, when it's wrong or out of date (a new "
+             "exam notice). The topics aren't touched. Runs in the background.",
+             _obj(one_course, ["course"]), rewrite_introduction),
+        Tool("find_figures", "Look at the slides of a course's topics once and add figures (graphs, diagrams) to the "
+             "topics that miss good ones, when the user wants more pictures in the notes. Runs in the background; "
+             "nothing is rewritten.", _obj(one_course, ["course"]), find_figures),
         Tool("notes_writer", "Who writes the study notes: the user's Claude plan (Claude Code on the server, no extra "
              "cost) or OpenRouter (paid). Without arguments it says which, and how much of the plan is used. "
              "engine_choice switches it when the user asks; limit_answer is their answer when a job is paused on "

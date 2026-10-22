@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS proposals (
 CREATE TABLE IF NOT EXISTS notebook_jobs (
     id         INTEGER PRIMARY KEY,
     course_id  INTEGER NOT NULL,
-    kind       TEXT NOT NULL,  -- start, outline, triage, apply, figures
+    kind       TEXT NOT NULL,  -- start, intro, outline, triage, apply, figures
     args       TEXT NOT NULL DEFAULT '{}',
     status     TEXT NOT NULL DEFAULT 'queued',  -- queued, running, done, failed
     error      TEXT,
@@ -105,11 +105,22 @@ SCAN_SIDE = 640  # pixels: enough to tell a graph from a bullet list, about 400 
 TOPIC_IMAGE_SIDE = 1000  # pixels: a graph reads fine, at about 1,000 tokens instead of 2,500
 PARALLEL = 3  # topics written at once
 CARDS = "===CARDS==="
+INFO_CHARS = 20_000  # the course files' pages on the exam and the course, for the Introduction, at most
+INFO_PAGES = 12  # ... and at most this many
+INFO_SCORE = 3  # different words on the exam and the course (below) for a page to count
 
 _ID = re.compile(r"^t_[0-9a-f]{12}$")
 _PID = re.compile(r"^p_[0-9a-f]{12}$")
 _WORD = re.compile(r"\w+")
 _HEADING = re.compile(r"^(#{2,3}) +(.+?) *#*$")
+# Words of a page about how the course and its exam run, in English and Italian (counted by their first four letters).
+_INFO_WORD = re.compile(r"\b(exam(s|ination)?|esam[ei]|mid-?terms?|multiple[- ]choice|scelta multipla|open "
+                        r"questions?|domande aperte|points|punti|penalty|penalità|grades?|grading|voto|assessment|"
+                        r"minutes|minuti|textbooks?|handbooks?|manuale|libro di testo|office hours|ricevimento|"
+                        r"syllabus|register|registration|iscrizione|attendance|teachers?|instructors?|docenti)\b",
+                        re.I)
+_INFO_NAME = re.compile(r"\b(info|exam|esam|syllabus|programma|regolamento|course (guide|outline)|mid-?term|"
+                        r"introduction to the course|presentazione del corso)", re.I)
 
 
 class NotebookStore:
@@ -270,6 +281,25 @@ class NotebookStore:
         except sqlite3.OperationalError:  # no Moodle tables
             return ""
         return "\n\n".join(f"Moodle course: {r['name']}\n{r['text']}" for r in rows)
+
+    def course_info(self, course_id: int, budget: int = INFO_CHARS) -> str:
+        """The pages of the course's files that say how the course and its exam run (an info sheet, the first
+        lecture's organisation slides, an exam notice), each marked [file name, p. N], the likeliest first. The
+        Moodle page often leaves the exam's format to them."""
+        scored = []
+        for f in self.files.files(course_id):
+            named = 3 if _INFO_NAME.search(f["name"]) else 0
+            for n, text in self.files.pages(f):
+                score = len({m.group(0).casefold()[:4] for m in _INFO_WORD.finditer(text)}) + named
+                if score >= INFO_SCORE:
+                    scored.append((-score, f["name"], n, text))
+        out, used = [], 0
+        for _, name, n, text in sorted(scored)[:INFO_PAGES]:
+            if used + len(text) > budget:
+                continue
+            out.append(f"[{name}, p. {n}]\n{text}")
+            used += len(text)
+        return "\n\n".join(out)
 
     def started(self, course_id: int) -> bool:
         """The course has a notebook, or one on the way."""
@@ -696,8 +726,10 @@ def parse_page(text: str) -> tuple[str, list[tuple[str, str]]]:
 # -- the model's side ------------------------------------------------------------------------
 
 INTRO_PROMPT = """You set up the study notebook of a university course. You get the course's Moodle page (its \
-sections, notices and forum posts), the exam dates from the student's calendar, and the list of course files. \
-Write the notebook's Introduction, in the language of the course page, as markdown.
+sections, notices and forum posts), the exam dates from the student's calendar, the list of course files, and the \
+pages of those files that say how the course and its exam run (an info sheet, the first lecture's slides, an exam \
+notice), each marked [file name, p. 3]. Write the notebook's Introduction, in the language of the course page, as \
+markdown.
 
 The first line is "Exam: " and one line on how the exam works (format, length, scoring). Then these sections, as \
 "## " headings, leaving out any with nothing to say:
@@ -715,9 +747,11 @@ Names, office hours and contacts as written; notices like a leave.
 ## Announcements
 Anything else on the page that matters (start dates, changes), short.
 
-Use only what the page says. Where something isn't there (how many options a question has), say it isn't stated \
-rather than guessing, and work the guessing sum for the usual cases. No dates of exam sessions (they're added \
-below your text from the calendar) and no list of topics (also added)."""
+Use only what the page and the files say, citing a file as (file name, p. 3). Where they disagree, say so and \
+give both. Where something isn't in either (how many options a question has), say it isn't stated rather than \
+guessing, and work the guessing sum for the usual cases; with no penalty, just say a blank never beats a guess. If \
+there are partial exams (mid-terms), say for each what it covers and how it counts. No dates of exam sessions \
+(they're added below your text from the calendar) and no list of topics (also added)."""
 
 OUTLINE_PROMPT = """You plan the study notebook of a university course: one page per topic, in the order the course \
 teaches them. You get the course's files as a map, each with its id, name, Moodle section and page count, then the \
@@ -873,6 +907,11 @@ class NotebookWorker:
             match job["kind"]:
                 case "start":
                     await self.start(course)
+                case "intro":
+                    await self.introduction(course)
+                    await self._post(course, "[Notebook: the Introduction was rewritten]",
+                                     f"I've rewritten the {course['name']} Introduction, with what the course files say "
+                                     "about the exam. It's in Obsidian.")
                 case "outline":
                     await self.outline(course, job["args"].get("note"))
                 case "triage":
@@ -889,7 +928,7 @@ class NotebookWorker:
             if job["kind"] == "apply" and (p := self.store.proposal(job["args"]["proposal"])):
                 self.store.set_proposal(p["id"], "failed", result=error)
             if course is not None:
-                what = {"start": "set up the notebook", "outline": "plan the topics", "triage": "look at the new "
+                what = {"start": "set up the notebook", "intro": "rewrite the Introduction", "outline": "plan the topics", "triage": "look at the new "
                         "material", "apply": "write the notes", "figures": "add the figures"}[job["kind"]]
                 await self._post(course, f"[Notebook: job {job['kind']} failed: {error}]",
                                  f"I couldn't {what}: {error}. It's in the server's logs.")
@@ -915,7 +954,8 @@ class NotebookWorker:
                           for f in self.store.files.files(cid))
         content = (f"Course: {course['name']}\n"
                    f"Next exam in the calendar: {f'{exam.start.astimezone(self.study.tz):%A %d %B %Y, %H:%M} ({exam.title})' if exam else 'none yet'}\n\n"
-                   f"Moodle page:\n{self.store.moodle_text(cid) or '(no Moodle page)'}\n\nFiles:\n{files or '(none)'}")
+                   f"Moodle page:\n{self.store.moodle_text(cid) or '(no Moodle page)'}\n\nFiles:\n{files or '(none)'}"
+                   f"\n\nFrom the files, on the course and the exam:\n{self.store.course_info(cid) or '(nothing found)'}")
         text = await self._ask(INTRO_PROMPT, [{"type": "text", "text": content}], 6000)
         first, _, rest = text.partition("\n")
         if first.lower().startswith("exam:"):
