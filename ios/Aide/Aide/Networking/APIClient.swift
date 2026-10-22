@@ -375,7 +375,8 @@ final class APIClient {
     }
 
     func startNotebook(course: Int) async throws -> NotebookStatus {
-        try await send("POST", "/v1/notebook?course=\(course)", body: EmptyBody())
+        try await send("POST", "/v1/notebook", query: [URLQueryItem(name: "course", value: String(course))],
+                       body: EmptyBody())
     }
 
     func topic(_ id: String) async throws -> TopicPage {
@@ -406,7 +407,8 @@ final class APIClient {
     }
 
     func findFigures(course: Int) async throws -> NotebookStatus {
-        try await send("POST", "/v1/notebook/figures?course=\(course)", body: EmptyBody())
+        try await send("POST", "/v1/notebook/figures", query: [URLQueryItem(name: "course", value: String(course))],
+                       body: EmptyBody())
     }
 
     func lectures(course: Int) async throws -> [Lecture] {
@@ -501,10 +503,10 @@ final class APIClient {
     }
 
     private func send<B: Encodable, T: Decodable>(
-        _ method: String, _ path: String, body: B, timeout: TimeInterval = 30
+        _ method: String, _ path: String, query: [URLQueryItem] = [], body: B, timeout: TimeInterval = 30
     ) async throws -> T {
         let data = try JSONEncoder.api.encode(body)
-        return try await perform(try request(method, path, query: [], auth: true, timeout: timeout, body: data))
+        return try await perform(try request(method, path, query: query, auth: true, timeout: timeout, body: data))
     }
 
     private func request(
