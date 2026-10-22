@@ -222,10 +222,56 @@ brand/                   Pebble, the logo
 deploy/                  systemd units
 ```
 
-## Setup
+## Run your own
 
-1. **Env file.** `cp .env.example .env` and fill in your OpenRouter (or Anthropic) key and `AIDE_API_TOKEN`
-   (the app's token).
+Aide is built for one person on their own machine, with nothing shared: your server, your tailnet, your keys.
+Everything personal lives in `.env` (git-ignored) and in `data/` (git-ignored), never in the code.
+
+**You need:**
+- A Linux machine that stays on (a mini PC is plenty; an NVIDIA GPU only for lecture transcription), with
+  Python 3.12, [uv](https://docs.astral.sh/uv/) and `poppler-utils` (for the study PDFs).
+- [Tailscale](https://tailscale.com) on that machine and on your iPhone (the free plan is fine). The server
+  listens on localhost only; `tailscale serve` publishes it to your tailnet with a real HTTPS certificate. Nothing
+  is open to the internet.
+- An [OpenRouter](https://openrouter.ai) or Anthropic API key.
+- A Mac with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) for the app,
+  and an Apple ID. A free one signs a build for your own phone for 7 days. Push notifications, and installs that last a
+  year, need the paid Developer Program.
+
+**Server:**
+
+```bash
+git clone https://github.com/filippocappa/aide ~/Developer/aide   # the systemd units expect this path
+cd ~/Developer/aide
+cp .env.example .env              # see the steps below
+uv sync && uv run pytest
+# run it as a service: see "Running as a service" below, then
+sudo tailscale serve --bg http://127.0.0.1:8787    # https://<machine>.<tailnet>.ts.net
+```
+
+**App:**
+
+```bash
+cd ios/Aide
+cp Config/Signing.local.xcconfig.example Config/Signing.local.xcconfig
+#   DEVELOPMENT_TEAM: your team ID. AIDE_BUNDLE_ID: a bundle ID of your own (and APNS_BUNDLE_ID in .env to match).
+#   A free Apple ID: leave AIDE_ENTITLEMENTS out (no push).
+xcodegen generate
+open Aide.xcodeproj               # run it on your phone
+```
+
+In the app, Settings: the server URL (`https://<machine>.<tailnet>.ts.net`) and your `AIDE_API_TOKEN`. Both are
+kept on the phone (the token in the Keychain).
+
+**Tuned for its first user, so check these:** the time zone (`AIDE_TIMEZONE`); the calendars the study side
+reads (`AIDE_STUDY_CALENDAR`, `AIDE_EXAM_CALENDAR`: a course is an event title that repeats there); practice exams
+score +1 / −0.25 / 0, as in one university's exams (`src/aide/quiz.py`); the Gmail consent screen's home page and
+privacy policy (make your own, see [Gmail](#gmail)); the agents' prompts, in `src/aide/agents.py`.
+
+### Setup, step by step
+
+1. **Env file.** `cp .env.example .env` and fill in your OpenRouter (or Anthropic) key, `AIDE_TIMEZONE` and
+   `AIDE_API_TOKEN` (the app's token).
 2. **iCloud Calendar (optional).** Create an app-specific password at account.apple.com → Sign-In and Security, and set `ICLOUD_EMAIL` and `ICLOUD_APP_PASSWORD`. Without them the calendar tools are off.
 3. **Gmail (optional).** See [Gmail](#gmail) below. Without it the mail tools are off.
    **Web search and Maps (optional)** are in [Web search and Maps](#web-search-and-maps); without their keys those tools are off.
@@ -251,7 +297,8 @@ One-time setup in Google Cloud, by hand:
 3. **Google Auth Platform → Branding:** app name "Aide", your address as support email and as developer
    contact (at the bottom of the page). Publishing also needs an app domain: home page
    `https://filippocappa.github.io/aide/`, privacy policy `https://filippocappa.github.io/aide/privacy.html`
-   (both served from the `gh-pages` branch), authorized domain `filippocappa.github.io` (no `https://`).
+   (both served from the `gh-pages` branch), authorized domain `filippocappa.github.io` (no `https://`). On your
+   own fork, publish the `gh-pages` branch from your GitHub account and use those addresses instead.
    **Audience:** External.
 4. **Data Access:** leave it empty. The sign-in script asks for the two scopes itself.
 5. **Clients → Create client:** type **Desktop app**, name "Aide server". Copy the client ID and secret into

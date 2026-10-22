@@ -8,8 +8,8 @@ struct APIConfig: Equatable {
 /// Server URL and list choice live in UserDefaults; the token lives in the Keychain.
 @MainActor
 final class AppSettings: ObservableObject {
-    /// The tailnet address from docs/API.md. It isn't a secret; the token is.
-    static let defaultServerURL = "https://cappa.tail9a24d8.ts.net"
+    /// None: each install points at its own server (https://<machine>.<tailnet>.ts.net), typed in Settings.
+    static let defaultServerURL = ""
 
     private enum Keys {
         static let serverURL = "serverURL"

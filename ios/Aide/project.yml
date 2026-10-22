@@ -39,7 +39,7 @@ targets:
           - remote-notification
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.filippocappa.aide
+        PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID)  # Config/Base.xcconfig; your own in Signing.local.xcconfig
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1"
@@ -52,7 +52,7 @@ targets:
       - target: Aide
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.filippocappa.aide.tests
+        PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).tests
         GENERATE_INFOPLIST_FILE: YES
 schemes:
   Aide:
