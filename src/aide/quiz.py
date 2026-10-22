@@ -261,7 +261,7 @@ _OPERATORS = {"cdot", "times", "div", "approx", "neq", "ne", "leq", "le", "geq",
 _SUB = dict(zip("0123456789+-=()aehijklmnoprstuvx", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ"))
 _SUP = dict(zip("0123456789+-=()abcdefghijklmnoprstuvwxyz*′'",
                 "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ*′′"))
-_MATH = re.compile(r"\$\$(.+?)\$\$|\$(?=\S)(.+?)(?<=\S)\$", re.S)
+_MATH = re.compile(r"(?<!\\)\$\$(.+?)(?<!\\)\$\$|(?<!\\)\$(?=\S)(.+?)(?<=\S)(?<!\\)\$", re.S)  # \$ is money
 _GROUP = r"(\{(?:[^{}]|\{[^{}]*\})*\}|\\[A-Za-z]+|.)"  # {…}, a command, or one character
 
 
@@ -302,5 +302,5 @@ def _math(s: str) -> str:
 def plain_math(text: str) -> str:
     """$…$ and $$…$$ in the notes as readable Unicode: $\\pi_t - \\pi_{t-1} = -\\alpha(u_t - u_n)$ as
     πₜ − πₜ₋₁ = −α(uₜ − uₙ). Markdown outside the maths stays."""
-    out = _MATH.sub(lambda m: _math(m.group(1) or m.group(2)).replace("-", "−"), text)
+    out = _MATH.sub(lambda m: _math(m.group(1) or m.group(2)).replace("-", "−"), text).replace("\\$", "$")
     return unicodedata.normalize("NFC", out)  # i and a combining bar as ī where there is one

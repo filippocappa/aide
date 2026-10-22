@@ -28,7 +28,7 @@ from typing import Callable
 from .db import utcnow
 from .engine import course_var
 from .material import PdfError, page_image
-from .study import StudyStore, summary
+from .study import StudyStore, summary, tidy_math
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +168,8 @@ class NotebookStore:
         """A new body (Aide's keeps the old one in prev_body; the user's from the vault doesn't), plus cards and
         sources added to the ones it has."""
         old = self._row(topic_id)
+        if not by_user:  # the user's own text stays as they wrote it
+            body, cards = tidy_math(body), [(tidy_math(q), tidy_math(a)) for q, a in cards]
         fields: dict = {"body": body.strip(), "updated_at": utcnow().isoformat()}
         if by_user:
             fields["edited_at"] = fields["updated_at"]
@@ -177,8 +179,9 @@ class NotebookStore:
             fields["summary"] = _line(summary, 300)
         if cards:
             have = json.loads(old["cards"])
-            seen = {q.casefold() for q, _ in have}
-            fields["cards"] = json.dumps(have + [[q, a] for q, a in cards if q.casefold() not in seen])
+            key = lambda q: q.replace("\\$", "$").casefold()  # older cards may have a bare $
+            seen = {key(q) for q, _ in have}
+            fields["cards"] = json.dumps(have + [[q, a] for q, a in cards if key(q) not in seen])
         if sources:
             have = json.loads(old["sources"])
             fields["sources"] = json.dumps(have + [s for s in sources if s not in have])
@@ -247,7 +250,7 @@ class NotebookStore:
         self.conn.execute(
             "INSERT INTO course_intros (course_id, exam, body, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(course_id) "
             "DO UPDATE SET exam = excluded.exam, body = excluded.body, updated_at = excluded.updated_at",
-            (course_id, _line(exam, 300), body.strip(), utcnow().isoformat()))
+            (course_id, _line(exam, 300), tidy_math(body.strip()), utcnow().isoformat()))
 
     def moodle_text(self, course_id: int) -> str:
         """What the course's Moodle page says (moodle.py keeps it), '' without Moodle."""
@@ -725,7 +728,8 @@ words (the axes, the curves, what moves them).
 A list: each term in bold, then its definition.
 ## Formulas
 Each formula in LaTeX, $…$ inline or $$…$$ on its own line (Obsidian draws it), what every symbol is, and when \
-it's used.
+it's used. A $$…$$ never sits inside a sentence. Everywhere on the page, money has its dollar escaped, \
+\\$13.5 trillion or \\$9,700: a bare $ starts a formula, and the words up to the next $ come out as maths.
 ## Worked examples
 The material's exercises and examples, solved step by step with the numbers.
 ## Exam-style questions
