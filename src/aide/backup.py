@@ -8,7 +8,7 @@ Photos (data/photos) never change once saved, so they go to one shared folder, ~
 and each night copies only the new ones. Study files (data/files, PDFs) go the same way to ~/aide-backups/files
 (a Moodle file changed there keeps its name, so the backup keeps the first version; Moodle has the rest).
 Pruning dated folders leaves both alone. Lecture recordings (data/audio) aren't backed up: they're large, and
-their transcripts are in the database.
+their transcripts are in the database. Nor is GTT's timetable (data/gtt.db, 85 MB): it's rebuilt from GTT every night.
 """
 
 import logging
@@ -29,6 +29,7 @@ KEEP_DAILY = 14
 KEEP_WEEKLY = 8
 DATED = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SKIP_SUFFIXES = ("-wal", "-shm", "-journal")  # folded into the copy by the backup API
+SKIP_NAMES = ("gtt.db", "gtt.db.tmp")  # rebuilt from GTT's feed
 
 
 class BackupError(RuntimeError):
@@ -86,7 +87,7 @@ def backup(data_dir: Path, dest_root: Path, env_file: Path, day: date) -> Path:
     tmp.mkdir(mode=0o700)
     try:
         for path in sorted(data_dir.iterdir()):
-            if not path.is_file() or path.name.endswith(SKIP_SUFFIXES):
+            if not path.is_file() or path.name.endswith(SKIP_SUFFIXES) or path.name in SKIP_NAMES:
                 continue
             if path.suffix in (".db", ".sqlite", ".sqlite3"):
                 copy_database(path, tmp / path.name)
