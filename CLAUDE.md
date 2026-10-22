@@ -39,6 +39,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
+- `objectives.py`: each specialist's objectives for the day, week and month: the store, progress from the data,
+  and the planner (one model call per period, through `engine.py`, before the digest that opens it).
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -188,12 +190,20 @@ writing progress, Ask Professor, Practice exam, the Introduction and topic pages
 `GET /v1/files/{id}/pages/{n}`, folded answers, flashcards; `plain=true` reads), lectures, PDFs, and adding a PDF or
 a recording from Files.
 
+**Done, both sides (2026-10-22), live on the server:** objectives (contract in `docs/API.md`, "Objectives";
+covers the Goals idea in #14). Every specialist proposes objectives for the day, the week and the month (before the
+morning, weekly and monthly digests, month first), each tied to a measure where one fits (habit check-ins, practice
+exams, food log, sleep, steps, a reminder) so it ticks itself; the rest are ticked by hand. They wait for the
+user's OK. `objectives` tools for every agent, an `objectives` digest section. App: an Objectives card on the home
+screen, the Objectives screen (Today / Week / Month, accept, drop, tick, add, propose now), objectives in the
+digest. First plan made live 2026-10-22; installed on the phone, not yet tried there.
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
-2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12),
-   a Goals flow per specialist (#14), digests in a feed instead of chat (#15).
+2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12), digests in a feed
+   instead of chat (#15). (#14, Goals, is mostly covered by objectives.)
 3. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
    for the other courses. Finance still has no data source (memory only).
 
