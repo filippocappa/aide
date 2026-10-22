@@ -310,7 +310,8 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
   without an OK; read-only).
 - `measure` says what ticks it, with a readable `label`; `null` means you tick it. Types:
   `habit` {`habit`}: check-ins in the period. `practice` {`course`, `score`?}: practice exams finished (at
-  `score`% or more). `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
+  `score`% or more). `notes` {`course`}: notebook topics written or revised (notes Aide wrote after your OK, or
+  your edits in Obsidian; a topic counts once, added figures don't count). `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
   goal (calories within 10%). `sleep` {`hours`}: nights at or over. `steps` {`steps`}: days at or over.
   `reminder` {`reminder`}: that reminder done (target 1). An unknown type is fine: show `label`.
 - `progress` of `target` is worked out on every read (only days of the period so far count). `done` is true when
@@ -322,6 +323,10 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
   per plan, from the calendar, reminders, courses, exams and practice exams, habits, food, sleep and steps, memory,
   the objectives above and how the last period went: at most 2 a day (6 a day in all), 3 a week and 2 a month
   per specialist, none when there's nothing real to go on. A new plan replaces only the proposals still waiting.
+  Titles state the period's total, matching `target` ("Sleep 7h or more on 5 nights this week").
+- **When the study material changes** (a course's notes written or edited, its dates read anew), Professor's week
+  and day are planned again, 10 min after the last change and at most every 30 min. A period is left alone when
+  it hasn't been planned yet, or when Professor's objectives in it are all taken with none waiting. No push.
 - **By chat.** Every agent has `objectives` tools: list, add (yours, so it starts `active`), change or tick or
   drop, accept proposals, and plan now. They run at once. Aide works with every specialist's; the others with
   their own.

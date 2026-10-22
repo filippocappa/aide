@@ -18,7 +18,7 @@ from .digest import DigestService, digest_schedule
 from .engine import Engine
 from .gmail import Gmail
 from .food import FoodStore
-from .objectives import ObjectivePlanner, ObjectiveStore
+from .objectives import ObjectivePlanner, ObjectiveStore, StudyReplanner
 from .habits import HabitStore
 from .health import HealthStore
 from .photos import PhotoStore
@@ -117,6 +117,8 @@ def main() -> None:
 
     objectives = ObjectiveStore(db.conn, settings.timezone, habits, food, health, reminders)
     planner = ObjectivePlanner(objectives, engine, db, cal, study, notebook)
+    replanner = StudyReplanner(planner)  # Professor's proposals follow the notes and dates as they change
+    notebook.on_change.append(replanner.changed)
     agent = Agent(
         client=client,
         db=db,
@@ -173,6 +175,7 @@ def main() -> None:
         log.info("AIDE_WEBDAV_PASSWORD not set: no Obsidian vault")
 
     async def run() -> None:
+        replanner.start()
         wake = WakeService(digest, health, settings.timezone, push)
         jobs = [
             reminder_fallback(reminders, settings.timezone, push),

@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS notebook_jobs (
     error      TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS topic_changes (  -- a topic's notes written or changed: by Aide (with an OK) or the user
+    id        INTEGER PRIMARY KEY,
+    topic_id  INTEGER NOT NULL,
+    course_id INTEGER NOT NULL,
+    by_user   INTEGER NOT NULL,  -- 1: the user's edit in the vault
+    at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS topic_changes_course ON topic_changes(course_id, at);
 CREATE TABLE IF NOT EXISTS page_looks (  -- what each slide shows, from one look at it: the figures to pick from
     file_id INTEGER NOT NULL,
     page    INTEGER NOT NULL,
@@ -144,6 +152,7 @@ class NotebookStore:
         if "done" not in {r[1] for r in self.conn.execute("PRAGMA table_info(proposals)")}:
             self.conn.execute("ALTER TABLE proposals ADD COLUMN done INTEGER NOT NULL DEFAULT 0")
         self.on_job: list[Callable[[], None]] = []  # the worker's kick
+        self.on_change: list[Callable[[int, str], None]] = []  # (course id, what): the notes or the dates changed
         self.steps: dict[int, str] = {}  # course id → what its job is doing now, a line for the app (not stored)
 
     def set_step(self, course_id: int, step: str | None) -> None:
@@ -196,9 +205,10 @@ class NotebookStore:
         return dict(self.conn.execute("SELECT * FROM topics WHERE id = ?", (row_id,)).fetchone())
 
     def set_body(self, topic_id: int, body: str, by_user: bool = False, summary: str | None = None,
-                 cards: list | tuple = (), sources: list | tuple = ()) -> dict:
+                 cards: list | tuple = (), sources: list | tuple = (), study: bool = True) -> dict:
         """A new body (Aide's keeps the old one in prev_body; the user's from the vault doesn't), plus cards and
-        sources added to the ones it has."""
+        sources added to the ones it has. A changed body is logged as a change to the notes, unless `study` is
+        false (figures put in: nothing new to study)."""
         old = self._row(topic_id)
         if not by_user:  # the user's own text stays as they wrote it
             body, cards = tidy_math(body), [(tidy_math(q), tidy_math(a)) for q, a in cards]
@@ -221,7 +231,25 @@ class NotebookStore:
                           (*fields.values(), topic_id))
         topic = self._row(topic_id)
         self._index(topic)
+        if study and topic["body"] != old["body"]:
+            self.conn.execute("INSERT INTO topic_changes (topic_id, course_id, by_user, at) VALUES (?, ?, ?, ?)",
+                              (topic_id, topic["course_id"], int(by_user), fields["updated_at"]))
+            self._changed(topic["course_id"], "your edit of " + topic["title"] if by_user else topic["title"])
         return topic
+
+    def _changed(self, course_id: int, what: str) -> None:
+        for call in self.on_change:
+            try:
+                call(course_id, what)
+            except Exception:
+                log.exception("notebook: a change listener failed")
+
+    def changes(self, course_id: int, since: datetime) -> list[dict]:
+        """Topics whose notes changed since then, newest first: {title, by_user (any of the changes), at}."""
+        return [dict(r) for r in self.conn.execute(
+            "SELECT t.title, MAX(c.by_user) AS by_user, MAX(c.at) AS at FROM topic_changes c "
+            "JOIN topics t ON t.id = c.topic_id WHERE c.course_id = ? AND c.at >= ? GROUP BY c.topic_id "
+            "ORDER BY at DESC", (course_id, since.isoformat()))]
 
     def _index(self, topic: dict) -> None:
         self.conn.execute("DELETE FROM topic_sections WHERE topic_id = ?", (topic["id"],))
@@ -338,10 +366,13 @@ class NotebookStore:
                         "end": it["end"] if _TIME.match(str(it.get("end"))) else None,
                         "details": _line(it.get("details"), 300), "source": _line(it.get("source"), 120)})
         out.sort(key=lambda d: (d["date"], d["time"] or ""))
+        before = self.dates(course_id)
         self.conn.execute(
             "INSERT INTO course_dates (course_id, items, read_at) VALUES (?, ?, ?) ON CONFLICT(course_id) "
             "DO UPDATE SET items = excluded.items, read_at = excluded.read_at",
             (course_id, json.dumps(out), utcnow().isoformat()))
+        if out != before:
+            self._changed(course_id, "the course's dates")
         return out
 
     def undated(self) -> list[int]:
@@ -1328,7 +1359,7 @@ class NotebookWorker:
                 lines.insert(span[1], f"\n{line}\n")
                 body, n = "\n".join(lines), n + 1
             if n:
-                self.store.set_body(topic["id"], re.sub(r"\n{3,}", "\n\n", body))
+                self.store.set_body(topic["id"], re.sub(r"\n{3,}", "\n\n", body), study=False)
                 added.append(f"{topic['title']} ({n})")
         if added:
             await self._post(course, "[Notebook: figures added]",
