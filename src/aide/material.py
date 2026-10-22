@@ -56,6 +56,9 @@ IMAGE_SIDE = 1400  # pixels, the longest side of a page image
 NOTES_FILE_CHARS = 150_000  # the slides' text the notes see, at most
 SLIDES_WINDOW = timedelta(hours=36)  # a Moodle file this close to a lecture is that lecture's slides
 SLIDES_PER_LECTURE = 3  # at most this many are attached by themselves (a term's worth at once isn't slides)
+PICTURE_SIDE = 100  # pixels: a smaller embedded image is an icon, not a picture
+DRAWN_SHAPES = 6  # a page with at least this many drawn shapes may hold a diagram, a chart or a table
+DRAWN_OVER_USUAL = 1.3  # ... and at least this many times its file's usual page (a template's boxes repeat)
 
 _ID = re.compile(r"^f_[0-9a-f]{12}$")
 _WORD = re.compile(r"\w+")
@@ -98,6 +101,29 @@ async def page_image(path: Path, page: int, side: int = IMAGE_SIDE) -> bytes:
             return out.with_suffix(".jpg").read_bytes()
         except FileNotFoundError:
             raise PdfError(f"page {page} couldn't be drawn") from None
+
+
+async def visual_pages(path: Path, pages: int) -> set[int]:
+    """The pages that may hold a figure, told from the PDF itself, without a model: an embedded picture (not an
+    icon, nor a logo repeated over the file), or more drawn shapes than the file's usual page (a diagram, a chart
+    or a table drawn in lines and boxes; a bullet list has only its template's). pdfimages lists the pictures;
+    pdftocairo draws the file as SVG, where text is glyphs in <defs> and shapes are <path>s on each <page>."""
+    on: dict[tuple[str, str], set[int]] = {}
+    for row in (await _run("pdfimages", "-list", str(path))).decode(errors="replace").splitlines()[2:]:
+        cols = row.split()
+        if len(cols) >= 12 and cols[2] == "image" and int(cols[3]) >= PICTURE_SIDE and int(cols[4]) >= PICTURE_SIDE:
+            on.setdefault((cols[10], cols[11]), set()).add(int(cols[0]))
+    found = {n for shown in on.values() if len(shown) <= max(3, pages // 4) for n in shown}
+    with tempfile.TemporaryDirectory(prefix="aide-svg-") as tmp:
+        out = Path(tmp) / "pages.svg"
+        await _run("pdftocairo", "-svg", str(path), str(out))
+        svg = out.read_text(errors="replace")
+    shapes = [len(re.findall(r"<path\b", re.sub(r"<(defs|clipPath|mask|pattern)\b.*?</\1>", "", page, flags=re.S)))
+              for page in re.findall(r"<page>(.*?)</page>", svg, flags=re.S)]
+    if len(shapes) != pages:
+        raise PdfError(f"the SVG has {len(shapes)} pages, not {pages}")
+    usual = sorted(shapes)[len(shapes) // 2] if shapes else 0
+    return found | {n for n, count in enumerate(shapes, 1) if count >= max(DRAWN_SHAPES, DRAWN_OVER_USUAL * usual)}
 
 
 class FileStore:
