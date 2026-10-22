@@ -160,6 +160,22 @@ async def test_a_plan_proposes_from_the_data_within_limits(env):
     assert "Already set for this period" in engine.asked[1]["text"]
 
 
+async def test_a_proposal_already_met_is_left_out(env):
+    store, planner, engine, *_ = env
+    start = bounds("month", TODAY)[0]
+    store.health.save([{"date": (start + timedelta(days=i)).isoformat(), "sleep": {"asleep_min": 480}}
+                       for i in range((TODAY - start).days + 1)])
+    nights = (TODAY - start).days + 1
+    engine.replies.append(json.dumps([
+        {"agent": "coach", "title": "Sleep 7h on a few nights", "measure": {"type": "sleep", "hours": 7}, "target": 1},
+        {"agent": "coach", "title": "Sleep 7h on more nights", "measure": {"type": "sleep", "hours": 7},
+         "target": nights + 1}]))
+    made = await planner.plan("month", TODAY)
+    assert [o["title"] for o in made] == ["Sleep 7h on more nights"]
+    if TODAY > start:
+        assert "So far this period" in engine.asked[0]["text"] and "8h" in engine.asked[0]["text"]
+
+
 async def test_ensure_plans_the_month_and_week_first(env):
     store, planner, engine, *_ = env
     engine.replies += ["[]", "nonsense", "[]"]
