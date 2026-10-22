@@ -670,6 +670,7 @@ struct DigestSection: Decodable, Identifiable {
         case habits([Habit])
         case sleep(SleepNight, usualAsleepMin: Int?)
         case recovery(Recovery)
+        case objectives([Objective], period: String)
         case text(String)
         case unknown // a section type this app version doesn't know: skipped
     }
@@ -688,11 +689,15 @@ struct DigestSection: Decodable, Identifiable {
         case "sleep": content = .sleep(try c.decode(SleepNight.self, forKey: .sleep),
                                        usualAsleepMin: try c.decodeIfPresent(Int.self, forKey: .usualAsleepMin))
         case "recovery": content = .recovery(try Recovery(from: decoder))
+        case "objectives": content = .objectives(try c.decode([Objective].self, forKey: .objectives),
+                                                 period: try c.decodeIfPresent(String.self, forKey: .period) ?? "day")
         case "text": content = .text(try c.decode(String.self, forKey: .text))
         default: content = .unknown
         }
     }
-    private enum CodingKeys: String, CodingKey { case type, title, events, items, reminders, habits, sleep, usualAsleepMin, text }
+    private enum CodingKeys: String, CodingKey {
+        case type, title, events, items, reminders, habits, sleep, usualAsleepMin, text, objectives, period
+    }
 }
 
 struct Digest: Decodable {
@@ -701,6 +706,75 @@ struct Digest: Decodable {
     let greeting: String
     let sections: [DigestSection]
 }
+
+// MARK: - Objectives
+
+/// One specialist's objective for a day, a week or a month (docs/API.md, "Objectives").
+struct Objective: Decodable, Identifiable, Hashable {
+    struct Measure: Decodable, Hashable {
+        let type: String
+        /// What it counts, for people: "check-ins of Run".
+        let label: String?
+    }
+    let id: String
+    let agent: String
+    let period: String
+    let start: String
+    let end: String
+    var title: String
+    let why: String?
+    let measure: Measure?
+    var progress: Int
+    var target: Int
+    var done: Bool
+    /// proposed, active, dropped or lapsed.
+    var status: String
+    let parent: String?
+    let addedBy: String?
+
+    var isProposed: Bool { status == "proposed" }
+    var isLapsed: Bool { status == "lapsed" }
+    /// Ticked by hand: no measure behind it.
+    var isManual: Bool { measure == nil }
+}
+
+/// One period's objectives: the day, the week or the month around a date.
+struct ObjectiveBlock: Decodable, Hashable {
+    let period: String
+    let start: String
+    let end: String
+    let planned: Bool
+    var objectives: [Objective]
+
+    var proposed: [Objective] { objectives.filter(\.isProposed) }
+}
+
+struct ObjectivesOverview: Decodable {
+    var day: ObjectiveBlock
+    var week: ObjectiveBlock
+    var month: ObjectiveBlock
+
+    subscript(period: String) -> ObjectiveBlock {
+        get { period == "week" ? week : period == "month" ? month : day }
+        set {
+            switch period {
+            case "week": week = newValue
+            case "month": month = newValue
+            default: day = newValue
+            }
+        }
+    }
+}
+
+struct ObjectivePatch: Encodable {
+    var title: String?
+    var done: Bool?
+    var status: String?
+    var target: Int?
+}
+struct NewObjective: Encodable { let agent: String; let period: String; let title: String }
+struct ObjectivesAccept: Encodable { let period: String; let date: String; var ids: [String]? }
+struct ObjectivesPlan: Encodable { let period: String; let date: String }
 
 struct DigestSchedule: Codable, Equatable {
     var enabled: Bool

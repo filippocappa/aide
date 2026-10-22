@@ -11,7 +11,8 @@ ORCHESTRATOR = "aide"
 
 # Tools every agent gets, whatever its domain.
 ROUTINES = ("list_routines", "create_routine", "update_routine", "delete_routine")
-COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", *ROUTINES)
+OBJECTIVES = ("list_objectives", "add_objective", "update_objective", "accept_objectives", "plan_objectives")
+COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", *ROUTINES, *OBJECTIVES)
 CALENDAR_READ = ("list_calendars", "list_events", "search_events")
 CALENDAR = (*CALENDAR_READ, "create_event", "move_event", "delete_event")
 REMINDERS = ("create_reminder", "list_reminders", "update_reminder", "complete_reminder", "delete_reminder")
@@ -200,6 +201,17 @@ mail reply, a plan). If nothing needs the user, or you already told them in this
 reply with exactly NOTHING. Otherwise write one short note: what you noticed, why it matters now, and what you \
 suggest. The user can answer in this chat to act on it."""
 
+_OBJECTIVES = """- Objectives: each specialist keeps objectives for the day, the week and the month (list_objectives). New ones \
+are proposed every morning, with the weekly digest and on the 1st, and wait for the user's OK (in the app, or when \
+they say so here: accept_objectives). Days are small and doable that day; the week's serve the month's. When the \
+user asks for one, add_objective (theirs, so it starts accepted), tied to a measure when one fits (a habit, practice \
+exams, the food log, sleep, steps, a reminder), so it ticks itself; otherwise they tick it, or tell you and you \
+update_objective with done. plan_objectives when they ask for a plan now."""
+
+_OBJECTIVES_ANY = """- Objectives belong to the specialists: Secretary (getting things done on time), Professor \
+(study), Coach (sleep, training, food, habits), Finance (money). You see and change all of them; when the user OKs \
+"the objectives" after a digest, accept every period that's waiting."""
+
 _ROUTINES_ANY = """- You can make routines for any of the specialists too: give each to the one whose work it is (a training \
 recap is Coach's, a mail sweep Secretary's), and keep for yourself the ones that span everything."""
 
@@ -215,6 +227,7 @@ AIDE_PROMPT = _prompt(
     "assistant with a team behind them, you understand what they want, hand it to the specialist whose work it "
     "is, and report back. You look things up on the web and on maps yourself.",
     _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _MAPS, _DELEGATE, _ROUTINES, _WATCHES, _ROUTINES_ANY,
+    _OBJECTIVES, _OBJECTIVES_ANY,
 )
 
 SECRETARY_PROMPT = _prompt(
@@ -222,7 +235,7 @@ SECRETARY_PROMPT = _prompt(
     "you get the day organised in as few words as possible, notice clashes and loose ends, and propose the "
     "next step instead of asking open questions.",
     _BASICS, _CALENDAR, _MAIL, _CARDS, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _ASKED, _ROUTINES,
-    _WATCHES,
+    _WATCHES, _OBJECTIVES,
 )
 
 PROFESSOR_PROMPT = _prompt(
@@ -230,7 +243,7 @@ PROFESSOR_PROMPT = _prompt(
     "explain step by step, starting from what the user already knows, with a small example where it helps. "
     "After a longer explanation, check understanding with one short question. Study plans are concrete: "
     "topics, order and time per session, working back from the exam date.",
-    _BASICS, _QUEUE, _STUDY, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
+    _BASICS, _QUEUE, _STUDY, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 COACH_PROMPT = _prompt(
@@ -239,7 +252,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day, but not change it.",
-    _BASICS, _QUEUE, _HEALTH, _HABITS, _CARDS, _PHOTOS, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
+    _BASICS, _QUEUE, _HEALTH, _HABITS, _CARDS, _PHOTOS, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 FINANCE_PROMPT = _prompt(
@@ -248,7 +261,7 @@ FINANCE_PROMPT = _prompt(
     "remember (your own scope) and keep the numbers straight; when they're missing, ask. Budgets are simple and "
     "concrete. You give no investment advice beyond general principles (an emergency fund, diversification, "
     "low fees, not betting money you need), and you never recommend specific securities.",
-    _BASICS, _QUEUE, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
+    _BASICS, _QUEUE, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 # The watches the server sets up once (docs/API.md, "Watches"), also offered as ideas: (agent, idea).
@@ -313,6 +326,8 @@ _CONNECTORS = (
     ("maps", "Google Maps", MAPS, set()),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),
     ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
+    ("objectives", "Objectives", OBJECTIVES, {"add_objective", "update_objective", "accept_objectives",
+                                              "plan_objectives"}),
     ("team", "The team", ("ask_agent",), {"ask_agent"}),
 )
 

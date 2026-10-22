@@ -71,12 +71,14 @@ class Agent:
         server_fallback: bool = False,
         photos: PhotoStore | None = None,
         delegate: bool = True,
+        agent_tools: Callable[[str, bool], list[Tool]] | None = None,
     ):
         self.client = client
         self.db = db
         self.photos = photos
         self.routines = RoutineStore(db, tz)
-        # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued.
+        # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued, and
+        # `agent_tools(agent id, any agent)` for other per-agent sets (objectives).
         # Aide delegates: it has only its own few tools and ask_agent, and the specialists do the work.
         # (delegate=False gives it every tool, as before; the tests use that to drive tools through Aide.)
         cancel = self._cancel_tool()
@@ -87,10 +89,12 @@ class Agent:
             extra = [self._ask_tool()] if a.orchestrator else []
             self.registries[a.id] = ToolRegistry(
                 [*own, *memory_tools(db, a.id, scoped=not a.orchestrator),
-                 *routine_tools(self.routines, a.id, any_agent=a.orchestrator), cancel, *extra])
+                 *routine_tools(self.routines, a.id, any_agent=a.orchestrator),
+                 *(agent_tools(a.id, a.orchestrator) if agent_tools else []), cancel, *extra])
         # Every tool, to run whatever any agent queued once the user confirms.
         self.tools = ToolRegistry([*tools, *memory_tools(db, ORCHESTRATOR, scoped=False),
-                                   *routine_tools(self.routines, ORCHESTRATOR, any_agent=True), cancel])
+                                   *routine_tools(self.routines, ORCHESTRATOR, any_agent=True),
+                                   *(agent_tools(ORCHESTRATOR, True) if agent_tools else []), cancel])
         self._channel = ""  # channel of the turn in progress; set under the lock
         self._conversation: str | None = None  # app chat of the turn in progress, None for the shared one
         self._attachments: list[dict] = []  # cards from the turn in progress

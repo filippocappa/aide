@@ -14,6 +14,8 @@ struct ChatsView: View {
     /// Picked in Past chats; run once the sheet is gone, so the push isn't lost in its dismissal.
     @State private var choice: PastChatsSheet.Choice?
     @State private var showTeam = false
+    @State private var showObjectives = false
+    @State private var objectives: ObjectivesOverview?
     /// Picked with "Open chat" in the team chat; opened once that screen is gone.
     @State private var openAfterTeam: String?
 
@@ -32,6 +34,8 @@ struct ChatsView: View {
                               spacing: 12) {
                         ForEach(chat.agents.filter { !$0.orchestrator }) { card($0, wide: false) }
                     }
+                    ObjectivesCard(overview: objectives) { showObjectives = true }
+                        .disabled(!settings.isConfigured)
                     TeamCard(agents: chat.agents, latest: chat.team.last,
                              name: { $0 == "user" ? "You" : chat.agent($0).name }) { showTeam = true }
                         .disabled(!settings.isConfigured)
@@ -47,6 +51,7 @@ struct ChatsView: View {
                 Theme.background.frame(height: 0).ignoresSafeArea(edges: .top)
             }
             .navigationDestination(isPresented: $chat.isChatOpen) { ChatView() }
+            .navigationDestination(isPresented: $showObjectives) { ObjectivesView() }
             .navigationDestination(isPresented: $showTeam) {
                 TeamChatView { id in openAfterTeam = id; showTeam = false }
             }
@@ -66,6 +71,9 @@ struct ChatsView: View {
             }
             // Back from a chat: its preview may have changed.
             .onChange(of: chat.isChatOpen) { _, open in if !open { Task { await load() } } }
+            .onChange(of: showObjectives) { _, shown in
+                if !shown { Task { objectives = try? await env.api.objectives() } }
+            }
             .onChange(of: showTeam) { _, shown in
                 guard !shown, let id = openAfterTeam else { return }
                 openAfterTeam = nil
@@ -111,7 +119,9 @@ struct ChatsView: View {
         async let agents: Void = chat.loadAgents()
         async let team: Void = chat.loadTeam()
         async let routines: Void = chat.loadRoutines()
+        async let objectives = try? env.api.objectives()
         await chat.loadConversations()
+        self.objectives = await objectives
         await agents
         await team
         await routines
@@ -129,6 +139,7 @@ struct ChatsView: View {
         }
         guard settings.isPreview, let target = UserDefaults.standard.string(forKey: "previewOpen") else { return }
         if target == "team" { showTeam = true; return }
+        if target == "objectives" { showObjectives = true; return }
         if target.hasPrefix("info:") { infoFor = chat.agent(String(target.dropFirst(5))); return }
         if target.hasPrefix("new:") { await chat.newChat(with: chat.agent(String(target.dropFirst(4)))); return }
         if target == "voice" { await chat.newChat(with: chat.orchestrator); await env.voice.toggle(); return }

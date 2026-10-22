@@ -174,7 +174,7 @@ a new agent needs no app update.
   - `tools`: the names of the tools it has on this server right now (web and maps only when their keys are set).
   - `connectors`: those tools grouped by what they reach, in a fixed order, each
     `{"id": "calendar", "name": "iCloud Calendar", "read_only": true, "tools": ["list_calendars", "list_events", "search_events"]}`.
-    Ids: `calendar`, `reminders`, `mail`, `health`, `habits`, `web`, `maps`, `memory`, `routines`, `team`
+    Ids: `calendar`, `reminders`, `mail`, `health`, `habits`, `web`, `maps`, `memory`, `routines`, `objectives`, `team`
     (Aide's `ask_agent`). `read_only` is true when none of its tools here change anything. A connector it doesn't
     have here is left out. Show `name`; an unknown `id` is fine.
 
@@ -294,6 +294,46 @@ workout; a streak about to break.
 - **By chat.** `create_routine` and `update_routine` take `watch` ("Coach, keep an eye on my sleep").
 - A routine object without `watch` (an older server) is not a watch.
 
+## Objectives
+
+Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the **day**, the **week** and the
+**month**. They propose them, you OK them, and most of them tick themselves from the data.
+
+```json
+{"id": "o_3f9a1c2b7d4e", "agent": "coach", "period": "week", "start": "2026-10-19", "end": "2026-10-25",
+ "title": "Run 3 times", "why": "Building up to the half marathon",
+ "measure": {"type": "habit", "habit": 4, "label": "check-ins of Run"},
+ "progress": 1, "target": 3, "done": false, "status": "active", "parent": "o_91be0a7c55d2", "added_by": "agent"}
+```
+- `period` is `day`, `week` (Monday to Sunday) or `month`. `start` and `end` are local dates, both included.
+- `status`: `proposed` (waiting for your OK), `active`, `dropped`, or `lapsed` (a proposal whose period ended
+  without an OK; read-only).
+- `measure` says what ticks it, with a readable `label`; `null` means you tick it. Types:
+  `habit` {`habit`}: check-ins in the period. `practice` {`course`, `score`?}: practice exams finished (at
+  `score`% or more). `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
+  goal (calories within 10%). `sleep` {`hours`}: nights at or over. `steps` {`steps`}: days at or over.
+  `reminder` {`reminder`}: that reminder done (target 1). An unknown type is fine: show `label`.
+- `progress` of `target` is worked out on every read (only days of the period so far count). `done` is true when
+  `progress` reaches `target`, or when you ticked it (for one without a measure, `progress` is then 1).
+- `parent` is the week's or month's objective it serves, or `null`. `added_by` is `agent` or `user`.
+- **Proposals.** A plan is made once per period, before the digest that opens it: the month's before the monthly
+  digest (or the first morning digest of the month), the week's before the weekly one (or Monday's morning),
+  the day's before the morning digest (or the wake-up briefing). Each goes higher levels first. One model call
+  per plan, from the calendar, reminders, courses, exams and practice exams, habits, food, sleep and steps, memory,
+  the objectives above and how the last period went: at most 2 a day (6 a day in all), 3 a week and 2 a month
+  per specialist, none when there's nothing real to go on. A new plan replaces only the proposals still waiting.
+- **By chat.** Every agent has `objectives` tools: list, add (yours, so it starts `active`), change or tick or
+  drop, accept proposals, and plan now. They run at once. Aide works with every specialist's; the others with
+  their own.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/objectives` | `?date=2026-10-22` (optional, default today) | `{"day": Block, "week": Block, "month": Block}` for the periods around that date. A Block is `{"period", "start", "end", "planned": true, "objectives": [ … ]}`: by agent order, then oldest first; dropped ones left out. `planned` is false until that period's plan has been made. |
+| `POST /v1/objectives` | `{"agent": "coach", "period": "day", "title": "Stretch", "why"?, "date"?}` | `201` and the new objective (`active`, `added_by: "user"`, no measure). `400` for Aide or an unknown agent or period, or an empty title. |
+| `PATCH /v1/objectives/{id}` | any of `title`, `done` (true/false), `status` (`active` / `dropped`), `target` | the objective. Ticking a proposal also accepts it. `404` if unknown. |
+| `POST /v1/objectives/accept` | `{"period": "day", "date"?, "ids"?}` (no `ids`: all of that period's proposals) | that period's Block. `404` if an id isn't a proposal of that period. |
+| `POST /v1/objectives/plan` | `{"period": "week", "date"?}` | proposes now (replacing those still waiting) and returns the Block. Can take 30 s. |
+
 ## Memory
 
 Short facts Aide keeps between chats (preferences, names, routines). The server puts the items into the model's context at the start of every conversation and gives the model a `remember` tool to add one (adding is harmless, so it isn't queued; the model deleting one is, like other destructive actions).
@@ -331,6 +371,8 @@ briefing (`wake`), which runs when the user gets up instead of at a set time (se
     {"type": "sleep", "title": "Last night", "sleep": { /* Sleep object, see Apple Health */ }, "usual_asleep_min": 438},
     {"type": "recovery", "title": "Recovery", "level": "good", "summary": "HRV above your usual, resting heart rate normal.",
      "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54},
+    {"type": "objectives", "title": "Objectives for today", "period": "day", "start": "2026-10-19",
+     "objectives": [ /* Objective objects, see Objectives */ ]},
     {"type": "text", "title": "Looking ahead", "text": "free-form markdown"}
   ]
 }
@@ -374,6 +416,10 @@ The app skips section types it doesn't know. `404` if none has been generated ye
   is under 85% of usual or resting HR is 5 or more above usual, `good` if HRV is at or above usual and resting HR
   at or below usual, otherwise `normal`. `summary` is one plain sentence from code. Both are comparisons with
   the user's own usual numbers, not medical advice, and are worded that way.
+- **Objectives** (live like the other data sections, left out when there are none): `daily` and `wake` show the
+  day's (`active` and `proposed`), `evening` reviews today's (`active` only), `weekly` reviews last week's and shows
+  the week's, `monthly` reviews last month's and shows the month's. The plans for those periods are made just
+  before the digest (see Objectives), and the greeting says when proposals are waiting for an OK.
 - **Schedule:** each enabled kind runs at its time. If the server was off then, it catches up within 6 hours,
   otherwise skips that one. `day` 29–31 means the last day in shorter months.
 

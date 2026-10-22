@@ -18,6 +18,7 @@ from .digest import DigestService, digest_schedule
 from .engine import Engine
 from .gmail import Gmail
 from .food import FoodStore
+from .objectives import ObjectivePlanner, ObjectiveStore
 from .habits import HabitStore
 from .health import HealthStore
 from .photos import PhotoStore
@@ -35,6 +36,7 @@ from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
 from .tools.food import food_tools
+from .tools.objectives import objective_tools
 from .tools.habits import habit_tools
 from .tools.health import health_tools
 from .tools.mail import mail_tools
@@ -112,6 +114,8 @@ def main() -> None:
     else:
         log.warning("GOOGLE_MAPS_API_KEY not set: Maps tools disabled")
 
+    objectives = ObjectiveStore(db.conn, settings.timezone, habits, food, health, reminders)
+    planner = ObjectivePlanner(objectives, engine, db, cal, study, notebook)
     agent = Agent(
         client=client,
         db=db,
@@ -123,11 +127,13 @@ def main() -> None:
         tz=settings.timezone,
         server_fallback=not settings.openrouter_api_key,
         photos=photos,
+        agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
     if added := agent.routines.add_starting_watches():
         log.info("set up the starting watches: %s", ", ".join(r["title"] for r in added))
     digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail,
                            health, maps, settings.home_address)
+    digest.objectives, digest.planner = objectives, planner
 
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")
@@ -180,7 +186,7 @@ def main() -> None:
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
-                             notebook, engine)
+                             notebook, engine, objectives, planner)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

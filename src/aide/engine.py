@@ -90,18 +90,24 @@ class Engine:
 
     # -- asking ---------------------------------------------------------------------------------
 
-    async def ask(self, system: str, content: list[dict], max_tokens: int, fast: bool = False) -> str:
+    async def ask(self, system: str, content: list[dict], max_tokens: int, fast: bool = False,
+                  wait: bool = True) -> str:
         """One model call, with the engine the user chose; while the plan's limit is reached, it waits for the
-        user's answer (or the reset)."""
+        user's answer (or the reset). `wait` False: a small call that can't wait (a digest's objectives) goes to
+        OpenRouter at the limit instead, without asking."""
         tier = "fast" if fast else "smart"
         while self.engine == "claude" and self.claude and not self._on_openrouter():
             if self.paused or (self._wait_until and _now() < self._wait_until):
+                if not wait:
+                    break
                 await self._hold()
                 continue
             try:
                 return await self._claude(system, content, max_tokens, tier)
             except PlanLimit as e:
                 log.warning("Claude plan limit: %s", e)
+                if not wait:
+                    break
                 await self._pause(e)
         return await self._openrouter(system, content, max_tokens, tier)
 
@@ -176,6 +182,9 @@ class Engine:
         except asyncio.TimeoutError:
             proc.kill()
             raise RuntimeError("Claude Code took too long") from None
+        except asyncio.CancelledError:
+            proc.kill()
+            raise
         result, limit = None, None
         for line in out.decode(errors="replace").splitlines():
             try:
