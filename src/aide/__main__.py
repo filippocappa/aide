@@ -146,13 +146,15 @@ def main() -> None:
         photos=photos,
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
-    if maps is not None:
-        agent.whereabouts = Whereabouts(location, maps).describe
+    whereabouts = Whereabouts(location, maps) if maps is not None else None
+    if whereabouts:
+        agent.whereabouts = whereabouts.describe
     if added := agent.routines.add_starting_watches():
         log.info("set up the starting watches: %s", ", ".join(r["title"] for r in added))
     digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail,
                            health, maps, settings.home_address)
     digest.objectives, digest.planner = objectives, planner
+    digest.whereabouts = whereabouts
 
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")

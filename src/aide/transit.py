@@ -631,19 +631,26 @@ class Whereabouts:
         now = now or utcnow()
         if fix is None or now - fix["at"] > FIX_USABLE:
             return None
+        address = await self.address(fix["lat"], fix["lon"])
+        if not address:
+            return None
+        minutes = int((now - fix["at"]).total_seconds() // 60)
+        age = "just now" if minutes < 2 else f"{minutes} min ago" if minutes < 60 else f"{minutes // 60} h ago"
+        return f"phone near {address}, {age}"
+
+    async def address(self, lat: float, lon: float) -> str | None:
+        """The street near a point, kept until the next point is over MOVED away; None if Maps can't say."""
         known = self._known
-        if known is None or metres(known[0], known[1], fix["lat"], fix["lon"]) > self.MOVED:
+        if known is None or metres(known[0], known[1], lat, lon) > self.MOVED:
             try:
-                address = await asyncio.wait_for(self.maps.address_near(fix["lat"], fix["lon"]), self.TIMEOUT)
+                address = await asyncio.wait_for(self.maps.address_near(lat, lon), self.TIMEOUT)
             except Exception as e:  # noqa: BLE001: the message goes without it
                 log.warning("no address near the phone: %s", e)
                 return None
             if not address:
                 return None
-            known = self._known = (fix["lat"], fix["lon"], address)
-        minutes = int((now - fix["at"]).total_seconds() // 60)
-        age = "just now" if minutes < 2 else f"{minutes} min ago" if minutes < 60 else f"{minutes // 60} h ago"
-        return f"phone near {known[2]}, {age}"
+            known = self._known = (lat, lon, address)
+        return known[2]
 
 
 class Walks:
