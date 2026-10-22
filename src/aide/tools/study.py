@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from ..engine import Engine
-from ..notebook import NotebookStore, sections
+from ..notebook import NotebookStore, date_line, sections
 from ..study import StudyStore
 from . import Tool
 
@@ -56,11 +56,16 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         if not courses:
             return "No courses yet: they come from the study calendar, and none were found."
         lines = []
+        today = datetime.now(tz).date()
         for c in courses:
             parts = [c["name"], f"{c['lectures']} lecture(s)", f"{store.files.count(c['id'])} file(s)"]
             if exam := c["next_exam"]:
                 parts.append(f"next exam {exam.start.astimezone(tz):%a %d %b %Y %H:%M} ({exam.title})")
+            if notebook and (intro := notebook.intro(c["id"])) and intro["exam"]:
+                parts.append(f"the exam: {intro['exam']}")
             lines.append(" · ".join(parts))
+            if notebook:  # read from the course's page and files
+                lines += [f"    {date_line(d, today)}" for d in notebook.dates(c["id"], since=today)]
         if n := store.unfiled():
             lines.append(f"{n} unfiled lecture(s)")
         return "\n".join(lines)
@@ -284,7 +289,8 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
     ] if notebook else []
     return [
         Tool("list_courses", "List the user's courses (from their timetable calendar), with how many lectures each "
-             "has and the next exam.", _obj({}, []), list_courses),
+             "has, the next exam, how the exam works, and what's coming from the course's page and files (exams, "
+             "mid-terms, sign-up deadlines).", _obj({}, []), list_courses),
         Tool("list_lectures", "List lectures, newest first, each with its id in brackets and the first line of its "
              "notes.", _obj(course, []), list_lectures),
         Tool("read_lecture", "Read a lecture's notes, and with transcript true its transcript too (time marks like "

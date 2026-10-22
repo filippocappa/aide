@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from .agents import AGENTS, SPECIALISTS, check_agent
 from .db import utcnow
+from .notebook import date_line
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ DAY_TOTAL = 6  # proposals for a day, all specialists together
 MEASURES = ("habit", "practice", "food", "sleep", "steps", "reminder")
 FOOD_METRICS = ("logged", "protein_g", "calories")
 CALORIE_BAND = 0.1  # a calorie goal is met within 10% either way
+COURSE_DATES_AHEAD = 120  # days: a course's exams and deadlines the planner sees
 MAX_TITLE = 120
 MAX_TARGET = 100
 STATUSES = ("proposed", "active", "dropped")
@@ -413,8 +415,8 @@ What makes a good objective:
 - Concrete and checkable: "Two practice exams in macroeconomics at 60% or more", not "study more".
 - Doable in the period, given the calendar: a packed day gets fewer and smaller ones. A day's objectives are \
 things to do that day; a week's serve the month's; a month's serve the big things ahead (an exam, a habit to build).
-- From the data: an exam coming, a habit slipping, a goal in memory, what was missed last time (carry it over or \
-make it smaller). Never invent facts about the person.
+- From the data: an exam or a mid-term coming, a sign-up deadline (missing one means no exam), a habit slipping, a \
+goal in memory, what was missed last time (carry it over or make it smaller). Never invent facts about the person.
 - A specialist with nothing real to go on proposes nothing. Never more than {most} per specialist{total}; fewer is \
 better than filler.
 - Don't repeat an objective already set for the period, nor copy one from the week or month above: a day's \
@@ -609,6 +611,9 @@ class ObjectivePlanner:
                 line += f": exam {day:%a %d %b %Y} (in {(day - today).days} days)"
             nb = self.notebook.summary(c["id"]) if self.notebook else None
             line += f"; notebook: {nb['topics']} topics, {nb['questions']} practice questions" if nb else "; no notebook"
+            intro = self.notebook.intro(c["id"]) if self.notebook else None
+            if intro and intro["exam"]:
+                line += f"; the exam: {intro['exam']}"
             try:
                 rows = self.store.conn.execute(
                     "SELECT finished_at, score, questions FROM quizzes WHERE course_id = ? AND finished_at IS NOT NULL "
@@ -620,6 +625,10 @@ class ObjectivePlanner:
                     f"{datetime.fromisoformat(r[0]).astimezone(self.tz):%d %b} "
                     f"{round(100 * (r[1] or 0) / max(1, len(json.loads(r[2]))))}%" for r in rows)
             out.append(line)
+            if self.notebook:  # from the course's page and files: mid-terms, sign-up deadlines the calendar may lack
+                coming = [d for d in self.notebook.dates(c["id"], since=today)
+                          if date.fromisoformat(d["date"]) <= today + timedelta(days=COURSE_DATES_AHEAD)]
+                out += [f"  - {date_line(d, today)}" for d in coming]
         lectures = [e for e in await self._events(start, end) if self.study.calendar
                     and e.calendar == self.study.study_calendar]
         if lectures:

@@ -125,9 +125,14 @@ def test_proposals_wait_for_an_ok_and_lapse(env):
 
 
 async def test_a_plan_proposes_from_the_data_within_limits(env):
-    store, planner, engine, db, _ = env
+    store, planner, engine, db, study = env
     run = store.habits.add("Run", per_week=3)
     db.add_memory("Wants to run a half marathon in spring", agent="coach")
+    await study.courses()
+    planner.notebook.set_dates(study.course_by_name("macroeconomics")["id"], [
+        {"what": "Sign-up for the mid-term closes", "kind": "deadline", "date": (TODAY + timedelta(days=3)).isoformat(),
+         "time": "23:59"},
+        {"what": "Last year's exam", "kind": "exam", "date": (TODAY - timedelta(days=300)).isoformat()}])
     month = store.add("coach", "month", TODAY, "Build up to 12 runs", measure={"type": "habit", "habit": run.id},
                       target=12)
     engine.replies.append(json.dumps([
@@ -145,6 +150,9 @@ async def test_a_plan_proposes_from_the_data_within_limits(env):
     assert f"[habit {run.id}] Run, 3 a week" in asked["text"] and "half marathon" in asked["text"]
     assert "Build up to 12 runs" in asked["text"] and "macroeconomics: exam" in asked["text"]
     assert "Dentist" in asked["text"]  # Secretary's calendar
+    # Professor's: what the course's page says is coming, read by the model, past ones left out.
+    assert "23:59: Sign-up for the mid-term closes (in 3 days)" in asked["text"]
+    assert "Last year's exam" not in asked["text"]
     titles = [o["title"] for o in made]
     assert titles == ["Run 3 times", "Sleep 7h", "Walk", "Practice exam in macroeconomics"]
     first = store.as_json(made[0])

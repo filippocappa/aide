@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -8,7 +9,7 @@ from aide.agent import CONVERSATION, Agent
 from aide.channels.api import create_app
 from aide.db import Database
 from aide.material import visual_pages
-from aide.notebook import SCAN_PROMPT, NotebookStore, NotebookWorker, parse_page, sections
+from aide.notebook import DATES_PROMPT, SCAN_PROMPT, NotebookStore, NotebookWorker, date_line, parse_page, sections
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
 from aide.study import StudyStore, tidy_math
@@ -56,12 +57,19 @@ PROBLEMS = make_pdf(None, ["Problem 1: a liquidity trap, where the LM curve is f
 class ByTopic(RecordingClient):
     """Answers topic pages by the topic they're for, since they're written in parallel: a response can be
     {title: response or [responses]}, used up a title at a time. The slide scan is answered by `scan`, a function
-    of the pages asked about (by default an answer that can't be read, so files stay unscanned), and kept apart."""
+    of the pages asked about (by default an answer that can't be read, so files stay unscanned), and kept apart. So
+    is reading a course's dates, answered with `dates`."""
 
     scan = None
     scans: list[dict]
+    dates: list | str = []
+    dated: list[dict]
 
     async def _create(self, **kwargs):
+        if kwargs.get("system") == DATES_PROMPT:
+            self.__dict__.setdefault("dated", []).append(kwargs)
+            answer = done(json.dumps(self.dates))
+            return SimpleNamespace(stop_reason=answer[0], content=answer[1])
         if kwargs.get("system") == SCAN_PROMPT:
             self.__dict__.setdefault("scans", []).append(kwargs)
             pages = [int(b["text"][4:-1]) for b in kwargs["messages"][-1]["content"]
@@ -194,6 +202,51 @@ async def test_the_introduction_reads_what_the_files_say_about_the_exam(nb):
     assert nb.notebook.intro(nb.macro["id"])["exam"].startswith("15 multiple choice")
     assert len(nb.notebook.proposals(nb.macro["id"])) == 1
     assert "rewritten the macroeconomics Introduction" in chat_messages(nb)[-1]["text"]
+
+
+async def test_a_courses_dates_are_read_from_its_page_and_files(nb):
+    cid = nb.macro["id"]
+    assert nb.notebook.undated() == [cid]  # never read: the worker queues it when it starts
+    today = datetime.now(ROME).date()
+    soon, later, before = today + timedelta(days=3), today + timedelta(days=11), today - timedelta(days=20)
+    nb.client.dates = [
+        {"what": "1st mid-term", "kind": "mid-term", "date": later.isoformat(), "time": "11:00", "end": "14:00",
+         "details": "Chapters 1-12 and slides 02-08.", "source": "01 info.pdf, p. 5"},
+        {"what": "Sign-up for the 1st mid-term closes", "kind": "deadline", "date": soon.isoformat(),
+         "time": "23:59", "end": None, "details": "Google form, UniTo email only", "source": "Moodle"},
+        {"what": "Classes start", "kind": "start", "date": before.isoformat(), "time": "11"},
+        {"what": "The 2nd mid-term", "date": "the last class"}, "not a date"]
+    await started(nb)  # the Introduction, then the dates from the same pages
+    asked = nb.client.dated[0]
+    assert asked["model"] == "smart" and "20 to 35 multiple-choice" in sent(asked) and "Today: " in sent(asked)
+    dates = nb.notebook.dates(cid)
+    assert [d["what"] for d in dates] == ["Classes start", "Sign-up for the 1st mid-term closes", "1st mid-term"]
+    assert dates[0]["kind"] == "other" and dates[0]["time"] is None  # made-up kinds and times are dropped
+    assert nb.notebook.undated() == []
+    assert [d["what"] for d in nb.notebook.dates(cid, since=today)] == ["Sign-up for the 1st mid-term closes",
+                                                                        "1st mid-term"]
+    line = date_line(dates[2], today)
+    assert line == f"{later:%a %d %b %Y}, 11:00-14:00: 1st mid-term (in 11 days). Chapters 1-12 and slides 02-08. " \
+                   "(01 info.pdf, p. 5)"
+
+    # Professor sees them with the courses, and the Introduction lists them all.
+    list_courses = next(t for t in study_tools(nb.study, ROME, None, nb.notebook) if t.name == "list_courses")
+    courses = await list_courses.handler()
+    assert "the exam: 20 to 35 multiple-choice questions" in courses and f"    {line}" in courses
+    assert "Classes start" not in courses
+    await nb.vault.sync()
+    intro = (nb.vault.folder / "Aide/macroeconomics/00 Introduction.md").read_text()
+    assert "## Dates\n- " in intro and "1st mid-term" in intro and intro.index("## Dates") < intro.index("## Files")
+
+    # Read again on a change, once however many come; an answer that can't be read keeps the old ones, quietly.
+    nb.notebook.reread_dates(cid)
+    nb.notebook.reread_dates(cid)
+    assert nb.db.conn.execute("SELECT COUNT(*) FROM notebook_jobs WHERE kind = 'dates' AND status = 'queued'"
+                              ).fetchone()[0] == 1
+    nb.client.dates = "no"
+    before_chat = len(chat_messages(nb))
+    await drain(nb)
+    assert len(nb.notebook.dates(cid)) == 3 and len(chat_messages(nb)) == before_chat
 
 
 async def test_the_app_sees_what_professor_is_doing(nb):
