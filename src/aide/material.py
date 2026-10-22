@@ -88,6 +88,7 @@ Answer with the transcription only, no preface. A blank page: answer (blank)."""
 
 _ID = re.compile(r"^f_[0-9a-f]{12}$")
 _WORD = re.compile(r"\w+")
+_BLOCKED = re.compile(r"content filtering|recitation", re.I)  # the model's answer withheld: a copyrighted text
 
 
 class PdfError(ValueError):
@@ -388,6 +389,11 @@ class PageReader:
                 {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                              "data": base64.b64encode(image).decode()}}]))
         except Exception as e:
+            if _BLOCKED.search(str(e)):  # a published book, which the model won't copy out: no use trying its pages
+                log.warning("reading %s was blocked (page %d): its pages stay images", f["public_id"], page)
+                for n in range(page, f["pages"] + 1):
+                    self.files.read_failed(f, n, READ_TRIES)
+                return
             log.warning("reading page %d of %s failed: %s", page, f["public_id"], e)
             self.files.read_failed(f, page)
             await asyncio.sleep(self.retry)

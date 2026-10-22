@@ -445,6 +445,17 @@ async def test_a_page_that_cant_be_read_is_left_as_it_is(env):
     f = study.files.get(scan["id"])
     assert study.files.pages(f) == [(1, ""), (2, "p")] and study.files.read_pages(f) == set()
 
+    # A published book the model won't copy out: one refusal, and the rest of the file stays images.
+    study.files.conn.execute("DELETE FROM read_pages")
+    calls.clear()
+
+    async def blocked(content):
+        calls.append(content)
+        raise RuntimeError("Claude Code: API Error: Output blocked by content filtering policy")
+    reader._ask = blocked
+    await read_all(reader)
+    assert len(calls) == 1 and study.files.to_read() is None and study.files.read_pages(f) == set()
+
     # A file renamed (or replaced) while its page is read: the answer is dropped, and the page read again.
     study.files.conn.execute("DELETE FROM read_pages")
     del reader._ask
