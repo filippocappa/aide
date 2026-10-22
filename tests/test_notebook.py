@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from aide.agent import CONVERSATION, Agent
 from aide.channels.api import create_app
 from aide.db import Database
-from aide.notebook import NotebookStore, NotebookWorker, parse_page, sections
+from aide.notebook import SCAN_PROMPT, NotebookStore, NotebookWorker, parse_page, sections
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
 from aide.study import StudyStore
@@ -54,9 +54,19 @@ PROBLEMS = make_pdf(None, ["Problem 1: a liquidity trap, where the LM curve is f
 
 class ByTopic(RecordingClient):
     """Answers topic pages by the topic they're for, since they're written in parallel: a response can be
-    {title: response or [responses]}, used up a title at a time."""
+    {title: response or [responses]}, used up a title at a time. The slide scan is answered by `scan`, a function
+    of the pages asked about (by default an answer that can't be read, so files stay unscanned), and kept apart."""
+
+    scan = None
+    scans: list[dict]
 
     async def _create(self, **kwargs):
+        if kwargs.get("system") == SCAN_PROMPT:
+            self.__dict__.setdefault("scans", []).append(kwargs)
+            pages = [int(b["text"][4:-1]) for b in kwargs["messages"][-1]["content"]
+                     if b.get("type") == "text" and b["text"].startswith("[p. ")]
+            answer = done(json.dumps(self.scan(pages)) if self.scan else "no")
+            return SimpleNamespace(stop_reason=answer[0], content=answer[1])
         if isinstance(self.responses[0], dict):
             pages = self.responses[0]
             title = next(t for t in pages if f"Topic: {t}\n" in sent(kwargs))
@@ -398,3 +408,34 @@ def test_page_parsing():
     body, cards = parse_page("# Title\nOne line.\n\n## Formulas\n$a$\n" + "===CARDS===\nQ1 :: A1\nno card\n* Q2::A2 :: more")
     assert body == "One line.\n\n## Formulas\n$a$" and cards == [("Q1", "A1"), ("Q2", "A2 : more")]
     assert sections("Intro.\n## A\na\n### B\nb\n## C\nc") == [("", "Intro."), ("A", "a"), ("A › B", "b"), ("C", "c")]
+
+
+async def test_the_slide_scan_picks_the_figures_whatever_their_text(nb):
+    is_lm, _ = await built(nb)  # its scan answer couldn't be read: nothing scanned yet
+    fid = nb.file["id"]
+    nb.client.scans.clear()
+    nb.client.scan = lambda pages: [{"page": n, "figure": n == 2, "what": "the LM curve" if n == 2 else ""}
+                                    for n in pages]
+    nb.client.responses.append(done(json.dumps([{"after": "Explanation › The LM curve", "file": "Week 3 slides.pdf",
+                                                 "page": 2, "caption": "LM sloping up"}])))
+    assert nb.api.post(f"/v1/notebook/figures?course={nb.macro['id']}", headers=AUTH).status_code == 202
+    await drain(nb)
+    assert len(nb.client.scans) == 1 and len(images(nb.client.scans[0])) == 3  # every slide, once, in one call
+    request = nb.client.requests[-1]
+    assert len(images(request)) == 1  # only the slide with a figure; Crowding out's slide has none: no call
+    body = nb.notebook.topic(is_lm["public_id"])["body"]
+    assert f"![LM sloping up](figure:{fid}/2)" in body
+
+    # Asked again: no slide is looked at twice, and a figure the page has isn't offered again.
+    before = len(nb.client.requests)
+    nb.notebook.enqueue(nb.macro["id"], "figures", again=True)
+    await drain(nb)
+    assert len(nb.client.scans) == 1 and len(nb.client.requests) == before
+    nb.notebook.set_looks(nb.notebook.files.get(fid)["id"], [(1, True, "the IS curve")])
+    nb.client.responses.append(done("[]"))
+    nb.notebook.enqueue(nb.macro["id"], "figures", again=True)
+    await drain(nb)
+    request = nb.client.requests[-1]
+    assert len(images(request)) == 1 and "Figures the page already has: LM sloping up. Add only ones that show " \
+        "something these don't, at most 3." in sent(request)
+    assert nb.api.post("/v1/notebook/figures?course=999", headers=AUTH).status_code == 404

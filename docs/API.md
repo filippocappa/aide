@@ -583,6 +583,7 @@ and posts the result in the same chat.
 |---|---|---|
 | `GET /v1/notebook?course=2&plain=true` | | Notebook. `404` no such course. |
 | `POST /v1/notebook?course=2` | | `202`, Notebook: the Introduction and the outline proposal are on their way. `409` it already has topics. |
+| `POST /v1/notebook/figures?course=2` | | `202`, Notebook: every slide of the course gets one look (once; new files later), then figures go into the topics that miss good ones, from the pages they don't show yet. Nothing is rewritten; the result comes in the course chat. `409` no topics yet. |
 | `GET /v1/topics/{id}?plain=true` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]` and `sources` (`["Week 3 slides, p. 1–2"]`). `404`. In `body`, a figure is `![The IS curve shifting right](figure:f_…/12)`: page 12 of that study file, with its caption. |
 | `GET /v1/proposals?course=2&status=pending` | | `{"proposals": [Proposal]}`; both optional; `status` `pending` (default) or `all`. |
 | `POST /v1/proposals/{id}/apply` | `{"items": [1, 3], "note": "keep it short"}`, both optional (all items) | `202`, the Proposal, `status` `applying`. `400` an item out of range; `409` not pending. |
@@ -609,6 +610,33 @@ Proposal: `{"id": "p_…", "course": 2, "kind": "outline" | "update", "status": 
 "what it would write", "sources": ["Problem set 2, p. 1"]}], "material": ["Problem set 2"], "result": "Updated The
 IS-LM model." or null, "progress": {"done": 4, "total": 11} or null, "created_at": "…"}`. A new outline supersedes a
 pending one.
+
+**Figures** come from a scan (since 2026-10-22): the cheap model looks at every slide once, small, and marks the
+ones with a graph, diagram or chart worth showing, whatever their text. A topic's figures are picked from its marked
+pages (up to 6 shown to the writer, at most 4 on a page). Files not scanned yet fall back to their pages with the
+least text. The scan runs before notes are written, and with `POST /v1/notebook/figures`.
+
+### Who writes the notes
+
+Since 2026-10-22 (`engine.py`): the heavy study jobs (lecture notes, the notebook, the answer checks and the slide
+scan) go through OpenRouter (paid, the default) or the user's Claude plan, through Claude Code logged in on the
+server (`claude -p`; Sonnet writes, Haiku reads; no API key, so it counts against the plan's limits). Chat is
+always OpenRouter. When the plan's limit is reached mid-job, the job pauses and Professor asks in the course's chat
+(with a push): wait for the reset, or finish on OpenRouter until then. Nothing goes to OpenRouter without that
+answer; with no answer, the job carries on by itself after the reset. Professor's `notes_writer` tool switches and
+answers too.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/writer` | | Writer |
+| `PUT /v1/writer` | `{"engine": "claude" or "openrouter"}` | Writer. `409` Claude Code isn't on the server. |
+| `POST /v1/writer/decide` | `{"use": "wait" or "openrouter"}` | Writer: the answer to a pause. `409` nothing is waiting. |
+
+Writer: `{"engine": "openrouter", "available": true, "usage": {"five_hour": {"used": 0.25, "resets_at": "…Z"},
+"seven_day": {"used": 0.5, "resets_at": "…Z"}} or null, "paused": {"since": "…Z", "resets_at": "…Z" or null,
+"window": "five_hour", "course": 2 or null} or null, "openrouter_until": "…Z" or null}`. `available`: Claude Code is
+installed on the server. `usage`: the plan's windows as Claude Code last reported them (`used` from 0 to 1; null
+until the plan has been used once). `openrouter_until`: the user chose OpenRouter at a pause, until then.
 
 ### Practice exams
 

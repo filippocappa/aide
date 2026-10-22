@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from datetime import date, datetime, time, timedelta
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Literal
 from zoneinfo import ZoneInfo
 
 import anthropic
@@ -20,6 +20,7 @@ from ..agent import CONVERSATION, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
+from ..engine import Engine
 from ..food import FoodStore, totals
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
@@ -113,6 +114,14 @@ class QuizStart(BaseModel):
     count: int = Field(default=30, ge=1, le=MOST_QUESTIONS)
     minutes: int | None = Field(default=None, ge=1, le=600)  # null: untimed
     topics: list[str] | None = None  # topic ids; null: all
+
+
+class WriterIn(BaseModel):
+    engine: Literal["claude", "openrouter"]
+
+
+class WriterDecide(BaseModel):
+    use: Literal["wait", "openrouter"]
 
 
 class QuizFinish(BaseModel):
@@ -239,7 +248,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                transcriber: Transcriber | None = None, food: FoodStore | None = None,
                study: StudyStore | None = None, worker: StudyWorker | None = None,
                vault: dict | None = None, moodle: MoodleSync | None = None,
-               notebook: NotebookStore | None = None) -> FastAPI:
+               notebook: NotebookStore | None = None, engine: Engine | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -921,6 +930,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(409, str(e))
         return JSONResponse(notebook.notebook_json(course), status_code=202)
 
+    @app.post("/v1/notebook/figures", dependencies=[Depends(auth)])
+    async def find_figures(course: int):
+        """Every slide looked at once, then figures added where the topics miss good ones."""
+        if not notebook.topics(course_or_404(course)):
+            raise HTTPException(409, "the notebook has no topics yet")
+        notebook.enqueue(course, "figures", again=True)
+        return JSONResponse(notebook.notebook_json(course), status_code=202)
+
     @app.get("/v1/topics/{topic_id}", dependencies=[Depends(auth)])
     async def get_topic(topic_id: str, plain: bool = False):
         if (t := notebook.topic(topic_id)) is None:
@@ -955,6 +972,34 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return notebook.proposal_json(notebook.decline(proposal_id))
         except ValueError as e:
             raise HTTPException(409, str(e))
+
+    # -- who writes the notes ------------------------------------------------------------
+
+    def engine_or_404() -> Engine:
+        if engine is None:
+            raise HTTPException(404, "no writer on this server")
+        return engine
+
+    @app.get("/v1/writer", dependencies=[Depends(auth)])
+    async def get_writer():
+        return engine_or_404().status()
+
+    @app.put("/v1/writer", dependencies=[Depends(auth)])
+    async def set_writer(body: WriterIn):
+        e = engine_or_404()
+        if body.engine == "claude" and not e.available:
+            raise HTTPException(409, "Claude Code isn't installed on the server")
+        e.set_engine(body.engine)
+        return e.status()
+
+    @app.post("/v1/writer/decide", dependencies=[Depends(auth)])
+    async def decide_writer(body: WriterDecide):
+        e = engine_or_404()
+        try:
+            e.decide(body.use)
+        except LookupError as err:
+            raise HTTPException(409, str(err))
+        return e.status()
 
     # -- practice exams ----------------------------------------------------------------
 

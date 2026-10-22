@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import anthropic
@@ -15,6 +15,7 @@ from .transcribe import Transcriber
 from .config import OPENROUTER_BASE_URL, load_settings, save_env
 from .db import Database
 from .digest import DigestService, digest_schedule
+from .engine import Engine
 from .gmail import Gmail
 from .food import FoodStore
 from .habits import HabitStore
@@ -88,7 +89,10 @@ def main() -> None:
                        settings.study_skip, settings.db_path.parent / "files")
     audio_dir = settings.db_path.parent / "audio"
     notebook = NotebookStore(study)
-    tools += study_tools(study, settings.timezone, audio_dir, notebook)
+    engine = Engine(db.conn, client, settings.model, settings.smart_model, workdir=settings.db_path.parent / "claude")
+    if not engine.available:
+        log.info("Claude Code not found: notes are written through OpenRouter only")
+    tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
     gmail = None
     if settings.gmail_client_id and settings.gmail_client_secret and settings.gmail_refresh_token:
         gmail = Gmail(settings.gmail_client_id, settings.gmail_client_secret, settings.gmail_refresh_token)
@@ -130,6 +134,25 @@ def main() -> None:
     worker = StudyWorker(study, agent, push, audio_dir, whisper_transcribe if whisper_available() else None)
     worker.notebook = notebook
     notes = NotebookWorker(notebook, agent, push)
+    worker.engine = notes.engine = engine
+
+    async def plan_limit(paused: dict) -> None:
+        """The plan's limit, mid-job: asked in the job's course chat (Professor), with a push."""
+        course = study.course(paused["course"]) if paused["course"] else None
+        when = ""
+        if paused["resets_at"]:
+            resets = datetime.fromisoformat(paused["resets_at"]).astimezone(settings.timezone)
+            today = resets.date() == datetime.now(settings.timezone).date()
+            when = f" It resets at {resets:%H:%M}" + ("" if today else f" on {resets:%a %d %b}") + "."
+        text = (f"I've hit your Claude plan's limit while writing notes.{when} Shall I wait for it, or finish on "
+                "OpenRouter (paid) until then? The job is paused until you say.")
+        note = ("[The Claude plan's limit is reached and a notes job is paused. When the user answers, call "
+                "notes_writer with limit_answer \"wait\" or \"openrouter\".]")
+        if course is not None:
+            await notes._post(course, note, text, push=True)
+        else:
+            log.warning("Claude plan limit reached during a job with no course: waiting for the reset")
+    engine.on_pause = plan_limit
     moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push, worker=worker,
                         save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token), notebook=notebook)
     vault, vault_info = None, None
@@ -157,7 +180,7 @@ def main() -> None:
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
-                             notebook)
+                             notebook, engine)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

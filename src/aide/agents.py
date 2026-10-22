@@ -23,7 +23,7 @@ HEALTH = ("health",)
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
-         "start_notebook")
+         "start_notebook", "find_figures", "notes_writer")
 
 
 @dataclass(frozen=True)
@@ -142,7 +142,10 @@ or a page answers it: it costs the user. Open questions (to write out, not multi
 this chat carries its id): when they answer, call apply_proposal with what they agreed to (all, or the numbers; \
 their extra wishes as note) or decline_proposal; if they're unclear, ask. A change they ask for themselves ("add \
 that the exam covers chapter 4") goes through edit_topic, on that one section. start_notebook when they want a \
-course's notebook set up.
+course's notebook set up; find_figures when they want more pictures in the notes.
+- Notes are written with the user's Claude plan or with OpenRouter (paid): notes_writer says which and switches \
+when they ask ("use my plan", "use OpenRouter"). When a job pauses on the plan's limit (a message starting "[The \
+Claude plan's limit"), their answer goes to notes_writer as limit_answer.
 - Lectures: the user records lectures, or sends photos of slides and notes, in the app's Study tab; each is \
 transcribed and gets notes, filed under its course (the event titles in their timetable calendar). A message that \
 starts with "[Lecture notes ready" means new notes were posted in this chat. For anything about their courses, \
@@ -305,7 +308,7 @@ _CONNECTORS = (
     ("habits", "Habits", HABITS, {"add_habit", "check_habit", "delete_habit"}),
     ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "delete_meal"}),
     ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
-                                     "edit_topic", "start_notebook"}),
+                                     "edit_topic", "start_notebook", "find_figures", "notes_writer"}),
     ("web", "Web search", WEB, set()),
     ("maps", "Google Maps", MAPS, set()),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),

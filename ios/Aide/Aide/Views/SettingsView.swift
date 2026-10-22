@@ -35,10 +35,11 @@ struct SettingsView: View {
                 Section {
                     NavigationLink("Moodle") { MoodleView() }
                     NavigationLink("Obsidian") { ObsidianView() }
+                    NavigationLink("Who writes the notes") { NotesWriterView() }
                 } header: {
                     Text("Study")
                 } footer: {
-                    Text("Course PDFs from the university's Moodle, and Aide's notes in an Obsidian vault.")
+                    Text("Course PDFs from the university's Moodle, Aide's notes in an Obsidian vault, and whether your Claude plan writes them.")
                 }
                 Section {
                     NavigationLink("Digests") { DigestSettingsView() }

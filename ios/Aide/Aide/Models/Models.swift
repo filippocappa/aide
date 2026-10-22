@@ -891,6 +891,44 @@ struct Flashcard: Decodable, Hashable { let q: String; let a: String }
 
 struct ProposalApplyBody: Encodable { var items: [Int]? }
 
+// MARK: Who writes the notes (docs/API.md, "Who writes the notes")
+
+struct NotesWriter: Decodable, Equatable {
+    var engine: String
+    var available: Bool?
+    var usage: PlanUsage?
+    var paused: WriterPause?
+    var openrouterUntil: String?
+
+    var onPlan: Bool { engine == "claude" }
+}
+
+/// The plan's windows as Claude Code last reported them. Fixed keys: the decoder's snake-case rule renames
+/// dictionary keys too.
+struct PlanUsage: Decodable, Equatable {
+    var fiveHour: PlanWindow?
+    var sevenDay: PlanWindow?
+}
+
+struct PlanWindow: Decodable, Equatable {
+    var used: Double?
+    var resetsAt: String?
+
+    var resets: Date? { resetsAt.flatMap(Wire.parse) }
+}
+
+struct WriterPause: Decodable, Equatable {
+    var since: String?
+    var resetsAt: String?
+    var window: String?
+    var course: Int?
+
+    var resets: Date? { resetsAt.flatMap(Wire.parse) }
+}
+
+struct WriterChoice: Encodable { var engine: String }
+struct WriterDecision: Encodable { var use: String }
+
 // MARK: Practice exams (docs/API.md, "Practice exams")
 
 /// What a course's practice exams can draw on, and the past ones.
