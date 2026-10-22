@@ -240,6 +240,17 @@ final class APIClient {
         let _: OKResponse = try await send("POST", "/v1/location", body: fix)
     }
 
+    /// A departures card again, from its own stop, line and destination.
+    func departures(_ board: DepartureBoard) async throws -> DepartureBoard {
+        var query = [URLQueryItem(name: "stop", value: board.stop.id)]
+        if let line = board.line { query.append(URLQueryItem(name: "line", value: line)) }
+        if let to = board.to {
+            query.append(URLQueryItem(name: "to", value: to.stops.joined(separator: ",")))
+            query.append(URLQueryItem(name: "to_name", value: to.name))
+        }
+        return try await send("GET", "/v1/transit/departures", query: query)
+    }
+
     func transitAlerts() async throws -> [TransitAlert] {
         let list: TransitAlertList = try await send("GET", "/v1/transit/alerts")
         return list.alerts

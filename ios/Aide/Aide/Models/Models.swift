@@ -62,6 +62,7 @@ enum Attachment: Decodable, Hashable {
     case reminders([Reminder])
     case events([CalendarEvent])
     case meals([Meal])
+    case departures([DepartureBoard])
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -70,10 +71,11 @@ enum Attachment: Decodable, Hashable {
         case "reminders": self = .reminders(try c.decode([Reminder].self, forKey: .reminders))
         case "events": self = .events(try c.decode([CalendarEvent].self, forKey: .events))
         case "meals": self = .meals(try c.decode([Meal].self, forKey: .meals))
+        case "departures": self = .departures(try c.decode([DepartureBoard].self, forKey: .departures))
         default: self = .unknown
         }
     }
-    private enum CodingKeys: String, CodingKey { case type, reminders, events, meals }
+    private enum CodingKeys: String, CodingKey { case type, reminders, events, meals, departures }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
         (list ?? []).filter { $0 != .unknown }
@@ -1310,4 +1312,60 @@ struct TransitAlertPatch: Encodable {
         try c.encodeIfPresent(enabled, forKey: .enabled)
     }
     private enum CodingKeys: String, CodingKey { case time, days, minutes, enabled }
+}
+
+/// A stop's next trams and buses, by line and direction (docs/API.md, "Departures"): a card in chat, kept live
+/// through GET /v1/transit/departures while it's on screen.
+struct DepartureBoard: Decodable, Identifiable, Hashable {
+    struct Stop: Decodable, Hashable {
+        let id: String
+        /// The number on the stop's sign.
+        let code: String
+        let name: String
+    }
+
+    /// Where the user is going: only the lines that get there directly are on the board.
+    struct Destination: Decodable, Hashable {
+        let name: String
+        let stops: [String]
+    }
+
+    struct Line: Decodable, Hashable, Identifiable {
+        let line: String
+        /// Tram, Bus, Metro or Train.
+        let vehicle: String
+        let towards: String?
+        let arrivals: [Arrival]
+
+        var id: String { line + "|" + (towards ?? "") }
+    }
+
+    struct Arrival: Decodable, Hashable {
+        /// Expected, with the live delay.
+        let at: String
+        let scheduled: String
+        /// false: timetable only.
+        let live: Bool
+        /// Seconds late (negative: early); nil when not live.
+        let delay: Int?
+        /// When it gets where the user is going, and that stop's number.
+        var toAt: String?
+        var toStop: String?
+
+        var date: Date? { Wire.parse(at) }
+        var arrivesDate: Date? { toAt.flatMap(Wire.parse) }
+    }
+
+    let id: String
+    let stop: Stop
+    /// When the board was made.
+    let at: String
+    /// Metres and seconds from where the phone was, when it's near enough.
+    let distance: Int?
+    let walk: Int?
+    let line: String?
+    let to: Destination?
+    let lines: [Line]
+
+    var madeDate: Date? { Wire.parse(at) }
 }

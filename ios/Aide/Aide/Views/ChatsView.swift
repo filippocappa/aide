@@ -171,6 +171,7 @@ struct ChatsView: View {
         }
         guard settings.isPreview, let target = UserDefaults.standard.string(forKey: "previewOpen") else { return }
         if target == "team" { showTeam = true; return }
+        if target.hasPrefix("chat:") { await chat.open(id: String(target.dropFirst(5))); return }
         if target.hasPrefix("info:") { infoFor = chat.agent(String(target.dropFirst(5))); return }
         if target.hasPrefix("new:") { await chat.newChat(with: chat.agent(String(target.dropFirst(4)))); return }
         if target == "voice" { await chat.newChat(with: chat.orchestrator); await env.voice.toggle(); return }
