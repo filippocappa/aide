@@ -60,6 +60,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var routines: [Routine] = []
     /// The course notebook being written, when this is the course's chat: the progress bar (docs/API.md, "Notebook").
     @Published private(set) var writing: NotebookProgress?
+    /// What Professor is doing meanwhile, under the bar: "Writing The IS-LM model, Crowding out".
+    @Published private(set) var writingStep: String?
     /// The course whose chat this is (docs/API.md, "Notebook"), for its practice exams.
     var course: (id: Int, name: String?)? {
         guard let id = conversationID, let row = conversations.first(where: { $0.id == id }),
@@ -186,6 +188,7 @@ final class ChatViewModel: ObservableObject {
                 guard let status = try? await self?.api.notebook(course: course),
                       let self, self.conversationID == id, !Task.isCancelled else { return }
                 guard let proposal = status.writing else {
+                    self.writingStep = nil
                     if self.writing != nil {
                         self.writing = nil
                         await self.loadHistory()
@@ -193,6 +196,7 @@ final class ChatViewModel: ObservableObject {
                     return
                 }
                 self.writing = proposal.progress ?? NotebookProgress(done: 0, total: 0)
+                self.writingStep = status.step
                 try? await Task.sleep(for: .seconds(4))
             }
         }
@@ -202,6 +206,7 @@ final class ChatViewModel: ObservableObject {
         notebookWatch?.cancel()
         notebookWatch = nil
         writing = nil
+        writingStep = nil
     }
 
     func loadConversations() async {

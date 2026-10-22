@@ -61,7 +61,7 @@ struct ChatView: View {
             }
             header
             if let writing = chat.writing, !voice.isActive {
-                NotebookBar(progress: writing)
+                NotebookBar(progress: writing, step: chat.writingStep)
                     .padding(.top, Self.headerHeight + 4)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -728,9 +728,11 @@ struct HeaderBackdrop: View {
 }
 
 /// Under Pebble in a course's chat while its notebook is being written: how many topics are done, filling up as each
-/// one finishes (docs/API.md, "Notebook"). Topics take a few minutes each, so the spinner shows it's still going.
+/// one finishes (docs/API.md, "Notebook"). Topics take a few minutes each, so the spinner shows it's still going,
+/// and the step line which topics are being written.
 private struct NotebookBar: View {
     let progress: NotebookProgress
+    var step: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -745,6 +747,10 @@ private struct NotebookBar: View {
                 }
             }
             ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+            if let step, !step.isEmpty {
+                Text(step).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    .contentTransition(.numericText()).animation(.default, value: step)
+            }
         }
         .tint(Theme.accent)
         .padding(.horizontal, 14)
@@ -753,6 +759,6 @@ private struct NotebookBar: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.line, lineWidth: 0.5))
         .padding(.horizontal, 16)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Writing the notes, \(progress.done) of \(progress.total) topics done")
+        .accessibilityLabel("Writing the notes, \(progress.done) of \(progress.total) topics done. \(step ?? "")")
     }
 }
