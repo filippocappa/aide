@@ -6,8 +6,13 @@ from email.message import EmailMessage
 from email.utils import getaddresses, parseaddr
 from zoneinfo import ZoneInfo
 
+from typing import TYPE_CHECKING
+
 from ..gmail import Gmail, attachments, body_text, headers
 from . import Tool
+
+if TYPE_CHECKING:
+    from ..drafts import Drafts
 
 MAX_RESULTS = 25
 BODY_LIMIT = 6000  # one message
@@ -31,6 +36,45 @@ def _addresses(value: str) -> list[str]:
         if not ADDRESS.match(addr):
             raise ValueError(f"not an email address: {addr!r}")
     return out
+
+
+def outgoing(to: list[str], subject: str, body: str, cc: list[str]) -> EmailMessage:
+    if not to:
+        raise ValueError("no recipient")
+    if not body.strip():
+        raise ValueError("the message is empty")
+    msg = EmailMessage()
+    msg["To"] = ", ".join(to)
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    msg["Subject"] = subject
+    msg.set_content(body)
+    return msg
+
+
+async def build_reply(gmail: Gmail, message_id: str, body: str, reply_all: bool = False) -> tuple[EmailMessage, str]:
+    """A reply to a message, in its thread: (the message, the thread id). Also used for sending a draft."""
+    original = await gmail.message(message_id)
+    h = headers(original)
+    me = (await gmail.me()).lower()
+    to = _addresses(h.get("reply-to") or h.get("from", ""))
+    if parseaddr(h.get("from", ""))[1].lower() == me:  # replying to my own message: same recipients
+        to = _addresses(h.get("to", ""))
+    cc: list[str] = []
+    if reply_all:
+        seen = {a.lower() for a in to} | {me}
+        for addr in _addresses(h.get("to", "")) + _addresses(h.get("cc", "")):
+            if addr.lower() not in seen:
+                seen.add(addr.lower())
+                cc.append(addr)
+    subject = h.get("subject", "")
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}".strip()
+    msg = outgoing(to, subject, body, cc)
+    if msg_id := h.get("message-id"):
+        msg["In-Reply-To"] = msg_id
+        msg["References"] = f"{h.get('references', '')} {msg_id}".strip()
+    return msg, original["threadId"]
 
 
 def mail_tools(gmail: Gmail, tz: ZoneInfo) -> list[Tool]:
@@ -75,19 +119,6 @@ def mail_tools(gmail: Gmail, tz: ZoneInfo) -> list[Tool]:
 
     # -- outgoing: built the same way for the summary and for the real send ------------
 
-    def outgoing(to: list[str], subject: str, body: str, cc: list[str]) -> EmailMessage:
-        if not to:
-            raise ValueError("no recipient")
-        if not body.strip():
-            raise ValueError("the message is empty")
-        msg = EmailMessage()
-        msg["To"] = ", ".join(to)
-        if cc:
-            msg["Cc"] = ", ".join(cc)
-        msg["Subject"] = subject
-        msg.set_content(body)
-        return msg
-
     def summary(verb: str, msg: EmailMessage, body: str) -> str:
         cc = f", cc {msg['Cc']}" if msg["Cc"] else ""
         return f"{verb} to {msg['To']}{cc}, subject \"{msg['Subject']}\":\n{_clip(body.strip(), PREVIEW_LIMIT)}"
@@ -96,27 +127,7 @@ def mail_tools(gmail: Gmail, tz: ZoneInfo) -> list[Tool]:
         return outgoing(_addresses(to), subject, body, _addresses(cc or ""))
 
     async def reply_to(message_id: str, body: str, reply_all: bool) -> tuple[EmailMessage, str]:
-        original = await gmail.message(message_id)
-        h = headers(original)
-        me = (await gmail.me()).lower()
-        to = _addresses(h.get("reply-to") or h.get("from", ""))
-        if parseaddr(h.get("from", ""))[1].lower() == me:  # replying to my own message: same recipients
-            to = _addresses(h.get("to", ""))
-        cc: list[str] = []
-        if reply_all:
-            seen = {a.lower() for a in to} | {me}
-            for addr in _addresses(h.get("to", "")) + _addresses(h.get("cc", "")):
-                if addr.lower() not in seen:
-                    seen.add(addr.lower())
-                    cc.append(addr)
-        subject = h.get("subject", "")
-        if not subject.lower().startswith("re:"):
-            subject = f"Re: {subject}".strip()
-        msg = outgoing(to, subject, body, cc)
-        if msg_id := h.get("message-id"):
-            msg["In-Reply-To"] = msg_id
-            msg["References"] = f"{h.get('references', '')} {msg_id}".strip()
-        return msg, original["threadId"]
+        return await build_reply(gmail, message_id, body, reply_all)
 
     async def send_mail(to: str, subject: str, body: str, cc: str | None = None) -> str:
         await gmail.send(new_mail(to, subject, body, cc))
@@ -156,4 +167,42 @@ def mail_tools(gmail: Gmail, tz: ZoneInfo) -> list[Tool]:
              _obj({"message_id": {"type": "string"}, "body": {"type": "string"},
                    "reply_all": {"type": "boolean"}}, ["message_id", "body"]),
              reply_mail, confirm=True, describe=describe_reply, target_arg="message_id"),
+    ]
+
+
+def draft_tools(drafts: "Drafts", gmail: Gmail) -> list[Tool]:
+    """Drafts the user sends with a tap in the app (Activity): writing one sends nothing."""
+
+    def line(d: dict) -> str:
+        why = f" ({d['why']})" if d["why"] else ""
+        return (f"[draft {d['id']}] to {d['from']}: {d['subject']}{why}, answering message {d['message_id']}\n"
+                f"    {_clip(d['body'], 400)}")
+
+    async def list_drafts() -> str:
+        waiting = drafts.waiting()
+        return "\n".join(line(d) for d in waiting) if waiting else "No drafts are waiting."
+
+    async def draft_reply(message_id: str, body: str, why: str | None = None) -> str:
+        d = drafts.add(await gmail.message(message_id, full=False), body, why)
+        return (f"Draft {d['id']} saved, to {d['from']}: {d['subject']}. It waits in the app's Activity, where the "
+                "user sends it with a tap or edits it first. Nothing was sent.")
+
+    async def discard_draft(draft_id: int) -> str:
+        try:
+            d = drafts.close(draft_id, "dismissed")
+        except KeyError:
+            return f"No draft {draft_id} is waiting."
+        return f"Discarded the draft to {d['from']}: {d['subject']}."
+
+    return [
+        Tool("list_drafts", "The reply drafts waiting for the user to send, with their ids and text.",
+             _obj({}, []), list_drafts),
+        Tool("draft_reply", "Save a reply to a message as a draft the user sends with one tap in the app (Activity), "
+             "or edits first. Sends nothing. A new draft in the same thread replaces the one waiting there, so use "
+             "it to change a draft too.",
+             _obj({"message_id": {"type": "string"}, "body": {"type": "string", "description": "The reply's text"},
+                   "why": {"type": "string", "description": "What the mail asks of the user, a few words"}},
+                  ["message_id", "body"]), draft_reply),
+        Tool("discard_draft", "Drop a waiting draft, by its id.",
+             _obj({"draft_id": {"type": "integer"}}, ["draft_id"]), discard_draft),
     ]

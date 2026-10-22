@@ -22,6 +22,7 @@ LABELS = {
     "create_reminder": "Added a reminder", "update_reminder": "Changed a reminder",
     "complete_reminder": "Completed a reminder", "delete_reminder": "Deleted a reminder",
     "send_mail": "Sent a mail", "reply_mail": "Replied to a mail",
+    "draft_reply": "Drafted a reply", "discard_draft": "Discarded a draft",
     "add_habit": "Added a habit", "check_habit": "Checked a habit", "delete_habit": "Deleted a habit",
     "log_meal": "Logged a meal", "update_meal": "Changed a meal", "set_food_goals": "Set food goals",
     "delete_meal": "Deleted a meal",

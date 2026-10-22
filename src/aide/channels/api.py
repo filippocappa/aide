@@ -21,6 +21,7 @@ from ..agent import CONVERSATION, PENDING_TTL, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
+from ..drafts import Drafts
 from ..engine import Engine
 from ..food import FoodStore, totals
 from ..habits import HabitStore
@@ -140,6 +141,10 @@ class LecturePatch(BaseModel):
 class TeamIn(BaseModel):
     text: str
     stream: bool = False
+
+
+class DraftIn(BaseModel):
+    body: str | None = None  # the reply as edited in the app; None sends it as drafted
 
 
 class RoutineIn(BaseModel):
@@ -301,7 +306,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                notebook: NotebookStore | None = None, engine: Engine | None = None,
                objectives: ObjectiveStore | None = None, planner: ObjectivePlanner | None = None,
                location: Location | None = None, transit_alerts: AlertStore | None = None,
-               boards: Boards | None = None) -> FastAPI:
+               boards: Boards | None = None, drafts: Drafts | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -315,6 +320,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     quizzes = QuizStore(notebook)
     objectives = objectives or ObjectiveStore(db.conn, tz, habits, food, health, store)
     location = location or Location(db.conn, push)
+    drafts = drafts or Drafts(db.conn, tz)  # no mail account: none are made, and sending is a 503
     photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
@@ -453,9 +459,66 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                               "conversation_id": course.get("chat")})
         paused = engine.status()["paused"] if engine else None
         coming = sorted(((n, r) for r in routines.all() if (n := routines.next_run(r))), key=lambda x: x[0])
-        return {"waiting": len(actions) + len(proposed) + len(proposals) + (1 if paused else 0),
-                "actions": actions, "objectives": proposed, "proposals": proposals, "writer": paused,
-                "upcoming": [routines.as_json(r) for _, r in coming[:5]]}
+        replies = drafts.waiting()
+        return {"waiting": len(actions) + len(proposed) + len(proposals) + len(replies) + (1 if paused else 0),
+                "actions": actions, "objectives": proposed, "proposals": proposals, "drafts": replies,
+                "writer": paused, "upcoming": [routines.as_json(r) for _, r in coming[:5]]}
+
+    # -- mail drafts ---------------------------------------------------------------------------
+
+    def waiting_draft(draft_id: int) -> dict:
+        d = drafts.get(draft_id)
+        if d is None:
+            raise HTTPException(404, "no such draft")
+        if d["status"] != "waiting":
+            raise HTTPException(409, f"the draft is {d['status']}")
+        return d
+
+    @app.get("/v1/mail/drafts", dependencies=[Depends(auth)])
+    async def list_drafts():
+        return {"drafts": drafts.waiting()}
+
+    @app.patch("/v1/mail/drafts/{draft_id}", dependencies=[Depends(auth)])
+    async def edit_draft(draft_id: int, body: DraftIn):
+        waiting_draft(draft_id)
+        if body.body is None or not body.body.strip():
+            raise HTTPException(400, "body is empty")
+        return drafts.revise(draft_id, body.body)
+
+    @app.post("/v1/mail/drafts/{draft_id}/send", dependencies=[Depends(auth)])
+    async def send_draft(draft_id: int, body: DraftIn | None = None):
+        """The user's tap on Send: this is the confirmation, so it sends straight away."""
+        waiting_draft(draft_id)
+        text = body.body if body else None
+        if text is not None and not text.strip():
+            raise HTTPException(400, "body is empty")
+        if drafts.gmail is None:
+            raise HTTPException(503, "no mail account is connected")
+        try:
+            sent = await drafts.send(draft_id, text)
+        except (RuntimeError, httpx.HTTPError) as e:
+            log.warning("draft %d not sent: %s", draft_id, e)
+            raise HTTPException(502, f"not sent: {e}") from None
+        return {"ok": True, "draft": sent}
+
+    @app.post("/v1/mail/drafts/{draft_id}/dismiss", dependencies=[Depends(auth)])
+    async def dismiss_draft(draft_id: int):
+        d = waiting_draft(draft_id)
+        drafts.close(draft_id, "dismissed")
+        activity.record(db.conn, d["agent"], "cancelled", f"Reply to {d['from']}: {d['subject']}")
+        return {"ok": True}
+
+    @app.post("/v1/mail/drafts/run", dependencies=[Depends(auth)])
+    async def run_drafts():
+        """The evening pass now: replies for the last days' mail that wants one."""
+        if drafts.gmail is None:
+            raise HTTPException(503, "no mail account is connected")
+        try:
+            made = await drafts.draft()
+        except (ValueError, httpx.HTTPError, anthropic.APIError) as e:
+            log.warning("drafting failed: %s", e)
+            raise HTTPException(502, f"couldn't draft: {e}") from None
+        return {"drafts": made, "waiting": drafts.waiting()}
 
     @app.post("/v1/new", dependencies=[Depends(auth)])
     async def new():
