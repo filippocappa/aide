@@ -2,8 +2,8 @@
 immediately; deleting an alert waits for the user's !yes."""
 
 from ..db import utcnow
-from ..transit import AlertStore, Location, Transit, line_key
-from . import Tool
+from ..transit import AlertStore, Boards, Location, Transit, line_key
+from . import Tool, ToolOutput
 
 STOPS_NEAR = 4  # stops shown for "near me"
 TIMES = 3  # arrivals shown per line and direction
@@ -13,7 +13,7 @@ def _obj(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-def transit_tools(transit: Transit, alerts: AlertStore, location: Location) -> list[Tool]:
+def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boards: Boards) -> list[Tool]:
     timetable = transit.timetable
 
     async def here() -> dict:
@@ -56,12 +56,19 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location) -> l
             return f"No GTT stops {where}."
         return f"GTT stops {where}:\n" + "\n".join(f"- {label(s, d)}: {lines_text(s)}" for s, d in found[:12])
 
-    async def transit_arrivals(stop: str | None = None, line: str | None = None) -> str:
+    def when(a, now) -> str:
+        text = f"{a.minutes(now)} min"
+        if not a.live:
+            return text + " (timetable)"
+        late = round((a.delay or 0) / 60)
+        return text + (f" ({late} late)" if late > 0 else f" ({-late} early)" if late < 0 else "")
+
+    async def transit_arrivals(stop: str | None = None, line: str | None = None, to: str | None = None) -> ToolOutput:
         now = utcnow()
         if stop and stop.strip():
             stops = [(s, None) for s in timetable.find(stop)][:6]
             if not stops:
-                return f"No GTT stop matches {stop!r}."
+                raise ValueError(f"no GTT stop matches {stop!r}")
         else:
             fix = await here()
             stops = timetable.near(fix["lat"], fix["lon"])
@@ -70,22 +77,38 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location) -> l
                 stops = [(s, d) for s, d in stops if any(l["name"] == key for l in timetable.lines(s["id"]))]
             stops = stops[:STOPS_NEAR]
             if not stops:
-                return "No GTT stops near the phone" + (f" for line {line_key(line)}." if line else ".")
-        arrivals = await transit.arrivals([s["id"] for s, _ in stops], line, now)
-        out = []
+                return ToolOutput("No GTT stops near the phone" + (f" for line {line_key(line)}." if line else "."))
+        dest = None
+        if to and to.strip():
+            found = timetable.find(to)
+            if not found:
+                raise ValueError(f"no GTT stop matches {to!r}: ask the user, or pass the stop's name or number")
+            dest = {"name": found[0]["name"] if len({s["name"] for s in found}) == 1 else to.strip(),
+                    "stops": [s["id"] for s in found]}
+        arrivals = await transit.arrivals([s["id"] for s, _ in stops], line, now, to=dest["stops"] if dest else None)
+        out, cards = [], []
         for s, d in stops:
             groups: dict[tuple, list] = {}
             for a in arrivals:
                 if a.stop == s["id"]:
                     groups.setdefault((a.name(), a.headsign), []).append(a)
             if not groups:
-                out.append(f"{label(s, d)}: nothing in the next hour" + (f" for line {line_key(line)}" if line else ""))
+                out.append(f"{label(s, d)}: nothing in the next hour" + (f" for line {line_key(line)}" if line else "")
+                           + (f" going to {dest['name']}" if dest else ""))
                 continue
-            rows = [f"- {name}" + (f" → {towards}" if towards else "") + ": " +
-                    ", ".join(f"{a.minutes(now)} min" + ("" if a.live else " (timetable)") for a in times[:TIMES])
-                    for (name, towards), times in groups.items()]
+            rows = []
+            for (name, towards), times in groups.items():
+                row = f"- {name}" + (f" → {towards}" if towards else "") + ": " + \
+                      ", ".join(when(a, now) for a in times[:TIMES])
+                if dest and times[0].to_at:
+                    row += f"; the first gets to {dest['name']} at {times[0].to_at.astimezone(timetable.tz):%H:%M}"
+                rows.append(row)
             out.append(f"{label(s, d)}:\n" + "\n".join(rows))
-        return "\n".join(out) + "\nMinutes are live from GTT unless marked (timetable)."
+            cards.append(await boards.board(s, line, dest, now, arrivals))
+        if dest and not cards:
+            out.append(f"No direct line to {dest['name']} in the next hour: the user may need to change.")
+        text = "\n".join(out) + "\nMinutes are live from GTT unless marked (timetable). The app shows these as cards."
+        return ToolOutput(text, {"type": "departures", "departures": cards} if cards else None)
 
     async def list_transit_alerts() -> str:
         found = alerts.all()
@@ -129,9 +152,13 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location) -> l
              "user's phone is now (leave query out). Lists each stop's number, name and lines with directions.",
              _obj({"query": {"type": "string", "description": stop_help}}, []), transit_stops),
         Tool("transit_arrivals", "When the next GTT trams, buses and metro come to a stop, in minutes, live from GTT "
-             "(else the timetable). Leave stop out for the stops near the user's phone.",
+             "(else the timetable), how late, and with `to` which go there directly and when they arrive. Leave stop "
+             "out for the stops near the user's phone. The app shows the result as departure cards.",
              _obj({"stop": {"type": "string", "description": stop_help},
-                   "line": {"type": "string", "description": "only this line, e.g. 4, 15, M1"}}, []),
+                   "line": {"type": "string", "description": "only this line, e.g. 4, 15, M1"},
+                   "to": {"type": "string", "description": "where the user is going: a GTT stop's name or number (from "
+                          "memory for their usual places, e.g. their university's stop). Only lines that get there "
+                          "without a change are kept"}}, []),
              transit_arrivals),
         Tool("list_transit_alerts", "List the tram alerts: id in brackets, line, stop, when, and how early.",
              _obj({}, []), list_transit_alerts),
