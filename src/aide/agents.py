@@ -111,9 +111,10 @@ web_search rather than guessing; use topic news for recent events. If the snippe
 result with fetch_page. Answer in a few lines and always give the link to your source."""
 
 _MAPS = """- Maps: for places ("a pharmacy open now near me") use find_places, and for how long it takes to get somewhere \
-use travel_time (by train or bus is mode transit). Both start from the user's home unless you pass near or origin; \
-if your memory has a home address, pass it, since it's newer than the configured one. Always give the Google Maps \
-link from the result."""
+use travel_time (driving, with live traffic, is the default; walk, bicycle, or transit for train and bus). Both \
+start from the user's home unless you pass near or origin: "here" is where their phone is, for "from where I am" or \
+"near me"; if your memory has a home address, pass it, since it's newer than the configured one. Always give the \
+Google Maps link from the result."""
 
 _TRANSIT = """- GTT (Turin's trams, buses and metro): transit_arrivals says when the next ones come, live; with no stop it \
 looks near the user's phone. When you know where the user is going (they say, or memory has their usual places), \

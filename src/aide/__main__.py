@@ -108,15 +108,15 @@ def main() -> None:
         tools += search_tools(Tavily(settings.tavily_api_key), settings.timezone)
     else:
         log.warning("TAVILY_API_KEY not set: web search disabled")
+    location = Location(db.conn, push)
     maps = None
     if settings.google_maps_api_key:
         maps = GoogleMaps(settings.google_maps_api_key)
-        tools += maps_tools(maps, settings.timezone, settings.home_address)
+        tools += maps_tools(maps, settings.timezone, settings.home_address, location.here)
         if not settings.home_address:
             log.warning("AIDE_HOME_ADDRESS not set: Maps tools need an explicit origin")
     else:
         log.warning("GOOGLE_MAPS_API_KEY not set: Maps tools disabled")
-    location = Location(db.conn, push)
     transit = alerts = watcher = boards = None
     if settings.gtt:
         timetable = Timetable(settings.db_path.parent / "gtt.db", settings.timezone)

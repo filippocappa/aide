@@ -4,6 +4,7 @@ Plain HTTP with an API key. Field masks keep each request to the fields shown, w
 """
 
 import re
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
@@ -24,6 +25,8 @@ MODES = {"drive": ("DRIVE", "driving"), "walk": ("WALK", "walking"),
          "transit": ("TRANSIT", "transit"), "bicycle": ("BICYCLE", "bicycling")}
 
 TIME_HELP = "Local time as YYYY-MM-DDTHH:MM, or HH:MM for today."
+HERE = "here"  # origin or near: where the user's phone is
+NEARBY = 1500  # metres: the circle a search "here" is biased to
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -45,8 +48,11 @@ class GoogleMaps:
             raise RuntimeError(f"Google Maps error {r.status_code}: {message}")
         return r.json()
 
-    async def search_places(self, query: str, open_now: bool) -> list[dict]:
-        body = {"textQuery": query, "pageSize": MAX_PLACES}
+    async def search_places(self, query: str, open_now: bool, center: tuple[float, float] | None = None) -> list[dict]:
+        body: dict = {"textQuery": query, "pageSize": MAX_PLACES}
+        if center:
+            body["locationBias"] = {"circle": {"center": {"latitude": center[0], "longitude": center[1]},
+                                               "radius": NEARBY}}
         if open_now:
             body["openNow"] = True
         return (await self._post(PLACES_URL, PLACE_FIELDS, body)).get("places", [])
@@ -83,13 +89,25 @@ def _distance(meters: int) -> str:
     return f"{meters} m" if meters < 1000 else f"{meters / 1000:.1f} km"
 
 
-def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None) -> list[Tool]:
+def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None,
+               here: Callable[[], Awaitable[tuple[float, float] | None]] | None = None) -> list[Tool]:
+    """`here` gives where the phone is, (lat, lon), or None when that isn't known."""
     def place_or_home(value: str | None, what: str) -> str:
         if value and value.strip():
             return value.strip()
         if not home:
             raise ValueError(f"no home address is set: ask the user for the {what}")
         return home
+
+    async def phone(value: str | None) -> tuple[float, float] | None:
+        """The phone's position when value is "here"; None for any other value."""
+        if (value or "").strip().lower() != HERE:
+            return None
+        fix = await here() if here else None
+        if fix is None:
+            raise ValueError("where the user is isn't known (location is off in the app, or the last fix is "
+                             "over 2 hours old): ask where they are")
+        return fix
 
     def parse_time(value: str) -> datetime:
         now = datetime.now(tz)
@@ -106,8 +124,12 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None) -> list[Tool]:
         return f"{dt:%H:%M}" if dt.date() == datetime.now(tz).date() else f"{dt:%a %d %b %H:%M}"
 
     async def find_places(query: str, open_now: bool | None = None, near: str | None = None) -> str:
-        where = place_or_home(near, "area to search")
-        found = await maps.search_places(f"{query} near {where}", bool(open_now))
+        if center := await phone(near):
+            where = "where you are"
+            found = await maps.search_places(query, bool(open_now), center)
+        else:
+            where = place_or_home(near, "area to search")
+            found = await maps.search_places(f"{query} near {where}", bool(open_now))
         if not found:
             return "No places found." + (" (Only places open now were searched.)" if open_now else "")
         weekday = datetime.now(tz).weekday()  # weekdayDescriptions start on Monday
@@ -136,10 +158,14 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None) -> list[Tool]:
             raise ValueError("give a departure time or an arrival time, not both")
         if arrival_time and mode != "transit":
             raise ValueError("an arrival time works only for transit; give a departure time instead")
-        start = place_or_home(origin, "starting point")
+        if fix := await phone(origin):
+            start, link_start = "where you are", f"{fix[0]:.6f},{fix[1]:.6f}"
+            start_point: dict = {"location": {"latLng": {"latitude": fix[0], "longitude": fix[1]}}}
+        else:
+            start = link_start = place_or_home(origin, "starting point")
+            start_point = {"address": start}
         travel_mode, url_mode = MODES[mode]
-        body: dict = {"origin": {"address": start}, "destination": {"address": destination},
-                      "travelMode": travel_mode}
+        body: dict = {"origin": start_point, "destination": {"address": destination}, "travelMode": travel_mode}
         if mode == "drive":
             body["routingPreference"] = "TRAFFIC_AWARE"
         when = None
@@ -152,7 +178,7 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None) -> list[Tool]:
 
         route = await maps.route(body)
         link = "https://www.google.com/maps/dir/?" + urlencode(
-            {"api": 1, "origin": start, "destination": destination, "travelmode": url_mode})
+            {"api": 1, "origin": link_start, "destination": destination, "travelmode": url_mode})
         if route is None:
             return f"No {mode} route found from {start} to {destination}.\n{link}"
 
@@ -191,16 +217,18 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None) -> list[Tool]:
     return [
         Tool("find_places", "Find places with Google Maps: shops, pharmacies, restaurants, stations. Returns up to "
              f"{MAX_PLACES} with name, rating, open or closed now, address, today's hours and a Google Maps link. "
-             "Searches near the user's home unless near is given.",
+             "Searches near the user's home unless near is given (\"here\": near the user's phone).",
              _obj({"query": {"type": "string", "description": "What to look for, e.g. 'pharmacy', 'sushi'"},
                    "open_now": {"type": "boolean", "description": "Only places open right now"},
                    "near": {"type": "string",
-                            "description": "Address or place to search around; default the user's home"}},
+                            "description": "Address or place to search around, or \"here\" for where the "
+                                           "user's phone is; default the user's home"}},
                   ["query"]), find_places),
         Tool("travel_time", "How long it takes to get somewhere, with Google Maps. Driving includes live traffic; "
              "transit lists the lines and departure times. Ends with a Google Maps directions link.",
              _obj({"destination": {"type": "string", "description": "Address or place name"},
-                   "origin": {"type": "string", "description": "Address or place name; default the user's home"},
+                   "origin": {"type": "string", "description": "Address or place name, or \"here\" for where "
+                                                         "the user's phone is; default the user's home"},
                    "mode": {"type": "string", "enum": list(MODES), "description": "default drive"},
                    "departure_time": {"type": "string", "description": f"Leave at this time. {TIME_HELP}"},
                    "arrival_time": {"type": "string",

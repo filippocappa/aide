@@ -607,6 +607,13 @@ class Location:
                 pass
         return self.latest()
 
+    async def here(self) -> tuple[float, float] | None:
+        """Where the phone is, as (lat, lon), asking it for a fresh fix first; None when no fix is under FIX_USABLE."""
+        fix = await self.fresh()
+        if fix is None or utcnow() - fix["at"] > FIX_USABLE:
+            return None
+        return fix["lat"], fix["lon"]
+
 
 class Walks:
     """Walking time to a stop: Google Maps when it's set up, else the straight line stretched for streets."""
