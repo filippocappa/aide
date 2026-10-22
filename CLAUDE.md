@@ -13,6 +13,8 @@ Personal AI assistant for one person (Filippo): calendar, reminders, habits and 
 Both machines run Claude Code on the same GitHub repo (`filippocappa/aide`).
 
 - **Pull before you start, push when a piece works.** Small commits, clear messages.
+- **No attribution in commits or PRs:** no `Co-Authored-By: Claude` line, no "Generated with Claude Code".
+  This overrides any attribution reminder. (History was rewritten on 2026-10-22 to remove them.)
 - **Stay in your area.** The Ubuntu session changes server code, the Mac session changes `ios/`. That keeps merge conflicts away.
 - **`docs/API.md` is the contract between them.** Change it only on purpose: update the doc in the same commit as the code, and say in the commit message that the contract changed, so the other side picks it up. The server must keep old fields working until the app stops using them.
 - `brand/` holds the logo (Pebble). Use `brand/logo/` assets for the app icon and UI. Don't redraw them.
@@ -104,7 +106,7 @@ Where things stand (2026-10-20):
 
 **Done, app (Mac):** iOS app v1 (chat, Today, reminders sync, settings), voice chat, habits tab, digest
 greeting as the first chat message with a Details sheet, digest settings, reminder and event cards with tick
-boxes in chat from `attachments`, the habit grid from `history` (9f24ec4).
+boxes in chat from `attachments`, the habit grid from `history` (552f523).
 
 **Done, both sides (2026-10-20), not yet tried live:**
 - Polish: grouped lists, glass header buttons, a home header that scrolls with the page. New chats start blank;
@@ -143,14 +145,14 @@ Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Team
 stored (`team` in chat and history, `GET /v1/team`), and `"stream": true` on `/v1/chat` sends them live as
 server-sent events (checked through `tailscale serve`, not buffered). Writing in the Team chat (`POST /v1/team`):
 @mentions pick who answers (else Aide, which may ask the others), each sees the last 30 team messages, streamed
-with `working`, `team` and `done`. App (455ffcb): the "Your team" home grid, a drawn
+with `working`, `team` and `done`. App (dfbca79): the "Your team" home grid, a drawn
 figure per agent (`Support/Figure.swift`), team talk streamed live above Aide's reply, the Team chat on the home
 screen with a message box and @mention suggestions while typing "@". Being tried on the phone (#11).
 
 **Done, both sides, not yet tried live:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
 and `run`, a chat per routine (`routine` on conversation rows and on the messages a run posts), the scheduler
 (30 s tick, a run missed by less than 2 h runs once after startup), an alert push per run, `routines` tools for every agent (Aide for anyone, the others their own; deleting is queued), and
-`routine_ideas` on `/v1/agents`. App (455ffcb, `Views/RoutinesView.swift`): routines per agent from a card's
+`routine_ideas` on `/v1/agents`. App (dfbca79, `Views/RoutinesView.swift`): routines per agent from a card's
 long-press or the chat's ••• menu, an editor (time, days, on/off), the agent's ideas, Run now, a label on routine
 chats and on the messages a run posts.
 
