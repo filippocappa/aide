@@ -5,7 +5,8 @@ struct APIConfig: Equatable {
     let token: String
 }
 
-/// Server URL and list choice live in UserDefaults; the token lives in the Keychain.
+/// Every setting lives in the Keychain, which keeps it through updates and even deleting the app
+/// (UserDefaults doesn't). Values from before that move over from UserDefaults once.
 @MainActor
 final class AppSettings: ObservableObject {
     /// None: each install points at its own server (https://<machine>.<tailnet>.ts.net), typed in Settings.
@@ -20,22 +21,22 @@ final class AppSettings: ObservableObject {
     }
 
     @Published var serverURL: String {
-        didSet { UserDefaults.standard.set(serverURL, forKey: Keys.serverURL) }
+        didSet { Keychain.set(serverURL, for: Keys.serverURL) }
     }
     @Published var token: String {
         didSet { Keychain.set(token, for: Keys.token) }
     }
     /// EKCalendar identifier of the synced list; empty means the system default list.
     @Published var reminderListID: String {
-        didSet { UserDefaults.standard.set(reminderListID, forKey: Keys.reminderListID) }
+        didSet { Keychain.set(reminderListID, for: Keys.reminderListID) }
     }
 
     /// Language Aide listens for when you talk: a BCP 47 code like en-US or it-IT.
     @Published var voiceLanguage: String {
-        didSet { UserDefaults.standard.set(voiceLanguage, forKey: Keys.voiceLanguage) }
+        didSet { Keychain.set(voiceLanguage, for: Keys.voiceLanguage) }
     }
     @Published var speakReplies: Bool {
-        didSet { UserDefaults.standard.set(speakReplies, forKey: Keys.speakReplies) }
+        didSet { Keychain.set(speakReplies ? "1" : "0", for: Keys.speakReplies) }
     }
 
     #if DEBUG
@@ -47,15 +48,28 @@ final class AppSettings: ObservableObject {
     #endif
 
     init() {
-        let defaults = UserDefaults.standard
-        serverURL = defaults.string(forKey: Keys.serverURL) ?? Self.defaultServerURL
+        Self.moveToKeychain([Keys.serverURL, Keys.reminderListID, Keys.voiceLanguage, Keys.speakReplies])
+        serverURL = Keychain.get(Keys.serverURL) ?? Self.defaultServerURL
         token = Keychain.get(Keys.token) ?? ""
         #if DEBUG
         if let previewToken = ProcessInfo.processInfo.environment["AIDE_TOKEN"] { token = previewToken }
         #endif
-        reminderListID = defaults.string(forKey: Keys.reminderListID) ?? ""
-        voiceLanguage = defaults.string(forKey: Keys.voiceLanguage) ?? "en-US"
-        speakReplies = defaults.object(forKey: Keys.speakReplies) as? Bool ?? true
+        reminderListID = Keychain.get(Keys.reminderListID) ?? ""
+        voiceLanguage = Keychain.get(Keys.voiceLanguage) ?? "en-US"
+        speakReplies = Keychain.get(Keys.speakReplies).map { $0 == "1" } ?? true
+    }
+
+    /// Settings saved in UserDefaults by older builds, into the Keychain (once; the Keychain wins).
+    private static func moveToKeychain(_ keys: [String]) {
+        let defaults = UserDefaults.standard
+        for key in keys {
+            guard let old = defaults.object(forKey: key) else { continue }
+            if Keychain.get(key) == nil {
+                let value = (old as? Bool).map { $0 ? "1" : "0" } ?? (old as? String) ?? ""
+                Keychain.set(value, for: key)
+            }
+            defaults.removeObject(forKey: key)
+        }
     }
 
     var apiConfig: APIConfig? {
