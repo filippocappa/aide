@@ -119,6 +119,13 @@ class NotebookStore:
         if "done" not in {r[1] for r in self.conn.execute("PRAGMA table_info(proposals)")}:
             self.conn.execute("ALTER TABLE proposals ADD COLUMN done INTEGER NOT NULL DEFAULT 0")
         self.on_job: list[Callable[[], None]] = []  # the worker's kick
+        self.steps: dict[int, str] = {}  # course id → what its job is doing now, a line for the app (not stored)
+
+    def set_step(self, course_id: int, step: str | None) -> None:
+        if step:
+            self.steps[course_id] = step
+        else:
+            self.steps.pop(course_id, None)
 
     # -- topics ------------------------------------------------------------------------
 
@@ -539,7 +546,9 @@ class NotebookStore:
 
     def notebook_json(self, course_id: int) -> dict:
         intro = self.intro(course_id)
-        return {"course": course_id, "started": self.started(course_id), "busy": self.busy(course_id),
+        busy = self.busy(course_id)
+        return {"course": course_id, "started": self.started(course_id), "busy": busy,
+                "step": self.steps.get(course_id) if busy else None,
                 "exam": intro["exam"] if intro else None, "introduction": intro["body"] if intro else None,
                 "topics": [self.topic_json(t) for t in self.topics(course_id)],
                 "writing": next((self.proposal_json(p) for p in self.proposals(course_id, "applying")), None),
@@ -868,6 +877,7 @@ class NotebookWorker:
             log.exception("notebook job %s (%s) failed", job["id"], job["kind"])
             error = str(e)[:200] if isinstance(e, (RuntimeError, KeyError, ValueError)) else "something went wrong"
             self.store.set_job(job["id"], "failed", error)
+            self.store.set_step(job["course_id"], None)
             if job["kind"] == "apply" and (p := self.store.proposal(job["args"]["proposal"])):
                 self.store.set_proposal(p["id"], "failed", result=error)
             if course is not None:
@@ -877,6 +887,7 @@ class NotebookWorker:
                                  f"I couldn't {what}: {error}. It's in the server's logs.")
             return
         self.store.set_job(job["id"], "done")
+        self.store.set_step(job["course_id"], None)
         if self.vault is not None:
             self.vault.kick()
 
@@ -889,6 +900,7 @@ class NotebookWorker:
 
     async def introduction(self, course: dict) -> None:
         cid = course["id"]
+        self.store.set_step(cid, "Writing the Introduction")
         live = next((c for c in await self.study.courses() if c["id"] == cid), None)
         exam = live["next_exam"] if live else None
         files = "\n".join(f"- {f['name']} ({f['section'] or 'no section'}, {f['pages']} pages)"
@@ -905,6 +917,7 @@ class NotebookWorker:
 
     async def outline(self, course: dict, note: str | None = None, intro: bool = False) -> dict | None:
         cid = course["id"]
+        self.store.set_step(cid, "Planning the topics")
         material = self.store.material_map(cid)
         if not material.strip():
             await self._post(course, "[Notebook: no material yet for the outline.]",
@@ -939,6 +952,7 @@ class NotebookWorker:
 
     async def triage(self, course: dict, material: list[dict]) -> dict | None:
         cid = course["id"]
+        self.store.set_step(cid, "Looking at the new material")
         if not self.store.topics(cid):
             # No topics yet: a waiting outline is planned again with the new material, else nothing to do.
             if self.store.proposals(cid, "pending"):
@@ -994,22 +1008,35 @@ class NotebookWorker:
                                              it["sources"], after["position"] if after else None)
                 jobs.append((topic, {**it, "new": True}))
         gate = asyncio.Semaphore(PARALLEL)
+        active: list[str] = []
+
+        def writing() -> None:
+            self.store.set_step(p["course_id"], f"Writing {', '.join(active)}" if active else None)
 
         async def one(topic: dict, it: dict) -> str | None:
             async with gate:
-                for attempt in (1, 2):
-                    try:
-                        if it.get("new") or not topic["body"]:
-                            await self.write(topic, note)
-                        else:
-                            await self.merge(self.store.topic(topic["public_id"]), it, note)
-                        self.store.topic_done(p["id"])
-                        return None
-                    except Exception as e:
-                        log.warning("topic %s, attempt %d: %s", topic["public_id"], attempt, e)
-                        error = str(e)
-                self.store.topic_done(p["id"])
-                return error
+                active.append(topic["title"])
+                writing()
+                try:
+                    return await attempts(topic, it)
+                finally:
+                    active.remove(topic["title"])
+                    writing()
+
+        async def attempts(topic: dict, it: dict) -> str | None:
+            for attempt in (1, 2):
+                try:
+                    if it.get("new") or not topic["body"]:
+                        await self.write(topic, note)
+                    else:
+                        await self.merge(self.store.topic(topic["public_id"]), it, note)
+                    self.store.topic_done(p["id"])
+                    return None
+                except Exception as e:
+                    log.warning("topic %s, attempt %d: %s", topic["public_id"], attempt, e)
+                    error = str(e)
+            self.store.topic_done(p["id"])
+            return error
 
         errors = await asyncio.gather(*(one(t, it) for t, it in jobs))
         done = [t["title"] for (t, _), e in zip(jobs, errors) if e is None]
@@ -1057,9 +1084,13 @@ class NotebookWorker:
         have a figure worth showing, whatever their text. Those become the figures' candidates. A batch that fails
         stays unscanned, and its file falls back to the pages with the least text."""
         done = 0
-        for f, missing in self.store.unscanned(course["id"]):
+        todo = self.store.unscanned(course["id"])
+        total, looked = sum(len(missing) for _, missing in todo), 0
+        for f, missing in todo:
             for i in range(0, len(missing), SCAN_BATCH):
                 batch, content = missing[i:i + SCAN_BATCH], []
+                self.store.set_step(course["id"], f"Looking for figures in the slides: {looked} of {total}")
+                looked += len(batch)
                 try:
                     for n in batch:
                         content += self._images([(f"[p. {n}]", await page_image(self.store.files.path(f), n, SCAN_SIDE))])
@@ -1085,6 +1116,7 @@ class NotebookWorker:
         if self.vault is not None:
             self.vault.pull()
         await self.scan(course)
+        self.store.set_step(course["id"], "Placing the figures")
         added = []
         for topic in self.store.topics(course["id"]):
             have = figures(topic["body"] or "")

@@ -635,17 +635,21 @@ and posts the result in the same chat.
 | `POST /v1/proposals/{id}/apply` | `{"items": [1, 3], "note": "keep it short"}`, both optional (all items) | `202`, the Proposal, `status` `applying`. `400` an item out of range; `409` not pending. |
 | `POST /v1/proposals/{id}/decline` | | the Proposal, `declined`. `409` not pending. |
 
-Notebook: `{"course": 2, "started": true, "busy": false, "exam": "20–35 multiple-choice questions, −0.25 for a wrong
-answer…" or null, "introduction": "markdown" or null, "topics": [Topic], "proposals": [Proposal], "writing": Proposal
-or null}` (`busy`: being written; pending proposals only; `writing`: the proposal being applied, with its `progress`).
+Notebook: `{"course": 2, "started": true, "busy": false, "step": "Writing The IS-LM model, Crowding out" or null,
+"exam": "20–35 multiple-choice questions, −0.25 for a wrong answer…" or null, "introduction": "markdown" or null,
+"topics": [Topic], "proposals": [Proposal], "writing": Proposal or null}` (`busy`: being written; `step`: what
+Professor is doing now, a line to show while `busy` (null otherwise, or right after a restart); pending proposals
+only; `writing`: the proposal being applied, with its `progress`).
 
 **`plain=true`** (on the notebook, a topic and a lecture): the notes as the app shows them. LaTeX becomes plain
 Unicode ($\pi_{t-1}$ as πₜ₋₁) and `[[links]]` their text. Without it, the markdown is as in the vault.
 
 **Progress.** A course's chat has `"course": 2` in the conversation list (`null` on other chats). While a proposal
 is applied, `GET /v1/notebook?course=` has it as `writing`, with `"progress": {"done": 4, "total": 11}` (topics
-finished, failed ones included; `progress` is null on proposals not being applied). The app polls it every few
-seconds while the course's chat is open and `writing` isn't null; when it turns null, the result is in the chat.
+finished, failed ones included; `progress` is null on proposals not being applied). Before the first topic, the
+slides are looked at for figures, so `progress` can stay at 0 for a while: `step` says so ("Looking for figures in
+the slides: 40 of 230"). The app polls it every few seconds while the course's chat is open and `writing` isn't
+null; when it turns null, the result is in the chat.
 
 Topic: `{"id": "t_…", "course": 2, "position": 1, "title": "The IS-LM model", "summary": "one line" or null,
 "written": true, "sections": ["Explanation", "Key terms", …], "questions": 5, "cards": 12, "edited": false,
