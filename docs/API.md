@@ -371,6 +371,7 @@ An unknown `agent` is `400`. Lines are kept 90 days; the feed starts empty on 20
 | `ask` | "Asked Coach" (always Aide's) | the request |
 | `message` | the chat's title: a message no one asked for (lecture notes ready, a notebook proposal, its result) | its first line |
 | `objectives` | "Proposed 2 objectives for the week" | their titles, `; ` between |
+| `drafts` | "Drafted 2 replies" (Secretary's, see Mail drafts) | "Anna Bianchi: Dinner Friday?; …" |
 | `digest` | "Morning digest", "Wake-up briefing", "Evening digest", "Weekly digest", "Monthly digest" (Aide's) | the greeting |
 
 Reads (listing events, searching mail) aren't recorded.
@@ -384,17 +385,55 @@ Reads (listing events, searching mail) aren't recorded.
               "created_at": "2026-10-22T10:02:11+02:00", "expires_at": "2026-10-22T10:32:11+02:00"}],
  "objectives": [ /* Objective objects with "status": "proposed", for this month, week and day */ ],
  "proposals": [ /* notebook Proposals still pending, plus "course_name" and "conversation_id" (the course chat, or null) */ ],
+ "drafts": [ /* reply Drafts waiting to be sent, newest mail first (see Mail drafts) */ ],
  "writer": null,
  "upcoming": [ /* the next 5 enabled routines (watches too), soonest first: Routine objects */ ]}
 ```
-- `waiting` counts actions, objectives, proposals and the writer's question: the app's badge.
+- `waiting` counts actions, objectives, proposals, drafts and the writer's question: the app's badge.
 - `actions`: the confirmation queue, with who queued it and from which chat. An action expires 30 min after it's
   queued. Confirm or cancel one with `POST /v1/confirm` / `/v1/cancel` and `{"ids": [42]}`.
 - `objectives`: accept with `POST /v1/objectives/accept` (`period`, `date` = the objective's `start`, `ids`), drop
   with `PATCH /v1/objectives/{id}` (see Objectives).
 - `proposals`: apply or decline with `/v1/proposals/{id}/apply` and `/decline` (see Notebook).
+- `drafts` (since 2026-10-22): send, edit or dismiss with `/v1/mail/drafts/{id}/…` (see Mail drafts). Unlike
+  an action, a draft doesn't expire for 7 days.
 - `writer`: while note writing is paused at the Claude plan's limit, the `paused` object of `GET /v1/writer`
   (`since`, `resets_at`, …), else `null`. Answer with `POST /v1/writer/decide` (see Who writes the notes).
+
+## Mail drafts
+
+Replies to mail that wants an answer, written by Secretary for you to send with one tap (#7, since 2026-10-22).
+Before the evening digest, Secretary reads the last 3 days' inbox (not promotions, social, updates or forums; not
+threads you've answered since) and drafts a reply to each message that asks something of you, in its language and
+your voice, using memory and the next 14 days of the calendar. Each message is read once. Secretary also drafts one
+in chat when you ask ("draft a reply to Anna"). A new draft in a thread replaces the one waiting there.
+
+**Nothing is sent until you tap Send.** `POST /v1/mail/drafts/{id}/send` is the confirmation, so it sends straight
+away (only the app calls it; the model has no way to send a draft). In chat, "send it now" still goes through the
+confirmation queue (`reply_mail`).
+
+Draft:
+```json
+{"id": 3, "message_id": "18f…", "thread_id": "18f…", "from": "Anna Bianchi", "from_address": "anna@example.com",
+ "subject": "Dinner Friday?", "preview": "Are you free Friday at 8?", "received_at": "2026-10-22T18:02:00+02:00",
+ "why": "Anna asks if Friday at 8 works", "body": "Friday at 8 works for me. See you then!\nFilippo",
+ "status": "waiting", "agent": "secretary", "created_at": "2026-10-22T21:55:10+02:00"}
+```
+- `why` may be `null`. `body` is the reply's plain text, without a subject or quoted text; it goes to the sender
+  (or Reply-To) as "Re: subject", in the thread.
+- `status`: `waiting`, then `sent`, `dismissed`, `answered` (you replied in that thread another way), `replaced`
+  (a newer draft in the thread), or `expired` (7 days waiting). Only `waiting` ones are listed.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/mail/drafts` | | `{"drafts": [Draft]}`: the waiting ones, newest mail first. |
+| `PATCH /v1/mail/drafts/{id}` | `{"body": "…"}` | the Draft, with the new text. |
+| `POST /v1/mail/drafts/{id}/send` | `{}`, or `{"body": "…"}` to send your edited text | `{"ok": true, "draft": Draft}` (`status: "sent"`). `502` when Gmail refused it or the message is gone (the draft stays waiting), `503` without a mail account. |
+| `POST /v1/mail/drafts/{id}/dismiss` | `{}` | `{"ok": true}`. |
+| `POST /v1/mail/drafts/run` | `{}` | `{"drafts": [new Drafts], "waiting": [Draft]}`: the evening pass now. `502` if the model or Gmail failed. |
+
+An unknown id is `404`; one that isn't waiting any more is `409`; an empty `body` is `400`. Sending and dismissing
+show in the activity feed as `confirmed` / `cancelled` ("Reply to Anna Bianchi: Dinner Friday?").
 
 ## Memory
 
@@ -433,6 +472,7 @@ briefing (`wake`), which runs when the user gets up instead of at a set time (se
     {"type": "sleep", "title": "Last night", "sleep": { /* Sleep object, see Apple Health */ }, "usual_asleep_min": 438},
     {"type": "recovery", "title": "Recovery", "level": "good", "summary": "HRV above your usual, resting heart rate normal.",
      "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54},
+    {"type": "replies", "title": "Replies to send", "drafts": [ /* Draft objects, see Mail drafts; evening only */ ]},
     {"type": "objectives", "title": "Objectives for today", "period": "day", "start": "2026-10-19",
      "objectives": [ /* Objective objects, see Objectives */ ]},
     {"type": "text", "title": "Looking ahead", "text": "free-form markdown"}
@@ -443,7 +483,8 @@ The app skips section types it doesn't know. `404` if none has been generated ye
 
 - **Morning and evening:** `daily` is the morning digest (the app calls it
   "Morning"). `evening` is for before bed: tomorrow's calendar ("Tomorrow"), reminders due by the end of tomorrow,
-  habits not yet done today (`habits` section, only the undone ones), today's mail, and a short `text`
+  habits not yet done today (`habits` section, only the undone ones), today's mail, the replies Secretary drafted
+  just before it (`replies`, live: only those still waiting; since 2026-10-22, see Mail drafts), and a short `text`
   wrap-up (titled "Wrap-up"). It always looks at tomorrow, whatever the clock says. Default time 22:00.
 - **What it covers:** daily = one day, weekly = 7 days, monthly = to the end of the month. The period starts today,
   or tomorrow if the digest is made after 17:00 (so the Sunday 18:00 weekly covers Monday to Sunday). Section

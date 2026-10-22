@@ -15,6 +15,7 @@ from .transcribe import Transcriber
 from .config import OPENROUTER_BASE_URL, load_settings, save_env
 from .db import Database
 from .digest import DigestService, digest_schedule
+from .drafts import Drafts
 from .engine import Engine
 from .gmail import Gmail
 from .food import FoodStore
@@ -40,7 +41,7 @@ from .tools.food import food_tools
 from .tools.objectives import objective_tools
 from .tools.habits import habit_tools
 from .tools.health import health_tools
-from .tools.mail import mail_tools
+from .tools.mail import draft_tools, mail_tools
 from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
@@ -99,9 +100,11 @@ def main() -> None:
         log.info("Claude Code not found: notes are written through OpenRouter only")
     tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
     gmail = None
+    drafts = Drafts(db.conn, settings.timezone)
     if settings.gmail_client_id and settings.gmail_client_secret and settings.gmail_refresh_token:
         gmail = Gmail(settings.gmail_client_id, settings.gmail_client_secret, settings.gmail_refresh_token)
-        tools += mail_tools(gmail, settings.timezone)
+        drafts = Drafts(db.conn, settings.timezone, gmail, client, settings.model, cal)
+        tools += mail_tools(gmail, settings.timezone) + draft_tools(drafts, gmail)
     else:
         log.warning("GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN not set: mail tools disabled")
     if settings.tavily_api_key:
@@ -155,6 +158,7 @@ def main() -> None:
                            health, maps, settings.home_address)
     digest.objectives, digest.planner = objectives, planner
     digest.whereabouts = whereabouts
+    digest.drafts = drafts if gmail else None
 
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")
@@ -211,7 +215,7 @@ def main() -> None:
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
-                             notebook, engine, objectives, planner, location, alerts, boards)
+                             notebook, engine, objectives, planner, location, alerts, boards, drafts)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
