@@ -54,6 +54,7 @@ FIX_AGE = timedelta(minutes=10)  # a leave-now alert wants a fix younger than th
 FIX_EVERY = timedelta(minutes=5)  # at most one location request per this long
 FIX_USABLE = timedelta(hours=2)  # older than this, the fix says nothing about where the user is
 NEAR = 400  # metres: "stops near me"
+TURIN = (45.0703, 7.6869)  # where a place named for a destination is looked for first
 WALK_SHOWN = 2000  # metres: a stop closer than this to the phone gets its walk on the departures card
 BOARD_TIMES = 4  # arrivals per line and direction on a departures card
 WALK_SPEED = 1.25  # m/s, for the straight-line estimate without Maps
@@ -499,6 +500,28 @@ class Boards:
 
     def __init__(self, transit: Transit, location: "Location", walks: "Walks"):
         self.transit, self.location, self.walks = transit, location, walks
+
+    async def destination(self, to: str) -> dict:
+        """Where the user is going, as {"name", "stops": [ids]}: the stops by that name, or (with Maps) the stops
+        within NEAR of the place. A ValueError when neither finds anything."""
+        found = self.transit.timetable.find(to)
+        if found:
+            names = {s["name"] for s in found}
+            return {"name": found[0]["name"] if len(names) == 1 else to.strip(), "stops": [s["id"] for s in found]}
+        maps = self.walks.maps
+        place = None
+        if maps is not None:
+            try:
+                place = await maps.locate(f"{to.strip()}, Torino", near=TURIN)
+            except Exception as e:  # noqa: BLE001: said below
+                log.warning("finding %r on Maps failed: %s", to, e)
+        if place:
+            near = self.transit.timetable.near(place["lat"], place["lon"], limit=20)
+            if near:
+                return {"name": place["name"], "stops": [s["id"] for s, _ in near]}
+            raise ValueError(f"{place['name']} has no GTT stop within {NEAR} m")
+        raise ValueError(f"no GTT stop matches {to!r}" + ("" if maps else " (and Maps is off, so places can't be "
+                                                                         "looked up): ask for the stop's name"))
 
     async def board(self, stop: dict, line: str | None = None, to: dict | None = None, now: datetime | None = None,
                     arrivals: list[Arrival] | None = None) -> dict:

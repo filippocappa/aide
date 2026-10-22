@@ -344,6 +344,24 @@ async def test_arrivals_to_a_destination_keep_the_lines_that_go_there(tools):
         await t["transit_arrivals"].handler(stop="252", to="Mars")
 
 
+async def test_a_destination_can_be_a_place_found_on_maps(env):
+    db, timetable, location, alerts, push = env
+
+    class Maps:
+        asked = []
+
+        async def locate(self, query, near=None):
+            self.asked.append(query)
+            return {"name": "Barriera di Milano", "lat": 45.1201, "lon": 7.7101} if "Barriera" in query else None
+
+    boards = Boards(Transit(timetable, FakeLive()), location, Walks(Maps()))
+    assert await boards.destination("Barriera di Milano") == {"name": "Barriera di Milano", "stops": ["4"]}
+    assert Maps.asked == ["Barriera di Milano, Torino"]
+    assert (await boards.destination("porta nuova"))["stops"] == ["1", "2"]  # a stop's name: no Maps
+    with pytest.raises(ValueError, match="no GTT stop matches 'Mars'$"):
+        await boards.destination("Mars")
+
+
 async def test_near_me_without_a_location_says_so(tools):
     t, location = tools
     location.push = None  # nobody to ask

@@ -51,6 +51,18 @@ class GoogleMaps:
             body["openNow"] = True
         return (await self._post(PLACES_URL, PLACE_FIELDS, body)).get("places", [])
 
+    async def locate(self, query: str, near: tuple[float, float] | None = None, radius: float = 20_000) -> dict | None:
+        """Where a place is: {name, lat, lon}, the best match (near a point, when given), or None."""
+        body: dict = {"textQuery": query, "pageSize": 1}
+        if near:
+            body["locationBias"] = {"circle": {"center": {"latitude": near[0], "longitude": near[1]}, "radius": radius}}
+        places = (await self._post(PLACES_URL, "places.displayName,places.location", body)).get("places", [])
+        if not places or "location" not in places[0]:
+            return None
+        p = places[0]
+        return {"name": (p.get("displayName") or {}).get("text") or query,
+                "lat": p["location"]["latitude"], "lon": p["location"]["longitude"]}
+
     async def route(self, body: dict) -> dict | None:
         routes = (await self._post(ROUTES_URL, ROUTE_FIELDS, body)).get("routes", [])
         return routes[0] if routes else None
