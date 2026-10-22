@@ -65,10 +65,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         [.banner, .list, .sound]
     }
 
+    /// A tap. Not the `async` variant: its generated thunk calls UIKit's completion handler off the main
+    /// thread, which UIKit asserts against (the crash in #17). Here the handler runs on the main actor.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                            didReceive response: UNNotificationResponse) async {
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
         let route = PushRoute(userInfo: response.notification.request.content.userInfo)
-        await MainActor.run { env.push.route = route }
+        Task { @MainActor in
+            env.push.route = route
+            completionHandler()
+        }
     }
 }
 
