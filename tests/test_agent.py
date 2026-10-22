@@ -161,3 +161,24 @@ async def test_message_is_stamped_in_local_time(db):
     stamp = client.requests[0]["messages"][-1]["content"][0]["text"]
     from datetime import datetime
     assert stamp.startswith(f"[{datetime.now(ZoneInfo('Pacific/Kiritimati')):%a %d %b %Y %H:}")
+
+
+async def test_stamp_says_where_the_phone_is(db):
+    client = FakeClient([("end_turn", [text("x")]), ("end_turn", [text("y")])])
+    agent = Agent(client, db, TOOLS, model="m", delegate=False)
+
+    async def where():
+        return "phone near Piazza Castello 34, Torino, 5 min ago"
+
+    agent.whereabouts = where
+    await agent.reply("discord", "how long from home?")
+    stamp = client.requests[0]["messages"][-1]["content"][0]["text"]
+    assert stamp.endswith(", phone near Piazza Castello 34, Torino, 5 min ago] how long from home?")
+
+    async def nowhere():
+        return None
+
+    agent.whereabouts = nowhere
+    await agent.reply("discord", "and now?")
+    assert client.requests[1]["messages"][-1]["content"][0]["text"].endswith("] and now?")
+    assert "phone" not in client.requests[1]["messages"][-1]["content"][0]["text"]

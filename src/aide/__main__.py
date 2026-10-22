@@ -46,7 +46,7 @@ from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
 from .tools.study import study_tools
 from .tools.transit import transit_tools
-from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks
+from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts
 from .wake import WakeService
 from .whisper import available as whisper_available
 
@@ -146,6 +146,8 @@ def main() -> None:
         photos=photos,
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
+    if maps is not None:
+        agent.whereabouts = Whereabouts(location, maps).describe
     if added := agent.routines.add_starting_watches():
         log.info("set up the starting watches: %s", ", ".join(r["title"] for r in added))
     digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail,

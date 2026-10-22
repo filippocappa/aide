@@ -14,6 +14,7 @@ import httpx
 from . import Tool
 
 PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
+NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby"
 ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 PLACE_FIELDS = ("places.displayName,places.formattedAddress,places.rating,places.userRatingCount,"
                 "places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions,"
@@ -68,6 +69,22 @@ class GoogleMaps:
         p = places[0]
         return {"name": (p.get("displayName") or {}).get("text") or query,
                 "lat": p["location"]["latitude"], "lon": p["location"]["longitude"]}
+
+    async def address_near(self, lat: float, lon: float, radius: float = 300) -> str | None:
+        """The street address closest to a point, as "Piazza Castello 34, Torino", or None. (The Geocoding API
+        isn't needed: the nearest place's address is near enough.)"""
+        body = {"maxResultCount": 1, "rankPreference": "DISTANCE",
+                "locationRestriction": {"circle": {"center": {"latitude": lat, "longitude": lon}, "radius": radius}}}
+        places = (await self._post(NEARBY_URL, "places.formattedAddress,places.addressComponents", body)).get(
+            "places", [])
+        if not places:
+            return None
+        parts = {t: c["longText"] for c in places[0].get("addressComponents", []) for t in c.get("types", [])}
+        street = " ".join(p for p in (parts.get("route"), parts.get("street_number")) if p)
+        town = parts.get("locality") or parts.get("administrative_area_level_3")
+        if street and town:
+            return f"{street}, {town}"
+        return places[0].get("formattedAddress") or None
 
     async def route(self, body: dict) -> dict | None:
         routes = (await self._post(ROUTES_URL, ROUTE_FIELDS, body)).get("routes", [])

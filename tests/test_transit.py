@@ -14,8 +14,8 @@ from aide.db import Database
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
 from aide.tools.transit import transit_tools
-from aide.transit import (AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, build,
-                          line_key, parse_live, pretty, stop_name)
+from aide.transit import (AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts,
+                          build, line_key, parse_live, pretty, stop_name)
 from test_api import AUTH, ROME, TOKEN, FakeClient
 
 DAY = date(2026, 10, 22)  # a Thursday
@@ -305,6 +305,29 @@ async def test_here_is_the_fix_while_it_says_where_the_user_is(env, monkeypatch)
     monkeypatch.setattr("aide.transit.utcnow", lambda: at(10, 30).astimezone(timezone.utc))
     monkeypatch.setattr(location, "request", lambda now=None: asyncio.sleep(0, result=False))
     assert await location.here() is None  # over two hours old, and the phone didn't answer
+
+
+async def test_whereabouts_names_the_street_and_looks_up_again_only_after_a_move(env, monkeypatch):
+    db, _, location, _, push = env
+
+    class Maps:
+        asked = []
+
+        async def address_near(self, lat, lon):
+            self.asked.append((lat, lon))
+            return "Piazza Castello 34, Torino" if lat < 45.2 else "Piazza di Città 8, Ivrea"
+
+    where = Whereabouts(location, Maps())
+    now = at(8, 30).astimezone(timezone.utc)
+    assert await where.describe(now) is None  # no fix yet
+    location.save(45.0539, 7.6589, 20, at(8, 0))
+    assert await where.describe(now) == "phone near Piazza Castello 34, Torino, 30 min ago"
+    location.save(45.0545, 7.6589, 20, at(8, 29))  # 70 m: the same address, not asked again
+    assert await where.describe(now) == "phone near Piazza Castello 34, Torino, just now"
+    assert len(Maps.asked) == 1
+    location.save(45.4669, 7.8763, 20, at(10, 0))
+    assert await where.describe(at(11, 30).astimezone(timezone.utc)) == "phone near Piazza di Città 8, Ivrea, 1 h ago"
+    assert await where.describe(at(12, 30).astimezone(timezone.utc)) is None  # over two hours old
 
 
 # -- tools ------------------------------------------------------------------------------------

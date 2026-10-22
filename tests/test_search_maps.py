@@ -160,6 +160,18 @@ async def test_here_unknown_asks():
             await tools["travel_time"].handler(destination="SME", origin="here")
 
 
+async def test_address_near_is_street_and_town():
+    rec = Recorder(httpx.Response(200, json={"places": [{"formattedAddress": "Piazza Castello, 34, 10122 Torino TO",
+        "addressComponents": [{"longText": "34", "types": ["street_number"]},
+                              {"longText": "Piazza Castello", "types": ["route"]},
+                              {"longText": "Torino", "types": ["locality", "political"]}]}]}),
+                   httpx.Response(200, json={}))
+    gm = GoogleMaps("gm-key", client(rec))
+    assert await gm.address_near(45.05, 7.66) == "Piazza Castello 34, Torino"
+    assert rec.body(0)["rankPreference"] == "DISTANCE" and rec.requests[0].url.path.endswith("searchNearby")
+    assert await gm.address_near(45.05, 7.66) is None
+
+
 async def test_transit_arrival_time_lists_lines_in_local_time():
     rec = Recorder(httpx.Response(200, json={"routes": [{
         "duration": "1500s", "distanceMeters": 6100,

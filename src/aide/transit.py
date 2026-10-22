@@ -615,6 +615,37 @@ class Location:
         return fix["lat"], fix["lon"]
 
 
+class Whereabouts:
+    """Where the phone is, in words, for the stamp on each message ("phone near Piazza Castello 34, Torino,
+    5 min ago"): the address near the latest fix, looked up again only after a move of MOVED metres."""
+
+    MOVED = 150
+    TIMEOUT = 5  # seconds a message waits for the lookup
+
+    def __init__(self, location: Location, maps):
+        self.location, self.maps = location, maps
+        self._known: tuple[float, float, str] | None = None
+
+    async def describe(self, now: datetime | None = None) -> str | None:
+        fix = self.location.latest()
+        now = now or utcnow()
+        if fix is None or now - fix["at"] > FIX_USABLE:
+            return None
+        known = self._known
+        if known is None or metres(known[0], known[1], fix["lat"], fix["lon"]) > self.MOVED:
+            try:
+                address = await asyncio.wait_for(self.maps.address_near(fix["lat"], fix["lon"]), self.TIMEOUT)
+            except Exception as e:  # noqa: BLE001: the message goes without it
+                log.warning("no address near the phone: %s", e)
+                return None
+            if not address:
+                return None
+            known = self._known = (fix["lat"], fix["lon"], address)
+        minutes = int((now - fix["at"]).total_seconds() // 60)
+        age = "just now" if minutes < 2 else f"{minutes} min ago" if minutes < 60 else f"{minutes // 60} h ago"
+        return f"phone near {known[2]}, {age}"
+
+
 class Walks:
     """Walking time to a stop: Google Maps when it's set up, else the straight line stretched for streets."""
 
