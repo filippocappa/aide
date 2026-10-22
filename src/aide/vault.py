@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .material import page_image
-from .notebook import FIGURE, figures
+from .notebook import FIGURE, date_line, figures
 from .study import StudyStore
 
 log = logging.getLogger(__name__)
@@ -347,6 +347,8 @@ class Vault:
             out.append(f"Next exam: {exam.start.astimezone(tz):%a %d %b %Y, %H:%M} ({exam.title})")
         if intro:
             out.append(intro["body"])
+        if dates := self.notebook.dates(c["id"]):
+            out.append("## Dates\n" + "\n".join(f"- {date_line(d)}" for d in dates))
         topics = self.notebook.topics(c["id"])
         if topics:
             lines = []

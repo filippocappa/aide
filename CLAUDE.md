@@ -199,6 +199,9 @@ exams, food log, sleep, steps, a reminder) so it ticks itself; the rest are tick
 user's OK. `objectives` tools for every agent, an `objectives` digest section. App: an Objectives card on the home
 screen, the Objectives screen (Today / Week / Month, accept, drop, tick, add, propose now), objectives in the
 digest. First plan made live 2026-10-22; installed on the phone, not yet tried there.
+Course dates (2026-10-22): a model reads each course's Moodle page and the files' exam pages into dated items
+(exams, mid-terms, sign-up deadlines; `course_dates`, the `dates` notebook job), again when Moodle changes. The
+planner, Professor's `list_courses` and the Introduction's Dates section use them.
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from

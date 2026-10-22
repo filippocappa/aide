@@ -11,6 +11,7 @@ from aide.agent import Agent
 from aide.channels.api import create_app
 from aide.db import Database
 from aide.moodle import MoodleSync, token_from
+from aide.notebook import NotebookStore
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
 from aide.study import StudyStore, StudyWorker
@@ -212,6 +213,24 @@ async def test_the_course_page_is_kept_as_text_for_the_notebook(env):
     assert text.startswith("## EXAM\n20 to 35 multiple-choice questions,\n−0.25 for a wrong one.")
     assert "Office hours: Thu 11:30" in text and "- Questions (forum)" in text and "Hidden quiz" not in text
     assert "- Announcements (forum)\n\n### Textbook & slides\nBlanchard, Macroeconomics, 8th ed." in text
+
+
+async def test_a_change_on_the_course_page_has_its_dates_read_again(env):
+    api, moodle, server, *_ = env()
+    moodle.notebook = NotebookStore(moodle.study)
+
+    def queued() -> list[int]:
+        return [r[0] for r in moodle.conn.execute(
+            "SELECT course_id FROM notebook_jobs WHERE kind = 'dates' AND status = 'queued'")]
+    await moodle.sync()
+    macro = moodle.study.course_by_name("macroeconomics")["id"]
+    assert queued() == [macro]  # new files, a new page
+    moodle.conn.execute("UPDATE notebook_jobs SET status = 'done'")
+    await moodle.sync()
+    assert queued() == []  # nothing changed
+    server.contents[101][0]["summary"] = "<p>The mid-term moves to 9 November.</p>"
+    await moodle.sync()
+    assert queued() == [macro]
 
 
 async def test_slides_put_up_near_a_lecture_rewrite_its_notes(env):

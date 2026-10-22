@@ -10,7 +10,8 @@ Syncing: every 4 hours, and on demand. For each current Moodle course matched to
 sections are downloaded, only new or changed ones. A file the user deleted in Aide stays deleted. A few new files
 close to a lecture become its slides, and its notes are written again with them. The course page's own text
 (section summaries, labels, the announcement and textbook forums) is kept too, for the notebook's Introduction, and
-new files go to the notebook (notebook.py), which proposes what to add from them.
+new files go to the notebook (notebook.py), which proposes what to add from them. When a course's page or files
+change, its dates (exams, mid-terms, sign-up deadlines) are read again.
 """
 
 import asyncio
@@ -353,14 +354,19 @@ class MoodleSync:
                 await self._refresh_courses(client, user["id"])
                 new: dict[int, list[dict]] = {}
                 updated = 0
+                changed: set[int] = set()  # courses whose page or files changed: their dates are read again
                 for row in self.courses():
                     if row["course_id"] is None:
                         continue
                     for f, was_new in await self._sync_course(client, row):
+                        changed.add(row["course_id"])
                         if was_new:
                             new.setdefault(row["course_id"], []).append(f)
                         else:
                             updated += 1
+                    if self.conn.execute("SELECT text FROM moodle_courses WHERE moodle_id = ?",
+                                         (row["moodle_id"],)).fetchone()[0] != row["text"]:
+                        changed.add(row["course_id"])
             except MoodleError as e:
                 return await self._failed(e)
             finally:
@@ -371,6 +377,9 @@ class MoodleSync:
                 self._attach(course_id, files)
                 if self.notebook is not None:
                     self.notebook.new_material(course_id, [{"file": f["public_id"]} for f in files])
+            if self.notebook is not None:
+                for course_id in changed:
+                    self.notebook.reread_dates(course_id)
             count = sum(len(fs) for fs in new.values())
             if count:
                 await self._announce(new)
