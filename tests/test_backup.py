@@ -24,6 +24,7 @@ def live(tmp_path):
 def test_backup_copies_uncheckpointed_writes_and_the_gmail_token(live, tmp_path):
     data, env = live
     assert (data / "aide.db-wal").stat().st_size > 0
+    sqlite3.connect(data / "gtt.db").close()  # GTT's timetable: rebuilt every night, not backed up
     folder = backup(data, tmp_path / "backups", env, date(2026, 10, 18))
     assert sorted(p.name for p in folder.iterdir()) == ["aide.db", "gmail.env"]
     copy = sqlite3.connect(folder / "aide.db")
