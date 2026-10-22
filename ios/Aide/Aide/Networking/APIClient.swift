@@ -162,6 +162,18 @@ final class APIClient {
         try await send("GET", "/v1/approvals")
     }
 
+    // MARK: Mail drafts
+
+    /// Sends it at once: the tap is the confirmation. `body` is the edited text, or nil as drafted.
+    func sendDraft(_ id: Int, body: String?) async throws -> MailDraft {
+        let sent: DraftSent = try await send("POST", "/v1/mail/drafts/\(id)/send", body: DraftBody(body: body), timeout: 60)
+        return sent.draft
+    }
+
+    func dismissDraft(_ id: Int) async throws {
+        let _: OKResponse = try await send("POST", "/v1/mail/drafts/\(id)/dismiss", body: EmptyBody())
+    }
+
     func think(conversationID: String? = nil) async throws {
         let _: OKResponse = try await send("POST", "/v1/think", body: ConversationBody(conversationId: conversationID))
     }

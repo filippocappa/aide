@@ -664,6 +664,30 @@ struct MailItem: Decodable, Identifiable, Hashable {
     private enum CodingKeys: String, CodingKey { case id, from, subject, preview, receivedAt, unread }
 }
 
+/// A reply Secretary drafted, waiting for you to send it with a tap (docs/API.md, "Mail drafts").
+struct MailDraft: Decodable, Identifiable, Hashable {
+    let id: Int
+    let from: String
+    let fromAddress: String?
+    let subject: String
+    let preview: String?
+    let receivedAt: String?
+    /// What the mail asks of you, in a few words.
+    let why: String?
+    let body: String
+    let agent: String
+
+    /// "Dinner Friday? · Anna asks if Friday at 8 works"
+    var detail: String {
+        [subject, why].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// The subject the reply goes out with.
+    var replySubject: String {
+        subject.lowercased().hasPrefix("re:") ? subject : "Re: \(subject)"
+    }
+}
+
 struct DigestSection: Decodable, Identifiable {
     enum Content {
         case calendar([CalendarEvent])
@@ -673,6 +697,7 @@ struct DigestSection: Decodable, Identifiable {
         case sleep(SleepNight, usualAsleepMin: Int?)
         case recovery(Recovery)
         case objectives([Objective], period: String)
+        case replies([MailDraft])
         case text(String)
         case unknown // a section type this app version doesn't know: skipped
     }
@@ -693,12 +718,13 @@ struct DigestSection: Decodable, Identifiable {
         case "recovery": content = .recovery(try Recovery(from: decoder))
         case "objectives": content = .objectives(try c.decode([Objective].self, forKey: .objectives),
                                                  period: try c.decodeIfPresent(String.self, forKey: .period) ?? "day")
+        case "replies": content = .replies(try c.decode([MailDraft].self, forKey: .drafts))
         case "text": content = .text(try c.decode(String.self, forKey: .text))
         default: content = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
-        case type, title, events, items, reminders, habits, sleep, usualAsleepMin, text, objectives, period
+        case type, title, events, items, reminders, habits, sleep, usualAsleepMin, text, objectives, period, drafts
     }
 }
 
@@ -902,9 +928,15 @@ struct Approvals: Decodable {
     var actions: [QueuedAction]
     var objectives: [Objective]
     var proposals: [NotebookProposal]
+    /// Reply drafts waiting to be sent; nil from a server before them.
+    var drafts: [MailDraft]?
     var writer: WriterPause?
     var upcoming: [Routine]
 }
+
+/// A draft's text as edited in the app; nil sends it as drafted.
+struct DraftBody: Encodable { let body: String? }
+struct DraftSent: Decodable { let ok: Bool; let draft: MailDraft }
 
 /// Which queued actions to confirm or cancel.
 struct ActionIDs: Encodable { let ids: [Int] }

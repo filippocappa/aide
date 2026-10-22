@@ -20,7 +20,7 @@ enum ActivityScope: Identifiable {
 
 /// What the team did and what's waiting for you, in one place outside the chats (docs/API.md, "Activity and
 /// approvals"). On top, everything waiting for your OK: queued actions (each confirmed or cancelled on its own),
-/// proposed objectives, notebook proposals, a paused notes job. Then the routines coming up, then the activity by
+/// reply drafts (sent with a tap, or edited first), proposed objectives, notebook proposals, a paused notes job. Then the routines coming up, then the activity by
 /// day. Opened from the bell on the home screen for everyone, or from an agent's card for that agent alone.
 struct ActivitySheet: View {
     @EnvironmentObject private var env: AppEnvironment
@@ -36,6 +36,7 @@ struct ActivitySheet: View {
     @State private var loaded = false
     @State private var busy: Set<String> = []
     @State private var error: String?
+    @State private var editing: MailDraft?
 
     var body: some View {
         NavigationStack {
@@ -78,6 +79,9 @@ struct ActivitySheet: View {
             }
             .refreshable { await load() }
             .task(id: agent?.id) { await load() }
+            .sheet(item: $editing) { draft in
+                DraftEditor(draft: draft, send: { await answer(draft, send: $0) }, dismiss: { await answer(draft, send: nil) })
+            }
         }
         .presentationDetents([.large])
         .presentationBackground(Theme.grouped)
@@ -87,10 +91,11 @@ struct ActivitySheet: View {
 
     @ViewBuilder private var waitingSection: some View {
         let actions = (approvals?.actions ?? []).filter(mine(\.agent))
+        let drafts = (approvals?.drafts ?? []).filter(mine(\.agent))
         let objectives = (approvals?.objectives ?? []).filter(mine(\.agent))
         let proposals = agent == nil || agent?.id == "professor" ? approvals?.proposals ?? [] : []
         let writer = agent == nil || agent?.id == "professor" ? approvals?.writer : nil
-        if !actions.isEmpty || !objectives.isEmpty || !proposals.isEmpty || writer != nil {
+        if !actions.isEmpty || !drafts.isEmpty || !objectives.isEmpty || !proposals.isEmpty || writer != nil {
             Section {
                 ForEach(actions) { action in
                     QueuedActionRow(action: action, agent: chat.agent(action.agent), busy: busy.contains("a\(action.id)"),
@@ -106,6 +111,13 @@ struct ActivitySheet: View {
                     }
                     .disabled(!busy.isEmpty)
                     .listRowBackground(Theme.row)
+                }
+                ForEach(drafts) { draft in
+                    DraftRow(draft: draft, agent: chat.agent(draft.agent), busy: busy.contains("d\(draft.id)"),
+                             send: { Task { error = await answer(draft, send: draft.body) } },
+                             edit: { editing = draft },
+                             dismiss: { Task { error = await answer(draft, send: nil) } })
+                        .listRowBackground(Theme.row)
                 }
                 ForEach(objectives) { o in
                     HStack(alignment: .top, spacing: 10) {
@@ -249,6 +261,17 @@ struct ActivitySheet: View {
         if confirm { await env.sync.sync() } // it may have changed reminders
     }
 
+    /// Sends a draft (with `send`, its text as it should go) or dismisses it (nil). A problem to show, or nil.
+    private func answer(_ draft: MailDraft, send text: String?) async -> String? {
+        busy.insert("d\(draft.id)")
+        defer { busy.remove("d\(draft.id)") }
+        do {
+            if let text { _ = try await env.api.sendDraft(draft.id, body: text) } else { try await env.api.dismissDraft(draft.id) }
+        } catch { return describe(error) }
+        await load()
+        return nil
+    }
+
     private func confirmAll(_ actions: [QueuedAction]) async {
         await act("all") {
             let result = try await env.api.confirm(ids: actions.map(\.id)).result
@@ -339,6 +362,7 @@ struct ActivityRow: View {
         case "ask": "bubble.left.and.bubble.right"
         case "message": "text.bubble"
         case "objectives": "scope"
+        case "drafts": "square.and.pencil"
         case "digest": "sun.horizon"
         default: "circle.fill"
         }

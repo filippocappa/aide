@@ -24,6 +24,7 @@ struct DigestView: View {
                 case .recovery(let recovery): group(section.title) { RecoveryRow(recovery: recovery) }
                 case .objectives(let objectives, let period):
                     group(section.title) { DigestObjectiveRows(objectives: objectives, period: period) }
+                case .replies(let drafts): group(section.title) { DigestDraftRows(drafts: drafts) }
                 case .text, .unknown: EmptyView() // the greeting already says it
                 }
             }
