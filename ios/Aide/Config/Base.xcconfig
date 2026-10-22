@@ -5,6 +5,10 @@
 // which has both (see the .example file).
 AIDE_ENTITLEMENTS = Aide/Health.entitlements
 
+// The bundle ID. Someone else's build needs its own (a bundle ID belongs to one team): set it in
+// Signing.local.xcconfig, and APNS_BUNDLE_ID in the server's .env to match.
+AIDE_BUNDLE_ID = com.filippocappa.aide
+
 #include? "Signing.local.xcconfig"
 
 CODE_SIGN_ENTITLEMENTS = $(AIDE_ENTITLEMENTS)

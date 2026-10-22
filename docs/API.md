@@ -610,7 +610,7 @@ cards files, which Aide only adds new cards to, at the end. It syncs within a mi
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/vault` | | `{"enabled": true, "url": "https://your-machine.your-tailnet.ts.net:8443", "user": "aide", "password": "…", "vault": "Uni"}`, what Remotely Save's WebDAV settings need (the vault in Obsidian must be named as `vault` says, since Remotely Save syncs a vault with the folder of its name); or `{"enabled": false}`. `url` may be null when the server doesn't know it. |
+| `GET /v1/vault` | | `{"enabled": true, "url": "https://cappa.<tailnet>.ts.net:8443", "user": "aide", "password": "…", "vault": "Uni"}`, what Remotely Save's WebDAV settings need (the vault in Obsidian must be named as `vault` says, since Remotely Save syncs a vault with the folder of its name); or `{"enabled": false}`. `url` may be null when the server doesn't know it. |
 
 ### Notebook
 
