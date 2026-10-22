@@ -37,6 +37,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var agentID: String {
         didSet { UserDefaults.standard.set(agentID, forKey: Self.agentKey) }
     }
+    /// ChatView is showing; a push for this chat then lands in it instead of as a banner.
+    var isOnScreen = false
     @Published private(set) var isSending = false
     @Published private(set) var isActing = false
     /// A new chat is waiting for its digest greeting.

@@ -97,7 +97,11 @@ struct ChatView: View {
             if active { composerFocused = false } // no keyboard in voice
             UIApplication.shared.isIdleTimerDisabled = active // locking would cut off the microphone
         }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .onAppear { chat.isOnScreen = true }
+        .onDisappear {
+            chat.isOnScreen = false
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
         .photoSources(camera: $showCamera, library: $showLibrary, limit: Self.maxPhotos - photos.count) { picked in
             photos = Array((photos + picked).prefix(Self.maxPhotos))
         }

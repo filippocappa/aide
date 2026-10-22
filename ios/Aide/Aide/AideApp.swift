@@ -59,10 +59,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    /// Show banners while the app is open too.
+    /// Show banners while the app is open too, except a message for the chat on screen: that one is loaded into it.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        let route = PushRoute(userInfo: notification.request.content.userInfo)
+        return await MainActor.run {
+            let chat = env.chat
+            guard case .conversation(let id) = route, chat.isOnScreen, chat.conversationID == id else {
+                return [.banner, .list, .sound]
+            }
+            Task { await chat.loadHistory() }
+            return []
+        }
     }
 
     /// A tap. Not the `async` variant: its generated thunk calls UIKit's completion handler off the main
