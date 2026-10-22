@@ -728,8 +728,10 @@ words (the axes, the curves, what moves them).
 A list: each term in bold, then its definition.
 ## Formulas
 Each formula in LaTeX, $…$ inline or $$…$$ on its own line (Obsidian draws it), what every symbol is, and when \
-it's used. A $$…$$ never sits inside a sentence. Everywhere on the page, money has its dollar escaped, \
-\\$13.5 trillion or \\$9,700: a bare $ starts a formula, and the words up to the next $ come out as maths.
+it's used. A $$…$$ never sits inside a sentence. Everywhere on the page, maths is LaTeX in $…$ too, in the \
+explanation, the examples and the questions and answers alike: $Y - Y_n = -L(u - u_n)$, $\\beta < 1$, never plain \
+text like Y − Y_n, which Obsidian shows as typed. And money has its dollar escaped, \\$13.5 trillion or \\$9,700: \
+a bare $ starts a formula, and the words up to the next $ come out as maths.
 ## Worked examples
 The material's exercises and examples, solved step by step with the numbers.
 ## Exam-style questions
