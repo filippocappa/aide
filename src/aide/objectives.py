@@ -417,7 +417,10 @@ things to do that day; a week's serve the month's; a month's serve the big thing
 make it smaller). Never invent facts about the person.
 - A specialist with nothing real to go on proposes nothing. Never more than {most} per specialist{total}; fewer is \
 better than filler.
-- Don't repeat an objective already set for the period.
+- Don't repeat an objective already set for the period, nor copy one from the week or month above: a day's \
+objective is a step toward the week's, not the same thing again.
+- A reminder is already on their to-do list. Make one an objective only when it's the period's real priority, at \
+one level only. Errands and appointments (picking someone up, a meeting) are not objectives.
 
 Tie each to a measure when one fits, so it ticks itself; otherwise the person ticks it:
 - {{"type": "habit", "habit": <habit id>}}: check-ins of that habit in the period; target = how many.
@@ -427,8 +430,11 @@ how many.
 if the goal is set); target = days.
 - {{"type": "sleep", "hours": 7.5}} or {{"type": "steps", "steps": 8000}}: nights or days at or above it (only with \
 health data); target = how many.
-- {{"type": "reminder", "reminder": "<reminder id>"}}: that reminder done; target 1.
+- {{"type": "reminder", "reminder": "<reminder id>"}}: that one reminder done; target 1. An objective about \
+several reminders has measure null.
 - null: ticked by hand.
+A measure counts the whole period, days already gone included ("so far this period" says how far along it is): \
+set the target above that, or it's met before it starts.
 
 Reply with a JSON list only, nothing before or after:
 [{{"agent": "professor", "title": "short, in the imperative, under 80 characters", "why": "one short line: why now", \
@@ -472,6 +478,12 @@ class ObjectivePlanner:
             system = PLAN_PROMPT.format(most=most, total=f", and {DAY_TOTAL} in all" if period == "day" else "")
             answer = await self.engine.ask(system, [{"type": "text", "text": context}], 3000, wait=False)
             items = self._parse(answer, agents, most, parents)
+            start = bounds(period, d)[0]
+            met = [i for i in items if i["measure"] and self.store.progress(
+                {"measure": i["measure"], "period": period, "start": start, "done_at": None}) >= i["target"]]
+            if met:
+                log.info("objectives: left out as already met: %s", ", ".join(i["title"] for i in met))
+            items = [i for i in items if i not in met]
             if period == "day":
                 items = items[:DAY_TOTAL]
             made = self.store.replace_proposals(period, d, agents, items)
@@ -517,8 +529,11 @@ class ObjectivePlanner:
         out = [f"Now: {datetime.now(self.tz):%a %d %b %Y %H:%M}. Plan the objectives for {what}.",
                f"Specialists to plan for: {', '.join(AGENTS[a].name for a in agents)}."]
         parents: dict[str, int] = {}
-        for level in PERIODS[PERIODS.index(period) + 1:]:  # the week and month above
-            above = [o for o in self.store.objectives(level, start, agents) if o["status"] == "active"]
+        if period != "day":
+            left = (last_day - max(start, today)).days + 1
+            out.append(f"It runs {start:%a %d %b} – {last_day:%a %d %b}: {left} days left, today included.")
+        for level in PERIODS[PERIODS.index(period) + 1:]:  # the week and month above (proposed ones too)
+            above = [o for o in self.store.objectives(level, start, agents) if o["status"] in ("active", "proposed")]
             if above:
                 out += ["", f"This {level}'s objectives (serve these):", *(self.store.line(o) for o in above)]
                 parents |= {o["public_id"]: o["id"] for o in above}
@@ -544,7 +559,7 @@ class ObjectivePlanner:
                 case "professor":
                     return await self._professor(start, end, today)
                 case "coach":
-                    return self._coach(today)
+                    return self._coach(today, start if period != "day" and start < today else None)
         except Exception:
             log.exception("objectives: %s's data couldn't be read", agent)
         return []
@@ -611,7 +626,8 @@ class ObjectivePlanner:
             out += ["Lectures in the period:", *(f"- {self._when(e)} {e.title}" for e in lectures[:40])]
         return out if len(out) > 1 else []
 
-    def _coach(self, today: date) -> list[str]:
+    def _coach(self, today: date, since: date | None = None) -> list[str]:
+        """Coach's data: the last 7 days, and with `since`, the period so far (it counts toward its measures)."""
         out = []
         week_ago = today - timedelta(days=6)
         if self.store.habits:
@@ -648,4 +664,23 @@ class ObjectivePlanner:
                 out.append(f"Steps, last 7 days: about {round(sum(steps) / len(steps)):,} a day")
             if not sleep and not steps:
                 out.append("No health data yet.")
+        if since:
+            out += ["", f"So far this period ({since:%d %b} – yesterday, it counts toward the measures):"]
+            yesterday = today - timedelta(days=1)
+            for h in self.store.habits.all() if self.store.habits else []:
+                n = self.store.conn.execute(
+                    "SELECT COUNT(*) FROM habit_checks WHERE habit_id = ? AND day >= ? AND day <= ?",
+                    (h.id, since.isoformat(), yesterday.isoformat())).fetchone()[0]
+                out.append(f"- {h.name}: {n} check-ins")
+            if food:
+                out.append(f"- Meals logged on {sum(1 for x in food.days(since, yesterday) if x['meals'])} days")
+            if health:
+                days = sorted(health.between(since, yesterday), key=lambda x: x["date"])
+                nights = [_hours(x["sleep"]["asleep_min"] / 60) for x in days
+                          if (x.get("sleep") or {}).get("asleep_min")]
+                walked = [f"{x['steps']:,}" for x in days if x.get("steps")]
+                if nights:
+                    out.append(f"- Sleep each night: {', '.join(nights)}")
+                if walked:
+                    out.append(f"- Steps each day: {', '.join(walked)}")
         return out
