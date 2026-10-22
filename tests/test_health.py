@@ -18,6 +18,7 @@ from aide.icloud import CalEvent
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
 from aide.tools.health import health_tools
+from aide.transit import Location
 from aide.wake import WakeService
 from test_api import AUTH, ROME, TOKEN, FakeClient, done
 from test_digest import Calendar
@@ -276,11 +277,15 @@ async def test_wake_greeting_knows_time_sleep_and_when_to_leave(world):
     assert [s["type"] for s in d["sections"]][:2] == ["sleep", "recovery"]
 
 
-async def leave_line(world, maps, responses=(), memories=(), agent=None):
-    """The leave-by line the wake greeting's model is given, for a 9:30 lecture at Città Studi."""
+async def leave_line(world, maps, responses=(), memories=(), agent=None, phone=None):
+    """The leave-by line the wake greeting's model is given, for a 9:30 lecture at Città Studi. `phone`: where the
+    phone slept, (lat, lon)."""
     lecture = MORNING.replace(hour=9, minute=30)
     w = world([*responses, done("Morning.")], [CalEvent("e1", "Uni", "Lecture", lecture,
                                                         lecture + timedelta(hours=2), "Città Studi")], maps)
+    if phone:
+        w.digest.whereabouts = Where(w.db)
+        w.digest.whereabouts.location.save(*phone, 20, MORNING - timedelta(hours=8))
     for m in memories:
         w.db.add_memory(m, agent)
     await w.digest.generate("wake", MORNING)
@@ -321,6 +326,36 @@ async def test_memory_without_travel_facts_or_unreadable(world):
         line, _ = await leave_line(world, maps, [done(answer)], ["Likes sushi"])
         assert line.endswith("walk: leave by 8:55 (25 min), tram: leave by 9:05 (15 min).")
         assert {b["origin"]["address"] for b in maps.bodies} == {"Via Roma 1, Milano"}
+
+
+class Where:
+    """Whereabouts with a real Location and a fixed street."""
+
+    def __init__(self, db):
+        self.location = Location(db.conn)
+
+    async def address(self, lat, lon):
+        return "Piazza di Città 8, Ivrea"
+
+
+class HomeMaps(Maps):
+    """Home (Via Roma 1, Milano, in the fixture) is at 45.4642, 9.19."""
+
+    async def locate(self, query, near=None):
+        return {"name": query, "lat": 45.4642, "lon": 9.19}
+
+
+async def test_far_from_home_means_probably_not_going(world):
+    maps = HomeMaps()
+    line, _ = await leave_line(world, maps, phone=(45.4669, 7.8763))
+    assert "Their phone is near Piazza di Città 8, Ivrea, 102 km from Via Roma 1, Milano" in line
+    assert "probably not going" in line and "leave by" not in line
+    assert maps.bodies == []  # no travel times looked up
+
+
+async def test_near_home_the_leave_by_stays(world):
+    line, _ = await leave_line(world, HomeMaps(), phone=(45.4700, 9.19))
+    assert line.endswith("walk: leave by 8:55 (25 min), tram: leave by 9:05 (15 min).")
 
 
 async def test_wake_waits_for_sleep_then_goes_ahead(world, monkeypatch):
