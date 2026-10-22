@@ -143,9 +143,11 @@ class Push:
             log.warning("APNs refused a push to %s…: %s %s", token[:8], r.status_code, reason)
         return False
 
-    async def _alert(self, kind: str, title: str, body: str, **extra) -> bool:
+    async def _alert(self, kind: str, title: str, body: str, level: str | None = None, **extra) -> bool:
         payload = {"aps": {"alert": {"title": title, "body": body}, "sound": "default", "thread-id": kind},
                    "aide": {"kind": kind, **extra}}
+        if level:
+            payload["aps"]["interruption-level"] = level
         sent, _ = await self.send(payload)
         return sent > 0
 
@@ -164,6 +166,15 @@ class Push:
 
     async def send_moodle(self, title: str, body: str, login: bool = False) -> bool:
         return await self._alert("moodle", title, body, **({"login": True} if login else {}))
+
+    async def send_transit(self, alert_id: int, title: str, body: str) -> bool:
+        # Time-sensitive: it's worth breaking through a Focus, and stale a few minutes later.
+        return await self._alert("transit", title, body, level="time-sensitive", alert_id=alert_id)
+
+    async def request_location(self) -> bool:
+        """Ask the phone for a fresh location fix (silent): a tram alert needs to know the walk."""
+        sent, _ = await self.send({"aps": {"content-available": 1}, "aide": {"kind": "location"}}, background=True)
+        return sent > 0
 
     async def send_test(self) -> tuple[int, int]:
         return await self.send({"aps": {"alert": {"title": "Aide", "body": "Push notifications work."},

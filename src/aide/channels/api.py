@@ -38,6 +38,7 @@ from ..objectives import ObjectivePlanner, ObjectiveStore
 from ..quiz import MOST as MOST_QUESTIONS, QuizStore, plain_math
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
+from ..transit import AlertStore, Location
 from ..wake import WakeService
 
 log = logging.getLogger(__name__)
@@ -255,6 +256,20 @@ class ReminderChange(BaseModel):
     list: str | None = None
 
 
+class LocationIn(BaseModel):
+    lat: float
+    lon: float
+    accuracy: float | None = None  # metres
+    at: datetime | None = None  # when the fix was taken, with its offset; default now
+
+
+class TransitAlertPatch(BaseModel):
+    time: str | None = None
+    days: list[int] | None = None
+    minutes: int | None = None  # null: when it's time to leave
+    enabled: bool | None = None
+
+
 class DeviceIn(BaseModel):
     token: str
     environment: str
@@ -284,7 +299,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                study: StudyStore | None = None, worker: StudyWorker | None = None,
                vault: dict | None = None, moodle: MoodleSync | None = None,
                notebook: NotebookStore | None = None, engine: Engine | None = None,
-               objectives: ObjectiveStore | None = None, planner: ObjectivePlanner | None = None) -> FastAPI:
+               objectives: ObjectiveStore | None = None, planner: ObjectivePlanner | None = None,
+               location: Location | None = None, transit_alerts: AlertStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -297,6 +313,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
     quizzes = QuizStore(notebook)
     objectives = objectives or ObjectiveStore(db.conn, tz, habits, food, health, store)
+    location = location or Location(db.conn, push)
     photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
@@ -1234,6 +1251,45 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         log.info("wake signal from %s", body.source)
         started, reason = wake.signal(body.at)
         return {"started": True} if started else {"started": False, "reason": reason}
+
+    # -- location and tram alerts --------------------------------------------------------
+
+    @app.post("/v1/location", dependencies=[Depends(auth)])
+    async def save_location(body: LocationIn):
+        if body.at is not None and body.at.tzinfo is None:
+            raise HTTPException(400, "at needs a UTC offset")
+        location.save(body.lat, body.lon, body.accuracy, body.at)
+        return {"ok": True}
+
+    def alerts_or_404() -> AlertStore:
+        if transit_alerts is None:
+            raise HTTPException(404, "GTT is off on this server (AIDE_GTT)")
+        return transit_alerts
+
+    def alert_or_404(alert_id: int) -> dict:
+        try:
+            return alerts_or_404().get(alert_id)
+        except ValueError:
+            raise HTTPException(404, f"no tram alert {alert_id}") from None
+
+    @app.get("/v1/transit/alerts", dependencies=[Depends(auth)])
+    async def list_transit_alerts():
+        found = alerts_or_404()
+        return {"alerts": [found.as_json(a) for a in found.all()]}
+
+    @app.patch("/v1/transit/alerts/{alert_id}", dependencies=[Depends(auth)])
+    async def edit_transit_alert(alert_id: int, body: TransitAlertPatch):
+        alert_or_404(alert_id)
+        changes = body.model_dump(exclude_unset=True)
+        if "minutes" in changes and changes["minutes"] is None:
+            changes["minutes"] = 0  # the store's "back to when it's time to leave"
+        return transit_alerts.as_json(transit_alerts.update(alert_id, **changes))
+
+    @app.delete("/v1/transit/alerts/{alert_id}", dependencies=[Depends(auth)])
+    async def delete_transit_alert(alert_id: int):
+        alert_or_404(alert_id)
+        transit_alerts.delete(alert_id)
+        return {"ok": True}
 
     @app.post("/v1/devices", dependencies=[Depends(auth)])
     async def register_device(body: DeviceIn):

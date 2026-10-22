@@ -989,6 +989,59 @@ ones.
 
 **Silent sync:** whenever reminders change on the server, it also sends a silent `sync` push, so the phone syncs (and sets the alarms) without the app being opened. iOS may delay or drop silent pushes, so the triggers above still apply.
 
+## Transit (GTT)
+
+Turin's buses, trams and metro: live arrivals and tram alerts, a push like "Tram 4 in 7 min: leave now". The server
+reads GTT's timetable (rebuilt every night) and its live feed; the agents (Aide and Secretary) answer "when's the next
+4?" and set alerts in chat. The app shares the phone's location, so an alert knows the walk to the stop, and lists the
+alerts in Settings. Off with `AIDE_GTT=0` on the server: the alert endpoints are then `404`.
+
+### Location
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/location` | `{"lat": 45.0625, "lon": 7.6756, "accuracy": 12, "at": "2026-10-22T08:01:00+02:00"}` | `{"ok": true}` |
+
+- `accuracy` in metres, optional. `at` is when the fix was taken, with its offset (default now); a fix older than the
+  one the server has is ignored. Only the latest fix is kept.
+- The app sends one when iOS reports a significant move (about 500 m, also with the app closed), when it comes to
+  the foreground, and when a silent `location` push asks for one (see Push). That needs "Always" location access.
+- An alert that fires "when it's time to leave" wants a fix under 10 minutes old: while it's watching, the server
+  asks for one (a `location` push) at most every 5 minutes. Without any fix it assumes a 5 minute walk and says so.
+
+### Tram alerts
+
+An alert watches one line at one stop (each side of the road is its own stop, with the number on its sign):
+
+- **Commute** (`days` set): on those ISO weekdays (`[]` every day), the first tram from about `time` (5 min before
+  it at the earliest). Watched from 30 min before `time` to 30 min after; at most one push a day.
+- **One-off** (`days` null, `once` true): the next tram (watched for 2 hours), or the first from about `time` (today,
+  or tomorrow if that's gone). Deleted once it fires or ends.
+- **When:** `minutes` null pushes when it's time to leave: the tram is the walk from the phone to the stop plus 2
+  minutes away (a tram you can't reach in time is skipped). `minutes: 10` pushes when it's 10 minutes away.
+- Times are live from GTT where it has them (a trip's delay carried on to the later stops), else the timetable,
+  and the push says which.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/transit/alerts` | | `{"alerts": [alert]}` |
+| `PATCH /v1/transit/alerts/{id}` | any of `{"time": "08:20", "days": [1,2,3,4,5], "minutes": 10 \| null, "enabled": false}` | the alert |
+| `DELETE /v1/transit/alerts/{id}` | | `{"ok": true}` |
+
+Alerts are made in chat ("every weekday tell me when to leave for the 4 at Porta Nuova around 8:10"); the app lists,
+edits and deletes them.
+
+```json
+{
+  "id": 1, "line": "4", "vehicle": "Tram", "towards": ["Falchera"],
+  "stop": {"id": "1687", "code": "253", "name": "Porta Nuova"},
+  "time": "08:10", "days": [1, 2, 3, 4, 5], "once": false, "minutes": null, "enabled": true,
+  "summary": "Tram 4 at Porta Nuova (stop 253), towards Falchera: Mon–Fri around 08:10, when it's time to leave"
+}
+```
+- `vehicle` is `Tram`, `Bus`, `Metro` or `Train`, `towards` the line's directions from this stop. `summary` is the
+  whole alert in a line, for the list.
+
 ## Push
 
 The server notifies the phone through APNs. It sends only when it has a key (`APNS_*` in `.env`) and at least one registered device; otherwise nothing is sent and everything is still in the app.
@@ -1020,6 +1073,8 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `message` | alert | Aide writes first (future use: briefings, leave-now alerts) | `conversation_id` | opens that conversation |
 | `lecture` | alert | a lecture's notes are ready, or it failed (title "Professor · macroeconomics") | `lecture_id` | opens that lecture |
 | `moodle` | alert | a Moodle sync brought new files ("3 new files in macroeconomics"), or the login expired | `login` (true: log in again) | opens Study, or the Moodle login with `login` |
+| `transit` | alert, `interruption-level: time-sensitive` | a tram alert fires ("Tram 4 in 7 min: leave now") | `alert_id` | nothing special (opens the app) |
+| `location` | silent (like `sync`) | a tram alert wants to know where the phone is | | (not shown) the app sends a fresh fix to `POST /v1/location` |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
 ```json
