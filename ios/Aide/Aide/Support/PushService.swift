@@ -24,8 +24,13 @@ enum PushRoute: Equatable {
     }
 
     /// A silent push that asks for a reminders sync.
-    static func isSync(_ userInfo: [AnyHashable: Any]) -> Bool {
-        (userInfo["aide"] as? [String: Any])?["kind"] as? String == "sync"
+    static func isSync(_ userInfo: [AnyHashable: Any]) -> Bool { kind(userInfo) == "sync" }
+
+    /// A silent push that asks for the phone's location, for a tram alert.
+    static func isLocation(_ userInfo: [AnyHashable: Any]) -> Bool { kind(userInfo) == "location" }
+
+    private static func kind(_ userInfo: [AnyHashable: Any]) -> String? {
+        (userInfo["aide"] as? [String: Any])?["kind"] as? String
     }
 }
 

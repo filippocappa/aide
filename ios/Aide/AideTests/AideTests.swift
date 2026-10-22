@@ -364,6 +364,43 @@ final class PushTests: XCTestCase {
         XCTAssertNil(PushRoute(userInfo: ["aps": ["alert": "hi"]]))
         XCTAssertTrue(PushRoute.isSync(["aps": ["content-available": 1], "aide": ["kind": "sync"]]))
         XCTAssertFalse(PushRoute.isSync(["aide": ["kind": "digest"]]))
+        XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "location"]]))
+        XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "transit", "alert_id": 3]])) // opens the app, nothing more
+        XCTAssertTrue(PushRoute.isLocation(["aps": ["content-available": 1], "aide": ["kind": "location"]]))
+        XCTAssertFalse(PushRoute.isLocation(["aide": ["kind": "sync"]]))
+    }
+
+    func testTransitAlertDecodesAndReads() throws {
+        let json = """
+        {"id": 1, "line": "4", "vehicle": "Tram", "towards": ["Falchera"],
+         "stop": {"id": "1687", "code": "253", "name": "Porta Nuova"}, "time": "08:10", "days": [1, 2, 3, 4, 5],
+         "once": false, "minutes": null, "enabled": true, "summary": "Tram 4 at Porta Nuova"}
+        """
+        let a = try JSONDecoder.api.decode(TransitAlert.self, from: Data(json.utf8))
+        XCTAssertEqual(a.title, "Tram 4 → Falchera")
+        XCTAssertEqual(a.stopLabel, "Porta Nuova · stop 253")
+        XCTAssertEqual(a.when, "Weekdays around 08:10")
+        XCTAssertEqual(a.lead, "When it's time to leave")
+        let once = """
+        {"id": 2, "line": "15", "vehicle": "Tram", "towards": [], "stop": {"id": "1", "code": "1", "name": "X"},
+         "time": null, "days": null, "once": true, "minutes": 10, "enabled": true, "summary": ""}
+        """
+        let b = try JSONDecoder.api.decode(TransitAlert.self, from: Data(once.utf8))
+        XCTAssertEqual(b.title, "Tram 15")
+        XCTAssertEqual(b.when, "Once, the next one")
+        XCTAssertEqual(b.lead, "10 min before")
+    }
+
+    func testTransitAlertPatchSendsOnlyWhatChanges() throws {
+        func json(_ patch: TransitAlertPatch) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(patch)) as? [String: Any])
+        }
+        let off = try json(TransitAlertPatch(enabled: false))
+        XCTAssertEqual(off.count, 1)
+        XCTAssertEqual(off["enabled"] as? Bool, false)
+        let leave = try json(TransitAlertPatch(minutes: .some(nil)))
+        XCTAssertTrue(leave["minutes"] is NSNull) // back to when it's time to leave
+        XCTAssertEqual(try json(TransitAlertPatch(time: "08:20", minutes: 8))["minutes"] as? Int, 8)
     }
 
     @MainActor

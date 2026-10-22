@@ -44,6 +44,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `activity.py`: the feed of what the agents did, behind `/v1/activity`; `/v1/approvals` gathers what waits for the user.
 - `objectives.py`: each specialist's objectives for the day, week and month: the store, progress from the data,
   and the planner (one model call per period, through `engine.py`, before the digest that opens it).
+- `transit.py`: GTT (Turin's buses and trams): the GTFS timetable (rebuilt nightly into `data/gtt.db`), the live
+  feed, the phone's location, and tram alerts with their watcher. `tools/transit.py`: the agents' transit tools.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -214,6 +216,13 @@ proposed objectives, notebook proposals, a paused notes job, the next routines).
 take `ids` to answer one action at a time. App (`Views/ActivityView.swift`): a bell with a badge on the home
 screen, a sheet with "Waiting for you" (each answered there), "Coming up" and the feed by day; an agent card's
 "Activity" shows that agent's alone.
+
+**Done, both sides (2026-10-22), not yet tried on the phone:** GTT tram alerts (contract in `docs/API.md`, "Transit
+(GTT)"). Server (live): GTT's timetable and live feed (GTT takes ~20 s to answer, so it refreshes in the background;
+the metro has no live data), transit tools for Aide and Secretary (stops, arrivals near the phone or at a stop,
+alerts: a weekday commute or a one-off), a watcher that pushes a time-sensitive "Tram 4 in 7 min: leave now" when
+the tram is the walk from the phone plus 2 min away (or N min before). App: `LocationService` (significant moves,
+Always, a fix on a silent `location` push), Settings → Getting around (location, Tram alerts list and editor).
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from

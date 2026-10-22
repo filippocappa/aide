@@ -254,7 +254,7 @@ struct RoutineEditor: View {
 }
 
 /// Seven round day buttons, Monday first. None picked means every day.
-private struct DayPicker: View {
+struct DayPicker: View {
     @Binding var days: Set<Int>
     let tint: Color
 

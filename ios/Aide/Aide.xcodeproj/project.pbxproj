@@ -11,6 +11,7 @@
 		097F7BCA07F7A5285EB983E7 /* AideTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0E327019026782069A1BA0 /* AideTests.swift */; };
 		0A464A123A92E74B5F7E6ACB /* AgentInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105404D7A7140F4B8B3BBAF8 /* AgentInfoView.swift */; };
 		0AC8B5D8AC5743C33B9BCBC3 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */; };
+		0BEE49E816A3DA0FB4136763 /* LocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDD7CC531B6DFD14673ABD6C /* LocationService.swift */; };
 		1275B54C0A7633E05DEE0CE9 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B15B4A9C146D208E461D58 /* ActivityView.swift */; };
 		134B9B0384FE48DECD7613EE /* VoiceLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67BBAA4A50EA4E94D5CE2C49 /* VoiceLog.swift */; };
 		1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
@@ -20,6 +21,7 @@
 		313DDC3B1BB41035C1030689 /* WakeUpIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */; };
 		44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289CE8321C0A5A80F6B92C /* MoodleView.swift */; };
 		583CA03CCC0F99FEB9CC3EB6 /* HealthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAE455930B7B7F343EF3E0F7 /* HealthService.swift */; };
+		5AA6A9DA665C8AA1D1152131 /* TransitAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE34FAE9A713F5C8D1AE1DA5 /* TransitAlertsView.swift */; };
 		6050EEA9BDAD57AB18630D2E /* DigestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */; };
 		675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48D3B662149E81DAF5A28319 /* TouchTracker.swift */; };
 		6B4364FB23EAD3E5E23039BE /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87678035748931339F27CC91 /* Photos.swift */; };
@@ -101,8 +103,10 @@
 		95BA6200F2ECB7474C9F8E54 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		9AEB482052BA9CB53D3B8410 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
 		9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideApp.swift; sourceTree = "<group>"; };
+		AE34FAE9A713F5C8D1AE1DA5 /* TransitAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransitAlertsView.swift; sourceTree = "<group>"; };
 		B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeUpIntent.swift; sourceTree = "<group>"; };
 		B9FC43C842297C98B8EC0DAE /* AideTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AideTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BDD7CC531B6DFD14673ABD6C /* LocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationService.swift; sourceTree = "<group>"; };
 		BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitsView.swift; sourceTree = "<group>"; };
 		CAE455930B7B7F343EF3E0F7 /* HealthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthService.swift; sourceTree = "<group>"; };
 		CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -144,6 +148,7 @@
 				DBB893CFE71A535E6990CADF /* SettingsView.swift */,
 				24233F28207417C05A177C18 /* StudyView.swift */,
 				0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */,
+				AE34FAE9A713F5C8D1AE1DA5 /* TransitAlertsView.swift */,
 				7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */,
 			);
 			path = Views;
@@ -173,6 +178,7 @@
 				0DFEF5446D771554DAAA7229 /* AppSettings.swift */,
 				77E5D11C27686D088BF88108 /* Figure.swift */,
 				63500D066A75FEEDD7B682E9 /* Keychain.swift */,
+				BDD7CC531B6DFD14673ABD6C /* LocationService.swift */,
 				87678035748931339F27CC91 /* Photos.swift */,
 				36387E8AE9A51ED3851F3281 /* PushService.swift */,
 				93B823567631C9266E89C0C5 /* SpeechDetector.swift */,
@@ -373,6 +379,7 @@
 				CDA6BD42FE40FA43362C4856 /* HealthView.swift in Sources */,
 				1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */,
 				DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */,
+				0BEE49E816A3DA0FB4136763 /* LocationService.swift in Sources */,
 				7F41522F5C768CB044BFBE4B /* MemoryView.swift in Sources */,
 				25FDB4AE99AC133557167989 /* Models.swift in Sources */,
 				44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */,
@@ -391,6 +398,7 @@
 				D70DECEDF4E4EC132639432C /* TeamChatView.swift in Sources */,
 				B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */,
 				675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */,
+				5AA6A9DA665C8AA1D1152131 /* TransitAlertsView.swift in Sources */,
 				B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */,
 				134B9B0384FE48DECD7613EE /* VoiceLog.swift in Sources */,
 				E0244E5AF24BFFC84C55D2A4 /* VoicePanel.swift in Sources */,

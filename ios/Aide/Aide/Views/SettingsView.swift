@@ -7,6 +7,7 @@ struct SettingsView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var health: HealthService
+    @EnvironmentObject private var location: LocationService
     @Environment(\.openURL) private var openURL
 
     @State private var testing = false
@@ -21,6 +22,7 @@ struct SettingsView: View {
                 remindersSection
                 notificationsSection
                 healthSection
+                locationSection
                 Section {
                     Picker("I speak", selection: $settings.voiceLanguage) {
                         Text("English").tag("en-US")
@@ -205,6 +207,43 @@ struct SettingsView: View {
             Text("Aide gets one summary a day: sleep, heart rate, HRV, steps and workouts. For the wake-up briefing, add an automation in Shortcuts: Sleep → Waking Up → Run Immediately → Aide's \"I'm up\". What Aide may read is in the Health app, Sharing → Apps.")
         }
         .task { await health.refreshStatus() }
+    }
+
+    private var locationAccess: String {
+        switch location.authorization {
+        case .authorizedAlways: "Always"
+        case .authorizedWhenInUse: "While using the app"
+        case .notDetermined: "Not shared"
+        default: "Off"
+        }
+    }
+
+    private var locationSection: some View {
+        Section {
+            LabeledContent("Location", value: locationAccess)
+            if location.canAsk {
+                Button(location.authorization == .notDetermined ? "Share location" : "Allow always") {
+                    location.requestAccess()
+                }
+            } else if !location.isAlways {
+                Button("Open iOS Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+            }
+            if location.isOn {
+                LabeledContent("Last sent", value: location.lastSent?.formatted(date: .abbreviated, time: .shortened) ?? "Not yet")
+            }
+            NavigationLink("Tram alerts") { TransitAlertsView() }
+            if let error = location.lastError {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+            }
+        } header: {
+            Text("Getting around")
+        } footer: {
+            Text("Tram alerts tell you when to leave for your GTT tram: the walk from where you are to the stop, plus two "
+                 + "minutes. With Always, the phone sends its location when you move about 500 m or an alert is about to "
+                 + "fire, also with the app closed.")
+        }
     }
 
     private func testConnection() async {

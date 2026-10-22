@@ -13,6 +13,7 @@ final class AppEnvironment: ObservableObject {
     let digest: DigestViewModel
     let push: PushService
     let health: HealthService
+    let location: LocationService
     let voice = VoiceController()
     /// The Moodle screen as a sheet, from a `moodle` notification.
     @Published var showMoodle = false
@@ -29,6 +30,7 @@ final class AppEnvironment: ObservableObject {
         self.digest = DigestViewModel(api: api)
         self.push = PushService(api: api)
         self.health = HealthService(api: api)
+        self.location = LocationService(api: api)
 
         // The assistant may have created reminders or moved events: sync.
         voice.languageCode = { [weak settings] in settings?.voiceLanguage ?? "en-US" }
@@ -72,6 +74,7 @@ final class AppEnvironment: ObservableObject {
         async let digestLoad: Void = digest.load()
         async let pushRefresh: Void = push.refresh()
         async let healthUpload = health.upload()
+        location.refresh()
         await sync.sync()
         await agents
         await history

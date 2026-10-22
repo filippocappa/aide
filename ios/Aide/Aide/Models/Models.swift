@@ -277,7 +277,7 @@ struct RoutineIdea: Decodable, Hashable {
 
 enum Schedule {
     /// "Every day at 09:00", "Weekdays at 09:00", "Sundays at 18:00", "Mon, Wed and Fri at 07:30".
-    static func label(time: String, days: [Int]) -> String {
+    static func label(time: String, days: [Int], joiner: String = "at") -> String {
         let set = Set(days)
         let when: String
         switch set {
@@ -290,7 +290,7 @@ enum Schedule {
             when = sorted.count == 1 ? names.weekdaySymbols[sorted[0] % 7] + "s"
                 : sorted.map { names.shortWeekdaySymbols[$0 % 7] }.formatted(.list(type: .and))
         }
-        return "\(when) at \(time)"
+        return "\(when) \(joiner) \(time)"
     }
 }
 
@@ -1244,4 +1244,70 @@ struct VaultSetup: Decodable {
     var user: String?
     var password: String?
     var vault: String?
+}
+
+// MARK: - Transit (docs/API.md, "Transit (GTT)")
+
+/// Where the phone is, for tram alerts: the server works out the walk to the stop.
+struct LocationFix: Encodable {
+    let lat: Double
+    let lon: Double
+    /// Metres.
+    var accuracy: Double?
+    /// When the fix was taken, UTC.
+    let at: String
+}
+
+/// A push when a GTT tram or bus is coming: a commute (`days`) or a one-off (`once`).
+struct TransitAlert: Decodable, Identifiable, Hashable {
+    struct Stop: Decodable, Hashable {
+        let id: String
+        /// The number on the stop's sign.
+        let code: String
+        let name: String
+    }
+
+    let id: Int
+    let line: String
+    /// Tram, Bus, Metro or Train.
+    let vehicle: String
+    let towards: [String]
+    let stop: Stop
+    /// HH:MM: the first tram from about then. nil on a one-off for the next one.
+    let time: String?
+    /// ISO weekdays, [] every day. nil on a one-off.
+    let days: [Int]?
+    let once: Bool
+    /// nil: when it's time to leave (the walk plus two minutes).
+    let minutes: Int?
+    var enabled: Bool
+    /// The whole alert in a line.
+    let summary: String
+
+    var title: String { "\(vehicle) \(line)" + (towards.isEmpty ? "" : " → \(towards.joined(separator: " / "))") }
+    var stopLabel: String { "\(stop.name) · stop \(stop.code)" }
+    var when: String {
+        if once { return time.map { "Once, around \($0)" } ?? "Once, the next one" }
+        return Schedule.label(time: time ?? "", days: days ?? [], joiner: "around")
+    }
+    var lead: String { minutes.map { "\($0) min before" } ?? "When it's time to leave" }
+}
+
+struct TransitAlertList: Decodable { let alerts: [TransitAlert] }
+
+/// Only what changes. `minutes: .some(nil)` sends `"minutes": null`: back to when it's time to leave.
+struct TransitAlertPatch: Encodable {
+    var time: String?
+    var days: [Int]?
+    var minutes: Int??
+    var enabled: Bool?
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(time, forKey: .time)
+        try c.encodeIfPresent(days, forKey: .days)
+        if let minutes { try c.encode(minutes, forKey: .minutes) }
+        try c.encodeIfPresent(enabled, forKey: .enabled)
+    }
+    private enum CodingKeys: String, CodingKey { case time, days, minutes, enabled }
 }
