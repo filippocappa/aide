@@ -133,7 +133,7 @@ habits. Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements
 (live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
 implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for sleep), the `wake` digest with a
 time-aware greeting and leave-by times (Maps: walk and transit, arriving 10 min early, home and per-place mode from memory, else `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
-sections in `wake` and `daily`, the read-only `health` tool. No real health data uploaded yet.
+sections in `wake` and `daily`, the read-only `health` tool. Live from the phone: 63 days uploaded (backfill from 2026-08-21), wake briefings from uploads since 2026-10-20.
 
 **In progress:** agents (contract in `docs/API.md`, "Agents"): Aide as the orchestrator that asks Secretary,
 Professor, Coach and Finance (`ask_agent`), each with its own chats, tools, memory and Pebble colour. App side built
@@ -197,7 +197,7 @@ morning, weekly and monthly digests, month first), each tied to a measure where 
 exams, food log, sleep, steps, a reminder) so it ticks itself; the rest are ticked by hand. They wait for the
 user's OK. `objectives` tools for every agent, an `objectives` digest section. App: an Objectives tab (badge: proposals
 waiting for the OK; Today / Week / Month, accept, drop, tick, add, propose now), objectives in the
-digest. First plan made live 2026-10-22; installed on the phone, not yet tried there.
+digest. First plan made live 2026-10-22; on the phone, the first proposals accepted 2026-10-22.
 Since #19 (2026-10-22): a `notes` measure (notebook topics written or revised, logged in `topic_changes`), and
 `StudyReplanner` plans Professor's week and day again 10 min after a course's notes or dates change (not when
 they're all taken with none waiting); the planner sees each course's new notes and most-missed topics.
