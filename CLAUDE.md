@@ -72,8 +72,8 @@ SwiftUI, iOS 17+, Xcode project in `ios/Aide/`. Paid Apple Developer Program acc
 
 ```bash
 cd ios/Aide
-xcodebuild -scheme Aide -destination 'platform=iOS Simulator,name=iPhone 16' build   # compile check
-xcodebuild -scheme Aide -destination 'platform=iOS Simulator,name=iPhone 16' test    # unit tests
+xcodebuild -scheme Aide -destination 'platform=iOS Simulator,name=iPhone 18 Pro' build   # compile check
+xcodebuild -scheme Aide -destination 'platform=iOS Simulator,name=iPhone 18 Pro' test    # unit tests
 ```
 (Check `xcrun simctl list devices available` if that simulator name doesn't exist.)
 
@@ -124,8 +124,7 @@ boxes in chat from `attachments`, the habit grid from `history` (552f523).
 **Done, live (2026-10-20):** push (#1). Server: devices endpoints, APNs sender, silent `sync`
 on server-side reminder changes, `reminder` and `digest` alerts. App: device
 registration, background sync on silent pushes, taps open the digest chat, the conversation or Details, and
-Settings → Notifications with a test button. The test push reached the phone. App unit tests not yet run (this
-Mac has no Simulator runtime yet).
+Settings → Notifications with a test button. The test push reached the phone. App unit tests pass on the Simulator (53, 2026-10-22).
 
 **Done, both sides, not yet tried live:** Apple Health (#2), contract in `docs/API.md` ("Apple Health"). App:
 daily health summaries with a 60-day backfill, HealthKit background delivery, the "I'm up" App Intent for a
