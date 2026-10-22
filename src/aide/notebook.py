@@ -151,6 +151,9 @@ class NotebookStore:
         self.conn.executescript(SCHEMA)
         if "done" not in {r[1] for r in self.conn.execute("PRAGMA table_info(proposals)")}:
             self.conn.execute("ALTER TABLE proposals ADD COLUMN done INTEGER NOT NULL DEFAULT 0")
+        if not self.conn.execute("SELECT 1 FROM topic_changes LIMIT 1").fetchone():  # notes from before the log
+            self.conn.execute("INSERT INTO topic_changes (topic_id, course_id, by_user, at) SELECT id, course_id, "
+                              "edited_at IS NOT NULL AND edited_at = updated_at, updated_at FROM topics WHERE body != ''")
         self.on_job: list[Callable[[], None]] = []  # the worker's kick
         self.on_change: list[Callable[[int, str], None]] = []  # (course id, what): the notes or the dates changed
         self.steps: dict[int, str] = {}  # course id → what its job is doing now, a line for the app (not stored)

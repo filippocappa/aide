@@ -378,3 +378,14 @@ async def test_a_change_in_the_notes_replans_professor(env):
     assert len(engine.asked) == 1 and "the week" in engine.asked[0]["text"]
     assert [o["title"] for o in store.objectives("week", TODAY)] == ["Practise IS-LM, just written"]
     assert [o["title"] for o in store.objectives("day", TODAY)] == ["Taken"]
+
+
+def test_notes_from_before_the_log_count(env):
+    _, planner, _, db, study = env
+    course = study.conn.execute("INSERT INTO courses (name) VALUES ('macroeconomics')").lastrowid
+    topic = planner.notebook.add_topic(course, "IS-LM")
+    db.conn.execute("UPDATE topics SET body = 'written before', edited_at = updated_at WHERE id = ?", (topic["id"],))
+    db.conn.execute("DELETE FROM topic_changes")
+    again = NotebookStore(study)  # the next start
+    since = datetime.now(timezone.utc) - timedelta(minutes=1)
+    assert [(t["title"], t["by_user"]) for t in again.changes(course, since)] == [("IS-LM", 1)]
