@@ -40,8 +40,8 @@ final class AppSettings: ObservableObject {
     }
 
     #if DEBUG
-    /// Simulator screenshots: the token comes from the launch environment (`SIMCTL_CHILD_AIDE_TOKEN`) and is never
-    /// saved, and the phone's side (reminders sync, Health, push) stays off so a simulator can't touch real data.
+    /// Simulator screenshots: the token (and the server, if given) come from the launch environment
+    /// (`SIMCTL_CHILD_AIDE_TOKEN`, `SIMCTL_CHILD_AIDE_SERVER`) and are never saved, and the phone's side (reminders sync, Health, push) stays off so a simulator can't touch real data.
     let isPreview = ProcessInfo.processInfo.environment["AIDE_TOKEN"] != nil
     #else
     let isPreview = false
@@ -53,6 +53,7 @@ final class AppSettings: ObservableObject {
         token = Keychain.get(Keys.token) ?? ""
         #if DEBUG
         if let previewToken = ProcessInfo.processInfo.environment["AIDE_TOKEN"] { token = previewToken }
+        if let previewServer = ProcessInfo.processInfo.environment["AIDE_SERVER"] { serverURL = previewServer }
         #endif
         reminderListID = Keychain.get(Keys.reminderListID) ?? ""
         voiceLanguage = Keychain.get(Keys.voiceLanguage) ?? "en-US"
