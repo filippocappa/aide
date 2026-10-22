@@ -55,6 +55,8 @@ from the tools the assistant used in that turn, not parsed from its text:
 - `reminders`: when the assistant listed reminders, or created, changed or completed one, in that turn.
 - `events`: when it listed or searched calendar events.
 - `meals`: when it logged, changed or listed meals (see Food), `{"type": "meals", "meals": [Meal]}`.
+- `departures`: when it looked up GTT arrivals, a card per stop (see Transit), `{"type": "departures",
+  "departures": [Board]}`.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
@@ -1008,6 +1010,43 @@ alerts in Settings. Off with `AIDE_GTT=0` on the server: the alert endpoints are
   the foreground, and when a silent `location` push asks for one (see Push). That needs "Always" location access.
 - An alert that fires "when it's time to leave" wants a fix under 10 minutes old: while it's watching, the server
   asks for one (a `location` push) at most every 5 minutes. Without any fix it assumes a 5 minute walk and says so.
+
+### Departures
+
+`transit_arrivals` in chat comes with a `departures` attachment: a Board per stop with something coming.
+
+```json
+{
+  "id": "1687:4:Politecnico",
+  "stop": {"id": "1687", "code": "253", "name": "Porta Nuova"},
+  "at": "2026-10-22T06:00:00Z",
+  "distance": 180, "walk": 170,
+  "line": "4",
+  "to": {"name": "Politecnico", "stops": ["812", "813"]},
+  "lines": [
+    {"line": "4", "vehicle": "Tram", "towards": "Falchera",
+     "arrivals": [
+       {"at": "2026-10-22T06:07:00Z", "scheduled": "2026-10-22T06:05:00Z", "live": true, "delay": 120,
+        "to_at": "2026-10-22T06:32:00Z", "to_stop": "813"},
+       {"at": "2026-10-22T06:15:00Z", "scheduled": "2026-10-22T06:15:00Z", "live": false, "delay": null}
+     ]}
+  ]
+}
+```
+- `at`: when the board was made. `distance` (metres) and `walk` (seconds) from the phone's last fix (under 2 hours
+  old, stop under 2 km away), else null.
+- `line`: the line asked for, or null. `to`: where the user is going (null if not asked): only lines that get there
+  without a change are kept, and each arrival has `to_at` (the delay carried on) and `to_stop` (the sign's number).
+- `lines`: by line and direction, soonest first, up to 4 arrivals each. `at` is expected (live delay included),
+  `scheduled` the timetable; `live` false means timetable only, `delay` seconds late (negative early), null then.
+- `vehicle`: `Tram`, `Bus`, `Metro` or `Train`.
+
+| Endpoint | Query | Response |
+|---|---|---|
+| `GET /v1/transit/departures` | `stop` (the board's stop id), `line`, `to` (stop ids, comma-separated), `to_name` | a Board |
+
+The app refreshes a card on screen with it (every 30 s or so), from the card's own `stop.id`, `line`, `to.stops`
+and `to.name`. `404` for an unknown stop or GTT off, `400` for an unknown line.
 
 ### Tram alerts
 

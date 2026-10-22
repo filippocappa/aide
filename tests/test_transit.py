@@ -13,8 +13,8 @@ from aide.db import Database
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
 from aide.tools.transit import transit_tools
-from aide.transit import (AlertStore, AlertWatcher, Live, Location, Timetable, Transit, Walks, build, line_key,
-                          parse_live, pretty, stop_name)
+from aide.transit import (AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, build,
+                          line_key, parse_live, pretty, stop_name)
 from test_api import AUTH, ROME, TOKEN, FakeClient
 
 DAY = date(2026, 10, 22)  # a Thursday
@@ -303,19 +303,45 @@ def tools(env, monkeypatch):
     db, timetable, location, alerts, push = env
     monkeypatch.setattr("aide.tools.transit.utcnow", lambda: at(8, 0).astimezone(timezone.utc))
     feed = live_feed(("T1", [(2, 120)]), ("T5", None))
-    return {t.name: t for t in transit_tools(Transit(timetable, FakeLive(feed)), alerts, location)}, location
+    transit = Transit(timetable, FakeLive(feed))
+    boards = Boards(transit, location, Walks())
+    return {t.name: t for t in transit_tools(transit, alerts, location, boards)}, location
 
 
 async def test_arrivals_tool_by_stop_and_near_the_phone(tools):
     t, location = tools
     out = await t["transit_arrivals"].handler(stop="252")
-    assert out.startswith("Porta Nuova (stop 252):\n- Tram 4 → Falchera: 7 min, 15 min (timetable)\n"
+    assert out.startswith("Porta Nuova (stop 252):\n- Tram 4 → Falchera: 7 min (2 late), 15 min (timetable)\n"
                           "- Bus 33 → Sassi: 9 min (timetable)")
+    card, = out.attachment["departures"]
+    assert [(l["line"], l["vehicle"], l["towards"]) for l in card["lines"]] == [("4", "Tram", "Falchera"),
+                                                                               ("33", "Bus", "Sassi")]
+    assert card["lines"][0]["arrivals"][0] == {"at": "2026-10-22T06:07:00Z", "scheduled": "2026-10-22T06:05:00Z",
+                                               "live": True, "delay": 120}
+    assert card["lines"][0]["arrivals"][1]["delay"] is None and card["walk"] is None and card["to"] is None
     location.save(45.0626, 7.6760, 10)
     out = await t["transit_arrivals"].handler(line="4")
     assert "Porta Nuova (stop 252, " in out and "Porta Nuova (stop 253, " in out and "Mirafiori: 6 min" in out
     stops = await t["transit_stops"].handler()
     assert stops.startswith("GTT stops near the phone:\n- Porta Nuova (stop 252, ")
+
+
+async def test_arrivals_to_a_destination_keep_the_lines_that_go_there(tools):
+    t, location = tools
+    location.save(45.0650, 7.6756, 10, at(7, 59))  # about 270 m from stop 252
+    out = await t["transit_arrivals"].handler(stop="252", to="Falchera")
+    assert out.startswith("Porta Nuova (stop 252):\n- Tram 4 → Falchera: 7 min (2 late); the first gets to Falchera "
+                          "at 08:32")  # T2 ends before Falchera, the 33 doesn't go there
+    card, = out.attachment["departures"]
+    assert card["to"] == {"name": "Falchera", "stops": ["4"]}
+    assert card["lines"][0]["arrivals"] == [{"at": "2026-10-22T06:07:00Z", "scheduled": "2026-10-22T06:05:00Z",
+                                             "live": True, "delay": 120, "to_at": "2026-10-22T06:32:00Z",
+                                             "to_stop": "400"}]
+    assert 250 < card["distance"] < 290 and abs(card["walk"] - card["distance"] * 1.3 / 1.25) < 1  # seconds
+    out = await t["transit_arrivals"].handler(stop="253", to="Falchera")
+    assert "No direct line to Falchera" in out and out.attachment is None
+    with pytest.raises(ValueError, match="no GTT stop matches 'Mars'"):
+        await t["transit_arrivals"].handler(stop="252", to="Mars")
 
 
 async def test_near_me_without_a_location_says_so(tools):
@@ -351,7 +377,9 @@ def test_aide_and_secretary_have_the_gtt_tools():
 def client(env):
     db, timetable, location, alerts, push = env
     agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", tz=ROME, delegate=False)
-    app = create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN, location=location, transit_alerts=alerts)
+    boards = Boards(Transit(timetable, FakeLive(live_feed(("T1", [(2, 120)])))), location, Walks())
+    app = create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN, location=location, transit_alerts=alerts,
+                     boards=boards)
     return TestClient(app), location, alerts
 
 
@@ -380,6 +408,18 @@ def test_alert_endpoints(client):
     assert c.patch(f"/v1/transit/alerts/{a['id']}", json={"time": "8"}, headers=AUTH).status_code == 400
     assert c.delete(f"/v1/transit/alerts/{a['id']}", headers=AUTH).json() == {"ok": True}
     assert c.delete(f"/v1/transit/alerts/{a['id']}", headers=AUTH).status_code == 404
+
+
+def test_departures_endpoint_refreshes_a_card(client, monkeypatch):
+    c, _, _ = client
+    monkeypatch.setattr("aide.transit.utcnow", lambda: at(8, 0).astimezone(timezone.utc))
+    card = c.get("/v1/transit/departures", params={"stop": "1", "to": "4", "to_name": "Falchera"}, headers=AUTH).json()
+    assert card["stop"] == {"id": "1", "code": "252", "name": "Porta Nuova"} and card["at"] == "2026-10-22T06:00:00Z"
+    assert [l["line"] for l in card["lines"]] == ["4"] and card["lines"][0]["arrivals"][0]["to_at"] == "2026-10-22T06:32:00Z"
+    card = c.get("/v1/transit/departures", params={"stop": "1", "line": "33"}, headers=AUTH).json()
+    assert [l["line"] for l in card["lines"]] == ["33"]
+    assert c.get("/v1/transit/departures", params={"stop": "nope"}, headers=AUTH).status_code == 404
+    assert c.get("/v1/transit/departures", params={"stop": "1", "line": "99"}, headers=AUTH).status_code == 400
 
 
 def test_alerts_are_404_with_gtt_off(env):

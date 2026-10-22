@@ -20,7 +20,7 @@ import os
 import re
 import sqlite3
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -54,6 +54,8 @@ FIX_AGE = timedelta(minutes=10)  # a leave-now alert wants a fix younger than th
 FIX_EVERY = timedelta(minutes=5)  # at most one location request per this long
 FIX_USABLE = timedelta(hours=2)  # older than this, the fix says nothing about where the user is
 NEAR = 400  # metres: "stops near me"
+WALK_SHOWN = 2000  # metres: a stop closer than this to the phone gets its walk on the departures card
+BOARD_TIMES = 4  # arrivals per line and direction on a departures card
 WALK_SPEED = 1.25  # m/s, for the straight-line estimate without Maps
 DETOUR = 1.3  # streets are longer than the straight line
 
@@ -331,6 +333,24 @@ class Timetable:
         return sorted(out, key=lambda a: a["at"])
 
 
+    def reaches(self, trips: list[tuple[str, int]], to: list[str]) -> dict[str, tuple[str, int]]:
+        """Which of these trips (id, the stop_sequence they're at) go on to one of the `to` stops later:
+        {trip: (stop, seconds from the service day's midnight)}, the first such stop."""
+        if not trips or not to:
+            return {}
+        out: dict[str, tuple[str, int, int]] = {}
+        after = dict(trips)
+        for chunk in range(0, len(trips), 400):
+            ids = [t for t, _ in trips[chunk:chunk + 400]]
+            rows = self.conn.execute(
+                f"SELECT trip, seq, stop, at FROM stop_times WHERE trip IN ({','.join('?' * len(ids))}) "
+                f"AND stop IN ({','.join('?' * len(to))})", [*ids, *to])
+            for r in rows:
+                if r["seq"] > after[r["trip"]] and (r["trip"] not in out or r["seq"] < out[r["trip"]][2]):
+                    out[r["trip"]] = (r["stop"], r["at"], r["seq"])
+        return {trip: (stop, at) for trip, (stop, at, _) in out.items()}
+
+
 # -- live times -----------------------------------------------------------------------------
 
 CANCELLED = None  # a trip the feed says won't run
@@ -406,6 +426,15 @@ class Arrival:
     scheduled: datetime
     live: bool
     trip: str
+    seq: int = 0
+    day: date | None = None  # the trip's service day
+    to_stop: str | None = None  # where the user is going, when asked: the stop it gets there
+    to_at: datetime | None = None  # and when, with the same delay
+
+    @property
+    def delay(self) -> int | None:
+        """Seconds late (negative: early), when live."""
+        return round((self.at - self.scheduled).total_seconds()) if self.live else None
 
     def seconds(self, now: datetime) -> float:
         return (self.at - now).total_seconds()
@@ -422,8 +451,9 @@ class Transit:
         self.timetable, self.live = timetable, live
 
     async def arrivals(self, stops: list[str], line: str | None = None, now: datetime | None = None,
-                       within: timedelta = timedelta(minutes=60)) -> list[Arrival]:
-        """What's coming to these stops in the next `within`, soonest first, live where GTT has it."""
+                       within: timedelta = timedelta(minutes=60), to: list[str] | None = None) -> list[Arrival]:
+        """What's coming to these stops in the next `within`, soonest first, live where GTT has it. With `to`
+        (stop ids), only the trips that go on to one of them, with when they get there."""
         now = now or utcnow()
         routes = None
         if line:
@@ -447,8 +477,62 @@ class Transit:
                     at, is_live = r["at"] + timedelta(seconds=before[-1]), True
             if at < now - timedelta(seconds=30) or at > now + within:
                 continue
-            out.append(Arrival(r["line"], r["vehicle"], r["headsign"], r["stop"], at, r["at"], is_live, r["trip"]))
+            out.append(Arrival(r["line"], r["vehicle"], r["headsign"], r["stop"], at, r["at"], is_live, r["trip"],
+                               r["seq"], r["day"]))
+        if to is not None:
+            reach = self.timetable.reaches([(a.trip, a.seq) for a in out], to)
+            out = [replace(a, to_stop=reach[a.trip][0],
+                           to_at=datetime.combine(a.day, time(), self.timetable.tz)
+                           + timedelta(seconds=reach[a.trip][1]) + (a.at - a.scheduled))
+                   for a in out if a.trip in reach]
         return sorted(out, key=lambda a: a.at)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class Boards:
+    """Departure cards (docs/API.md, "Transit (GTT)", the `departures` attachment): a stop's next trams and buses by
+    line and direction, live or timetable, late or early, the walk from the phone, and when asked, where the user is
+    going. Chat shows them from the tools; the app refreshes them through GET /v1/transit/departures."""
+
+    def __init__(self, transit: Transit, location: "Location", walks: "Walks"):
+        self.transit, self.location, self.walks = transit, location, walks
+
+    async def board(self, stop: dict, line: str | None = None, to: dict | None = None, now: datetime | None = None,
+                    arrivals: list[Arrival] | None = None) -> dict:
+        """`to`: {"name", "stops": [ids]}. `arrivals`: already fetched for this stop (else fetched here)."""
+        now = now or utcnow()
+        if arrivals is None:
+            arrivals = await self.transit.arrivals([stop["id"]], line, now, to=to["stops"] if to else None)
+        groups: dict[tuple, list[Arrival]] = {}
+        for a in arrivals:
+            if a.stop == stop["id"]:
+                groups.setdefault((a.line, a.headsign), []).append(a)
+        distance = walk = None
+        fix = self.location.latest()
+        if fix and now - fix["at"] <= FIX_USABLE:
+            d = metres(fix["lat"], fix["lon"], stop["lat"], stop["lon"])
+            if d <= WALK_SHOWN:
+                distance, walk = round(d), await self.walks.seconds(fix["lat"], fix["lon"], stop)
+        names = {}
+        if to:
+            names = {s: self.transit.timetable.stop(s) for s in {a.to_stop for a in arrivals if a.to_stop}}
+        return {
+            "id": f"{stop['id']}:{line_key(line) if line else ''}:{to['name'] if to else ''}",
+            "stop": {"id": stop["id"], "code": stop["code"], "name": stop["name"]},
+            "at": _iso(now), "distance": distance, "walk": walk,
+            "line": line_key(line) if line else None,
+            "to": {"name": to["name"], "stops": to["stops"]} if to else None,
+            "lines": [{
+                "line": times[0].line, "vehicle": times[0].vehicle, "towards": times[0].headsign,
+                "arrivals": [{"at": _iso(a.at), "scheduled": _iso(a.scheduled), "live": a.live, "delay": a.delay,
+                              **({"to_at": _iso(a.to_at), "to_stop": (names.get(a.to_stop) or {}).get("code")}
+                                 if a.to_at else {})}
+                             for a in times[:BOARD_TIMES]],
+            } for (_, _), times in groups.items()],
+        }
 
 
 # -- where the phone is ---------------------------------------------------------------------

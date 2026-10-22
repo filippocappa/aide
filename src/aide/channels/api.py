@@ -38,7 +38,7 @@ from ..objectives import ObjectivePlanner, ObjectiveStore
 from ..quiz import MOST as MOST_QUESTIONS, QuizStore, plain_math
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
-from ..transit import AlertStore, Location
+from ..transit import AlertStore, Boards, Location
 from ..wake import WakeService
 
 log = logging.getLogger(__name__)
@@ -300,7 +300,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                vault: dict | None = None, moodle: MoodleSync | None = None,
                notebook: NotebookStore | None = None, engine: Engine | None = None,
                objectives: ObjectiveStore | None = None, planner: ObjectivePlanner | None = None,
-               location: Location | None = None, transit_alerts: AlertStore | None = None) -> FastAPI:
+               location: Location | None = None, transit_alerts: AlertStore | None = None,
+               boards: Boards | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -1284,6 +1285,22 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if "minutes" in changes and changes["minutes"] is None:
             changes["minutes"] = 0  # the store's "back to when it's time to leave"
         return transit_alerts.as_json(transit_alerts.update(alert_id, **changes))
+
+    @app.get("/v1/transit/departures", dependencies=[Depends(auth)])
+    async def departures(stop: str, line: str | None = None, to: str | None = None, to_name: str | None = None):
+        """A departures card again, to keep it live in the app: `stop` and `to` are stop ids, as on the card."""
+        if boards is None:
+            raise HTTPException(404, "GTT is off on this server (AIDE_GTT)")
+        found = boards.transit.timetable.stop(stop)
+        if found is None:
+            raise HTTPException(404, f"no GTT stop {stop}")
+        dest = None
+        if to:
+            dest = {"name": to_name or "", "stops": [s for s in to.split(",") if s]}
+        try:
+            return await boards.board(found, line or None, dest)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
 
     @app.delete("/v1/transit/alerts/{alert_id}", dependencies=[Depends(auth)])
     async def delete_transit_alert(alert_id: int):
