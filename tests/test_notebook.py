@@ -10,7 +10,7 @@ from aide.db import Database
 from aide.notebook import SCAN_PROMPT, NotebookStore, NotebookWorker, parse_page, sections
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
-from aide.study import StudyStore
+from aide.study import StudyStore, tidy_math
 from aide.tools import ToolRegistry
 from aide.tools.study import study_tools
 from aide.vault import Vault
@@ -439,3 +439,23 @@ async def test_the_slide_scan_picks_the_figures_whatever_their_text(nb):
     assert len(images(request)) == 1 and "Figures the page already has: LM sloping up. Add only ones that show " \
         "something these don't, at most 3." in sent(request)
     assert nb.api.post("/v1/notebook/figures?course=999", headers=AUTH).status_code == 404
+
+
+def test_money_and_sentence_formulas_made_safe_for_obsidian():
+    raw = ("Output $13.5 trillion, output per person $9,700. Ranges $5–$10, $10k a year, costs $5.\n"
+           "Growth $1909/1632-1=+17.0\\%$ and about $0.6/4\\approx 15$–$20\\%$, $1$ unit.\n"
+           "The curve: $$\\pi - \\pi^e = -\\alpha(u-u_n)$$ where $u_n$ is natural.\n"
+           "$$Y = C + I + G$$\n> $$Y = N$$\nAlready \\$3 billion.")
+    assert tidy_math(raw) == (
+        "Output \\$13.5 trillion, output per person \\$9,700. Ranges \\$5–\\$10, \\$10k a year, costs \\$5.\n"
+        "Growth $1909/1632-1=+17.0\\%$ and about $0.6/4\\approx 15$–$20\\%$, $1$ unit.\n"
+        "The curve: $\\pi - \\pi^e = -\\alpha(u-u_n)$ where $u_n$ is natural.\n"
+        "$$Y = C + I + G$$\n> $$Y = N$$\nAlready \\$3 billion.")
+    assert tidy_math(tidy_math(raw)) == tidy_math(raw)
+
+
+def test_set_body_tidies_aides_text_not_the_users(nb):
+    topic = nb.notebook.add_topic(nb.macro["id"], "Data", "", [])
+    t = nb.notebook.set_body(topic["id"], "GDP is $13.5 trillion.", cards=[("GDP in $?", "$13.5 trillion")])
+    assert t["body"] == "GDP is \\$13.5 trillion." and json.loads(t["cards"]) == [["GDP in $?", "\\$13.5 trillion"]]
+    assert nb.notebook.set_body(topic["id"], "Mine: $5 here.", by_user=True)["body"] == "Mine: $5 here."

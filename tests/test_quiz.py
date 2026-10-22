@@ -114,3 +114,7 @@ def test_the_study_tab_reads_notes_as_plain_text(nb):
     courses = {c["id"]: c for c in nb.api.get("/v1/study", headers=AUTH).json()["courses"]}
     assert courses[cid]["notebook"] == {"topics": 2, "questions": 6, "proposals": 0, "writing": False}
     assert all(c["notebook"] is None for i, c in courses.items() if i != cid)
+
+
+def test_escaped_money_is_not_maths():
+    assert plain_math(r"From \$13.5 trillion to \$9,700, and $\Delta Y$.") == "From $13.5 trillion to $9,700, and ΔY."

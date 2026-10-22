@@ -311,7 +311,7 @@ class StudyStore:
         """The worker's notes, and the title they suggest when the lecture has none. Notes written again keep
         the old ones in notes_prev."""
         old = self._row(lecture_id)
-        fields = {"notes": notes.strip(), "status": "ready", "error": None}
+        fields = {"notes": tidy_math(notes.strip()), "status": "ready", "error": None}
         if old["notes"]:
             fields["notes_prev"] = old["notes"]
         if title and not old["title"]:
@@ -428,6 +428,24 @@ def _title(title: str | None) -> str:
     return title
 
 
+# A $ before an amount ($13.5 trillion, $9,700, $10k, $5–$10): money, not the start of a formula.
+_MONEY = re.compile(r"(?<![\\$])\$(?=\d[\d,]*(?:\.\d+)?(?:bn|tn|[kKmMbB])?(?:\s+[A-Za-z(]|[.,;:!?)\]]*(?:\s|$)|[–-]\\?\$))")
+_DISPLAY = re.compile(r"(?<!\\)\$\$(?=\S)([^$\n]+?)(?<=\S)(?<!\\)\$\$")
+
+
+def tidy_math(text: str) -> str:
+    """Markdown from the model made safe for Obsidian's maths: a dollar for money escaped (\\$13.5 trillion), else
+    it pairs with the next $ and the words between become a formula; a $$…$$ inside a sentence made inline, since
+    Obsidian draws it as a centred block that splits the sentence."""
+    out = []
+    for line in _MONEY.sub(r"\\$", text).split("\n"):
+        bare = line.lstrip("> \t")
+        if not (bare.startswith("$$") and bare.rstrip().endswith("$$")):
+            line = _DISPLAY.sub(r"$\1$", line)
+        out.append(line)
+    return "\n".join(out)
+
+
 def summary(notes: str) -> str | None:
     """The notes' first plain line: the one-sentence summary they start with."""
     return next((line.strip() for line in notes.splitlines() if line.strip() and not line.lstrip().startswith("#")),
@@ -451,7 +469,8 @@ A list: each concept in bold, then what it means and why it matters, in a line o
 ## Definitions
 A list of the terms defined, word for word where the lecturer was precise.
 ## Formulas and examples
-Formulas in plain text (Y = C + I + G), what each symbol is, and the worked examples, step by step.
+Formulas in plain text (Y = C + I + G), what each symbol is, and the worked examples, step by step. Money with \
+its dollar escaped, \\$13.5 trillion: a bare $ starts a formula in Obsidian.
 ## Questions to check yourself
 Five to eight questions an exam could ask about this lecture, from recall to applying it. No answers.
 ## Unclear in the recording
