@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// What each specialist sets out for the day, the week and the month (docs/API.md, "Objectives"). The team
-/// proposes them each morning, week and month; you accept, drop or add your own. Most tick themselves from the
-/// data behind them (habits, practice exams, food, sleep, steps, a reminder); the rest you tick here.
+/// The Objectives tab: what each specialist sets out for the day, the week and the month (docs/API.md,
+/// "Objectives"). The team proposes them each morning, week and month; you accept, drop or add your own. Most tick
+/// themselves from the data behind them (habits, practice exams, food, sleep, steps, a reminder); the rest you tick here.
 struct ObjectivesView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var chat: ChatViewModel
+    /// Proposals waiting for your OK, for the tab's badge.
+    @Binding var waiting: Int
     @State private var period = "day"
     @State private var overview: ObjectivesOverview?
     @State private var error: String?
@@ -15,6 +17,11 @@ struct ObjectivesView: View {
     private static let periods = [("day", "Today"), ("week", "Week"), ("month", "Month")]
 
     var body: some View {
+        NavigationStack { list }
+            .onChange(of: overview?.waiting) { _, n in if let n { waiting = n } }
+    }
+
+    private var list: some View {
         List {
             Section {
                 Picker("Period", selection: $period) {
@@ -77,7 +84,6 @@ struct ObjectivesView: View {
         .scrollContentBackground(.hidden)
         .background(Theme.grouped)
         .navigationTitle("Objectives")
-        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -322,58 +328,5 @@ enum ObjectiveDates {
 
     static func when(_ period: String) -> String {
         period == "week" ? "with the weekly digest" : period == "month" ? "on the 1st" : "every morning"
-    }
-}
-
-/// On the home screen: today's objectives in a line, and what's waiting for your OK.
-struct ObjectivesCard: View {
-    let overview: ObjectivesOverview?
-    let open: () -> Void
-
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 14) {
-                Image(systemName: "scope")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .background(Theme.chip, in: Circle())
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Objectives").font(.headline)
-                        Spacer(minLength: 4)
-                        if waiting > 0 {
-                            Text("\(waiting) to OK").font(.caption.weight(.semibold))
-                                .foregroundStyle(Theme.onAccent)
-                                .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(Theme.accent, in: Capsule())
-                        }
-                    }
-                    Text(summary).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens your objectives")
-    }
-
-    private var waiting: Int {
-        guard let o = overview else { return 0 }
-        return o.day.proposed.count + o.week.proposed.count + o.month.proposed.count
-    }
-
-    private var summary: String {
-        guard let today = overview?.day.objectives.filter({ !$0.isLapsed && !$0.isProposed }) else {
-            return "For today, this week and this month"
-        }
-        if today.isEmpty { return waiting > 0 ? "Your team has proposed some" : "Nothing set for today yet" }
-        let done = today.filter(\.done).count
-        let next = today.first { !$0.done }
-        return "Today \(done) of \(today.count) done" + (next.map { " · next: \($0.title)" } ?? "")
     }
 }

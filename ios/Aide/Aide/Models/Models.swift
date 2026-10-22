@@ -764,6 +764,9 @@ struct ObjectivesOverview: Decodable {
             }
         }
     }
+
+    /// Proposals waiting for your OK, in all three periods.
+    var waiting: Int { day.proposed.count + week.proposed.count + month.proposed.count }
 }
 
 struct ObjectivePatch: Encodable {

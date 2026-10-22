@@ -196,8 +196,8 @@ a recording from Files.
 covers the Goals idea in #14). Every specialist proposes objectives for the day, the week and the month (before the
 morning, weekly and monthly digests, month first), each tied to a measure where one fits (habit check-ins, practice
 exams, food log, sleep, steps, a reminder) so it ticks itself; the rest are ticked by hand. They wait for the
-user's OK. `objectives` tools for every agent, an `objectives` digest section. App: an Objectives card on the home
-screen, the Objectives screen (Today / Week / Month, accept, drop, tick, add, propose now), objectives in the
+user's OK. `objectives` tools for every agent, an `objectives` digest section. App: an Objectives tab (badge: proposals
+waiting for the OK; Today / Week / Month, accept, drop, tick, add, propose now), objectives in the
 digest. First plan made live 2026-10-22; installed on the phone, not yet tried there.
 Course dates (2026-10-22): a model reads each course's Moodle page and the files' exam pages into dated items
 (exams, mid-terms, sign-up deadlines; `course_dates`, the `dates` notebook job), again when Moodle changes. The
