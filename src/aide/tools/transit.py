@@ -78,13 +78,7 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
             stops = stops[:STOPS_NEAR]
             if not stops:
                 return ToolOutput("No GTT stops near the phone" + (f" for line {line_key(line)}." if line else "."))
-        dest = None
-        if to and to.strip():
-            found = timetable.find(to)
-            if not found:
-                raise ValueError(f"no GTT stop matches {to!r}: ask the user, or pass the stop's name or number")
-            dest = {"name": found[0]["name"] if len({s["name"] for s in found}) == 1 else to.strip(),
-                    "stops": [s["id"] for s in found]}
+        dest = await boards.destination(to) if to and to.strip() else None
         arrivals = await transit.arrivals([s["id"] for s, _ in stops], line, now, to=dest["stops"] if dest else None)
         out, cards = [], []
         for s, d in stops:
@@ -156,9 +150,9 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
              "out for the stops near the user's phone. The app shows the result as departure cards.",
              _obj({"stop": {"type": "string", "description": stop_help},
                    "line": {"type": "string", "description": "only this line, e.g. 4, 15, M1"},
-                   "to": {"type": "string", "description": "where the user is going: a GTT stop's name or number (from "
-                          "memory for their usual places, e.g. their university's stop). Only lines that get there "
-                          "without a change are kept"}}, []),
+                   "to": {"type": "string", "description": "where the user is going: a GTT stop's name or number, or "
+                          "a place in Turin (\"Politecnico\", \"Piazza della Repubblica\", an address; from memory for "
+                          "their usual places). Only lines that get there without a change are kept"}}, []),
              transit_arrivals),
         Tool("list_transit_alerts", "List the tram alerts: id in brackets, line, stop, when, and how early.",
              _obj({}, []), list_transit_alerts),
