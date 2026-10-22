@@ -106,8 +106,8 @@ data: { the usual /v1/chat body, including the whole "team" }
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/confirm` | `{}` | `{"result": "✓ Moved: …", "pending": []}`. Runs every pending action. |
-| `POST /v1/cancel` | `{}` | `{"result": "Cancelled. Nothing was changed.", "pending": []}` |
+| `POST /v1/confirm` | `{}`, or `{"ids": [42]}` | `{"result": "✓ Moved: …", "pending": []}`. Runs every pending action, or only those (since 2026-10-22; see Activity and approvals). |
+| `POST /v1/cancel` | `{}`, or `{"ids": [42]}` | `{"result": "Cancelled. Nothing was changed.", "pending": [ … ]}`: what's still waiting. |
 | `POST /v1/new` | `{}` | `{"ok": true}`. Starts a fresh conversation (like `!new`). |
 | `POST /v1/think` | `{}` | `{"ok": true}`. Smarter model for the rest of the conversation (like `!think`). |
 
@@ -338,6 +338,61 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
 | `PATCH /v1/objectives/{id}` | any of `title`, `done` (true/false), `status` (`active` / `dropped`), `target` | the objective. Ticking a proposal also accepts it. `404` if unknown. |
 | `POST /v1/objectives/accept` | `{"period": "day", "date"?, "ids"?}` (no `ids`: all of that period's proposals) | that period's Block. `404` if an id isn't a proposal of that period. |
 | `POST /v1/objectives/plan` | `{"period": "week", "date"?}` | proposes now (replacing those still waiting) and returns the Block. Can take 30 s. |
+
+## Activity and approvals
+
+What the agents did, and what's waiting for you, in one place outside the chats (#12, since 2026-10-22).
+
+### Activity
+
+`GET /v1/activity` (`?agent=coach`, `?before=81`, `?limit=100`, all optional; `limit` at most 200) →
+`{"items": [Item], "next": 73}`, newest first. `next` is the `before` for the page after, or `null` at the end.
+An unknown `agent` is `400`. Lines are kept 90 days; the feed starts empty on 2026-10-22.
+
+```json
+{"id": 81, "ts": "2026-10-22T18:30:04+02:00", "agent": "secretary", "kind": "watch", "title": "Tomorrow",
+ "detail": "Your 9:00 with Rossi clashes with the macro lecture.", "conversation_id": "c_7ab…"}
+```
+- `agent` is who did it. A change made by a specialist that Aide asked is the specialist's.
+- `detail` is one line (at most 280 characters) or `null`. `conversation_id` is the chat it happened in (`main`
+  for the first chat, `team` for the Team chat), or `null` (a digest, objectives): open it on a tap when it's set.
+- `kind` (the app shows any other one as a plain line):
+
+| `kind` | `title` | `detail` |
+|---|---|---|
+| `action` | what a tool changed: "Added a reminder", "Logged a meal", "Remembered something" | the tool's result |
+| `queued` | the summary of an action now waiting for your OK | |
+| `confirmed` / `failed` | the summary, once you confirmed it | the result, or the error |
+| `cancelled` | the summary, when you cancelled it | |
+| `routine` / `watch` | the routine's title: it posted in its chat | the first line it posted |
+| `quiet` | the watch's title: it checked and nothing needed you (nothing was posted) | "Checked: nothing needed you." |
+| `ask` | "Asked Coach" (always Aide's) | the request |
+| `message` | the chat's title: a message no one asked for (lecture notes ready, a notebook proposal, its result) | its first line |
+| `objectives` | "Proposed 2 objectives for the week" | their titles, `; ` between |
+| `digest` | "Morning digest", "Wake-up briefing", "Evening digest", "Weekly digest", "Monthly digest" (Aide's) | the greeting |
+
+Reads (listing events, searching mail) aren't recorded.
+
+### Approvals
+
+`GET /v1/approvals` → everything waiting for your OK, and the routines coming up:
+```json
+{"waiting": 4,
+ "actions": [{"id": 42, "summary": "Send the reply to Marco", "agent": "secretary", "conversation_id": "c_91f…",
+              "created_at": "2026-10-22T10:02:11+02:00", "expires_at": "2026-10-22T10:32:11+02:00"}],
+ "objectives": [ /* Objective objects with "status": "proposed", for this month, week and day */ ],
+ "proposals": [ /* notebook Proposals still pending, plus "course_name" and "conversation_id" (the course chat, or null) */ ],
+ "writer": null,
+ "upcoming": [ /* the next 5 enabled routines (watches too), soonest first: Routine objects */ ]}
+```
+- `waiting` counts actions, objectives, proposals and the writer's question: the app's badge.
+- `actions`: the confirmation queue, with who queued it and from which chat. An action expires 30 min after it's
+  queued. Confirm or cancel one with `POST /v1/confirm` / `/v1/cancel` and `{"ids": [42]}`.
+- `objectives`: accept with `POST /v1/objectives/accept` (`period`, `date` = the objective's `start`, `ids`), drop
+  with `PATCH /v1/objectives/{id}` (see Objectives).
+- `proposals`: apply or decline with `/v1/proposals/{id}/apply` and `/decline` (see Notebook).
+- `writer`: while note writing is paused at the Claude plan's limit, the `paused` object of `GET /v1/writer`
+  (`since`, `resets_at`, …), else `null`. Answer with `POST /v1/writer/decide` (see Who writes the notes).
 
 ## Memory
 

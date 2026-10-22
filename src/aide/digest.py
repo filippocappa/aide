@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 
+from . import activity
 from .db import utcnow
 from .gmail import Gmail, headers
 from .habits import HabitStore
@@ -262,6 +263,7 @@ class DigestService:
         body = {"kind": kind, "generated_at": now.replace(microsecond=0).isoformat(),
                 "greeting": greeting, "sections": sections + texts}
         self._store(kind, generated, body)
+        activity.record(self.conn, "aide", "digest", activity.DIGESTS.get(kind, f"{kind.capitalize()} digest"), greeting)
         return body
 
     async def view(self, kind: str) -> dict | None:

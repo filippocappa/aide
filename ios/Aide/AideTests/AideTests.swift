@@ -103,6 +103,57 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(r.cursor, "1720")
     }
 
+    func testApprovalsDecode() throws {
+        let json = #"""
+        {"waiting": 3,
+         "actions": [{"id": 42, "summary": "Delete reminder 'Bins'", "agent": "secretary", "conversation_id": "main",
+                      "created_at": "2026-10-22T18:00:00+02:00", "expires_at": "2026-10-22T18:30:00+02:00"}],
+         "objectives": [{"id": "o1", "agent": "coach", "period": "week", "start": "2026-10-19", "end": "2026-10-25",
+                         "title": "Run 3 times", "why": null, "measure": {"type": "habit", "habit": 4, "label": "check-ins of Run"},
+                         "progress": 1, "target": 3, "done": false, "status": "proposed", "parent": null, "added_by": "coach"}],
+         "proposals": [{"id": "p1", "kind": "update", "status": "pending", "course": 2, "course_name": "Macroeconomics",
+                        "conversation_id": "c9", "items": []}],
+         "writer": null,
+         "upcoming": [{"id": 1, "agent": "secretary", "title": "Tomorrow", "prompt": "p", "time": "20:00", "days": [],
+                       "enabled": true, "watch": true, "conversation_id": "c3", "next_run": "2026-10-22T20:00:00+02:00",
+                       "last_run": null}]}
+        """#
+        let a = try JSONDecoder.api.decode(Approvals.self, from: Data(json.utf8))
+        XCTAssertEqual(a.waiting, 3)
+        XCTAssertEqual(a.actions.first?.agent, "secretary")
+        XCTAssertNotNil(a.actions.first?.expiresAt.flatMap(Wire.parse))
+        XCTAssertTrue(a.objectives.first?.isProposed == true)
+        XCTAssertEqual(a.proposals.first?.courseName, "Macroeconomics")
+        XCTAssertEqual(a.proposals.first?.conversationId, "c9")
+        XCTAssertNil(a.writer)
+        XCTAssertTrue(a.upcoming.first?.isWatch == true)
+    }
+
+    func testActivityPagesAndGroupsByDay() throws {
+        let json = #"""
+        {"items": [
+          {"id": 3, "ts": "2026-10-22T18:00:00+02:00", "agent": "coach", "kind": "action", "title": "Logged a meal",
+           "detail": "Pasta", "conversation_id": "c1"},
+          {"id": 2, "ts": "2026-10-22T08:00:00+02:00", "agent": "aide", "kind": "digest", "title": "Morning digest",
+           "detail": null, "conversation_id": null},
+          {"id": 1, "ts": "2026-10-21T21:00:00+02:00", "agent": "secretary", "kind": "something_new", "title": "New"}],
+         "next": 1}
+        """#
+        let page = try JSONDecoder.api.decode(ActivityPage.self, from: Data(json.utf8))
+        XCTAssertEqual(page.next, 1)
+        var rome = Calendar(identifier: .gregorian)
+        rome.timeZone = TimeZone(identifier: "Europe/Rome")!
+        let days = ActivityDays.group(page.items, calendar: rome)
+        XCTAssertEqual(days.map { $0.items.map(\.id) }, [[3, 2], [1]])
+        XCTAssertEqual(ActivityRow.symbol("something_new"), "circle.fill") // an unknown kind still shows
+        XCTAssertEqual(ActivityRow.verb("queued"), "Asked to")
+    }
+
+    func testActionIDsEncode() throws {
+        let data = try JSONEncoder.api.encode(ActionIDs(ids: [42, 43]))
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), #"{"ids":[42,43]}"#)
+    }
+
     func testWireDatesRoundTrip() throws {
         let d = try XCTUnwrap(Wire.parse("2026-10-20T17:00:00+02:00"))
         XCTAssertEqual(d, Wire.parse(Wire.local(d)))

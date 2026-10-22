@@ -41,6 +41,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
+- `activity.py`: the feed of what the agents did, behind `/v1/activity`; `/v1/approvals` gathers what waits for the user.
 - `objectives.py`: each specialist's objectives for the day, week and month: the store, progress from the data,
   and the planner (one model call per period, through `engine.py`, before the digest that opens it).
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
@@ -205,12 +206,20 @@ Course dates (2026-10-22): a model reads each course's Moodle page and the files
 (exams, mid-terms, sign-up deadlines; `course_dates`, the `dates` notebook job), again when Moodle changes. The
 planner, Professor's `list_courses` and the Introduction's Dates section use them.
 
+**Done, both sides (2026-10-22), not yet tried on the phone:** Activity and approvals (#12, contract in
+`docs/API.md`, "Activity and approvals"). Server: `activity.py` keeps a 90-day feed of what each agent did (changes,
+queued actions and how they were answered, routine and watch runs, asks, unasked posts, objectives proposed,
+digests), `GET /v1/activity` (paged, per agent) and `GET /v1/approvals` (queued actions with who and from where,
+proposed objectives, notebook proposals, a paused notes job, the next routines). `/v1/confirm` and `/v1/cancel`
+take `ids` to answer one action at a time. App (`Views/ActivityView.swift`): a bell with a badge on the home
+screen, a sheet with "Waiting for you" (each answered there), "Coming up" and the feed by day; an agent card's
+"Activity" shows that agent's alone.
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
-2. Ideas from the agent-app research, not yet chosen: an Activity and Approvals view (#12), digests in a feed
-   instead of chat (#15). (#14, Goals, is mostly covered by objectives.)
+2. Ideas from the agent-app research, not yet chosen: digests in a feed instead of chat (#15). (#14, Goals, is mostly covered by objectives.)
 3. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
    for the other courses. Finance still has no data source (memory only).
 

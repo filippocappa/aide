@@ -16,7 +16,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..agent import CONVERSATION, Agent, Turn, UnknownConversation
+from .. import activity
+from ..agent import CONVERSATION, PENDING_TTL, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
@@ -186,6 +187,10 @@ class ObjectivesAccept(BaseModel):
     period: Period
     day: date | None = Field(None, alias="date")
     ids: list[str] | None = None  # None: all of the period's proposals
+
+
+class ActionsIn(BaseModel):
+    ids: list[int] | None = None  # None: every pending action
 
 
 class ConversationIn(BaseModel):
@@ -397,12 +402,42 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             lambda turn: sse("reply", chat_json(conversation, turn)))
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
-    async def confirm():
-        return {"result": await agent.confirm(CONVERSATION), "pending": pending()}
+    async def confirm(body: ActionsIn | None = None):
+        return {"result": await agent.confirm(CONVERSATION, body.ids if body else None), "pending": pending()}
 
     @app.post("/v1/cancel", dependencies=[Depends(auth)])
-    async def cancel():
-        return {"result": await agent.cancel(CONVERSATION), "pending": pending()}
+    async def cancel(body: ActionsIn | None = None):
+        return {"result": await agent.cancel(CONVERSATION, body.ids if body else None), "pending": pending()}
+
+    # -- activity and approvals ------------------------------------------------------------
+
+    @app.get("/v1/activity", dependencies=[Depends(auth)])
+    async def get_activity(agent_id: str | None = Query(None, alias="agent"), before: int | None = None,
+                           limit: int = 100):
+        limit = max(1, min(limit, 200))
+        items = activity.recent(db.conn, check_agent(agent_id) if agent_id is not None else None, before, limit)
+        return {"items": [{**i, "ts": local(i["ts"])} for i in items],
+                "next": items[-1]["id"] if len(items) == limit else None}
+
+    @app.get("/v1/approvals", dependencies=[Depends(auth)])
+    async def approvals():
+        actions = [{"id": a["id"], "summary": a["summary"], "agent": a["agent"] or "aide",
+                    "conversation_id": a["conversation"] or CONVERSATION, "created_at": local(a["created_at"]),
+                    "expires_at": local((datetime.fromisoformat(a["created_at"]) + PENDING_TTL).isoformat())}
+                   for a in db.pending_actions(CONVERSATION, PENDING_TTL)]
+        today = objectives.today()
+        proposed = [o for p in ("month", "week", "day") for o in objectives.block(p, today)["objectives"]
+                    if o["status"] == "proposed"]
+        proposals = []
+        for p in notebook.proposals(None, "pending"):
+            course = study.course(p["course_id"]) or {}
+            proposals.append({**notebook.proposal_json(p), "course_name": course.get("name"),
+                              "conversation_id": course.get("chat")})
+        paused = engine.status()["paused"] if engine else None
+        coming = sorted(((n, r) for r in routines.all() if (n := routines.next_run(r))), key=lambda x: x[0])
+        return {"waiting": len(actions) + len(proposed) + len(proposals) + (1 if paused else 0),
+                "actions": actions, "objectives": proposed, "proposals": proposals, "writer": paused,
+                "upcoming": [routines.as_json(r) for _, r in coming[:5]]}
 
     @app.post("/v1/new", dependencies=[Depends(auth)])
     async def new():
