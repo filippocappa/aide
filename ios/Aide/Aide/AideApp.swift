@@ -91,14 +91,19 @@ struct ContentView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
     @State private var tab = Tab.chat
+    @State private var objectivesWaiting = 0
 
-    enum Tab { case chat, study, health, settings }
+    enum Tab { case chat, objectives, study, health, settings }
 
     var body: some View {
         TabView(selection: $tab) {
             ChatsView()
                 .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                 .tag(Tab.chat)
+            ObjectivesView(waiting: $objectivesWaiting)
+                .tabItem { Label("Objectives", systemImage: "scope") }
+                .tag(Tab.objectives)
+                .badge(objectivesWaiting)
             StudyView()
                 .tabItem { Label("Study", systemImage: "book") }
                 .tag(Tab.study)
@@ -112,9 +117,10 @@ struct ContentView: View {
         .onAppear {
             if !settings.isConfigured { tab = .settings }
             #if DEBUG
-            // Simulator screenshots: `-previewTab health` (or `habits`), `study` or `settings`.
+            // Simulator screenshots: `-previewTab objectives`, `health` (or `habits`), `study` or `settings`.
             if settings.isPreview, let name = UserDefaults.standard.string(forKey: "previewTab") {
                 tab = switch name {
+                case "objectives": .objectives
                 case "health", "habits": .health
                 case "study": .study
                 case "settings": .settings
@@ -122,6 +128,10 @@ struct ContentView: View {
                 }
             }
             #endif
+        }
+        // The badge, before the tab is first opened; the tab keeps it current after that.
+        .task(id: settings.isConfigured) {
+            if settings.isConfigured, let o = try? await env.api.objectives() { objectivesWaiting = o.waiting }
         }
         // onReceive also sees a route set before this view existed (a tap that launched the app).
         .onReceive(push.$route.compactMap { $0 }) { route in
