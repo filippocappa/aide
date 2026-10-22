@@ -122,13 +122,13 @@ struct CourseView: View {
                 Section { WriterPauseCard(pause: pause) { writer = $0 } }
             }
             if let writing = notebook?.writing {
-                Section { WritingRow(progress: writing.progress) }
+                Section { WritingRow(progress: writing.progress, step: notebook?.step) }
             } else if notebook?.busy == true {
                 // A job with no proposal yet: the outline at the start, or new material and figures later.
                 Section {
                     WritingRow(title: (notebook?.topics ?? []).isEmpty ? "Reading the course's files"
                                                                         : "Working on the notebook",
-                               systemImage: "books.vertical", progress: nil)
+                               systemImage: "books.vertical", progress: nil, step: notebook?.step)
                 }
             }
             notebookSection
@@ -412,6 +412,8 @@ private struct WritingRow: View {
     var title = "Writing the notes"
     var systemImage = "pencil.and.scribble"
     let progress: NotebookProgress?
+    /// What Professor is doing now, from the server.
+    var step: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -421,6 +423,10 @@ private struct WritingRow: View {
                 Text("\(progress.done) of \(progress.total) topics").font(.caption).foregroundStyle(.secondary)
             } else {
                 ProgressView().frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let step, !step.isEmpty {
+                Text(step).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    .contentTransition(.numericText()).animation(.default, value: step)
             }
         }
         .padding(.vertical, 4)

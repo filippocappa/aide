@@ -144,7 +144,7 @@ async def built(nb) -> list[dict]:
     assert writing["id"] == p["public_id"] and writing["progress"] == {"done": 0, "total": 2}
     await drain(nb)
     after = nb.api.get(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).json()
-    assert after["writing"] is None and nb.notebook.proposal(p["public_id"])["done"] == 2
+    assert after["writing"] is None and after["step"] is None and nb.notebook.proposal(p["public_id"])["done"] == 2
     return nb.notebook.topics(nb.macro["id"])
 
 
@@ -173,6 +173,17 @@ async def test_starting_writes_the_introduction_and_proposes_topics(nb):
     assert nb.api.get(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).json()["proposals"][0]["items"][1] == \
         {"n": 2, "topic": None, "title": "Crowding out", "add": "Spending and the interest rate.",
          "sources": ["Week 3 slides, p. 3"]}
+
+
+async def test_the_app_sees_what_professor_is_doing(nb):
+    seen = []
+
+    def scan(pages):
+        seen.append(nb.api.get(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).json()["step"])
+        return [{"page": n, "figure": False} for n in pages]
+    nb.client.scan = scan
+    await built(nb)  # and, done, no step
+    assert seen == ["Looking for figures in the slides: 0 of 3"]
 
 
 async def test_applying_the_outline_writes_each_topic_from_its_own_pages(nb):
