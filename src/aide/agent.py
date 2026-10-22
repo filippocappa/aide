@@ -8,7 +8,7 @@ import base64
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Callable, NamedTuple
+from typing import Awaitable, Callable, NamedTuple
 from zoneinfo import ZoneInfo
 
 import anthropic
@@ -78,6 +78,8 @@ class Agent:
         self.db = db
         self.photos = photos
         self.routines = RoutineStore(db, tz)
+        # Where the phone is, in words, for the stamp (transit.Whereabouts.describe); None leaves it out.
+        self.whereabouts: Callable[[], Awaitable[str | None]] | None = None
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued, and
         # `agent_tools(agent id, any agent)` for other per-agent sets (objectives).
         # Aide delegates: it has only its own few tools and ask_agent, and the specialists do the work.
@@ -300,7 +302,7 @@ class Agent:
             agent = self.db.conversation_agent(conversation_id)
             self.check_photos(photos)
             body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
-            turn: list[dict] = [{"role": "user", "content": self._stamp(channel, body)}]
+            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body)}]
             try:
                 reply = await self._run(agent, channel, model, history, turn, on_text)
             finally:
@@ -321,10 +323,11 @@ class Agent:
             if self.photos is None or not self.photos.exists(p):
                 raise ValueError(f"no photo {p}")
 
-    def _stamp(self, channel: str, text: str) -> str:
-        """Stamped so the model never reuses a stale time from earlier in the conversation,
-        and shown the real queue, which may differ from what it remembers queuing."""
-        stamped = f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] {text}"
+    async def _stamp(self, channel: str, text: str) -> str:
+        """Stamped so the model never reuses a stale time from earlier in the conversation (with where the phone
+        is, when that's known), and shown the real queue, which may differ from what it remembers queuing."""
+        where = await self.whereabouts() if self.whereabouts else None
+        stamped = f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{', ' + where if where else ''}] {text}"
         if queued := self.db.pending_actions(channel, PENDING_TTL):
             lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
             stamped += f"{_QUEUE_MARK}\n{lines}]"
@@ -355,7 +358,7 @@ class Agent:
             else:
                 note = (f"{_ROUTINE} \"{routine['title']}\". The user set this up to run on a schedule and isn't in "
                         "the chat right now: write the message they'll read here.]\n" + routine["prompt"])
-            turn: list[dict] = [{"role": "user", "content": self._stamp(channel, note)}]
+            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note)}]
             reply = await self._run(routine["agent"], channel, model, history, turn)
             if self._watching and _nothing(reply):
                 self.routines.mark_run(routine["id"])
@@ -418,7 +421,7 @@ class Agent:
                     "their assistants. The latest messages, oldest first:\n" + lines + "\n\n"
                     "Answer the user's last message as yourself, for the group: short, only what you add, "
                     "without repeating what the others said. Don't bring the others in by mentioning them.]")
-            turn: list[dict] = [{"role": "user", "content": self._stamp(channel, note)}]
+            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note)}]
             reply = await self._run(agent, channel, self.model, [], turn)
             said({"from": agent, "to": TEAM, "text": reply, "ts": utcnow().isoformat()})
 
