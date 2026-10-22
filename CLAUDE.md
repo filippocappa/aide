@@ -228,6 +228,13 @@ minutes, live delay or timetable, the next ones, the walk and when to leave; wit
 through Maps: its stops within 400 m) only direct lines, with the time there. The app's `DeparturesCard` counts down
 and fetches the board again every 30 s while on screen (cards under 3 h old).
 
+**Done, both sides (2026-10-22), not yet tried on the phone:** mail drafts (#7, contract in `docs/API.md`, "Mail
+drafts"). Server (live, `drafts.py`): before the evening digest Secretary reads the last 3 days' inbox (each message
+once) and drafts replies to mail that asks something of the user, with memory and the calendar; `draft_reply`,
+`list_drafts`, `discard_draft` in chat; drafts in `/v1/approvals` and the evening digest's `replies` section.
+`POST /v1/mail/drafts/{id}/send` (the app's tap) is the confirmation. App (`Views/DraftViews.swift`): drafts in
+Activity's "Waiting for you" (Send, Edit, Dismiss), an editor sheet, and "Replies to send" in the digest Details.
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed

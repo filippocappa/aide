@@ -113,6 +113,10 @@ final class ModelTests: XCTestCase {
                          "progress": 1, "target": 3, "done": false, "status": "proposed", "parent": null, "added_by": "coach"}],
          "proposals": [{"id": "p1", "kind": "update", "status": "pending", "course": 2, "course_name": "Macroeconomics",
                         "conversation_id": "c9", "items": []}],
+         "drafts": [{"id": 3, "message_id": "m1", "thread_id": "t1", "from": "Anna Bianchi",
+                     "from_address": "anna@example.com", "subject": "Dinner Friday?", "preview": "Are you free?",
+                     "received_at": "2026-10-22T18:02:00+02:00", "why": "Anna asks about Friday", "body": "Yes!",
+                     "status": "waiting", "agent": "secretary", "created_at": "2026-10-22T21:55:10+02:00"}],
          "writer": null,
          "upcoming": [{"id": 1, "agent": "secretary", "title": "Tomorrow", "prompt": "p", "time": "20:00", "days": [],
                        "enabled": true, "watch": true, "conversation_id": "c3", "next_run": "2026-10-22T20:00:00+02:00",
@@ -127,6 +131,27 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(a.proposals.first?.conversationId, "c9")
         XCTAssertNil(a.writer)
         XCTAssertTrue(a.upcoming.first?.isWatch == true)
+        let draft = try XCTUnwrap(a.drafts?.first)
+        XCTAssertEqual(draft.fromAddress, "anna@example.com")
+        XCTAssertEqual(draft.detail, "Dinner Friday? · Anna asks about Friday")
+        XCTAssertEqual(draft.replySubject, "Re: Dinner Friday?")
+        // An older server has no drafts.
+        let old = try JSONDecoder.api.decode(Approvals.self, from: Data(
+            #"{"waiting": 0, "actions": [], "objectives": [], "proposals": [], "writer": null, "upcoming": []}"#.utf8))
+        XCTAssertNil(old.drafts)
+    }
+
+    func testDigestRepliesSectionDecodes() throws {
+        let json = #"""
+        {"kind": "evening", "generated_at": "2026-10-22T22:00:00+02:00", "greeting": "Night.",
+         "sections": [{"type": "replies", "title": "Replies to send", "drafts": [
+           {"id": 3, "from": "Anna Bianchi", "from_address": null, "subject": "Re: Dinner", "preview": "",
+            "received_at": null, "why": null, "body": "Yes!", "agent": "secretary"}]}]}
+        """#
+        let d = try JSONDecoder.api.decode(Digest.self, from: Data(json.utf8))
+        guard case .replies(let drafts) = d.sections.first?.content else { return XCTFail("not replies") }
+        XCTAssertEqual(drafts.first?.replySubject, "Re: Dinner")
+        XCTAssertEqual(drafts.first?.detail, "Re: Dinner")
     }
 
     func testActivityPagesAndGroupsByDay() throws {

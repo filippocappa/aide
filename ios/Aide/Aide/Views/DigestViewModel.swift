@@ -25,6 +25,8 @@ final class DigestViewModel: ObservableObject {
     @Published private(set) var objectiveOverrides: [String: Objective] = [:]
     /// Reminders ticked here, by server id, until the next load shows the synced state.
     @Published private(set) var reminderOverrides: [String: Bool] = [:]
+    /// Drafts answered here: "sent" or "dismissed", by id, until the next load drops them.
+    @Published private(set) var draftOutcomes: [Int: String] = [:]
 
     /// Set by AppEnvironment: ticks a reminder in Apple Reminders and syncs. Returns false if it couldn't.
     var completeReminder: ((Reminder, Bool) async -> Bool)?
@@ -41,6 +43,7 @@ final class DigestViewModel: ObservableObject {
             habitOverrides = [:]
             reminderOverrides = [:]
             objectiveOverrides = [:]
+            draftOutcomes = [:]
         } catch {
             digest = nil // 404 until the first digest exists; the empty chat falls back to suggestions
         }
@@ -61,6 +64,23 @@ final class DigestViewModel: ObservableObject {
     func accept(_ proposals: [Objective], period: String, date: String) async {
         guard let block = try? await api.acceptObjectives(period: period, date: date, ids: proposals.map(\.id)) else { return }
         for o in block.objectives where proposals.contains(where: { $0.id == o.id }) { objectiveOverrides[o.id] = o }
+    }
+
+    /// A problem to show, or nil once it's sent.
+    func send(_ draft: MailDraft, body: String) async -> String? {
+        do {
+            _ = try await api.sendDraft(draft.id, body: body)
+            draftOutcomes[draft.id] = "sent"
+            return nil
+        } catch { return error.localizedDescription }
+    }
+
+    func dismiss(_ draft: MailDraft) async -> String? {
+        do {
+            try await api.dismissDraft(draft.id)
+            draftOutcomes[draft.id] = "dismissed"
+            return nil
+        } catch { return error.localizedDescription }
     }
 
     func toggle(_ habit: Habit) async {
