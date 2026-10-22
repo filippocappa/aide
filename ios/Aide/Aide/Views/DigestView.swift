@@ -22,6 +22,8 @@ struct DigestView: View {
                 case .mail(let items): group(section.title) { MailRows(items: items) }
                 case .sleep(let night, let usual): group(section.title) { SleepCard(night: night, usualAsleepMin: usual) }
                 case .recovery(let recovery): group(section.title) { RecoveryRow(recovery: recovery) }
+                case .objectives(let objectives, let period):
+                    group(section.title) { DigestObjectiveRows(objectives: objectives, period: period) }
                 case .text, .unknown: EmptyView() // the greeting already says it
                 }
             }
@@ -129,6 +131,36 @@ private struct HabitRows: View {
                     }
                 }
                 .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+/// The team's objectives, with the specialist's name; tick the ones you tick, and OK the proposals in one go.
+private struct DigestObjectiveRows: View {
+    @EnvironmentObject private var model: DigestViewModel
+    @EnvironmentObject private var chat: ChatViewModel
+    let objectives: [Objective]
+    let period: String
+
+    var body: some View {
+        let shown = objectives.map { model.objectiveOverrides[$0.id] ?? $0 }
+        ForEach(shown) { o in
+            let agent = chat.agent(o.agent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(agent.name.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(agent.tint)
+                ObjectiveRow(objective: o, tint: agent.tint) { Task { await model.tick(o) } }
+            }
+        }
+        let proposed = shown.filter(\.isProposed)
+        if let first = proposed.first {
+            Button { Task { await model.accept(proposed, period: period, date: first.start) } } label: {
+                Text(proposed.count == 1 ? "Accept it" : "Accept all \(proposed.count)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.onAccent)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    .background(Theme.accent, in: Capsule())
             }
             .buttonStyle(.plain)
         }

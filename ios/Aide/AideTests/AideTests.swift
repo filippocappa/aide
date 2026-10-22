@@ -410,6 +410,29 @@ final class HealthTests: XCTestCase {
         XCTAssertEqual(r.restingHrUsual, 54)
     }
 
+    func testObjectivesDecodeInBlocksAndInTheDigest() throws {
+        let objective = #"""
+        {"id":"o_3f9a1c2b7d4e","agent":"coach","period":"week","start":"2026-10-19","end":"2026-10-25",
+         "title":"Run 3 times","why":"Half marathon","measure":{"type":"habit","habit":4,"label":"check-ins of Run"},
+         "progress":1,"target":3,"done":false,"status":"proposed","parent":null,"added_by":"agent"}
+        """#
+        let block = #"{"period":"week","start":"2026-10-19","end":"2026-10-25","planned":true,"objectives":[\#(objective)]}"#
+        let empty = #"{"period":"day","start":"2026-10-22","end":"2026-10-22","planned":false,"objectives":[]}"#
+        let overview = try JSONDecoder.api.decode(ObjectivesOverview.self,
+                                                  from: Data(#"{"day":\#(empty),"week":\#(block),"month":\#(empty)}"#.utf8))
+        let o = try XCTUnwrap(overview["week"].objectives.first)
+        XCTAssertEqual(o.measure?.label, "check-ins of Run")
+        XCTAssertTrue(o.isProposed && !o.isManual)
+        XCTAssertEqual(overview["week"].proposed.count, 1)
+        XCTAssertFalse(overview["day"].planned)
+
+        let digest = #"{"kind":"daily","greeting":"Morning.","sections":[{"type":"objectives","title":"Objectives for today","period":"week","start":"2026-10-19","objectives":[\#(objective)]}]}"#
+        let d = try JSONDecoder.api.decode(Digest.self, from: Data(digest.utf8))
+        guard case .objectives(let list, let period) = d.sections[0].content else { return XCTFail() }
+        XCTAssertEqual(list.first?.addedBy, "agent")
+        XCTAssertEqual(period, "week")
+    }
+
     func testSleepCardWording() {
         XCTAssertEqual(SleepCard.duration(412), "6h 52m")
         XCTAssertEqual(SleepCard.duration(45), "45m")

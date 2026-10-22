@@ -33,6 +33,7 @@ from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError, page_image
 from ..moodle import MoodleError, MoodleSync
 from ..notebook import NotebookStore
+from ..objectives import ObjectivePlanner, ObjectiveStore
 from ..quiz import MOST as MOST_QUESTIONS, QuizStore, plain_math
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
@@ -158,6 +159,35 @@ class RoutinePatch(BaseModel):
     watch: bool | None = None
 
 
+Period = Literal["day", "week", "month"]
+
+
+class ObjectiveIn(BaseModel):
+    agent: str
+    period: Period
+    title: str
+    why: str = ""
+    day: date | None = Field(None, alias="date")  # a day in the period, default today
+
+
+class ObjectivePatch(BaseModel):
+    title: str | None = None
+    done: bool | None = None
+    status: Literal["active", "dropped"] | None = None
+    target: int | None = None
+
+
+class ObjectivesPlan(BaseModel):
+    period: Period
+    day: date | None = Field(None, alias="date")
+
+
+class ObjectivesAccept(BaseModel):
+    period: Period
+    day: date | None = Field(None, alias="date")
+    ids: list[str] | None = None  # None: all of the period's proposals
+
+
 class ConversationIn(BaseModel):
     conversation_id: str | None = None
 
@@ -248,7 +278,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                transcriber: Transcriber | None = None, food: FoodStore | None = None,
                study: StudyStore | None = None, worker: StudyWorker | None = None,
                vault: dict | None = None, moodle: MoodleSync | None = None,
-               notebook: NotebookStore | None = None, engine: Engine | None = None) -> FastAPI:
+               notebook: NotebookStore | None = None, engine: Engine | None = None,
+               objectives: ObjectiveStore | None = None, planner: ObjectivePlanner | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -260,6 +291,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
     quizzes = QuizStore(notebook)
+    objectives = objectives or ObjectiveStore(db.conn, tz, habits, food, health, store)
     photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
@@ -452,6 +484,51 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         reply = await deliver(agent, CONVERSATION, r, push)
         return {"routine": routines.as_json(routines.get(routine_id)), "conversation_id": r["public_id"],
                 "spoke": reply is not None}
+
+    # -- objectives ------------------------------------------------------------------
+
+    def objective_or_404(public_id: str) -> dict:
+        o = objectives.get(public_id)
+        if o is None:
+            raise HTTPException(404, f"no objective {public_id}")
+        return o
+
+    def objective_blocks(day: date | None) -> dict:
+        day = day or objectives.today()
+        return {p: objectives.block(p, day) for p in ("day", "week", "month")}
+
+    @app.get("/v1/objectives", dependencies=[Depends(auth)])
+    async def list_objectives(day: date | None = Query(None, alias="date")):
+        return objective_blocks(day)
+
+    @app.post("/v1/objectives", dependencies=[Depends(auth)], status_code=201)
+    async def add_objective(body: ObjectiveIn):
+        if body.agent not in AGENTS or AGENTS[body.agent].orchestrator:
+            raise HTTPException(400, f"agent must be a specialist, not {body.agent!r}")
+        o = objectives.add(body.agent, body.period, body.day or objectives.today(), body.title, body.why)
+        return objectives.as_json(o)
+
+    @app.patch("/v1/objectives/{public_id}", dependencies=[Depends(auth)])
+    async def edit_objective(public_id: str, body: ObjectivePatch):
+        objective_or_404(public_id)
+        return objectives.as_json(objectives.update(public_id, **body.model_dump(exclude_unset=True)))
+
+    @app.post("/v1/objectives/accept", dependencies=[Depends(auth)])
+    async def accept_objectives(body: ObjectivesAccept):
+        day = body.day or objectives.today()
+        try:
+            objectives.accept(body.period, day, body.ids)
+        except KeyError as e:
+            raise HTTPException(404, e.args[0])
+        return objectives.block(body.period, day)
+
+    @app.post("/v1/objectives/plan", dependencies=[Depends(auth)])
+    async def plan_objectives(body: ObjectivesPlan):
+        if planner is None:
+            raise HTTPException(409, "objectives can't be planned on this server")
+        day = body.day or objectives.today()
+        await planner.plan(body.period, day)
+        return objectives.block(body.period, day)
 
     @app.get("/v1/conversations", dependencies=[Depends(auth)])
     async def conversations():

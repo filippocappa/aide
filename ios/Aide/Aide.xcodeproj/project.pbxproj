@@ -15,6 +15,7 @@
 		1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		22723056AB8C45B0D23646D9 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
 		25FDB4AE99AC133557167989 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32DFE4D7AD03B872AE8A96C /* Models.swift */; };
+		27063010372E886231ED3DD3 /* ObjectivesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054584741E8F0145B3456003 /* ObjectivesView.swift */; };
 		313DDC3B1BB41035C1030689 /* WakeUpIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */; };
 		44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289CE8321C0A5A80F6B92C /* MoodleView.swift */; };
 		583CA03CCC0F99FEB9CC3EB6 /* HealthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAE455930B7B7F343EF3E0F7 /* HealthService.swift */; };
@@ -62,6 +63,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		054584741E8F0145B3456003 /* ObjectivesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectivesView.swift; sourceTree = "<group>"; };
 		0D0E327019026782069A1BA0 /* AideTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideTests.swift; sourceTree = "<group>"; };
 		0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamChatView.swift; sourceTree = "<group>"; };
 		0DFEF5446D771554DAAA7229 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 				3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */,
 				1F289CE8321C0A5A80F6B92C /* MoodleView.swift */,
 				75A4AEC9022A036D36BF776D /* NotesView.swift */,
+				054584741E8F0145B3456003 /* ObjectivesView.swift */,
 				E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */,
 				31E717ACC950E43DC53B945E /* RichText.swift */,
 				53C02A40AE154F5373B2E531 /* RoutinesView.swift */,
@@ -370,6 +373,7 @@
 				25FDB4AE99AC133557167989 /* Models.swift in Sources */,
 				44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */,
 				879BFFF09ECF6F6D4A039B00 /* NotesView.swift in Sources */,
+				27063010372E886231ED3DD3 /* ObjectivesView.swift in Sources */,
 				6B4364FB23EAD3E5E23039BE /* Photos.swift in Sources */,
 				AEEA7D4B2EB40173AC263CF1 /* PracticeExamView.swift in Sources */,
 				6FFB4761315BC0B5CD78D8C6 /* PushService.swift in Sources */,

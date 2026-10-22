@@ -239,6 +239,30 @@ final class APIClient {
         let _: OKResponse = try await send("DELETE", "/v1/habits/\(id)", body: EmptyBody())
     }
 
+    // MARK: Objectives
+
+    func objectives() async throws -> ObjectivesOverview {
+        try await send("GET", "/v1/objectives")
+    }
+
+    func addObjective(_ new: NewObjective) async throws -> Objective {
+        try await send("POST", "/v1/objectives", body: new)
+    }
+
+    func updateObjective(_ id: String, _ patch: ObjectivePatch) async throws -> Objective {
+        try await send("PATCH", "/v1/objectives/\(id)", body: patch)
+    }
+
+    /// `ids` nil: all of that period's proposals. `date` is any day in the period.
+    func acceptObjectives(period: String, date: String, ids: [String]? = nil) async throws -> ObjectiveBlock {
+        try await send("POST", "/v1/objectives/accept", body: ObjectivesAccept(period: period, date: date, ids: ids))
+    }
+
+    /// Proposes now (one model call, can take 30 s).
+    func planObjectives(period: String, date: String) async throws -> ObjectiveBlock {
+        try await send("POST", "/v1/objectives/plan", body: ObjectivesPlan(period: period, date: date), timeout: 120)
+    }
+
     func checkHabit(_ id: Int, done: Bool) async throws -> Habit {
         try await send("POST", "/v1/habits/\(id)/check", body: HabitCheck(done: done))
     }
