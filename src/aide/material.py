@@ -7,6 +7,7 @@ name the page; the notes see a deck's most visual pages as images too (pdftoppm)
 """
 
 import asyncio
+import base64
 import logging
 import re
 import secrets
@@ -14,9 +15,11 @@ import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from .db import Database, utcnow
+from .engine import course_var
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +49,13 @@ CREATE TABLE IF NOT EXISTS study_pages (
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS study_pages_fts USING fts5(text, file_id UNINDEXED, page UNINDEXED,
     tokenize = 'unicode61 remove_diacritics 2');
+CREATE TABLE IF NOT EXISTS read_pages (  -- pages a model read from their image: a scan's, or one with no text
+    file_id INTEGER NOT NULL REFERENCES study_files(id) ON DELETE CASCADE,
+    page    INTEGER NOT NULL,
+    read_at TEXT,  -- NULL: not read yet (the calls so far failed)
+    tries   INTEGER NOT NULL DEFAULT 0,  -- failed calls; at READ_TRIES the page stays as it is
+    PRIMARY KEY (file_id, page)
+);
 """
 
 MAX_FILE = 100 * 1024 * 1024
@@ -60,6 +70,21 @@ PICTURE_SIDE = 100  # pixels: a smaller embedded image is an icon, not a picture
 DRAWN_SHAPES = 6  # a page with at least this many drawn shapes may hold a diagram, a chart or a table
 DRAWN_OVER_USUAL = 1.3  # ... and at least this many times its file's usual page (a template's boxes repeat)
 USUAL_PAGES = 4  # a file needs this many pages to have a usual one
+READ_TOKENS = 4000  # a page's transcription, at most
+READ_TRIES = 3  # failed calls before a page is left as it is
+READ_RETRY = 60  # seconds after a failed call
+
+READ_PROMPT = """You transcribe one page of a university course's material from its image: a scanned page, or a \
+slide with no text layer. Write out what is on the page, faithfully and in the page's own language: don't \
+translate, summarise, correct or add anything.
+
+- Text as markdown: headings, lists and emphasis as the page has them.
+- Maths in LaTeX: $…$ inline, $$…$$ for an equation on its own line.
+- A table as a list, one item per row: "- Column: value; Column: value".
+- A figure, chart or drawing as one line in brackets: [Figure: what it shows, its axes and labels].
+- Handwriting too, as best you can; a word you can't make out as [?].
+
+Answer with the transcription only, no preface. A blank page: answer (blank)."""
 
 _ID = re.compile(r"^f_[0-9a-f]{12}$")
 _WORD = re.compile(r"\w+")
@@ -135,6 +160,7 @@ class FileStore:
         self.folder = folder or Path(tempfile.mkdtemp(prefix="aide-files-"))  # tests
         self.folder.mkdir(parents=True, exist_ok=True)
         self.conn.executescript(SCHEMA)
+        self.on_add: list[Callable[[], None]] = []  # the page reader's kick
 
     @staticmethod
     def new_id() -> str:
@@ -170,11 +196,14 @@ class FileStore:
         shutil.move(tmp, self.path(f))
         self.conn.execute("DELETE FROM study_pages WHERE file_id = ?", (row_id,))
         self.conn.execute("DELETE FROM study_pages_fts WHERE file_id = ?", (row_id,))
+        self.conn.execute("DELETE FROM read_pages WHERE file_id = ?", (row_id,))
         for i, text in enumerate(pages, 1):
             self.conn.execute("INSERT INTO study_pages (file_id, page, text) VALUES (?, ?, ?)", (row_id, i, text))
             if text:
                 self.conn.execute("INSERT INTO study_pages_fts (text, file_id, page) VALUES (?, ?, ?)",
                                   (text, row_id, i))
+        for kick in self.on_add:
+            kick()
         return f
 
     def _row(self, row_id: int) -> dict:
@@ -231,6 +260,35 @@ class FileStore:
         return [(r["page"], r["text"]) for r in self.conn.execute(
             "SELECT page, text FROM study_pages WHERE file_id = ? AND page >= ? AND page <= ? ORDER BY page",
             (f["id"], first, last or f["pages"]))]
+
+    def to_read(self) -> tuple[dict, int] | None:
+        """The next page a model should read from its image: a scan's, or a page with no text; oldest file first.
+        The pages not read yet are the queue, so a restart loses nothing."""
+        row = self.conn.execute(
+            "SELECT p.file_id, p.page FROM study_pages p JOIN study_files f ON f.id = p.file_id "
+            "LEFT JOIN read_pages r ON r.file_id = p.file_id AND r.page = p.page "
+            "WHERE (f.scanned OR TRIM(p.text, char(32, 9, 10, 12, 13)) = '') AND r.read_at IS NULL "
+            "AND COALESCE(r.tries, 0) < ? ORDER BY f.id, p.page LIMIT 1", (READ_TRIES,)).fetchone()
+        return (self._row(row["file_id"]), row["page"]) if row else None
+
+    def set_read(self, f: dict, page: int, text: str) -> None:
+        """A page's text, as a model read it: it replaces the text layer, in the search too, and isn't read again."""
+        self.conn.execute("UPDATE study_pages SET text = ? WHERE file_id = ? AND page = ?", (text, f["id"], page))
+        self.conn.execute("DELETE FROM study_pages_fts WHERE file_id = ? AND page = ?", (f["id"], page))
+        if text:
+            self.conn.execute("INSERT INTO study_pages_fts (text, file_id, page) VALUES (?, ?, ?)",
+                              (text, f["id"], page))
+        self.conn.execute("INSERT INTO read_pages (file_id, page, read_at) VALUES (?, ?, ?) ON CONFLICT "
+                          "DO UPDATE SET read_at = excluded.read_at", (f["id"], page, utcnow().isoformat()))
+
+    def read_failed(self, f: dict, page: int, tries: int = 1) -> None:
+        self.conn.execute("INSERT INTO read_pages (file_id, page, tries) VALUES (?, ?, ?) ON CONFLICT "
+                          "DO UPDATE SET tries = tries + excluded.tries", (f["id"], page, tries))
+
+    def read_pages(self, f: dict) -> set[int]:
+        """The file's pages a model has read."""
+        return {r[0] for r in self.conn.execute(
+            "SELECT page FROM read_pages WHERE file_id = ? AND read_at IS NOT NULL", (f["id"],))}
 
     def text(self, f: dict, first: int = 1, last: int | None = None) -> str:
         """The pages' text, each page starting with its mark: [p. 3]."""
@@ -290,3 +348,71 @@ def _name(name: str) -> str:
         name = name[:MAX_NAME - 4].rstrip() + ".pdf"
     return name
 
+
+class PageReader:
+    """Reads each scanned page (and each page with no text) once with the smart model, from its image, so it can
+    be searched, read and mapped like any other. One page a call, in the background; the pages not read yet are
+    the queue, so a file added (upload or Moodle) wakes it, and the scans already there are read after startup."""
+
+    def __init__(self, files: FileStore, agent):
+        self.files = files
+        self.agent = agent  # the model client and the smart model
+        self.engine = None  # Engine, set after: OpenRouter or the user's Claude plan; None calls OpenRouter directly
+        self.retry = READ_RETRY
+        self._wake = asyncio.Event()
+        files.on_add.append(self.kick)
+
+    def kick(self) -> None:
+        self._wake.set()
+
+    async def run(self) -> None:
+        while True:
+            nxt = self.files.to_read()
+            if nxt is None:
+                await self._wake.wait()
+                self._wake.clear()
+                continue
+            await self.read(*nxt)
+
+    async def read(self, f: dict, page: int) -> None:
+        course_var.set(f["course_id"])  # a pause at the plan's limit asks in this course's chat
+        try:
+            image = await page_image(self.files.path(f), page)
+        except PdfError:
+            log.warning("couldn't render page %d of %s: left as it is", page, f["public_id"])
+            self.files.read_failed(f, page, READ_TRIES)
+            return
+        try:
+            text = _transcript(await self._ask([
+                {"type": "text", "text": f"{f['name']}, page {page} of {f['pages']}:"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                             "data": base64.b64encode(image).decode()}}]))
+        except Exception as e:
+            log.warning("reading page %d of %s failed: %s", page, f["public_id"], e)
+            self.files.read_failed(f, page)
+            await asyncio.sleep(self.retry)
+            return
+        now = self.files.get(f["public_id"])
+        if now is None or now["updated_at"] != f["updated_at"]:
+            return  # deleted or replaced meanwhile: the new file's pages are queued on their own
+        self.files.set_read(f, page, text)
+        log.info("read page %d of %s (%d characters)", page, f["public_id"], len(text))
+
+    async def _ask(self, content: list[dict]) -> str:
+        if self.engine is not None:
+            return await self.engine.ask(READ_PROMPT, content, READ_TOKENS)
+        response = await self.agent.client.beta.messages.create(
+            model=self.agent.smart_model, max_tokens=READ_TOKENS, system=READ_PROMPT,
+            messages=[{"role": "user", "content": content}])
+        text = "".join(b.text for b in response.content if b.type == "text").strip()
+        if not text:
+            raise RuntimeError("the page came back empty")
+        return text
+
+
+def _transcript(answer: str) -> str:
+    """The model's transcription, without a fence around it; a blank page is empty."""
+    text = answer.strip()
+    if m := re.fullmatch(r"```(?:markdown|md)?\n(.*)\n```", text, flags=re.S):
+        text = m.group(1).strip()
+    return "" if text.lower() in ("(blank)", "blank") else text

@@ -545,7 +545,9 @@ File object:
 {"id": "f_3f9a1c2b4d5e", "course": 2, "lecture": "l_…" or null, "name": "Week 3 slides.pdf", "section": "",
  "size": 2481920, "pages": 42, "scanned": false, "source": "upload", "added_at": "2026-10-21T12:00:00+02:00"}
 ```
-- `scanned`: no text layer (a scan); it can't be searched or read as text, but a lecture still sees its pages.
+- `scanned`: no text layer (a scan). The server reads each of its pages once with the model, from the page's
+  image (pages with no text in other files too), in the background; from then on they're searched and read as text.
+  A lecture still sees its pages as images.
 - `section`: where it was on Moodle ("Week 3"), else empty.
 
 | Endpoint | Body | Response |

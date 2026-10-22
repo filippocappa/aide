@@ -27,6 +27,7 @@ from .push import Push
 from .reminders import ReminderStore
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
+from .material import PageReader
 from .moodle import MoodleSync
 from .notebook import NotebookStore, NotebookWorker
 from .study import StudyStore, StudyWorker, whisper_transcribe
@@ -140,7 +141,8 @@ def main() -> None:
     worker = StudyWorker(study, agent, push, audio_dir, whisper_transcribe if whisper_available() else None)
     worker.notebook = notebook
     notes = NotebookWorker(notebook, agent, push)
-    worker.engine = notes.engine = engine
+    reader = PageReader(study.files, agent)  # scans, read once with the model
+    worker.engine = notes.engine = reader.engine = engine
 
     async def plan_limit(paused: dict) -> None:
         """The plan's limit, mid-job: asked in the job's course chat (Professor), with a push."""
@@ -178,6 +180,7 @@ def main() -> None:
             routine_schedule(agent, CONVERSATION, push),
             worker.run(),
             notes.run(),
+            reader.run(),
             *([vault.run()] if vault else []),
             *([moodle.run()] if settings.moodle_url else []),
         ]
