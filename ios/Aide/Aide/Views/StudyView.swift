@@ -71,7 +71,9 @@ private struct CourseRow: View {
     private var detail: String {
         var parts: [String] = []
         if let nb = course.notebook {
-            parts.append(nb.writing == true ? "Notes being written" : "\(nb.topics) topics")
+            // Started with nothing to show or answer yet: the outline is being drafted.
+            let drafting = nb.topics == 0 && (nb.proposals ?? 0) == 0
+            parts.append(nb.writing == true ? "Notes being written" : drafting ? "Topics being drafted" : "\(nb.topics) topics")
             if let p = nb.proposals, p > 0 { parts.append(p == 1 ? "1 to answer" : "\(p) to answer") }
         }
         if let n = course.lectures, n > 0 { parts.append(n == 1 ? "1 lecture" : "\(n) lectures") }
@@ -121,6 +123,13 @@ struct CourseView: View {
             }
             if let writing = notebook?.writing {
                 Section { WritingRow(progress: writing.progress) }
+            } else if notebook?.busy == true {
+                // A job with no proposal yet: the outline at the start, or new material and figures later.
+                Section {
+                    WritingRow(title: (notebook?.topics ?? []).isEmpty ? "Reading the course's files"
+                                                                        : "Working on the notebook",
+                               systemImage: "books.vertical", progress: nil)
+                }
             }
             notebookSection
             Section {
@@ -196,10 +205,11 @@ struct CourseView: View {
         }
         .task { await load() }
         .refreshable { await load() }
-        .task(id: notebook?.writing?.id) {
-            // While notes are written, follow the progress; the result lands in the course's chat too.
-            guard notebook?.writing != nil else { return }
-            while !Task.isCancelled, notebook?.writing != nil {
+        .task(id: "\(notebook?.writing?.id ?? "")\(notebook?.busy == true)") {
+            // While Professor works, follow the progress; the result lands in the course's chat too.
+            func working() -> Bool { notebook?.writing != nil || notebook?.busy == true }
+            guard working() else { return }
+            while !Task.isCancelled, working() {
                 try? await Task.sleep(for: .seconds(4))
                 if let fresh = try? await env.api.notebookPage(course: course.id) { notebook = fresh }
                 if let fresh = try? await env.api.notesWriter() { writer = fresh }
@@ -399,11 +409,13 @@ private struct ProposalCard: View {
 }
 
 private struct WritingRow: View {
+    var title = "Writing the notes"
+    var systemImage = "pencil.and.scribble"
     let progress: NotebookProgress?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Writing the notes", systemImage: "pencil.and.scribble").font(.headline)
+            Label(title, systemImage: systemImage).font(.headline)
             if let progress, progress.total > 0 {
                 ProgressView(value: Double(progress.done), total: Double(progress.total)).tint(Theme.toggle)
                 Text("\(progress.done) of \(progress.total) topics").font(.caption).foregroundStyle(.secondary)
