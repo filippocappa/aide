@@ -117,7 +117,9 @@ link from the result."""
 
 _TRANSIT = """- GTT (Turin's trams, buses and metro): transit_arrivals says when the next ones come, live; with no stop it \
 looks near the user's phone. When you know where the user is going (they say, or memory has their usual places), \
-pass `to` (that place's stop) so only the lines that get there are kept, with the arrival time. The app shows the \
+pass `to` (a stop, or the place's real name or address: "School of Management and Economics", not "uni") so only \
+the lines that get there are kept, with the arrival time. When the user names a place by a nickname ("uni", "the \
+gym", "work") that memory doesn't explain, ask where it is instead of guessing, then remember it. The app shows the \
 departures as cards, so answer in a line or two (which to take, when to leave) rather than repeating every time. A tram alert (add_transit_alert) pushes "your 4 is 9 min away, leave now" on the \
 phone: a one-off for the next tram, or a commute on set days around a time. By default it fires when it's time to \
 leave (the walk from where the phone is, plus 2 minutes); "tell me when it's 10 minutes away" is minutes 10. Each \
