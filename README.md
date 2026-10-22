@@ -1,7 +1,198 @@
-# Aide
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/web/pebble-white.svg">
+    <img src="brand/logo/pebble.svg" width="120" alt="Pebble, Aide's logo">
+  </picture>
+</p>
 
-Personal assistant, backed by Claude, that you talk to through the iOS app (`ios/`, over the HTTP API in
-[docs/API.md](docs/API.md)). See [SPEC.md](SPEC.md) for the original plan and CLAUDE.md for where things stand.
+<h1 align="center">Aide</h1>
+
+<p align="center">
+  A personal assistant for one person, backed by Claude.<br>
+  Calendar, reminders, mail, health, habits and study notes, through chat on the phone.
+</p>
+
+---
+
+Aide is a Python server that runs on a home machine and an iOS app that talks to it over Tailscale. You chat with
+**Aide**, which hands the work to a small team of specialists, each with its own chats, tools and memory:
+
+| Agent | Looks after |
+|---|---|
+| **Aide** | the orchestrator: web, maps, memory, routines; asks the others |
+| **Secretary** | calendar (iCloud), reminders (Apple Reminders), mail (Gmail) |
+| **Professor** | courses, lectures, study files, course notebooks, practice exams |
+| **Coach** | Apple Health, sleep and recovery, habits, food |
+| **Finance** | money (memory only, for now) |
+
+Anything destructive or outward-facing (sending mail, deleting an event, moving a reminder) is queued in code and
+runs only after you tap **Confirm** in the app. The model never runs it directly.
+
+The API is in [docs/API.md](docs/API.md), the contract between the server and the app. [SPEC.md](SPEC.md) is the
+original plan, and [CLAUDE.md](CLAUDE.md) is where things stand.
+
+## How it fits together
+
+```mermaid
+flowchart TB
+    subgraph Phone["📱 iPhone"]
+        direction LR
+        HK["Apple Health"] --> App["Aide app<br/>SwiftUI"]
+        EK["Apple Reminders"] <--> App
+        Obs["Obsidian"]
+    end
+
+    subgraph Server["🖥️ Home server, always on"]
+        API["HTTP API<br/>FastAPI"]
+        Sched["Scheduler<br/>digests · routines · watches"]
+        Loop["Agent loop<br/>Aide + specialists"]
+        Queue["Confirmation queue"]
+        DB[("SQLite")]
+        Workers["Study workers<br/>Whisper · notebook"]
+        Vault["Obsidian vault<br/>WebDAV"]
+    end
+
+    subgraph Outside["☁️ Outside"]
+        direction LR
+        LLM["Claude<br/>OpenRouter or Claude plan"]
+        Services["iCloud Calendar · Gmail<br/>Tavily · Google Maps"]
+        Moodle["University Moodle"]
+        APNs["APNs"]
+    end
+
+    App <-->|"Tailscale"| API
+    API --> Loop
+    Sched --> Loop
+    Loop <--> DB
+    Loop <--> LLM
+    Loop -->|"reads"| Services
+    Loop --> Queue -->|"after Confirm"| Services
+    Moodle --> Workers
+    Workers <--> LLM
+    Workers --> Vault
+    Vault <-->|"WebDAV over Tailscale"| Obs
+    Sched -->|"push"| APNs --> App
+```
+
+## How study notes are made
+
+Professor turns everything a course produces (lecture recordings, slides, Moodle PDFs) into notes you can study
+from, in Obsidian on the phone and the Mac. Two kinds of notes come out of it:
+
+- **Lecture notes**: one page per lecture, written as soon as the lecture is in.
+- **A course notebook**: an Introduction on the exam, then one page per topic in the order it's taught, with an
+  explanation, key terms, formulas, worked examples, figures from the slides, exam-style questions with checked
+  answer keys, and flashcards. It grows as new material comes in, but nothing is written until you say yes.
+
+### From material to notes
+
+```mermaid
+flowchart TD
+    subgraph In["What comes in"]
+        Rec["🎙️ Lecture recording"]
+        Snap["📷 Photos of slides or notes"]
+        PDF["📄 PDF from the app"]
+        MD["🎓 Moodle<br/>every 4 hours"]
+    end
+
+    Rec --> Whisper["Whisper on the GPU<br/>transcript with timestamps"]
+    Whisper --> Lecture
+    Snap --> Lecture["Lecture"]
+    MD -->|"new or changed PDFs"| Files["Study files<br/>text page by page, page images"]
+    PDF --> Files
+    Files -->|"slides close to a lecture"| Lecture
+
+    Lecture --> LNotes["✍️ Lecture notes<br/>one model call"]
+    LNotes --> Sources["Vault: Sources/"]
+    LNotes -->|"posted"| Chat["Course chat with Professor"]
+
+    LNotes -->|"new material"| Triage
+    Files -->|"new material"| Triage["🔎 Triage against the outline<br/>Haiku"]
+
+    Triage -->|"adds nothing"| Drop(["skipped"])
+    Triage -->|"expand a topic,<br/>or a new one"| Proposal["📝 Proposal in the course chat<br/>'Shall I? All of it, some, or not now.'"]
+
+    Proposal --> You{"You"}
+    You -->|"Not now"| Drop
+    You -->|"Apply<br/>all or some"| Pull["Read your Obsidian edits back"]
+
+    Pull --> Scan["Scan new slides for figures<br/>Haiku, 8 at a time"]
+    Scan --> Write["Write or merge each topic page<br/>Sonnet, 3 at a time"]
+    Write --> Check["Check answer keys<br/>Haiku answers blind,<br/>Sonnet fixes what it disputes"]
+    Check --> Page["Topic page + new flashcards"]
+    Page --> V["Vault: topic page, Cards/, Images/"]
+    V --> O["📱 Obsidian on phone and Mac"]
+    Page --> Quiz["🧪 Practice exams<br/>no model call"]
+```
+
+The model calls run in background workers, one job at a time, outside the chat turn that asked for them. They go
+through OpenRouter or through your Claude plan (Claude Code on the server, `claude -p`), as set in the app under
+Settings → *Who writes the notes*. When the plan hits its limit, the job pauses and Professor asks whether to wait
+for the reset or finish on OpenRouter.
+
+### Starting a notebook
+
+```mermaid
+sequenceDiagram
+    actor You
+    participant P as Professor<br/>(course chat)
+    participant W as Notebook worker
+    participant M as Model
+    participant V as Obsidian vault
+
+    You->>P: "Make a notebook for Macroeconomics"
+    P->>W: start job
+    W->>M: Moodle page + exam date + file list
+    M-->>W: Introduction (exam format, textbook, instructors)
+    W->>V: 00 Introduction.md
+    W->>M: a map of every file (first line of each page)
+    M-->>W: topics in teaching order, with their pages
+    W->>P: proposal: 11 topics
+    P->>You: "Here's the plan: 1. Goods market, 2. IS-LM… Shall I?"
+    You->>P: "Yes, all of it"
+    P->>W: apply job
+    loop each topic, 3 at a time
+        W->>M: only that topic's pages (text + images)
+        M-->>W: page + flashcards
+        W->>M: answer the questions blind (Haiku)
+        M-->>W: its picks, and Sonnet fixes any key they dispute
+    end
+    W->>V: 01 … 11 topic pages, Cards/, Images/
+    W->>P: "Wrote the notes: … N flashcards in all. They're in Obsidian."
+    P-->>You: push notification
+```
+
+### Example: a new PDF on Moodle, a week later
+
+1. Moodle sync finds `Lecture 7 - Open economy.pdf` and adds it to the course's study files.
+2. Triage reads the notebook's **outline** (titles, summaries, headings, not the text) and the file's page map,
+   and finds what's new:
+   > New in Macroeconomics: Lecture 7 - Open economy.pdf. I'd add to the notes:
+   > 1. Expand **IS-LM model**: the open-economy IS curve with net exports (p. 3–6)
+   > 2. New topic **Exchange rates**: nominal vs. real, uncovered interest parity (p. 7–15)
+   >
+   > Shall I? All of it, some, or not now.
+3. You answer "just 2" in the chat, or tap **Apply** in the Study tab.
+4. The worker pulls your latest edits from Obsidian, writes *Exchange rates* from pages 7–15 only, checks its
+   answer keys, and slots it in after *IS-LM model*. Its flashcards are **appended** to `Cards/`, so the
+   Spaced Repetition plugin's review history is never lost.
+
+What ends up in the vault for one course:
+
+```
+Aide/Macroeconomics/
+├── 00 Introduction.md          the exam, textbook, instructors
+├── 01 The goods market.md      explanation · key terms · formulas · worked examples
+├── 02 The IS-LM model.md       · figures · exam-style questions (folded answers)
+├── …
+├── Cards/                      question :: answer, tagged #flashcards/macroeconomics
+├── Images/                     slide figures the topic pages show
+├── Sources/                    one page per lecture: its notes
+└── Files/                      the PDFs
+```
+
+Topic pages are shared: edit them in Obsidian and your wording stands; Aide builds on it the next time it adds
+material. Any other page you edit becomes yours, and Aide leaves it alone.
 
 ## Layout
 
@@ -10,14 +201,25 @@ src/aide/
   __main__.py            entry point: wires settings, db, agent, API, background jobs
   config.py              settings from the environment
   db.py                  SQLite (WAL): conversations, messages, audit_log
-  agent.py               Claude tool-use loop and conversation history
-  tools/                 tool registry: clock, calendar, reminders, memory, mail
-  gmail.py, gmail_auth.py  Gmail API client; one-time OAuth sign-in script
-  backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
-  push.py                APNs pushes and the devices table
-  health.py, wake.py     Apple Health days and usual numbers; the wake-up briefing
+  agent.py               Claude tool-use loop, conversation history, the confirmation queue
+  agents.py              Aide and the specialists: prompts, tool sets, colours, starters
+  tools/                 everything that touches the outside world: calendar, reminders, mail, web, maps…
   channels/api.py        the HTTP API the app uses (FastAPI)
-deploy/aide.service      systemd unit
+  scheduler.py           background jobs; routines.py: scheduled agent jobs and watches
+  digest.py              daily, weekly and monthly digests; objectives.py: each specialist's objectives
+  reminders.py, habits.py, food.py, photos.py
+  health.py, wake.py     Apple Health days and usual numbers; the wake-up briefing
+  gmail.py, gmail_auth.py  Gmail API client; one-time OAuth sign-in script
+  push.py                APNs pushes and the devices table
+  study.py, whisper.py   courses, lectures and their notes; transcription on the GPU
+  material.py, moodle.py study files (PDFs) and the Moodle sync
+  notebook.py, quiz.py   course notebooks; practice exams
+  engine.py              who writes the notes: OpenRouter or the Claude plan
+  vault.py, webdav.py    the Obsidian vault and its WebDAV server
+  backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
+ios/Aide/                the iOS app (SwiftUI, iOS 17+)
+brand/                   Pebble, the logo
+deploy/                  systemd units
 ```
 
 ## Setup
