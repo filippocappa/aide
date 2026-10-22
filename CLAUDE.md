@@ -35,6 +35,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes, served by
   `webdav.py` (its own unit, `deploy/aide-webdav.service`, published by `tailscale serve` on 8443). `moodle.py`:
   the university Moodle's PDFs into the study files (login through the app; the token in `.env`).
+- `engine.py`: who writes the notes, OpenRouter or the Claude plan through Claude Code.
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
@@ -178,6 +179,10 @@ are written. Live on macroeconomics (11 topics, 25 figures).
 Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's checked MCQs, no model call, missed
 questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
 result in the chat.
+Since 2026-10-22 (`engine.py`, contract "Who writes the notes"): lecture notes and notebook jobs can run on the
+user's Claude plan through Claude Code on `cappa` (`claude -p`, Sonnet writes, Haiku reads; set in Settings → Who
+writes the notes; on now). At the plan's limit a job pauses and Professor asks: wait, or finish on OpenRouter.
+Figures come from a Haiku scan of every slide (`page_looks`); "Find figures in the slides" re-picks them.
 Study tab (both sides): courses with their notebook in brief, a course page with proposals (Apply / Not now), the
 writing progress, Ask Professor, Practice exam, the Introduction and topic pages (notes with figures from
 `GET /v1/files/{id}/pages/{n}`, folded answers, flashcards; `plain=true` reads), lectures, PDFs, and adding a PDF or
