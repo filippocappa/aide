@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 
+from . import activity
 from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WRITES, check_agent, mentions
 from .db import Database, utcnow
 from .photos import PhotoStore
@@ -171,6 +172,9 @@ class Agent:
             self.db.append_turn(conversation_id, "app", [
                 {"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] {note}"},
                 {"role": "assistant", "content": [{"type": "text", "text": text}]}])
+            row = self.db.app_conversation(conversation)
+            activity.record(self.db.conn, row["agent"] if row else ORCHESTRATOR, "message",
+                            (row["title"] if row else None) or "Wrote to you", text, conversation)
 
     def delete_conversation(self, channel: str, conversation: str) -> None:
         if conversation == channel:
@@ -208,9 +212,10 @@ class Agent:
         """One line per action waiting for the user's !yes, written by code, not the model."""
         return [p["summary"] for p in self.db.pending_actions(channel, PENDING_TTL)]
 
-    async def confirm(self, channel: str) -> str:
+    async def confirm(self, channel: str, ids: list[int] | None = None) -> str:
+        """Run every pending action, or only those with the given ids."""
         async with self._lock:
-            actions = self.db.pending_actions(channel, PENDING_TTL)
+            actions = [a for a in self.db.pending_actions(channel, PENDING_TTL) if ids is None or a["id"] in ids]
             if not actions:
                 return "Nothing is waiting for confirmation."
             lines = []
@@ -218,6 +223,8 @@ class Agent:
                 out, err = await self._execute(action["tool"], action["args"])
                 self.db.set_pending_status(action["id"], "failed" if err else "done")
                 lines.append(("✗ " if err else "✓ ") + out)
+                activity.record(self.db.conn, action["agent"] or ORCHESTRATOR, "failed" if err else "confirmed",
+                                action["summary"], out, action["conversation"] or channel)
             result = "\n".join(lines)
             # Each chat that queued something learns how its own actions went.
             for conversation in dict.fromkeys(a["conversation"] for a in actions):
@@ -225,11 +232,15 @@ class Agent:
                 self._note(channel, conversation, f"[The user replied !yes. Results:\n{own}]")
             return result
 
-    async def cancel(self, channel: str) -> str:
+    async def cancel(self, channel: str, ids: list[int] | None = None) -> str:
+        """Cancel every pending action, or only those with the given ids."""
         async with self._lock:
-            actions = self.db.pending_actions(channel, PENDING_TTL)
-            if not self.db.cancel_pending(channel):
+            actions = [a for a in self.db.pending_actions(channel, PENDING_TTL) if ids is None or a["id"] in ids]
+            if not self.db.cancel_pending(channel, ids):
                 return "Nothing to cancel."
+            for a in actions:
+                activity.record(self.db.conn, a["agent"] or ORCHESTRATOR, "cancelled", a["summary"],
+                                conversation=a["conversation"] or channel)
             for conversation in dict.fromkeys(a["conversation"] for a in actions):
                 self._note(channel, conversation, "[The user replied !no. The queued actions were cancelled.]")
             return "Cancelled. Nothing was changed."
@@ -348,10 +359,14 @@ class Agent:
             reply = await self._run(routine["agent"], channel, model, history, turn)
             if self._watching and _nothing(reply):
                 self.routines.mark_run(routine["id"])
+                activity.record(self.db.conn, routine["agent"], "quiet", routine["title"],
+                                "Checked: nothing needed you.", conversation)
                 return None, 0
             self.db.append_turn(conversation_id, "app", turn, _merge(self._attachments), list(self._consulted),
                                 list(self._team), {"id": routine["id"], "title": routine["title"]})
             self.routines.mark_run(routine["id"])
+            activity.record(self.db.conn, routine["agent"], "watch" if routine.get("watch") else "routine",
+                            routine["title"], reply, conversation)
             queued = [a for a in self.db.pending_actions(channel, PENDING_TTL) if a["id"] not in before]
             return reply, len(queued)
 
@@ -422,6 +437,8 @@ class Agent:
                 raise ValueError(f"already asked {MAX_ASKS} times this turn; answer with what you have")
             self._consulted.append(agent)  # before any await, so parallel asks keep their order
             self._say(ORCHESTRATOR, agent, request)
+            activity.record(self.db.conn, ORCHESTRATOR, "ask", f"Asked {AGENTS[agent].name}", request,
+                            self._conversation or self._channel)
             # One stateless turn: the specialist sees only the request (and the turn's photos), and nothing is
             # stored in its chats.
             photos = "".join(f"\n[Photo {p}]" for p in self._photos)
@@ -592,6 +609,9 @@ class Agent:
                 out, err = await self._execute(name, args, self.registries[agent])
                 if not err and getattr(out, "attachment", None):
                     self._attachments.append(out.attachment)
+                if not err and name in WRITES and name != "ask_agent":
+                    activity.record(self.db.conn, agent, "action", activity.label(name), out,
+                                    self._conversation or channel)
                 return out, err
             # Queue instead of running. describe() also validates, so impossible actions fail now.
             summary = await tool.describe(**args) if tool.describe else f"{name} {args}"
@@ -600,8 +620,9 @@ class Agent:
             self.db.audit(name, args, f"Error: {e}", True)
             return f"Error: {e}", True
         target = str(args[tool.target_arg]) if tool.target_arg else None
-        action_id, replaced = self.db.add_pending(channel, name, args, summary, target, self._conversation)
+        action_id, replaced = self.db.add_pending(channel, name, args, summary, target, self._conversation, agent)
         self.db.audit(name, args, f"queued #{action_id}: {summary}")
+        activity.record(self.db.conn, agent, "queued", summary, conversation=self._conversation or channel)
         note = " This replaces the change queued earlier for it." if replaced else ""
         return f"Queued, waiting for the user's !yes: {summary}.{note}", False
 

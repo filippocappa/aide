@@ -140,6 +140,28 @@ final class APIClient {
         try await send("POST", "/v1/cancel", body: EmptyBody())
     }
 
+    /// Only these queued actions; the rest keep waiting.
+    func confirm(ids: [Int]) async throws -> ActionResult {
+        try await send("POST", "/v1/confirm", body: ActionIDs(ids: ids), timeout: 120)
+    }
+
+    func cancel(ids: [Int]) async throws -> ActionResult {
+        try await send("POST", "/v1/cancel", body: ActionIDs(ids: ids))
+    }
+
+    // MARK: Activity and approvals
+
+    func activity(agent: String? = nil, before: Int? = nil, limit: Int = 100) async throws -> ActivityPage {
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
+        if let before { query.append(URLQueryItem(name: "before", value: String(before))) }
+        return try await send("GET", "/v1/activity", query: query)
+    }
+
+    func approvals() async throws -> Approvals {
+        try await send("GET", "/v1/approvals")
+    }
+
     func think(conversationID: String? = nil) async throws {
         let _: OKResponse = try await send("POST", "/v1/think", body: ConversationBody(conversationId: conversationID))
     }

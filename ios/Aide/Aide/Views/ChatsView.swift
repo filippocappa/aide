@@ -16,6 +16,12 @@ struct ChatsView: View {
     @State private var showTeam = false
     /// Picked with "Open chat" in the team chat; opened once that screen is gone.
     @State private var openAfterTeam: String?
+    /// The Activity sheet: everyone's (`.everyone`) or one agent's.
+    @State private var activity: ActivityScope?
+    /// Picked in the Activity sheet; opened once it's gone.
+    @State private var openAfterActivity: String?
+    /// Things waiting for your OK, for the bell's badge.
+    @State private var waiting = 0
 
     var body: some View {
         NavigationStack {
@@ -57,6 +63,9 @@ struct ChatsView: View {
                 RoutinesSheet(agent: agent) { choice = $0; routinesFor = nil }
             }
             .sheet(item: $infoFor) { AgentInfoSheet(agent: $0) }
+            .sheet(item: $activity, onDismiss: afterActivity) { scope in
+                ActivitySheet(agent: scope.agent) { id in openAfterActivity = id; activity = nil }
+            }
             .refreshable { await load() }
             .task {
                 await load()
@@ -82,6 +91,23 @@ struct ChatsView: View {
         HStack(alignment: .center) {
             Text("Your team").font(.largeTitle.bold())
             Spacer()
+            Button { activity = .everyone } label: {
+                HeaderIcon(name: "bell")
+                    .overlay(alignment: .topTrailing) {
+                        if waiting > 0 {
+                            Text("\(waiting)")
+                                .font(.caption2.weight(.bold)).monospacedDigit()
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .frame(minWidth: 18, minHeight: 18)
+                                .background(.red, in: Capsule())
+                                .offset(x: 4, y: -2)
+                        }
+                    }
+            }
+                .buttonStyle(.plain)
+                .accessibilityLabel(waiting > 0 ? "Activity, \(waiting) waiting for you" : "Activity")
+                .disabled(!settings.isConfigured)
             Button {
                 digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
                 digest.isPresented = true
@@ -103,6 +129,7 @@ struct ChatsView: View {
             Button("New chat", systemImage: "square.and.pencil") { Task { await chat.startChat(with: agent) } }
             Button("Past chats", systemImage: "clock") { pastChats = agent }
             Button("Routines", systemImage: "alarm") { routinesFor = agent }
+            Button("Activity", systemImage: "list.bullet.rectangle") { activity = .agent(agent) }
             Button("About \(agent.name)", systemImage: "info.circle") { infoFor = agent }
         }
     }
@@ -111,10 +138,25 @@ struct ChatsView: View {
         async let agents: Void = chat.loadAgents()
         async let team: Void = chat.loadTeam()
         async let routines: Void = chat.loadRoutines()
+        async let approvals = try? env.api.approvals()
         await chat.loadConversations()
         await agents
         await team
         await routines
+        if let approvals = await approvals { waiting = approvals.waiting } // an older server: no badge
+    }
+
+    /// A line tapped in the Activity sheet: its chat. "team" is the team chat, "main" the old shared chat, which the
+    /// app shows as Aide's latest.
+    private func afterActivity() {
+        Task { await load() } // answered something: the badge may have changed
+        guard let id = openAfterActivity else { return }
+        openAfterActivity = nil
+        switch id {
+        case "team": showTeam = true
+        case "main": Task { await chat.talk(to: chat.orchestrator) }
+        default: Task { await chat.open(id: id) }
+        }
     }
 
     #if DEBUG

@@ -55,8 +55,21 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     target     TEXT,  -- what the action changes; a newer action on the same target replaces it
     conversation TEXT,  -- public id of the app chat that queued it; NULL means the shared conversation
     created_at TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'pending'  -- pending, done, failed, cancelled, expired, replaced
+    status     TEXT NOT NULL DEFAULT 'pending',  -- pending, done, failed, cancelled, expired, replaced
+    agent      TEXT  -- the agent that queued it
 );
+
+-- What the agents did, newest last (activity.py).
+CREATE TABLE IF NOT EXISTS activity (
+    id           INTEGER PRIMARY KEY,
+    ts           TEXT NOT NULL,  -- UTC
+    agent        TEXT NOT NULL,
+    kind         TEXT NOT NULL,  -- action, queued, confirmed, failed, cancelled, routine, watch, quiet, ask, message, objectives, digest
+    title        TEXT NOT NULL,
+    detail       TEXT,
+    conversation TEXT  -- the chat it happened in: a public id, 'main' or 'team'
+);
+CREATE INDEX IF NOT EXISTS activity_ts ON activity(ts);
 
 -- Short facts the model sees in every conversation.
 CREATE TABLE IF NOT EXISTS memory (
@@ -157,6 +170,8 @@ class Database:
             self.conn.execute("UPDATE pending_actions SET target = json_extract(args, '$.event_id')")
         if "conversation" not in columns:
             self.conn.execute("ALTER TABLE pending_actions ADD COLUMN conversation TEXT")
+        if "agent" not in columns:  # databases created before the activity feed
+            self.conn.execute("ALTER TABLE pending_actions ADD COLUMN agent TEXT")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(routines)")}
         if "watch" not in columns:  # databases created before watches
             self.conn.execute("ALTER TABLE routines ADD COLUMN watch INTEGER NOT NULL DEFAULT 0")
@@ -318,7 +333,7 @@ class Database:
     # -- pending actions -----------------------------------------------------
 
     def add_pending(self, channel: str, tool: str, args: dict, summary: str, target: str | None = None,
-                    conversation: str | None = None) -> tuple[int, int]:
+                    conversation: str | None = None, agent: str | None = None) -> tuple[int, int]:
         """Queue an action. Returns (new id, number of older actions on the same target it replaced)."""
         with self.conn:
             self.conn.execute("BEGIN")
@@ -330,9 +345,9 @@ class Database:
                     (channel, target),
                 ).rowcount
             cur = self.conn.execute(
-                "INSERT INTO pending_actions (channel, tool, args, summary, target, conversation, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (channel, tool, json.dumps(args), summary, target, conversation, utcnow().isoformat()),
+                "INSERT INTO pending_actions (channel, tool, args, summary, target, conversation, created_at, agent) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (channel, tool, json.dumps(args), summary, target, conversation, utcnow().isoformat(), agent),
             )
         return cur.lastrowid, replaced
 
@@ -343,12 +358,12 @@ class Database:
             (cutoff,),
         )
         rows = self.conn.execute(
-            "SELECT id, tool, args, summary, conversation FROM pending_actions "
+            "SELECT id, tool, args, summary, conversation, agent, created_at FROM pending_actions "
             "WHERE channel = ? AND status = 'pending' ORDER BY id",
             (channel,),
         ).fetchall()
         return [{"id": r["id"], "tool": r["tool"], "args": json.loads(r["args"]), "summary": r["summary"],
-                 "conversation": r["conversation"]} for r in rows]
+                 "conversation": r["conversation"], "agent": r["agent"], "created_at": r["created_at"]} for r in rows]
 
     def set_pending_status(self, action_id: int, status: str) -> None:
         self.conn.execute("UPDATE pending_actions SET status = ? WHERE id = ?", (status, action_id))

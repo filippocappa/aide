@@ -21,6 +21,7 @@ import secrets
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from . import activity
 from .agents import AGENTS, SPECIALISTS, check_agent
 from .db import utcnow
 from .notebook import date_line
@@ -516,6 +517,11 @@ class ObjectivePlanner:
                 items = items[:DAY_TOTAL]
             made = self.store.replace_proposals(period, d, agents, items)
             log.info("objectives: %d proposed for the %s of %s", len(made), period, bounds(period, d)[0])
+            for a in agents:
+                if mine := [o["title"] for o in made if o["agent"] == a]:
+                    activity.record(self.store.conn, a, "objectives",
+                                    f"Proposed {len(mine)} objective{'s' if len(mine) != 1 else ''} for the {period}",
+                                    "; ".join(mine))
             return made
 
     def _parse(self, answer: str, agents: list[str], most: int, parents: dict[str, int]) -> list[dict]:

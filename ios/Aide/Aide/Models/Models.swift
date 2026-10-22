@@ -860,6 +860,53 @@ struct SyncResponse: Decodable {
     private enum CodingKeys: String, CodingKey { case cursor, reminders }
 }
 
+// MARK: - Activity and approvals (docs/API.md, "Activity and approvals")
+
+/// One thing an agent did.
+struct ActivityItem: Decodable, Identifiable, Hashable {
+    let id: Int
+    let ts: String
+    let agent: String
+    /// action, queued, confirmed, failed, cancelled, routine, watch, quiet, ask, message, objectives, digest;
+    /// others show as a plain line.
+    let kind: String
+    let title: String
+    var detail: String?
+    /// The chat it happened in: a chat id, "main", "team", or nil.
+    var conversationId: String?
+
+    var date: Date? { Wire.parse(ts) }
+}
+
+struct ActivityPage: Decodable {
+    let items: [ActivityItem]
+    /// The `before` for the next page; nil at the end.
+    var next: Int?
+}
+
+/// An action in the confirmation queue, with who queued it and from where.
+struct QueuedAction: Decodable, Identifiable, Hashable {
+    let id: Int
+    let summary: String
+    let agent: String
+    var conversationId: String?
+    var createdAt: String?
+    var expiresAt: String?
+}
+
+/// Everything waiting for your OK, and the routines coming up.
+struct Approvals: Decodable {
+    var waiting: Int
+    var actions: [QueuedAction]
+    var objectives: [Objective]
+    var proposals: [NotebookProposal]
+    var writer: WriterPause?
+    var upcoming: [Routine]
+}
+
+/// Which queued actions to confirm or cancel.
+struct ActionIDs: Encodable { let ids: [Int] }
+
 // MARK: - Dates
 
 /// ISO 8601 with offset for times, `YYYY-MM-DD` for days.
@@ -932,6 +979,10 @@ struct NotebookProposal: Decodable, Hashable, Identifiable {
     var items: [ProposalItem]?
     var material: [String]?
     var result: String?
+    var course: Int?
+    /// In approvals only: the course's name and its Professor chat.
+    var courseName: String?
+    var conversationId: String?
 }
 
 struct ProposalItem: Decodable, Hashable, Identifiable {
