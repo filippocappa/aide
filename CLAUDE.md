@@ -210,6 +210,8 @@ planner, Professor's `list_courses` and the Introduction's Dates section use the
    instead of chat (#15). (#14, Goals, is mostly covered by objectives.)
 3. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
    for the other courses. Finance still has no data source (memory only).
+4. Objectives, server: Professor plans again when the study material changes, a study measure, new topics in the
+   planner's context (#19); titles saying "N more" while the target counts the whole period (#20).
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
