@@ -908,7 +908,7 @@ extension JSONEncoder {
 
 // MARK: Course notebooks (docs/API.md, "Notebook")
 
-/// A course's notebook (docs/API.md, "Notebook"). The course chat's progress bar only needs `writing`.
+/// A course's notebook (docs/API.md, "Notebook"). The course chat's progress bar only needs `writing` and `step`.
 struct NotebookStatus: Decodable {
     var writing: NotebookProposal?
     var started: Bool?
