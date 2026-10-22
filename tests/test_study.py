@@ -13,6 +13,8 @@ from aide.agents import STUDY, connectors
 from aide.channels.api import create_app
 from aide.db import Database
 from aide.icloud import CalEvent
+from aide.material import READ_PROMPT, READ_TRIES, PageReader
+from aide.notebook import NotebookStore
 from aide.photos import PhotoStore
 from aide.push import Push
 from aide.reminders import ReminderStore
@@ -381,3 +383,75 @@ async def test_professor_reads_files(env, tmp_path):
     searched, read = (m["content"][0]["content"] for m in client.requests[2]["messages"][-3::2])
     assert f"[{f['id']}] Week 3 slides.pdf, p. 2" in searched
     assert "[p. 2]\nLM: liquidity" in read and "[p. 1]" not in read
+
+
+async def read_all(reader: PageReader) -> None:
+    while nxt := reader.files.to_read():
+        await reader.read(*nxt)
+
+
+async def test_scanned_pages_are_read_once_with_the_model(env, tmp_path):
+    api, study, worker, _, client = env()
+    api.get("/v1/study", headers=AUTH)
+    macro = study.course_by_name("macroeconomics")["id"]
+    reader = PageReader(study.files, worker.agent)
+    notebook = NotebookStore(study)
+    tools = ToolRegistry(study_tools(study, ROME, tmp_path / "audio"))
+    scan = add_pdf(api, make_pdf(None, ["", "", "p"]), course=macro).json()
+    deck = add_pdf(api, make_pdf(None, ["Matrices and vectors: the first slide of a deck\nwith enough text on it "
+                                        "to be read as text, not as a scan", ""]), course=macro).json()
+    assert scan["scanned"] and not deck["scanned"] and reader._wake.is_set()  # an upload wakes the reader
+    assert "(a scan: its pages aren't read yet)" in notebook.material_map(macro)
+    assert "haven't been read yet" in await tools.call("read_file", {"file_id": scan["id"]})
+
+    client.responses = [done("```markdown\n# Determinanti\nPer una matrice $2 \\times 2$: $ad - bc$\n```"),
+                        done("(blank)"), done("- Riga: 1; Colonna: 2"), done("[Figure: a parabola, $y = x^2$]")]
+    await read_all(reader)
+    assert len(client.requests) == 4  # the scan's three pages and the deck's empty one; nothing else
+    request = client.requests[0]
+    assert (request["system"], request["model"]) == (READ_PROMPT, "smart") and len(images(request)) == 1
+    assert request["messages"][-1]["content"][0]["text"] == f"{scan['name']}, page 1 of 3:"
+    f = study.files.get(scan["id"])
+    assert study.files.pages(f) == [(1, "# Determinanti\nPer una matrice $2 \\times 2$: $ad - bc$"), (2, ""),
+                                    (3, "- Riga: 1; Colonna: 2")]
+    assert study.files.read_pages(f) == {1, 2, 3} and study.files.to_read() is None  # a restart finds nothing
+    assert [(x["public_id"], x["page"]) for x in study.files.search("determinanti")] == [(scan["id"], 1)]
+    assert [x["page"] for x in study.files.search("parabola")] == [2]
+    mapped = notebook.material_map(macro)
+    assert "  p.1: # Determinanti" in mapped and "  p.2: (no text)" in mapped and "not read" not in mapped
+    assert "[p. 3]\n- Riga" in await tools.call("read_file", {"file_id": scan["id"]})
+
+    # A new version of the file (Moodle's, by its key) is read again.
+    study.files.conn.execute("UPDATE study_files SET source_key = 'k' WHERE public_id = ?", (scan["id"],))
+    make_pdf(tmp_path / "new.pdf", ["", "", ""])
+    await study.files.add(tmp_path / "new.pdf", "Scan.pdf", course_id=macro, source_key="k")
+    assert study.files.to_read() == (study.files.get(scan["id"]), 1)
+    assert study.files.search("determinanti") == []
+
+
+async def test_a_page_that_cant_be_read_is_left_as_it_is(env):
+    api, study, worker, _, client = env()
+    reader = PageReader(study.files, worker.agent)
+    reader.retry = 0
+    scan = add_pdf(api, make_pdf(None, ["", "p"])).json()
+    calls = []
+
+    async def down(content):
+        calls.append(content)
+        raise RuntimeError("OpenRouter is down")
+    reader._ask = down
+    await read_all(reader)
+    assert len(calls) == 2 * READ_TRIES  # each page tried that many times, then left
+    f = study.files.get(scan["id"])
+    assert study.files.pages(f) == [(1, ""), (2, "p")] and study.files.read_pages(f) == set()
+
+    # A file renamed (or replaced) while its page is read: the answer is dropped, and the page read again.
+    study.files.conn.execute("DELETE FROM read_pages")
+    del reader._ask
+    client.responses = [done("Una pagina"), done("Una pagina"), done("Seconda")]
+    nxt = study.files.to_read()
+    assert api.patch(f"/v1/files/{scan['id']}", json={"name": "Renamed"}, headers=AUTH).status_code == 200
+    await reader.read(*nxt)
+    assert study.files.read_pages(f) == set()
+    await read_all(reader)
+    assert study.files.pages(f) == [(1, "Una pagina"), (2, "Seconda")]

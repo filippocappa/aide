@@ -500,10 +500,14 @@ class NotebookStore:
             out = []
             for f in files:
                 out.append(f"[{f['public_id']}] {f['name']} · {f['section'] or 'no section'} · {f['pages']} pages")
-                if f["scanned"]:
-                    out.append("  (a scan: no text layer)")
+                read = self.files.read_pages(f) if f["scanned"] else None
+                if read is not None and not read:
+                    out.append("  (a scan: its pages aren't read yet)")
                     continue
                 for n, text in self.files.pages(f):
+                    if read is not None and n not in read:
+                        out.append(f"  p.{n}: (a scan: not read yet)")
+                        continue
                     first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
                     out.append(f"  p.{n}: {first[:width]}" if first else f"  p.{n}: (no text)")
             for lec in sorted(lectures, key=lambda r: r["recorded_at"]):

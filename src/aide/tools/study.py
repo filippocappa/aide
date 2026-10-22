@@ -112,8 +112,8 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
 
     async def read_file(file_id: str, first_page: int = 1, last_page: int | None = None) -> str:
         f = store.files.find(file_id)
-        if f["scanned"]:
-            return f"{file_line(f)}\nIt's a scan with no text layer, so it can't be read here."
+        if f["scanned"] and not store.files.read_pages(f):
+            return f"{file_line(f)}\nIt's a scan whose pages haven't been read yet, so it can't be read here."
         text = store.files.text(f, max(1, first_page), last_page)
         if len(text) > FILE_CHARS:
             text = text[:FILE_CHARS] + "\n(cut here: read the next pages on their own)"
