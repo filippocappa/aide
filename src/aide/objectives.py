@@ -6,8 +6,11 @@ the week, the monthly one for the month), or when asked: one model call proposes
 from what the server knows (calendar, reminders, habits, food, sleep, courses and practice exams, memory, the
 objectives above and how the last period went). They wait as `proposed` until the user OKs them (Accept in the app,
 or saying so in chat); a proposal not taken lapses with its period. Progress is worked out on every read from the
-data behind an objective's measure (habit check-ins, practice exams, the food log, sleep, steps, a reminder), so it
-ticks itself; one without a measure is ticked by hand.
+data behind an objective's measure (habit check-ins, practice exams, notebook topics, the food log, sleep, steps, a
+reminder), so it ticks itself; one without a measure is ticked by hand.
+
+When a course's notes or dates change (a notebook proposal applied, the user's edit in Obsidian, new dates read),
+StudyReplanner plans Professor's day and week again a little later, so the proposals follow what's new.
 """
 
 import asyncio
@@ -27,10 +30,14 @@ log = logging.getLogger(__name__)
 PERIODS = ("day", "week", "month")
 MOST = {"day": 2, "week": 3, "month": 2}  # proposals per specialist
 DAY_TOTAL = 6  # proposals for a day, all specialists together
-MEASURES = ("habit", "practice", "food", "sleep", "steps", "reminder")
+MEASURES = ("habit", "practice", "notes", "food", "sleep", "steps", "reminder")
 FOOD_METRICS = ("logged", "protein_g", "calories")
 CALORIE_BAND = 0.1  # a calorie goal is met within 10% either way
 COURSE_DATES_AHEAD = 120  # days: a course's exams and deadlines the planner sees
+NEW_NOTES_DAYS = 7  # the planner sees the notebook topics changed in this many days
+MISSED_QUIZZES = 10  # ... and the topics most missed in this many recent practice exams
+REPLAN_SETTLE = 600  # seconds after a course's last change before Professor's plan is made again
+REPLAN_GAP = 1800  # seconds between two of those, at least
 MAX_TITLE = 120
 MAX_TARGET = 100
 STATUSES = ("proposed", "active", "dropped")
@@ -160,6 +167,11 @@ class ObjectiveStore:
             if score is not None and not 0 < float(score) <= 100:
                 raise ValueError("score is a percentage, 1 to 100")
             return {"type": "practice", "course": course, **({"score": round(float(score))} if score else {})}
+        if kind == "notes":
+            course = int(measure.get("course") or 0)
+            if not self.conn.execute("SELECT 1 FROM courses WHERE id = ?", (course,)).fetchone():
+                raise ValueError(f"no course {measure.get('course')}")
+            return {"type": "notes", "course": course}
         if kind == "food":
             metric = measure.get("metric")
             if metric not in FOOD_METRICS:
@@ -298,6 +310,13 @@ class ObjectiveStore:
                 return 0
             need = m.get("score", 0) / 100
             return sum(1 for r in rows if (r[0] or 0) >= need * len(json.loads(r[1])))
+        if m["type"] == "notes":
+            try:
+                return self.conn.execute(
+                    "SELECT COUNT(DISTINCT topic_id) FROM topic_changes WHERE course_id = ? AND at >= ? AND at < ?",
+                    (m["course"], self._utc(first), self._utc(last + timedelta(days=1)))).fetchone()[0]
+            except Exception:  # no notebooks: the table isn't there
+                return 0
         if m["type"] == "food":
             if self.food is None:
                 return 0
@@ -330,6 +349,9 @@ class ObjectiveStore:
                 row = self.conn.execute("SELECT name FROM courses WHERE id = ?", (m["course"],)).fetchone()
                 score = f" at {m['score']}% or more" if m.get("score") else ""
                 return f"practice exams in {row[0] if row else 'a course'}{score}"
+            case "notes":
+                row = self.conn.execute("SELECT name FROM courses WHERE id = ?", (m["course"],)).fetchone()
+                return f"{row[0] if row else 'a course'} notebook topics written or revised"
             case "food":
                 return {"logged": "days with meals logged", "protein_g": "days at the protein goal",
                         "calories": "days at the calorie goal"}[m["metric"]]
@@ -428,6 +450,8 @@ Tie each to a measure when one fits, so it ticks itself; otherwise the person ti
 - {{"type": "habit", "habit": <habit id>}}: check-ins of that habit in the period; target = how many.
 - {{"type": "practice", "course": <course id>, "score": <percent, optional>}}: practice exams finished; target = \
 how many.
+- {{"type": "notes", "course": <course id>}}: notebook topics written or revised in the period (the notes Aide \
+writes once the user OKs them, and the user's own edits in Obsidian); target = how many topics.
 - {{"type": "food", "metric": "logged" | "protein_g" | "calories"}}: days with meals logged, or at that goal (only \
 if the goal is set); target = days.
 - {{"type": "sleep", "hours": 7.5}} or {{"type": "steps", "steps": 8000}}: nights or days at or above it (only with \
@@ -436,7 +460,9 @@ health data); target = how many.
 several reminders has measure null.
 - null: ticked by hand.
 A measure counts the whole period, days already gone included ("so far this period" says how far along it is): \
-set the target above that, or it's met before it starts.
+set the target above that, or it's met before it starts. The person sees "<progress> of <target>" under the title, \
+so the title says the same total for the whole period: "Sleep 7h or more on 5 nights this week" with target 5, \
+never "3 more nights" or "3 of the next 4 nights" (which would read 2 of 5 under it).
 
 Reply with a JSON list only, nothing before or after:
 [{{"agent": "professor", "title": "short, in the imperative, under 80 characters", "why": "one short line: why now", \
@@ -629,11 +655,38 @@ class ObjectivePlanner:
                 coming = [d for d in self.notebook.dates(c["id"], since=today)
                           if date.fromisoformat(d["date"]) <= today + timedelta(days=COURSE_DATES_AHEAD)]
                 out += [f"  - {date_line(d, today)}" for d in coming]
+                since = datetime.combine(today - timedelta(days=NEW_NOTES_DAYS), time.min, self.tz)
+                new = self.notebook.changes(c["id"], since.astimezone(timezone.utc))
+                if new:
+                    out.append(f"  - Notes written or changed in the last {NEW_NOTES_DAYS} days: " + ", ".join(
+                        f"{t['title']} ({datetime.fromisoformat(t['at']).astimezone(self.tz):%a %d %b}"
+                        f"{', by the user' if t['by_user'] else ''})" for t in new[:12]))
+            if missed := self._missed(c["id"]):
+                out.append(f"  - Topics most missed in recent practice exams: {missed}")
         lectures = [e for e in await self._events(start, end) if self.study.calendar
                     and e.calendar == self.study.study_calendar]
         if lectures:
             out += ["Lectures in the period:", *(f"- {self._when(e)} {e.title}" for e in lectures[:40])]
         return out if len(out) > 1 else []
+
+    def _missed(self, course_id: int) -> str:
+        """The weakest topics in the course's recent practice exams: "IS-LM 2/6 right, ..."; '' with none."""
+        try:
+            rows = self.store.conn.execute(
+                "SELECT questions, answers FROM quizzes WHERE course_id = ? AND finished_at IS NOT NULL "
+                "ORDER BY finished_at DESC LIMIT ?", (course_id, MISSED_QUIZZES)).fetchall()
+        except Exception:
+            return ""
+        topics: dict[str, list[int]] = {}  # title → [right, asked]
+        for questions, answers in rows:
+            given = json.loads(answers or "{}")
+            for n, q in enumerate(json.loads(questions), 1):
+                if q.get("topic_title"):
+                    t = topics.setdefault(q["topic_title"], [0, 0])
+                    t[0] += given.get(str(n)) == q.get("key")
+                    t[1] += 1
+        weak = sorted((r / n, title, r, n) for title, (r, n) in topics.items() if n >= 2 and r / n < 0.7)
+        return ", ".join(f"{title} {r}/{n} right" for _, title, r, n in weak[:3])
 
     def _coach(self, today: date, since: date | None = None) -> list[str]:
         """Coach's data: the last 7 days, and with `since`, the period so far (it counts toward its measures)."""
@@ -693,3 +746,71 @@ class ObjectivePlanner:
                 if walked:
                     out.append(f"- Steps each day: {', '.join(walked)}")
         return out
+
+
+class StudyReplanner:
+    """Plans Professor's day and week again when a course's notes or dates change, so the proposals follow what's
+    new. It waits for the changes to settle (a notebook update writes several topics), keeps a gap between two
+    plans, and leaves alone a period whose Professor objectives the user has already taken with none waiting:
+    nothing is piled on top of what they OK'd. No push; the app's badge shows the new proposals."""
+
+    def __init__(self, planner: ObjectivePlanner, settle: float = REPLAN_SETTLE, gap: float = REPLAN_GAP):
+        self.planner = planner
+        self.store = planner.store
+        self.settle = settle
+        self.gap = gap
+        self.reasons: list[str] = []
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._timer: asyncio.TimerHandle | None = None
+        self._last = 0.0  # loop time of the last plan
+        self._running: asyncio.Task | None = None
+
+    def start(self) -> None:
+        """Bind to the running loop; changes before this are ignored (nothing's listening yet)."""
+        self._loop = asyncio.get_running_loop()
+
+    def changed(self, course_id: int, what: str) -> None:
+        """A notebook listener: may be called from a thread (the vault's pull)."""
+        if self._loop is not None and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._schedule, course_id, what)
+
+    def _schedule(self, course_id: int, what: str) -> None:
+        row = self.store.conn.execute("SELECT name FROM courses WHERE id = ?", (course_id,)).fetchone()
+        reason = f"{row[0] if row else 'a course'}: {what}"
+        if reason not in self.reasons:
+            self.reasons.append(reason)
+        if self._timer:
+            self._timer.cancel()
+        delay = max(self.settle, self._last + self.gap - self._loop.time()) if self._last else self.settle
+        self._timer = self._loop.call_later(delay, self._fire)
+
+    def _fire(self) -> None:
+        self._timer = None
+        if self._running and not self._running.done():  # still planning: once more after it
+            self._timer = self._loop.call_later(self.settle, self._fire)
+            return
+        self._running = self._loop.create_task(self.replan())
+
+    def due(self, period: str, d: date) -> bool:
+        """Whether Professor's plan for the period should be made again: it was planned, and Professor has
+        proposals waiting in it or nothing taken."""
+        if not self.store.planned(period, d):
+            return False  # the digest that opens it plans it, with everything new
+        mine = [o for o in self.store.objectives(period, d, ["professor"]) if self.store.status(o) != "lapsed"]
+        return any(o["status"] == "proposed" for o in mine) or not any(o["status"] == "active" for o in mine)
+
+    async def replan(self) -> list[dict]:
+        reasons, self.reasons = self.reasons, []
+        self._last = self._loop.time() if self._loop else 0.0
+        today = self.store.today()
+        made = []
+        for period in ("week", "day"):  # the week first: the day's serve it
+            if not self.due(period, today):
+                log.info("objectives: Professor's %s left as it is (taken, nothing waiting)", period)
+                continue
+            try:
+                made += await self.planner.plan(period, today, ["professor"])
+                log.info("objectives: replanned Professor's %s after %s", period, "; ".join(reasons))
+            except Exception:
+                log.exception("objectives: Professor's %s couldn't be planned again", period)
+        return made

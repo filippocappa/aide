@@ -290,3 +290,91 @@ def test_every_agent_has_the_objective_tools(env, tmp_path):
         assert "accept_objectives" in [t.name for t in registry]
     assert "plan_objectives" in WRITES
     assert any(c["id"] == "objectives" for c in connectors([t.name for t in agent.registries["coach"]]))
+
+
+def test_notes_measure_counts_topics_written_or_revised(env):
+    store, planner, _, db, study = env
+    notebook = planner.notebook
+    heard = []
+    notebook.on_change.append(lambda cid, what: heard.append((cid, what)))
+    course = study.conn.execute("INSERT INTO courses (name) VALUES ('macroeconomics')").lastrowid
+    o = store.add("professor", "week", TODAY, "Write up 2 topics", measure={"type": "notes", "course": course},
+                  target=2)
+    assert store.as_json(o)["measure"]["label"] == "macroeconomics notebook topics written or revised"
+    islm = notebook.add_topic(course, "IS-LM")
+    money = notebook.add_topic(course, "Money")
+    notebook.set_body(islm["id"], "## Explanation\nThe IS curve.")
+    notebook.set_body(islm["id"], "## Explanation\nThe IS curve, by the user.", by_user=True)
+    assert store.as_json(o)["progress"] == 1  # the same topic twice counts once
+    notebook.set_body(money["id"], "## Explanation\nMoney.\n\n![fig](x)", study=False)  # figures: not studying
+    assert store.as_json(o)["progress"] == 1
+    notebook.set_body(money["id"], "## Explanation\nMoney, and banks.")
+    j = store.as_json(o)
+    assert j["progress"] == 2 and j["done"]
+    assert heard == [(course, "IS-LM"), (course, "your edit of IS-LM"), (course, "Money")]
+    notebook.set_body(money["id"], "## Explanation\nMoney, and banks.")  # unchanged: nothing heard
+    assert len(heard) == 3
+    since = datetime.now(timezone.utc) - timedelta(minutes=1)
+    assert [(t["title"], t["by_user"]) for t in notebook.changes(course, since)] == [("Money", 0), ("IS-LM", 1)]
+    with pytest.raises(ValueError):
+        store.add("professor", "day", TODAY, "Notes", measure={"type": "notes", "course": 999})
+
+
+def test_new_dates_are_a_change(env):
+    _, planner, _, _, study = env
+    course = study.conn.execute("INSERT INTO courses (name) VALUES ('macroeconomics')").lastrowid
+    heard = []
+    planner.notebook.on_change.append(lambda cid, what: heard.append(what))
+    item = {"what": "Mid-term", "kind": "mid-term", "date": "2026-11-20"}
+    planner.notebook.set_dates(course, [item])
+    planner.notebook.set_dates(course, [item])  # read again, the same: no change
+    assert heard == ["the course's dates"]
+
+
+async def test_the_plan_sees_new_notes_and_missed_topics(env):
+    store, planner, engine, db, study = env
+    await study.courses()
+    course = study.course_by_name("macroeconomics")["id"]
+    topic = planner.notebook.add_topic(course, "Money markets")
+    planner.notebook.set_body(topic["id"], "## Explanation\nBonds and money.", by_user=True)
+    questions = [{"topic_title": "IS-LM", "key": "A"}] * 3 + [{"topic_title": "Inflation", "key": "B"}] * 2
+    now = datetime.now(timezone.utc).isoformat()
+    db.conn.execute("INSERT INTO quizzes (public_id, course_id, questions, answers, score, started_at, finished_at) "
+                    "VALUES ('x_1', ?, ?, ?, 2, ?, ?)", (course, json.dumps(questions),
+                                                         json.dumps({"1": "A", "2": "C", "3": None, "4": "B",
+                                                                     "5": "B"}), now, now))
+    await planner.plan("week", TODAY, ["professor"])
+    text, system = engine.asked[0]["text"], engine.asked[0]["system"]
+    assert "Notes written or changed in the last 7 days: Money markets (" in text and "by the user)" in text
+    assert "Topics most missed in recent practice exams: IS-LM 1/3 right" in text
+    assert "Inflation" not in text.split("most missed")[1].split("\n")[0]  # 2/2 right
+    assert '"type": "notes"' in system and 'never "3 more nights"' in system
+
+
+async def test_a_change_in_the_notes_replans_professor(env):
+    import asyncio
+    from aide.objectives import StudyReplanner
+
+    store, planner, engine, db, study = env
+    course = study.conn.execute("INSERT INTO courses (name) VALUES ('macroeconomics')").lastrowid
+    replanner = StudyReplanner(planner, settle=0.05, gap=0)
+    replanner.start()
+    planner.notebook.on_change.append(replanner.changed)
+    topic = planner.notebook.add_topic(course, "IS-LM")
+
+    # Nothing planned yet: the digest will, so a change does nothing.
+    planner.notebook.set_body(topic["id"], "v1")
+    await asyncio.sleep(0.15)
+    assert engine.asked == []
+
+    store.replace_proposals("week", TODAY, ["professor"], [{"agent": "professor", "title": "Old week"}])
+    store.replace_proposals("day", TODAY, ["professor"], [{"agent": "professor", "title": "Taken"}])
+    store.accept("day", TODAY)
+    engine.replies += [json.dumps([{"agent": "professor", "title": "Practise IS-LM, just written"}])]
+    for body in ("v2", "v3", "v4"):  # several changes together: one plan
+        planner.notebook.set_body(topic["id"], body)
+    await asyncio.sleep(0.2)
+    # The week had a proposal waiting: planned again. The day's was taken, nothing waiting: left alone.
+    assert len(engine.asked) == 1 and "the week" in engine.asked[0]["text"]
+    assert [o["title"] for o in store.objectives("week", TODAY)] == ["Practise IS-LM, just written"]
+    assert [o["title"] for o in store.objectives("day", TODAY)] == ["Taken"]

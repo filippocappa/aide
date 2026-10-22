@@ -198,6 +198,9 @@ exams, food log, sleep, steps, a reminder) so it ticks itself; the rest are tick
 user's OK. `objectives` tools for every agent, an `objectives` digest section. App: an Objectives tab (badge: proposals
 waiting for the OK; Today / Week / Month, accept, drop, tick, add, propose now), objectives in the
 digest. First plan made live 2026-10-22; installed on the phone, not yet tried there.
+Since #19 (2026-10-22): a `notes` measure (notebook topics written or revised, logged in `topic_changes`), and
+`StudyReplanner` plans Professor's week and day again 10 min after a course's notes or dates change (not when
+they're all taken with none waiting); the planner sees each course's new notes and most-missed topics.
 Course dates (2026-10-22): a model reads each course's Moodle page and the files' exam pages into dated items
 (exams, mid-terms, sign-up deadlines; `course_dates`, the `dates` notebook job), again when Moodle changes. The
 planner, Professor's `list_courses` and the Introduction's Dates section use them.
@@ -210,8 +213,6 @@ planner, Professor's `list_courses` and the Introduction's Dates section use the
    instead of chat (#15). (#14, Goals, is mostly covered by objectives.)
 3. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
    for the other courses. Finance still has no data source (memory only).
-4. Objectives, server: Professor plans again when the study material changes, a study measure, new topics in the
-   planner's context (#19); titles saying "N more" while the target counts the whole period (#20).
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
