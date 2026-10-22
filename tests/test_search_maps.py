@@ -133,6 +133,33 @@ async def test_drive_reports_traffic_and_link():
     assert out.endswith("travelmode=driving")
 
 
+async def test_here_starts_from_the_phone():
+    rec = Recorder(httpx.Response(200, json={"routes": [{"duration": "900s", "distanceMeters": 6100}]}),
+                   httpx.Response(200, json={}))
+
+    async def here():
+        return 45.0703, 7.6869
+
+    tools = {t.name: t for t in maps_tools(GoogleMaps("gm-key", client(rec)), ROME, HOME, here)}
+    out = await tools["travel_time"].handler(destination="SME, Torino", origin="here")
+    assert rec.body(0)["origin"] == {"location": {"latLng": {"latitude": 45.0703, "longitude": 7.6869}}}
+    assert out.startswith("Drive from where you are to SME, Torino: 15 min, 6.1 km.")
+    assert "origin=45.070300%2C7.686900" in out
+    await tools["find_places"].handler(query="pharmacy", near="Here")
+    assert rec.body(1) == {"textQuery": "pharmacy", "pageSize": 5, "locationBias": {"circle": {
+        "center": {"latitude": 45.0703, "longitude": 7.6869}, "radius": 1500}}}
+
+
+async def test_here_unknown_asks():
+    async def nowhere():
+        return None
+
+    for tools in (maps(Recorder()), {t.name: t for t in maps_tools(GoogleMaps("k", client(Recorder())), ROME, HOME,
+                                                                   nowhere)}):
+        with pytest.raises(ValueError, match="ask where they are"):
+            await tools["travel_time"].handler(destination="SME", origin="here")
+
+
 async def test_transit_arrival_time_lists_lines_in_local_time():
     rec = Recorder(httpx.Response(200, json={"routes": [{
         "duration": "1500s", "distanceMeters": 6100,

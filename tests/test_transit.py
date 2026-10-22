@@ -1,3 +1,4 @@
+import asyncio
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -293,6 +294,17 @@ async def test_location_keeps_the_latest_fix_and_asks_at_most_every_five_minutes
     assert await location.request(now + timedelta(minutes=5)) and push.location_requests == 2
     with pytest.raises(ValueError):
         location.save(95, 7, None)
+
+
+async def test_here_is_the_fix_while_it_says_where_the_user_is(env, monkeypatch):
+    db, _, location, _, push = env
+    assert await location.here() is None
+    location.save(45.07, 7.68, 20, at(8, 0))
+    monkeypatch.setattr("aide.transit.utcnow", lambda: at(8, 5).astimezone(timezone.utc))
+    assert await location.here() == (45.07, 7.68)
+    monkeypatch.setattr("aide.transit.utcnow", lambda: at(10, 30).astimezone(timezone.utc))
+    monkeypatch.setattr(location, "request", lambda now=None: asyncio.sleep(0, result=False))
+    assert await location.here() is None  # over two hours old, and the phone didn't answer
 
 
 # -- tools ------------------------------------------------------------------------------------
