@@ -105,8 +105,6 @@ class Push:
         devices = self.devices()
         if not self.enabled or not devices:
             return 0, len(devices)
-        if self._client is None:
-            self._client = httpx.AsyncClient(http2=True, transport=self._transport, timeout=15)
         headers = {
             "apns-topic": self.bundle_id,
             "apns-push-type": "background" if background else "alert",
@@ -118,30 +116,52 @@ class Push:
                 sent += 1
         return sent, len(devices) - sent
 
-    async def _send_one(self, device: dict, payload: dict, headers: dict) -> bool:
-        token = device["token"]
-        url = f"{HOSTS[device['environment']]}/3/device/{token}"
+    async def _post(self, token: str, environment: str, payload: dict, headers: dict) -> tuple[int, str]:
+        """One request to APNs: (status, reason), status 0 when it didn't get there."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(http2=True, transport=self._transport, timeout=15)
+        url = f"{HOSTS[environment]}/3/device/{token}"
         try:
             r = await self._client.post(url, json=payload,
                                         headers={**headers, "authorization": f"bearer {self._token()}"})
         except httpx.HTTPError as e:
             log.warning("push to %s… failed: %s", token[:8], e)
-            return False
+            return 0, ""
         if r.status_code == 200:
-            self.conn.execute("UPDATE devices SET last_push_at = ? WHERE token = ?", (_now(), token))
-            return True
+            return 200, ""
         try:
             reason = r.json().get("reason", "")
         except ValueError:
             reason = ""
-        if r.status_code == 410 or reason == "BadDeviceToken":
-            log.info("APNs says device %s… is gone (%s): removing it", token[:8], reason or r.status_code)
+        if r.status_code == 403 and reason in ("ExpiredProviderToken", "InvalidProviderToken"):
+            self._jwt = None  # sign a fresh one next time
+        return r.status_code, reason
+
+    @staticmethod
+    def gone(status: int, reason: str) -> bool:
+        """APNs says the token is no good any more."""
+        return status == 410 or reason == "BadDeviceToken"
+
+    async def _send_one(self, device: dict, payload: dict, headers: dict) -> bool:
+        token = device["token"]
+        status, reason = await self._post(token, device["environment"], payload, headers)
+        if status == 200:
+            self.conn.execute("UPDATE devices SET last_push_at = ? WHERE token = ?", (_now(), token))
+            return True
+        if self.gone(status, reason):
+            log.info("APNs says device %s… is gone (%s): removing it", token[:8], reason or status)
             self.remove(token)
-        else:
-            if r.status_code == 403 and reason in ("ExpiredProviderToken", "InvalidProviderToken"):
-                self._jwt = None  # sign a fresh one next time
-            log.warning("APNs refused a push to %s…: %s %s", token[:8], r.status_code, reason)
+        elif status:
+            log.warning("APNs refused a push to %s…: %s %s", token[:8], status, reason)
         return False
+
+    async def send_live(self, token: str, environment: str, payload: dict, priority: int = 5) -> tuple[int, str]:
+        """A Live Activity push (docs/API.md, "Live Activities") to a push-to-start or an activity's token."""
+        if not self.enabled:
+            return 0, ""
+        headers = {"apns-topic": f"{self.bundle_id}.push-type.liveactivity", "apns-push-type": "liveactivity",
+                   "apns-priority": str(priority)}
+        return await self._post(token, environment, payload, headers)
 
     async def _alert(self, kind: str, title: str, body: str, level: str | None = None, **extra) -> bool:
         payload = {"aps": {"alert": {"title": title, "body": body}, "sound": "default", "thread-id": kind},

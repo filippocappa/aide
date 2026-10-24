@@ -1249,7 +1249,7 @@ Push type `liveactivity`, topic `<bundle id>.push-type.liveactivity`, to the tok
 | `gone` | the tram has left the stop (the last update, sent with `end`) |
 
 The server updates it every 30 s or so while `at` moves by 30 s or more, sets `stale-date` to `at` plus 2 minutes,
-and ends it once `at` is a minute past (or the trip is cancelled), dismissed 2 minutes later.
+and ends it once the tram has gone by (about 30 s after `at`) or the trip is cancelled, dismissed 2 minutes later.
 
 **`agent`** (`AgentActivityAttributes`). Attributes: `key` (`agent:<conversation id>`, the Team chat's is
 `agent:team`), `agent` (its id; for the Team chat, whoever answers first), `name`, `color` ("#RRGGBB"),

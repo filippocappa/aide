@@ -24,6 +24,7 @@ from .habits import HabitStore
 from .health import HealthStore
 from .photos import PhotoStore
 from .icloud import ICloudCalendar
+from .live import LiveActivities
 from .push import Push
 from .reminders import ReminderStore
 from .routines import routine_schedule
@@ -81,6 +82,8 @@ def main() -> None:
     elif not (settings.apns_key_path and settings.apns_key_id and settings.apns_team_id):
         log.warning("APNS_KEY_PATH / APNS_KEY_ID / APNS_TEAM_ID not set: push notifications off")
 
+    live = LiveActivities(db.conn, push)
+
     tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits),
              *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone)]
     cal = None
@@ -126,7 +129,7 @@ def main() -> None:
         transit = Transit(timetable, Live())
         alerts = AlertStore(db.conn, settings.timezone, timetable)
         walks = Walks(maps)
-        watcher = AlertWatcher(alerts, transit, location, walks, push)
+        watcher = AlertWatcher(alerts, transit, location, walks, push, live)
         boards = Boards(transit, location, walks)
         tools += transit_tools(transit, alerts, location, boards)
     else:
@@ -202,7 +205,7 @@ def main() -> None:
         jobs = [
             reminder_fallback(reminders, settings.timezone, push),
             digest_schedule(digest, push),
-            routine_schedule(agent, CONVERSATION, push),
+            routine_schedule(agent, CONVERSATION, push, live),
             worker.run(),
             notes.run(),
             reader.run(),
@@ -215,7 +218,7 @@ def main() -> None:
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
-                             notebook, engine, objectives, planner, location, alerts, boards, drafts)
+                             notebook, engine, objectives, planner, location, alerts, boards, drafts, live)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

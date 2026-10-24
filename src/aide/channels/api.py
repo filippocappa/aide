@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from .. import activity
 from ..agent import CONVERSATION, PENDING_TTL, Agent, Turn, UnknownConversation
-from ..agents import AGENTS, check_agent, connectors, mentions
+from ..agents import AGENTS, ORCHESTRATOR, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
 from ..drafts import Drafts
@@ -27,6 +27,7 @@ from ..food import FoodStore, totals
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
 from ..icloud import CalendarBackend
+from ..live import KINDS as LIVE_KINDS, LiveActivities, hooks
 from ..photos import MAX_BYTES as MAX_PHOTO, TYPES as PHOTO_TYPES, PhotoStore
 from ..push import Push
 from ..reminders import ReminderStore
@@ -281,6 +282,22 @@ class DeviceIn(BaseModel):
     name: str = ""
 
 
+class LiveTokenIn(BaseModel):
+    kind: str
+    token: str
+    environment: str
+
+
+class LiveActivityIn(BaseModel):
+    key: str = Field(min_length=1, max_length=200)
+    token: str
+    environment: str
+
+
+class CompleteIn(BaseModel):
+    completed: bool = True
+
+
 class SyncIn(BaseModel):
     cursor: str | None = None
     changes: list[ReminderChange] = []
@@ -306,7 +323,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                notebook: NotebookStore | None = None, engine: Engine | None = None,
                objectives: ObjectiveStore | None = None, planner: ObjectivePlanner | None = None,
                location: Location | None = None, transit_alerts: AlertStore | None = None,
-               boards: Boards | None = None, drafts: Drafts | None = None) -> FastAPI:
+               boards: Boards | None = None, drafts: Drafts | None = None,
+               live: LiveActivities | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     habits = habits or HabitStore(db.conn, tz)
@@ -320,6 +338,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     quizzes = QuizStore(notebook)
     objectives = objectives or ObjectiveStore(db.conn, tz, habits, food, health, store)
     location = location or Location(db.conn, push)
+    live = live or LiveActivities(db.conn, push)
     drafts = drafts or Drafts(db.conn, tz)  # no mail account: none are made, and sending is a 503
     photos: PhotoStore | None = agent.photos
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
@@ -415,14 +434,26 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(400, "text is empty")
         agent.check_photos(body.photos)  # a plain 400, before a stream starts
         conversation = body.conversation_id or CONVERSATION
-        if not body.stream:
-            return chat_json(conversation, await agent.respond(CONVERSATION, text, conversation, photos=body.photos))
-        if conversation != CONVERSATION and db.app_conversation(conversation) is None:
+        row = db.app_conversation(conversation) if conversation != CONVERSATION else None
+        if conversation != CONVERSATION and row is None and body.stream:
             raise UnknownConversation(f"no conversation {conversation}")  # a plain 404, before the stream starts
+        activity_turn = live.turn(conversation, (row["agent"] if row else None) or ORCHESTRATOR)
+
+        async def respond(on_team=None, on_text=None) -> Turn:
+            try:
+                turn = await agent.respond(CONVERSATION, text, conversation, hooks(on_team, activity_turn.team),
+                                           hooks(on_text, activity_turn.text) if on_text else None, body.photos)
+            except BaseException:
+                activity_turn.failed()
+                raise
+            activity_turn.finished(turn.reply)
+            return turn
+
+        if not body.stream:
+            return chat_json(conversation, await respond())
         return streamed(
-            lambda emit: agent.respond(CONVERSATION, text, conversation, lambda t: emit("team", team_json(t)),
-                                       lambda delta, restart: emit("text", {"delta": delta, "restart": restart}),
-                                       body.photos),
+            lambda emit: respond(lambda t: emit("team", team_json(t)),
+                                 lambda delta, restart: emit("text", {"delta": delta, "restart": restart})),
             lambda turn: sse("reply", chat_json(conversation, turn)))
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
@@ -555,11 +586,23 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         def team_body(new: list[dict]) -> dict:
             return {"messages": [team_json({**t, "conversation_id": None}) for t in new], "pending": pending()}
 
+        activity_turn = live.turn("team")
+
+        async def answer(on_working=None, on_team=None) -> list[dict]:
+            try:
+                new = await agent.team_chat(CONVERSATION, text, hooks(on_working, activity_turn.working), on_team)
+            except BaseException:
+                activity_turn.failed()
+                raise
+            first = next((t for t in new if t["from"] in AGENTS and t["to"] == "team"), None)
+            activity_turn.finished(first["text"] if first else "", first["from"] if first else None)
+            return new
+
         if not body.stream:
-            return team_body(await agent.team_chat(CONVERSATION, text))
+            return team_body(await answer())
         return streamed(
-            lambda emit: agent.team_chat(CONVERSATION, text, lambda a: emit("working", {"agent": a}),
-                                         lambda t: emit("team", team_json({**t, "conversation_id": None}))),
+            lambda emit: answer(lambda a: emit("working", {"agent": a}),
+                                lambda t: emit("team", team_json({**t, "conversation_id": None}))),
             lambda new: sse("done", team_body(new)))
 
     # -- routines ------------------------------------------------------------
@@ -1286,6 +1329,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                                          body.lists, body.default_list)
         return {"cursor": str(new_cursor), "reminders": [reminder_json(r, tz) for r in changed]}
 
+    @app.post("/v1/reminders/{reminder_id}/complete", dependencies=[Depends(auth)])
+    async def complete_reminder(reminder_id: str, body: CompleteIn | None = None):
+        try:
+            rem = store.update(reminder_id, completed=body.completed if body else True)
+        except KeyError:
+            raise HTTPException(404, f"no reminder {reminder_id}") from None
+        return reminder_json(rem, tz)
+
     def save_days(days: list[dict]) -> tuple[list[dict], list[dict]]:
         """Store health days and check habits from their workouts. Returns (days saved, habits checked)."""
         saved = health.save(days)
@@ -1349,6 +1400,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             changes["minutes"] = 0  # the store's "back to when it's time to leave"
         return transit_alerts.as_json(transit_alerts.update(alert_id, **changes))
 
+    @app.get("/v1/transit/nearby", dependencies=[Depends(auth)])
+    async def nearby():
+        if boards is None:
+            raise HTTPException(404, "GTT is off on this server (AIDE_GTT)")
+        found, fix_at = await boards.nearby()
+        return {"boards": found, "fix_at": local(fix_at.isoformat()) if fix_at else None}
+
     @app.get("/v1/transit/departures", dependencies=[Depends(auth)])
     async def departures(stop: str, line: str | None = None, to: str | None = None, to_name: str | None = None):
         """A departures card again, to keep it live in the app: `stop` and `to` are stop ids, as on the card."""
@@ -1391,6 +1449,30 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.delete("/v1/devices/{token}", dependencies=[Depends(auth)])
     async def delete_device(token: str):
         push.remove(token)
+        return {"ok": True}
+
+    # -- Live Activities ---------------------------------------------------------
+
+    @app.post("/v1/live/tokens", dependencies=[Depends(auth)])
+    async def live_start_token(body: LiveTokenIn):
+        live.set_start_token(body.kind, body.token, body.environment)
+        return {"ok": True}
+
+    @app.delete("/v1/live/tokens/{kind}", dependencies=[Depends(auth)])
+    async def delete_live_start_token(kind: str):
+        if kind not in LIVE_KINDS:
+            raise HTTPException(404, f"no Live Activity kind {kind}")
+        live.remove_start_token(kind)
+        return {"ok": True}
+
+    @app.post("/v1/live/activities", dependencies=[Depends(auth)])
+    async def live_activity(body: LiveActivityIn):
+        live.register(body.key, body.token, body.environment)
+        return {"ok": True}
+
+    @app.delete("/v1/live/activities/{key}", dependencies=[Depends(auth)])
+    async def delete_live_activity(key: str):
+        live.remove(key)
         return {"ok": True}
 
     return app
