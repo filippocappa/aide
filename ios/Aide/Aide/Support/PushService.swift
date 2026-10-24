@@ -8,6 +8,30 @@ enum PushRoute: Equatable {
     case conversation(String)
     /// New course files, or (`login`) the Moodle login has expired.
     case moodle(login: Bool)
+    /// From widgets and Live Activities (`aide://…` links): the Team chat, an agent's latest chat, talking to Aide.
+    case team
+    case agent(String)
+    case voice
+    /// The Objectives and Health tabs.
+    case objectives
+    case health
+
+    /// `aide://conversation/<id>`, `aide://team`, `aide://agent/<id>`, `aide://voice`, `aide://today`,
+    /// `aide://objectives`, `aide://health`.
+    init?(url: URL) {
+        guard url.scheme == "aide" else { return nil }
+        let id = url.pathComponents.dropFirst().first
+        switch url.host {
+        case "conversation": guard let id else { return nil }; self = .conversation(id)
+        case "agent": guard let id else { return nil }; self = .agent(id)
+        case "team": self = .team
+        case "voice": self = .voice
+        case "today": self = .today
+        case "objectives": self = .objectives
+        case "health": self = .health
+        default: return nil
+        }
+    }
 
     /// nil for silent pushes, test pushes and kinds this version doesn't know.
     init?(userInfo: [AnyHashable: Any]) {

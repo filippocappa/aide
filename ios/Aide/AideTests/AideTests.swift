@@ -395,6 +395,60 @@ final class PushTests: XCTestCase {
         XCTAssertFalse(PushRoute.isLocation(["aide": ["kind": "sync"]]))
     }
 
+    func testWidgetAndLiveActivityLinksRoute() {
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://conversation/c_91f")!), .conversation("c_91f"))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://agent/coach")!), .agent("coach"))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://team")!), .team)
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://voice")!), .voice)
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://today")!), .today)
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://objectives")!), .objectives)
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://health")!), .health)
+        XCTAssertNil(PushRoute(url: URL(string: "aide://agent")!))
+        XCTAssertNil(PushRoute(url: URL(string: "aide://something-new")!))
+        XCTAssertNil(PushRoute(url: URL(string: "https://example.com/team")!))
+    }
+
+    /// The server's push payloads, as in docs/API.md, "Live Activities": ActivityKit decodes them with a plain decoder.
+    func testLiveActivityStatesDecodeFromTheServersJSON() throws {
+        let tram = """
+        {"at": 1792483800, "leave": 1792483380, "walk": 300, "live": true, "delay": 60, "next": 1792484400, "gone": false}
+        """
+        let t = try JSONDecoder().decode(TramActivityAttributes.ContentState.self, from: Data(tram.utf8))
+        XCTAssertEqual(t.atDate, Date(timeIntervalSince1970: 1792483800))
+        XCTAssertEqual(t.leaveDate, Date(timeIntervalSince1970: 1792483380))
+        XCTAssertEqual(t.walk, 300)
+        let bare = #"{"at": 1792483800, "live": false, "gone": true}"#
+        let b = try JSONDecoder().decode(TramActivityAttributes.ContentState.self, from: Data(bare.utf8))
+        XCTAssertNil(b.leaveDate)
+        XCTAssertNil(b.nextDate)
+        XCTAssertTrue(b.gone)
+
+        let attrs = """
+        {"key": "agent:c_91f", "agent": "coach", "name": "Coach", "color": "#1F8A5B", "conversation": "c_91f"}
+        """
+        let a = try JSONDecoder().decode(AgentActivityAttributes.self, from: Data(attrs.utf8))
+        XCTAssertNil(a.title)
+        XCTAssertEqual(a.url, URL(string: "aide://conversation/c_91f"))
+        let state = #"{"status": "done", "detail": "", "text": "Logged it.", "since": 1792483800}"#
+        let s = try JSONDecoder().decode(AgentActivityAttributes.ContentState.self, from: Data(state.utf8))
+        XCTAssertTrue(s.isOver)
+        XCTAssertEqual(s.line(name: "Coach"), "Logged it.")
+        XCTAssertEqual(AgentActivityAttributes.ContentState.working().line(name: "Coach"), "Coach is working on it")
+    }
+
+    func testNearbyBoardsDecode() throws {
+        let json = """
+        {"boards": [{"id": "1687", "stop": {"id": "1687", "code": "253", "name": "Porta Nuova"}, "at": "2026-10-24T08:00:00+02:00",
+          "distance": 120, "walk": 95, "line": null, "to": null,
+          "lines": [{"line": "4", "vehicle": "Tram", "towards": "Falchera",
+                     "arrivals": [{"at": "2026-10-24T08:04:00+02:00", "scheduled": "2026-10-24T08:03:00+02:00", "live": true, "delay": 60}]}]}],
+         "fix_at": "2026-10-24T07:58:00+02:00"}
+        """
+        let n = try JSONDecoder.api.decode(NearbyBoards.self, from: Data(json.utf8))
+        XCTAssertEqual(n.fixAt, "2026-10-24T07:58:00+02:00")
+        XCTAssertEqual(n.boards.first?.lines.first?.arrivals.first?.delay, 60)
+    }
+
     func testTransitAlertDecodesAndReads() throws {
         let json = """
         {"id": 1, "line": "4", "vehicle": "Tram", "towards": ["Falchera"],

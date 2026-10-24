@@ -1,4 +1,5 @@
 import SwiftUI
+import WidgetKit
 
 /// Builds the object graph once and keeps the three screens in step with each other.
 @MainActor
@@ -14,9 +15,12 @@ final class AppEnvironment: ObservableObject {
     let push: PushService
     let health: HealthService
     let location: LocationService
+    let live: LiveActivities
     let voice = VoiceController()
     /// The Moodle screen as a sheet, from a `moodle` notification.
     @Published var showMoodle = false
+    /// The Team chat, from a widget or a Live Activity (`aide://team`); the home screen opens it and clears this.
+    @Published var showTeam = false
 
     private init() {
         let settings = AppSettings()
@@ -31,6 +35,8 @@ final class AppEnvironment: ObservableObject {
         self.push = PushService(api: api)
         self.health = HealthService(api: api)
         self.location = LocationService(api: api)
+        self.live = LiveActivities(api: api)
+        chat.live = live
 
         // The assistant may have created reminders or moved events: sync.
         voice.languageCode = { [weak settings] in settings?.voiceLanguage ?? "en-US" }
@@ -53,7 +59,10 @@ final class AppEnvironment: ObservableObject {
             }
         }
 
-        chat.onServerChange = { [weak self] in await self?.sync.sync() }
+        chat.onServerChange = { [weak self] in
+            await self?.sync.sync()
+            WidgetCenter.shared.reloadAllTimelines() // a reply may have added a reminder, ticked a habit, …
+        }
         digest.completeReminder = { [weak sync] reminder, done in await sync?.setCompleted(reminder, done) ?? false }
     }
 
@@ -75,6 +84,7 @@ final class AppEnvironment: ObservableObject {
         async let pushRefresh: Void = push.refresh()
         async let healthUpload = health.upload()
         location.refresh()
+        live.appBecameActive()
         await sync.sync()
         await agents
         await history
@@ -97,6 +107,16 @@ final class AppEnvironment: ObservableObject {
             await chat.open(id: id)
         case .moodle:
             showMoodle = true
+        case .team:
+            showTeam = true
+        case .agent(let id):
+            if chat.conversations.isEmpty { await chat.loadConversations() }
+            await chat.talk(to: chat.agent(id))
+        case .voice:
+            await chat.newChat(with: chat.orchestrator)
+            if !voice.isActive { await voice.toggle() }
+        case .objectives, .health:
+            break // tabs, switched by ContentView
         }
     }
 

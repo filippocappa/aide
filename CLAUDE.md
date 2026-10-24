@@ -235,6 +235,19 @@ once) and drafts replies to mail that asks something of the user, with memory an
 `POST /v1/mail/drafts/{id}/send` (the app's tap) is the confirmation. App (`Views/DraftViews.swift`): drafts in
 Activity's "Waiting for you" (Send, Edit, Dismiss), an editor sheet, and "Replies to send" in the digest Details.
 
+**Done, both sides (2026-10-24), not yet tried on the phone:** Live Activities and widgets (contract in
+`docs/API.md`, "Live Activities" and "Widgets"). Server (live, `live.py`): push-to-start and update tokens
+(`/v1/live/tokens`, `/v1/live/activities`), the `liveactivity` sender; a tram alert starts a countdown instead of
+the plain push when there's a start token, updated as the live feed moves; chat and team turns update the agent's
+activity (asking, writing, then done with an alert ~3 s after, unless the app ended it); scheduled routines start one
+quietly. `POST /v1/reminders/{id}/complete` and `GET /v1/transit/nearby` for the widgets. App: `AideWidgets`
+extension (App Group `group.<bundle id>` shares the keychain items and a cache of the last answers): Today, Food and
+habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departures; tick boxes through App Intents;
+`TramLiveActivity` and `AgentLiveActivity` on the Lock Screen and in the Dynamic Island
+(`Shared/LiveActivityAttributes.swift`); `Support/LiveActivities.swift` starts the chat ones and registers tokens;
+`aide://` links (`PushRoute(url:)`). The first phone install needs the App Group and the `.widgets` bundle ID on the
+team (Xcode's automatic signing adds them).
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed

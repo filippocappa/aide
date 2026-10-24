@@ -75,6 +75,12 @@ struct ChatsView: View {
             }
             // Back from a chat: its preview may have changed.
             .onChange(of: chat.isChatOpen) { _, open in if !open { Task { await load() } } }
+            .onChange(of: env.showTeam, initial: true) { _, show in
+                guard show else { return }
+                env.showTeam = false
+                chat.isChatOpen = false
+                showTeam = true
+            }
             .onChange(of: showTeam) { _, shown in
                 guard !shown, let id = openAfterTeam else { return }
                 openAfterTeam = nil
