@@ -965,6 +965,10 @@ Its answers are plain text; there are no health attachments yet.
 ```
 All-day events have `"all_day": true`, and `start`/`end` are dates, with `end` **exclusive**.
 
+`POST /v1/reminders/{id}/complete` with `{"completed": true}` (false: not done after all) → the Reminder object.
+For the Today widget's tick box, which can't reach Apple Reminders: the server marks it (`modified_at` now, so it
+wins the next sync) and sends a silent `sync`, so the app ticks it in Apple Reminders too. `404` for an unknown id.
+
 ## Reminders
 
 The server keeps the master list. Apple Reminders on the phone is a mirror the app keeps in sync, and only the app can write to it.
@@ -1089,6 +1093,12 @@ alerts in Settings. Off with `AIDE_GTT=0` on the server: the alert endpoints are
 The app refreshes a card on screen with it (every 30 s or so), from the card's own `stop.id`, `line`, `to.stops`
 and `to.name`. `404` for an unknown stop or GTT off, `400` for an unknown line.
 
+| `GET /v1/transit/nearby` | | `{"boards": [Board], "fix_at": "2026-10-22T08:01:00+02:00" \| null}` |
+
+For the departures widget: Boards for the 2 stops nearest the phone's last fix (under 2 hours old, stops within
+400 m, nearest first; each side of the road counts, so it's often both directions) that have something in the next
+hour. No usable fix: `boards` empty and `fix_at` the old fix's time or null. `404` with GTT off.
+
 ### Tram alerts
 
 An alert watches one line at one stop (each side of the road is its own stop, with the number on its sign):
@@ -1170,3 +1180,109 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 - Alert pushes use `thread-id` = the kind, so iOS groups them.
 - A scheduled digest is pushed to every device.
 - Silent `sync` pushes are coalesced: at most one per 10 seconds, so a burst of changes sends one.
+
+## Live Activities
+
+Two kinds on the Lock Screen and in the Dynamic Island, both drawn by the app's widget extension:
+
+- **`tram`**: a tram alert's countdown. When an alert fires, the server starts it (APNs push-to-start) instead of
+  the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left.
+- **`agent`**: an agent at work. The app starts one when it sends a chat or Team chat message; the server keeps it
+  up to date (asking another agent, writing) and ends it with the reply's first line, so a reply that comes in with
+  the phone locked lights up the screen. The server also starts one for each scheduled routine run (not watches).
+
+The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as before.
+
+### Tokens
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
+| `DELETE /v1/live/tokens/{kind}` | | `{"ok": true}` |
+| `POST /v1/live/activities` | `{"key": "agent:3f2a…", "token": "a91c…", "environment": "sandbox"}` | `{"ok": true}` |
+| `DELETE /v1/live/activities/{key}` | | `{"ok": true}`, also for an unknown key |
+
+- `/v1/live/tokens`: a **push-to-start** token (`Activity<…>.pushToStartTokenUpdates`), one per kind; a new one
+  replaces the old. The app sends it on launch and when it changes, and deletes it when Live Activities are turned
+  off for Aide in iOS Settings. With no `tram` token the server sends the plain `transit` push.
+- `/v1/live/activities`: one activity's **update** token (`activity.pushTokenUpdates`), by the `key` in its
+  attributes. For an activity the server started, the app gets its token in a short background wake and sends it.
+  The app deletes the key when it ends an activity itself (the reply came in with the app open); the server then
+  stops pushing. Keys and tokens older than 12 hours are dropped.
+- Tokens are hex, like device tokens; `environment` as for devices. A token APNs refuses (`410`, `BadDeviceToken`)
+  is deleted.
+
+### Pushes
+
+Push type `liveactivity`, topic `<bundle id>.push-type.liveactivity`, to the token. Priority 5 for routine updates
+(no budget), 10 for start, end and updates with an `alert`.
+
+```json
+{"aps": {"timestamp": 1761120120, "event": "start",
+         "attributes-type": "TramActivityAttributes",
+         "attributes": {"key": "tram:1:7712345:20261022", "line": "4", "vehicle": "Tram", "stop": "Porta Nuova",
+                        "code": "253", "towards": "Falchera", "alert": 1},
+         "content-state": {"at": 1761120540, "leave": 1761120120, "walk": 300, "live": true, "delay": 120,
+                           "next": 1761121140, "gone": false},
+         "stale-date": 1761120660,
+         "alert": {"title": "Tram 4 in 7 min: leave now", "body": "Porta Nuova (stop 253), towards Falchera. …",
+                   "sound": "default"}}}
+```
+
+- Field names in `attributes` and `content-state` are what ActivityKit decodes, so they're single words (no
+  snake_case), and **times are Unix seconds** (not ISO strings).
+- `event` is `start` (push-to-start, with `attributes-type`, `attributes` and `alert`), `update` or `end` (with
+  `dismissal-date`, Unix seconds; now dismisses it at once).
+
+**`tram`** (`TramActivityAttributes`). Attributes: `key` (`tram:<alert id>:<trip>:<service day>`), `line`,
+`vehicle` (`Tram`, `Bus`, `Metro`, `Train`), `stop` (name), `code` (the sign's number), `towards` (or null),
+`alert` (the alert's id). Content state:
+
+| Field | Meaning |
+|---|---|
+| `at` | when the tram is expected at the stop (live delay included) |
+| `leave` | when to leave to make it: `at` minus the walk, or null for an "N minutes away" alert |
+| `walk` | seconds from the phone to the stop, or null when the location isn't known |
+| `live` | false: timetable only |
+| `delay` | seconds late (negative: early), null when not live |
+| `next` | the next one's expected time, or null |
+| `gone` | the tram has left the stop (the last update, sent with `end`) |
+
+The server updates it every 30 s or so while `at` moves by 30 s or more, sets `stale-date` to `at` plus 2 minutes,
+and ends it once `at` is a minute past (or the trip is cancelled), dismissed 2 minutes later.
+
+**`agent`** (`AgentActivityAttributes`). Attributes: `key` (`agent:<conversation id>`, the Team chat's is
+`agent:team`), `agent` (its id; for the Team chat, whoever answers first), `name`, `color` ("#RRGGBB"),
+`conversation` (the conversation id, or `team`), `title` (the routine's title, or null for a chat). Content state:
+
+| Field | Meaning |
+|---|---|
+| `status` | `working`, `asking` (Aide asked another agent), `writing` (the reply is coming), `done`, `failed` |
+| `detail` | a few words for `asking` ("Asking Coach") or `failed`; else empty |
+| `text` | `done`: the reply's first line, cut to about 140 characters; else empty |
+| `since` | when it started working |
+
+- A chat turn: the app starts the activity (status `working`) and registers its key; the server sends `update`s as
+  the turn goes (each ask; `writing` once, when the reply starts), at most one per 2 seconds, priority 5. About 3 s
+  after the turn ends, if the key is still there, it sends an `update` with `done` and an `alert` (the agent's name,
+  the first line), then an `end` dismissed after 30 minutes. A failed turn ends with `failed`, no alert.
+- A scheduled routine (not a watch): the server push-to-starts it (key `agent:<routine conversation id>`,
+  `title` the routine's), with an alert ("Coach · Weekly plan"), silent if the device's start token is all it has.
+  When the run ends it sends `end` with `done`, dismissed at once: the `message` push that follows is the
+  notification.
+- Tapping the activity opens the conversation (`aide://conversation/<id>`; the Team chat: `aide://team`).
+
+## Widgets
+
+The app's widget extension reads the server itself, with the server URL and token the app shares with it (an App
+Group keychain item), and draws from the last good answer when the server can't be reached. The app reloads the
+widgets after a sync, a chat reply, a check-in and the like. They use these endpoints, nothing widget-only except
+`POST /v1/reminders/{id}/complete` and `GET /v1/transit/nearby`:
+
+| Widget | Reads | Taps |
+|---|---|---|
+| Today | `GET /v1/today` | a reminder's tick box: `POST /v1/reminders/{id}/complete` |
+| Health | `GET /v1/food`, `GET /v1/habits` | a habit: `POST /v1/habits/{id}/check` |
+| Objectives | `GET /v1/objectives` (the day's, then the week's) | a hand-ticked one: `PATCH /v1/objectives/{id}` `{"done": true}` |
+| Team | `GET /v1/agents` | an agent: `aide://agent/<id>` (its latest chat); the Lock Screen's "Talk to Aide": `aide://voice` |
+| Departures | `GET /v1/transit/nearby` | opens the app |
