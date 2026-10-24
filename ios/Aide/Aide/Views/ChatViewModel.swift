@@ -73,6 +73,8 @@ final class ChatViewModel: ObservableObject {
     private var notebookWatch: Task<Void, Never>?
 
     /// Called after the server may have changed reminders or events.
+    /// The agent's Live Activity for a reply on its way (the lock screen shows it once you leave the app).
+    var live: LiveActivities?
     var onServerChange: (() async -> Void)?
 
     private let api: APIClient
@@ -234,21 +236,34 @@ final class ChatViewModel: ObservableObject {
         team.append(TeamMessage(from: "user", to: "team", text: text, ts: Wire.local(Date())))
         isPostingTeam = true
         defer { isPostingTeam = false; teamWorking = nil }
+        live?.agentStarted(conversation: "team", agent: mentioned(in: text) ?? orchestrator)
         do {
             let reply = try await api.postTeam(text) { [weak self] event in
                 guard let self else { return }
                 switch event {
-                case .working(let agent): teamWorking = agent
+                case .working(let agent):
+                    teamWorking = agent
+                    live?.agentUpdate(conversation: "team", status: "writing", detail: "\(self.agent(agent).name) is writing")
                 case .team(let message) where message.from != "user": team.append(message)
                 default: break
                 }
             }
+            live?.agentFinished(conversation: "team", reply: reply.messages.last.map { "\(agent($0.from).name): \($0.text)" } ?? "")
             pending = reply.pending
             await loadTeam()
             await onServerChange?()
         } catch {
+            live?.agentFinished(conversation: "team", reply: error.localizedDescription, failed: true)
             team.append(TeamMessage(from: orchestrator.id, to: "team", text: error.localizedDescription))
         }
+    }
+
+    /// The first agent @mentioned, who answers first in the Team chat.
+    private func mentioned(in text: String) -> Agent? {
+        let words = text.lowercased().split(whereSeparator: { !$0.isLetter && $0 != "@" })
+        return words.lazy.compactMap { word in
+            word.hasPrefix("@") ? self.agents.first { $0.id == word.dropFirst() || $0.name.lowercased() == word.dropFirst() } : nil
+        }.first
     }
 
     // MARK: Routines
@@ -345,13 +360,21 @@ final class ChatViewModel: ObservableObject {
             var ids: [String] = []
             for photo in photos { ids.append(try await api.uploadPhoto(photo.jpeg)) }
             if conversationID == nil { conversationID = try await newConversationID() }
+            let turn = conversationID ?? "main"
+            live?.agentStarted(conversation: turn, agent: agent)
             let reply = try await api.chatLive(text, photos: ids, conversationID: conversationID, onText: { [weak self] delta, restart in
                 guard let self else { return }
                 liveReply = restart ? delta : liveReply + delta
                 onDraft?(liveReply, restart)
-            }, onTeam: { [weak self] in
-                self?.liveTeam.append($0)
+                live?.agentUpdate(conversation: turn, status: "writing")
+            }, onTeam: { [weak self] message in
+                guard let self else { return }
+                liveTeam.append(message)
+                if message.from == orchestrator.id, message.to != "user" {
+                    live?.agentUpdate(conversation: turn, status: "asking", detail: "Asking \(self.agent(message.to).name)")
+                }
             })
+            live?.agentFinished(conversation: turn, reply: reply.reply)
             messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments,
                                     consulted: reply.consulted, team: reply.team.isEmpty ? liveTeam : reply.team))
             pending = reply.pending
@@ -362,6 +385,7 @@ final class ChatViewModel: ObservableObject {
             if writing == nil { watchNotebook() } // "yes" to a proposal starts the writing
             await onServerChange?()
         } catch {
+            live?.agentFinished(conversation: conversationID ?? "main", reply: error.localizedDescription, failed: true)
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true, team: liveTeam))
             liveTeam = []
             liveReply = ""

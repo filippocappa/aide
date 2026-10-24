@@ -1281,8 +1281,8 @@ widgets after a sync, a chat reply, a check-in and the like. They use these endp
 
 | Widget | Reads | Taps |
 |---|---|---|
-| Today | `GET /v1/today` | a reminder's tick box: `POST /v1/reminders/{id}/complete` |
-| Health | `GET /v1/food`, `GET /v1/habits` | a habit: `POST /v1/habits/{id}/check` |
-| Objectives | `GET /v1/objectives` (the day's, then the week's) | a hand-ticked one: `PATCH /v1/objectives/{id}` `{"done": true}` |
+| Today | `GET /v1/today` | a reminder's tick box: `POST /v1/reminders/{id}/complete`; the rest: `aide://today` |
+| Health | `GET /v1/food`, `GET /v1/habits` | a habit: `POST /v1/habits/{id}/check`; the rest: `aide://health` (the tab) |
+| Objectives | `GET /v1/objectives` (the day's, then the week's) | a hand-ticked one: `PATCH /v1/objectives/{id}` `{"done": true}`; the rest: `aide://objectives` (the tab) |
 | Team | `GET /v1/agents` | an agent: `aide://agent/<id>` (its latest chat); the Lock Screen's "Talk to Aide": `aide://voice` |
 | Departures | `GET /v1/transit/nearby` | opens the app |

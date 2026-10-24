@@ -49,6 +49,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         Self.moveToKeychain([Keys.serverURL, Keys.reminderListID, Keys.voiceLanguage, Keys.speakReplies])
+        if Bundle.main.bundleURL.pathExtension == "app" { Keychain.share([Keys.serverURL, Keys.token]) } // for the widgets
         serverURL = Keychain.get(Keys.serverURL) ?? Self.defaultServerURL
         token = Keychain.get(Keys.token) ?? ""
         #if DEBUG

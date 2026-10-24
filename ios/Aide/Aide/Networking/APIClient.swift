@@ -394,6 +394,45 @@ final class APIClient {
         try await send("POST", "/v1/devices/test", body: EmptyBody())
     }
 
+    // MARK: Widgets and Live Activities (docs/API.md)
+
+    /// The Today widget's tick box: the server marks it and the next sync ticks it in Apple Reminders.
+    func completeReminder(_ id: String, completed: Bool = true) async throws -> Reminder {
+        try await send("POST", "/v1/reminders/\(id)/complete", body: ReminderCompletion(completed: completed))
+    }
+
+    /// Boards for the stops nearest the phone's last fix.
+    func nearbyDepartures() async throws -> NearbyBoards {
+        try await send("GET", "/v1/transit/nearby")
+    }
+
+    /// A push-to-start token for one kind of Live Activity (`tram`, `agent`).
+    func registerLiveToken(kind: String, token: String, environment: String) async throws {
+        let _: OKResponse = try await send("POST", "/v1/live/tokens",
+                                           body: LiveToken(kind: kind, token: token, environment: environment))
+    }
+
+    func deleteLiveToken(kind: String) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/live/tokens/\(kind)")
+    }
+
+    /// One activity's update token, by the key in its attributes.
+    func registerLiveActivity(key: String, token: String, environment: String) async throws {
+        let _: OKResponse = try await send("POST", "/v1/live/activities",
+                                           body: LiveActivityToken(key: key, token: token, environment: environment))
+    }
+
+    func deleteLiveActivity(key: String) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/live/activities/\(key)") // URLComponents escapes it
+    }
+
+    /// A GET's body as it came, after the status check: the widgets keep it to draw from when the server is away.
+    func raw(_ path: String, query: [URLQueryItem] = []) async throws -> Data {
+        let (data, http) = try await fetch(try request("GET", path, query: query, auth: true, timeout: 20, body: nil))
+        try check(data, http)
+        return data
+    }
+
     func moodle() async throws -> MoodleStatus {
         try await send("GET", "/v1/moodle")
     }

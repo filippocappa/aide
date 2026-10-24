@@ -1,5 +1,6 @@
 import SwiftUI
 import UserNotifications
+import WidgetKit
 
 @main
 struct AideApp: App {
@@ -25,7 +26,10 @@ struct AideApp: App {
                 .task { await env.refreshAll() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { Task { await env.refreshAll() } }
+                    // Leaving the app: the widgets show what changed in it (check-ins, meals, objectives).
+                    if phase == .background { WidgetCenter.shared.reloadAllTimelines() }
                 }
+                .onOpenURL { url in env.push.route = PushRoute(url: url) }
         }
     }
 }
@@ -41,6 +45,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Task { if !env.settings.isPreview { await env.health.startObserving() } }
         // A significant move relaunches the app in the background only if monitoring starts again at launch.
         if !env.settings.isPreview { env.location.start() }
+        // A Live Activity the server starts wakes the app in the background to hand over its token.
+        if !env.settings.isPreview { env.live.start() }
         return true
     }
 
@@ -63,6 +69,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         guard PushRoute.isSync(userInfo), env.settings.isConfigured else { return completionHandler(.noData) }
         Task {
             await env.sync.sync()
+            WidgetCenter.shared.reloadTimelines(ofKind: "Today")
             completionHandler(env.sync.lastError == nil ? .newData : .failed)
         }
     }
@@ -145,7 +152,12 @@ struct ContentView: View {
         .onReceive(push.$route.compactMap { $0 }) { route in
             push.route = nil
             guard settings.isConfigured else { return }
-            if case .moodle = route {} else { tab = .chat } // Moodle opens as a sheet over any tab
+            switch route {
+            case .objectives: tab = .objectives; return
+            case .health: tab = .health; return
+            case .moodle: break // a sheet over any tab
+            default: tab = .chat
+            }
             Task { await env.open(route) }
         }
         .sheet(isPresented: $env.showMoodle) {

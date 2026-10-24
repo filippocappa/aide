@@ -108,6 +108,9 @@ struct MemoryRequest: Encodable { let text: String; var agent: String? }
 /// `environment` is "sandbox" for Xcode builds, "production" for TestFlight and the App Store.
 struct DeviceRegistration: Encodable { let token: String; let environment: String; let name: String }
 struct PushTestResult: Decodable { let sent: Int; let failed: Int }
+struct LiveToken: Encodable { let kind: String; let token: String; let environment: String }
+struct LiveActivityToken: Encodable { let key: String; let token: String; let environment: String }
+struct ReminderCompletion: Encodable { let completed: Bool }
 
 struct Conversation: Decodable, Identifiable, Hashable {
     let id: String
@@ -1400,4 +1403,11 @@ struct DepartureBoard: Decodable, Identifiable, Hashable {
     let lines: [Line]
 
     var madeDate: Date? { Wire.parse(at) }
+}
+
+/// `GET /v1/transit/nearby`: the departures widget.
+struct NearbyBoards: Decodable {
+    let boards: [DepartureBoard]
+    /// The fix they're from; nil without one.
+    let fixAt: String?
 }
