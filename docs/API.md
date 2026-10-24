@@ -1267,7 +1267,7 @@ and ends it once `at` is a minute past (or the trip is cancelled), dismissed 2 m
   after the turn ends, if the key is still there, it sends an `update` with `done` and an `alert` (the agent's name,
   the first line), then an `end` dismissed after 30 minutes. A failed turn ends with `failed`, no alert.
 - A scheduled routine (not a watch): the server push-to-starts it (key `agent:<routine conversation id>`,
-  `title` the routine's), with an alert ("Coach · Weekly plan"), silent if the device's start token is all it has.
+  `title` the routine's), with a quiet alert (title "Coach · Weekly plan", body "Working on it", no sound; a start needs one).
   When the run ends it sends `end` with `done`, dismissed at once: the `message` push that follows is the
   notification.
 - Tapping the activity opens the conversation (`aide://conversation/<id>`; the Team chat: `aide://team`).
