@@ -23,6 +23,7 @@ import zipfile
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -30,6 +31,9 @@ import httpx
 from .db import utcnow
 from .push import Push
 from .routines import check_days, check_time, days_text
+
+if TYPE_CHECKING:
+    from .live import LiveActivities
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +63,11 @@ WALK_SHOWN = 2000  # metres: a stop closer than this to the phone gets its walk 
 BOARD_TIMES = 4  # arrivals per line and direction on a departures card
 WALK_SPEED = 1.25  # m/s, for the straight-line estimate without Maps
 DETOUR = 1.3  # streets are longer than the straight line
+LIVE_MOVE = 30  # seconds: a tram's Live Activity is updated when its expected time moves this much
+LIVE_GONE = timedelta(minutes=1)  # this long past its time, the tram has left: its Live Activity ends
+LIVE_STALE = timedelta(minutes=2)  # after its time, the countdown is stale; and the ended one goes after this
+LIVE_FOR = timedelta(hours=2)  # a tram followed longer than this is let go
+NEARBY = 2  # stops on the departures widget
 
 GTFS_SCHEMA = """
 CREATE TABLE stops (id TEXT PRIMARY KEY, code TEXT NOT NULL, name TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL);
@@ -558,6 +567,26 @@ class Boards:
         }
 
 
+    async def nearby(self, now: datetime | None = None) -> tuple[list[dict], datetime | None]:
+        """The departures widget: boards for the NEARBY stops closest to the phone's fix (under FIX_USABLE old,
+        within NEAR) with something in the next hour, nearest first; and the fix's time (None without one)."""
+        now = now or utcnow()
+        fix = self.location.latest()
+        if fix is None:
+            return [], None
+        if now - fix["at"] > FIX_USABLE:
+            return [], fix["at"]
+        out = []
+        for stop, _ in self.transit.timetable.near(fix["lat"], fix["lon"], limit=8):
+            arrivals = await self.transit.arrivals([stop["id"]], now=now)
+            if not arrivals:
+                continue
+            out.append(await self.board(stop, now=now, arrivals=arrivals))
+            if len(out) == NEARBY:
+                break
+        return out, fix["at"]
+
+
 # -- where the phone is ---------------------------------------------------------------------
 
 
@@ -838,8 +867,12 @@ class AlertStore:
 class AlertWatcher:
     """Checks the active alerts every TICK and sends the push when it's time."""
 
-    def __init__(self, store: AlertStore, transit: Transit, location: Location, walks: Walks, push: Push | None):
+    def __init__(self, store: AlertStore, transit: Transit, location: Location, walks: Walks, push: Push | None,
+                 live: "LiveActivities | None" = None):
         self.store, self.transit, self.location, self.walks, self.push = store, transit, location, walks, push
+        self.live = live
+        # Trams with a Live Activity, by its key: {"trip", "day", "stop", "line", "leave_by", "state", "started"}.
+        self.following: dict[str, dict] = {}
 
     async def run(self) -> None:
         while True:
@@ -857,6 +890,11 @@ class AlertWatcher:
                 await self.check(a, earliest, now)
             except Exception:
                 log.exception("tram alert %s failed", a["id"])
+        for key in list(self.following):
+            try:
+                await self.follow(key, now)
+            except Exception:
+                log.exception("tram Live Activity %s failed", key)
 
     async def walk(self, stop: dict, now: datetime) -> int | None:
         """Seconds from where the phone is to the stop; None if it's not known."""
@@ -884,11 +922,64 @@ class AlertWatcher:
         lead = a["minutes"] * 60 if not leave else (walk if walk is not None else DEFAULT_WALK) + BUFFER
         if tram.seconds(now) > lead:
             return
-        title, body = alert_text(tram, catchable[1] if len(catchable) > 1 else None, stop, walk, leave, now)
-        if not (self.push and await self.push.send_transit(a["id"], title, body)):
+        after = catchable[1] if len(catchable) > 1 else None
+        title, body = alert_text(tram, after, stop, walk, leave, now)
+        if await self.start_live(a, tram, after, stop, walk, leave, title, body, now):
+            log.info("tram alert %s: Live Activity started", a["id"])
+        elif not (self.push and await self.push.send_transit(a["id"], title, body)):
             log.warning("tram alert %s: push didn't go out", a["id"])
         log.info("tram alert %s: %s", a["id"], title)
         self.store.alerted(a, now)
+
+
+    # -- the Live Activity (docs/API.md, "Live Activities", tram) -----------------------------------------------
+
+    @staticmethod
+    def live_state(tram: Arrival, after: Arrival | None, leave_by: int | None, walk: int | None,
+                   gone: bool = False) -> dict:
+        at = int(tram.at.timestamp())
+        return {"at": at, "leave": at - leave_by if leave_by is not None else None, "walk": walk, "live": tram.live,
+                "delay": tram.delay, "next": int(after.at.timestamp()) if after else None, "gone": gone}
+
+    async def start_live(self, a: dict, tram: Arrival, after: Arrival | None, stop: dict, walk: int | None,
+                         leave: bool, title: str, body: str, now: datetime) -> bool:
+        """Push-start the tram's countdown instead of the plain push. False if there's no start token."""
+        if not (self.live and self.live.start_token("tram")):
+            return False
+        key = f"tram:{a['id']}:{tram.trip}:{tram.day:%Y%m%d}" if tram.day else f"tram:{a['id']}:{tram.trip}"
+        leave_by = (walk if walk is not None else DEFAULT_WALK) if leave else None
+        state = self.live_state(tram, after, leave_by, walk)
+        attributes = {"key": key, "line": tram.line, "vehicle": tram.vehicle, "stop": stop["name"],
+                      "code": stop["code"], "towards": tram.headsign or None, "alert": a["id"]}
+        try:
+            ok = await self.live.start("tram", attributes, state,
+                                       {"title": title, "body": body, "sound": "default"}, stale=tram.at + LIVE_STALE)
+        except Exception:
+            log.exception("tram alert %s: Live Activity didn't start", a["id"])
+            return False
+        if ok:
+            self.following[key] = {"trip": tram.trip, "day": tram.day, "stop": tram.stop, "line": a["line"],
+                                   "leave_by": leave_by, "walk": walk, "state": state, "started": now}
+        return ok
+
+    async def follow(self, key: str, now: datetime) -> None:
+        """Keep a started tram's countdown live; end it once the tram has left (or won't come)."""
+        f = self.following[key]
+        if now - f["started"] > LIVE_FOR:
+            del self.following[key]
+            return
+        arrivals = await self.transit.arrivals([f["stop"]], f["line"], now, within=timedelta(minutes=90))
+        mine = next((x for x in arrivals if x.trip == f["trip"] and x.day == f["day"]), None)
+        if mine is None or now - mine.at >= LIVE_GONE:
+            del self.following[key]
+            await self.live.end(key, {**f["state"], "gone": True}, now + LIVE_STALE)
+            return
+        after = next((x for x in arrivals if x.at > mine.at and x.trip != mine.trip), None)
+        state = self.live_state(mine, after, f["leave_by"], f["walk"])
+        if abs(state["at"] - f["state"]["at"]) < LIVE_MOVE and state["next"] == f["state"]["next"]:
+            return
+        if await self.live.update(key, state, stale=mine.at + LIVE_STALE):
+            f["state"] = state  # not sent (no token yet): compared with what the phone shows, so tried again
 
 
 def alert_text(tram: Arrival, after: Arrival | None, stop: dict, walk: int | None, leave: bool,
