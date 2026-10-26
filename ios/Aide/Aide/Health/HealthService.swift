@@ -216,6 +216,7 @@ final class HealthService: ObservableObject {
                 activeKcal: energy.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .kilocalorie())) },
                 exerciseMin: exercise.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .minute())) },
                 inhalerUsage: inhaler.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .count())) },
+                naps: Optional(SleepSummary.naps(on: day, from: segments, calendar: calendar)).flatMap { $0.isEmpty ? nil : $0 },
                 workouts: allWorkouts.filter { $0.startDate >= day && $0.startDate < nextDay }.map(Self.workout)
             )
         }

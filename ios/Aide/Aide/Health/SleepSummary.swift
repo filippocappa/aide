@@ -20,11 +20,8 @@ enum SleepSummary {
               let windowStart = calendar.date(byAdding: .day, value: -1, to: windowEnd)
         else { return nil }
 
-        // The Watch writes stages; the iPhone only "asleep". When there are stages, the plain ones are duplicates.
         let staged = segments.filter { [.core, .deep, .rem].contains($0.stage) }
-        let asleep = staged.isEmpty ? segments.filter { $0.stage == .asleep } : staged
-
-        let night = sessions(merge(asleep.map { ($0.start, $0.end) }))
+        let night = sessions(merge(asleep(segments).map { ($0.start, $0.end) }))
             .filter { $0.end > windowStart && $0.end <= windowEnd }
             .max { asleepTime($0.parts) < asleepTime($1.parts) }
         guard let night else { return nil }
@@ -40,6 +37,28 @@ enum SleepSummary {
         return SleepNight(bedtime: Wire.local(night.start), wake: Wire.local(night.end),
                           asleepMin: asleepMin, inBedMin: inBedMin, awakeMin: max(0, inBedMin - asleepMin),
                           deepMin: minutes(.deep), coreMin: minutes(.core), remMin: minutes(.rem))
+    }
+
+    /// Sleep in the day apart from the night: stretches that start after the night's wake (or midnight) and before
+    /// the next midnight, 10 minutes to 4 hours asleep, leaving out the next night (an early bedtime).
+    static func naps(on day: Date, from segments: [SleepSegment], calendar: Calendar = .current) -> [SleepNap] {
+        let midnight = calendar.startOfDay(for: day)
+        guard let nextDay = calendar.date(byAdding: .day, value: 1, to: midnight) else { return [] }
+        let from = night(endingOn: day, from: segments, calendar: calendar)?.wakeDate.map { max($0, midnight) } ?? midnight
+        let nextNight = night(endingOn: nextDay, from: segments, calendar: calendar)?.bedtimeDate
+        return sessions(merge(asleep(segments).map { ($0.start, $0.end) }))
+            .filter { $0.start >= from && $0.start < nextDay && $0.start != nextNight }
+            .compactMap { nap in
+                let minutes = Int((asleepTime(nap.parts) / 60).rounded())
+                guard (10...240).contains(minutes) else { return nil }
+                return SleepNap(start: Wire.local(nap.start), end: Wire.local(nap.end), asleepMin: minutes)
+            }
+    }
+
+    /// The Watch writes stages; the iPhone only "asleep". When there are stages, the plain ones are duplicates.
+    private static func asleep(_ segments: [SleepSegment]) -> [SleepSegment] {
+        let staged = segments.filter { [.core, .deep, .rem].contains($0.stage) }
+        return staged.isEmpty ? segments.filter { $0.stage == .asleep } : staged
     }
 
     private typealias Interval = (start: Date, end: Date)

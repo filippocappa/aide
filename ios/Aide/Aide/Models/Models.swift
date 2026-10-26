@@ -644,6 +644,13 @@ struct SleepNight: Codable, Hashable {
     var wakeDate: Date? { Wire.parse(wake) }
 }
 
+/// Sleep in the day, apart from the night (a nap).
+struct SleepNap: Codable, Hashable {
+    var start: String
+    var end: String
+    var asleepMin: Int
+}
+
 struct HealthWorkout: Encodable, Equatable {
     var id: String
     var type: String
@@ -665,6 +672,7 @@ struct HealthDay: Encodable, Equatable {
     var activeKcal: Int?
     var exerciseMin: Int?
     var inhalerUsage: Int?  // Health's Inhaler Usage: a limit habit may count from it (coffees)
+    var naps: [SleepNap]?  // nil when there were none
     var workouts: [HealthWorkout] = []
 }
 
@@ -688,6 +696,7 @@ struct HealthDayReading: Decodable, Hashable {
     let activeKcal: Int?
     let exerciseMin: Int?
     let workouts: [Workout]?
+    var naps: [SleepNap]? = nil
 }
 
 struct HealthDayList: Decodable { let days: [HealthDayReading] }

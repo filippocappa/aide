@@ -59,7 +59,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     /// What it says, in a line, under the chart.
     var about: String {
         switch self {
-        case .sleep: "Time asleep in the night that ended that morning, from your Watch. Naps are left out."
+        case .sleep: "Time asleep in the night that ended that morning, from your Watch. Naps are counted apart."
         case .restingHr: "Apple's resting heart rate for the day. Lower than usual often means well rested."
         case .hrv: "The average variability during the night's sleep. Higher than usual usually means recovered."
         case .breathing: "Breaths per minute, averaged over the night."
@@ -184,6 +184,13 @@ struct BodySections: View {
         }
     }
 
+    /// "Nap 10:42–12:30 (1h40)".
+    private static func nap(_ nap: SleepNap) -> String {
+        let time = Date.FormatStyle(date: .omitted, time: .shortened)
+        let span = [nap.start, nap.end].compactMap(Wire.parse).map { $0.formatted(time) }.joined(separator: "–")
+        return "Nap \(span) (\(SleepCard.duration(nap.asleepMin)))"
+    }
+
     @ViewBuilder private func sleep(_ days: [HealthDayReading]) -> some View {
         if let night = days.first(where: { $0.sleep != nil }), let s = night.sleep {
             let usual = HealthMetric.sleep.latest(in: days)?.usual.map { Int(($0 * 60).rounded()) }
@@ -191,6 +198,11 @@ struct BodySections: View {
                 Button { open(.sleep) } label: {
                     VStack(alignment: .leading, spacing: 12) {
                         SleepCard(night: s, usualAsleepMin: usual)
+                        if let naps = days.first?.naps, !naps.isEmpty {
+                            Label(naps.map(Self.nap).joined(separator: ", "), systemImage: "powersleep")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                         MiniChart(metric: .sleep, days: Array(days.prefix(7)))
                             .frame(height: 44)
                     }

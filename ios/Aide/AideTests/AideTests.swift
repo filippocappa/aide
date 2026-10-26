@@ -593,6 +593,21 @@ final class HealthTests: XCTestCase {
         XCTAssertNil(night.deepMin)
     }
 
+    func testNapsAreTheDaysOtherSleepNotTheNextNight() {
+        let segments = [
+            seg(.core, (2, 16), (7, 53)), // the night
+            seg(.core, (10, 30), (12, 0)),
+            seg(.rem, (12, 0), (12, 40)), // one nap, 2h10
+            seg(.core, (16, 0), (16, 5)), // 5 min: dozing, not a nap
+            seg(.core, (20, 30), (23, 59)), // the next night, early
+        ]
+        let naps = SleepSummary.naps(on: at(12), from: segments, calendar: calendar)
+        XCTAssertEqual(naps.count, 1)
+        XCTAssertEqual(naps.first.flatMap { Wire.parse($0.start) }, at(10, 30))
+        XCTAssertEqual(naps.first.flatMap { Wire.parse($0.end) }, at(12, 40))
+        XCTAssertEqual(naps.first?.asleepMin, 130)
+    }
+
     func testNightEndingTheDayBeforeIsNotThisDays() {
         let segments = [seg(.core, (-24, 0), (-17, 0))] // ended 07:00 on the 18th
         XCTAssertNil(SleepSummary.night(endingOn: at(12), from: segments, calendar: calendar))
