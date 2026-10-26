@@ -48,6 +48,8 @@ class PlanLimit(Exception):
         self.window = window
 
 
+PLAN_MIN_OUTPUT = 4096  # the least output cap a call on the plan gets
+
 class Engine:
     def __init__(self, conn, client, fast_model: str, smart_model: str, claude: str | None = None,
                  workdir: Path | None = None):
@@ -279,7 +281,8 @@ class Engine:
     async def _claude(self, system: str, content: list[dict], max_tokens: int, tier: str) -> str:
         self.workdir.mkdir(parents=True, exist_ok=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith("ANTHROPIC_")}  # the plan, never a key
-        env |= {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(max_tokens), "MAX_THINKING_TOKENS": "0",
+        # A floor: Claude Code runs past a small cap (a 300-token JSON answer failed) and the plan doesn't bill tokens.
+        env |= {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(max(max_tokens, PLAN_MIN_OUTPUT)), "MAX_THINKING_TOKENS": "0",
                 "DISABLE_AUTOUPDATER": "1", "DISABLE_TELEMETRY": "1"}
         message = json.dumps({"type": "user", "message": {"role": "user", "content": content}})
         proc = await asyncio.create_subprocess_exec(
