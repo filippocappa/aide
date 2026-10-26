@@ -56,7 +56,7 @@ final class DigestViewModel: ObservableObject {
 
     func tick(_ objective: Objective) async {
         let current = objectiveOverrides[objective.id] ?? objective
-        if let updated = try? await api.updateObjective(objective.id, ObjectivePatch(done: !current.done)) {
+        if let updated = try? await api.tickObjective(current) {
             objectiveOverrides[objective.id] = updated
         }
     }

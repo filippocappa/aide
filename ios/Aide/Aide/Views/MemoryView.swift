@@ -6,44 +6,19 @@ struct MemoryView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var chat: ChatViewModel
     @State private var items: [MemoryItem] = []
-    @State private var draft = ""
-    /// Who a new item is for; nil is shared.
-    @State private var owner: String?
+    @State private var adding = false
     @State private var error: String?
     @State private var loaded = false
 
     var body: some View {
         List {
-            Section {
-                HStack(alignment: .bottom, spacing: 8) {
-                    TextField("Something Aide should remember", text: $draft, axis: .vertical)
-                        .lineLimit(1...4)
-                    // Borderless, or the List turns the whole row into this button: tapping the
-                    // empty field then hit the disabled Add instead of opening the keyboard.
-                    Button { Task { await add() } } label: {
-                        Text("Add")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Theme.onAccent)
-                            .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(Theme.accent, in: Capsule())
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .opacity(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
-                }
-                if specialists.count > 0 {
-                    Picker("For", selection: $owner) {
-                        Text("Everyone").tag(String?.none)
-                        ForEach(specialists) { Text($0.name).tag(String?.some($0.id)) }
-                    }
-                }
-            }
             if let error {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
             }
             Section {
                 if items.isEmpty && loaded {
-                    Text("Nothing yet. Try \"I'm vegetarian\" or \"My dentist is Dr. Rossi\".").foregroundStyle(.secondary)
+                    Text("Nothing yet. Tap + to add something, like \"I'm vegetarian\" or \"My dentist is Dr. Rossi\", or say \"remember that…\" in a chat.")
+                        .foregroundStyle(.secondary)
                 }
                 rows(items.filter { $0.agent == nil })
             } header: {
@@ -67,6 +42,14 @@ struct MemoryView: View {
         .background(Theme.grouped)
         .navigationTitle("Memory")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Add", systemImage: "plus") { adding = true }
+            }
+        }
+        .sheet(isPresented: $adding) {
+            NewMemorySheet(agents: specialists) { text, owner in await add(text, owner: owner) }
+        }
         .task { await load() }
     }
 
@@ -96,14 +79,16 @@ struct MemoryView: View {
         return error.localizedDescription
     }
 
-    private func add() async {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+    /// False when it didn't save, so the sheet stays open with the text.
+    private func add(_ text: String, owner: String?) async -> Bool {
         do {
             items.insert(try await env.api.addMemory(text, agent: owner), at: 0)
-            draft = ""
             error = nil
-        } catch { self.error = describe(error) }
+            return true
+        } catch {
+            self.error = describe(error)
+            return false
+        }
     }
 
     private func remove(_ item: MemoryItem) async {
@@ -111,5 +96,90 @@ struct MemoryView: View {
             try await env.api.deleteMemory(item.id)
             items.removeAll { $0.id == item.id }
         } catch { self.error = describe(error) }
+    }
+}
+
+/// Something new to remember, and who reads it: everyone, or one specialist.
+private struct NewMemorySheet: View {
+    let agents: [Agent]
+    let save: (String, String?) async -> Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    /// nil is everyone.
+    @State private var owner: String?
+    @State private var saving = false
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Something Aide should remember", text: $text, axis: .vertical)
+                        .lineLimit(3...8)
+                        .focused($focused)
+                }
+                if !agents.isEmpty {
+                    Section {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                chip("Everyone", tint: Theme.accent, selected: owner == nil) {
+                                    Image(systemName: "person.2.fill").font(.caption)
+                                } action: { owner = nil }
+                                ForEach(agents) { agent in
+                                    chip(agent.name, tint: agent.tint, selected: owner == agent.id) {
+                                        AgentMark(agent: agent, size: 16)
+                                    } action: { owner = agent.id }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                        }
+                        .listRowInsets(EdgeInsets())
+                    } header: {
+                        Text("Who reads it")
+                    } footer: {
+                        Text(owner == nil ? "Every agent reads it at the start of a chat."
+                             : "Only \(agents.first { $0.id == owner }?.name ?? "this agent") reads it. Aide sees it too.")
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Theme.grouped)
+            .navigationTitle("New memory")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        Task {
+                            saving = true
+                            if await save(trimmed, owner) { dismiss() }
+                            saving = false
+                        }
+                    }
+                    .disabled(saving || trimmed.isEmpty)
+                }
+            }
+            .onAppear { focused = true }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func chip<Icon: View>(_ title: String, tint: Color, selected: Bool, @ViewBuilder icon: () -> Icon,
+                                  action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                icon()
+                Text(title).font(.subheadline.weight(selected ? .semibold : .regular))
+            }
+            .foregroundStyle(selected ? tint : .primary)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(selected ? tint.opacity(0.15) : Theme.chip, in: Capsule())
+            .overlay(Capsule().strokeBorder(selected ? tint.opacity(0.5) : .clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .animation(.snappy(duration: 0.15), value: selected)
     }
 }

@@ -616,6 +616,26 @@ struct HealthDay: Encodable, Equatable {
 }
 
 struct HealthUpload: Encodable { let days: [HealthDay] }
+
+/// A health day as the server has it, for Settings → Apple Health: what has reached Aide.
+struct HealthDayReading: Decodable, Hashable {
+    struct Workout: Decodable, Hashable {
+        let type: String
+        let minutes: Int?
+    }
+    let date: String
+    let sleep: SleepNight?
+    let restingHr: Int?
+    let hrvMs: Double?
+    let respiratoryRate: Double?
+    let wristTempC: Double?
+    let steps: Int?
+    let activeKcal: Int?
+    let exerciseMin: Int?
+    let workouts: [Workout]?
+}
+
+struct HealthDayList: Decodable { let days: [HealthDayReading] }
 struct HealthUploadResult: Decodable {
     let saved: Int
     /// Habits this upload checked through workouts.
@@ -746,6 +766,8 @@ struct Objective: Decodable, Identifiable, Hashable {
         let type: String
         /// What it counts, for people: "check-ins of Run".
         let label: String?
+        /// The reminder that ticks a `reminder` measure.
+        let reminder: String?
     }
     let id: String
     let agent: String
@@ -767,6 +789,10 @@ struct Objective: Decodable, Identifiable, Hashable {
     var isLapsed: Bool { status == "lapsed" }
     /// Ticked by hand: no measure behind it.
     var isManual: Bool { measure == nil }
+    /// Ticked when this reminder is done.
+    var reminderID: String? { measure?.type == "reminder" ? measure?.reminder : nil }
+    /// Can be ticked or unticked by hand: anything but a measured one its data has already done.
+    var canTick: Bool { !isLapsed && (isManual || reminderID != nil || progress < target) }
 }
 
 /// One period's objectives: the day, the week or the month around a date.

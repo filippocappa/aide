@@ -11,9 +11,10 @@ struct SettingsView: View {
     @EnvironmentObject private var location: LocationService
     @EnvironmentObject private var env: AppEnvironment
     @StateObject private var connection = ConnectionCheck()
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Form {
                 Section {
                     NavigationLink { ConnectionSettingsView(connection: connection) } label: { ConnectionHeader(connection: connection) }
@@ -57,6 +58,28 @@ struct SettingsView: View {
                 await connection.check(env.api, configured: settings.isConfigured)
             }
             .task { await health.refreshStatus() }
+            #if DEBUG
+            // Simulator screenshots: `-previewSettings digests` (or memory, voice, plan, notifications, reminders,
+            // health, location, connection) opens that page.
+            .navigationDestination(for: String.self) { page in
+                switch page {
+                case "digests": DigestSettingsView()
+                case "memory": MemoryView()
+                case "voice": VoiceSettingsView()
+                case "plan": NotesWriterView()
+                case "notifications": NotificationSettingsView()
+                case "reminders": ReminderSettingsView()
+                case "health": HealthSettingsView()
+                case "location": LocationSettingsView()
+                default: ConnectionSettingsView(connection: connection)
+                }
+            }
+            .onAppear {
+                if settings.isPreview, path.isEmpty, let page = UserDefaults.standard.string(forKey: "previewSettings") {
+                    path.append(page)
+                }
+            }
+            #endif
         }
     }
 
@@ -113,7 +136,7 @@ struct SettingsView: View {
 }
 
 /// The coloured rounded square in front of a settings row, as in the iPhone's Settings.
-private struct SettingsIcon: View {
+struct SettingsIcon: View {
     let systemName: String
     let color: Color
 
@@ -412,6 +435,10 @@ private struct ReminderSettingsView: View {
 private struct HealthSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var health: HealthService
+    @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.openURL) private var openURL
+    /// What the server has, newest first; nil until loaded.
+    @State private var days: [HealthDayReading]?
 
     var body: some View {
         Form {
@@ -443,12 +470,30 @@ private struct HealthSettingsView: View {
                     Text("Without it, the briefing comes with the first health upload of the morning.")
                 }
             }
+            if let days, health.isAvailable {
+                Section {
+                    ForEach(HealthMeasure.all) { measure in
+                        HealthReadingRow(measure: measure, latest: days.lazy.compactMap { day in
+                            measure.value(day).map { (day.date, $0) }
+                        }.first)
+                    }
+                    Button("Change in the Health app") {
+                        if let url = URL(string: "x-apple-health://") { openURL(url) }
+                    }
+                } header: {
+                    Text("What Aide reads")
+                } footer: {
+                    Text("The latest of each that reached Aide in the last 30 days. iOS doesn't tell apps what they may read, "
+                         + "so one with nothing yet may be turned off: Health app → your picture → Apps → Aide.")
+                }
+            }
         }
         .scrollContentBackground(.hidden)
         .background(Theme.grouped)
         .navigationTitle("Apple Health")
         .navigationBarTitleDisplayMode(.inline)
         .task { await health.refreshStatus() }
+        .task(id: health.lastUpload) { days = try? await env.api.healthDays() }
     }
 
     private func step(_ n: Int, _ text: String) -> some View {
@@ -456,6 +501,71 @@ private struct HealthSettingsView: View {
             Text("\(n)").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
             Text(text).font(.subheadline)
         }
+    }
+}
+
+/// One thing Aide reads from Apple Health, and how to show it from a day's summary.
+private struct HealthMeasure: Identifiable {
+    let name: String
+    let icon: String
+    let color: Color
+    let value: (HealthDayReading) -> String?
+    var id: String { name }
+
+    static let all: [HealthMeasure] = [
+        .init(name: "Sleep", icon: "bed.double.fill", color: .teal) { day in
+            day.sleep.map { s in
+                let time = "\(s.asleepMin / 60) h \(s.asleepMin % 60) min"
+                return s.deepMin == nil ? time : time + ", with stages"
+            }
+        },
+        .init(name: "Resting heart rate", icon: "heart.fill", color: .red) { $0.restingHr.map { "\($0) bpm" } },
+        .init(name: "Heart rate variability", icon: "waveform.path.ecg", color: .red) { $0.hrvMs.map { "\(Int($0.rounded())) ms" } },
+        .init(name: "Breathing rate", icon: "lungs.fill", color: .cyan) {
+            $0.respiratoryRate.map { "\($0.formatted(.number.precision(.fractionLength(1)))) per min" }
+        },
+        .init(name: "Wrist temperature", icon: "thermometer.medium", color: .orange) {
+            $0.wristTempC.map { "\($0.formatted(.number.precision(.fractionLength(1)))) °C" }
+        },
+        .init(name: "Steps", icon: "figure.walk", color: .orange) { $0.steps.map { $0.formatted() } },
+        .init(name: "Active energy", icon: "flame.fill", color: .pink) { $0.activeKcal.map { "\($0) kcal" } },
+        .init(name: "Exercise", icon: "figure.run", color: .green) { $0.exerciseMin.map { "\($0) min" } },
+        .init(name: "Workouts", icon: "dumbbell.fill", color: .green) { day in
+            day.workouts?.first.map { w in
+                let type = w.type.replacingOccurrences(of: "_", with: " ")
+                let name = type.prefix(1).uppercased() + type.dropFirst()
+                return w.minutes.map { "\(name), \($0) min" } ?? name
+            }
+        },
+    ]
+}
+
+private struct HealthReadingRow: View {
+    let measure: HealthMeasure
+    /// The newest day that had it, and its value.
+    let latest: (date: String, value: String)?
+
+    var body: some View {
+        LabeledContent {
+            if let latest {
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(latest.value).foregroundStyle(.primary)
+                    Text(Self.day(latest.date)).font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Nothing yet").foregroundStyle(.orange)
+            }
+        } label: {
+            Label { Text(measure.name) } icon: { SettingsIcon(systemName: measure.icon, color: measure.color) }
+        }
+    }
+
+    private static func day(_ date: String) -> String {
+        guard let d = Wire.day(date) else { return date }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(d) { return "Today" }
+        if calendar.isDateInYesterday(d) { return "Yesterday" }
+        return d.formatted(.dateTime.day().month(.abbreviated))
     }
 }
 

@@ -14,40 +14,55 @@ struct DigestSettingsView: View {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
             }
             if let binding = Binding($settings) {
-                // One list, details only for the ones that are on.
-                Section {
-                    if binding.wrappedValue.wake != nil {
-                        DigestRow(title: "When I wake up", detail: "How you slept, then your day",
+                // A card per digest, its schedule only while it's on.
+                if binding.wrappedValue.wake != nil {
+                    Section {
+                        DigestRow(title: "When I wake up", detail: "How you slept, then your day", icon: "sunrise.fill", color: .orange,
                                   isOn: Binding(get: { binding.wrappedValue.wake?.enabled ?? false },
                                                 set: { binding.wrappedValue.wake?.enabled = $0 })) {
                             EmptyView()
                         }
+                    } footer: {
+                        Text("When the Shortcuts automation says you're up, or with the morning's first health upload.")
                     }
-                    DigestRow(title: "Morning", detail: "Your day ahead", isOn: binding.daily.enabled) {
+                }
+                Section {
+                    DigestRow(title: "Morning", detail: "Your day ahead", icon: "sun.max.fill", color: .yellow,
+                              isOn: binding.daily.enabled) {
                         TimeRow(time: binding.daily.time)
                     }
-                    if binding.wrappedValue.evening != nil {
-                        DigestRow(title: "Evening", detail: "Tomorrow, and what's still open",
+                }
+                if binding.wrappedValue.evening != nil {
+                    Section {
+                        DigestRow(title: "Evening", detail: "Tomorrow, and what's still open", icon: "moon.stars.fill", color: .indigo,
                                   isOn: Binding(get: { binding.wrappedValue.evening?.enabled ?? false },
                                                 set: { binding.wrappedValue.evening?.enabled = $0 })) {
                             TimeRow(time: Binding(get: { binding.wrappedValue.evening?.time ?? "22:00" },
                                                   set: { binding.wrappedValue.evening?.time = $0 }))
                         }
                     }
-                    DigestRow(title: "Weekly", detail: "The week ahead", isOn: binding.weekly.enabled) {
-                        Picker("Day", selection: Binding(get: { binding.wrappedValue.weekly.weekday ?? 7 },
-                                                         set: { binding.wrappedValue.weekly.weekday = $0 })) {
+                }
+                Section {
+                    DigestRow(title: "Weekly", detail: "The week ahead", icon: "calendar", color: .red, isOn: binding.weekly.enabled) {
+                        Picker("Every", selection: Binding(get: { binding.wrappedValue.weekly.weekday ?? 7 },
+                                                           set: { binding.wrappedValue.weekly.weekday = $0 })) {
                             ForEach(1...7, id: \.self) { Text(Self.weekdays[$0 - 1]).tag($0) }
                         }
                         TimeRow(time: binding.weekly.time)
                     }
-                    DigestRow(title: "Monthly", detail: "The month ahead", isOn: binding.monthly.enabled) {
+                }
+                Section {
+                    DigestRow(title: "Monthly", detail: "The month ahead", icon: "calendar.badge.clock", color: .blue,
+                              isOn: binding.monthly.enabled) {
                         let day = binding.wrappedValue.monthly.day ?? 1
                         // 29 to 31 means the last day of shorter months.
-                        Stepper(day > 28 ? "Day \(day) or the last" : "Day \(day)",
-                                value: Binding(get: { day }, set: { binding.wrappedValue.monthly.day = $0 }), in: 1...31)
+                        Stepper(value: Binding(get: { day }, set: { binding.wrappedValue.monthly.day = $0 }), in: 1...31) {
+                            LabeledContent("On day", value: day > 28 ? "\(day), or the last" : "\(day)")
+                        }
                         TimeRow(time: binding.monthly.time)
                     }
+                } footer: {
+                    Text("Each one comes as a notification. Tap it to open the digest in a chat.")
                 }
             } else if error == nil {
                 ProgressView()
@@ -78,14 +93,19 @@ struct DigestSettingsView: View {
 private struct DigestRow<Details: View>: View {
     let title: String
     let detail: String
+    let icon: String
+    let color: Color
     @Binding var isOn: Bool
     @ViewBuilder let details: () -> Details
 
     var body: some View {
         Toggle(isOn: $isOn.animation()) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                SettingsIcon(systemName: icon, color: color)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
         if isOn { details() }
@@ -96,7 +116,7 @@ private struct TimeRow: View {
     @Binding var time: String
 
     var body: some View {
-        DatePicker("Time", selection: Binding(
+        DatePicker("At", selection: Binding(
             get: {
                 let parts = time.split(separator: ":").compactMap { Int($0) }
                 return Calendar.current.date(bySettingHour: parts.first ?? 8, minute: parts.count > 1 ? parts[1] : 0,

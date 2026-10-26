@@ -143,8 +143,9 @@ struct ObjectivesView: View {
     }
 
     private func tick(_ o: Objective) async {
-        do { replace(try await env.api.updateObjective(o.id, ObjectivePatch(done: !o.done))); error = nil }
+        do { replace(try await env.api.tickObjective(o)); error = nil }
         catch { self.error = describe(error) }
+        if o.reminderID != nil { await env.sync.sync() }
     }
 
     private func drop(_ o: Objective) async {
@@ -170,11 +171,12 @@ struct ObjectivesView: View {
     }
 }
 
-/// One objective: a tick box when you tick it, a ring when the data does; how far along, and why.
+/// One objective: a tick box when you tick it, a ring when the data does; how far along, and why. Either can be
+/// tapped, unless the data has already done it.
 struct ObjectiveRow: View {
     let objective: Objective
     let tint: Color
-    /// Ticks or unticks one without a measure; nil where it can't be changed.
+    /// Ticks or unticks it; nil where it can't be changed.
     var tick: (() -> Void)?
 
     var body: some View {
@@ -201,21 +203,21 @@ struct ObjectiveRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder private var mark: some View {
-        if objective.isManual {
-            Button { tick?() } label: {
+    private var mark: some View {
+        Button { tick?() } label: {
+            if objective.isManual {
                 Image(systemName: objective.done ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
                     .foregroundStyle(objective.done ? tint : .secondary)
+            } else {
+                ProgressRing(fraction: objective.done ? 1 : Double(objective.progress) / Double(max(1, objective.target)),
+                             done: objective.done, tint: tint)
+                    .frame(width: 22, height: 22)
             }
-            .buttonStyle(.borderless)
-            .disabled(tick == nil || objective.isLapsed)
-            .accessibilityLabel(objective.done ? "Mark not done" : "Mark done")
-        } else {
-            ProgressRing(fraction: objective.done ? 1 : Double(objective.progress) / Double(max(1, objective.target)),
-                         done: objective.done, tint: tint)
-                .frame(width: 22, height: 22)
         }
+        .buttonStyle(.borderless)
+        .disabled(tick == nil || !objective.canTick)
+        .accessibilityLabel(objective.done ? "Mark not done" : "Mark done")
     }
 
     private var detail: String? {

@@ -315,6 +315,18 @@ final class APIClient {
         try await send("PATCH", "/v1/objectives/\(id)", body: patch)
     }
 
+    /// Ticks or unticks one by hand. One tied to a reminder completes the reminder instead, which ticks it (and
+    /// reaches Apple Reminders); a reminder deleted since falls back to the plain tick.
+    func tickObjective(_ objective: Objective) async throws -> Objective {
+        if let reminder = objective.reminderID {
+            do {
+                _ = try await completeReminder(reminder, completed: !objective.done)
+                return try await objectives()[objective.period].objectives.first { $0.id == objective.id } ?? objective
+            } catch APIError.server(404, _) {}
+        }
+        return try await updateObjective(objective.id, ObjectivePatch(done: !objective.done))
+    }
+
     /// `ids` nil: all of that period's proposals. `date` is any day in the period.
     func acceptObjectives(period: String, date: String, ids: [String]? = nil) async throws -> ObjectiveBlock {
         try await send("POST", "/v1/objectives/accept", body: ObjectivesAccept(period: period, date: date, ids: ids))
@@ -369,6 +381,12 @@ final class APIClient {
 
     func uploadHealthDays(_ days: [HealthDay]) async throws -> HealthUploadResult {
         try await send("POST", "/v1/health/days", body: HealthUpload(days: days), timeout: 60)
+    }
+
+    /// The last 30 days the server has, newest first.
+    func healthDays() async throws -> [HealthDayReading] {
+        let list: HealthDayList = try await send("GET", "/v1/health/days")
+        return list.days
     }
 
     func wake(_ request: WakeRequest) async throws -> WakeResult {
