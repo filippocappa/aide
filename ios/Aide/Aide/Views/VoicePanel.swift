@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The voice-chat half of the chat screen: status, this turn's words, and End.
+/// The voice-chat half of the chat screen: status, this turn as in the chat (your words in a bubble, the reply with
+/// its cards and the team's talk), anything waiting for your yes, and End.
 /// Pebble itself stays above, grown big (tap it to send without waiting for the pause). Everything comes from the voice turn's `phase`, so nothing from an
 /// earlier turn shows while you talk.
 struct VoicePanel: View {
@@ -37,7 +38,7 @@ struct VoicePanel: View {
                     switch voice.phase {
                     case .off: EmptyView()
                     case .hearing:
-                        if !voice.transcript.isEmpty { line("You", voice.transcript) }
+                        if !voice.transcript.isEmpty { you(voice.transcript) }
                     case .waiting:
                         // The turn before, faded, until you start talking.
                         exchange.opacity(0.45)
@@ -46,9 +47,12 @@ struct VoicePanel: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
             }
             .defaultScrollAnchor(.top)
+
+            if !chat.pending.isEmpty { PendingCard() }
 
             if let error = voice.error {
                 Text(error).font(.footnote).foregroundStyle(.red).padding(.horizontal, 20)
@@ -67,19 +71,32 @@ struct VoicePanel: View {
 
     @ViewBuilder
     private var exchange: some View {
-        if !voice.said.isEmpty { line("You", voice.said) }
+        if !voice.said.isEmpty { you(voice.said) }
+        if chat.isSending, !chat.liveTeam.isEmpty {
+            TeamThread(messages: chat.liveTeam, live: true)
+        } else if let reply, !reply.consulted.isEmpty {
+            ConsultedRow(agents: reply.consulted.map { chat.agent($0) })
+        }
         if let reply {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(chat.agent.name).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            HStack {
                 RichText(text: reply.text, isError: reply.isError)
+                Spacer(minLength: 32)
+            }
+            .padding(.horizontal, 2)
+            ForEach(Array(reply.attachments.enumerated()), id: \.offset) { _, attachment in
+                AttachmentCard(attachment: attachment)
             }
         }
     }
 
-    private func line(_ who: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(who).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            Text(text).font(.title3.weight(.medium))
+    /// Your words, in the chat's bubble.
+    private func you(_ text: String) -> some View {
+        HStack {
+            Spacer(minLength: 56)
+            Text(text)
+                .foregroundStyle(Theme.userBubbleText)
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 }

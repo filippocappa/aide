@@ -53,26 +53,61 @@ struct EventRows: View {
         if events.isEmpty {
             Text("Nothing scheduled.").foregroundStyle(.secondary)
         }
-        ForEach(events) { event in
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 1) {
-                    if let day = event.startDate, !Calendar.current.isDateInToday(day) {
-                        Text(day.formatted(.dateTime.weekday(.abbreviated))).font(.caption2.weight(.semibold))
-                    }
-                    Text(event.allDay ? "All day" : event.startDate?.formatted(date: .omitted, time: .shortened) ?? "")
-                        .font(.subheadline.weight(.semibold))
-                        .monospacedDigit()
-                }
-                .foregroundStyle(Theme.tint(for: event.calendar ?? event.title))
-                .frame(width: 58, alignment: .leading)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(event.title)
-                    if let place = event.location, !place.isEmpty {
-                        Text(place).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 0)
+        let days = Self.days(events)
+        if days.count > 1 {
+            // Several days: each under its own heading, the rows with just the time.
+            ForEach(Array(days.enumerated()), id: \.offset) { index, day in
+                Text(Self.heading(day[0].startDate))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, index == 0 ? 0 : 6)
+                ForEach(day) { row($0, weekday: false) }
             }
+        } else {
+            ForEach(events) { row($0, weekday: true) }
+        }
+    }
+
+    /// Runs of events on the same day, in order.
+    private static func days(_ events: [CalendarEvent]) -> [[CalendarEvent]] {
+        var days: [[CalendarEvent]] = []
+        for event in events {
+            if let last = days.last?.last, Calendar.current.isDate(last.startDate ?? .distantPast,
+                                                                    inSameDayAs: event.startDate ?? .distantPast) {
+                days[days.count - 1].append(event)
+            } else {
+                days.append([event])
+            }
+        }
+        return days
+    }
+
+    private static func heading(_ day: Date?) -> String {
+        guard let day else { return "" }
+        if Calendar.current.isDateInToday(day) { return "Today" }
+        if Calendar.current.isDateInTomorrow(day) { return "Tomorrow" }
+        return day.formatted(.dateTime.weekday(.wide).day().month(.abbreviated))
+    }
+
+    private func row(_ event: CalendarEvent, weekday: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                if weekday, let day = event.startDate, !Calendar.current.isDateInToday(day) {
+                    Text(day.formatted(.dateTime.weekday(.abbreviated))).font(.caption2.weight(.semibold))
+                }
+                Text(event.allDay ? "All day" : event.startDate?.formatted(date: .omitted, time: .shortened) ?? "")
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(Theme.tint(for: event.calendar ?? event.title))
+            .frame(width: 58, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.title)
+                if let place = event.location, !place.isEmpty {
+                    Text(place).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
         }
     }
 }

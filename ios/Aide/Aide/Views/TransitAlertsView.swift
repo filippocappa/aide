@@ -26,7 +26,8 @@ struct TransitAlertsView: View {
             }
             Section {
                 if alerts.isEmpty && loaded {
-                    Text("No alerts yet.").foregroundStyle(.secondary)
+                    Text(settings?.calendar == true ? "None right now. An event's alert shows up here about 45 minutes before it's time to leave."
+                         : "No alerts yet.").foregroundStyle(.secondary)
                 }
                 ForEach($alerts) { $alert in
                     NavigationLink {

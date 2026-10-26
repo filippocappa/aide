@@ -532,19 +532,21 @@ private struct MessagePhotos: View {
 }
 
 /// The reminders, events, meals, departures or study files a reply was about, as a card: reminders tick off right
-/// here, files open, a notebook proposal is answered.
-private struct AttachmentCard: View {
+/// here, files open, a notebook proposal is answered. A long list shows its first few until you ask for the rest.
+struct AttachmentCard: View {
     let attachment: Attachment
+    @State private var expanded = false
+    private static let fold = 5
 
     var body: some View {
         switch attachment {
         case .reminders(let all):
             let reminders = all.filter { !$0.deleted } // deleted since the reply
-            if !reminders.isEmpty { card { ReminderRows(reminders: reminders) } }
+            if !reminders.isEmpty { card(reminders.count) { ReminderRows(reminders: shown(reminders)) } }
         case .events(let events):
-            card { EventRows(events: events) }
+            card(events.count) { EventRows(events: shown(events)) }
         case .meals(let meals):
-            if !meals.isEmpty { card { ForEach(meals) { MealRow(meal: $0) } } }
+            if !meals.isEmpty { card(meals.count) { ForEach(shown(meals)) { MealRow(meal: $0) } } }
         case .departures(let boards):
             VStack(spacing: 10) { ForEach(boards) { DeparturesCard(board: $0) } }
         case .files(let files):
@@ -556,8 +558,27 @@ private struct AttachmentCard: View {
         }
     }
 
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) { content() }
+    /// Folded only when it saves more than a couple of rows.
+    private func folds(_ count: Int) -> Bool { count > Self.fold + 2 }
+
+    private func shown<T>(_ items: [T]) -> [T] {
+        expanded || !folds(items.count) ? items : Array(items.prefix(Self.fold))
+    }
+
+    private func card<Content: View>(_ count: Int = 0, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            content()
+            if folds(count) {
+                Button { withAnimation(.snappy) { expanded.toggle() } } label: {
+                    Label(expanded ? "Show less" : "Show all \(count)", systemImage: expanded ? "chevron.up" : "chevron.down")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -565,7 +586,7 @@ private struct AttachmentCard: View {
 }
 
 /// Above a reply: the specialists Aide asked for it, as small Pebbles in their colours.
-private struct ConsultedRow: View {
+struct ConsultedRow: View {
     let agents: [Agent]
 
     var body: some View {
@@ -584,7 +605,7 @@ private struct ConsultedRow: View {
 
 /// What Aide and the agents it asked said to each other, as a little group chat above Aide's reply. While Aide is
 /// still working it fills in live, with the asked agent thinking until its answer comes. Tap to read it all.
-private struct TeamThread: View {
+struct TeamThread: View {
     @EnvironmentObject private var chat: ChatViewModel
     let messages: [TeamMessage]
     var live = false
