@@ -40,7 +40,7 @@ struct AgentInfoSheet: View {
                     } header: {
                         Text("Instructions")
                     } footer: {
-                        Text("What \(agent.name) is told before every chat. What it remembers about you comes on top, in Settings → What Aide remembers.")
+                        Text("What \(agent.name) is told before every chat. What it remembers about you comes on top, in Settings → Memory.")
                     }
                 }
             }

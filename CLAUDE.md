@@ -187,8 +187,8 @@ Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's c
 questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
 result in the chat.
 Since 2026-10-22 (`engine.py`, contract "Who writes the notes"): lecture notes and notebook jobs can run on the
-user's Claude plan through Claude Code on `cappa` (`claude -p`, Sonnet writes, Haiku reads; set in Settings → Who
-writes the notes; on now). At the plan's limit a job pauses and Professor asks: wait, or finish on OpenRouter.
+user's Claude plan through Claude Code on `cappa` (`claude -p`, Sonnet writes, Haiku reads; set in Settings → Claude
+plan; on now). At the plan's limit a job pauses and Professor asks: wait, or finish on OpenRouter.
 Figures come from a Haiku scan of every slide (`page_looks`); "Find figures in the slides" re-picks them.
 Study tab (both sides): courses with their notebook in brief, a course page with proposals (Apply / Not now), the
 writing progress, Ask Professor, Practice exam, the Introduction and topic pages (notes with figures from
@@ -223,7 +223,7 @@ screen, a sheet with "Waiting for you" (each answered there), "Coming up" and th
 the metro has no live data), transit tools for Aide and Secretary (stops, arrivals near the phone or at a stop,
 alerts: a weekday commute or a one-off), a watcher that pushes a time-sensitive "Tram 4 in 7 min: leave now" when
 the tram is the walk from the phone plus 2 min away (or N min before). App: `LocationService` (significant moves,
-Always, a fix on a silent `location` push), Settings → Getting around (location, Tram alerts list and editor).
+Always, a fix on a silent `location` push), Settings → Location and trams (location, Tram alerts list and editor).
 Departure cards (`departures` attachment, `GET /v1/transit/departures`): per stop, each line's badge, direction,
 minutes, live delay or timetable, the next ones, the walk and when to leave; with a destination (a stop, or any place
 through Maps: its stops within 400 m) only direct lines, with the time there. The app's `DeparturesCard` counts down

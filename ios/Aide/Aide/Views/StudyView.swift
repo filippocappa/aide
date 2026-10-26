@@ -435,7 +435,7 @@ private struct WritingRow: View {
 
 // MARK: Who writes the notes (docs/API.md, "Who writes the notes")
 
-/// Settings → Your Claude plan: what runs on it (through Claude Code on the server) instead of OpenRouter, the notes
+/// Settings → Claude plan: what runs on it (through Claude Code on the server) instead of OpenRouter, the notes
 /// and the background work each on its own switch, and the plan's use.
 struct NotesWriterView: View {
     @EnvironmentObject private var env: AppEnvironment

@@ -127,7 +127,7 @@ flowchart TD
 
 The model calls run in background workers, one job at a time, outside the chat turn that asked for them. They go
 through OpenRouter or through your Claude plan (Claude Code on the server, `claude -p`), as set in the app under
-Settings → *Who writes the notes*. When the plan hits its limit, the job pauses and Professor asks whether to wait
+Settings → *Claude plan*. When the plan hits its limit, the job pauses and Professor asks whether to wait
 for the reset or finish on OpenRouter.
 
 ### Starting a notebook
@@ -212,7 +212,7 @@ Aide doesn't count tokens, so these are estimates from the sizes it sends, not a
 At Sonnet 5.5 at $2 / $10 and Haiku 5.5 at $0.10 / $0.50 per million tokens in / out, plus OpenRouter's ~5%.
 Almost all of it is Sonnet writing. A whole course (~450 slides and ~24 lectures) comes to about $5–10.
 
-**On a Claude plan** (Settings → Who writes the notes → Claude plan), the notes cost nothing extra; they use the
+**On a Claude plan** (Settings → Claude plan), the notes cost nothing extra; they use the
 plan's limits instead. Those reset every 5 hours, with a weekly cap on top, and aren't published in tokens, so
 these are guesses. Check `/usage` in Claude Code on the server for the real picture:
 

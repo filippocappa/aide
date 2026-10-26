@@ -156,7 +156,7 @@ private struct TransitAlertEditor: View {
             } footer: {
                 Text(minutes == nil
                      ? "When the \(alert.vehicle.lowercased()) is as far away as your walk to the stop, plus two minutes. "
-                        + "The walk is from where your phone is (Settings → Location)."
+                        + "The walk is from where your phone is (Settings → Location and trams)."
                      : "When the \(alert.vehicle.lowercased()) is \(minutes!) minutes from the stop, live from GTT.")
             }
             .listRowBackground(Theme.row)
