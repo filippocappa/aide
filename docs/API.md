@@ -934,6 +934,7 @@ the server's liveness check; these routes sit under it and need the token like e
   "active_kcal": 512,
   "exercise_min": 41,
   "inhaler_usage": 3,
+  "naps": [{"start": "2026-10-19T14:05:00+02:00", "end": "2026-10-19T14:50:00+02:00", "asleep_min": 42}],
   "workouts": [
     {"id": "6B1F0C2E-…", "type": "strength", "start": "2026-10-19T18:30:00+02:00",
      "end": "2026-10-19T19:22:00+02:00", "minutes": 52, "kcal": 310}
@@ -944,9 +945,12 @@ the server's liveness check; these routes sit under it and need the token like e
 - `date` is the local calendar day. `steps`, `active_kcal`, `exercise_min`, `inhaler_usage` and `workouts` cover
   00:00–24:00. `inhaler_usage` (since 2026-10-26) is Health's Inhaler Usage count, for a limit habit's `health`.
 - `sleep` is the night that **ended** that morning: the longest stretch of sleep that ends between 18:00 the
-  evening before and 18:00 on `date`, with gaps under an hour counted as part of it. Naps are left out. `bedtime`
+  evening before and 18:00 on `date`, with gaps under an hour counted as part of it. Naps are left out of it. `bedtime`
   is when sleep started, `wake` when it ended, `in_bed_min` = `wake` − `bedtime`, `asleep_min` = the sleep stages
   added up, `awake_min` = time awake in between. `deep_min`, `core_min` and `rem_min` are `null` without a Watch.
+- `naps` (since 2026-10-26; missing when there were none) is the day's other sleep: stretches that start after
+  the night's `wake` (or midnight) and before the next midnight, 10 min to 4 h asleep, the same gap rule as the
+  night; the next night (an early bedtime) isn't one.
 - `resting_hr` (bpm) is Apple's resting heart rate for that day. `hrv_ms` is the average HRV (SDNN, Apple's
   measure) during that night's sleep, or over the day if there's none from the night. `respiratory_rate`
   (breaths/min) and `wrist_temp_c` (absolute °C, Series 8 and later) are averages over the night. The server

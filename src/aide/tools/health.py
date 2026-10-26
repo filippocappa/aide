@@ -19,6 +19,9 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
                 when = (f" ({datetime.fromisoformat(sleep['bedtime']).astimezone(tz):%H:%M}–"
                         f"{datetime.fromisoformat(sleep['wake']).astimezone(tz):%H:%M})")
             parts.append(f"slept {hours(sleep.get('asleep_min'))}{when}")
+        for nap in d.get("naps", []):
+            parts.append(f"nap {hours(nap.get('asleep_min'))} ({datetime.fromisoformat(nap['start']).astimezone(tz):%H:%M}–"
+                         f"{datetime.fromisoformat(nap['end']).astimezone(tz):%H:%M})")
         for key, label in (("resting_hr", "resting HR {} bpm"), ("hrv_ms", "HRV {} ms"), ("steps", "{} steps"),
                            ("exercise_min", "{} exercise min")):
             if key in d:
@@ -54,7 +57,7 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
 
     return [
         Tool("health", "Read the user's Apple Health summaries for a date range: sleep (time asleep, bedtime, "
-             "wake), resting heart rate, HRV, steps, exercise minutes and workouts, per day and on average. "
+             "wake), naps, resting heart rate, HRV, steps, exercise minutes and workouts, per day and on average. "
              "Default: the last 7 days. Data arrives from the phone, so the latest day may be partial. Compare with "
              "the user's own numbers; don't make medical claims.",
              {"type": "object", "additionalProperties": False, "required": [], "properties": {

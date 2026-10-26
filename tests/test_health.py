@@ -353,6 +353,22 @@ async def test_far_from_home_means_probably_not_going(world):
     assert maps.bodies == []  # no travel times looked up
 
 
+class PlaceMaps(Maps):
+    """Home (Via Roma 1, Milano) is in Milan; every other place is in Ivrea, where the phone is."""
+
+    async def locate(self, query, near=None):
+        return {"name": query, "lat": 45.4642, "lon": 9.19} if "Milano" in query else \
+            {"name": query, "lat": 45.4670, "lon": 7.8760}
+
+
+async def test_away_from_home_but_near_the_place_leaves_from_the_phone(world):
+    maps = PlaceMaps()
+    line, _ = await leave_line(world, maps, phone=(45.4669, 7.8763))
+    assert "probably not going" not in line
+    assert line.endswith("from where their phone is: walk: leave by 8:55 (25 min), tram: leave by 9:05 (15 min).")
+    assert maps.bodies[0]["origin"] == {"location": {"latLng": {"latitude": 45.4669, "longitude": 7.8763}}}
+
+
 async def test_near_home_the_leave_by_stays(world):
     line, _ = await leave_line(world, HomeMaps(), phone=(45.4700, 9.19))
     assert line.endswith("walk: leave by 8:55 (25 min), tram: leave by 9:05 (15 min).")
@@ -425,12 +441,14 @@ def test_wake_test_run_and_opening(world):
 async def test_health_tool(world):
     w = world()
     w.health.save([night(TODAY - timedelta(days=1), 400, resting_hr=52, hrv_ms=60, steps=8000,
-                         workouts=[workout("W1", day=TODAY - timedelta(days=1))]),
+                         workouts=[workout("W1", day=TODAY - timedelta(days=1))],
+                         naps=[{"start": f"{TODAY - timedelta(days=1)}T10:30:00+01:00",
+                                "end": f"{TODAY - timedelta(days=1)}T12:40:00+01:00", "asleep_min": 130}]),
                    night(TODAY - timedelta(days=2), 440, resting_hr=54, steps=4000)])
     [tool] = health_tools(w.health, ROME)
     assert not tool.confirm
     out = await tool.handler()
-    assert "· slept 6h40 (00:00–07:00) · resting HR 52 bpm · HRV 60 ms · 8000 steps · workout: strength 52 min" in out
+    assert "· slept 6h40 (00:00–07:00) · nap 2h10 (10:30–12:40) · resting HR 52 bpm · HRV 60 ms · 8000 steps · workout: strength 52 min" in out
     assert "- sleep: 7h00 (over 2 days)" in out and "- resting HR: 53 bpm (over 2 days)" in out
     assert "- HRV: 60 ms (over 1 days)" in out and "- workouts: 1 in 2 days with data" in out
     old = await tool.handler(from_date="2020-01-01", to_date="2020-01-07")

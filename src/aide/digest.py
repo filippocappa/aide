@@ -220,7 +220,7 @@ class DigestService:
         self.planner: "ObjectivePlanner | None" = None
         self.drafts: "Drafts | None" = None  # set by the app when mail is connected: the evening drafts replies
         self.whereabouts: "Whereabouts | None" = None  # where the phone is; set by the app when Maps is on
-        self._homes: dict[str, tuple[float, float] | None] = {}  # home address -> where it is
+        self._spots: dict[str, tuple[float, float] | None] = {}  # an address (home, a place) -> where it is
         self.conn.executescript(SCHEMA)
 
     # -- settings and storage ------------------------------------------------
@@ -438,8 +438,8 @@ class DigestService:
         mode = found.get("mode") if found.get("mode") in TRAVEL_MODES else None
         return home, mode
 
-    async def _route(self, home: str, place: str, mode: str, arrive: datetime) -> dict | None:
-        body = {"origin": {"address": home}, "destination": {"address": place}, "travelMode": TRAVEL_MODES[mode]}
+    async def _route(self, origin: dict, place: str, mode: str, arrive: datetime) -> dict | None:
+        body = {"origin": origin, "destination": {"address": place}, "travelMode": TRAVEL_MODES[mode]}
         if mode == "transit":  # the Routes API takes an arrival time only for transit
             body["arrivalTime"] = arrive.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
@@ -449,36 +449,47 @@ class DigestService:
             return None
         return route if route and route.get("duration") else None
 
-    async def _away(self, home: str, now: datetime) -> str | None:
-        """Where the phone is when that's over AWAY from home ("near Piazza di Città 8, Ivrea, 52 km from …"), else
-        None (near home, or not known)."""
+    async def _spot(self, address: str) -> tuple[float, float] | None:
+        if address not in self._spots:
+            try:
+                found = await self.maps.locate(address)
+            except Exception:
+                log.warning("digest: couldn't find %r on Maps", address, exc_info=True)
+                return None  # not cached: tried again next time
+            self._spots[address] = (found["lat"], found["lon"]) if found else None
+        return self._spots[address]
+
+    async def _away(self, home: str, place: str, now: datetime) -> tuple[str | None, dict | None]:
+        """Where the phone is against home and the event's place: (where it is when that's over AWAY from both,
+        "near Piazza di Città 8, Ivrea, 52 km from …", else None; the phone's fix when it's away from home but near
+        the place, so the way there is from the phone, else None). (None, None) when unknown."""
         if self.whereabouts is None or self.maps is None:
-            return None
+            return None, None
         fix = self.whereabouts.location.latest()
         if fix is None or now - fix["at"] > AWAY_FIX_AGE:
-            return None
-        if home not in self._homes:
-            try:
-                found = await self.maps.locate(home)
-            except Exception:
-                log.warning("digest: couldn't find %r on Maps", home, exc_info=True)
-                return None  # not cached: tried again next time
-            self._homes[home] = (found["lat"], found["lon"]) if found else None
-        if (spot := self._homes[home]) is None:
-            return None
+            return None, None
+        if (spot := await self._spot(home)) is None:
+            return None, None
         distance = metres(spot[0], spot[1], fix["lat"], fix["lon"])
         if distance < AWAY:
-            return None
+            return None, None
+        # Away from home but near the place (in Turin for a bus from Turin): going, from where the phone is.
+        if (there := await self._spot(place)) and metres(there[0], there[1], fix["lat"], fix["lon"]) < AWAY:
+            return None, fix
         near = await self.whereabouts.address(fix["lat"], fix["lon"])
-        return (f"near {near}, " if near else "") + f"{distance / 1000:.0f} km from {home}"
+        return (f"near {near}, " if near else "") + f"{distance / 1000:.0f} km from {home}", None
 
-    async def _leave_by(self, event: dict, start: datetime, home: str | None, mode: str | None) -> str:
-        """' Walk: leave by 8:50, tram: leave by 9:05.' for arriving 10 minutes early, or '' if unknown."""
-        if not home:
+    async def _leave_by(self, event: dict, start: datetime, home: str | None, mode: str | None,
+                        fix: dict | None = None) -> str:
+        """' Walk: leave by 8:50, tram: leave by 9:05.' for arriving 10 minutes early, or '' if unknown. From home,
+        or from the phone's `fix` when it's away from home near the place."""
+        if not home and not fix:
             return ""
+        origin = ({"location": {"latLng": {"latitude": fix["lat"], "longitude": fix["lon"]}}} if fix
+                  else {"address": home})
         arrive = start - ARRIVE_EARLY
         modes = [mode] if mode else ["walk", "transit"]
-        routes = dict(zip(modes, await asyncio.gather(*(self._route(home, event["location"], m, arrive)
+        routes = dict(zip(modes, await asyncio.gather(*(self._route(origin, event["location"], m, arrive)
                                                          for m in modes))))
         trips = {m: timedelta(seconds=int(float(r["duration"].rstrip("s")))) for m, r in routes.items() if r}
         if not mode and "transit" in trips and trips.get("walk", MAX_WALK + timedelta(1)) > MAX_WALK:
@@ -495,7 +506,7 @@ class DigestService:
                          f"({round(trip.total_seconds() / 60)} min)")
         if not parts:
             return ""
-        return f" To be there 10 min early, from home: {', '.join(parts)}."
+        return f" To be there 10 min early, from {'where their phone is' if fix else 'home'}: {', '.join(parts)}."
 
     async def _wake_lines(self, now: datetime, sections: list[dict], wake_at: datetime | None) -> list[str]:
         """What the wake greeting needs beyond the cards: when they got up, and when to leave for what's next."""
@@ -514,11 +525,12 @@ class DigestService:
         line = f"Next: {nxt['title']} at {start:%H:%M}" + (f" at {nxt['location']}" if nxt["location"] else "") + "."
         if nxt["location"] and self.maps:
             home, mode = await self._travel_plan(nxt)
-            if home and (away := await self._away(home, now)):
-                line += (f" Their phone is {away}, so they're probably not going to this today: give no leave-by "
-                         "time, and mention it lightly if at all.")
+            away, fix = await self._away(home, nxt["location"], now) if home else (None, None)
+            if away:
+                line += (f" Their phone is {away} and far from this place, so they're probably not going to this "
+                         "today: give no leave-by time, and mention it lightly if at all.")
             else:
-                line += await self._leave_by(nxt, start, home, mode)
+                line += await self._leave_by(nxt, start, home, mode, fix)
         out.append(line)
         return out
 
