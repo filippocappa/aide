@@ -254,7 +254,7 @@ habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departure
 `aide://` links (`PushRoute(url:)`). The first phone install needs the App Group and the `.widgets` bundle ID on the
 team (Xcode's automatic signing adds them).
 
-**Done, both sides (2026-10-26), not yet tried on the phone:** Today and limit habits (#21, contract in
+**Done, both sides (2026-10-26), installed on the phone 2026-10-26:** Today and limit habits (#21, contract in
 `docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card
 (`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
 habits and objectives with Today / Week / Month, "From the team" (`/v1/activity?kind=routine,watch`) and all
@@ -264,7 +264,9 @@ chat. Routine chats are left out of Chats. Limit habits (`{"type": "limit", "max
 the `count_habit` tool, "I had another one") show "2/5" with − and +. Food habits tick from the food log. The planner
 leaves habits out of a day's objectives, and Coach sees each limit habit's last 7 days. One tap: the "Log one" App
 Intent (Shortcuts, Action Button), the Health widget's +, a Control Center control (iOS 18,
-`AideWidgets/HabitControl.swift`).
+`AideWidgets/HabitControl.swift`). A limit habit can count from Apple Health (`health: "inhaler_usage"`: the user logs
+coffees as Inhaler Usage; the day's count is the larger of Health's and the app's). "Coffee" (at most 5) is set up
+that way.
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
