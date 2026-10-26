@@ -42,7 +42,14 @@ final class ChatViewModel: ObservableObject {
     }
     /// ChatView is showing; a push for this chat then lands in it instead of as a banner.
     var isOnScreen = false
+    /// A reply is on its way in the open chat.
     @Published private(set) var isSending = false
+    /// Chats with a reply on its way, by conversation id, also after you've left them: the agent's card says so.
+    @Published private(set) var working: [String: Working] = [:]
+    struct Working: Equatable {
+        let agent: String
+        var status: String
+    }
     @Published private(set) var isActing = false
     /// A new chat is waiting for its digest greeting.
     @Published private(set) var isOpening = false
@@ -159,7 +166,20 @@ final class ChatViewModel: ObservableObject {
         conversationID = nil
         messages = []
         pending = []
+        leaveTurn()
         stopWatchingNotebook()
+    }
+
+    /// Another chat is opening: the reply on its way (if any) carries on, shown on its agent's card, not here.
+    private func leaveTurn() {
+        liveTeam = []
+        liveReply = ""
+        isSending = conversationID.map { working[$0] != nil } ?? false
+    }
+
+    /// What the agent is doing in one of its chats right now ("Asking Secretary…"), nil when it isn't.
+    func working(for agent: Agent) -> String? {
+        working.values.first { self.agent($0.agent).id == agent.id }?.status
     }
 
     /// The chat opened with the digest: its first message is Aide's (every other chat starts with yours).
@@ -179,6 +199,7 @@ final class ChatViewModel: ObservableObject {
         conversationID = id
         messages = []
         pending = []
+        leaveTurn()
         isChatOpen = true
         isLoadingHistory = true
         defer { isLoadingHistory = false }
@@ -361,39 +382,63 @@ final class ChatViewModel: ObservableObject {
     func send(_ raw: String, photos: [PickedPhoto] = [], onDraft: ((String, Bool) -> Void)? = nil) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !photos.isEmpty, !isSending, !isOpening else { return }
-        messages.append(Message(role: .user, text: text, localPhotos: photos.map(\.jpeg)))
+        let asked = Message(role: .user, text: text, localPhotos: photos.map(\.jpeg))
+        messages.append(asked)
         isSending = true
         liveReply = ""
+        let speaker = agentID
+        var started: String? // the turn's chat, once known
         do {
             var ids: [String] = []
             for photo in photos { ids.append(try await api.uploadPhoto(photo.jpeg)) }
             if conversationID == nil { conversationID = try await newConversationID() }
             let turn = conversationID ?? "main"
+            // You may leave the chat while the reply is on its way: from then on it only updates the agent's card,
+            // and the reply lands in the chat's history (shown when you open it again).
+            let here = { [weak self] in (self?.conversationID ?? "main") == turn }
+            started = turn
+            working[turn] = Working(agent: speaker, status: "Thinking…")
             live?.agentStarted(conversation: turn, agent: agent)
             let reply = try await api.chatLive(text, photos: ids, conversationID: conversationID, onText: { [weak self] delta, restart in
                 guard let self else { return }
+                working[turn]?.status = "Writing…"
+                live?.agentUpdate(conversation: turn, status: "writing")
+                guard here() else { return }
                 liveReply = restart ? delta : liveReply + delta
                 onDraft?(liveReply, restart)
-                live?.agentUpdate(conversation: turn, status: "writing")
             }, onTeam: { [weak self] message in
                 guard let self else { return }
-                liveTeam.append(message)
-                if message.from == orchestrator.id, message.to != "user" {
+                if message.from == speaker, message.to != "user", message.to != "team" {
+                    working[turn]?.status = "Asking \(self.agent(message.to).name)…"
                     live?.agentUpdate(conversation: turn, status: "asking", detail: "Asking \(self.agent(message.to).name)")
                 }
+                if here() { liveTeam.append(message) }
             })
+            working[turn] = nil
             live?.agentFinished(conversation: turn, reply: reply.reply)
-            messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments,
-                                    consulted: reply.consulted, team: reply.team.isEmpty ? liveTeam : reply.team))
-            pending = reply.pending
-            if let id = reply.conversationId { conversationID = id }
-            liveTeam = []
-            liveReply = ""
-            isSending = false
-            if writing == nil { watchNotebook() } // "yes" to a proposal starts the writing
+            if here(), messages.contains(where: { $0.id == asked.id }) {
+                messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments,
+                                        consulted: reply.consulted, team: reply.team.isEmpty ? liveTeam : reply.team))
+                pending = reply.pending
+                if let id = reply.conversationId { conversationID = id }
+                liveTeam = []
+                liveReply = ""
+                isSending = false
+                if writing == nil { watchNotebook() } // "yes" to a proposal starts the writing
+            } else if here() { // left and came back while it was on its way: the history has it all now
+                liveTeam = []
+                liveReply = ""
+                isSending = false
+                await loadHistory()
+            } else {
+                await loadConversations() // the card's last line
+            }
             await onServerChange?()
         } catch {
-            live?.agentFinished(conversation: conversationID ?? "main", reply: error.localizedDescription, failed: true)
+            let turn = started ?? conversationID ?? "main"
+            working[turn] = nil
+            live?.agentFinished(conversation: turn, reply: error.localizedDescription, failed: true)
+            guard (conversationID ?? "main") == turn else { return } // you've left: the card stops saying so
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true, team: liveTeam))
             liveTeam = []
             liveReply = ""

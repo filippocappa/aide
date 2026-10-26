@@ -114,8 +114,9 @@ struct ChatsView: View {
     }
 
     private func card(_ agent: Agent, wide: Bool) -> some View {
-        AgentCard(agent: agent, latest: chat.chats(with: agent).first, wide: wide,
-                  mood: settings.isConfigured ? "awake" : "sleeping",
+        let working = chat.working(for: agent)
+        return AgentCard(agent: agent, latest: chat.chats(with: agent).first, wide: wide, working: working,
+                  mood: !settings.isConfigured ? "sleeping" : working != nil ? "thinking" : "awake",
                   loading: settings.isConfigured && !chat.conversationsLoaded) {
             Task { await chat.talk(to: agent) }
         }
@@ -186,6 +187,8 @@ private struct AgentCard: View {
     let agent: Agent
     let latest: Conversation?
     let wide: Bool
+    /// What it's doing in a chat you left while it answers ("Asking Secretary…"); nil when it isn't.
+    var working: String?
     let mood: String
     /// The chats are on their way: placeholder lines instead of the role.
     var loading = false
@@ -251,9 +254,9 @@ private struct AgentCard: View {
     }
 
     private func previewText(_ lines: Int) -> some View {
-        Text(preview)
+        Text(working ?? preview)
             .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(working == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(agent.tint))
             .lineLimit(lines, reservesSpace: true)
             .multilineTextAlignment(.leading)
     }
