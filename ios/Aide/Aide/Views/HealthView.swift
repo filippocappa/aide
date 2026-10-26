@@ -52,6 +52,8 @@ struct HealthView: View {
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets())
                     foodSection
+                    // Its own section: a clear row inside the card's section cut off the card's rounded bottom.
+                    Section { logButton }
                     mealsSection
                 }
                 habitsSection
@@ -116,7 +118,6 @@ struct HealthView: View {
             }
             .padding(.vertical, 6)
             .animation(.easeInOut(duration: 0.25), value: logging)
-            logButton
             if let id = foodChat {
                 Button {
                     push.route = .conversation(id) // the same way a tapped notification opens a chat

@@ -49,6 +49,7 @@
 		879BFFF09ECF6F6D4A039B00 /* NotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A4AEC9022A036D36BF776D /* NotesView.swift */; };
 		9391CA921BA0BA9BC5E1E6BA /* StudyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24233F28207417C05A177C18 /* StudyView.swift */; };
 		9458E33FE7340C8EDED1D46F /* LineBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2712472C5856CDCD16C4FAB /* LineBadge.swift */; };
+		A6148BC6CEF952AC9FEFF97C /* WidgetSamples.swift in Sources */ = {isa = PBXBuildFile; fileRef = B767930966E7CE68008A6BC6 /* WidgetSamples.swift */; };
 		A839EDCD73AEB1F1DBD6E437 /* AideApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */; };
 		AA355EF0C809637B2B575280 /* DigestViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78FD630BFAF2C84AC4AF0659 /* DigestViewModel.swift */; };
 		AA3A37D30E4DCE329F1D78A5 /* RichText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31E717ACC950E43DC53B945E /* RichText.swift */; };
@@ -164,6 +165,7 @@
 		B080CFFD5248A57D95546299 /* TodayWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayWidget.swift; sourceTree = "<group>"; };
 		B2712472C5856CDCD16C4FAB /* LineBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineBadge.swift; sourceTree = "<group>"; };
 		B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeUpIntent.swift; sourceTree = "<group>"; };
+		B767930966E7CE68008A6BC6 /* WidgetSamples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSamples.swift; sourceTree = "<group>"; };
 		B9FC43C842297C98B8EC0DAE /* AideTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AideTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BDD7CC531B6DFD14673ABD6C /* LocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationService.swift; sourceTree = "<group>"; };
 		BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitsView.swift; sourceTree = "<group>"; };
@@ -289,6 +291,7 @@
 				B080CFFD5248A57D95546299 /* TodayWidget.swift */,
 				CEA0AF3C34ADA2A7F1F3492E /* TramLiveActivity.swift */,
 				18F809AD4D845567498CDA11 /* WidgetIntents.swift */,
+				B767930966E7CE68008A6BC6 /* WidgetSamples.swift */,
 				ADE4DEA766E09C8CD558DC9B /* WidgetSupport.swift */,
 			);
 			path = AideWidgets;
@@ -496,6 +499,7 @@
 				C9E49AE1E7182DCFB48FDE7A /* TodayWidget.swift in Sources */,
 				32929000119CE3BE2D9FD69A /* TramLiveActivity.swift in Sources */,
 				F6B00D2F77B7F975287A6827 /* WidgetIntents.swift in Sources */,
+				A6148BC6CEF952AC9FEFF97C /* WidgetSamples.swift in Sources */,
 				0E8E4C39F0C5E93AC75C7BBB /* WidgetSupport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

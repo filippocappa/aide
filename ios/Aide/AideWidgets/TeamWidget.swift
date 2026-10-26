@@ -21,6 +21,11 @@ struct TeamProvider: TimelineProvider {
     func placeholder(in context: Context) -> TeamEntry { TeamEntry(date: Date()) }
 
     func getSnapshot(in context: Context, completion: @escaping (TeamEntry) -> Void) {
+        if context.isPreview {
+            return provide({ completion($0.entries[0]) }) {
+                Timeline(entries: [TeamEntry(date: Date(), agents: WidgetSamples.agents)], policy: .never)
+            }
+        }
         provide({ completion($0.entries[0]) }) { await timeline() }
     }
 

@@ -7,7 +7,7 @@ struct TodayWidget: Widget {
         StaticConfiguration(kind: "Today", provider: TodayProvider()) { TodayView(entry: $0) }
             .configurationDisplayName("Today")
             .description("What's next on your calendar, and your reminders.")
-            .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryRectangular, .accessoryInline])
+            .supportedFamilies([.systemSmall, .systemMedium, .accessoryRectangular, .accessoryInline])
     }
 }
 
@@ -35,6 +35,9 @@ struct TodayProvider: TimelineProvider {
     func placeholder(in context: Context) -> TodayEntry { TodayEntry(date: Date(), today: nil) }
 
     func getSnapshot(in context: Context, completion: @escaping (TodayEntry) -> Void) {
+        if context.isPreview {
+            return provide({ completion($0.entries[0]) }) { Timeline(entries: [TodayEntry(date: Date(), today: WidgetSamples.today)], policy: .never) }
+        }
         provide({ completion($0.entries[0]) }) { await timeline() }
     }
 
@@ -75,7 +78,7 @@ struct TodayView: View {
             case .accessoryInline: inline
             case .accessoryRectangular: rectangular
             case .systemSmall: small
-            default: list(events: family == .systemLarge ? 4 : 2, reminders: family == .systemLarge ? 6 : 3)
+            default: list(events: 2, reminders: 3)
             }
         }
     }
@@ -106,7 +109,8 @@ struct TodayView: View {
 
     private var small: some View {
         VStack(alignment: .leading, spacing: 4) {
-            WidgetHeader(title: entry.date.formatted(.dateTime.weekday(.abbreviated).day()), fresh: entry.today?.fresh ?? true)
+            WidgetHeader(title: entry.date.formatted(.dateTime.weekday(.wide)), tint: Theme.accent,
+                         trailing: entry.date.formatted(.dateTime.day()), fresh: entry.today?.fresh ?? true)
             if let next = entry.next {
                 Text(next.allDay ? "All day" : time(next))
                     .font(.caption.weight(.semibold)).foregroundStyle(Theme.tint(for: next.calendar ?? next.title))
@@ -128,9 +132,13 @@ struct TodayView: View {
         let shown = Array(entry.events.prefix(events))
         let todo = Array(entry.reminders.prefix(reminders + max(0, events - shown.count)))
         return VStack(alignment: .leading, spacing: 6) {
-            WidgetHeader(title: entry.date.formatted(.dateTime.weekday(.wide).day().month()), fresh: entry.today?.fresh ?? true)
+            WidgetHeader(title: entry.date.formatted(.dateTime.weekday(.wide).day().month()), symbol: "calendar",
+                         tint: Theme.accent, fresh: entry.today?.fresh ?? true)
             if shown.isEmpty && todo.isEmpty {
                 WidgetNote(text: "Nothing else today.", symbol: "sun.max")
+            } else if shown.isEmpty {
+                Label("No more events today", systemImage: "checkmark.circle")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             ForEach(shown) { eventRow($0) }
             if !shown.isEmpty && !todo.isEmpty { Divider() }
@@ -164,10 +172,20 @@ struct TodayView: View {
             Text(reminder.title).font(.subheadline).lineLimit(1)
             Spacer(minLength: 0)
             if let due = reminder.dueDate {
-                Text(due.formatted(date: Calendar.current.isDateInToday(due) ? .omitted : .abbreviated, time: .shortened))
-                    .font(.caption2).foregroundStyle(due < entry.date ? .red : .secondary)
+                Text(dueText(due)).font(.caption2.weight(.medium)).monospacedDigit()
+                    .foregroundStyle(due < entry.date ? .red : .secondary)
             }
         }
+    }
+
+    /// "10:00" today, else "Yesterday", "Tomorrow", a weekday within the week, or "25 Oct".
+    private func dueText(_ due: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(due) { return due.formatted(date: .omitted, time: .shortened) }
+        if calendar.isDateInYesterday(due) { return "Yesterday" }
+        if calendar.isDateInTomorrow(due) { return "Tomorrow" }
+        if abs(due.timeIntervalSince(entry.date)) < 6 * 86_400 { return due.formatted(.dateTime.weekday(.abbreviated)) }
+        return due.formatted(.dateTime.day().month(.abbreviated))
     }
 
     private func time(_ event: CalendarEvent) -> String {

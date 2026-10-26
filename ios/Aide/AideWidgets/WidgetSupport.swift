@@ -85,16 +85,25 @@ struct WidgetNote: View {
     static let setUp = "Open Aide and add your server in Settings."
 }
 
-/// A small header: a title and, when the server didn't answer, a hint that this is the last copy.
+/// A small header in the widget's colour: a symbol, a title, a count on the right and, when the server didn't
+/// answer, a hint that this is the last copy.
 struct WidgetHeader: View {
     let title: String
+    var symbol: String?
+    var tint: Color = .secondary
+    var trailing: String?
     var fresh = true
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase)
-            Spacer(minLength: 0)
+            if let symbol { Image(systemName: symbol).font(.caption.weight(.bold)) }
+            Text(title).font(.caption.weight(.bold)).lineLimit(1)
+            Spacer(minLength: 4)
+            if let trailing {
+                Text(trailing).font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
+            }
             if !fresh { Image(systemName: "icloud.slash").font(.caption2).foregroundStyle(.tertiary) }
         }
+        .foregroundStyle(tint)
     }
 }

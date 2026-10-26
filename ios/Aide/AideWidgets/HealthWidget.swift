@@ -25,6 +25,12 @@ struct HealthProvider: TimelineProvider {
     func placeholder(in context: Context) -> HealthEntry { HealthEntry(date: Date(), food: nil, habits: nil) }
 
     func getSnapshot(in context: Context, completion: @escaping (HealthEntry) -> Void) {
+        if context.isPreview {
+            return provide({ completion($0.entries[0]) }) {
+                Timeline(entries: [HealthEntry(date: Date(), food: WidgetSamples.food, habits: WidgetSamples.habits,
+                                               agents: WidgetSamples.agents)], policy: .never)
+            }
+        }
         provide({ completion($0.entries[0]) }) { await timeline() }
     }
 
@@ -89,7 +95,7 @@ struct HealthWidgetView: View {
 
     private var food: some View {
         VStack(alignment: .leading, spacing: 6) {
-            WidgetHeader(title: "Food", fresh: entry.fresh)
+            WidgetHeader(title: "Food", symbol: "fork.knife", tint: coach, fresh: entry.fresh)
             HStack(spacing: 10) {
                 Ring(value: Double(totals.calories), goal: goals.calories.map(Double.init), color: coach)
                     .frame(width: 54, height: 54)
@@ -127,7 +133,8 @@ struct HealthWidgetView: View {
         let list = entry.habits?.value.habits ?? []
         let done = list.filter(\.doneToday).count
         return VStack(alignment: .leading, spacing: 5) {
-            WidgetHeader(title: list.isEmpty ? "Habits" : "Habits \(done)/\(list.count)", fresh: entry.fresh)
+            WidgetHeader(title: "Habits", symbol: "checkmark.circle", tint: coach,
+                         trailing: list.isEmpty ? nil : "\(done)/\(list.count)", fresh: entry.fresh)
             if list.isEmpty {
                 Text("No habits yet. Ask Coach to start one.").font(.caption).foregroundStyle(.secondary)
             }
@@ -160,7 +167,7 @@ struct Ring: View {
 
     var body: some View {
         ZStack {
-            Circle().stroke(color.opacity(0.18), lineWidth: 6)
+            Circle().stroke(color.opacity(0.25), lineWidth: 6)
             if let goal, goal > 0 {
                 Circle().trim(from: 0, to: min(value / goal, 1))
                     .stroke(value > goal * 1.05 ? .orange : color, style: StrokeStyle(lineWidth: 6, lineCap: .round))
