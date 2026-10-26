@@ -673,20 +673,26 @@ def _who(agent: str) -> str:
 
 def _cut_old_results(history: list[dict]) -> list[dict]:
     """Copy of earlier turns with long tool results cut to their start: a file read three questions ago needn't be
-    paid for on every turn after. The model can call the tool again. Stored history keeps them whole."""
+    paid for on every turn after. The model can call the tool again. Stored history keeps them whole. A specialist's
+    answer (ask_agent) stays whole: it's short and what the reply stood on, and cut it reads as never seen."""
     def cut(text: str) -> str:
         if len(text) <= OLD_RESULT:
             return text
-        return f"{text[:OLD_RESULT_KEPT]}\n[… {len(text) - OLD_RESULT_KEPT:,} more characters cut from this old " \
-               "result; call the tool again if you need them]"
+        return f"{text[:OLD_RESULT_KEPT]}\n[… {len(text) - OLD_RESULT_KEPT:,} more characters left out of this old " \
+               "result here to save space; you read it whole when you answered, so that answer stands. Call the " \
+               "tool again only if you need the details now]"
 
+    names = {b["id"]: b["name"] for m in history if m["role"] == "assistant" and isinstance(m["content"], list)
+             for b in m["content"] if b.get("type") == "tool_use"}
     out = []
     for m in history:
         if m["role"] == "user" and isinstance(m["content"], list) and any(
                 b.get("type") == "tool_result" for b in m["content"]):
             blocks = []
             for b in m["content"]:
-                if b.get("type") == "tool_result" and isinstance(b.get("content"), str):
+                if b.get("type") == "tool_result" and names.get(b.get("tool_use_id")) == "ask_agent":
+                    pass
+                elif b.get("type") == "tool_result" and isinstance(b.get("content"), str):
                     b = {**b, "content": cut(b["content"])}
                 elif b.get("type") == "tool_result" and isinstance(b.get("content"), list):
                     b = {**b, "content": [{**c, "text": cut(c["text"])} if c.get("type") == "text" else c

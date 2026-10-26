@@ -415,8 +415,8 @@ async def test_old_tool_results_are_cut_in_the_replayed_history(nb, tmp_path):
     request = nb.client.requests[-1]
     old = next(b for m in request["messages"] if isinstance(m["content"], list) for b in m["content"]
                if b.get("type") == "tool_result")
-    assert old["content"].startswith(full[:300]) and "more characters cut from this old result" in old["content"]
-    assert len(old["content"]) < 500
+    assert old["content"].startswith(full[:300]) and "more characters left out of this old result" in old["content"]
+    assert "that answer stands" in old["content"] and len(old["content"]) < 600
     assert request["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert request["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
     stored = [m for m in nb.db.history(nb.db.app_conversation(chat)["id"]) if isinstance(m["content"], list)]

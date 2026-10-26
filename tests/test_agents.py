@@ -289,6 +289,21 @@ def test_aide_asks_a_specialist(env):
                 if c["agent"] == "coach"]
 
 
+def test_a_long_specialist_answer_is_replayed_whole_on_the_next_turn(env):
+    answer = "Register on the Google form, UniTo email only. " * 60
+    client, agent, store = env([
+        calls(("ask_agent", {"agent": "professor", "request": "When is the mid-term?"})),
+        done(answer),
+        done("2 Nov; register tonight."),
+        done("Sunday."),
+    ])
+    client.post("/v1/chat", json={"text": "when is the midterm?"}, headers=AUTH)
+    client.post("/v1/chat", json={"text": "what day is it?"}, headers=AUTH)
+    old = next(b for m in agent.client.requests[-1]["messages"] if isinstance(m["content"], list)
+               for b in m["content"] if b.get("type") == "tool_result")
+    assert old["content"] == f"Professor answered:\n{answer.strip()}"
+
+
 def test_a_specialists_cards_and_queued_actions_join_aides_turn(env):
     client, agent, store = env()
     rem = store.create("Bins", None)
