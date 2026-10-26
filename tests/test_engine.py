@@ -260,6 +260,7 @@ async def test_a_tool_loop_on_the_plan_runs_aides_tools_in_process(plan, sdk):
     assert options.system_prompt == "Be you." and options.model == "haiku" and options.tools == []
     assert options.allowed_tools == ["mcp__aide__make"] and options.cli_path == engine.claude
     assert options.env["ANTHROPIC_API_KEY"] == "" and options.effort == "medium"  # the plan, never the key
+    assert "no-session-persistence" in options.extra_args
     assert sdk["prompt"] == "Make x." and ran == [("make", {"title": "x"})]
     assert sdk["results"] == [{"content": [{"type": "text", "text": "made x"}], "is_error": False}]
     assert engine.usage["five_hour"]["used"] == 0.3

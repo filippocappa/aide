@@ -172,6 +172,7 @@ class Engine:
             mcp_servers={"aide": create_sdk_mcp_server("aide", tools=[wrap(t) for t in tools])},
             allowed_tools=[f"mcp__aide__{t.name}" for t in tools], strict_mcp_config=True, setting_sources=[],
             permission_mode="dontAsk", max_turns=max_turns, cwd=self.workdir, cli_path=self.claude,
+            extra_args={"no-session-persistence": None},  # as with the notes: no transcripts left in ~/.claude
             effort=effort if effort in ("low", "medium", "high") else None,
             # The plan, never a key: the SDK can only override the environment, and an empty key counts as none.
             env={**{k: "" for k in os.environ if k.startswith("ANTHROPIC_")},
