@@ -5,6 +5,8 @@ final class DigestViewModel: ObservableObject {
     enum Kind: String, CaseIterable, Identifiable {
         case wake, daily, evening, weekly, monthly
         var id: String { rawValue }
+        /// The ones to pick from: the wake-up briefing is the morning one ("Morning" is off; older ones still open).
+        static let picked: [Kind] = [.wake, .evening, .weekly, .monthly]
         var label: String {
             switch self {
             case .wake: "Wake-up"; case .daily: "Morning"; case .evening: "Evening"; case .weekly: "Week"; case .monthly: "Month"
@@ -12,7 +14,7 @@ final class DigestViewModel: ObservableObject {
         }
     }
 
-    @Published var kind: Kind = .daily
+    @Published var kind: Kind = .wake
     /// The digest sheet is up (from Today's Details, or the Details link under a digest chat).
     @Published var isPresented = false
     /// The kind picked in the sheet.
@@ -21,6 +23,9 @@ final class DigestViewModel: ObservableObject {
     @Published private(set) var latest: Digest?
     @Published private(set) var latestLoaded = false
     @Published private(set) var isLoading = false
+    /// The digest is being written again (Refresh).
+    @Published private(set) var isRefreshing = false
+    @Published var refreshError: String?
     /// True once any digest has loaded, so the picker stays when one period has none yet.
     @Published private(set) var hasDigests = false
     /// Habits ticked here, newer than the digest's snapshot.
@@ -53,6 +58,20 @@ final class DigestViewModel: ObservableObject {
         }
     }
 
+    /// Writes the picked digest again, so its greeting sees what changed since (an event added after it was made).
+    func refresh() async {
+        isRefreshing = true
+        defer { isRefreshing = false }
+        do {
+            let fresh = try await api.runDigest(kind: kind.rawValue)
+            await load()
+            if digest == nil { digest = fresh }
+            if latest?.kind == fresh.kind { await loadLatest() }
+        } catch {
+            refreshError = error.localizedDescription
+        }
+    }
+
     /// The card on Today. An older server doesn't know `latest`: the one for the time of day.
     func loadLatest() async {
         defer { latestLoaded = true }
@@ -69,7 +88,7 @@ final class DigestViewModel: ObservableObject {
 
     /// The sheet, on the latest digest's kind.
     func showLatest() {
-        kind = latest.flatMap { Kind(rawValue: $0.kind) } ?? .daily
+        kind = latest.flatMap { Kind(rawValue: $0.kind) } ?? .wake
         isPresented = true
     }
 

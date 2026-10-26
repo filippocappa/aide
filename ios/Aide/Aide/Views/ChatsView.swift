@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The Team tab, the app's home: a strip for the day (the briefing, habits, what's waiting; the Today page from it),
+/// The Team tab, the app's home: the briefing behind the sun in the corner, a strip for the day (habits, what's
+/// waiting; the Today page from it),
 /// then your team. Aide on a wide card on top, the specialists two by two below, each alive in its own
 /// colour with the last line of its latest chat. Tapping a card carries on that chat (or starts one); long-press
 /// for a new chat or past chats. A chat opens on top. Below them, the team's own group chat. Only conversations:
@@ -9,6 +10,7 @@ struct ChatsView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var digest: DigestViewModel
     @State private var pastChats: Agent?
     @State private var routinesFor: Agent?
     @State private var infoFor: Agent?
@@ -99,10 +101,16 @@ struct ChatsView: View {
     }
 
     private var header: some View {
-        Text("Your team").font(.largeTitle.bold())
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+        HStack {
+            Text("Your team").font(.largeTitle.bold())
+            Spacer()
+            Button { digest.showLatest() } label: { HeaderIcon(name: "sun.horizon") }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Briefing")
+                .disabled(!settings.isConfigured)
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 4)
     }
 
     private func card(_ agent: Agent, wide: Bool) -> some View {
@@ -419,8 +427,7 @@ struct ConversationRow: View {
     }
 }
 
-/// The day in three lines on top of the team: the latest briefing (tap for it), how many habits are done today, and
-/// what's waiting for your OK. "Today" opens the whole page.
+/// The day on top of the team: how many habits are done today and what's waiting for your OK; each opens Today.
 private struct TodayStrip: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var digest: DigestViewModel
@@ -430,12 +437,6 @@ private struct TodayStrip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let latest = digest.latest {
-                row(icon: "sun.horizon.fill", color: Theme.accent) {
-                    Text(latest.greeting.markdown).lineLimit(1)
-                } action: { digest.showLatest() }
-                Divider().padding(.leading, 40)
-            }
             row(icon: "checkmark.circle.fill", color: .green) {
                 Text(habitsLine)
             } action: { open(.habits) }

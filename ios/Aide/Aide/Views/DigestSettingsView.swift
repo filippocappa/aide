@@ -26,12 +26,6 @@ struct DigestSettingsView: View {
                         Text("When the Shortcuts automation says you're up, or with the morning's first health upload.")
                     }
                 }
-                Section {
-                    DigestRow(title: "Morning", detail: "Your day ahead", icon: "sun.max.fill", color: .yellow,
-                              isOn: binding.daily.enabled) {
-                        TimeRow(time: binding.daily.time)
-                    }
-                }
                 if binding.wrappedValue.evening != nil {
                     Section {
                         DigestRow(title: "Evening", detail: "Tomorrow, and what's still open", icon: "moon.stars.fill", color: .indigo,

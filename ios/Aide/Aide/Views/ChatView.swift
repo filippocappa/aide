@@ -238,7 +238,7 @@ struct ChatView: View {
     /// Under Pebble's digest greeting: the cards it was written from.
     private var digestDetails: some View {
         Button {
-            digest.kind = DigestViewModel.Kind(rawValue: chat.openedDigest ?? ChatViewModel.digestKind()) ?? .daily
+            digest.kind = DigestViewModel.Kind(rawValue: chat.openedDigest ?? ChatViewModel.digestKind()) ?? .wake
             digest.isPresented = true
         } label: {
             Label("Details", systemImage: "sun.horizon")

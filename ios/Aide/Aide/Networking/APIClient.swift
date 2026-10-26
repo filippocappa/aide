@@ -291,6 +291,11 @@ final class APIClient {
         try await send("GET", "/v1/digest", query: [URLQueryItem(name: "kind", value: kind)])
     }
 
+    /// A digest written again now (5–30 s). Not pushed; a wake-up one doesn't count as the day's wake-up.
+    func runDigest(kind: String) async throws -> Digest {
+        try await send("POST", "/v1/digest/run", body: ["kind": kind], timeout: 90)
+    }
+
     func digestSettings() async throws -> DigestSettings {
         try await send("GET", "/v1/digest/settings")
     }

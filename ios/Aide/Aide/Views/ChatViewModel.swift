@@ -151,7 +151,7 @@ final class ChatViewModel: ObservableObject {
 
     /// The digest that fits the time of day: "daily" (morning) before 17:00, "evening" after.
     static func digestKind(at now: Date = Date()) -> String {
-        Calendar.current.component(.hour, from: now) < 17 ? "daily" : "evening"
+        Calendar.current.component(.hour, from: now) < 17 ? "wake" : "evening"
     }
 
     private func reset() {
