@@ -173,7 +173,8 @@ struct ChatsView: View {
 
     #if DEBUG
     /// Simulator screenshots: `-previewOpen team` opens the Team chat, `-previewOpen coach` Coach's latest chat,
-    /// `-previewOpen new:coach` a blank one (nothing is sent until you write).
+    /// `-previewOpen new:coach` a blank one (nothing is sent until you write), `-previewOpen files:f_1,f_2` a Moodle
+    /// notification's files.
     private func openForPreview() async {
         // On the phone, launched over the cable with `-voiceTest YES`: a voice chat with Aide, to try voice from the Mac.
         if UserDefaults.standard.bool(forKey: "voiceTest") {
@@ -184,6 +185,7 @@ struct ChatsView: View {
         guard settings.isPreview, let target = UserDefaults.standard.string(forKey: "previewOpen") else { return }
         if target == "team" { showTeam = true; return }
         if target.hasPrefix("chat:") { await chat.open(id: String(target.dropFirst(5))); return }
+        if target.hasPrefix("files:") { env.newFiles = NewFiles(ids: target.dropFirst(6).split(separator: ",").map(String.init)); return }
         if target.hasPrefix("info:") { infoFor = chat.agent(String(target.dropFirst(5))); return }
         if target.hasPrefix("new:") { await chat.newChat(with: chat.agent(String(target.dropFirst(4)))); return }
         if target == "voice" { await chat.newChat(with: chat.orchestrator); await env.voice.toggle(); return }

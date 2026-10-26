@@ -547,6 +547,10 @@ final class APIClient {
         try await send("GET", "/v1/lectures/\(id)", query: [URLQueryItem(name: "plain", value: "true")])
     }
 
+    func file(_ id: String) async throws -> StudyFile {
+        try await send("GET", "/v1/files/\(id)")
+    }
+
     func files(course: Int) async throws -> [StudyFile] {
         let list: StudyFileList = try await send("GET", "/v1/files",
                                                  query: [URLQueryItem(name: "course", value: String(course))])

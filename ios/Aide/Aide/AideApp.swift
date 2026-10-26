@@ -166,5 +166,6 @@ struct ContentView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { env.showMoodle = false } } }
             }
         }
+        .sheet(item: $env.newFiles) { NewFilesSheet(ids: $0.ids) }
     }
 }

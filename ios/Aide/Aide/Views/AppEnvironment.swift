@@ -19,6 +19,8 @@ final class AppEnvironment: ObservableObject {
     let voice = VoiceController()
     /// The Moodle screen as a sheet, from a `moodle` notification.
     @Published var showMoodle = false
+    /// The files a `moodle` notification was about, listed in a sheet.
+    @Published var newFiles: NewFiles?
     /// The Team chat, from a widget or a Live Activity (`aide://team`); the home screen opens it and clears this.
     @Published var showTeam = false
 
@@ -105,8 +107,8 @@ final class AppEnvironment: ObservableObject {
             await chat.startNewChat(digest: kind)
         case .conversation(let id):
             await chat.open(id: id)
-        case .moodle:
-            showMoodle = true
+        case .moodle(let login, let files):
+            if login || files.isEmpty { showMoodle = true } else { newFiles = NewFiles(ids: files) }
         case .team:
             showTeam = true
         case .agent(let id):

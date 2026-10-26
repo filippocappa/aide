@@ -163,7 +163,10 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// The chat opened with the digest: its first message is Aide's (every other chat starts with yours).
-    var startsWithDigest: Bool { messages.first?.role == .assistant }
+    /// A course's chat can open with Professor too (a notebook proposal in a chat of its own): not a digest.
+    var startsWithDigest: Bool {
+        messages.first?.role == .assistant && conversations.first(where: { $0.id == conversationID })?.course == nil
+    }
 
     func open(_ conversation: Conversation) async {
         await open(id: conversation.id)

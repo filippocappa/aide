@@ -382,6 +382,8 @@ final class PushTests: XCTestCase {
     func testSilentTestAndUnknownPushesDontRoute() {
         XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "moodle"]]), .moodle(login: false))
         XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "moodle", "login": true]]), .moodle(login: true))
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "moodle", "files": ["f_1", "f_2"]]]),
+                       .moodle(login: false, files: ["f_1", "f_2"]))
         XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "sync"]]))
         XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "test"]]))
         XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "something-new"]]))
@@ -492,6 +494,28 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(first.arrivesDate?.timeIntervalSince(first.date!), 25 * 60)
         XCTAssertNil(board.lines[0].arrivals[1].delay)
         XCTAssertNil(board.lines[0].arrivals[1].toAt)
+    }
+
+    func testFilesAndProposalAttachmentsDecode() throws {
+        let json = """
+        [{"type": "files", "files": [{"id": "f_1", "course": 2, "lecture": null, "name": "Lect: Monetary Policy.pdf",
+          "section": "Week 6", "size": 100, "pages": 24, "scanned": false, "source": "moodle",
+          "added_at": "2026-10-26T17:00:00+01:00"}]},
+         {"type": "proposal", "proposal": {"id": "p_1", "course": 2, "kind": "update", "status": "pending",
+          "items": [{"n": 1, "topic": "t_1", "title": "Money", "add": "The credit channel.", "sources": ["Lect, p. 3"]},
+                    {"n": 2, "topic": null, "title": "Monetary policy rule", "add": "", "sources": []}],
+          "material": ["Lect: Monetary Policy"], "result": null, "progress": null, "conversation_id": "c_9",
+          "created_at": "2026-10-26T17:00:00+01:00"}}]
+        """
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .files(let files) = attachments[0], case .proposal(let p) = attachments[1] else {
+            return XCTFail("expected files and a proposal")
+        }
+        XCTAssertEqual(StudyFileRow.title(files[0]), "Lect: Monetary Policy")
+        XCTAssertEqual(StudyFileRow.detail(files[0]), "24 pages · Week 6 · from Moodle")
+        XCTAssertEqual(p.items?.map(\.title), ["Money", "Monetary policy rule"])
+        XCTAssertEqual(p.conversationId, "c_9")
+        XCTAssertNil(p.items?[1].topic)
     }
 
     func testTransitAlertPatchSendsOnlyWhatChanges() throws {

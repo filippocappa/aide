@@ -63,6 +63,8 @@ enum Attachment: Decodable, Hashable {
     case events([CalendarEvent])
     case meals([Meal])
     case departures([DepartureBoard])
+    case files([StudyFile])
+    case proposal(NotebookProposal)
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -72,10 +74,12 @@ enum Attachment: Decodable, Hashable {
         case "events": self = .events(try c.decode([CalendarEvent].self, forKey: .events))
         case "meals": self = .meals(try c.decode([Meal].self, forKey: .meals))
         case "departures": self = .departures(try c.decode([DepartureBoard].self, forKey: .departures))
+        case "files": self = .files(try c.decode([StudyFile].self, forKey: .files))
+        case "proposal": self = .proposal(try c.decode(NotebookProposal.self, forKey: .proposal))
         default: self = .unknown
         }
     }
-    private enum CodingKeys: String, CodingKey { case type, reminders, events, meals, departures }
+    private enum CodingKeys: String, CodingKey { case type, reminders, events, meals, departures, files, proposal }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
         (list ?? []).filter { $0 != .unknown }
