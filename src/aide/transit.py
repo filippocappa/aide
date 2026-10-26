@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS transit_alerts (
     starts_at  TEXT,              -- UTC, one-offs: when it starts watching
     ends_at    TEXT,              -- UTC, one-offs: when it gives up
     last_alert TEXT,              -- UTC
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    event      TEXT               -- set for a calendar event ("Macroeconomics at 09:30"), by leave.py
 );
 CREATE TABLE IF NOT EXISTS location (
     id       INTEGER PRIMARY KEY CHECK (id = 1),  -- only the latest fix is kept
@@ -717,6 +718,8 @@ class AlertStore:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo, timetable: Timetable):
         self.conn, self.tz, self.timetable = conn, tz, timetable
         self.conn.executescript(ALERTS_SCHEMA)
+        if "event" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(transit_alerts)")}:
+            self.conn.execute("ALTER TABLE transit_alerts ADD COLUMN event TEXT")  # from before leave-now for events
 
     def _row(self, row) -> dict:
         a = dict(row)
@@ -757,7 +760,7 @@ class AlertStore:
         return (at - WINDOW).astimezone(timezone.utc), (at + WINDOW).astimezone(timezone.utc)
 
     def create(self, stop: str, line: str, time_: str | None = None, days: list[int] | None = None,
-               minutes: int | None = None, now: datetime | None = None) -> dict:
+               minutes: int | None = None, now: datetime | None = None, event: str | None = None) -> dict:
         now = now or utcnow()
         stop, line = self._check(stop, line, minutes)
         if time_ is not None:
@@ -770,9 +773,10 @@ class AlertStore:
         else:
             starts, ends = (t.isoformat() for t in self._window(time_, now))
         cur = self.conn.execute(
-            "INSERT INTO transit_alerts (stop, line, time, days, minutes, starts_at, ends_at, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (stop, line, time_, json.dumps(days) if days is not None else None, minutes, starts, ends, now.isoformat()))
+            "INSERT INTO transit_alerts (stop, line, time, days, minutes, starts_at, ends_at, created_at, event) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (stop, line, time_, json.dumps(days) if days is not None else None, minutes, starts, ends, now.isoformat(),
+             event))
         return self.get(cur.lastrowid)
 
     def update(self, alert_id: int, now: datetime | None = None, **changes) -> dict:
@@ -851,6 +855,8 @@ class AlertStore:
         else:
             text += ": once, the next one"
         text += f", when it's {a['minutes']} min away" if a["minutes"] else ", when it's time to leave"
+        if a["event"]:
+            text += f", for {a['event']}"
         return text + ("" if a["enabled"] else " (off)")
 
     def as_json(self, a: dict) -> dict:
@@ -861,7 +867,7 @@ class AlertStore:
                 "stop": {"id": a["stop"], "code": stop["code"], "name": stop["name"]} if stop else
                 {"id": a["stop"], "code": None, "name": None},
                 "time": a["time"], "days": a["days"], "once": a["days"] is None, "minutes": a["minutes"],
-                "enabled": a["enabled"], "summary": self.describe(a)}
+                "enabled": a["enabled"], "event": a["event"], "summary": self.describe(a)}
 
 
 class AlertWatcher:
@@ -923,7 +929,7 @@ class AlertWatcher:
         if tram.seconds(now) > lead:
             return
         after = catchable[1] if len(catchable) > 1 else None
-        title, body = alert_text(tram, after, stop, walk, leave, now)
+        title, body = alert_text(tram, after, stop, walk, leave, now, a["event"])
         if await self.start_live(a, tram, after, stop, walk, leave, title, body, now):
             log.info("tram alert %s: Live Activity started", a["id"])
         elif not (self.push and await self.push.send_transit(a["id"], title, body)):
@@ -983,7 +989,7 @@ class AlertWatcher:
 
 
 def alert_text(tram: Arrival, after: Arrival | None, stop: dict, walk: int | None, leave: bool,
-               now: datetime) -> tuple[str, str]:
+               now: datetime, event: str | None = None) -> tuple[str, str]:
     m = tram.minutes(now)
     when = "now" if m == 0 else f"in {m} min"
     title = f"{tram.name()} {when}" + (": leave now" if leave else "")
@@ -995,4 +1001,6 @@ def alert_text(tram: Arrival, after: Arrival | None, stop: dict, walk: int | Non
         body += " From the timetable (no live data for it)."
     if after:
         body += f" Next one in {after.minutes(now)} min."
+    if event:
+        body += f" For {event}."
     return title, body

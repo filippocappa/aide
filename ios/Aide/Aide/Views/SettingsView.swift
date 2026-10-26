@@ -595,7 +595,7 @@ private struct LocationSettingsView: View {
             Section {
                 NavigationLink("Tram alerts") { TransitAlertsView() }
             } footer: {
-                Text("When to leave for your GTT tram: the walk from where you are to the stop, plus two minutes.")
+                Text("When to leave for your GTT tram, also for calendar events with a place: the walk from where you are to the stop, plus two minutes.")
             }
         }
         .scrollContentBackground(.hidden)

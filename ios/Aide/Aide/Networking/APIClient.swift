@@ -279,6 +279,14 @@ final class APIClient {
         let _: OKResponse = try await send("DELETE", "/v1/transit/alerts/\(id)", body: EmptyBody())
     }
 
+    func transitSettings() async throws -> TransitSettings {
+        try await send("GET", "/v1/transit/settings")
+    }
+
+    func updateTransitSettings(_ settings: TransitSettings) async throws -> TransitSettings {
+        try await send("PATCH", "/v1/transit/settings", body: settings)
+    }
+
     func digest(kind: String) async throws -> Digest {
         try await send("GET", "/v1/digest", query: [URLQueryItem(name: "kind", value: kind)])
     }

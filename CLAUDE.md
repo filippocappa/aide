@@ -47,6 +47,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   and the planner (one model call per period, through `engine.py`, before the digest that opens it).
 - `transit.py`: GTT (Turin's buses and trams): the GTFS timetable (rebuilt nightly into `data/gtt.db`), the live
   feed, the phone's location, and tram alerts with their watcher. `tools/transit.py`: the agents' transit tools.
+  `leave.py`: leave-now for calendar events (the event's GTT ride from Maps becomes a one-off tram alert).
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -233,6 +234,10 @@ Departure cards (`departures` attachment, `GET /v1/transit/departures`): per sto
 minutes, live delay or timetable, the next ones, the walk and when to leave; with a destination (a stop, or any place
 through Maps: its stops within 400 m) only direct lines, with the time there. The app's `DeparturesCard` counts down
 and fetches the board again every 30 s while on screen (cards under 3 h old).
+Leave-now for events (2026-10-26, contract "Leaving for an event"; closes the tram half of #5): for a timed event with
+a place, Maps' transit way from the phone; ~45 min before leaving, its first GTT ride becomes a one-off tram alert
+(`event` on the alert), so the usual "Tram 4 in 7 min: leave now" comes. On/off in Settings → Location and trams →
+Tram alerts (`/v1/transit/settings`). Not yet tried on the phone.
 
 **Done, both sides (2026-10-22), not yet tried on the phone:** mail drafts (#7, contract in `docs/API.md`, "Mail
 drafts"). Server (live, `drafts.py`): before the evening digest Secretary reads the last 3 days' inbox (each message

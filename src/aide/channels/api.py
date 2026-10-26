@@ -40,6 +40,7 @@ from ..objectives import ObjectivePlanner, ObjectiveStore
 from ..quiz import MOST as MOST_QUESTIONS, QuizStore, plain_math
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
+from ..leave import LeaveWatcher
 from ..transit import AlertStore, Boards, Location
 from ..wake import WakeService
 
@@ -287,6 +288,10 @@ class LocationIn(BaseModel):
     at: datetime | None = None  # when the fix was taken, with its offset; default now
 
 
+class TransitSettingsPatch(BaseModel):
+    calendar: bool
+
+
 class TransitAlertPatch(BaseModel):
     time: str | None = None
     days: list[int] | None = None
@@ -342,7 +347,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                objectives: ObjectiveStore | None = None, planner: ObjectivePlanner | None = None,
                location: Location | None = None, transit_alerts: AlertStore | None = None,
                boards: Boards | None = None, drafts: Drafts | None = None,
-               live: LiveActivities | None = None) -> FastAPI:
+               live: LiveActivities | None = None, leave: LeaveWatcher | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -1446,6 +1451,19 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if "minutes" in changes and changes["minutes"] is None:
             changes["minutes"] = 0  # the store's "back to when it's time to leave"
         return transit_alerts.as_json(transit_alerts.update(alert_id, **changes))
+
+    def leave_or_404() -> LeaveWatcher:
+        if leave is None:
+            raise HTTPException(404, "leave-now alerts need GTT, the calendar and Maps on this server")
+        return leave
+
+    @app.get("/v1/transit/settings", dependencies=[Depends(auth)])
+    async def transit_settings():
+        return leave_or_404().settings()
+
+    @app.patch("/v1/transit/settings", dependencies=[Depends(auth)])
+    async def edit_transit_settings(body: TransitSettingsPatch):
+        return leave_or_404().update_settings(body.calendar)
 
     @app.get("/v1/transit/nearby", dependencies=[Depends(auth)])
     async def nearby():

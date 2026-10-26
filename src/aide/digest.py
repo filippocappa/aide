@@ -419,7 +419,7 @@ class DigestService:
         greeting, ahead = parts[0].strip(), parts[1].strip() if len(parts) > 1 else ""
         return greeting or _fallback_greeting(now, sections), ahead
 
-    async def _travel_plan(self, event: dict) -> tuple[str | None, str | None]:
+    async def travel_plan(self, event: dict) -> tuple[str | None, str | None]:
         """(home, mode for this place) from memory, falling back to AIDE_HOME_ADDRESS and no fixed mode."""
         # Shared items plus Secretary's own: travel is its domain ("I always walk to uni").
         notes = [r["text"] for r in self.conn.execute(
@@ -524,7 +524,7 @@ class DigestService:
         start = datetime.fromisoformat(nxt["start"]).astimezone(self.tz)
         line = f"Next: {nxt['title']} at {start:%H:%M}" + (f" at {nxt['location']}" if nxt["location"] else "") + "."
         if nxt["location"] and self.maps:
-            home, mode = await self._travel_plan(nxt)
+            home, mode = await self.travel_plan(nxt)
             away, fix = await self._away(home, nxt["location"], now) if home else (None, None)
             if away:
                 line += (f" Their phone is {away} and far from this place, so they're probably not going to this "

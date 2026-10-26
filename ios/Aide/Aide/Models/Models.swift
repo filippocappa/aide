@@ -1438,6 +1438,8 @@ struct TransitAlert: Decodable, Identifiable, Hashable {
     /// nil: when it's time to leave (the walk plus two minutes).
     let minutes: Int?
     var enabled: Bool
+    /// The calendar event the server set it for ("Macroeconomics at 09:30"), else nil. Older servers leave it out.
+    let event: String?
     /// The whole alert in a line.
     let summary: String
 
@@ -1451,6 +1453,9 @@ struct TransitAlert: Decodable, Identifiable, Hashable {
 }
 
 struct TransitAlertList: Decodable { let alerts: [TransitAlert] }
+
+/// `calendar`: the server sets leave-now alerts for calendar events with a place (docs/API.md, "Leaving for an event").
+struct TransitSettings: Codable { var calendar: Bool }
 
 /// Only what changes. `minutes: .some(nil)` sends `"minutes": null`: back to when it's time to leave.
 struct TransitAlertPatch: Encodable {

@@ -1200,12 +1200,37 @@ edits and deletes them.
 {
   "id": 1, "line": "4", "vehicle": "Tram", "towards": ["Falchera"],
   "stop": {"id": "1687", "code": "253", "name": "Porta Nuova"},
-  "time": "08:10", "days": [1, 2, 3, 4, 5], "once": false, "minutes": null, "enabled": true,
+  "time": "08:10", "days": [1, 2, 3, 4, 5], "once": false, "minutes": null, "enabled": true, "event": null,
   "summary": "Tram 4 at Porta Nuova (stop 253), towards Falchera: Mon–Fri around 08:10, when it's time to leave"
 }
 ```
 - `vehicle` is `Tram`, `Bus`, `Metro` or `Train`, `towards` the line's directions from this stop. `summary` is the
   whole alert in a line, for the list.
+- `event` (since 2026-10-26): the calendar event a leave-now alert was set for, as `"Macroeconomics at 09:30"`, else
+  null. Its push ends with "For Macroeconomics at 09:30."
+
+### Leaving for an event
+
+Since 2026-10-26 the server sets tram alerts for the calendar by itself: for a timed event with a place in the next 3
+hours, it asks Maps for the way there by transit from where the phone is (to be there 10 min early). When leaving
+for the first ride is under 45 minutes away and that ride is a GTT line, it sets a one-off alert for that line at that
+stop around its departure, with `event` set, and the alert pushes "Tram 4 in 7 min: leave now" as any other
+(live times, the walk from the phone, the Live Activity). Until then the way is looked up again every 10 minutes, or
+after a 300 m move.
+
+- One alert per event. Deleting it in the app is final for that event; an event that moves or is deleted takes its
+  alert with it.
+- None when the phone is within 500 m of the place or over 20 km away, when a note in memory says the user walks,
+  drives or cycles there, when the first ride isn't GTT's (a train), or when one of the user's alerts for that line
+  already watches that time.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/transit/settings` | | `{"calendar": true}` |
+| `PATCH /v1/transit/settings` | `{"calendar": false}` | the settings |
+
+`calendar` (default true) turns the event alerts on or off. `404` when the server can't make them (GTT off, or no
+calendar or Maps key).
 
 ## Push
 

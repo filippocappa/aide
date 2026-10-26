@@ -4,6 +4,8 @@ import SwiftUI
 struct TransitAlertsView: View {
     @EnvironmentObject private var env: AppEnvironment
     @State private var alerts: [TransitAlert] = []
+    /// nil: the server can't set alerts for events (an older one, or no calendar or Maps there).
+    @State private var settings: TransitSettings?
     @State private var error: String?
     @State private var loaded = false
 
@@ -11,6 +13,16 @@ struct TransitAlertsView: View {
         List {
             if let error {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
+            }
+            if let settings {
+                Section {
+                    Toggle("Calendar events", isOn: Binding(get: { settings.calendar },
+                                                            set: { on in Task { await setCalendar(on) } }))
+                        .tint(Theme.toggle)
+                } footer: {
+                    Text("For an event with a place, Aide finds your tram from where you are and tells you when to leave "
+                         + "for it. The alert shows up below about 45 minutes before; delete it to skip that one.")
+                }
             }
             Section {
                 if alerts.isEmpty && loaded {
@@ -53,7 +65,18 @@ struct TransitAlertsView: View {
         } catch {
             self.error = Self.describe(error)
         }
+        settings = try? await env.api.transitSettings()
         loaded = true
+    }
+
+    private func setCalendar(_ on: Bool) async {
+        settings?.calendar = on
+        do {
+            settings = try await env.api.updateTransitSettings(TransitSettings(calendar: on))
+        } catch {
+            settings?.calendar = !on
+            self.error = Self.describe(error)
+        }
     }
 
     private func setEnabled(_ alert: TransitAlert, _ on: Bool) async {
@@ -94,6 +117,9 @@ private struct TransitAlertRow: View {
                 Text(alert.title)
                 Text(alert.stopLabel).font(.subheadline).foregroundStyle(.secondary)
                 Text("\(alert.when) · \(alert.lead)").font(.caption).foregroundStyle(.secondary)
+                if let event = alert.event {
+                    Label("For \(event)", systemImage: "calendar").font(.caption).foregroundStyle(.secondary)
+                }
             }
             Spacer()
             Toggle(alert.title, isOn: Binding(get: { alert.enabled }, set: setEnabled))

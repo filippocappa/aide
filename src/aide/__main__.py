@@ -48,6 +48,7 @@ from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
 from .tools.study import study_tools
 from .tools.transit import transit_tools
+from .leave import LeaveWatcher
 from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts
 from .wake import WakeService
 from .whisper import available as whisper_available
@@ -123,7 +124,7 @@ def main() -> None:
             log.warning("AIDE_HOME_ADDRESS not set: Maps tools need an explicit origin")
     else:
         log.warning("GOOGLE_MAPS_API_KEY not set: Maps tools disabled")
-    transit = alerts = watcher = boards = None
+    transit = alerts = watcher = boards = walks = None
     if settings.gtt:
         timetable = Timetable(settings.db_path.parent / "gtt.db", settings.timezone)
         transit = Transit(timetable, Live())
@@ -163,6 +164,11 @@ def main() -> None:
     digest.objectives, digest.planner, digest.engine = objectives, planner, engine
     digest.whereabouts = whereabouts
     digest.drafts = drafts if gmail else None
+    leave = None
+    if transit and cal and maps:
+        leave = LeaveWatcher(db.conn, settings.timezone, cal, maps, alerts, location, walks, digest.travel_plan)
+    elif transit:
+        log.info("leave-now alerts for events need the calendar and GOOGLE_MAPS_API_KEY: off")
 
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")
@@ -213,13 +219,14 @@ def main() -> None:
             *([vault.run()] if vault else []),
             *([moodle.run()] if settings.moodle_url else []),
             *([transit.timetable.run(), watcher.run()] if transit else []),
+            *([leave.run()] if leave else []),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
-                             notebook, engine, objectives, planner, location, alerts, boards, drafts, live)
+                             notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
