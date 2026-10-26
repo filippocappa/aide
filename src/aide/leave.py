@@ -1,9 +1,9 @@
 """Leave-now alerts for the calendar. The contract is docs/API.md, "Transit (GTT)", "Leaving for an event".
 
 A timed event with a place, in the next few hours: from where the phone is, Maps gives ways there by transit, to be
-there 10 minutes early. Of those whose first ride is a GTT line, the one leaving latest on a frequent line (at least
-FREQUENT an hour at that stop) wins, so a missed tram isn't a long wait (Maps' first pick is often a rare
-extra-urban bus); without a frequent one, the latest. Once leaving for it is under COMMIT away, it becomes a
+there 10 minutes early. Of those whose first ride is a GTT line, the one leaving latest on a line memory says the
+user prefers there ("I take the 10 to uni"; the first named, of a few) wins; else on a frequent line (at least FREQUENT an hour at that stop),
+so a missed tram isn't a long wait (Maps' first pick is often a rare extra-urban bus); else the latest. Once leaving for it is under COMMIT away, it becomes a
 one-off tram alert around that departure. The tram alert watcher does the rest from the live times: the
 walk from the phone, "Tram 4 in 7 min: leave now", the Live Activity. Until then the way is looked up again every
 REPLAN (sooner after a move), since the phone and the trams move.
@@ -24,7 +24,7 @@ from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 from .db import utcnow
-from .digest import ARRIVE_EARLY, AWAY
+from .digest import ARRIVE_EARLY, AWAY, Travel
 from .transit import (BUFFER, FIX_AGE, FIX_USABLE, WINDOW, AlertStore, Location, Walks, line_key, metres)
 
 log = logging.getLogger(__name__)
@@ -54,9 +54,9 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 class LeaveWatcher:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo, cal, maps, alerts: AlertStore, location: Location,
-                 walks: Walks, travel_plan: Callable[[dict], Awaitable[tuple[str | None, str | None]]] | None = None):
-        """`travel_plan(event)`: (home, mode, place) from memory, as the wake briefing reads it; a mode other than
-        transit means no alert, and `place` is where an event with no place is."""
+                 walks: Walks, travel_plan: Callable[[dict], Awaitable[Travel]] | None = None):
+        """`travel_plan(event)`: how the user gets there, from memory, as the wake briefing reads it; a mode other
+        than transit means no alert, `place` is where an event with no place is, `lines` the lines they prefer."""
         self.conn, self.tz, self.cal, self.maps = conn, tz, cal, maps
         self.alerts, self.timetable, self.location, self.walks = alerts, alerts.timetable, location, walks
         self.travel_plan = travel_plan
@@ -64,7 +64,7 @@ class LeaveWatcher:
         self._events: tuple[datetime, list[dict]] | None = None
         self._routes: dict[tuple[str, str], tuple[datetime, tuple[float, float], list[dict]]] = {}
         self._spots: dict[str, tuple[float, float] | None] = {}
-        self._plans: dict[tuple[str, str], tuple[str | None, str | None]] = {}
+        self._plans: dict[tuple[str, str], Travel] = {}
 
     # -- the setting ------------------------------------------------------------------------------------------
 
@@ -151,10 +151,10 @@ class LeaveWatcher:
 
     async def plan(self, e: dict, fix: dict, now: datetime) -> None:
         here = (fix["lat"], fix["lon"])
-        mode, place = await self._plan(e)
-        if mode not in (None, "transit"):
+        travel = await self._plan(e)
+        if travel.mode not in (None, "transit"):
             return self._mark(e, "walks", now)
-        place = e["location"] or place
+        place = e["location"] or travel.place
         there = await self._spot(place, here) if place else None
         if there is None:
             return self._mark(e, "no_place", now)
@@ -169,14 +169,17 @@ class LeaveWatcher:
                                    if s.get("transitDetails")), None))]
         if not rides:
             return self._mark(e, "no_ride", now)
+        preferred = [line_key(l) for l in travel.lines]  # best first
+        rank = lambda line: len(preferred) - preferred.index(line_key(line)) if line_key(line) in preferred else 0  # noqa: E731
         options = []
         for ride in rides:
             if found := self._gtt(ride):
                 departs = datetime.fromisoformat(ride["stopDetails"]["departureTime"].replace("Z", "+00:00"))
-                options.append((self._frequent(found[0]["id"], found[1], departs), departs, *found))
+                options.append((rank(found[1]), self._frequent(found[0]["id"], found[1], departs),
+                                departs, *found))
         if not options:
             return self._mark(e, "not_gtt", now)
-        _, departs, stop, line = max(options, key=lambda o: o[:2])
+        *_, departs, stop, line = max(options, key=lambda o: o[:3])
         walk = await self.walks.seconds(*here, stop)
         if departs - timedelta(seconds=walk + BUFFER) - now > COMMIT:
             return  # not yet: the way may change
@@ -198,11 +201,11 @@ class LeaveWatcher:
             self._spots[place] = (found["lat"], found["lon"]) if found else None
         return self._spots[place]
 
-    async def _plan(self, e: dict) -> tuple[str | None, str | None]:
-        """(mode, place) from memory, once per event."""
+    async def _plan(self, e: dict) -> Travel:
+        """How the user gets there, from memory, once per event."""
         key = self._key(e)
         if key not in self._plans:
-            self._plans[key] = (await self.travel_plan(e))[1:] if self.travel_plan else (None, None)
+            self._plans[key] = await self.travel_plan(e) if self.travel_plan else Travel(None)
         return self._plans[key]
 
     async def _ways(self, e: dict, place: str, here: tuple[float, float], now: datetime) -> list[dict] | None:

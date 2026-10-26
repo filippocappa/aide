@@ -1214,8 +1214,8 @@ edits and deletes them.
 Since 2026-10-26 the server sets tram alerts for the calendar by itself: for a timed event with a place in the next 3
 hours, it asks Maps for the ways there by transit from where the phone is (to be there 10 min early). An event with
 no place takes it from memory when the notes say where such events are (a lecture: the uni). Of the ways whose first
-ride is a GTT line, it takes the one leaving latest on a frequent line (at least 4 an hour at that stop), else the
-latest. When leaving for it is under 45 minutes away, it sets a one-off alert for that line at that stop around its
+ride is a GTT line, it takes the one leaving latest on the line memory says the user prefers there ("I take the 10 to
+uni"), else on a frequent line (at least 4 an hour at that stop), else the latest. When leaving for it is under 45 minutes away, it sets a one-off alert for that line at that stop around its
 departure, with `event` set, and the alert pushes "Tram 4 in 7 min: leave now" as any other
 (live times, the walk from the phone, the Live Activity). Until then the way is looked up again every 10 minutes, or
 after a 300 m move.

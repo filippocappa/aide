@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from aide.agent import Agent
 from aide.channels.api import create_app
+from aide.digest import Travel
 from aide.icloud import CalEvent
 from aide.leave import LeaveWatcher
 from aide.reminders import ReminderStore
@@ -59,9 +60,10 @@ def utc(dt: datetime) -> datetime:
 def leave(env):  # noqa: F811
     db, timetable, location, alerts, push = env
 
-    def make(cal: FakeCal, maps: FakeMaps, mode: str | None = None, place: str | None = None) -> LeaveWatcher:
+    def make(cal: FakeCal, maps: FakeMaps, mode: str | None = None, place: str | None = None,
+             lines: tuple[str, ...] = ()) -> LeaveWatcher:
         async def travel_plan(event):
-            return None, mode, place
+            return Travel(None, mode, place, lines)
         return LeaveWatcher(db.conn, ROME, cal, maps, alerts, location, Walks(), travel_plan)
     return make, env
 
@@ -128,10 +130,13 @@ async def test_the_latest_frequent_line_wins_over_a_rare_one(leave, monkeypatch)
     (a,) = alerts.all()
     assert (a["line"], a["time"]) == ("4", "08:05")
     assert maps.bodies[0]["computeAlternativeRoutes"] is True
-    monkeypatch.setattr("aide.leave.FREQUENT", 6)  # nothing is frequent: the latest
-    await make(FakeCal(lecture(uid="rare")), maps).tick(utc(at(7, 30)))
+    await make(FakeCal(lecture(uid="mine")), maps, lines=("33", "4")).tick(utc(at(7, 30)))  # "the 33, else the 4"
     a = alerts.all()[-1]
     assert (a["line"], a["time"]) == ("33", "08:09")
+    monkeypatch.setattr("aide.leave.FREQUENT", 6)  # nothing is frequent: the latest
+    await make(FakeCal(lecture(uid="rare")), FakeMaps(ride(departs=at(7, 58)), ride(departs=at(8, 5)))).tick(utc(at(7, 30)))
+    a = alerts.all()[-1]
+    assert (a["line"], a["time"]) == ("4", "08:05")
 
 
 async def test_not_while_there_or_far_away_and_not_without_a_fix(leave):

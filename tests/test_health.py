@@ -312,7 +312,7 @@ async def test_memory_gives_home_and_mode(world):
 async def test_memory_says_where_an_event_with_no_place_is(world):
     lecture = MORNING.replace(hour=9, minute=30)
     maps = Maps(walk=50, transit=20)
-    w = world([done('{"home": null, "mode": null, "place": "Città Studi"}'), done("Morning.")],
+    w = world([done('{"home": null, "mode": null, "place": "Città Studi", "lines": ["10"]}'), done("Morning.")],
               [CalEvent("e1", "Uni", "Lecture", lecture, lecture + timedelta(hours=2), "")], maps)
     w.db.add_memory("Lectures are at Città Studi")
     await w.digest.generate("wake", MORNING)

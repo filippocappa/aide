@@ -235,8 +235,8 @@ minutes, live delay or timetable, the next ones, the walk and when to leave; wit
 through Maps: its stops within 400 m) only direct lines, with the time there. The app's `DeparturesCard` counts down
 and fetches the board again every 30 s while on screen (cards under 3 h old).
 Leave-now for events (2026-10-26, contract "Leaving for an event"; closes the tram half of #5): for a timed event with
-a place (or one from memory: lectures are at the uni), Maps' transit ways from the phone, the latest on a frequent
-GTT line; ~45 min before leaving, its first ride becomes a one-off tram alert
+a place (or one from memory: lectures are at the uni), Maps' transit ways from the phone, the latest on the line memory
+prefers (the 10 to uni), else on a frequent GTT line; ~45 min before leaving, its first ride becomes a one-off tram alert
 (`event` on the alert), so the usual "Tram 4 in 7 min: leave now" comes. On/off in Settings → Location and trams →
 Tram alerts (`/v1/transit/settings`). Not yet tried on the phone.
 

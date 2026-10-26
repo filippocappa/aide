@@ -199,6 +199,16 @@ def check_kind(kind: str) -> str:
     return kind
 
 
+@dataclass(frozen=True)
+class Travel:
+    """How the user gets to an event, from memory: the home they leave from, the mode (walk, transit, drive,
+    bicycle) if a note fixes one, where an event with no place is, and the transit lines they'd rather take there."""
+    home: str | None
+    mode: str | None = None
+    place: str | None = None
+    lines: tuple[str, ...] = ()
+
+
 class DigestService:
     def __init__(self, conn, client: anthropic.AsyncAnthropic, model: str, tz: ZoneInfo,
                  reminders: ReminderStore, habits: HabitStore,
@@ -419,14 +429,13 @@ class DigestService:
         greeting, ahead = parts[0].strip(), parts[1].strip() if len(parts) > 1 else ""
         return greeting or _fallback_greeting(now, sections), ahead
 
-    async def travel_plan(self, event: dict) -> tuple[str | None, str | None, str | None]:
-        """(home, mode for this place, where an event with no place is) from memory, falling back to
-        AIDE_HOME_ADDRESS, no fixed mode and no place."""
+    async def travel_plan(self, event: dict) -> Travel:
+        """How the user gets to this event, from memory; else from AIDE_HOME_ADDRESS, with nothing else fixed."""
         # Shared items plus Secretary's own: travel is its domain ("I always walk to uni").
         notes = [r["text"] for r in self.conn.execute(
             "SELECT text FROM memory WHERE agent IS NULL OR agent = 'secretary' ORDER BY id DESC")]
         if not notes:
-            return self.home, None, None
+            return Travel(self.home)
         ask = (f"Configured home: {self.home or 'none'}\nPlace: {event['location'] or 'none given'} "
                f"(event: {event['title']}, calendar: {event.get('calendar') or 'unknown'})\n\n"
                "Notes, newest first:\n" + "\n".join(f"- {n}" for n in notes))
@@ -436,11 +445,13 @@ class DigestService:
             found = json.loads(text[text.index("{"):text.rindex("}") + 1])
         except Exception as e:
             log.warning("digest: couldn't read home and travel mode from memory (%s): %r", e, text[:200])
-            return self.home, None, None
+            return Travel(self.home)
         home = found.get("home") if isinstance(found.get("home"), str) and found["home"].strip() else self.home
         mode = found.get("mode") if found.get("mode") in TRAVEL_MODES else None
         place = found.get("place") if isinstance(found.get("place"), str) and found["place"].strip() else None
-        return home, mode, None if event["location"] else place
+        lines = found.get("lines") if isinstance(found.get("lines"), list) else []
+        return Travel(home, mode, None if event["location"] else place,
+                      tuple(str(l).strip() for l in lines if str(l).strip()))
 
     async def _route(self, origin: dict, place: str, mode: str, arrive: datetime) -> dict | None:
         body = {"origin": origin, "destination": {"address": place}, "travelMode": TRAVEL_MODES[mode]}
@@ -528,7 +539,8 @@ class DigestService:
         start = datetime.fromisoformat(nxt["start"]).astimezone(self.tz)
         line = f"Next: {nxt['title']} at {start:%H:%M}" + (f" at {nxt['location']}" if nxt["location"] else "") + "."
         if self.maps:
-            home, mode, place = await self.travel_plan(nxt)
+            plan = await self.travel_plan(nxt)
+            home, mode, place = plan.home, plan.mode, plan.place
             if place:  # no place on the event, but memory says where such events are
                 line = line[:-1] + f" at {place} (from their notes)."
                 nxt = {**nxt, "location": place}
@@ -560,7 +572,8 @@ TRAVEL_PROMPT = """From the user's saved notes, answer with JSON only, in this f
 {"home": "<the home address they leave from for this place, if a note gives one, else null>", "mode": "<walk, \
 transit, drive or bicycle if a note says how they get to this place, else null>", "place": "<when the event has no \
 place: the address where it is, if the notes say where such events are (a lecture at uni: the uni's address), \
-else null>"}
+else null>", "lines": [<the transit lines a note says they take or prefer to get to this place, best first, as \
+"10" or "4"; else empty>]}
 When the notes give more than one home, take the one a note says they leave from for this place, else the one in \
 the same town as the place.
 A note counts for the place if it names it or plainly means it (a note about "uni" counts for a lecture at the \
