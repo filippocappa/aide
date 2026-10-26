@@ -59,6 +59,7 @@ struct HabitRow: View {
             parts.append("\(names) from the Watch")
         }
         if let food = habit.food { parts.append("\(FoodHabit.label(food)) ticks it") }
+        if habit.health == "inhaler_usage" { parts.append("Inhaler Usage from Health") }
         return parts.joined(separator: " · ")
     }
 }

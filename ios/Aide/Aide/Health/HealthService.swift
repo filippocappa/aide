@@ -40,9 +40,11 @@ final class HealthService: ObservableObject {
     private static let steps = HKQuantityType(.stepCount)
     private static let activeEnergy = HKQuantityType(.activeEnergyBurned)
     private static let exercise = HKQuantityType(.appleExerciseTime)
+    private static let inhaler = HKQuantityType(.inhalerUsage)
 
     private static let readTypes: Set<HKObjectType> = [
-        sleep, restingHR, hrv, respiratory, wristTemp, steps, activeEnergy, exercise, HKObjectType.workoutType(),
+        sleep, restingHR, hrv, respiratory, wristTemp, steps, activeEnergy, exercise, inhaler,
+        HKObjectType.workoutType(),
     ]
 
     // MARK: Permission and background delivery
@@ -69,10 +71,15 @@ final class HealthService: ObservableObject {
     /// At launch, so HealthKit can wake the app when the Watch syncs a night or a workout, or steps change.
     func startObserving() async {
         await refreshStatus()
+        if !hasAsked, !observing, UserDefaults.standard.object(forKey: Keys.backfilled) != nil {
+            // Allowed before, but there's a new kind to read (Inhaler Usage): ask for it; that comes back here.
+            return await requestAccess()
+        }
         guard hasAsked, !observing else { return }
         observing = true
         let watched: [(HKSampleType, HKUpdateFrequency)] = [
             (Self.sleep, .immediate), (HKObjectType.workoutType(), .immediate), (Self.steps, .hourly),
+            (Self.inhaler, .immediate), // a limit habit counts from it, so it should show up soon
         ]
         for (type, frequency) in watched {
             try? await store.enableBackgroundDelivery(for: type, frequency: frequency)
@@ -179,11 +186,13 @@ final class HealthService: ObservableObject {
         async let energyByDay = daily(Self.activeEnergy, .cumulativeSum, from: first, to: end)
         async let exerciseByDay = daily(Self.exercise, .cumulativeSum, from: first, to: end)
         async let restingByDay = daily(Self.restingHR, .discreteAverage, from: first, to: end)
+        async let inhalerByDay = daily(Self.inhaler, .cumulativeSum, from: first, to: end)
 
         let segments = try await sleepSamples.compactMap(Self.segment)
         let (hrv, respiratory, temp) = try await (hrvSamples, respiratorySamples, tempSamples)
         let (allWorkouts, steps, energy, exercise, resting) =
             try await (workouts, stepsByDay, energyByDay, exerciseByDay, restingByDay)
+        let inhaler = try await inhalerByDay
 
         let bpm = HKUnit.count().unitDivided(by: .minute())
         return (0..<count).compactMap { offset -> HealthDay? in
@@ -206,6 +215,7 @@ final class HealthService: ObservableObject {
                 steps: steps.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .count())) },
                 activeKcal: energy.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .kilocalorie())) },
                 exerciseMin: exercise.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .minute())) },
+                inhalerUsage: inhaler.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .count())) },
                 workouts: allWorkouts.filter { $0.startDate >= day && $0.startDate < nextDay }.map(Self.workout)
             )
         }

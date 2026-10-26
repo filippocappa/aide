@@ -405,6 +405,8 @@ struct Habit: Decodable, Identifiable, Hashable {
     var count: Int? = nil
     /// A limit habit's counts by local date, the last 26 weeks (days over 0 only).
     var counts: [String: Int]? = nil
+    /// A limit habit that also counts from Apple Health: "inhaler_usage". nil: logged here only.
+    var health: String? = nil
 
     var isLimit: Bool { cadence.type == "limit" }
     var isWeekly: Bool { cadence.type == "weekly" }
@@ -662,6 +664,7 @@ struct HealthDay: Encodable, Equatable {
     var steps: Int?
     var activeKcal: Int?
     var exerciseMin: Int?
+    var inhalerUsage: Int?  // Health's Inhaler Usage: a limit habit may count from it (coffees)
     var workouts: [HealthWorkout] = []
 }
 
