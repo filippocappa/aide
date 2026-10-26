@@ -389,3 +389,60 @@ def test_notes_from_before_the_log_count(env):
     again = NotebookStore(study)  # the next start
     since = datetime.now(timezone.utc) - timedelta(minutes=1)
     assert [(t["title"], t["by_user"]) for t in again.changes(course, since)] == [("IS-LM", 1)]
+
+
+async def test_steps(env, tmp_path):
+    store, planner, engine, db, _ = env
+    o = store.add("secretary", "day", TODAY, "Register for the mid-term", steps=["Log in to Moodle", " Pick  a slot ", ""])
+    j = store.as_json(o)
+    assert j["steps"] == [{"text": "Log in to Moodle", "done": False}, {"text": "Pick a slot", "done": False}]
+    assert (j["progress"], j["target"], j["done"]) == (0, 2, False)
+    j = store.as_json(store.update(o["public_id"], steps=[{"text": "Log in to Moodle", "done": True},
+                                                          {"text": "Pick a slot", "done": False}]))
+    assert (j["progress"], j["target"], j["done"]) == (1, 2, False)
+    j = store.as_json(store.update(o["public_id"], steps=[{"text": "Log in to Moodle", "done": True},
+                                                          {"text": "Pick a slot", "done": True}]))
+    assert j["done"] and j["progress"] == 2
+    # ticking it by hand ticks (and unticks) every step
+    j = store.as_json(store.update(o["public_id"], done=False))
+    assert not j["done"] and j["progress"] == 0 and not any(s["done"] for s in j["steps"])
+    j = store.as_json(store.update(o["public_id"], done=True))
+    assert j["done"] and all(s["done"] for s in j["steps"])
+    with pytest.raises(ValueError):
+        store.update(o["public_id"], steps=[f"step {n}" for n in range(11)])
+    # on a measured one the steps are a checklist only
+    m = store.add("coach", "week", TODAY, "Sleep 7h on 5 nights", measure={"type": "sleep", "hours": 7}, target=5,
+                  steps=["Phone away at 23:00"])
+    j = store.as_json(store.update(m["public_id"], steps=[{"text": "Phone away at 23:00", "done": True}]))
+    assert (j["target"], j["done"]) == (5, False)
+
+    # the tools: a checklist, ticked by number, kept by its text
+    tools = {t.name: t for t in objective_tools(store, planner, "secretary")}
+    out = await tools["update_objective"].handler(objective_id=o["public_id"], checklist=["Log in to Moodle", "Pay"],
+                                                    untick_steps=[2])
+    assert "1. [x] Log in to Moodle" in out and "2. [ ] Pay" in out
+    assert "1/2 steps" in await tools["list_objectives"].handler("day")
+
+    # the API
+    agent = Agent(RecordingClient([]), db, ToolRegistry([]), model="m", tz=ROME,
+                  photos=PhotoStore(tmp_path / "photos"), delegate=False)
+    api = TestClient(create_app(agent, store.reminders, FakeCalendar([]), ROME, TOKEN, store.habits,
+                                objectives=store, planner=planner))
+    r = api.post("/v1/objectives", json={"agent": "coach", "period": "day", "title": "Pack", "steps": ["Shoes", "Towel"]},
+                 headers=AUTH)
+    assert r.status_code == 201 and [s["text"] for s in r.json()["steps"]] == ["Shoes", "Towel"]
+    j = api.patch(f"/v1/objectives/{r.json()['id']}", json={"steps": [{"text": "Shoes", "done": True},
+                                                                       {"text": "Towel"}]}, headers=AUTH).json()
+    assert (j["progress"], j["target"]) == (1, 2)
+    assert api.patch(f"/v1/objectives/{r.json()['id']}", json={"steps": ["x"] * 11},
+                     headers=AUTH).status_code in (400, 422)
+
+    # the planner's steps, for hand-ticked ones only
+    engine.replies.append(json.dumps([
+        {"agent": "secretary", "title": "Sign up for the exam", "steps": ["Open Esse3", "Confirm"]},
+        {"agent": "coach", "title": "Sleep 7h", "measure": {"type": "sleep", "hours": 7}, "target": 1,
+         "steps": ["Bed by 23"]}]))
+    made = await planner.plan("month", TODAY)
+    by = {o["title"]: o for o in made}
+    assert [s["text"] for s in by["Sign up for the exam"]["steps"]] == ["Open Esse3", "Confirm"]
+    assert by.get("Sleep 7h") is None or by["Sleep 7h"]["steps"] == []

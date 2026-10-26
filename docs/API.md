@@ -305,7 +305,8 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
 {"id": "o_3f9a1c2b7d4e", "agent": "coach", "period": "week", "start": "2026-10-19", "end": "2026-10-25",
  "title": "Run 3 times", "why": "Building up to the half marathon",
  "measure": {"type": "habit", "habit": 4, "label": "check-ins of Run"},
- "progress": 1, "target": 3, "done": false, "status": "active", "parent": "o_91be0a7c55d2", "added_by": "agent"}
+ "progress": 1, "target": 3, "done": false, "steps": [], "status": "active", "parent": "o_91be0a7c55d2",
+ "added_by": "agent"}
 ```
 - `period` is `day`, `week` (Monday to Sunday) or `month`. `start` and `end` are local dates, both included.
 - `status`: `proposed` (waiting for your OK), `active`, `dropped`, or `lapsed` (a proposal whose period ended
@@ -318,6 +319,9 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
   `reminder` {`reminder`}: that reminder done (target 1). An unknown type is fine: show `label`.
 - `progress` of `target` is worked out on every read (only days of the period so far count). `done` is true when
   `progress` reaches `target`, or when you ticked it (for one without a measure, `progress` is then 1).
+- `steps`: a checklist, `[{"text": "Log in to Moodle", "done": true}, …]`, up to 10, often empty. On one without a
+  measure, `progress` of `target` counts the steps done, and it's `done` when they all are; ticking it (`done`)
+  ticks or unticks them all. On a measured one they're only a checklist. The planner may propose 2 to 5.
 - `parent` is the week's or month's objective it serves, or `null`. `added_by` is `agent` or `user`.
 - **Proposals.** A plan is made once per period, before the digest that opens it: the month's before the monthly
   digest (or the first morning digest of the month), the week's before the weekly one (or Monday's morning),
@@ -336,8 +340,8 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/objectives` | `?date=2026-10-22` (optional, default today) | `{"day": Block, "week": Block, "month": Block}` for the periods around that date. A Block is `{"period", "start", "end", "planned": true, "objectives": [ … ]}`: by agent order, then oldest first; dropped ones left out. `planned` is false until that period's plan has been made. |
-| `POST /v1/objectives` | `{"agent": "coach", "period": "day", "title": "Stretch", "why"?, "date"?}` | `201` and the new objective (`active`, `added_by: "user"`, no measure). `400` for Aide or an unknown agent or period, or an empty title. |
-| `PATCH /v1/objectives/{id}` | any of `title`, `done` (true/false), `status` (`active` / `dropped`), `target` | the objective. Ticking a proposal also accepts it. `404` if unknown. |
+| `POST /v1/objectives` | `{"agent": "coach", "period": "day", "title": "Stretch", "why"?, "date"?, "steps"?: ["…"]}` | `201` and the new objective (`active`, `added_by: "user"`, no measure). `400` for Aide or an unknown agent or period, or an empty title. |
+| `PATCH /v1/objectives/{id}` | any of `title`, `done` (true/false), `status` (`active` / `dropped`), `target`, `steps` (`[{"text", "done"}]`, replaces the list) | the objective. Ticking a proposal also accepts it. `404` if unknown. |
 | `POST /v1/objectives/accept` | `{"period": "day", "date"?, "ids"?}` (no `ids`: all of that period's proposals) | that period's Block. `404` if an id isn't a proposal of that period. |
 | `POST /v1/objectives/plan` | `{"period": "week", "date"?}` | proposes now (replacing those still waiting) and returns the Block. Can take 30 s. |
 

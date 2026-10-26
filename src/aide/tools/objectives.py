@@ -33,7 +33,8 @@ def objective_tools(store: ObjectiveStore, planner: ObjectivePlanner | None, age
     async def add_objective(period: str, title: str, why: str = "", track: str | None = None,
                             habit_id: int | None = None, course_id: int | None = None, min_score: float | None = None,
                             food: str | None = None, hours: float | None = None, steps: int | None = None,
-                            reminder_id: str | None = None, target: int | None = None, agent: str = agent) -> str:
+                            reminder_id: str | None = None, target: int | None = None, checklist: list[str] | None = None,
+                            agent: str = agent) -> str:
         if not any_agent and agent != owner:
             raise ValueError("you can only add objectives of your own")
         if agent not in SPECIALISTS:
@@ -42,13 +43,27 @@ def objective_tools(store: ObjectiveStore, planner: ObjectivePlanner | None, age
         if track:
             measure = {"type": track, "habit": habit_id, "course": course_id, "score": min_score, "metric": food,
                        "hours": hours, "steps": steps, "reminder": reminder_id}
-        o = store.add(agent, period, store.today(), title, why, measure, target)
+        o = store.add(agent, period, store.today(), title, why, measure, target, steps=checklist)
         return "Added: " + store.line(o)
 
     async def update_objective(objective_id: str, title: str | None = None, done: bool | None = None,
-                               drop: bool | None = None, target: int | None = None) -> str:
-        store.find(objective_id, owner)
-        o = store.update(objective_id, title=title, done=done, target=target,
+                               drop: bool | None = None, target: int | None = None, checklist: list[str] | None = None,
+                               tick_steps: list[int] | None = None, untick_steps: list[int] | None = None) -> str:
+        o = store.find(objective_id, owner)
+        steps = None
+        if checklist is not None:  # a step kept by its text stays ticked
+            ticked = {s["text"] for s in o["steps"] if s["done"]}
+            steps = [{"text": t, "done": " ".join(t.split()) in ticked} for t in checklist]
+        if tick_steps or untick_steps:
+            steps = [dict(s) for s in (steps if steps is not None else o["steps"])]
+            for n in [*(tick_steps or []), *(untick_steps or [])]:
+                if not 1 <= n <= len(steps):
+                    raise ValueError(f"no step {n}: it has {len(steps)}")
+            for n in tick_steps or []:
+                steps[n - 1]["done"] = True
+            for n in untick_steps or []:
+                steps[n - 1]["done"] = False
+        o = store.update(objective_id, title=title, done=done, target=target, steps=steps,
                          status=None if drop is None else "dropped" if drop else "active")
         return "Updated: " + store.line(o)
 
@@ -80,6 +95,9 @@ def objective_tools(store: ObjectiveStore, planner: ObjectivePlanner | None, age
         "food": {"type": "string", "enum": ["logged", "protein_g", "calories"]},
         "hours": {"type": "number"}, "steps": {"type": "integer"}, "reminder_id": {"type": "string"},
         "target": {"type": "integer", "description": "how many (times, days, exams) in the period; default 1"},
+        "checklist": {"type": "array", "items": {"type": "string"}, "description":
+                      "steps, in order, when it takes a few distinct actions; without a measure it's done when "
+                      "they all are"},
     }
     if any_agent:
         add["agent"] = {"type": "string", "enum": list(SPECIALISTS), "description": "whose objective it is"}
@@ -92,9 +110,13 @@ def objective_tools(store: ObjectiveStore, planner: ObjectivePlanner | None, age
              "accepted. Tie it to a measure (track) when one fits, so it ticks itself.",
              _obj(add, ["period", "title", *(["agent"] if any_agent else [])]), add_objective),
         Tool("update_objective", "Change an objective: its title or target, tick it done (or not), or drop it "
-             "(drop false takes it back). Ticking a proposal also accepts it.",
+             "(drop false takes it back), its steps (checklist replaces them; tick_steps and untick_steps take step "
+             "numbers, from 1). Ticking a proposal also accepts it.",
              _obj({**oid, "title": {"type": "string"}, "done": {"type": "boolean"}, "drop": {"type": "boolean"},
-                   "target": {"type": "integer"}}, ["objective_id"]), update_objective),
+                   "target": {"type": "integer"}, "checklist": {"type": "array", "items": {"type": "string"}},
+                   "tick_steps": {"type": "array", "items": {"type": "integer"}},
+                   "untick_steps": {"type": "array", "items": {"type": "integer"}}}, ["objective_id"]),
+             update_objective),
         Tool("accept_objectives", f"The user OKs {whose} proposed objectives for a period: all of them, or only "
              "objective_ids.", _obj({"period": period, "objective_ids": {"type": "array", "items": {"type": "string"}}},
                                    ["period"]), accept_objectives),

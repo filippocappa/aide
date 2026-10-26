@@ -171,11 +171,17 @@ class RoutinePatch(BaseModel):
 Period = Literal["day", "week", "month"]
 
 
+class ObjectiveStep(BaseModel):
+    text: str
+    done: bool = False
+
+
 class ObjectiveIn(BaseModel):
     agent: str
     period: Period
     title: str
     why: str = ""
+    steps: list[str] = []
     day: date | None = Field(None, alias="date")  # a day in the period, default today
 
 
@@ -184,6 +190,7 @@ class ObjectivePatch(BaseModel):
     done: bool | None = None
     status: Literal["active", "dropped"] | None = None
     target: int | None = None
+    steps: list[ObjectiveStep] | None = None  # replaces the list
 
 
 class ObjectivesPlan(BaseModel):
@@ -665,7 +672,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def add_objective(body: ObjectiveIn):
         if body.agent not in AGENTS or AGENTS[body.agent].orchestrator:
             raise HTTPException(400, f"agent must be a specialist, not {body.agent!r}")
-        o = objectives.add(body.agent, body.period, body.day or objectives.today(), body.title, body.why)
+        o = objectives.add(body.agent, body.period, body.day or objectives.today(), body.title, body.why,
+                           steps=body.steps)
         return objectives.as_json(o)
 
     @app.patch("/v1/objectives/{public_id}", dependencies=[Depends(auth)])
