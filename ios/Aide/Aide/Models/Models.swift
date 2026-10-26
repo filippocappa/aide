@@ -1062,12 +1062,15 @@ struct ProposalApplyBody: Encodable { var items: [Int]? }
 
 struct NotesWriter: Decodable, Equatable {
     var engine: String
+    /// Routines, watches, digests, drafts and titles; nil from a server older than the switch.
+    var background: String?
     var available: Bool?
     var usage: PlanUsage?
     var paused: WriterPause?
     var openrouterUntil: String?
 
     var onPlan: Bool { engine == "claude" }
+    var backgroundOnPlan: Bool { background == "claude" }
 }
 
 /// The plan's windows as Claude Code last reported them. Fixed keys: the decoder's snake-case rule renames
@@ -1093,7 +1096,8 @@ struct WriterPause: Decodable, Equatable {
     var resets: Date? { resetsAt.flatMap(Wire.parse) }
 }
 
-struct WriterChoice: Encodable { var engine: String }
+/// Either switch, or both; a nil one is left out and stays as it is.
+struct WriterChoice: Encodable { var engine: String?; var background: String? }
 struct WriterDecision: Encodable { var use: String }
 
 // MARK: Practice exams (docs/API.md, "Practice exams")

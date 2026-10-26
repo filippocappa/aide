@@ -37,15 +37,17 @@ struct SettingsView: View {
                 Section {
                     NavigationLink("Moodle") { MoodleView() }
                     NavigationLink("Obsidian") { ObsidianView() }
-                    NavigationLink("Who writes the notes") { NotesWriterView() }
                 } header: {
                     Text("Study")
                 } footer: {
-                    Text("Course PDFs from the university's Moodle, Aide's notes in an Obsidian vault, and whether your Claude plan writes them.")
+                    Text("Course PDFs from the university's Moodle, and Aide's notes in an Obsidian vault.")
                 }
                 Section {
                     NavigationLink("Digests") { DigestSettingsView() }
                     NavigationLink("What Aide remembers") { MemoryView() }
+                    NavigationLink("Your Claude plan") { NotesWriterView() }
+                } footer: {
+                    Text("What runs on your Claude plan instead of OpenRouter: the notes, and the work done in the background.")
                 }
                 Section("About") {
                     LabeledContent("Built", value: Self.buildTime)

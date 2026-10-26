@@ -502,6 +502,11 @@ final class APIClient {
         try await send("PUT", "/v1/writer", body: WriterChoice(engine: engine))
     }
 
+    /// Routines, watches, digests, drafts and chat titles: "claude" or "openrouter".
+    func setBackgroundWorker(_ engine: String) async throws -> NotesWriter {
+        try await send("PUT", "/v1/writer", body: WriterChoice(background: engine))
+    }
+
     /// The answer to a job paused on the plan's limit: "wait" or "openrouter".
     func decideWriter(_ use: String) async throws -> NotesWriter {
         try await send("POST", "/v1/writer/decide", body: WriterDecision(use: use))

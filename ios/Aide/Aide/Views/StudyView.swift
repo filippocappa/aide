@@ -435,7 +435,8 @@ private struct WritingRow: View {
 
 // MARK: Who writes the notes (docs/API.md, "Who writes the notes")
 
-/// Settings → Study: the user's Claude plan (through Claude Code on the server) or OpenRouter, and the plan's use.
+/// Settings → Your Claude plan: what runs on it (through Claude Code on the server) instead of OpenRouter, the notes
+/// and the background work each on its own switch, and the plan's use.
 struct NotesWriterView: View {
     @EnvironmentObject private var env: AppEnvironment
     @State private var writer: NotesWriter?
@@ -460,12 +461,29 @@ struct NotesWriterView: View {
                     .pickerStyle(.inline)
                     .labelsHidden()
                     .disabled(writer.available == false)
+                } header: {
+                    Text("Notes")
                 } footer: {
                     Text(writer.available == false
-                         ? "Claude Code isn't installed on the server, so notes are written through OpenRouter."
+                         ? "Claude Code isn't installed on the server, so everything goes through OpenRouter."
                          : "Lecture notes, notebook pages and the slide scan. With your plan, Sonnet writes and Haiku "
                            + "reads, with no extra cost; when its limit is reached, Professor asks whether to wait or "
-                           + "finish on OpenRouter (paid). Chat always uses OpenRouter.")
+                           + "finish on OpenRouter (paid).")
+                }
+                if writer.background != nil {
+                    Section {
+                        Toggle("On your Claude plan", isOn: Binding(get: { writer.backgroundOnPlan }, set: { on in
+                            Task { await setBackground(on ? "claude" : "openrouter") }
+                        }))
+                        .tint(Theme.toggle)
+                        .disabled(writer.available == false)
+                    } header: {
+                        Text("Background work")
+                    } footer: {
+                        Text("Routines and watches, digests, mail drafts, chat titles and objectives. When the plan's "
+                             + "limit is reached they carry on through OpenRouter (paid) until it resets, without "
+                             + "asking. Chat always uses OpenRouter.")
+                    }
                 }
                 if let usage = writer.usage {
                     Section("Your plan") {
@@ -483,7 +501,7 @@ struct NotesWriterView: View {
                 ProgressView().frame(maxWidth: .infinity)
             }
         }
-        .navigationTitle("Who writes the notes")
+        .navigationTitle("Your Claude plan")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
@@ -495,6 +513,10 @@ struct NotesWriterView: View {
 
     private func set(_ engine: String) async {
         do { writer = try await env.api.setNotesWriter(engine); error = nil } catch { self.error = error.localizedDescription }
+    }
+
+    private func setBackground(_ engine: String) async {
+        do { writer = try await env.api.setBackgroundWorker(engine); error = nil } catch { self.error = error.localizedDescription }
     }
 }
 
