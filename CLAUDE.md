@@ -133,9 +133,9 @@ Settings → Notifications with a test button. The test push reached the phone. 
 **Done, both sides, not yet tried live:** Apple Health (#2), contract in `docs/API.md` ("Apple Health"). App:
 daily health summaries with a 60-day backfill, HealthKit background delivery, the "I'm up" App Intent for a
 Shortcuts Sleep → Waking Up automation, the `wake` digest with sleep and recovery cards, Watch workouts ticking
-habits. The app's Health tab (2026-10-26) has three pages: Body (last night's sleep, recovery and
-activity tiles against your own usual, recent workouts, each opening a 7- or 30-day chart; `Views/BodyViews.swift`),
-Food and Habits. Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
+habits. The app's Health tab (2026-10-26) has two pages: Body (last night's sleep, recovery and
+activity tiles against your own usual, recent workouts, each opening a 7- or 30-day chart; `Views/BodyViews.swift`)
+and Food. Habits moved to Today (#21). Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
 (live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
 implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for sleep), the `wake` digest with a
 time-aware greeting and leave-by times (Maps: walk and transit, arriving 10 min early, home and per-place mode from memory, else `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
@@ -254,11 +254,24 @@ habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departure
 `aide://` links (`PushRoute(url:)`). The first phone install needs the App Group and the `.widgets` bundle ID on the
 team (Xcode's automatic signing adds them).
 
+**Done, both sides (2026-10-26), not yet tried on the phone:** Today and limit habits (#21, contract in
+`docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card
+(`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
+habits and objectives with Today / Week / Month, "From the team" (`/v1/activity?kind=routine,watch`) and all
+activity. It replaced the digest as a chat message, the sun button, the bell and the Objectives tab. Tabs: Today ·
+Chats · Study · Health · Settings. Notifications open Today on their item (a routine's push carries `routine`), or the
+chat. Routine chats are left out of Chats. Limit habits (`{"type": "limit", "max": 5}`, `POST /v1/habits/{id}/count`,
+the `count_habit` tool, "I had another one") show "2/5" with − and +. Food habits tick from the food log. The planner
+leaves habits out of a day's objectives, and Coach sees each limit habit's last 7 days. One tap: the "Log one" App
+Intent (Shortcuts, Action Button), the Health widget's +, a Control Center control (iOS 18,
+`AideWidgets/HabitControl.swift`).
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
-2. Ideas from the agent-app research, not yet chosen: digests in a feed instead of chat (#15). (#14, Goals, is mostly covered by objectives.)
+2. Ideas from the agent-app research, not yet chosen: (#15, digests in a feed, is mostly covered by Today; #14,
+   Goals, by objectives.)
 3. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
    for the other courses. Finance still has no data source (memory only).
 
