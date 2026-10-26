@@ -28,16 +28,15 @@ class FakeCal:
 
 
 class FakeMaps:
-    def __init__(self, ride: dict | None):
-        self.ride, self.routes = ride, []
+    def __init__(self, *rides: dict | None):
+        self.rides, self.bodies = rides or (None,), []
 
     async def locate(self, query, near=None):
         return {"name": query, "lat": UNI[0], "lon": UNI[1]} if query == "Politecnico" else None
 
-    async def route(self, body):
-        self.routes.append(body)
-        steps = [{"transitDetails": self.ride}] if self.ride else [{}]
-        return {"duration": "1800s", "legs": [{"steps": steps}]}
+    async def routes(self, body):
+        self.bodies.append(body)
+        return [{"duration": "1800s", "legs": [{"steps": [{"transitDetails": r} if r else {}]}]} for r in self.rides]
 
 
 def ride(line="4", departs=at(8, 15), stop=(45.06254, 7.67561), headsign="Falchera") -> dict:
@@ -60,9 +59,9 @@ def utc(dt: datetime) -> datetime:
 def leave(env):  # noqa: F811
     db, timetable, location, alerts, push = env
 
-    def make(cal: FakeCal, maps: FakeMaps, mode: str | None = None) -> LeaveWatcher:
+    def make(cal: FakeCal, maps: FakeMaps, mode: str | None = None, place: str | None = None) -> LeaveWatcher:
         async def travel_plan(event):
-            return None, mode
+            return None, mode, place
         return LeaveWatcher(db.conn, ROME, cal, maps, alerts, location, Walks(), travel_plan)
     return make, env
 
@@ -73,17 +72,17 @@ async def test_an_event_with_a_tram_ride_becomes_a_tram_alert_that_says_leave_no
     w = make(FakeCal(lecture()), maps)
     location.save(*HOME, 10, at(7, 15))
     await w.tick(utc(at(7, 20)))  # leaving at about 08:08: still 48 min away
-    assert alerts.all() == [] and len(maps.routes) == 1
-    assert maps.routes[0]["arrivalTime"] == "2026-10-22T06:50:00Z"  # there 10 min early
+    assert alerts.all() == [] and len(maps.bodies) == 1
+    assert maps.bodies[0]["arrivalTime"] == "2026-10-22T06:50:00Z"  # there 10 min early
     await w.tick(utc(at(7, 22)))  # the way is looked up again only after 10 minutes
-    assert alerts.all() == [] and len(maps.routes) == 1
+    assert alerts.all() == [] and len(maps.bodies) == 1
     await w.tick(utc(at(7, 30)))  # leaving in 38 min
     (a,) = alerts.all()
-    assert len(maps.routes) == 2
+    assert len(maps.bodies) == 2
     assert (a["stop"], a["line"], a["time"], a["days"], a["event"]) == ("1", "4", "08:15", None, "Macroeconomics at 09:00")
     assert alerts.describe(a).endswith("when it's time to leave, for Macroeconomics at 09:00")
     await w.tick(utc(at(7, 40)))
-    assert len(alerts.all()) == 1 and len(maps.routes) == 2  # one alert per event, and no more lookups
+    assert len(alerts.all()) == 1 and len(maps.bodies) == 2  # one alert per event, and no more lookups
 
     watcher = AlertWatcher(alerts, Transit(timetable, FakeLive()), location, Walks(), push)
     location.save(*HOME, 10, at(8, 5))
@@ -109,17 +108,43 @@ async def test_no_alert_when_there_is_no_tram_to_take(leave):
     assert [a["event"] for a in alerts.all()] == [None]
 
 
+async def test_an_event_with_no_place_takes_it_from_memory(leave):
+    make, (db, timetable, location, alerts, push) = leave
+    location.save(*HOME, 10, at(7, 25))
+    maps = FakeMaps(ride())
+    await make(FakeCal(lecture(place="")), maps, place="Politecnico").tick(utc(at(7, 30)))
+    assert [a["event"] for a in alerts.all()] == ["Macroeconomics at 09:00"]
+    assert maps.bodies[0]["destination"] == {"address": "Politecnico"}
+    await make(FakeCal(lecture(uid="none", place="")), maps).tick(utc(at(7, 30)))  # memory doesn't know
+    assert db.conn.execute("SELECT state FROM leave_plans WHERE event = 'none'").fetchone()[0] == "no_place"
+
+
+async def test_the_latest_frequent_line_wins_over_a_rare_one(leave, monkeypatch):
+    make, (db, timetable, location, alerts, push) = leave
+    location.save(*HOME, 10, at(7, 25))
+    # The 4 stops at 252 four times within half an hour of 08:05, the 33 once. Maps lists the 33 first.
+    maps = FakeMaps(None, ride(line="33", departs=at(8, 9)), ride(departs=at(8, 5)), ride(departs=at(7, 58)))
+    await make(FakeCal(lecture()), maps).tick(utc(at(7, 30)))
+    (a,) = alerts.all()
+    assert (a["line"], a["time"]) == ("4", "08:05")
+    assert maps.bodies[0]["computeAlternativeRoutes"] is True
+    monkeypatch.setattr("aide.leave.FREQUENT", 6)  # nothing is frequent: the latest
+    await make(FakeCal(lecture(uid="rare")), maps).tick(utc(at(7, 30)))
+    a = alerts.all()[-1]
+    assert (a["line"], a["time"]) == ("33", "08:09")
+
+
 async def test_not_while_there_or_far_away_and_not_without_a_fix(leave):
     make, (db, timetable, location, alerts, push) = leave
     maps = FakeMaps(ride())
     w = make(FakeCal(lecture()), maps)
     await w.tick(utc(at(7, 30)))  # no fix: asks the phone for one
-    assert push.location_requests == 1 and maps.routes == []
+    assert push.location_requests == 1 and maps.bodies == []
     location.save(UNI[0] + 0.001, UNI[1], 10, at(7, 31))  # already at uni
     await w.tick(utc(at(7, 32)))
     location.save(45.4642, 9.19, 10, at(7, 33))  # in Milan: not going
     await w.tick(utc(at(7, 34)))
-    assert maps.routes == [] and alerts.all() == []
+    assert maps.bodies == [] and alerts.all() == []
     location.save(*HOME, 10, at(7, 35))  # home after all: it's still looked at
     await w.tick(utc(at(7, 36)))
     assert len(alerts.all()) == 1

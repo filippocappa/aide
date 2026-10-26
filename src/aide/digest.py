@@ -419,24 +419,28 @@ class DigestService:
         greeting, ahead = parts[0].strip(), parts[1].strip() if len(parts) > 1 else ""
         return greeting or _fallback_greeting(now, sections), ahead
 
-    async def travel_plan(self, event: dict) -> tuple[str | None, str | None]:
-        """(home, mode for this place) from memory, falling back to AIDE_HOME_ADDRESS and no fixed mode."""
+    async def travel_plan(self, event: dict) -> tuple[str | None, str | None, str | None]:
+        """(home, mode for this place, where an event with no place is) from memory, falling back to
+        AIDE_HOME_ADDRESS, no fixed mode and no place."""
         # Shared items plus Secretary's own: travel is its domain ("I always walk to uni").
         notes = [r["text"] for r in self.conn.execute(
             "SELECT text FROM memory WHERE agent IS NULL OR agent = 'secretary' ORDER BY id DESC")]
         if not notes:
-            return self.home, None
-        ask = (f"Configured home: {self.home or 'none'}\nPlace: {event['location']} (event: {event['title']})\n\n"
+            return self.home, None, None
+        ask = (f"Configured home: {self.home or 'none'}\nPlace: {event['location'] or 'none given'} "
+               f"(event: {event['title']}, calendar: {event.get('calendar') or 'unknown'})\n\n"
                "Notes, newest first:\n" + "\n".join(f"- {n}" for n in notes))
-        try:
-            text = await ask_text(self.engine, self.client, self.model, TRAVEL_PROMPT, ask, 300)
+        text = ""
+        try:  # room for the model's thinking: at 300 tokens the JSON was sometimes cut off
+            text = await ask_text(self.engine, self.client, self.model, TRAVEL_PROMPT, ask, 2000)
             found = json.loads(text[text.index("{"):text.rindex("}") + 1])
-        except Exception:
-            log.warning("digest: couldn't read home and travel mode from memory", exc_info=True)
-            return self.home, None
+        except Exception as e:
+            log.warning("digest: couldn't read home and travel mode from memory (%s): %r", e, text[:200])
+            return self.home, None, None
         home = found.get("home") if isinstance(found.get("home"), str) and found["home"].strip() else self.home
         mode = found.get("mode") if found.get("mode") in TRAVEL_MODES else None
-        return home, mode
+        place = found.get("place") if isinstance(found.get("place"), str) and found["place"].strip() else None
+        return home, mode, None if event["location"] else place
 
     async def _route(self, origin: dict, place: str, mode: str, arrive: datetime) -> dict | None:
         body = {"origin": origin, "destination": {"address": place}, "travelMode": TRAVEL_MODES[mode]}
@@ -523,14 +527,18 @@ class DigestService:
             return out
         start = datetime.fromisoformat(nxt["start"]).astimezone(self.tz)
         line = f"Next: {nxt['title']} at {start:%H:%M}" + (f" at {nxt['location']}" if nxt["location"] else "") + "."
-        if nxt["location"] and self.maps:
-            home, mode = await self.travel_plan(nxt)
-            away, fix = await self._away(home, nxt["location"], now) if home else (None, None)
-            if away:
-                line += (f" Their phone is {away} and far from this place, so they're probably not going to this "
-                         "today: give no leave-by time, and mention it lightly if at all.")
-            else:
-                line += await self._leave_by(nxt, start, home, mode, fix)
+        if self.maps:
+            home, mode, place = await self.travel_plan(nxt)
+            if place:  # no place on the event, but memory says where such events are
+                line = line[:-1] + f" at {place} (from their notes)."
+                nxt = {**nxt, "location": place}
+            if nxt["location"]:
+                away, fix = await self._away(home, nxt["location"], now) if home else (None, None)
+                if away:
+                    line += (f" Their phone is {away} and far from this place, so they're probably not going to "
+                             "this today: give no leave-by time, and mention it lightly if at all.")
+                else:
+                    line += await self._leave_by(nxt, start, home, mode, fix)
         out.append(line)
         return out
 
@@ -550,7 +558,9 @@ def _fallback_greeting(now: datetime, sections: list[dict]) -> str:
 
 TRAVEL_PROMPT = """From the user's saved notes, answer with JSON only, in this form:
 {"home": "<the home address they leave from for this place, if a note gives one, else null>", "mode": "<walk, \
-transit, drive or bicycle if a note says how they get to this place, else null>"}
+transit, drive or bicycle if a note says how they get to this place, else null>", "place": "<when the event has no \
+place: the address where it is, if the notes say where such events are (a lecture at uni: the uni's address), \
+else null>"}
 When the notes give more than one home, take the one a note says they leave from for this place, else the one in \
 the same town as the place.
 A note counts for the place if it names it or plainly means it (a note about "uni" counts for a lecture at the \

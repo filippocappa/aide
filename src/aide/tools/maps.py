@@ -87,8 +87,12 @@ class GoogleMaps:
         return places[0].get("formattedAddress") or None
 
     async def route(self, body: dict) -> dict | None:
-        routes = (await self._post(ROUTES_URL, ROUTE_FIELDS, body)).get("routes", [])
+        routes = await self.routes(body)
         return routes[0] if routes else None
+
+    async def routes(self, body: dict) -> list[dict]:
+        """Every route Maps gives: one, or a few with `computeAlternativeRoutes`."""
+        return (await self._post(ROUTES_URL, ROUTE_FIELDS, body)).get("routes", [])
 
 
 def _seconds(duration: str | None) -> int:

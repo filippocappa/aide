@@ -1,12 +1,15 @@
 """Leave-now alerts for the calendar. The contract is docs/API.md, "Transit (GTT)", "Leaving for an event".
 
-A timed event with a place, in the next few hours: from where the phone is, Maps picks the way there by transit, to
-be there 10 minutes early. Once leaving for its first ride is under COMMIT away, and that ride is a GTT line, it
-becomes a one-off tram alert around that departure. The tram alert watcher does the rest from the live times: the
+A timed event with a place, in the next few hours: from where the phone is, Maps gives ways there by transit, to be
+there 10 minutes early. Of those whose first ride is a GTT line, the one leaving latest on a frequent line (at least
+FREQUENT an hour at that stop) wins, so a missed tram isn't a long wait (Maps' first pick is often a rare
+extra-urban bus); without a frequent one, the latest. Once leaving for it is under COMMIT away, it becomes a
+one-off tram alert around that departure. The tram alert watcher does the rest from the live times: the
 walk from the phone, "Tram 4 in 7 min: leave now", the Live Activity. Until then the way is looked up again every
 REPLAN (sooner after a move), since the phone and the trams move.
 
 One alert per event: deleting it in the app is final. An event that moves or goes takes its alert with it.
+An event with no place gets one from memory when the notes say where such events are (a lecture: the uni).
 Nothing is set when the phone is already at the place, or far from it (not going); when a note in memory says the
 user walks, drives or cycles there; when the first ride isn't GTT's (a train); or when the user's own alert for
 that line already covers the time.
@@ -34,6 +37,7 @@ MOVED = 300  # metres: or after a move this big
 COMMIT = timedelta(minutes=45)  # the tram alert is set once leaving is this close
 THERE = 500  # metres: the phone this close to the place is already there
 STOP_NEAR = 150  # metres between the stop Maps names and GTT's
+FREQUENT = 4  # departures an hour (around the one taken) that make a line frequent
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS leave_plans (
@@ -51,16 +55,16 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 class LeaveWatcher:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo, cal, maps, alerts: AlertStore, location: Location,
                  walks: Walks, travel_plan: Callable[[dict], Awaitable[tuple[str | None, str | None]]] | None = None):
-        """`travel_plan(event)`: (home, mode) from memory, as the wake briefing reads it; a mode other than transit
-        means no alert."""
+        """`travel_plan(event)`: (home, mode, place) from memory, as the wake briefing reads it; a mode other than
+        transit means no alert, and `place` is where an event with no place is."""
         self.conn, self.tz, self.cal, self.maps = conn, tz, cal, maps
         self.alerts, self.timetable, self.location, self.walks = alerts, alerts.timetable, location, walks
         self.travel_plan = travel_plan
         self.conn.executescript(SCHEMA)
         self._events: tuple[datetime, list[dict]] | None = None
-        self._routes: dict[tuple[str, str], tuple[datetime, tuple[float, float], dict | None]] = {}
+        self._routes: dict[tuple[str, str], tuple[datetime, tuple[float, float], list[dict]]] = {}
         self._spots: dict[str, tuple[float, float] | None] = {}
-        self._modes: dict[tuple[str, str], str | None] = {}
+        self._plans: dict[tuple[str, str], tuple[str | None, str | None]] = {}
 
     # -- the setting ------------------------------------------------------------------------------------------
 
@@ -108,16 +112,17 @@ class LeaveWatcher:
                 log.exception("leave-now plan for %r failed", e["title"])
 
     async def _upcoming(self, now: datetime) -> list[dict] | None:
-        """Timed events with a place starting in the next AHEAD; None when the calendar can't be read."""
+        """Timed events starting in the next AHEAD, with a place (or memory to find one in); None when the
+        calendar can't be read."""
         if self._events is None or now - self._events[0] >= EVENTS_EVERY:
             try:
                 found = await asyncio.to_thread(self.cal.events, now, now + AHEAD)
             except Exception:
                 log.warning("leave-now: couldn't read the calendar", exc_info=True)
                 return None
-            self._events = (now, [{"uid": e.uid, "title": e.title, "location": e.location.strip(),
-                                   "start": e.start.astimezone(timezone.utc)}
-                                  for e in found if not e.all_day and e.location.strip()])
+            self._events = (now, [{"uid": e.uid, "title": e.title, "calendar": e.calendar,
+                                   "location": e.location.strip(), "start": e.start.astimezone(timezone.utc)}
+                                  for e in found if not e.all_day and (e.location.strip() or self.travel_plan)])
         return [e for e in self._events[1] if now < e["start"] <= now + AHEAD]
 
     @staticmethod
@@ -146,26 +151,32 @@ class LeaveWatcher:
 
     async def plan(self, e: dict, fix: dict, now: datetime) -> None:
         here = (fix["lat"], fix["lon"])
-        there = await self._spot(e["location"], here)
+        mode, place = await self._plan(e)
+        if mode not in (None, "transit"):
+            return self._mark(e, "walks", now)
+        place = e["location"] or place
+        there = await self._spot(place, here) if place else None
         if there is None:
             return self._mark(e, "no_place", now)
         distance = metres(*here, *there)
         if distance < THERE or distance > AWAY:
             return  # already there, or not going (not yet, at least): looked at again later
-        if await self._mode(e) not in (None, "transit"):
-            return self._mark(e, "walks", now)
-        route = await self._route(e, here, now)
-        if route is None:
+        routes = await self._ways(e, place, here, now)
+        if routes is None:
             return
-        ride = next((s["transitDetails"] for leg in route.get("legs", []) for s in leg.get("steps", [])
-                     if s.get("transitDetails")), None)
-        if ride is None:
+        rides = [ride for route in routes
+                 if (ride := next((s["transitDetails"] for leg in route.get("legs", []) for s in leg.get("steps", [])
+                                   if s.get("transitDetails")), None))]
+        if not rides:
             return self._mark(e, "no_ride", now)
-        found = self._gtt(ride)
-        if found is None:
+        options = []
+        for ride in rides:
+            if found := self._gtt(ride):
+                departs = datetime.fromisoformat(ride["stopDetails"]["departureTime"].replace("Z", "+00:00"))
+                options.append((self._frequent(found[0]["id"], found[1], departs), departs, *found))
+        if not options:
             return self._mark(e, "not_gtt", now)
-        stop, line = found
-        departs = datetime.fromisoformat(ride["stopDetails"]["departureTime"].replace("Z", "+00:00"))
+        _, departs, stop, line = max(options, key=lambda o: o[:2])
         walk = await self.walks.seconds(*here, stop)
         if departs - timedelta(seconds=walk + BUFFER) - now > COMMIT:
             return  # not yet: the way may change
@@ -187,27 +198,33 @@ class LeaveWatcher:
             self._spots[place] = (found["lat"], found["lon"]) if found else None
         return self._spots[place]
 
-    async def _mode(self, e: dict) -> str | None:
+    async def _plan(self, e: dict) -> tuple[str | None, str | None]:
+        """(mode, place) from memory, once per event."""
         key = self._key(e)
-        if key not in self._modes:
-            self._modes[key] = (await self.travel_plan(e))[1] if self.travel_plan else None
-        return self._modes[key]
+        if key not in self._plans:
+            self._plans[key] = (await self.travel_plan(e))[1:] if self.travel_plan else (None, None)
+        return self._plans[key]
 
-    async def _route(self, e: dict, here: tuple[float, float], now: datetime) -> dict | None:
+    async def _ways(self, e: dict, place: str, here: tuple[float, float], now: datetime) -> list[dict] | None:
         key = self._key(e)
         cached = self._routes.get(key)
         if cached and now - cached[0] < REPLAN and metres(*cached[1], *here) < MOVED:
             return cached[2]
         body = {"origin": {"location": {"latLng": {"latitude": here[0], "longitude": here[1]}}},
-                "destination": {"address": e["location"]}, "travelMode": "TRANSIT",
+                "destination": {"address": place}, "travelMode": "TRANSIT", "computeAlternativeRoutes": True,
                 "arrivalTime": (e["start"] - ARRIVE_EARLY).strftime("%Y-%m-%dT%H:%M:%SZ")}
         try:
-            route = await self.maps.route(body)
+            routes = await self.maps.routes(body)
         except Exception:
-            log.warning("leave-now: transit route to %r failed", e["location"], exc_info=True)
+            log.warning("leave-now: transit routes to %r failed", place, exc_info=True)
             return None
-        self._routes[key] = (now, here, route)
-        return route
+        self._routes[key] = (now, here, routes)
+        return routes
+
+    def _frequent(self, stop: str, line: str, departs: datetime) -> bool:
+        routes = [r["id"] for r in self.timetable.routes(line)]
+        half = timedelta(minutes=30)
+        return len(self.timetable.scheduled([stop], departs - half, departs + half, routes)) >= FREQUENT
 
     def _gtt(self, ride: dict) -> tuple[dict, str] | None:
         """The GTT stop and line for Maps' first ride: a stop near the one Maps names where the line stops, the one

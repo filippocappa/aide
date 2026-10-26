@@ -309,6 +309,20 @@ async def test_memory_gives_home_and_mode(world):
     assert "I always walk to uni" in ask and "Città Studi" in ask and "JSON" in w.model.requests[0]["system"]
 
 
+async def test_memory_says_where_an_event_with_no_place_is(world):
+    lecture = MORNING.replace(hour=9, minute=30)
+    maps = Maps(walk=50, transit=20)
+    w = world([done('{"home": null, "mode": null, "place": "Città Studi"}'), done("Morning.")],
+              [CalEvent("e1", "Uni", "Lecture", lecture, lecture + timedelta(hours=2), "")], maps)
+    w.db.add_memory("Lectures are at Città Studi")
+    await w.digest.generate("wake", MORNING)
+    prompt = w.model.requests[-1]["messages"][0]["content"]
+    line = next(line for line in prompt.splitlines() if line.startswith("Next:"))
+    assert line == ("Next: Lecture at 09:30 at Città Studi (from their notes). To be there 10 min early, from home: "
+                    "tram: leave by 9:00 (20 min).")
+    assert "Place: none given" in w.model.requests[0]["messages"][0]["content"]
+
+
 async def test_memory_from_secretary_reaches_the_briefing(world):
     _, w = await leave_line(world, Maps(walk=12), [done('{"home": null, "mode": "walk"}')],
                             ["I always walk to uni"], agent="secretary")
