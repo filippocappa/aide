@@ -347,7 +347,7 @@ private struct TeamCard: View {
 }
 
 /// Cards give a little under the finger, without bouncing back.
-private struct CardPress: ButtonStyle {
+struct CardPress: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.98 : 1)

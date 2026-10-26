@@ -622,6 +622,8 @@ struct HealthDayReading: Decodable, Hashable {
     struct Workout: Decodable, Hashable {
         let type: String
         let minutes: Int?
+        var start: String?
+        var kcal: Int?
     }
     let date: String
     let sleep: SleepNight?

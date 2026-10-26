@@ -1,12 +1,20 @@
 import SwiftUI
 
-/// The Health tab: what you ate, day by day, and your habits. Meals come from a photo (or a few words) that Coach
-/// names and estimates; tap one to fix the numbers, swipe to delete. Habits tick off, edit and delete as before.
+/// The Health tab, in three pages. Body: what Apple Health says (sleep, recovery, activity, workouts), each opening
+/// its chart. Food: what you ate, day by day; meals come from a photo (or a few words) that Coach names and
+/// estimates; tap one to fix the numbers, swipe to delete. Habits: tick off, edit and delete.
 struct HealthView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var push: PushService
+    @EnvironmentObject private var health: HealthService
+
+    @AppStorage("healthPage") private var page = "body"
+    /// Newest first; nil while loading.
+    @State private var bodyDays: [HealthDayReading]?
+    @State private var bodyError: String?
+    @State private var metric: HealthMetric?
 
     @State private var day = Calendar.current.startOfDay(for: Date())
     @State private var food: FoodDay?
@@ -44,7 +52,18 @@ struct HealthView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !noFood {
+                Section {
+                    Picker("Page", selection: $page) {
+                        Text("Body").tag("body")
+                        if !noFood { Text("Food").tag("food") }
+                        Text("Habits").tag("habits")
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+                }
+                switch page {
+                case "food" where !noFood:
                     Section {
                         WeekStrip(days: week, summaries: Dictionary(foodDays.map { ($0.date, $0) }) { _, last in last },
                                   goal: food?.goals.calories, tint: coach.tint, selection: $day)
@@ -55,12 +74,16 @@ struct HealthView: View {
                     // Its own section: a clear row inside the card's section cut off the card's rounded bottom.
                     Section { logButton }
                     mealsSection
+                case "habits":
+                    habitsSection
+                default:
+                    BodySections(days: bodyDays, error: bodyError) { metric = $0 }
                 }
-                habitsSection
             }
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
             .navigationTitle("Health")
+            .navigationDestination(item: $metric) { m in HealthMetricView(metric: m, days: bodyDays ?? []) }
             .sheet(isPresented: $showGoals) {
                 FoodGoalsSheet(goals: food?.goals ?? FoodGoals()) { await saveGoals($0) }
             }
@@ -83,10 +106,20 @@ struct HealthView: View {
             }
             .refreshable {
                 async let food: Void = loadFood()
+                async let body: Void = loadBody(upload: true)
                 await loadHabits()
                 await food
+                await body
             }
             .task { await loadHabits() }
+            .task {
+                await loadBody()
+                #if DEBUG
+                if settings.isPreview, let m = UserDefaults.standard.string(forKey: "previewMetric") {
+                    page = "body"; metric = HealthMetric(rawValue: m)
+                }
+                #endif
+            }
             .task(id: day) { await loadFood() }
         }
     }
@@ -213,6 +246,20 @@ struct HealthView: View {
         }
     }
 
+    /// What the server has from Apple Health; a pull sends the phone's last two days first.
+    private func loadBody(upload: Bool = false) async {
+        guard settings.isConfigured else { return }
+        if upload { _ = await health.upload(days: 2) }
+        do {
+            bodyDays = try await env.api.healthDays()
+            bodyError = nil
+        } catch APIError.server(let status, _) where status == 404 {
+            bodyDays = []
+        } catch {
+            if !Task.isCancelled { bodyError = error.localizedDescription }
+        }
+    }
+
     /// Uploads the photos, then Coach logs the meal on the chosen day and says what it made of it.
     private func log(photos: [PickedPhoto] = [], text: String? = nil) async {
         logging = true
@@ -263,6 +310,9 @@ struct HealthView: View {
         Section {
             if let habitsError {
                 Label(habitsError, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+            }
+            if !habitsLoaded && settings.isConfigured {
+                ForEach(0..<3, id: \.self) { i in SkeletonRow(widths: SkeletonRow.widths[i]) }
             }
             if habits.isEmpty && habitsLoaded && habitsError == nil {
                 Text("No habits yet. Tap + to add one, or tell Aide in chat: \"add a gym habit, three times a week\".")

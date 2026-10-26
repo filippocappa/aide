@@ -133,7 +133,9 @@ Settings → Notifications with a test button. The test push reached the phone. 
 **Done, both sides, not yet tried live:** Apple Health (#2), contract in `docs/API.md` ("Apple Health"). App:
 daily health summaries with a 60-day backfill, HealthKit background delivery, the "I'm up" App Intent for a
 Shortcuts Sleep → Waking Up automation, the `wake` digest with sleep and recovery cards, Watch workouts ticking
-habits. Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
+habits. The app's Health tab (2026-10-26) has three pages: Body (last night's sleep, recovery and
+activity tiles against your own usual, recent workouts, each opening a 7- or 30-day chart; `Views/BodyViews.swift`),
+Food and Habits. Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
 (live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
 implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for sleep), the `wake` digest with a
 time-aware greeting and leave-by times (Maps: walk and transit, arriving 10 min early, home and per-place mode from memory, else `AIDE_HOME_ADDRESS`), `sleep` and `recovery`

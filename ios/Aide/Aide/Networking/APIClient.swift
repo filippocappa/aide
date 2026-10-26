@@ -384,8 +384,10 @@ final class APIClient {
     }
 
     /// The last 30 days the server has, newest first.
-    func healthDays() async throws -> [HealthDayReading] {
-        let list: HealthDayList = try await send("GET", "/v1/health/days")
+    /// Newest first; the last 30 days, or since `from`.
+    func healthDays(from: Date? = nil) async throws -> [HealthDayReading] {
+        let query = from.map { [URLQueryItem(name: "from", value: Wire.dayString($0))] } ?? []
+        let list: HealthDayList = try await send("GET", "/v1/health/days", query: query)
         return list.days
     }
 
