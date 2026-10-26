@@ -861,7 +861,7 @@ Unicode in `text`, `options` and `explanation` ($\pi_{t-1}$ as πₜ₋₁).
 Habits are what you always do: they never end, and they keep a streak and a grid. (What a day, week or month is
 about is an objective, see Objectives.)
 
-Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3} | {"type": "limit", "max": 5}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"], "food": null, "count": null, "counts": {}}`.
+Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3} | {"type": "limit", "max": 5}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"], "food": null, "count": null, "counts": {}, "health": null}`.
 
 `workouts` (default `[]`) lists the Apple Watch workout types that check the habit by themselves (see Apple Health,
 "Workout types"; `"any"` matches every type). When a health upload has a workout of a listed type that lasted at
@@ -882,6 +882,11 @@ means 0.
   day the habit became a limit habit). `done_today` says whether today is still within the limit so far.
 - `streak` counts the days before today in a row that were done, and is 0 once today goes over.
 - Checking a limit habit (`/check`) is `400`; the count is its check.
+- `health` (since 2026-10-26, default `null`): a limit habit can also count from Apple Health. `"inhaler_usage"`
+  follows the health day's `inhaler_usage` (Health's Inhaler Usage, where the user may log coffees). A day's count
+  is then the larger of Health's number and what was logged here, so one logged in both places counts once. `/count`
+  adds to the count as shown (Health's included); taking back can't go below Health's number. `400` on a habit
+  that isn't a limit habit, or for another value.
 
 `history` is every local date the habit was checked (or done, for the two kinds above) in the last 26 weeks (182
 days, today included), newest first, for a GitHub-style grid. Every endpoint that returns a Habit includes it,
@@ -890,8 +895,8 @@ days, today included), newest first, for a GitHub-style grid. Every endpoint tha
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/habits` | | `{"habits": [Habit]}` |
-| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "workouts": ["strength"], "food": null}` (`workouts`, `food` optional) | the new Habit |
-| `PATCH /v1/habits/{id}` | any of `name`, `cadence`, `workouts`, `food` | the updated Habit |
+| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "workouts": ["strength"], "food": null}` (`workouts`, `food`, `health` optional) | the new Habit |
+| `PATCH /v1/habits/{id}` | any of `name`, `cadence`, `workouts`, `food`, `health` (`null` turns `food` or `health` off) | the updated Habit |
 | `POST /v1/habits/{id}/check` | `{"date": "2026-10-18"}` (optional, default today; send `"done": false` to undo) | the updated Habit |
 | `POST /v1/habits/{id}/count` | `{"add": 1}` (default 1; `-1` takes one back, never below 0), `"date"` optional (default today) | the updated Habit. `400` for a habit that isn't a limit habit, or a future date. |
 | `DELETE /v1/habits/{id}` | | `{"ok": true}` |
@@ -928,6 +933,7 @@ the server's liveness check; these routes sit under it and need the token like e
   "steps": 8432,
   "active_kcal": 512,
   "exercise_min": 41,
+  "inhaler_usage": 3,
   "workouts": [
     {"id": "6B1F0C2E-…", "type": "strength", "start": "2026-10-19T18:30:00+02:00",
      "end": "2026-10-19T19:22:00+02:00", "minutes": 52, "kcal": 310}
@@ -935,7 +941,8 @@ the server's liveness check; these routes sit under it and need the token like e
 }
 ```
 - **Missing or `null` means no data** for that field. Every number may be missing.
-- `date` is the local calendar day. `steps`, `active_kcal`, `exercise_min` and `workouts` cover 00:00–24:00.
+- `date` is the local calendar day. `steps`, `active_kcal`, `exercise_min`, `inhaler_usage` and `workouts` cover
+  00:00–24:00. `inhaler_usage` (since 2026-10-26) is Health's Inhaler Usage count, for a limit habit's `health`.
 - `sleep` is the night that **ended** that morning: the longest stretch of sleep that ends between 18:00 the
   evening before and 18:00 on `date`, with gaps under an hour counted as part of it. Naps are left out. `bedtime`
   is when sleep started, `wake` when it ended, `in_bed_min` = `wake` − `bedtime`, `asleep_min` = the sleep stages

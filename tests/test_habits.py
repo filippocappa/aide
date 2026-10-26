@@ -56,7 +56,7 @@ def test_habit_endpoints(api):
                       headers=AUTH).json()
     assert gym == {"id": 1, "name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "streak": 0,
                    "done_today": False, "last_done": None, "history": [], "workouts": [], "food": None,
-                   "count": None, "counts": {}}
+                   "count": None, "counts": {}, "health": None}
     read = client.post("/v1/habits", json={"name": "Read"}, headers=AUTH).json()
     assert read["cadence"] == {"type": "daily"}
 
@@ -177,10 +177,34 @@ def test_becoming_a_limit_habit_counts_from_that_day(api):
     assert daily["cadence"] == {"type": "daily"} and daily["count"] is None and len(daily["history"]) == 1
 
 
+def test_limit_habit_counts_from_apple_health_too(api):
+    client, _, habits = api()
+    today = habits.today()
+    coffee = client.post("/v1/habits", json={"name": "Coffee", "cadence": {"type": "limit", "max": 5},
+                                            "health": "inhaler_usage"}, headers=AUTH).json()
+    assert coffee["health"] == "inhaler_usage" and coffee["count"] == 0
+    days = [{"date": (today - timedelta(days=1)).isoformat(), "inhaler_usage": 7},
+            {"date": today.isoformat(), "inhaler_usage": 3, "steps": 900}]
+    client.post("/v1/health/days", json={"days": days}, headers=AUTH)
+    h = client.get("/v1/habits", headers=AUTH).json()["habits"][0]
+    assert h["count"] == 3 and h["counts"][(today - timedelta(days=1)).isoformat()] == 7
+    # One logged here goes on top of Health's 3; the same one logged in Health later counts once.
+    assert client.post(f"/v1/habits/{coffee['id']}/count", headers=AUTH).json()["count"] == 4
+    client.post("/v1/health/days", json={"days": [{"date": today.isoformat(), "inhaler_usage": 4}]}, headers=AUTH)
+    assert habits.find(coffee["id"]).count == 4
+    client.post("/v1/health/days", json={"days": [{"date": today.isoformat(), "inhaler_usage": 6}]}, headers=AUTH)
+    over = habits.find(coffee["id"])
+    assert over.count == 6 and not over.done_today
+    assert client.post("/v1/habits", json={"name": "Y", "health": "inhaler_usage"}, headers=AUTH).status_code == 400
+    off = client.patch(f"/v1/habits/{coffee['id']}", json={"health": None}, headers=AUTH).json()
+    assert off["health"] is None and off["count"] == 4  # what was logged here
+
+
 @pytest.mark.parametrize("body", [
     {"name": "X", "cadence": {"type": "limit"}}, {"name": "X", "cadence": {"type": "limit", "max": 0}},
     {"name": "X", "cadence": {"type": "limit", "max": 101}}, {"name": "X", "food": "pizza"},
     {"name": "X", "cadence": {"type": "limit", "max": 3}, "food": "logged"},
+    {"name": "X", "cadence": {"type": "limit", "max": 3}, "health": "steps"},
 ])
 def test_bad_limit_and_food_habits_are_400(api, body):
     client, _, _ = api()

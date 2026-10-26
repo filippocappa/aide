@@ -233,6 +233,7 @@ class HabitIn(BaseModel):
     cadence: Cadence = Cadence()
     workouts: list[str] = []
     food: str | None = None
+    health: str | None = None  # a limit habit's Apple Health count: inhaler_usage
 
 
 class HabitPatch(BaseModel):
@@ -240,6 +241,7 @@ class HabitPatch(BaseModel):
     cadence: Cadence | None = None
     workouts: list[str] | None = None
     food: str | None = None
+    health: str | None = None
 
 
 class CountIn(BaseModel):
@@ -348,6 +350,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     if habits.food is None:  # food habits tick from the food log
         habits.food = food
     health = health or HealthStore(db.conn, tz)
+    if habits.health_days is None:  # limit habits count from Apple Health
+        habits.health_days = health
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
     wake = wake or WakeService(digest, health, tz, push=push)
     study = study or StudyStore(db, tz, calendar)
@@ -807,14 +811,15 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.post("/v1/habits", dependencies=[Depends(auth)])
     async def add_habit(body: HabitIn):
-        return habits.add(body.name, workouts=body.workouts, food=body.food, **cadence(body.cadence)).as_json()
+        return habits.add(body.name, workouts=body.workouts, food=body.food, health=body.health,
+                          **cadence(body.cadence)).as_json()
 
     @app.patch("/v1/habits/{habit_id}", dependencies=[Depends(auth)])
     async def edit_habit(habit_id: int, body: HabitPatch):
         if habits.get(habit_id) is None:
             raise HTTPException(404, f"no habit {habit_id}")
         changes = body.model_dump(exclude_unset=True, exclude={"cadence"})
-        changes = {k: v for k, v in changes.items() if v is not None or k == "food"}  # food: null stops it
+        changes = {k: v for k, v in changes.items() if v is not None or k in ("food", "health")}  # null stops it
         if body.cadence is not None:
             changes |= cadence(body.cadence)
         return habits.update(habit_id, **changes).as_json()

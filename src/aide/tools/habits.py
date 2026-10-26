@@ -3,7 +3,7 @@
 import datetime
 
 from ..food import FOOD_METRICS
-from ..habits import Habit, HabitStore
+from ..habits import HEALTH_COUNTS, Habit, HabitStore
 from . import Tool
 
 
@@ -20,7 +20,8 @@ def fmt(h: Habit, today: datetime.date) -> str:
         counts = dict(h.counts)
         week = [counts.get(today - datetime.timedelta(days=i), 0) for i in range(7, 0, -1)]
         streak = f"streak {h.streak} day{'s' if h.streak != 1 else ''} within the limit"
-        return (f"[{h.id}] {h.name} · at most {h.max_count} a day · {h.count} today"
+        source = " (counted from Apple Health too)" if h.health else ""
+        return (f"[{h.id}] {h.name} · at most {h.max_count} a day{source} · {h.count} today"
                 f"{' (over the limit)' if not h.done_today else ''} · last 7 days, oldest first: "
                 f"{', '.join(map(str, week))} · {streak}")
     if h.per_week is None:
@@ -35,8 +36,8 @@ def fmt(h: Habit, today: datetime.date) -> str:
 
 def habit_tools(store: HabitStore) -> list[Tool]:
     async def add_habit(name: str, per_week: int | None = None, max: int | None = None,  # noqa: A002
-                        food: str | None = None) -> str:
-        return "Added: " + fmt(store.add(name, per_week, max_count=max, food=food), store.today())
+                        food: str | None = None, health: str | None = None) -> str:
+        return "Added: " + fmt(store.add(name, per_week, max_count=max, food=food, health=health), store.today())
 
     async def list_habits() -> str:
         habits = store.all()
@@ -65,10 +66,12 @@ def habit_tools(store: HabitStore) -> list[Tool]:
     return [
         Tool("add_habit", "Start tracking a habit. Daily unless per_week is given (times per Monday-to-Sunday "
              "week, 1–7). max makes it a limit habit: a daily count that has to stay at or under max (e.g. at most "
-             "5 coffees a day), logged with count_habit. food makes it tick itself from the food log: logged (a "
+             "5 coffees a day), logged with count_habit; with health it also counts from that Apple Health number "
+             "(inhaler_usage: the Inhaler Usage the user logs there). food makes it tick itself from the food log: logged (a "
              "meal logged), protein_g or calories (at that goal). Runs immediately.",
              _obj({"name": {"type": "string"}, "per_week": {"type": "integer"}, "max": {"type": "integer"},
-                   "food": {"type": "string", "enum": list(FOOD_METRICS)}}, ["name"]), add_habit),
+                   "food": {"type": "string", "enum": list(FOOD_METRICS)},
+                   "health": {"type": "string", "enum": list(HEALTH_COUNTS)}}, ["name"]), add_habit),
         Tool("list_habits", "List habits with their id in brackets, cadence, streak and whether today is done; for "
              "a limit habit, today's count and the last 7 days'.", _obj({}, []), list_habits),
         Tool("check_habit", "Mark a habit as done for a day (default today). done=false undoes it. Not for limit "
