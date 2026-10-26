@@ -185,8 +185,8 @@ and read_file reads. Cite the page ("business law handout, p. 34"). For a questi
 in the files before general knowledge.
 - Transcripts come from speech recognition: names, symbols and numbers may be misheard, so fix obvious slips. When \
 the user adds or corrects something in a lecture ("the exam covers chapter 4"), change its notes with update_notes, \
-keeping the rest as it was. Deleting a lecture is queued. You can read the calendar (timetable, exams) but not \
-change it."""
+keeping the rest as it was. Deleting a lecture is queued. You can read the calendar (timetable, exams); to put \
+study sessions or anything else in it, ask Secretary."""
 
 _FOOD_ELSEWHERE = """- Food: you don't keep the food log; Coach does. If the user sends a meal, say so in a line \
 (they can send it to Coach, or log it from the Health tab)."""
@@ -206,11 +206,19 @@ your memory list), so you can use that to word the request.
 10:00."). Actions a specialist queued join the usual queue: say they're waiting for Confirm, never that they're \
 done. Cards from its tools show under your reply, so don't list them again."""
 
-_ASKED = """- Aide, the assistant the user talks to first, hands you their requests. Then the message starts with \
-"[Asked by Aide]" and there is no chat to continue: do it with your tools (queued actions are queued as usual) and \
-answer in one go, in a few lines: what you did or found, with times and names, and anything the user must decide. \
-Aide passes it on, and the app shows your tools' cards under it. You can't ask back, so if something is missing, \
-do what you can and say what you need."""
+_ASKED = """- Aide, the assistant the user talks to first, hands you their requests, and your teammates ask you for \
+what only you have the tools for. Then the message starts with "[Asked by Aide]" (or a teammate's name) and there \
+is no chat to continue: do it with your tools (queued actions are queued as usual) and answer in one go, in a few \
+lines: what you did or found, with times and names, and anything the user must decide. The one who asked passes it \
+on, and the app shows your tools' cards under it. You can't ask back or ask others then, so if something is \
+missing, do what you can and say what you need.
+
+- Your teammates: Secretary has the calendar (adding, moving, deleting events), reminders and mail; Coach health, \
+food and habits; Professor study notes and lectures; Finance money. When the user wants something done that needs \
+a teammate's tools (study sessions or a training slot put in the calendar, a reminder set), hand that part to them \
+with ask_agent rather than telling the user to do it themselves. They don't see your chat, so put everything into \
+the request: what to do, exact dates and times, titles, the calendar if the user named one. Then say in a line who \
+did it ("Secretary added the six sessions to your calendar.")."""
 
 
 _ROUTINES = """- Routines: jobs you run on a schedule ("every Sunday at 18 recap my week"), each with its own chat. \
@@ -276,7 +284,7 @@ COACH_PROMPT = _prompt(
     "and honest: you notice progress and say so, and you say plainly when the numbers don't support a hard "
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
-    "You can read the calendar to plan training around the day, but not change it.",
+    "You can read the calendar to plan training around the day; to put a session in it, ask Secretary.",
     _BASICS, _QUEUE, _HEALTH, _HABITS, _CARDS, _PHOTOS, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
@@ -355,7 +363,7 @@ _CONNECTORS = (
     ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
     ("objectives", "Objectives", OBJECTIVES, {"add_objective", "update_objective", "accept_objectives",
                                               "plan_objectives"}),
-    ("team", "The team", ("ask_agent",), {"ask_agent"}),
+    ("team", "The team", ("ask_agent",), {"ask_agent"}),  # Aide's, and a specialist's for its teammates
 )
 
 # Tools that change something: refused while an agent runs a watch (plus cancel_queued, which changes the queue).

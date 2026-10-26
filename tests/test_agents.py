@@ -145,15 +145,15 @@ def test_tool_sets_follow_the_table(env):
     assert names["aide"] == {"web_search", "fetch_page", "find_places", "ask_agent", "get_current_time", "remember",
                              "forget", "cancel_queued", *routines}
     assert {t.name for t in agent.tools} >= {"create_reminder", "health", "send_mail", "create_event"}  # runs the queue
-    assert names["coach"] == {"health", "list_habits", "list_events", "web_search", "fetch_page",
+    assert names["coach"] == {"health", "list_habits", "list_events", "web_search", "fetch_page", "ask_agent",
                               "get_current_time", "remember", "forget", "cancel_queued", *routines}
-    assert names["finance"] == {"web_search", "fetch_page", "get_current_time", "remember", "forget",
+    assert names["finance"] == {"web_search", "fetch_page", "ask_agent", "get_current_time", "remember", "forget",
                                 "cancel_queued", *routines}
     assert names["professor"] == {*names["finance"], "list_events"}  # plus the study tools, which this env hasn't
     assert all(routines <= names[a] for a in AGENTS)
     assert {"create_event", "send_mail", "create_reminder", "find_places"} <= names["secretary"]
     assert "health" not in names["secretary"]
-    assert all("ask_agent" not in names[a] for a in SPECIALISTS)
+    assert all("ask_agent" in names[a] for a in SPECIALISTS)  # for their teammates
 
 
 # -- conversations ---------------------------------------------------------------
@@ -348,7 +348,7 @@ def test_at_most_three_asks_per_turn(env):
     assert "already asked 3 times" in results[3]["content"]
 
 
-def test_a_specialist_cannot_ask_others(env):
+def test_an_asked_specialist_cannot_ask_others(env):
     client, agent, _ = env([
         calls(("ask_agent", {"agent": "coach", "request": "?"})),
         calls(("ask_agent", {"agent": "finance", "request": "?"})),  # Coach tries to ask
@@ -357,8 +357,31 @@ def test_a_specialist_cannot_ask_others(env):
     ])
     body = client.post("/v1/chat", json={"text": "hi"}, headers=AUTH).json()
     assert body["consulted"] == ["coach"]
+    assert "ask_agent" not in tool_names(agent.client.requests[1])  # not offered while answering an ask
     coach_result = agent.client.requests[2]["messages"][-1]["content"][0]
-    assert coach_result["is_error"] and "unknown tool" in coach_result["content"]
+    assert coach_result["is_error"] and "can't ask others in turn" in coach_result["content"]
+
+
+def test_a_specialist_hands_a_teammate_what_needs_their_tools(env):
+    client, agent, _ = env([
+        ask("secretary", "Add 'Business law study' Tue 27 Oct 15:30-16:30."),
+        calls(("create_event", {})),  # Secretary's stateless turn
+        done("Added Business law study, Tue 15:30."),
+        done("Secretary put the session in your calendar."),
+        done("Study session"),
+    ])
+    cid = new_chat(client, "professor")
+    body = client.post("/v1/chat", json={"text": "add the study time to my calendar", "conversation_id": cid},
+                       headers=AUTH).json()
+    assert body["reply"] == "Secretary put the session in your calendar." and body["consulted"] == ["secretary"]
+    assert team_lines(body["team"]) == [("professor", "secretary", "Add 'Business law study' Tue 27 Oct 15:30-16:30."),
+                                        ("secretary", "professor", "Added Business law study, Tue 15:30.")]
+    professor, secretary = agent.client.requests[:2]
+    assert "ask_agent" in tool_names(professor) and "create_event" not in tool_names(professor)
+    enum = next(t for t in professor["tools"] if t["name"] == "ask_agent")["input_schema"]["properties"]["agent"]["enum"]
+    assert enum == ["secretary", "coach", "finance"]  # not itself, not Aide
+    assert secretary["system"][0]["text"] == AGENTS["secretary"].prompt and "ask_agent" not in tool_names(secretary)
+    assert "[Asked by Professor] Add 'Business law study'" in str(secretary["messages"][0])
 
 
 # -- team talk -------------------------------------------------------------------
@@ -530,7 +553,7 @@ def test_mentions_pick_who_answers_in_order(env):
     finance, coach = agent.client.requests
     assert finance["system"][0]["text"] == AGENTS["finance"].prompt and coach["system"][0]["text"] == AGENTS["coach"].prompt
     assert "Finance → Everyone: Sleep is fine." in coach["messages"][0]["content"][0]["text"]  # sees what was said
-    assert all("ask_agent" not in tool_names(r) for r in agent.client.requests)
+    assert all("ask_agent" in tool_names(r) for r in agent.client.requests)  # each can hand a teammate work
 
 
 def test_at_most_three_mentions():
@@ -584,11 +607,11 @@ def test_agents_show_their_prompt_and_connectors(env):
     assert agents["coach"]["prompt"] == AGENTS["coach"].prompt
     assert set(agents["coach"]["tools"]) == {t.name for t in agent.registries["coach"]}
     coach = {c["id"]: c for c in agents["coach"]["connectors"]}
-    assert list(coach) == ["calendar", "health", "habits", "web", "memory", "routines"]
+    assert list(coach) == ["calendar", "health", "habits", "web", "memory", "routines", "team"]
     assert coach["calendar"] == {"id": "calendar", "name": "iCloud Calendar", "read_only": True, "tools": ["list_events"]}
     assert coach["health"]["read_only"] and not coach["memory"]["read_only"]
     assert "team" in {c["id"] for c in agents["aide"]["connectors"]}
-    assert "team" not in {c["id"] for c in agents["professor"]["connectors"]}
+    assert "team" in {c["id"] for c in agents["professor"]["connectors"]}  # its teammates
 
 
 def test_connectors_mark_what_can_only_read():

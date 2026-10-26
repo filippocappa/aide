@@ -87,14 +87,15 @@ class Agent:
         self.whereabouts: Callable[[], Awaitable[str | None]] | None = None
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued, and
         # `agent_tools(agent id, any agent)` for other per-agent sets (objectives).
-        # Aide delegates: it has only its own few tools and ask_agent, and the specialists do the work.
-        # (delegate=False gives it every tool, as before; the tests use that to drive tools through Aide.)
+        # Aide delegates: it has only its own few tools and ask_agent, and the specialists do the work. A specialist
+        # can ask a teammate too, for what only the other has the tools for (Professor's study sessions go into the
+        # calendar through Secretary). (delegate=False gives Aide every tool, as before; the tests use that.)
         cancel = self._cancel_tool()
         self.registries: dict[str, ToolRegistry] = {}
         for a in AGENTS.values():
             allowed = None if a.orchestrator and not delegate else {*a.tools, *COMMON_TOOLS}
             own = [t for t in tools if allowed is None or t.name in allowed]
-            extra = [self._ask_tool()] if a.orchestrator else []
+            extra = [self._ask_tool(a.id)]
             self.registries[a.id] = ToolRegistry(
                 [*own, *memory_tools(db, a.id, scoped=not a.orchestrator),
                  *routine_tools(self.routines, a.id, any_agent=a.orchestrator),
@@ -107,6 +108,7 @@ class Agent:
         self._conversation: str | None = None  # app chat of the turn in progress, None for the shared one
         self._attachments: list[dict] = []  # cards from the turn in progress
         self._consulted: list[str] = []  # agents asked in the turn in progress
+        self._asked: list[str] = []  # agents answering an ask right now: they can't ask in turn
         self._team: list[dict] = []  # its team messages
         self._photos: tuple[str, ...] = ()  # photos the user sent with the turn in progress; asked agents see them
         self._on_team: Callable[[dict], None] | None = None  # told about each one as it happens
@@ -449,32 +451,44 @@ class Agent:
         if self._on_team:
             self._on_team(message)
 
-    def _ask_tool(self) -> Tool:
+    def _ask_tool(self, sender: str) -> Tool:
+        """`sender`'s ask_agent: Aide asks any specialist, a specialist the other specialists."""
+        others = tuple(a for a in SPECIALISTS if a != sender)
+        name = AGENTS[sender].name
+
         async def ask_agent(agent: str, request: str) -> str:
-            if agent not in SPECIALISTS:
-                raise ValueError(f"no specialist {agent!r}; ask one of {', '.join(SPECIALISTS)}")
+            if agent not in others:
+                raise ValueError(f"no teammate {agent!r}; ask one of {', '.join(others)}")
+            if sender in self._asked:
+                raise ValueError("you were asked by a teammate, so you can't ask others in turn: "
+                                 "do what you can and say what's still needed")
             if len(self._consulted) >= MAX_ASKS:
                 raise ValueError(f"already asked {MAX_ASKS} times this turn; answer with what you have")
             self._consulted.append(agent)  # before any await, so parallel asks keep their order
-            self._say(ORCHESTRATOR, agent, request)
-            activity.record(self.db.conn, ORCHESTRATOR, "ask", f"Asked {AGENTS[agent].name}", request,
+            self._say(sender, agent, request)
+            activity.record(self.db.conn, sender, "ask", f"Asked {AGENTS[agent].name}", request,
                             self._conversation or self._channel)
             # One stateless turn: the specialist sees only the request (and the turn's photos), and nothing is
             # stored in its chats.
             photos = "".join(f"\n[Photo {p}]" for p in self._photos)
-            turn = [{"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] [Asked by Aide] {request}{photos}"}]
-            answer = await self._run(agent, self._channel, self._model, [], turn)
-            self._say(agent, ORCHESTRATOR, answer)
+            turn = [{"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] [Asked by {name}] {request}{photos}"}]
+            self._asked.append(agent)
+            try:
+                answer = await self._run(agent, self._channel, self._model, [], turn)
+            finally:
+                self._asked.remove(agent)
+            self._say(agent, sender, answer)
             return f"{AGENTS[agent].name} answered:\n{answer}"
 
-        names = "; ".join(f"{a}: {AGENTS[a].role.lower()}" for a in SPECIALISTS)
+        names = "; ".join(f"{a}: {AGENTS[a].role.lower()}" for a in others)
+        whom = "one of your specialists" if AGENTS[sender].orchestrator else "a teammate"
         return Tool(
             "ask_agent",
-            f"Hand work to one of your specialists ({names}) and get their answer back. They don't see this chat: "
+            f"Hand work to {whom} ({names}) and get their answer back. They don't see this chat: "
             "put what the user wants and all the context they need into request (they do see the photos the user "
             "sent with this message). Actions they queue join the usual queue. "
             f"At most {MAX_ASKS} asks per turn.",
-            {"type": "object", "properties": {"agent": {"type": "string", "enum": list(SPECIALISTS)},
+            {"type": "object", "properties": {"agent": {"type": "string", "enum": list(others)},
                                               "request": {"type": "string"}},
              "required": ["agent", "request"], "additionalProperties": False},
             ask_agent,
@@ -549,7 +563,7 @@ class Agent:
             return await self._run_tool(agent, channel, name, args)
 
         reply = await self.engine.run("\n\n".join(b["text"] for b in self._system(agent)), prompt,
-                                      list(self.registries[agent]), call, fast=model != self.smart_model,
+                                      self._offered(agent), call, fast=model != self.smart_model,
                                       max_turns=MAX_TOOL_ROUNDS, effort=self.effort)
         turn.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
         return reply
@@ -573,6 +587,10 @@ class Agent:
                 on_text("", True)  # a round with no text still clears the draft before it
             return await stream.get_final_message()
 
+    def _offered(self, agent: str) -> list[Tool]:
+        """The agent's tools for this run: without ask_agent while it answers an ask (it can't ask in turn)."""
+        return [t for t in self.registries[agent] if not (t.name == "ask_agent" and agent in self._asked)]
+
     def _request(self, agent: str, model: str, messages: list[dict]) -> dict:
         extra = {}
         if self.server_fallback and "haiku" not in model:  # Haiku has no server-side fallback
@@ -583,7 +601,7 @@ class Agent:
             max_tokens=16000,
             # Two cache breakpoints: tools + system, and the conversation so far.
             system=self._system(agent),
-            tools=self.registries[agent].definitions(),
+            tools=[t.definition() for t in self._offered(agent)],
             messages=_with_cache_breakpoint(self._with_photos(messages)),
             output_config={"effort": self.effort},
             **extra,

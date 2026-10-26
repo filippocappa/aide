@@ -181,7 +181,7 @@ a new agent needs no app update.
   - `connectors`: those tools grouped by what they reach, in a fixed order, each
     `{"id": "calendar", "name": "iCloud Calendar", "read_only": true, "tools": ["list_calendars", "list_events", "search_events"]}`.
     Ids: `calendar`, `reminders`, `mail`, `health`, `habits`, `web`, `maps`, `memory`, `routines`, `objectives`, `team`
-    (Aide's `ask_agent`). `read_only` is true when none of its tools here change anything. A connector it doesn't
+    (`ask_agent`: Aide's, and each specialist's for its teammates). `read_only` is true when none of its tools here change anything. A connector it doesn't
     have here is left out. Show `name`; an unknown `id` is fine.
 
 **What each one does** (server side; the app only shows them):
@@ -199,10 +199,14 @@ a new agent needs no app update.
   and doesn't write to the agent's own chats. Its answer goes back to Aide, which replies, saying who it asked
   ("Coach thinks…"). Actions it queues join the usual confirmation queue; cards from its tools join the reply.
   At most 3 asks per turn, and an asked agent can't ask others.
+- **A specialist asking a teammate.** Every specialist has `ask_agent` too, for the other specialists, when the work
+  needs a teammate's tools: Professor asks Secretary to put study sessions in the calendar. It works the same way
+  (`[Asked by Professor]`, one stateless turn, at most 3, no asks from the one asked), and shows the same:
+  `consulted` on the specialist's reply, and team messages `from: "professor"`, `to: "secretary"` and back.
 
 ### Team talk
 
-The agents have a group chat of their own: every ask and every answer, from all of Aide's chats, is kept there as a message. In a chat with Aide the same messages show live above Aide's reply (`team`
+The agents have a group chat of their own: every ask and every answer, from all the chats, is kept there as a message. In a chat with Aide the same messages show live above Aide's reply (`team`
 in Chat); the Team chat on the app's home screen shows them all together.
 
 `GET /v1/team?limit=100` →
@@ -214,7 +218,7 @@ in Chat); the Team chat on the app's home screen shows them all together.
 ```
 - The latest `limit` messages, oldest first. `text` is the whole ask (the `request` Aide wrote) or the whole
   answer (the agent's reply to Aide), never tool calls.
-- `conversation_id` is Aide's chat the exchange came from, so the app can open it. Deleting that chat deletes its
+- `conversation_id` is the chat the exchange came from (Aide's, or a specialist's that asked a teammate), so the app can open it. Deleting that chat deletes its
   team messages too.
 - Messages you write in the Team chat (below) are in here too: `from: "user"`, and `conversation_id: null` for
   everything said in the Team chat itself.
