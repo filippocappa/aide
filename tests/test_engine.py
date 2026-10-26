@@ -18,7 +18,7 @@ from test_food import RecordingClient
 from test_study import ROME
 
 # Claude Code as the server runs it: one stream-json message in, events out. What it does comes from files next to
-# it: `mode` (ok or limit) and `reset` (when the limit resets, epoch seconds); each call is kept in `calls`.
+# it: `mode` (ok, limit or split) and `reset` (when the limit resets, epoch seconds); each call is kept in `calls`.
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 here = pathlib.Path(__file__).parent
@@ -38,6 +38,10 @@ if mode == "limit":
         "unifiedWindows": {"five_hour": {"utilization": 1.0, "resetsAt": reset}}}}))
     print(json.dumps({"type": "result", "subtype": "success", "is_error": True,
                       "result": "You've hit your limit"}))
+elif mode == "split":  # an answer past the output limit: Claude Code goes on in a second message
+    for part in ("The first half, ", "and the second."):
+        print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": part}]}}))
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "and the second."}))
 else:
     print(json.dumps({"type": "rate_limit_event", "rate_limit_info": {
         "status": "allowed", "resetsAt": 1792660800, "rateLimitType": "five_hour",
@@ -107,6 +111,13 @@ async def test_the_plan_writes_with_sonnet_and_haiku_and_its_usage_is_kept(plan)
     assert engine.usage == {"five_hour": {"used": 0.25, "resets_at": "2026-10-22T09:20:00Z"},
                             "seven_day": {"used": 0.5, "resets_at": "2026-10-23T11:00:00Z"}}
     assert client.requests == []
+
+
+async def test_an_answer_past_the_output_limit_comes_back_whole(plan, tmp_path):
+    engine, *_ = plan
+    engine.set_engine("claude")
+    (tmp_path / "bin" / "mode").write_text("split")
+    assert await engine.ask("Write.", TEXT, 16000) == "The first half, and the second."
 
 
 async def test_at_the_limit_a_job_waits_for_the_user_then_finishes_on_openrouter(plan):

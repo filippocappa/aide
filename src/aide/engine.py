@@ -297,7 +297,7 @@ class Engine:
         except asyncio.CancelledError:
             proc.kill()
             raise
-        result, limit = None, None
+        result, limit, parts = None, None, []
         for line in out.decode(errors="replace").splitlines():
             try:
                 event = json.loads(line)
@@ -306,9 +306,16 @@ class Engine:
             if event.get("type") == "rate_limit_event":
                 limit = event.get("rate_limit_info") or {}
                 self._save_usage(limit)
+            elif event.get("type") == "assistant":
+                parts += [b.get("text", "") for b in (event.get("message") or {}).get("content") or []
+                          if isinstance(b, dict) and b.get("type") == "text"]
             elif event.get("type") == "result":
                 result = event
         text = (result or {}).get("result") or ""
+        # A long answer that reaches the output limit goes on in another message, and `result` is only the last
+        # one: the whole answer is all of them, in order.
+        if len(whole := "".join(parts)) > len(text):
+            text = whole
         if limit and limit.get("status") == "rejected" or \
                 result and result.get("is_error") and _PLAN_LIMIT.search(text):
             raise PlanLimit(_resets(limit, text), (limit or {}).get("rateLimitType"), text or "limit reached")
