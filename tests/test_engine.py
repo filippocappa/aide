@@ -163,10 +163,112 @@ def test_the_writer_endpoints(plan):
                   photos=PhotoStore(engine.workdir / "photos"), delegate=False)
     api = TestClient(create_app(agent, ReminderStore(db.conn), FakeCalendar([]), ROME, TOKEN, engine=engine))
     status = api.get("/v1/writer", headers=AUTH).json()
-    assert status == {"engine": "openrouter", "available": True, "usage": None, "paused": None,
-                      "openrouter_until": None}
+    assert status == {"engine": "openrouter", "background": "openrouter", "available": True, "usage": None,
+                      "paused": None, "openrouter_until": None}
     assert api.put("/v1/writer", json={"engine": "claude"}, headers=AUTH).json()["engine"] == "claude"
+    both = api.put("/v1/writer", json={"background": "claude"}, headers=AUTH).json()
+    assert both["background"] == "claude" and both["engine"] == "claude"  # each switch on its own
+    assert api.put("/v1/writer", json={"background": "gpt"}, headers=AUTH).status_code == 400
     assert api.put("/v1/writer", json={"engine": "gpt"}, headers=AUTH).status_code == 400
     assert api.post("/v1/writer/decide", json={"use": "wait"}, headers=AUTH).status_code == 409
     engine.claude = None
     assert api.put("/v1/writer", json={"engine": "claude"}, headers=AUTH).status_code == 409
+    assert api.put("/v1/writer", json={"background": "claude"}, headers=AUTH).status_code == 409
+
+
+# -- background work ---------------------------------------------------------------------------
+
+
+async def test_background_work_has_its_own_switch(plan):
+    engine, client, calls, *_ = plan
+    engine.set_engine("claude")  # the notes on the plan leave background work on OpenRouter
+    client.responses.append(done("from OpenRouter"))
+    assert await engine.ask("Be brief.", TEXT, 300, fast=True, background=True, effort="low") == "from OpenRouter"
+    assert client.requests[0]["model"] == "m" and client.requests[0]["output_config"] == {"effort": "low"}
+    engine.set_background("claude")
+    assert engine.background == "claude" and engine.plan_for_background()
+    assert await engine.ask("Be brief.", TEXT, 300, fast=True, background=True) == "ok from haiku"
+    assert len(calls()) == 1 and len(client.requests) == 1
+
+
+async def test_at_the_limit_background_work_goes_to_openrouter_without_asking(plan):
+    engine, client, calls, limit, unlimit, _ = plan
+    engine.set_background("claude")
+    asked = []
+    engine.on_pause = lambda paused: asked.append(paused)
+    resets = limit(600)
+    client.responses += [done("one"), done("two")]
+    assert await engine.ask("Be brief.", TEXT, 300, background=True) == "one"
+    assert engine.paused is None and asked == [] and not engine.plan_for_background()
+    unlimit()
+    assert await engine.ask("Be brief.", TEXT, 300, background=True) == "two"  # skips the plan until the reset
+    assert len(calls()) == 1
+    engine._limited_until = datetime.now(timezone.utc)  # the reset came
+    assert await engine.ask("Be brief.", TEXT, 300, background=True) == "ok from sonnet"
+    assert resets > datetime.now(timezone.utc)
+
+
+@pytest.fixture
+def sdk(monkeypatch):
+    """The Claude Agent SDK without Claude Code: `query` makes the calls in `script` through the in-process tools,
+    then answers as `reply` says ("limit" for the plan's limit)."""
+    import claude_agent_sdk
+    from claude_agent_sdk import (AssistantMessage, RateLimitEvent, RateLimitInfo, ResultMessage, TextBlock)
+    seen: dict = {"script": [], "reply": "Done.", "results": []}
+
+    async def query(prompt, options):
+        seen["options"] = options
+        async for message in prompt:
+            seen["prompt"] = message["message"]["content"]
+        tools = {t.name: t for t in options.mcp_servers["aide"]["tools"]}
+        for name, args in seen["script"]:
+            seen["results"].append(await tools[name].handler(args))
+        if seen["reply"] == "limit":
+            reset = int(datetime.now(timezone.utc).timestamp()) + 600
+            info = {"status": "rejected", "resetsAt": reset, "rateLimitType": "five_hour"}
+            yield RateLimitEvent(rate_limit_info=RateLimitInfo(status="rejected", raw=info), uuid="u", session_id="s")
+            yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=True, num_turns=1,
+                                session_id="s", result="You've hit your limit")
+            return
+        info = {"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": 0.3, "resetsAt": 1792660800}}}
+        yield RateLimitEvent(rate_limit_info=RateLimitInfo(status="allowed", raw=info), uuid="u", session_id="s")
+        yield AssistantMessage(content=[TextBlock(text=seen["reply"])], model="haiku")
+        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=2,
+                            session_id="s", result=seen["reply"])
+
+    monkeypatch.setattr(claude_agent_sdk, "query", query)
+    monkeypatch.setattr(claude_agent_sdk, "create_sdk_mcp_server", lambda name, tools: {"tools": tools})
+    return seen
+
+
+async def test_a_tool_loop_on_the_plan_runs_aides_tools_in_process(plan, sdk):
+    engine, *_ = plan
+    from aide.tools import Tool
+
+    async def handler(title: str) -> str:
+        return f"made {title}"
+    made = Tool("make", "Make one.", {"type": "object", "properties": {"title": {"type": "string"}},
+                                      "required": ["title"], "additionalProperties": False}, handler)
+    ran = []
+
+    async def call(name, args):
+        ran.append((name, args))
+        return await made.handler(**args), False
+    sdk["script"] = [("make", {"title": "x"})]
+    assert await engine.run("Be you.", "Make x.", [made], call, fast=True, effort="medium") == "Done."
+    options = sdk["options"]
+    assert options.system_prompt == "Be you." and options.model == "haiku" and options.tools == []
+    assert options.allowed_tools == ["mcp__aide__make"] and options.cli_path == engine.claude
+    assert options.env["ANTHROPIC_API_KEY"] == "" and options.effort == "medium"  # the plan, never the key
+    assert sdk["prompt"] == "Make x." and ran == [("make", {"title": "x"})]
+    assert sdk["results"] == [{"content": [{"type": "text", "text": "made x"}], "is_error": False}]
+    assert engine.usage["five_hour"]["used"] == 0.3
+
+
+async def test_a_tool_loop_at_the_limit_raises_and_the_plan_is_skipped_till_the_reset(plan, sdk):
+    engine, *_ = plan
+    engine.set_background("claude")
+    sdk["reply"] = "limit"
+    with pytest.raises(engine_module.PlanLimit):
+        await engine.run("Be you.", "Hi.", [], None)
+    assert not engine.plan_for_background() and engine.paused is None

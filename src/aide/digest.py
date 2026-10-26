@@ -23,6 +23,7 @@ import anthropic
 
 from . import activity
 from .db import utcnow
+from .engine import ask_text
 from .gmail import Gmail, headers
 from .habits import HabitStore
 from .health import HealthStore, hours
@@ -206,6 +207,7 @@ class DigestService:
         self.conn = conn
         self.client = client
         self.model = model
+        self.engine = None  # engine.Engine: the greeting and the travel plan on the Claude plan, when chosen
         self.tz = tz
         self.reminders = reminders
         self.habits = habits
@@ -398,14 +400,11 @@ class DigestService:
             lines += ["", "After that period:", *(f"- {_event_line(event_json(e, self.tz), self.tz)}"
                                                   for e in later[:30])]
         try:
-            response = await self.client.beta.messages.create(
-                model=self.model, max_tokens=2000,
-                system=PROMPT.format_map({**dict(zip(("title", "closing"), CLOSING.get(kind, LOOKING_AHEAD))),
-                                          "extra": WAKE if kind == "wake" else ""}),
-                messages=[{"role": "user", "content": "\n".join(lines)}],
-                output_config={"effort": "low"},
-            )
-            text = "".join(b.text for b in response.content if b.type == "text").strip()
+            text = await ask_text(
+                self.engine, self.client, self.model,
+                PROMPT.format_map({**dict(zip(("title", "closing"), CLOSING.get(kind, LOOKING_AHEAD))),
+                                   "extra": WAKE if kind == "wake" else ""}),
+                "\n".join(lines), 2000)
         except Exception:
             log.warning("digest: the model failed; sending it without its text", exc_info=True)
             text = ""
@@ -425,10 +424,7 @@ class DigestService:
         ask = (f"Configured home: {self.home or 'none'}\nPlace: {event['location']} (event: {event['title']})\n\n"
                "Notes, newest first:\n" + "\n".join(f"- {n}" for n in notes))
         try:
-            response = await self.client.beta.messages.create(
-                model=self.model, max_tokens=300, system=TRAVEL_PROMPT,
-                messages=[{"role": "user", "content": ask}], output_config={"effort": "low"})
-            text = "".join(b.text for b in response.content if b.type == "text")
+            text = await ask_text(self.engine, self.client, self.model, TRAVEL_PROMPT, ask, 300)
             found = json.loads(text[text.index("{"):text.rindex("}") + 1])
         except Exception:
             log.warning("digest: couldn't read home and travel mode from memory", exc_info=True)

@@ -18,6 +18,7 @@ import anthropic
 
 from . import activity
 from .db import utcnow
+from .engine import ask_text
 from .gmail import Gmail, body_text, headers
 from .icloud import CalendarBackend
 from .shapes import event_json, event_start
@@ -87,6 +88,7 @@ class Drafts:
         self.gmail = gmail
         self.client = client
         self.model = model
+        self.engine = None  # engine.Engine: drafted on the Claude plan, when chosen for background work
         self.calendar = calendar
         self.conn.executescript(SCHEMA)
 
@@ -237,10 +239,7 @@ class Drafts:
                       f"To: {h.get('to', '')}", *([f"Cc: {h['cc']}"] if h.get("cc") else []),
                       f"Subject: {h.get('subject') or '(no subject)'}", "",
                       text if len(text) <= BODY else text[:BODY] + " […]"]
-        response = await self.client.beta.messages.create(
-            model=self.model, max_tokens=4000, system=PROMPT,
-            messages=[{"role": "user", "content": "\n".join(lines)}], output_config={"effort": "medium"})
-        text = "".join(b.text for b in response.content if b.type == "text")
+        text = await ask_text(self.engine, self.client, self.model, PROMPT, "\n".join(lines), 4000, effort="medium")
         try:
             replies = json.loads(text[text.index("{"):text.rindex("}") + 1]).get("replies")
         except ValueError:

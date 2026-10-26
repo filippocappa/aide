@@ -152,6 +152,7 @@ def main() -> None:
         photos=photos,
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
+    agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
     whereabouts = Whereabouts(location, maps) if maps is not None else None
     if whereabouts:
         agent.whereabouts = whereabouts.describe
@@ -159,7 +160,7 @@ def main() -> None:
         log.info("set up the starting watches: %s", ", ".join(r["title"] for r in added))
     digest = DigestService(db.conn, client, settings.model, settings.timezone, reminders, habits, cal, gmail,
                            health, maps, settings.home_address)
-    digest.objectives, digest.planner = objectives, planner
+    digest.objectives, digest.planner, digest.engine = objectives, planner, engine
     digest.whereabouts = whereabouts
     digest.drafts = drafts if gmail else None
 

@@ -1,12 +1,17 @@
-"""Who writes the study notes: OpenRouter (pay per token) or the user's Claude plan, through Claude Code on this
+"""Who does the model work: OpenRouter (pay per token) or the user's Claude plan, through Claude Code on this
 machine (`claude -p`, logged in with the user's account; no API key, so it counts against the plan's limits).
+Two switches, set apart in the app:
 
-Chat stays on OpenRouter: it needs Aide's own tool loop. The heavy jobs go through `Engine.ask`: lecture notes, the
-notebook (Introduction, outline, triage, topic pages, merges, answer checks) and the slide scan. With the plan,
-Sonnet writes and Haiku does the quick reads, as on OpenRouter.
+- Notes (`engine`): the heavy study jobs through `Engine.ask`: lecture notes, the notebook (Introduction, outline,
+  triage, topic pages, merges, answer checks) and the slide scan. With the plan, Sonnet writes and Haiku does the
+  quick reads, as on OpenRouter. When the plan's limit is reached, the job waits and the user is asked (in the
+  course's chat, and with buttons in the app): wait for the reset, or finish on OpenRouter until then. Nothing is
+  spent on OpenRouter without that.
+- Background (`background`): the work nobody waits on: routines and watches (`Engine.run`, a tool loop through the
+  Claude Agent SDK, with Aide's own tools run in this process), digest greetings, mail drafts, chat titles and the
+  objectives planner (`Engine.ask(background=True)`). At the plan's limit these go to OpenRouter without asking.
 
-When the plan's limit is reached, the job waits and the user is asked (in the course's chat, and with buttons in
-the app): wait for the reset, or finish on OpenRouter until then. Nothing is spent on OpenRouter without that.
+Chat stays on OpenRouter: it streams through Aide's own tool loop.
 """
 
 import asyncio
@@ -18,7 +23,10 @@ import shutil
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
+
+if TYPE_CHECKING:
+    from .tools import Tool
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +62,7 @@ class Engine:
         self._answered = asyncio.Event()
         self._openrouter_until: datetime | None = None  # the user said: finish on OpenRouter until the reset
         self._wait_until: datetime | None = None  # the user said: wait for the reset
+        self._limited_until: datetime | None = None  # the plan said no; background work skips it until then
 
     # -- the setting --------------------------------------------------------------------------
 
@@ -64,13 +73,34 @@ class Engine:
         return engine if engine in ENGINES else DEFAULT
 
     def set_engine(self, engine: str) -> None:
-        if engine not in ENGINES:
-            raise ValueError(f"engine must be one of {', '.join(ENGINES)}")
-        self.conn.execute("INSERT INTO settings (key, value) VALUES ('writer', ?) "
-                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps({"engine": engine}),))
-        self.conn.commit()
+        self._set("writer", engine)
         if engine == "openrouter" and self.paused:
             self.decide("openrouter")  # switching over answers a pending question too
+
+    @property
+    def background(self) -> str:
+        """Who does the background work (routines, watches, digests, drafts, titles, objectives)."""
+        row = self.conn.execute("SELECT value FROM settings WHERE key = 'background'").fetchone()
+        engine = json.loads(row[0]).get("engine") if row else None
+        return engine if engine in ENGINES else DEFAULT
+
+    def set_background(self, engine: str) -> None:
+        self._set("background", engine)
+
+    def _set(self, key: str, engine: str) -> None:
+        if engine not in ENGINES:
+            raise ValueError(f"engine must be one of {', '.join(ENGINES)}")
+        self.conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, json.dumps({"engine": engine})))
+        self.conn.commit()
+
+    def plan_for_background(self) -> bool:
+        """Background work goes to the plan now: chosen, installed, and not at the limit (nor paused on it)."""
+        if self._limited_until and _now() >= self._limited_until:
+            self._limited_until = None
+        return (self.background == "claude" and self.available and self._limited_until is None
+                and self.paused is None and not (self._wait_until and _now() < self._wait_until)
+                and not self._on_openrouter())
 
     @property
     def available(self) -> bool:
@@ -83,7 +113,8 @@ class Engine:
         return json.loads(row[0]) if row else None
 
     def status(self) -> dict:
-        return {"engine": self.engine, "available": self.available, "usage": self.usage,
+        return {"engine": self.engine, "background": self.background, "available": self.available,
+                "usage": self.usage,
                 "paused": self.paused and {**self.paused, "since": _iso(self.paused["since"]),
                                            "resets_at": _iso(self.paused["resets_at"])},
                 "openrouter_until": _iso(self._openrouter_until) if self._on_openrouter() else None}
@@ -91,11 +122,19 @@ class Engine:
     # -- asking ---------------------------------------------------------------------------------
 
     async def ask(self, system: str, content: list[dict], max_tokens: int, fast: bool = False,
-                  wait: bool = True) -> str:
-        """One model call, with the engine the user chose; while the plan's limit is reached, it waits for the
-        user's answer (or the reset). `wait` False: a small call that can't wait (a digest's objectives) goes to
-        OpenRouter at the limit instead, without asking."""
+                  wait: bool = True, background: bool = False, effort: str | None = None) -> str:
+        """One model call, with the engine the user chose for notes; while the plan's limit is reached, it waits for
+        the user's answer (or the reset). `wait` False: a call that can't wait goes to OpenRouter at the limit
+        instead, without asking. `background`: with the background engine, never waiting. `effort` is OpenRouter's
+        (Claude Code thinks on its own)."""
         tier = "fast" if fast else "smart"
+        if background:
+            if self.plan_for_background():
+                try:
+                    return await self._claude(system, content, max_tokens, tier)
+                except PlanLimit as e:
+                    self._limited(e)
+            return await self._openrouter(system, content, max_tokens, tier, effort)
         while self.engine == "claude" and self.claude and not self._on_openrouter():
             if self.paused or (self._wait_until and _now() < self._wait_until):
                 if not wait:
@@ -105,11 +144,81 @@ class Engine:
             try:
                 return await self._claude(system, content, max_tokens, tier)
             except PlanLimit as e:
-                log.warning("Claude plan limit: %s", e)
+                self._limited(e)
                 if not wait:
                     break
                 await self._pause(e)
         return await self._openrouter(system, content, max_tokens, tier)
+
+    async def run(self, system: str, prompt: str, tools: "list[Tool]",
+                  call: Callable[[str, dict], Awaitable[tuple[str, bool]]], fast: bool = True, max_turns: int = 12,
+                  effort: str | None = None) -> str:
+        """A tool loop on the plan: Claude Code through the Claude Agent SDK, with `tools` served in this process
+        (an in-process MCP server) and each call run by `call(name, args)` -> (text, is_error), so the queue for
+        confirmation and a watch's read-only rule stay in Aide's code. Claude Code's own tools are off. Returns the
+        final text; PlanLimit at the limit (and later calls skip the plan until the reset)."""
+        from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, RateLimitEvent, ResultMessage,
+                                      create_sdk_mcp_server, query, tool)
+
+        def wrap(t: "Tool"):
+            async def handler(args: dict) -> dict:
+                out, err = await call(t.name, args)
+                return {"content": [{"type": "text", "text": str(out)}], "is_error": err}
+            return tool(t.name, t.description, t.input_schema)(handler)
+
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        options = ClaudeAgentOptions(
+            system_prompt=system, model=CLAUDE_MODELS["fast" if fast else "smart"], tools=[],
+            mcp_servers={"aide": create_sdk_mcp_server("aide", tools=[wrap(t) for t in tools])},
+            allowed_tools=[f"mcp__aide__{t.name}" for t in tools], strict_mcp_config=True, setting_sources=[],
+            permission_mode="dontAsk", max_turns=max_turns, cwd=self.workdir, cli_path=self.claude,
+            effort=effort if effort in ("low", "medium", "high") else None,
+            # The plan, never a key: the SDK can only override the environment, and an empty key counts as none.
+            env={**{k: "" for k in os.environ if k.startswith("ANTHROPIC_")},
+                 "DISABLE_AUTOUPDATER": "1", "DISABLE_TELEMETRY": "1"},
+            stderr=lambda line: log.debug("claude: %s", line))
+
+        async def prompt_stream():  # in-process tools need the streaming input mode
+            yield {"type": "user", "message": {"role": "user", "content": prompt}}
+
+        async def loop() -> str:
+            texts: list[str] = []
+            result, limit = None, None
+            try:
+                async for m in query(prompt=prompt_stream(), options=options):
+                    if isinstance(m, RateLimitEvent):
+                        limit = m.rate_limit_info.raw or {}
+                        self._save_usage(limit)
+                    elif isinstance(m, AssistantMessage):
+                        if text := "".join(getattr(b, "text", "") for b in m.content).strip():
+                            texts.append(text)
+                    elif isinstance(m, ResultMessage):
+                        result = m
+            except Exception as e:  # the CLI exits non-zero at the limit
+                if limit and limit.get("status") == "rejected":
+                    raise PlanLimit(_resets(limit, ""), limit.get("rateLimitType"), str(e)) from e
+                raise RuntimeError(f"Claude Code: {str(e)[:200]}") from e
+            text = (result.result if result else None) or ""
+            if limit and limit.get("status") == "rejected" or \
+                    result and result.is_error and _PLAN_LIMIT.search(text):
+                raise PlanLimit(_resets(limit, text), (limit or {}).get("rateLimitType"), text or "limit reached")
+            if result is None or result.is_error:
+                if result is not None and result.subtype == "error_max_turns" and texts:
+                    return texts[-1]
+                raise RuntimeError(f"Claude Code: {(text or getattr(result, 'subtype', None) or 'no result')[:200]}")
+            return (text or (texts[-1] if texts else "")).strip() or "(no reply)"
+
+        try:
+            return await asyncio.wait_for(loop(), TIMEOUT)
+        except asyncio.TimeoutError:
+            raise RuntimeError("Claude Code took too long") from None
+        except PlanLimit as e:
+            self._limited(e)
+            raise
+
+    def _limited(self, e: PlanLimit) -> None:
+        log.warning("Claude plan limit: %s", e)
+        self._limited_until = e.resets_at or _now() + UNKNOWN_RESET
 
     def decide(self, use: str) -> None:
         """The user's answer to a pause: "wait" for the reset, or "openrouter" until then."""
@@ -155,10 +264,12 @@ class Engine:
             self._openrouter_until = None
         return self._openrouter_until is not None
 
-    async def _openrouter(self, system: str, content: list[dict], max_tokens: int, tier: str) -> str:
+    async def _openrouter(self, system: str, content: list[dict], max_tokens: int, tier: str,
+                          effort: str | None = None) -> str:
         response = await self.client.beta.messages.create(
             model=self.models[tier], max_tokens=max_tokens, system=system,
-            messages=[{"role": "user", "content": content}])
+            messages=[{"role": "user", "content": content}],
+            **({"output_config": {"effort": effort}} if effort else {}))
         text = "".join(b.text for b in response.content if b.type == "text").strip()
         if not text:
             raise RuntimeError("the model's answer came back empty")
@@ -246,3 +357,16 @@ def _resets(info: dict | None, text: str) -> datetime | None:
         return when
     m = re.search(r"\|(\d{9,11})\b", text)
     return _epoch(m.group(1)) if m else None
+
+
+async def ask_text(engine: "Engine | None", client, model: str, system: str, text: str, max_tokens: int,
+                   effort: str = "low") -> str:
+    """A small background call (a greeting, a title, drafts): through the engine, on the plan when the user chose it
+    for background work; straight to `client` when there's no engine (tests)."""
+    if engine is not None:
+        return await engine.ask(system, [{"type": "text", "text": text}], max_tokens,
+                                fast=model != engine.models["smart"], background=True, effort=effort)
+    response = await client.beta.messages.create(
+        model=model, max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": text}],
+        output_config={"effort": effort})
+    return "".join(b.text for b in response.content if b.type == "text").strip()

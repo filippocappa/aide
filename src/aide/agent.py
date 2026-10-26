@@ -16,6 +16,7 @@ import anthropic
 from . import activity
 from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WRITES, check_agent, mentions
 from .db import Database, utcnow
+from .engine import Engine, ask_text
 from .photos import PhotoStore
 from .routines import RoutineStore
 from .tools import Tool, ToolRegistry
@@ -37,6 +38,7 @@ MAX_ASKS = 3  # ask_agent calls per turn
 MAX_PHOTOS = 4  # per message
 OLD_RESULT = 1500  # a tool result from an earlier turn longer than this is replayed cut short
 OLD_RESULT_KEPT = 300  # characters of it kept
+PLAN_CONTEXT = 20  # earlier messages a routine on the Claude plan reads, as text
 SEEN_PHOTOS = 3  # the model sees a chat's latest photos as images; older ones only as their [Photo id] line
 TEAM = "team"  # the Team chat: recipient of what's said there, and the queue's tag for actions queued from it
 TEAM_CONTEXT = 30  # team messages an agent answering in the Team chat sees
@@ -78,6 +80,9 @@ class Agent:
         self.db = db
         self.photos = photos
         self.routines = RoutineStore(db, tz)
+        # Routines, watches and chat titles go through it, on the Claude plan when the user chose that for
+        # background work (engine.py). None: OpenRouter, through `client`.
+        self.engine: Engine | None = None
         # Where the phone is, in words, for the stamp (transit.Whereabouts.describe); None leaves it out.
         self.whereabouts: Callable[[], Awaitable[str | None]] | None = None
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued, and
@@ -106,6 +111,8 @@ class Agent:
         self._photos: tuple[str, ...] = ()  # photos the user sent with the turn in progress; asked agents see them
         self._on_team: Callable[[dict], None] | None = None  # told about each one as it happens
         self._watching = False  # the turn in progress is a watch: tools that change something are refused
+        self._plan = False  # the turn in progress runs on the Claude plan (Engine.run), asks included
+        self._plan_calls = 0  # tools it has called there
         self._model = model  # model of the turn in progress; asked agents use it too
         self.model = model
         self.smart_model = smart_model or model
@@ -339,6 +346,7 @@ class Agent:
         self._channel, self._conversation, self._model = channel, conversation, model
         self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
         self._watching, self._photos = False, ()
+        self._plan, self._plan_calls = False, 0
 
     async def run_routine(self, channel: str, routine: dict) -> tuple[str | None, int]:
         """One run of a routine: its agent answers the hidden prompt in the routine's chat, with that chat's history.
@@ -359,7 +367,16 @@ class Agent:
                 note = (f"{_ROUTINE} \"{routine['title']}\". The user set this up to run on a schedule and isn't in "
                         "the chat right now: write the message they'll read here.]\n" + routine["prompt"])
             turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note)}]
-            reply = await self._run(routine["agent"], channel, model, history, turn)
+            self._plan = self.engine is not None and self.engine.plan_for_background()
+            try:
+                reply = await self._run(routine["agent"], channel, model, history, turn)
+            except Exception as e:
+                if not self._plan or self._plan_calls:
+                    raise  # nothing ran on the plan yet, or it can't be run again safely
+                log.warning("routine %s: the Claude plan failed (%s); on OpenRouter instead", routine["id"], e)
+                self._plan = False
+                del turn[1:]
+                reply = await self._run(routine["agent"], channel, model, history, turn)
             if self._watching and _nothing(reply):
                 self.routines.mark_run(routine["id"])
                 activity.record(self.db.conn, routine["agent"], "quiet", routine["title"],
@@ -468,14 +485,9 @@ class Agent:
         text = text or "(sent a photo)"
         fallback = "Photo" if text == "(sent a photo)" else text if len(text) <= 40 else text[:40].rsplit(" ", 1)[0] + "…"
         try:
-            response = await self.client.beta.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                system=TITLE_PROMPT,
-                messages=[{"role": "user", "content": f"User: {text[:1000]}\n\nAssistant: {reply[:1000]}"}],
-                output_config={"effort": "low"},
-            )
-            title = " ".join("".join(b.text for b in response.content if b.type == "text").split()).strip("\"'.")
+            answer = await ask_text(self.engine, self.client, self.model, TITLE_PROMPT,
+                                    f"User: {text[:1000]}\n\nAssistant: {reply[:1000]}", 1000)
+            title = " ".join(answer.split()).strip("\"'.")
         except Exception:
             log.warning("could not title a chat", exc_info=True)
             return fallback
@@ -483,6 +495,8 @@ class Agent:
 
     async def _run(self, agent: str, channel: str, model: str, history: list[dict], turn: list[dict],
                    on_text: Callable[[str, bool], None] | None = None) -> str:
+        if self._plan:
+            return await self._run_on_plan(agent, channel, model, history, turn)
         restart = False  # the text so far came before a tool call: the draft starts over
         history = _cut_old_results(history)
         for _ in range(MAX_TOOL_ROUNDS):
@@ -518,6 +532,27 @@ class Agent:
         # History must not end on an unanswered tool_use, or the next request is rejected.
         turn.append({"role": "assistant", "content": "I stopped after too many steps."})
         return "I stopped after too many steps. Try asking in a simpler way."
+
+    async def _run_on_plan(self, agent: str, channel: str, model: str, history: list[dict], turn: list[dict]) -> str:
+        """_run on the Claude plan (Engine.run), with the agent's own tools run through _run_tool. The model reads
+        the chat so far as text, and the turn is stored as its note and the final reply: Claude Code's tool calls
+        stay out of the history OpenRouter replays later."""
+        content = turn[0]["content"]
+        note = content if isinstance(content, str) else \
+            "\n".join(b["text"] for b in content if b.get("type") == "text")
+        earlier = _transcript(history[-PLAN_CONTEXT * 3:])
+        prompt = f"[Earlier in this chat, oldest first]\n{earlier}\n[End of the earlier messages]\n\n{note}" \
+            if earlier else note
+
+        async def call(name: str, args: dict) -> tuple[str, bool]:
+            self._plan_calls += 1
+            return await self._run_tool(agent, channel, name, args)
+
+        reply = await self.engine.run("\n\n".join(b["text"] for b in self._system(agent)), prompt,
+                                      list(self.registries[agent]), call, fast=model != self.smart_model,
+                                      max_turns=MAX_TOOL_ROUNDS, effort=self.effort)
+        turn.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
+        return reply
 
     async def _create(self, agent: str, model: str, messages: list[dict]):
         return await self.client.beta.messages.create(**self._request(agent, model, messages))
@@ -665,6 +700,18 @@ _NOTEBOOK = "[Notebook"
 def _nothing(reply: str) -> bool:
     """A watch's way of saying nothing needs the user: NOTHING, give or take punctuation and markdown."""
     return reply.strip().strip(".*_`'\" ").upper() == "NOTHING"
+
+
+def _transcript(history: list[dict]) -> str:
+    """The text of a chat's last PLAN_CONTEXT messages, without tool calls or results, each cut to OLD_RESULT."""
+    lines = []
+    for m in history:
+        c = m["content"]
+        text = (c if isinstance(c, str) else "\n".join(b.get("text", "") for b in c if b.get("type") == "text")).strip()
+        if text:
+            text = text if len(text) <= OLD_RESULT else text[:OLD_RESULT] + " […]"
+            lines.append(f"{'User' if m['role'] == 'user' else 'You'}: {text}")
+    return "\n\n".join(lines[-PLAN_CONTEXT:])
 
 
 def _who(agent: str) -> str:

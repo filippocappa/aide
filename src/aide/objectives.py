@@ -505,7 +505,7 @@ class ObjectivePlanner:
             context, parents = await self.context(period, d, agents)
             most = MOST[period]
             system = PLAN_PROMPT.format(most=most, total=f", and {DAY_TOTAL} in all" if period == "day" else "")
-            answer = await self.engine.ask(system, [{"type": "text", "text": context}], 3000, wait=False)
+            answer = await self.engine.ask(system, [{"type": "text", "text": context}], 3000, background=True)
             items = self._parse(answer, agents, most, parents)
             start = bounds(period, d)[0]
             met = [i for i in items if i["measure"] and self.store.progress(

@@ -32,8 +32,8 @@ class FakeEngine:
         self.replies: list[str] = []
         self.asked: list[dict] = []
 
-    async def ask(self, system, content, max_tokens, fast=False, wait=True):
-        self.asked.append({"system": system, "text": content[0]["text"], "wait": wait})
+    async def ask(self, system, content, max_tokens, fast=False, wait=True, background=False):
+        self.asked.append({"system": system, "text": content[0]["text"], "background": background})
         return self.replies.pop(0) if self.replies else "[]"
 
 
@@ -146,7 +146,7 @@ async def test_a_plan_proposes_from_the_data_within_limits(env):
     ]))
     made = await planner.plan("week", TODAY)
     asked = engine.asked[0]
-    assert asked["wait"] is False  # never held up by the plan's limit
+    assert asked["background"] is True  # background work: never held up by the plan's limit
     assert f"[habit {run.id}] Run, 3 a week" in asked["text"] and "half marathon" in asked["text"]
     assert "Build up to 12 runs" in asked["text"] and "macroeconomics: exam" in asked["text"]
     assert "Dentist" in asked["text"]  # Secretary's calendar

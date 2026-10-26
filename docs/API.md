@@ -776,7 +776,16 @@ least text. The scan runs before notes are written, and with `POST /v1/notebook/
 Since 2026-10-22 (`engine.py`): the heavy study jobs (lecture notes, the notebook, the answer checks and the slide
 scan) go through OpenRouter (paid, the default) or the user's Claude plan, through Claude Code logged in on the
 server (`claude -p`; Sonnet writes, Haiku reads; no API key, so it counts against the plan's limits). Chat is
-always OpenRouter. When the plan's limit is reached mid-job, the job pauses and Professor asks in the course's chat
+always OpenRouter.
+
+Since 2026-10-26, a second switch, `background`, does the same for the work nobody waits on: routines and watches
+(their tool loop runs in Claude Code through the Claude Agent SDK, with Aide's own tools, so queued actions and a
+watch's read-only rule work as before), digest greetings and leave-by plans, mail drafts, chat titles and the
+objectives planner. On the plan they use the same tier as on OpenRouter (Haiku, Sonnet for the planner). At the
+plan's limit they go to OpenRouter without asking, until the reset; a routine whose run fails on the plan before
+it calls any tool runs on OpenRouter instead. The two switches are independent.
+
+When the plan's limit is reached mid-job, the job pauses and Professor asks in the course's chat
 (with a push): wait for the reset, or finish on OpenRouter until then. Nothing goes to OpenRouter without that
 answer; with no answer, the job carries on by itself after the reset. Professor's `notes_writer` tool switches and
 answers too.
@@ -784,10 +793,10 @@ answers too.
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/writer` | | Writer |
-| `PUT /v1/writer` | `{"engine": "claude" or "openrouter"}` | Writer. `409` Claude Code isn't on the server. |
+| `PUT /v1/writer` | `{"engine": "claude" or "openrouter", "background": "claude" or "openrouter"}`, either or both | Writer. `409` Claude Code isn't on the server. |
 | `POST /v1/writer/decide` | `{"use": "wait" or "openrouter"}` | Writer: the answer to a pause. `409` nothing is waiting. |
 
-Writer: `{"engine": "openrouter", "available": true, "usage": {"five_hour": {"used": 0.25, "resets_at": "…Z"},
+Writer: `{"engine": "openrouter", "background": "openrouter", "available": true, "usage": {"five_hour": {"used": 0.25, "resets_at": "…Z"},
 "seven_day": {"used": 0.5, "resets_at": "…Z"}} or null, "paused": {"since": "…Z", "resets_at": "…Z" or null,
 "window": "five_hour", "course": 2 or null} or null, "openrouter_until": "…Z" or null}`. `available`: Claude Code is
 installed on the server. `usage`: the plan's windows as Claude Code last reported them (`used` from 0 to 1; null

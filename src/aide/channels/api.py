@@ -122,7 +122,8 @@ class QuizStart(BaseModel):
 
 
 class WriterIn(BaseModel):
-    engine: Literal["claude", "openrouter"]
+    engine: Literal["claude", "openrouter"] | None = None  # the notes
+    background: Literal["claude", "openrouter"] | None = None  # routines, watches, digests, drafts, titles
 
 
 class WriterDecide(BaseModel):
@@ -1223,9 +1224,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.put("/v1/writer", dependencies=[Depends(auth)])
     async def set_writer(body: WriterIn):
         e = engine_or_404()
-        if body.engine == "claude" and not e.available:
+        if "claude" in (body.engine, body.background) and not e.available:
             raise HTTPException(409, "Claude Code isn't installed on the server")
-        e.set_engine(body.engine)
+        if body.engine:
+            e.set_engine(body.engine)
+        if body.background:
+            e.set_background(body.background)
         return e.status()
 
     @app.post("/v1/writer/decide", dependencies=[Depends(auth)])

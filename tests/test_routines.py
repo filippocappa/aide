@@ -185,6 +185,70 @@ def test_a_run_posts_in_the_chat_and_pushes(env):
     assert [m.get("routine", {}).get("id") for m in last["messages"]] == [r["id"], r["id"], None, None]
 
 
+class FakePlan:
+    """The engine with background work on the Claude plan: run() makes the scripted calls through Aide's own tools,
+    then answers (or fails)."""
+
+    def __init__(self, script=(), reply="From the plan.", fail: Exception | None = None):
+        self.script, self.reply, self.fail = list(script), reply, fail
+        self.runs: list[dict] = []
+        self.results: list = []
+
+    def plan_for_background(self) -> bool:
+        return True
+
+    async def run(self, system, prompt, tools, call, fast=True, max_turns=12, effort=None):
+        self.runs.append({"system": system, "prompt": prompt, "tools": [t.name for t in tools], "fast": fast})
+        for name, args in self.script:
+            self.results.append(await call(name, args))
+        if self.fail:
+            raise self.fail
+        return self.reply
+
+
+def test_a_routine_runs_on_the_claude_plan_when_chosen(env):
+    client, agent, store, push = env()
+    rem = store.create("Old errand", None)
+    agent.engine = FakePlan([("list_reminders", {}), ("delete_reminder", {"reminder_id": rem.id})],
+                            "Cleared one old errand.")
+    r = client.post("/v1/routines", json={**RECAP, "agent": "secretary", "title": "Tidy up"}, headers=AUTH).json()
+    client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH)
+    run = agent.engine.runs[0]
+    assert run["system"].startswith(AGENTS["secretary"].prompt) and "delete_reminder" in run["tools"]
+    assert "Recap my week." in run["prompt"] and agent.client.requests == []
+    assert "Old errand" in agent.engine.results[0][0]
+    assert push.sent[0][1:] == ("Secretary · Tidy up", "Cleared one old errand. (1 action waiting for your OK.)")
+    assert not store.get(rem.id).deleted  # queued in Aide's code, as on OpenRouter
+    stored = agent.db.history(agent.db.app_conversation(r["conversation_id"])["id"])
+    assert [m["role"] for m in stored] == ["user", "assistant"] and "tool_use" not in str(stored)
+
+    agent.engine.script = []
+    client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH)  # the next run reads the chat so far
+    assert "[Earlier in this chat" in agent.engine.runs[1]["prompt"]
+    assert "You: Cleared one old errand." in agent.engine.runs[1]["prompt"]
+
+
+def test_a_watch_on_the_plan_still_cannot_change_anything(env):
+    client, agent, store, push = env()
+    rem = store.create("Old errand", None)
+    agent.engine = FakePlan([("delete_reminder", {"reminder_id": rem.id})], "One old errand you could drop.")
+    r = client.post("/v1/routines", json=WATCH, headers=AUTH).json()
+    client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH)
+    out, err = agent.engine.results[0]
+    assert err and "Not during a check" in out
+    assert agent.db.pending_actions("main", timedelta(minutes=30)) == []
+
+
+async def test_when_the_plan_fails_before_any_tool_the_routine_runs_on_openrouter(env):
+    _, agent, _, push = env([done("From OpenRouter.")])
+    agent.engine = FakePlan(fail=RuntimeError("Claude Code: no login"))
+    r = agent.routines.create(**RECAP)
+    assert await deliver(agent, "main", r, push) == "From OpenRouter."
+    agent.engine = FakePlan([("list_reminders", {})], fail=RuntimeError("Claude Code: gone"))
+    with pytest.raises(RuntimeError):  # a tool ran already: not run twice
+        await deliver(agent, "main", r, push)
+
+
 def test_a_disabled_routine_still_runs_on_request(env):
     client, *_ = env([done("Done.")])
     r = client.post("/v1/routines", json={**RECAP, "enabled": False}, headers=AUTH).json()
