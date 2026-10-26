@@ -29,6 +29,7 @@ struct HabitRow: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(habit.name).font(.body.weight(.medium)).foregroundStyle(Color.primary)
                             Text(Self.detail(habit)).font(.caption).foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
                         }
                         Spacer()
                         if habit.streak > 0 {
@@ -59,7 +60,7 @@ struct HabitRow: View {
             parts.append("\(names) from the Watch")
         }
         if let food = habit.food { parts.append("\(FoodHabit.label(food)) ticks it") }
-        if habit.health == "inhaler_usage" { parts.append("Inhaler Usage from Health") }
+        if habit.health == "inhaler_usage" { parts.append("from Health") }
         return parts.joined(separator: " · ")
     }
 }

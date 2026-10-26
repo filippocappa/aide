@@ -382,8 +382,8 @@ struct TodayView: View {
     }
 }
 
-/// The latest digest on Today: which one and when, the greeting, then the day (events, reminders, last night).
-/// Details opens the rest; Reply starts a chat with Aide about it.
+/// The latest digest on Today, kept small: which one and when, three lines of the greeting, then a line each for
+/// last night and what's next. Tapping it opens the whole digest; the bubble starts a chat with Aide about it.
 private struct DigestCard: View {
     @EnvironmentObject private var model: DigestViewModel
     let digest: Digest
@@ -391,45 +391,72 @@ private struct DigestCard: View {
     let reply: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "sun.horizon.fill").foregroundStyle(Theme.accent)
                 Text(heading).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Button(action: reply) {
+                    Image(systemName: "bubble.left").font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Reply")
             }
-            Text(digest.greeting.markdown).font(.body.weight(.medium)).lineSpacing(3)
-            ForEach(digest.sections.filter(Self.shown)) { section in
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(section.title.uppercased())
-                        .font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(.secondary)
-                    switch section.content {
-                    case .calendar(let events): EventRows(events: events)
-                    case .reminders(let reminders): ReminderRows(reminders: reminders)
-                    case .sleep(let night, let usual): SleepCard(night: night, usualAsleepMin: usual)
-                    default: EmptyView()
+            Button(action: details) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(digest.greeting.markdown).font(.subheadline).lineSpacing(2).lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                    ForEach(lines, id: \.text) { line in
+                        Label {
+                            Text(line.text).lineLimit(1)
+                        } icon: {
+                            Image(systemName: line.icon).foregroundStyle(line.color)
+                        }
+                        .font(.subheadline)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            HStack(spacing: 10) {
-                Button(action: details) {
-                    Label("Details", systemImage: "list.bullet").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                Button(action: reply) {
-                    Label("Reply", systemImage: "bubble.left").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
-            .font(.subheadline.weight(.semibold))
+            .buttonStyle(.plain)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
-    /// The day at a glance; mail, habits, objectives and the rest are behind Details (or elsewhere on Today).
-    private static func shown(_ section: DigestSection) -> Bool {
-        switch section.content {
-        case .calendar, .reminders, .sleep: true
-        default: false
+    private struct Line { let icon: String; let color: Color; let text: String }
+
+    /// Last night, the next two events, the reminders due: one line each.
+    private var lines: [Line] {
+        var out: [Line] = []
+        for section in digest.sections {
+            switch section.content {
+            case .sleep(let night, let usual):
+                var text = "\(SleepCard.duration(night.asleepMin)) asleep"
+                if let usual, abs(night.asleepMin - usual) >= 15 {
+                    let gap = SleepCard.duration(abs(night.asleepMin - usual))
+                    text += night.asleepMin < usual ? " · \(gap) under your usual" : " · \(gap) over your usual"
+                }
+                out.append(Line(icon: "moon.zzz.fill", color: .indigo, text: text))
+            case .calendar(let events):
+                let upcoming = events.filter { $0.allDay || ($0.startDate ?? .distantFuture) > Date() }
+                for event in upcoming.prefix(2) {
+                    let time = event.allDay ? "All day" : event.startDate?.formatted(date: .omitted, time: .shortened) ?? ""
+                    out.append(Line(icon: "calendar", color: Theme.tint(for: event.calendar ?? event.title),
+                                    text: "\(time) \(event.title)"))
+                }
+                if upcoming.count > 2 {
+                    out.append(Line(icon: "ellipsis", color: .secondary, text: "\(upcoming.count - 2) more today"))
+                }
+            case .reminders(let reminders) where !reminders.isEmpty:
+                let open = reminders.filter { !$0.completed }
+                if !open.isEmpty {
+                    out.append(Line(icon: "checklist", color: .orange,
+                                    text: open.count == 1 ? open[0].title : "\(open.count) reminders"))
+                }
+            default: break
+            }
         }
+        return out
     }
 
     /// "Morning · 08:02", "Evening · yesterday 22:00".
