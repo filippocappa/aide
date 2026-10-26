@@ -289,7 +289,7 @@ struct TopicPageView: View {
                 } else if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
                 } else {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+                    SkeletonText()
                 }
             }
             .padding(.horizontal, 16)
@@ -385,7 +385,7 @@ struct LectureView: View {
                 } else if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
                 } else if full == nil {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+                    SkeletonText()
                 }
             }
             .padding(.horizontal, 16)

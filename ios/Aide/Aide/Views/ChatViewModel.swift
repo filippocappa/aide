@@ -33,6 +33,9 @@ final class ChatViewModel: ObservableObject {
     }
     /// Aide first, then the specialists, in the server's order. Just Aide until the server says otherwise.
     @Published private(set) var agents: [Agent] = [.aide]
+    /// The first answers are in (or failed): until then the chat list shows placeholders.
+    @Published private(set) var agentsLoaded = false
+    @Published private(set) var conversationsLoaded = false
     /// The agent the current chat belongs to.
     @Published private(set) var agentID: String {
         didSet { UserDefaults.standard.set(agentID, forKey: Self.agentKey) }
@@ -94,6 +97,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func loadAgents() async {
+        defer { agentsLoaded = true }
         guard let list = try? await api.agents(), !list.isEmpty else { return } // older server: Aide alone
         agents = list
     }
@@ -214,6 +218,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func loadConversations() async {
+        defer { conversationsLoaded = true }
         do {
             conversations = try await api.conversations()
         } catch APIError.server(let status, _) where status == 404 {

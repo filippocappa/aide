@@ -81,7 +81,7 @@ struct ObjectivesView: View {
                     }
                 }
             } else if !planning && error == nil {
-                Section { ProgressView().frame(maxWidth: .infinity) }.listRowBackground(Color.clear)
+                SkeletonSections(sections: 3, rows: 1)
             }
         }
         .scrollContentBackground(.hidden)

@@ -49,6 +49,7 @@
 		879BFFF09ECF6F6D4A039B00 /* NotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A4AEC9022A036D36BF776D /* NotesView.swift */; };
 		9391CA921BA0BA9BC5E1E6BA /* StudyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24233F28207417C05A177C18 /* StudyView.swift */; };
 		9458E33FE7340C8EDED1D46F /* LineBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2712472C5856CDCD16C4FAB /* LineBadge.swift */; };
+		9B7C05BF6AA1755870A8620F /* Skeleton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0707EC0845E48ECBB81D60A4 /* Skeleton.swift */; };
 		A6148BC6CEF952AC9FEFF97C /* WidgetSamples.swift in Sources */ = {isa = PBXBuildFile; fileRef = B767930966E7CE68008A6BC6 /* WidgetSamples.swift */; };
 		A839EDCD73AEB1F1DBD6E437 /* AideApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */; };
 		AA355EF0C809637B2B575280 /* DigestViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78FD630BFAF2C84AC4AF0659 /* DigestViewModel.swift */; };
@@ -114,6 +115,7 @@
 /* Begin PBXFileReference section */
 		0183C66CE418FFB138873C0E /* TeamWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamWidget.swift; sourceTree = "<group>"; };
 		054584741E8F0145B3456003 /* ObjectivesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectivesView.swift; sourceTree = "<group>"; };
+		0707EC0845E48ECBB81D60A4 /* Skeleton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Skeleton.swift; sourceTree = "<group>"; };
 		0A69E8EEFF682D9CF99C9B61 /* AgentLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLiveActivity.swift; sourceTree = "<group>"; };
 		0D0E327019026782069A1BA0 /* AideTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideTests.swift; sourceTree = "<group>"; };
 		0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamChatView.swift; sourceTree = "<group>"; };
@@ -260,6 +262,7 @@
 				BDD7CC531B6DFD14673ABD6C /* LocationService.swift */,
 				87678035748931339F27CC91 /* Photos.swift */,
 				36387E8AE9A51ED3851F3281 /* PushService.swift */,
+				0707EC0845E48ECBB81D60A4 /* Skeleton.swift */,
 				93B823567631C9266E89C0C5 /* SpeechDetector.swift */,
 				95BA6200F2ECB7474C9F8E54 /* Theme.swift */,
 				48D3B662149E81DAF5A28319 /* TouchTracker.swift */,
@@ -546,6 +549,7 @@
 				AA3A37D30E4DCE329F1D78A5 /* RichText.swift in Sources */,
 				77A8815630784AAAA723B773 /* RoutinesView.swift in Sources */,
 				7688764763680AE215A25A25 /* SettingsView.swift in Sources */,
+				9B7C05BF6AA1755870A8620F /* Skeleton.swift in Sources */,
 				F889CC6C37E9D4CC8806D49B /* SleepSummary.swift in Sources */,
 				DF67394A3A18D94603A30688 /* SpeechDetector.swift in Sources */,
 				9391CA921BA0BA9BC5E1E6BA /* StudyView.swift in Sources */,

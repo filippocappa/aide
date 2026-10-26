@@ -10,6 +10,8 @@ struct DigestView: View {
         VStack(alignment: .leading, spacing: 28) {
             if let digest {
                 Text(digest.greeting.markdown).font(.title3.weight(.medium)).lineSpacing(4)
+            } else if model.isLoading {
+                SkeletonText(paragraphs: 2)
             } else {
                 Text("No \(model.kind.label.lowercased()) digest yet.").foregroundStyle(.secondary)
             }

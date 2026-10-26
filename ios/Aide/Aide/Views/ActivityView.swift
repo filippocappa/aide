@@ -67,7 +67,7 @@ struct ActivitySheet: View {
                     }
                 }
                 if !loaded && error == nil {
-                    Section { ProgressView().frame(maxWidth: .infinity) }.listRowBackground(Color.clear)
+                    SkeletonSections(sections: 2, rows: 3)
                 }
             }
             .scrollContentBackground(.hidden)

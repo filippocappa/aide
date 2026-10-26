@@ -28,7 +28,7 @@ struct StudyView: View {
                         if courses.isEmpty { Text("Courses come from the timetable calendar.") }
                     }
                 } else if error == nil {
-                    ProgressView().frame(maxWidth: .infinity)
+                    SkeletonSections(sections: 1, rows: 3, mark: false)
                 }
             }
             .navigationTitle("Study")

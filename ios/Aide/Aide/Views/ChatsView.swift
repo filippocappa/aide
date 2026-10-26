@@ -36,7 +36,11 @@ struct ChatsView: View {
                     card(chat.orchestrator, wide: true)
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                               spacing: 12) {
-                        ForEach(chat.agents.filter { !$0.orchestrator }) { card($0, wide: false) }
+                        if chat.agentsLoaded || !settings.isConfigured {
+                            ForEach(chat.agents.filter { !$0.orchestrator }) { card($0, wide: false) }
+                        } else {
+                            ForEach(0..<4, id: \.self) { _ in AgentCardPlaceholder() }
+                        }
                     }
                     TeamCard(agents: chat.agents, latest: chat.team.last,
                              name: { $0 == "user" ? "You" : chat.agent($0).name }) { showTeam = true }
@@ -127,7 +131,9 @@ struct ChatsView: View {
     }
 
     private func card(_ agent: Agent, wide: Bool) -> some View {
-        AgentCard(agent: agent, latest: chat.chats(with: agent).first, wide: wide, mood: settings.isConfigured ? "awake" : "sleeping") {
+        AgentCard(agent: agent, latest: chat.chats(with: agent).first, wide: wide,
+                  mood: settings.isConfigured ? "awake" : "sleeping",
+                  loading: settings.isConfigured && !chat.conversationsLoaded) {
             Task { await chat.talk(to: agent) }
         }
         .disabled(!settings.isConfigured)
@@ -199,6 +205,8 @@ private struct AgentCard: View {
     let latest: Conversation?
     let wide: Bool
     let mood: String
+    /// The chats are on their way: placeholder lines instead of the role.
+    var loading = false
     let open: () -> Void
 
     var body: some View {
@@ -247,7 +255,20 @@ private struct AgentCard: View {
         }
     }
 
-    private func line(_ lines: Int) -> some View {
+    @ViewBuilder private func line(_ lines: Int) -> some View {
+        if loading {
+            VStack(alignment: .leading, spacing: 7) {
+                SkeletonBar(height: 11)
+                SkeletonBar(width: wide ? 150 : 70, height: 11)
+            }
+            .padding(.vertical, 3)
+            .shimmering()
+        } else {
+            previewText(lines)
+        }
+    }
+
+    private func previewText(_ lines: Int) -> some View {
         Text(preview)
             .font(.subheadline)
             .foregroundStyle(.secondary)
@@ -258,6 +279,27 @@ private struct AgentCard: View {
     private var preview: String {
         if let preview = latest?.preview, !preview.isEmpty { return preview }
         return agent.role.isEmpty ? "Say hi" : agent.role
+    }
+}
+
+/// A specialist's card while the team is on its way: the same size, grey shapes for the figure and the words.
+private struct AgentCardPlaceholder: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Circle().fill(Color.secondary.opacity(0.16)).frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 8) {
+                SkeletonBar(width: 80, height: 14)
+                SkeletonBar(height: 11)
+                SkeletonBar(width: 70, height: 11)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 128, alignment: .top)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shimmering()
+        .accessibilityHidden(true)
     }
 }
 
