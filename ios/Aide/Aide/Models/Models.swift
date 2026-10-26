@@ -386,6 +386,8 @@ struct Habit: Decodable, Identifiable, Hashable {
     struct Cadence: Decodable, Hashable {
         let type: String
         let perWeek: Int?
+        /// A limit habit's most a day.
+        var max: Int? = nil
     }
     let id: Int
     let name: String
@@ -397,19 +399,63 @@ struct Habit: Decodable, Identifiable, Hashable {
     var history: [String]?
     /// Watch workout types that check it by themselves (docs/API.md, "Workout types"). Missing from older servers.
     var workouts: [String]?
+    /// The food log ticks it: "logged", "protein_g" or "calories". nil: not from food (or an older server).
+    var food: String? = nil
+    /// A limit habit's count today; nil on other habits.
+    var count: Int? = nil
+    /// A limit habit's counts by local date, the last 26 weeks (days over 0 only).
+    var counts: [String: Int]? = nil
+
+    var isLimit: Bool { cadence.type == "limit" }
+    var isWeekly: Bool { cadence.type == "weekly" }
 
     var cadenceText: String {
-        cadence.type == "weekly" ? "\(cadence.perWeek ?? 1)× a week" : "Every day"
+        switch cadence.type {
+        case "weekly": "\(cadence.perWeek ?? 1)× a week"
+        case "limit": "At most \(cadence.max ?? 1) a day"
+        default: "Every day"
+        }
+    }
+
+    /// Done days this Monday-to-Sunday week, for a weekly habit.
+    var thisWeek: Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.firstWeekday = 2
+        guard let monday = calendar.dateInterval(of: .weekOfYear, for: Date())?.start else { return 0 }
+        let first = Wire.dayString(monday)
+        return (history ?? []).filter { $0 >= first }.count
     }
 }
 struct HabitList: Decodable { let habits: [Habit] }
 struct HabitCheck: Encodable { var done: Bool }
+struct HabitCount: Encodable { var add: Int }
 /// The body of `POST /v1/habits` and `PATCH /v1/habits/{id}`.
 struct HabitNew: Encodable {
-    struct Cadence: Encodable { var type: String; var perWeek: Int? }
+    struct Cadence: Encodable { var type: String; var perWeek: Int?; var max: Int? = nil }
     var name: String
     var cadence: Cadence
     var workouts: [String] = []
+    /// Always sent, so clearing it in the editor clears it on the server.
+    var food: String?
+
+    enum CodingKeys: String, CodingKey { case name, cadence, workouts, food }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(cadence, forKey: .cadence)
+        try c.encode(workouts, forKey: .workouts)
+        try c.encode(food, forKey: .food) // null too
+    }
+}
+
+/// What the food log can tick a habit with (docs/API.md, Habits).
+enum FoodHabit {
+    static let all: [(id: String, label: String)] = [
+        ("logged", "A meal logged"), ("protein_g", "At the protein goal"), ("calories", "At the calorie goal"),
+    ]
+
+    static func label(_ id: String) -> String { all.first { $0.id == id }?.label ?? id }
 }
 
 /// Labels for the workout types a habit can be checked by, in the order the picker shows them.

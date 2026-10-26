@@ -119,6 +119,13 @@ private struct HabitRows: View {
     var body: some View {
         ForEach(habits) { original in
             let habit = model.habitOverrides[original.id] ?? original
+            if habit.isLimit {
+                HStack(spacing: 12) {
+                    Text(habit.name)
+                    Spacer(minLength: 0)
+                    LimitCounter(habit: habit) { n in Task { await model.count(habit, add: n) } }
+                }
+            } else {
             Button {
                 Task { await model.toggle(habit) }
             } label: {
@@ -136,6 +143,7 @@ private struct HabitRows: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            }
         }
     }
 }

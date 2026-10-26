@@ -4,15 +4,20 @@ import UserNotifications
 /// What a tapped notification asks the app to show (docs/API.md, Push).
 enum PushRoute: Equatable {
     case today
+    /// A digest is ready: Today, on its card.
     case digest(String)
     case conversation(String)
+    /// A routine's or watch's post: Today, on the team's notes (its chat opens from there).
+    case note(String)
+    /// The Chats tab, e.g. after starting a chat from Today.
+    case chats
     /// New course files (their ids), or (`login`) the Moodle login has expired.
     case moodle(login: Bool, files: [String] = [])
     /// From widgets and Live Activities (`aide://…` links): the Team chat, an agent's latest chat, talking to Aide.
     case team
     case agent(String)
     case voice
-    /// The Objectives and Health tabs.
+    /// Today's habits and objectives, and the Health tab.
     case objectives
     case health
 
@@ -41,7 +46,7 @@ enum PushRoute: Equatable {
         case "digest": self = .digest(aide["digest"] as? String ?? "daily")
         case "message":
             guard let id = aide["conversation_id"] as? String else { return nil }
-            self = .conversation(id)
+            self = aide["routine"] != nil ? .note(id) : .conversation(id)
         case "moodle": self = .moodle(login: aide["login"] as? Bool ?? false, files: aide["files"] as? [String] ?? [])
         default: return nil
         }

@@ -144,9 +144,9 @@ final class ChatViewModel: ObservableObject {
         if let latest = chats(with: agent).first { await open(latest) } else { await startChat(with: agent) }
     }
 
-    /// The agent's chats, newest first.
+    /// The agent's chats, newest first. Not routine chats: their posts are notes on Today, which opens them.
     func chats(with agent: Agent) -> [Conversation] {
-        conversations.filter { self.agent($0.agent).id == agent.id }
+        conversations.filter { self.agent($0.agent).id == agent.id && $0.routine == nil }
     }
 
     /// The digest that fits the time of day: "daily" (morning) before 17:00, "evening" after.

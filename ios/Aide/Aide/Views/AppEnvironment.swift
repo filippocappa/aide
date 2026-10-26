@@ -23,6 +23,8 @@ final class AppEnvironment: ObservableObject {
     @Published var newFiles: NewFiles?
     /// The Team chat, from a widget or a Live Activity (`aide://team`); the home screen opens it and clears this.
     @Published var showTeam = false
+    /// Where Today should scroll to; Today clears it.
+    @Published var todayFocus: TodayFocus?
 
     private init() {
         let settings = AppSettings()
@@ -82,7 +84,7 @@ final class AppEnvironment: ObservableObject {
         async let agents: Void = chat.loadAgents()
         async let history: Void = chat.loadHistory()
         async let conversations: Void = chat.loadConversations()
-        async let digestLoad: Void = digest.load()
+        async let digestLoad: Void = digest.loadLatest()
         async let pushRefresh: Void = push.refresh()
         async let healthUpload = health.upload()
         location.refresh()
@@ -100,11 +102,14 @@ final class AppEnvironment: ObservableObject {
     func open(_ route: PushRoute) async {
         switch route {
         case .today:
+            todayFocus = .top
             await sync.sync()
-            digest.kind = .daily
-            digest.isPresented = true
-        case .digest(let kind):
-            await chat.startNewChat(digest: kind)
+        case .digest:
+            todayFocus = .digest
+        case .note:
+            todayFocus = .notes
+        case .objectives:
+            todayFocus = .habits
         case .conversation(let id):
             await chat.open(id: id)
         case .moodle(let login, let files):
@@ -117,7 +122,7 @@ final class AppEnvironment: ObservableObject {
         case .voice:
             await chat.newChat(with: chat.orchestrator)
             if !voice.isActive { await voice.toggle() }
-        case .objectives, .health:
+        case .health, .chats:
             break // tabs, switched by ContentView
         }
     }

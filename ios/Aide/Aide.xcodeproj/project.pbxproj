@@ -27,6 +27,7 @@
 		44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289CE8321C0A5A80F6B92C /* MoodleView.swift */; };
 		491F45628A791B6298C0076C /* DeparturesCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F38E82A30132956316CD8AC /* DeparturesCard.swift */; };
 		4FB496AD42CA08D51DDFEF94 /* AgentLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A69E8EEFF682D9CF99C9B61 /* AgentLiveActivity.swift */; };
+		51273D15EB4478AF03C06D80 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA08F1D7D45CEF403CEF6E48 /* TodayView.swift */; };
 		538C12160BE5E1402129DBF0 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
 		583CA03CCC0F99FEB9CC3EB6 /* HealthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAE455930B7B7F343EF3E0F7 /* HealthService.swift */; };
 		5896E96FF0FB87722CA47D83 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DFEF5446D771554DAAA7229 /* AppSettings.swift */; };
@@ -40,6 +41,7 @@
 		6DA7ACDE971323C214D45600 /* TeamWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0183C66CE418FFB138873C0E /* TeamWidget.swift */; };
 		6F50A0BBCD8AE4B87A0300EC /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32DFE4D7AD03B872AE8A96C /* Models.swift */; };
 		6FFB4761315BC0B5CD78D8C6 /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36387E8AE9A51ED3851F3281 /* PushService.swift */; };
+		731F6A69DA90B3592DCAF24B /* HabitIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FA885056211A769DEA36F2 /* HabitIntents.swift */; };
 		7688764763680AE215A25A25 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB893CFE71A535E6990CADF /* SettingsView.swift */; };
 		77A8815630784AAAA723B773 /* RoutinesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53C02A40AE154F5373B2E531 /* RoutinesView.swift */; };
 		77F46E3BE8C9B9AF42649FB9 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DFEF5446D771554DAAA7229 /* AppSettings.swift */; };
@@ -72,11 +74,13 @@
 		DD8C7BFE0F07FFAABDD8DC63 /* DigestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */; };
 		DF67394A3A18D94603A30688 /* SpeechDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B823567631C9266E89C0C5 /* SpeechDetector.swift */; };
 		DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B4431689B0F772EB8EDA27 /* LivePebble.swift */; };
+		DFBDF3B9BAA93D0DEB902233 /* HabitControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FF2F172DF24BB3119602573 /* HabitControl.swift */; };
 		E0244E5AF24BFFC84C55D2A4 /* VoicePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */; };
 		E4BACF93150EA9F47597B833 /* DeparturesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F534E81CB6CBAEDF422485 /* DeparturesWidget.swift */; };
 		EA7898D2B9F95FC9F72530FD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */; };
 		EC4367366F1C80C9EE522308 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		EE7CC3F0646FABF4F63B420B /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */; };
+		F4CBC49331862920D6DD3CC7 /* HabitIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FA885056211A769DEA36F2 /* HabitIntents.swift */; };
 		F6B00D2F77B7F975287A6827 /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18F809AD4D845567498CDA11 /* WidgetIntents.swift */; };
 		F889CC6C37E9D4CC8806D49B /* SleepSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */; };
 		FA49E57FDF31B7507D385EA8 /* DraftViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 772E51ADF548B97CFFD4C44D /* DraftViews.swift */; };
@@ -129,6 +133,7 @@
 		1F289CE8321C0A5A80F6B92C /* MoodleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoodleView.swift; sourceTree = "<group>"; };
 		24233F28207417C05A177C18 /* StudyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudyView.swift; sourceTree = "<group>"; };
 		27B91716B1D5968DBC47F553 /* AideWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AideWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		2FF2F172DF24BB3119602573 /* HabitControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitControl.swift; sourceTree = "<group>"; };
 		31E717ACC950E43DC53B945E /* RichText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichText.swift; sourceTree = "<group>"; };
 		36387E8AE9A51ED3851F3281 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryView.swift; sourceTree = "<group>"; };
@@ -140,6 +145,7 @@
 		50F534E81CB6CBAEDF422485 /* DeparturesWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeparturesWidget.swift; sourceTree = "<group>"; };
 		5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		53C02A40AE154F5373B2E531 /* RoutinesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutinesView.swift; sourceTree = "<group>"; };
+		55FA885056211A769DEA36F2 /* HabitIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitIntents.swift; sourceTree = "<group>"; };
 		57E832869DBA4E90B67C6D56 /* LiveActivities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivities.swift; sourceTree = "<group>"; };
 		58AE8C76701A110B13945027 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		591D1D0440D0AE931595EE83 /* HealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthView.swift; sourceTree = "<group>"; };
@@ -178,6 +184,7 @@
 		CAE455930B7B7F343EF3E0F7 /* HealthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthService.swift; sourceTree = "<group>"; };
 		CEA0AF3C34ADA2A7F1F3492E /* TramLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TramLiveActivity.swift; sourceTree = "<group>"; };
 		CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		DA08F1D7D45CEF403CEF6E48 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
 		DBB893CFE71A535E6990CADF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		DDFDB90CA977D76111828E4F /* FoodViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodViews.swift; sourceTree = "<group>"; };
 		DFD117E9E143D868B430B441 /* AideWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AideWidgets.entitlements; sourceTree = "<group>"; };
@@ -223,6 +230,7 @@
 				031232FED72D4C9A787D8843 /* StudyCards.swift */,
 				24233F28207417C05A177C18 /* StudyView.swift */,
 				0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */,
+				DA08F1D7D45CEF403CEF6E48 /* TodayView.swift */,
 				AE34FAE9A713F5C8D1AE1DA5 /* TransitAlertsView.swift */,
 				7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */,
 			);
@@ -240,6 +248,7 @@
 		232F74A84F5C3BB3A4604639 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				55FA885056211A769DEA36F2 /* HabitIntents.swift */,
 				B2712472C5856CDCD16C4FAB /* LineBadge.swift */,
 				48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */,
 			);
@@ -293,6 +302,7 @@
 				DFD117E9E143D868B430B441 /* AideWidgets.entitlements */,
 				F7399AF7109C6333CB3244BC /* AideWidgets.swift */,
 				50F534E81CB6CBAEDF422485 /* DeparturesWidget.swift */,
+				2FF2F172DF24BB3119602573 /* HabitControl.swift */,
 				3D2F5F2B76D809AD012067BF /* HealthWidget.swift */,
 				E6A623639391457CF5AA5349 /* Info.plist */,
 				9F02CCB66A67DA8AD790FF51 /* ObjectivesWidget.swift */,
@@ -497,6 +507,8 @@
 				5896E96FF0FB87722CA47D83 /* AppSettings.swift in Sources */,
 				E4BACF93150EA9F47597B833 /* DeparturesWidget.swift in Sources */,
 				7F9041E9C2D02598155BA0C1 /* Figure.swift in Sources */,
+				DFBDF3B9BAA93D0DEB902233 /* HabitControl.swift in Sources */,
+				731F6A69DA90B3592DCAF24B /* HabitIntents.swift in Sources */,
 				3ED4F27F4BDF47BC7C5CCE36 /* HealthWidget.swift in Sources */,
 				EC4367366F1C80C9EE522308 /* Keychain.swift in Sources */,
 				604B0E7F4A64D6A407C64C90 /* LineBadge.swift in Sources */,
@@ -535,6 +547,7 @@
 				FA49E57FDF31B7507D385EA8 /* DraftViews.swift in Sources */,
 				B498B793AEFA7987A267B6D0 /* Figure.swift in Sources */,
 				DCCB151C61A44732969A6427 /* FoodViews.swift in Sources */,
+				F4CBC49331862920D6DD3CC7 /* HabitIntents.swift in Sources */,
 				C09D1B1769A15612EC00F4D0 /* HabitsView.swift in Sources */,
 				583CA03CCC0F99FEB9CC3EB6 /* HealthService.swift in Sources */,
 				CDA6BD42FE40FA43362C4856 /* HealthView.swift in Sources */,
@@ -563,6 +576,7 @@
 				9391CA921BA0BA9BC5E1E6BA /* StudyView.swift in Sources */,
 				D70DECEDF4E4EC132639432C /* TeamChatView.swift in Sources */,
 				B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */,
+				51273D15EB4478AF03C06D80 /* TodayView.swift in Sources */,
 				675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */,
 				5AA6A9DA665C8AA1D1152131 /* TransitAlertsView.swift in Sources */,
 				B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */,

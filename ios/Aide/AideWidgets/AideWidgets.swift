@@ -11,5 +11,6 @@ struct AideWidgets: WidgetBundle {
         DeparturesWidget()
         TramLiveActivity()
         AgentLiveActivity()
+        if #available(iOS 18.0, *) { HabitControl() }
     }
 }

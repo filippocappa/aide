@@ -140,6 +140,9 @@ struct HealthWidgetView: View {
             }
             // Still to do first: those are the ones to tap.
             ForEach(Array(list.sorted { !$0.doneToday && $1.doneToday }.prefix(limit))) { habit in
+                if habit.isLimit {
+                    limitRow(habit)
+                } else {
                 Button(intent: CheckHabitIntent(id: habit.id, done: !habit.doneToday)) {
                     HStack(spacing: 6) {
                         Image(systemName: habit.doneToday ? "checkmark.circle.fill" : "circle")
@@ -153,9 +156,25 @@ struct HealthWidgetView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                }
             }
             Spacer(minLength: 0)
         }
+    }
+
+    /// A limit habit: "2/5" and a + that logs one.
+    private func limitRow(_ habit: Habit) -> some View {
+        let n = habit.count ?? 0, most = habit.cadence.max ?? 0
+        return Button(intent: LogHabitIntent(habit: HabitEntity(id: habit.id, name: habit.name))) {
+            HStack(spacing: 6) {
+                Image(systemName: "plus.circle.fill").foregroundStyle(n > most ? .red : coach)
+                Text(habit.name).font(.subheadline).lineLimit(1)
+                Spacer(minLength: 0)
+                Text("\(n)/\(most)").font(.caption.weight(.semibold)).monospacedDigit()
+                    .foregroundStyle(n > most ? .red : .secondary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

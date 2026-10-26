@@ -105,20 +105,22 @@ struct ContentView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
-    @State private var tab = Tab.chat
-    @State private var objectivesWaiting = 0
+    @EnvironmentObject private var digest: DigestViewModel
+    @State private var tab = Tab.today
+    /// Things waiting for your OK, on Today's badge.
+    @State private var waiting = 0
 
-    enum Tab { case chat, objectives, study, health, settings }
+    enum Tab { case today, chat, study, health, settings }
 
     var body: some View {
         TabView(selection: $tab) {
+            TodayView(waiting: $waiting)
+                .tabItem { Label("Today", systemImage: "sun.horizon") }
+                .tag(Tab.today)
+                .badge(waiting)
             ChatsView()
                 .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                 .tag(Tab.chat)
-            ObjectivesView(waiting: $objectivesWaiting)
-                .tabItem { Label("Objectives", systemImage: "scope") }
-                .tag(Tab.objectives)
-                .badge(objectivesWaiting)
             StudyView()
                 .tabItem { Label("Study", systemImage: "book") }
                 .tag(Tab.study)
@@ -132,29 +134,30 @@ struct ContentView: View {
         .onAppear {
             if !settings.isConfigured { tab = .settings }
             #if DEBUG
-            // Simulator screenshots: `-previewTab objectives`, `health` (or `habits`), `study` or `settings`.
+            // Simulator screenshots: `-previewTab chat`, `health`, `study` or `settings` (Today otherwise).
             if settings.isPreview, let name = UserDefaults.standard.string(forKey: "previewTab") {
                 tab = switch name {
-                case "objectives": .objectives
-                case "health", "habits": .health
+                case "chat", "chats": .chat
+                case "health": .health
                 case "study": .study
                 case "settings": .settings
-                default: .chat
+                default: .today
                 }
             }
             #endif
         }
-        // The badge, before the tab is first opened; the tab keeps it current after that.
+        // The badge, before Today first loads; Today keeps it current after that.
         .task(id: settings.isConfigured) {
-            if settings.isConfigured, let o = try? await env.api.objectives() { objectivesWaiting = o.waiting }
+            if settings.isConfigured, let a = try? await env.api.approvals() { waiting = a.waiting }
         }
         // onReceive also sees a route set before this view existed (a tap that launched the app).
         .onReceive(push.$route.compactMap { $0 }) { route in
             push.route = nil
             guard settings.isConfigured else { return }
             switch route {
-            case .objectives: tab = .objectives; return
+            case .today, .digest, .note, .objectives: tab = .today
             case .health: tab = .health; return
+            case .chats: tab = .chat; return
             case .moodle: break // a sheet over any tab
             default: tab = .chat
             }
@@ -167,5 +170,6 @@ struct ContentView: View {
             }
         }
         .sheet(item: $env.newFiles) { NewFilesSheet(ids: $0.ids) }
+        .sheet(isPresented: $digest.isPresented) { DigestSheet() }
     }
 }

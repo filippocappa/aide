@@ -659,6 +659,24 @@ final class HealthTests: XCTestCase {
         let json = #"{"id":3,"name":"Gym","cadence":{"type":"daily"},"streak":0,"done_today":false,"last_done":null}"#
         XCTAssertNil(try JSONDecoder.api.decode(Habit.self, from: Data(json.utf8)).workouts)
     }
+
+    func testLimitHabit() throws {
+        let json = #"""
+        {"id":4,"name":"Coffee","cadence":{"type":"limit","max":5},"streak":2,"done_today":true,"last_done":"2026-10-25",
+         "history":["2026-10-24","2026-10-25"],"workouts":[],"food":null,"count":2,"counts":{"2026-10-26":2}}
+        """#
+        let habit = try JSONDecoder.api.decode(Habit.self, from: Data(json.utf8))
+        XCTAssertTrue(habit.isLimit)
+        XCTAssertEqual(habit.cadence.max, 5)
+        XCTAssertEqual(habit.count, 2)
+        XCTAssertEqual(HabitRow.detail(habit), "At most 5 a day · 2 today")
+    }
+
+    func testNewHabitSendsFoodEvenWhenOff() throws {
+        let new = HabitNew(name: "Eat well", cadence: .init(type: "daily", perWeek: nil), workouts: [], food: nil)
+        let json = String(decoding: try JSONEncoder.api.encode(new), as: UTF8.self)
+        XCTAssertTrue(json.contains(#""food":null"#), json)
+    }
 }
 
 final class AgentTests: XCTestCase {

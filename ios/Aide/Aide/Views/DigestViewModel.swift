@@ -13,9 +13,13 @@ final class DigestViewModel: ObservableObject {
     }
 
     @Published var kind: Kind = .daily
-    /// The digest sheet is up (from the chat header, the Details link or a reminder notification).
+    /// The digest sheet is up (from Today's Details, or the Details link under a digest chat).
     @Published var isPresented = false
+    /// The kind picked in the sheet.
     @Published private(set) var digest: Digest?
+    /// Whichever digest was made last, for the card on Today; nil before the first one.
+    @Published private(set) var latest: Digest?
+    @Published private(set) var latestLoaded = false
     @Published private(set) var isLoading = false
     /// True once any digest has loaded, so the picker stays when one period has none yet.
     @Published private(set) var hasDigests = false
@@ -47,6 +51,26 @@ final class DigestViewModel: ObservableObject {
         } catch {
             digest = nil // 404 until the first digest exists; the empty chat falls back to suggestions
         }
+    }
+
+    /// The card on Today. An older server doesn't know `latest`: the one for the time of day.
+    func loadLatest() async {
+        defer { latestLoaded = true }
+        do {
+            latest = try await api.digest(kind: "latest")
+        } catch APIError.server(400, _) {
+            latest = try? await api.digest(kind: ChatViewModel.digestKind())
+        } catch APIError.server(404, _) {
+            latest = nil
+        } catch {
+            // offline: keep what's shown
+        }
+    }
+
+    /// The sheet, on the latest digest's kind.
+    func showLatest() {
+        kind = latest.flatMap { Kind(rawValue: $0.kind) } ?? .daily
+        isPresented = true
     }
 
     func setCompleted(_ reminder: Reminder, _ done: Bool) async {
@@ -88,5 +112,10 @@ final class DigestViewModel: ObservableObject {
         if let updated = try? await api.checkHabit(habit.id, done: !current.doneToday) {
             habitOverrides[habit.id] = updated
         }
+    }
+
+    /// A limit habit: one more (1) or one back (-1).
+    func count(_ habit: Habit, add: Int) async {
+        if let updated = try? await api.countHabit(habit.id, add: add) { habitOverrides[habit.id] = updated }
     }
 }

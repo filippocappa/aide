@@ -2,11 +2,11 @@ import SwiftUI
 
 /// The Chats tab: your team. Aide on a wide card on top, the specialists two by two below, each alive in its own
 /// colour with the last line of its latest chat. Tapping a card carries on that chat (or starts one); long-press
-/// for a new chat or past chats. A chat opens on top. Below them, the team's own group chat.
+/// for a new chat or past chats. A chat opens on top. Below them, the team's own group chat. Only conversations:
+/// digests, routines' and watches' posts and what's waiting for you are on Today.
 struct ChatsView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var digest: DigestViewModel
     @EnvironmentObject private var env: AppEnvironment
     @State private var pastChats: Agent?
     @State private var routinesFor: Agent?
@@ -16,12 +16,10 @@ struct ChatsView: View {
     @State private var showTeam = false
     /// Picked with "Open chat" in the team chat; opened once that screen is gone.
     @State private var openAfterTeam: String?
-    /// The Activity sheet: everyone's (`.everyone`) or one agent's.
+    /// An agent's Activity sheet.
     @State private var activity: ActivityScope?
     /// Picked in the Activity sheet; opened once it's gone.
     @State private var openAfterActivity: String?
-    /// Things waiting for your OK, for the bell's badge.
-    @State private var waiting = 0
 
     var body: some View {
         NavigationStack {
@@ -94,40 +92,13 @@ struct ChatsView: View {
                 }
             }
         }
-        .sheet(isPresented: $digest.isPresented) { DigestSheet() }
     }
 
     private var header: some View {
-        HStack(alignment: .center) {
-            Text("Your team").font(.largeTitle.bold())
-            Spacer()
-            Button { activity = .everyone } label: {
-                HeaderIcon(name: "bell")
-                    .overlay(alignment: .topTrailing) {
-                        if waiting > 0 {
-                            Text("\(waiting)")
-                                .font(.caption2.weight(.bold)).monospacedDigit()
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 5)
-                                .frame(minWidth: 18, minHeight: 18)
-                                .background(.red, in: Capsule())
-                                .offset(x: 4, y: -2)
-                        }
-                    }
-            }
-                .buttonStyle(.plain)
-                .accessibilityLabel(waiting > 0 ? "Activity, \(waiting) waiting for you" : "Activity")
-                .disabled(!settings.isConfigured)
-            Button {
-                digest.kind = DigestViewModel.Kind(rawValue: ChatViewModel.digestKind()) ?? .daily
-                digest.isPresented = true
-            } label: { HeaderIcon(name: "sun.horizon") }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Digest")
-                .disabled(!settings.isConfigured)
-        }
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        Text("Your team").font(.largeTitle.bold())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
     }
 
     private func card(_ agent: Agent, wide: Bool) -> some View {
@@ -150,18 +121,15 @@ struct ChatsView: View {
         async let agents: Void = chat.loadAgents()
         async let team: Void = chat.loadTeam()
         async let routines: Void = chat.loadRoutines()
-        async let approvals = try? env.api.approvals()
         await chat.loadConversations()
         await agents
         await team
         await routines
-        if let approvals = await approvals { waiting = approvals.waiting } // an older server: no badge
     }
 
     /// A line tapped in the Activity sheet: its chat. "team" is the team chat, "main" the old shared chat, which the
     /// app shows as Aide's latest.
     private func afterActivity() {
-        Task { await load() } // answered something: the badge may have changed
         guard let id = openAfterActivity else { return }
         openAfterActivity = nil
         switch id {

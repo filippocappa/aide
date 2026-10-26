@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The Health tab, in three pages. Body: what Apple Health says (sleep, recovery, activity, workouts), each opening
+/// The Health tab, in two pages. Body: what Apple Health says (sleep, recovery, activity, workouts), each opening
 /// its chart. Food: what you ate, day by day; meals come from a photo (or a few words) that Coach names and
-/// estimates; tap one to fix the numbers, swipe to delete. Habits: tick off, edit and delete.
+/// estimates; tap one to fix the numbers, swipe to delete. (Habits are on Today.)
 struct HealthView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var settings: AppSettings
@@ -33,12 +33,6 @@ struct HealthView: View {
     @State private var showGoals = false
     @State private var editingMeal: Meal?
 
-    @State private var habits: [Habit] = []
-    @State private var habitsLoaded = false
-    @State private var habitsError: String?
-    @State private var addingHabit = false
-    @State private var editingHabit: Habit?
-
     private var coach: Agent { chat.agent("coach") }
 
     /// The last seven days, today last.
@@ -56,7 +50,6 @@ struct HealthView: View {
                     Picker("Page", selection: $page) {
                         Text("Body").tag("body")
                         if !noFood { Text("Food").tag("food") }
-                        Text("Habits").tag("habits")
                     }
                     .pickerStyle(.segmented)
                     .listRowBackground(Color.clear)
@@ -74,8 +67,6 @@ struct HealthView: View {
                     // Its own section: a clear row inside the card's section cut off the card's rounded bottom.
                     Section { logButton }
                     mealsSection
-                case "habits":
-                    habitsSection
                 default:
                     BodySections(days: bodyDays, error: bodyError) { metric = $0 }
                 }
@@ -90,8 +81,6 @@ struct HealthView: View {
             .sheet(item: $editingMeal) { meal in
                 MealSheet(meal: meal, save: { await update(meal, $0) }, delete: { await remove(meal) })
             }
-            .sheet(isPresented: $addingHabit) { HabitSheet(habit: nil) { await addHabit($0) } }
-            .sheet(item: $editingHabit) { habit in HabitSheet(habit: habit) { await updateHabit(habit, $0) } }
             .alert("What did you eat?", isPresented: $describing) {
                 TextField("A cappuccino and a croissant", text: $mealText)
                 Button("Cancel", role: .cancel) { mealText = "" }
@@ -107,11 +96,9 @@ struct HealthView: View {
             .refreshable {
                 async let food: Void = loadFood()
                 async let body: Void = loadBody(upload: true)
-                await loadHabits()
                 await food
                 await body
             }
-            .task { await loadHabits() }
             .task {
                 await loadBody()
                 #if DEBUG
@@ -300,78 +287,6 @@ struct HealthView: View {
     private func saveGoals(_ goals: FoodGoals) async -> String? {
         do {
             food?.goals = try await env.api.saveFoodGoals(goals)
-            return nil
-        } catch { return error.localizedDescription }
-    }
-
-    // MARK: Habits
-
-    private var habitsSection: some View {
-        Section {
-            if let habitsError {
-                Label(habitsError, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
-            }
-            if !habitsLoaded && settings.isConfigured {
-                ForEach(0..<3, id: \.self) { i in SkeletonRow(widths: SkeletonRow.widths[i]) }
-            }
-            if habits.isEmpty && habitsLoaded && habitsError == nil {
-                Text("No habits yet. Tap + to add one, or tell Aide in chat: \"add a gym habit, three times a week\".")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(habits) { habit in
-                HabitRow(habit: habit, toggle: { Task { await toggle(habit) } }, edit: { editingHabit = habit })
-            }
-            .onDelete { offsets in
-                let doomed = offsets.map { habits[$0] }
-                Task { for h in doomed { await removeHabit(h) } }
-            }
-        } header: {
-            HStack {
-                Text("Habits")
-                Spacer()
-                Button { addingHabit = true } label: { Image(systemName: "plus") }
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityLabel("Add habit")
-                    .disabled(!settings.isConfigured)
-            }
-        }
-        .listRowBackground(Theme.row)
-    }
-
-    private func loadHabits() async {
-        guard settings.isConfigured else { return }
-        do { habits = try await env.api.habits(); habitsError = nil } catch { habitsError = error.localizedDescription }
-        habitsLoaded = true
-    }
-
-    private func toggle(_ habit: Habit) async {
-        do {
-            let updated = try await env.api.checkHabit(habit.id, done: !habit.doneToday)
-            if let i = habits.firstIndex(where: { $0.id == habit.id }) { habits[i] = updated }
-        } catch { habitsError = error.localizedDescription }
-    }
-
-    private func removeHabit(_ habit: Habit) async {
-        do {
-            try await env.api.deleteHabit(habit.id)
-            habits.removeAll { $0.id == habit.id }
-        } catch { habitsError = error.localizedDescription }
-    }
-
-    private func updateHabit(_ habit: Habit, _ changes: HabitNew) async -> String? {
-        do {
-            let updated = try await env.api.updateHabit(habit.id, changes)
-            if let i = habits.firstIndex(where: { $0.id == habit.id }) { habits[i] = updated }
-            return nil
-        } catch APIError.server(let status, _) where status == 404 || status == 405 {
-            return "The server can't edit habits yet."
-        } catch { return error.localizedDescription }
-    }
-
-    private func addHabit(_ habit: HabitNew) async -> String? {
-        do {
-            habits.append(try await env.api.addHabit(habit))
             return nil
         } catch { return error.localizedDescription }
     }

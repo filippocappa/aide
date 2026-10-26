@@ -19,9 +19,9 @@ enum ActivityScope: Identifiable {
 }
 
 /// What the team did and what's waiting for you, in one place outside the chats (docs/API.md, "Activity and
-/// approvals"). On top, everything waiting for your OK: queued actions (each confirmed or cancelled on its own),
-/// reply drafts (sent with a tap, or edited first), proposed objectives, notebook proposals, a paused notes job. Then the routines coming up, then the activity by
-/// day. Opened from the bell on the home screen for everyone, or from an agent's card for that agent alone.
+/// approvals"). On top, what's waiting for your OK (`WaitingSection`; left out from Today, which shows it itself),
+/// then the routines coming up, then the activity by day. Opened from Today's "All activity" for everyone, or from
+/// an agent's card for that agent alone.
 struct ActivitySheet: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var chat: ChatViewModel
@@ -34,9 +34,9 @@ struct ActivitySheet: View {
     @State private var items: [ActivityItem] = []
     @State private var next: Int?
     @State private var loaded = false
-    @State private var busy: Set<String> = []
     @State private var error: String?
-    @State private var editing: MailDraft?
+    /// False on Today, which shows what's waiting above its own link here.
+    var showsWaiting = true
 
     var body: some View {
         NavigationStack {
@@ -44,7 +44,9 @@ struct ActivitySheet: View {
                 if let error {
                     Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
                 }
-                waitingSection
+                if showsWaiting {
+                    WaitingSection(approvals: approvals, agent: agent, reload: { await load() }, open: go)
+                }
                 upcomingSection
                 ForEach(ActivityDays.group(items), id: \.day) { group in
                     Section(ActivityDays.title(group.day)) {
@@ -79,91 +81,9 @@ struct ActivitySheet: View {
             }
             .refreshable { await load() }
             .task(id: agent?.id) { await load() }
-            .sheet(item: $editing) { draft in
-                DraftEditor(draft: draft, send: { await answer(draft, send: $0) }, dismiss: { await answer(draft, send: nil) })
-            }
         }
         .presentationDetents([.large])
         .presentationBackground(Theme.grouped)
-    }
-
-    // MARK: Waiting
-
-    @ViewBuilder private var waitingSection: some View {
-        let actions = (approvals?.actions ?? []).filter(mine(\.agent))
-        let drafts = (approvals?.drafts ?? []).filter(mine(\.agent))
-        let objectives = (approvals?.objectives ?? []).filter(mine(\.agent))
-        let proposals = agent == nil || agent?.id == "professor" ? approvals?.proposals ?? [] : []
-        let writer = agent == nil || agent?.id == "professor" ? approvals?.writer : nil
-        if !actions.isEmpty || !drafts.isEmpty || !objectives.isEmpty || !proposals.isEmpty || writer != nil {
-            Section {
-                ForEach(actions) { action in
-                    QueuedActionRow(action: action, agent: chat.agent(action.agent), busy: busy.contains("a\(action.id)"),
-                                    confirm: { Task { await decide(action, confirm: true) } },
-                                    cancel: { Task { await decide(action, confirm: false) } })
-                        .contentShape(Rectangle())
-                        .onTapGesture { go(action.conversationId) }
-                        .listRowBackground(Theme.row)
-                }
-                if actions.count > 1 {
-                    Button { Task { await confirmAll(actions) } } label: {
-                        Label("Confirm all \(actions.count)", systemImage: "checkmark").font(.body.weight(.semibold))
-                    }
-                    .disabled(!busy.isEmpty)
-                    .listRowBackground(Theme.row)
-                }
-                ForEach(drafts) { draft in
-                    DraftRow(draft: draft, agent: chat.agent(draft.agent), busy: busy.contains("d\(draft.id)"),
-                             send: { Task { error = await answer(draft, send: draft.body) } },
-                             edit: { editing = draft },
-                             dismiss: { Task { error = await answer(draft, send: nil) } })
-                        .listRowBackground(Theme.row)
-                }
-                ForEach(objectives) { o in
-                    HStack(alignment: .top, spacing: 10) {
-                        AgentMark(agent: chat.agent(o.agent), size: 22).padding(.top, 1)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(o.title)
-                            Text([ObjectiveDates.this(o.period).capitalizedFirst, o.why].compactMap { $0 }
-                                .filter { !$0.isEmpty }.joined(separator: " · "))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                    .swipeActions(edge: .leading) {
-                        Button("Accept") { Task { await accept([o]) } }.tint(.green)
-                    }
-                    .swipeActions(edge: .trailing) {
-                        Button("Drop", role: .destructive) { Task { await drop(o) } }
-                    }
-                    .listRowBackground(Theme.row)
-                }
-                if !objectives.isEmpty {
-                    Button { Task { await accept(objectives) } } label: {
-                        Label(objectives.count == 1 ? "Accept the objective" : "Accept all \(objectives.count) objectives",
-                              systemImage: "scope").font(.body.weight(.semibold))
-                    }
-                    .disabled(busy.contains("objectives"))
-                    .listRowBackground(Theme.row)
-                }
-                ForEach(proposals) { p in
-                    ProposalRow(proposal: p, agent: chat.agent("professor"), busy: busy.contains(p.id),
-                                apply: { Task { await answer(p, apply: true) } },
-                                decline: { Task { await answer(p, apply: false) } })
-                        .contentShape(Rectangle())
-                        .onTapGesture { go(p.conversationId) }
-                        .listRowBackground(Theme.row)
-                }
-                if let writer {
-                    WriterPauseCard(pause: writer) { _ in Task { await load() } }
-                        .listRowBackground(Theme.row)
-                }
-            } header: {
-                Text("Waiting for you")
-            } footer: {
-                if !objectives.isEmpty { Text("Swipe an objective to accept or drop it on its own.") }
-            }
-        }
     }
 
     // MARK: Coming up
@@ -238,10 +158,125 @@ struct ActivitySheet: View {
         } catch { self.error = describe(error) }
     }
 
-    private func describe(_ error: Error) -> String {
+    private func describe(_ error: Error) -> String { WaitingSection.describe(error) }
+}
+
+/// Everything waiting for your OK, as one list section: queued actions (each confirmed or cancelled on its own),
+/// reply drafts (sent with a tap, or edited first), proposed objectives, notebook proposals, a paused notes job.
+/// Shown on Today, and in an agent's Activity sheet for that agent alone. Nothing at all when nothing waits.
+struct WaitingSection: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var chat: ChatViewModel
+    let approvals: Approvals?
+    /// nil: the whole team.
+    let agent: Agent?
+    /// Loads the approvals again after an answer.
+    let reload: () async -> Void
+    /// A chat to open: a chat id, "main" or "team".
+    let open: (String?) -> Void
+
+    @State private var busy: Set<String> = []
+    @State private var error: String?
+    @State private var editing: MailDraft?
+
+    var body: some View {
+        let actions = (approvals?.actions ?? []).filter(mine(\.agent))
+        let drafts = (approvals?.drafts ?? []).filter(mine(\.agent))
+        let objectives = (approvals?.objectives ?? []).filter(mine(\.agent))
+        let proposals = agent == nil || agent?.id == "professor" ? approvals?.proposals ?? [] : []
+        let writer = agent == nil || agent?.id == "professor" ? approvals?.writer : nil
+        if !actions.isEmpty || !drafts.isEmpty || !objectives.isEmpty || !proposals.isEmpty || writer != nil {
+            Section {
+                ForEach(actions) { action in
+                    QueuedActionRow(action: action, agent: chat.agent(action.agent), busy: busy.contains("a\(action.id)"),
+                                    confirm: { Task { await decide(action, confirm: true) } },
+                                    cancel: { Task { await decide(action, confirm: false) } })
+                        .contentShape(Rectangle())
+                        .onTapGesture { go(action.conversationId) }
+                        .listRowBackground(Theme.row)
+                }
+                if actions.count > 1 {
+                    Button { Task { await confirmAll(actions) } } label: {
+                        Label("Confirm all \(actions.count)", systemImage: "checkmark").font(.body.weight(.semibold))
+                    }
+                    .disabled(!busy.isEmpty)
+                    .listRowBackground(Theme.row)
+                }
+                ForEach(drafts) { draft in
+                    DraftRow(draft: draft, agent: chat.agent(draft.agent), busy: busy.contains("d\(draft.id)"),
+                             send: { Task { error = await answer(draft, send: draft.body) } },
+                             edit: { editing = draft },
+                             dismiss: { Task { error = await answer(draft, send: nil) } })
+                        .listRowBackground(Theme.row)
+                }
+                ForEach(objectives) { o in
+                    HStack(alignment: .top, spacing: 10) {
+                        AgentMark(agent: chat.agent(o.agent), size: 22).padding(.top, 1)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(o.title)
+                            Text([ObjectiveDates.this(o.period).capitalizedFirst, o.why].compactMap { $0 }
+                                .filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .swipeActions(edge: .leading) {
+                        Button("Accept") { Task { await accept([o]) } }.tint(.green)
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button("Drop", role: .destructive) { Task { await drop(o) } }
+                    }
+                    .listRowBackground(Theme.row)
+                }
+                if !objectives.isEmpty {
+                    Button { Task { await accept(objectives) } } label: {
+                        Label(objectives.count == 1 ? "Accept the objective" : "Accept all \(objectives.count) objectives",
+                              systemImage: "scope").font(.body.weight(.semibold))
+                    }
+                    .disabled(busy.contains("objectives"))
+                    .listRowBackground(Theme.row)
+                }
+                ForEach(proposals) { p in
+                    ProposalRow(proposal: p, agent: chat.agent("professor"), busy: busy.contains(p.id),
+                                apply: { Task { await answer(p, apply: true) } },
+                                decline: { Task { await answer(p, apply: false) } })
+                        .contentShape(Rectangle())
+                        .onTapGesture { go(p.conversationId) }
+                        .listRowBackground(Theme.row)
+                }
+                if let writer {
+                    WriterPauseCard(pause: writer) { _ in Task { await load() } }
+                        .listRowBackground(Theme.row)
+                }
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+                        .listRowBackground(Theme.row)
+                }
+            } header: {
+                Text("Waiting for you")
+            } footer: {
+                if !objectives.isEmpty { Text("Swipe an objective to accept or drop it on its own.") }
+            }
+            .sheet(item: $editing) { draft in
+                DraftEditor(draft: draft, send: { await answer(draft, send: $0) }, dismiss: { await answer(draft, send: nil) })
+            }
+        }
+    }
+
+    private func go(_ id: String?) { open(id) }
+
+    private func mine<T>(_ key: KeyPath<T, String>) -> (T) -> Bool {
+        { agent == nil || $0[keyPath: key] == agent?.id }
+    }
+
+    static func describe(_ error: Error) -> String {
         if case APIError.server(404, _) = error { return "The server doesn't have the activity feed yet. Update the server first." }
         return error.localizedDescription
     }
+
+    private func describe(_ error: Error) -> String { Self.describe(error) }
+
+    private func load() async { await reload() }
 
     /// Answers, then reloads everything: one answer can change the feed and the rest of the queue. `call` returns
     /// a problem to show, or nil.

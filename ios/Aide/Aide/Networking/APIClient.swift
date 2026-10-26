@@ -151,9 +151,12 @@ final class APIClient {
 
     // MARK: Activity and approvals
 
-    func activity(agent: String? = nil, before: Int? = nil, limit: Int = 100) async throws -> ActivityPage {
+    /// `kinds`: only those kinds of line (e.g. the team's notes, `["routine", "watch"]`).
+    func activity(agent: String? = nil, kinds: [String] = [], before: Int? = nil,
+                  limit: Int = 100) async throws -> ActivityPage {
         var query = [URLQueryItem(name: "limit", value: String(limit))]
         if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
+        if !kinds.isEmpty { query.append(URLQueryItem(name: "kind", value: kinds.joined(separator: ","))) }
         if let before { query.append(URLQueryItem(name: "before", value: String(before))) }
         return try await send("GET", "/v1/activity", query: query)
     }
@@ -339,6 +342,11 @@ final class APIClient {
 
     func checkHabit(_ id: Int, done: Bool) async throws -> Habit {
         try await send("POST", "/v1/habits/\(id)/check", body: HabitCheck(done: done))
+    }
+
+    /// A limit habit: one more today (`add` 1), or one taken back (-1).
+    func countHabit(_ id: Int, add: Int = 1) async throws -> Habit {
+        try await send("POST", "/v1/habits/\(id)/count", body: HabitCount(add: add))
     }
 
     func updateHabit(_ id: Int, _ habit: HabitNew) async throws -> Habit {

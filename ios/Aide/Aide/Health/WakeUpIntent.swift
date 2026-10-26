@@ -21,5 +21,9 @@ struct AideShortcuts: AppShortcutsProvider {
                     phrases: ["I'm up in \(.applicationName)", "Tell \(.applicationName) I'm up"],
                     shortTitle: "I'm up",
                     systemImageName: "sun.horizon")
+        AppShortcut(intent: LogHabitIntent(),
+                    phrases: ["Log one in \(.applicationName)", "Count one in \(.applicationName)"],
+                    shortTitle: "Log one",
+                    systemImageName: "plus.circle")
     }
 }
