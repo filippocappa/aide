@@ -25,6 +25,8 @@ final class AppEnvironment: ObservableObject {
     @Published var showTeam = false
     /// Where Today should scroll to; Today clears it.
     @Published var todayFocus: TodayFocus?
+    /// The Today page, open over the Team tab.
+    @Published var showToday = false
 
     private init() {
         let settings = AppSettings()

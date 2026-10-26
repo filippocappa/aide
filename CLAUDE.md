@@ -258,8 +258,9 @@ team (Xcode's automatic signing adds them).
 `docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card
 (`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
 habits and objectives with Today / Week / Month, "From the team" (`/v1/activity?kind=routine,watch`) and all
-activity. It replaced the digest as a chat message, the sun button, the bell and the Objectives tab. Tabs: Today ·
-Chats · Study · Health · Settings. Notifications open Today on their item (a routine's push carries `routine`), or the
+activity. It replaced the digest as a chat message, the sun button, the bell and the Objectives tab. Since 2026-10-26 the
+agents come first: tabs Team · Study · Health · Settings. The Team tab opens on a small strip (the briefing in one
+line, "3 of 5 habits done today", what's waiting) above the team; Today opens from it as a page (`env.showToday`). Notifications open Today on their item (a routine's push carries `routine`), or the
 chat. Routine chats are left out of Chats. Limit habits (`{"type": "limit", "max": 5}`, `POST /v1/habits/{id}/count`,
 the `count_habit` tool, "I had another one") show "2/5" with − and +. Food habits tick from the food log. The planner
 leaves habits out of a day's objectives, and Coach sees each limit habit's last 7 days. One tap: the "Log one" App

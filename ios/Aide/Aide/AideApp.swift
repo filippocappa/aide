@@ -106,21 +106,18 @@ struct ContentView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var digest: DigestViewModel
-    @State private var tab = Tab.today
-    /// Things waiting for your OK, on Today's badge.
+    @State private var tab = Tab.chat
+    /// Things waiting for your OK, on the Team tab's badge.
     @State private var waiting = 0
 
-    enum Tab { case today, chat, study, health, settings }
+    enum Tab { case chat, study, health, settings }
 
     var body: some View {
         TabView(selection: $tab) {
-            TodayView(waiting: $waiting)
-                .tabItem { Label("Today", systemImage: "sun.horizon") }
-                .tag(Tab.today)
-                .badge(waiting)
-            ChatsView()
-                .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
+            ChatsView(waiting: $waiting)
+                .tabItem { Label("Team", systemImage: "person.3") }
                 .tag(Tab.chat)
+                .badge(waiting)
             StudyView()
                 .tabItem { Label("Study", systemImage: "book") }
                 .tag(Tab.study)
@@ -134,19 +131,19 @@ struct ContentView: View {
         .onAppear {
             if !settings.isConfigured { tab = .settings }
             #if DEBUG
-            // Simulator screenshots: `-previewTab chat`, `health`, `study` or `settings` (Today otherwise).
+            // Simulator screenshots: `-previewTab today`, `health`, `study` or `settings` (Team otherwise).
             if settings.isPreview, let name = UserDefaults.standard.string(forKey: "previewTab") {
                 tab = switch name {
-                case "chat", "chats": .chat
                 case "health": .health
                 case "study": .study
                 case "settings": .settings
-                default: .today
+                default: .chat
                 }
+                if name == "today" { env.showToday = true }
             }
             #endif
         }
-        // The badge, before Today first loads; Today keeps it current after that.
+        // The badge, before the Team tab's strip first loads; the strip and Today keep it current after that.
         .task(id: settings.isConfigured) {
             if settings.isConfigured, let a = try? await env.api.approvals() { waiting = a.waiting }
         }
@@ -154,14 +151,23 @@ struct ContentView: View {
         .onReceive(push.$route.compactMap { $0 }) { route in
             push.route = nil
             guard settings.isConfigured else { return }
+            let onToday: Bool
             switch route {
-            case .today, .digest, .note, .objectives: tab = .today
-            case .health: tab = .health; return
-            case .chats: tab = .chat; return
-            case .moodle: break // a sheet over any tab
-            default: tab = .chat
+            case .today, .digest, .note, .objectives: tab = .chat; onToday = true
+            case .health: tab = .health; env.showToday = false; return
+            case .chats: tab = .chat; env.showToday = false; return
+            case .moodle: onToday = false // a sheet over any tab, once Today is out of the way
+            default: tab = .chat; onToday = false
             }
-            Task { await env.open(route) }
+            Task {
+                if onToday {
+                    env.showToday = true
+                } else if env.showToday {
+                    env.showToday = false
+                    try? await Task.sleep(for: .milliseconds(450)) // let Today slide away first
+                }
+                await env.open(route)
+            }
         }
         .sheet(isPresented: $env.showMoodle) {
             NavigationStack {
@@ -170,6 +176,9 @@ struct ContentView: View {
             }
         }
         .sheet(item: $env.newFiles) { NewFilesSheet(ids: $0.ids) }
-        .sheet(isPresented: $digest.isPresented) { DigestSheet() }
+        .sheet(isPresented: $env.showToday) { TodayView(waiting: $waiting) }
+        .sheet(isPresented: Binding(get: { digest.isPresented && !env.showToday }, set: { digest.isPresented = $0 })) {
+            DigestSheet()
+        }
     }
 }

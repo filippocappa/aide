@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The Chats tab: your team. Aide on a wide card on top, the specialists two by two below, each alive in its own
+/// The Team tab, the app's home: a strip for the day (the briefing, habits, what's waiting; the Today page from it),
+/// then your team. Aide on a wide card on top, the specialists two by two below, each alive in its own
 /// colour with the last line of its latest chat. Tapping a card carries on that chat (or starts one); long-press
 /// for a new chat or past chats. A chat opens on top. Below them, the team's own group chat. Only conversations:
 /// digests, routines' and watches' posts and what's waiting for you are on Today.
@@ -20,12 +21,15 @@ struct ChatsView: View {
     @State private var activity: ActivityScope?
     /// Picked in the Activity sheet; opened once it's gone.
     @State private var openAfterActivity: String?
+    /// Things waiting for your OK, for the tab's badge.
+    @Binding var waiting: Int
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
                     header
+                    if settings.isConfigured { TodayStrip(waiting: $waiting) }
                     if !settings.isConfigured {
                         Text("Add your server token in Settings to start.")
                             .foregroundStyle(.secondary)
@@ -412,5 +416,77 @@ struct ConversationRow: View {
             return date.formatted(.dateTime.weekday(.wide))
         }
         return date.formatted(.dateTime.day().month(.abbreviated))
+    }
+}
+
+/// The day in three lines on top of the team: the latest briefing (tap for it), how many habits are done today, and
+/// what's waiting for your OK. "Today" opens the whole page.
+private struct TodayStrip: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var digest: DigestViewModel
+    @Environment(\.scenePhase) private var scenePhase
+    @Binding var waiting: Int
+    @State private var habits: [Habit]?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let latest = digest.latest {
+                row(icon: "sun.horizon.fill", color: Theme.accent) {
+                    Text(latest.greeting.markdown).lineLimit(1)
+                } action: { digest.showLatest() }
+                Divider().padding(.leading, 40)
+            }
+            row(icon: "checkmark.circle.fill", color: .green) {
+                Text(habitsLine)
+            } action: { open(.habits) }
+            if waiting > 0 {
+                Divider().padding(.leading, 40)
+                row(icon: "tray.full.fill", color: .orange) {
+                    Text("\(waiting) waiting for you")
+                } action: { open(.top) }
+            }
+        }
+        .font(.subheadline)
+        .background(Theme.row, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .task { await load() }
+        .onChange(of: env.showToday) { _, shown in if !shown { Task { await load() } } } // ticked something there
+        .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await load() } } }
+    }
+
+    private func row(icon: String, color: Color, @ViewBuilder text: () -> some View,
+                     action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).foregroundStyle(color).frame(width: 20)
+                text().foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// "3 of 5 habits done today". Counted habits (a daily limit) aren't in it: they're never "done" during the day.
+    private var habitsLine: String {
+        guard let habits else { return "Habits" }
+        let ticked = habits.filter { !$0.isLimit }
+        guard !ticked.isEmpty else { return habits.isEmpty ? "No habits yet" : "Habits" }
+        let done = ticked.filter { $0.doneToday || ($0.isWeekly && $0.thisWeek >= ($0.cadence.perWeek ?? 1)) }.count
+        return done == ticked.count ? "All \(ticked.count) habits done today" : "\(done) of \(ticked.count) habits done today"
+    }
+
+    private func open(_ focus: TodayFocus) {
+        env.todayFocus = focus
+        env.showToday = true
+    }
+
+    private func load() async {
+        async let latest: Void = digest.loadLatest()
+        async let approvals = try? env.api.approvals()
+        habits = (try? await env.api.habits()) ?? habits
+        if let a = await approvals { waiting = a.waiting }
+        await latest
     }
 }

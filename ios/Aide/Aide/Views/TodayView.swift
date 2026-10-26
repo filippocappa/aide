@@ -6,7 +6,7 @@ enum TodayFocus: Equatable {
 }
 
 /// The Today tab (#21): one page for the day instead of a digest in the chat, the bell and the Objectives tab. From
-/// the top: the latest digest as a card, everything waiting for your OK, habits and objectives (Today / Week /
+/// the top (opened from the strip on the Team tab): the latest digest as a card, everything waiting for your OK, habits and objectives (Today / Week /
 /// Month), then the team's notes from routines and watches, with the whole activity feed behind them. Each part
 /// loads on its own (docs/API.md, "Today").
 struct TodayView: View {
@@ -16,6 +16,7 @@ struct TodayView: View {
     @EnvironmentObject private var digest: DigestViewModel
     @EnvironmentObject private var push: PushService
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
     /// Things waiting for your OK, for the tab's badge.
     @Binding var waiting: Int
 
@@ -56,7 +57,10 @@ struct TodayView: View {
                 .scrollContentBackground(.hidden)
                 .background(Theme.grouped)
                 .navigationTitle("Today")
-                .toolbar { ToolbarItem(placement: .topBarTrailing) { addMenu } }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) { addMenu }
+                    ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
+                }
                 .navigationDestination(isPresented: $showHabits) { HabitsScreen(habits: $habits) }
                 .onChange(of: env.todayFocus, initial: true) { _, focus in
                     guard let focus else { return }
@@ -105,6 +109,7 @@ struct TodayView: View {
                     } catch { return error.localizedDescription }
                 }
             }
+            .sheet(isPresented: $digest.isPresented) { DigestSheet() } // the Team tab's can't show over this page
             .sheet(isPresented: $showActivity, onDismiss: afterActivity) {
                 ActivitySheet(agent: nil, open: { id in openAfterActivity = id; showActivity = false }, showsWaiting: false)
             }
@@ -161,7 +166,7 @@ struct TodayView: View {
                 } else if habits.isEmpty {
                     Button("Add a habit", systemImage: "plus") { addingHabit = true }
                 }
-                ForEach(habits) { habit in
+                ForEach(habits.sorted { !$0.isLimit && $1.isLimit }) { habit in // the counted ones last
                     HabitRow(habit: habit,
                              toggle: { Task { await HabitActions.toggle(habit, in: $habits, env: env, error: $error) } },
                              count: { n in Task { await HabitActions.count(habit, n, in: $habits, env: env, error: $error) } },
