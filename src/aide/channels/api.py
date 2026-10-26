@@ -387,9 +387,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return datetime.fromisoformat(utc_iso).astimezone(tz).replace(microsecond=0).isoformat()
 
     def conversation_json(c: dict) -> dict:
-        course = db.conn.execute("SELECT id FROM courses WHERE chat = ?", (c["id"],)).fetchone()
         return {"id": c["id"], "agent": c["agent"], "title": c["title"], "routine": c["routine"],
-                "course": course[0] if course else None, "preview": c["preview"], "updated_at": local(c["updated_at"])}
+                "course": study.chat_course(c["id"]), "preview": c["preview"], "updated_at": local(c["updated_at"])}
 
     def team_json(t: dict) -> dict:
         return {**t, "ts": local(t["ts"])}
@@ -495,7 +494,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         for p in notebook.proposals(None, "pending"):
             course = study.course(p["course_id"]) or {}
             proposals.append({**notebook.proposal_json(p), "course_name": course.get("name"),
-                              "conversation_id": course.get("chat")})
+                              "conversation_id": p["chat"] or course.get("chat")})
         paused = engine.status()["paused"] if engine else None
         coming = sorted(((n, r) for r in routines.all() if (n := routines.next_run(r))), key=lambda x: x[0])
         replies = drafts.waiting()
@@ -578,6 +577,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 if a["type"] == "reminders":
                     a["reminders"] = [reminder_json(r, tz) if (r := store.get(old["id"])) else old
                                       for old in a["reminders"]]
+                elif a["type"] == "proposal" and notebook and (p := notebook.proposal(a["proposal"]["id"])):
+                    a["proposal"] = notebook.proposal_json(p)  # applied or declined since
+                elif a["type"] == "files":
+                    a["files"] = [file_json(f) for old in a["files"] if (f := study.files.get(old["id"]))]
+            m["attachments"] = [a for a in m["attachments"] if a["type"] != "files" or a["files"]]
         return {"messages": messages}
 
     @app.get("/v1/team", dependencies=[Depends(auth)])

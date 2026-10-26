@@ -97,8 +97,9 @@ def env(tmp_path):
         push = FakePush(db.conn)
         push.moodle = []
 
-        async def send_moodle(title, body, login=False):
+        async def send_moodle(title, body, login=False, files=None):
             push.moodle.append((body, login))
+            push.moodle_files = (title, files)
             return True
         push.send_moodle = send_moodle
         worker = StudyWorker(study, agent, push, tmp_path / "audio", Transcribe())
@@ -170,7 +171,8 @@ async def test_a_sync_brings_the_pdfs_of_matched_courses(env):
     macro = moodle.study.course_by_name("macroeconomics")["id"]
     assert {f["course_id"] for f in files} == {macro} and {f["section"] for f in files} == {"Week 3"}
     assert {f["source"] for f in files} == {"moodle"} and files[0]["source_time"] == T
-    assert push.moodle == [("3 new files in macroeconomics", False)]
+    assert push.moodle == [("Macroeconomics: " + ", ".join(f["name"].rsplit(".", 1)[0] for f in files), False)]
+    assert push.moodle_files == ("Moodle · 3 new files", [f["public_id"] for f in files])
     status = api.get("/v1/moodle", headers=AUTH).json()
     # The old course isn't listed; the Italian one isn't matched by itself.
     assert [(c["id"], c["course"], c["matched"], c["files"]) for c in status["courses"]] == \

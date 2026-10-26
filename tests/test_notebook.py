@@ -177,7 +177,12 @@ async def test_starting_writes_the_introduction_and_proposes_topics(nb):
     assert {c["id"]: c["course"] for c in chats}[nb.study.chat(nb.macro["id"])] == nb.macro["id"]
     assert {c["course"] for c in chats} == {nb.macro["id"], None}
     assert [m["role"] for m in messages] == ["assistant"]  # the note with the proposal's id stays hidden
-    assert "1. **The IS-LM model**: Goods and money markets together." in messages[0]["text"]
+    # The topics are on the card under the message (and in the note for the model), not in its text.
+    assert "2 topics, one page each" in messages[0]["text"]
+    card = messages[0]["attachments"][-1]["proposal"]
+    assert card["id"] == p["public_id"] and [it["title"] for it in card["items"]] == ["The IS-LM model", "Crowding out"]
+    note = nb.db.history(nb.db.app_conversation(nb.study.chat(nb.macro["id"]))["id"])[0]["content"]
+    assert "1. **The IS-LM model**: Goods and money markets together." in note
     assert "Shall I write them?" in messages[0]["text"] and len(nb.push.messages) == 1
     assert nb.api.get(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).json()["proposals"][0]["items"][1] == \
         {"n": 2, "topic": None, "title": "Crowding out", "add": "Spending and the interest rate.",
@@ -325,10 +330,24 @@ async def test_new_material_is_proposed_from_the_outline_and_merged_into_the_use
     assert "a lower interest rate raises investment" not in request and "p.1: Problem 1: a liquidity trap" in request
     p = nb.notebook.proposals(nb.macro["id"])[0]
     assert p["kind"] == "update" and [it["title"] for it in p["items"]] == ["The IS-LM model", "Fiscal policy"]
-    text = chat_messages(nb)[-1]["text"]
-    assert text.startswith("New in macroeconomics: Problem set 2. I'd add to the notes:")
-    assert "1. Expand **The IS-LM model**: The liquidity-trap exercise." in text
-    assert "2. New topic **Fiscal policy**: Debt-financed spending." in text
+    # In a chat of its own (about the course), with the file to open and the proposal to answer as cards.
+    chat = p["chat"]
+    assert chat and chat != nb.study.chat(nb.macro["id"]) and nb.push.messages[-1][0] == chat
+    row = next(c for c in nb.api.get("/v1/conversations", headers=AUTH).json()["conversations"] if c["id"] == chat)
+    assert row["title"] == "Macroeconomics: Problem set 2" and row["course"] == nb.macro["id"]
+    message = nb.api.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"][-1]
+    assert message["text"] == ("New in macroeconomics: **Problem set 2**. From it I'd expand 1 topic and add 1 new one "
+                               "in the notes. Pick below, or tell me which (\"only 1 and 3\", \"also stress the "
+                               "graphs\").")
+    files, card = message["attachments"]
+    assert files["type"] == "files" and [f["id"] for f in files["files"]] == [f2["id"]]
+    assert card["type"] == "proposal" and card["proposal"]["id"] == p["public_id"]
+    assert card["proposal"]["conversation_id"] == chat and card["proposal"]["status"] == "pending"
+    assert [it["title"] for it in card["proposal"]["items"]] == ["The IS-LM model", "Fiscal policy"]
+    # The model reads the items in the note before it.
+    note = nb.db.history(nb.db.app_conversation(chat)["id"])[-2]["content"]
+    assert "1. Expand **The IS-LM model**: The liquidity-trap exercise." in note
+    assert "2. New topic **Fiscal policy**: Debt-financed spending." in note
     assert not nb.notebook.new_material(nb.macro["id"], [])
 
     # Only the first item, with a wish; the merge builds on the user's edit, read back from the vault.
@@ -350,6 +369,10 @@ async def test_new_material_is_proposed_from_the_outline_and_merged_into_the_use
                                                       "What is a liquidity trap?"]
     assert {"file": f2["id"], "pages": [1]} in json.loads(t["sources"])
     assert [x["title"] for x in nb.notebook.topics(nb.macro["id"])] == ["The IS-LM model", "Crowding out"]
+    # The result comes in the proposal's chat, and its card shows it applied.
+    after = nb.api.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"]
+    assert after[-1]["text"].startswith("Updated the notes: **The IS-LM model**.")
+    assert after[-2]["attachments"][1]["proposal"]["status"] == "applied"
 
     await nb.vault.sync()
     assert "LM is flat at zero." in page.read_text()

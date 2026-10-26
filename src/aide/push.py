@@ -184,8 +184,9 @@ class Push:
     async def send_lecture(self, lecture_id: str, title: str, body: str) -> bool:
         return await self._alert("lecture", title, body, lecture_id=lecture_id)
 
-    async def send_moodle(self, title: str, body: str, login: bool = False) -> bool:
-        return await self._alert("moodle", title, body, **({"login": True} if login else {}))
+    async def send_moodle(self, title: str, body: str, login: bool = False, files: list[str] | None = None) -> bool:
+        return await self._alert("moodle", title, body, **({"login": True} if login else {}),
+                                 **({"files": files} if files else {}))
 
     async def send_transit(self, alert_id: int, title: str, body: str) -> bool:
         # Time-sensitive: it's worth breaking through a Focus, and stale a few minutes later.

@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS courses (
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,  -- the event title in the study calendar
     chat TEXT  -- public id of the course's Professor chat, made when first needed
 );
+CREATE TABLE IF NOT EXISTS course_chats (  -- the course's other Professor chats (one per notebook proposal)
+    chat      TEXT PRIMARY KEY,  -- the conversation's public id
+    course_id INTEGER NOT NULL REFERENCES courses(id)
+);
 CREATE TABLE IF NOT EXISTS lectures (
     id          INTEGER PRIMARY KEY,
     public_id   TEXT NOT NULL UNIQUE,
@@ -225,6 +229,19 @@ class StudyStore:
         self.db.set_conversation_title(row["id"], course["name"][:1].upper() + course["name"][1:])
         self.conn.execute("UPDATE courses SET chat = ? WHERE id = ?", (row["public_id"], course_id))
         return row["public_id"]
+
+    def new_chat(self, course_id: int, title: str) -> str:
+        """Another Professor chat about the course, for one subject (new material and what to do with it)."""
+        row = self.db.new_app_conversation("professor")
+        self.db.set_conversation_title(row["id"], title)
+        self.conn.execute("INSERT INTO course_chats (chat, course_id) VALUES (?, ?)", (row["public_id"], course_id))
+        return row["public_id"]
+
+    def chat_course(self, chat: str) -> int | None:
+        """The course a chat is about: its main chat or one of the others."""
+        row = self.conn.execute("SELECT id FROM courses WHERE chat = ? UNION ALL "
+                                "SELECT course_id FROM course_chats WHERE chat = ?", (chat, chat)).fetchone()
+        return row[0] if row else None
 
     def course_chat(self, course: dict) -> str | None:
         """The chat's id if it still exists, without making one."""

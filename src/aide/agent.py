@@ -173,14 +173,14 @@ class Agent:
         return {"id": row["public_id"], "agent": row["agent"], "title": None, "routine": None, "preview": opening,
                 "updated_at": row["last_active_at"]}
 
-    async def post(self, conversation: str, note: str, text: str) -> None:
+    async def post(self, conversation: str, note: str, text: str, attachments: list[dict] | None = None) -> None:
         """A message from the chat's agent that no user turn asked for (a lecture's notes are ready). `note` goes
         before it as the user turn the API needs: the model reads it, the app doesn't show it."""
         async with self._lock:
             conversation_id = self._resolve(CONVERSATION, conversation)
             self.db.append_turn(conversation_id, "app", [
                 {"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] {note}"},
-                {"role": "assistant", "content": [{"type": "text", "text": text}]}])
+                {"role": "assistant", "content": [{"type": "text", "text": text}]}], attachments=attachments)
             row = self.db.app_conversation(conversation)
             activity.record(self.db.conn, row["agent"] if row else ORCHESTRATOR, "message",
                             (row["title"] if row else None) or "Wrote to you", text, conversation)

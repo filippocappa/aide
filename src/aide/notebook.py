@@ -149,8 +149,11 @@ class NotebookStore:
         self.conn = study.conn
         self.tz = study.tz
         self.conn.executescript(SCHEMA)
-        if "done" not in {r[1] for r in self.conn.execute("PRAGMA table_info(proposals)")}:
+        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(proposals)")}
+        if "done" not in columns:
             self.conn.execute("ALTER TABLE proposals ADD COLUMN done INTEGER NOT NULL DEFAULT 0")
+        if "chat" not in columns:  # the chat it was posted in, when not the course's own
+            self.conn.execute("ALTER TABLE proposals ADD COLUMN chat TEXT")
         if not self.conn.execute("SELECT 1 FROM topic_changes LIMIT 1").fetchone():  # notes from before the log
             self.conn.execute("INSERT INTO topic_changes (topic_id, course_id, by_user, at) SELECT id, course_id, "
                               "edited_at IS NOT NULL AND edited_at = updated_at, updated_at FROM topics WHERE body != ''")
@@ -432,6 +435,9 @@ class NotebookStore:
             "SELECT * FROM proposals" + (" WHERE " + " AND ".join(where) if where else "")
             + " ORDER BY id DESC LIMIT 50", tuple(where.values()))]
 
+    def set_chat(self, proposal_id: int, chat: str) -> None:
+        self.conn.execute("UPDATE proposals SET chat = ? WHERE id = ?", (chat, proposal_id))
+
     def topic_done(self, proposal_id: int) -> None:
         """One more of an applying proposal's topics finished: for the app's progress bar."""
         self.conn.execute("UPDATE proposals SET done = done + 1 WHERE id = ?", (proposal_id,))
@@ -677,7 +683,18 @@ class NotebookStore:
                 "material": self.source_names(p["material"]), "result": p["result"],
                 "progress": {"done": p["done"], "total": len(p["chosen"]["items"])}
                 if p["status"] == "applying" and p["chosen"] else None,
-                "created_at": self.study.local(p["created_at"])}
+                "conversation_id": p.get("chat"), "created_at": self.study.local(p["created_at"])}
+
+    def file_json(self, f: dict) -> dict:
+        lecture = self.study.lecture_row(f["lecture_id"]) if f["lecture_id"] else None
+        return self.files.as_json(f, lecture["public_id"] if lecture else None)
+
+    def attachments(self, p: dict) -> list[dict]:
+        """The cards under a proposal's message: its files, to open, and the proposal, to answer. Built again on every
+        read, so they show how things are now."""
+        files = [self.file_json(f) for m in p["material"] if "file" in m and (f := self.files.get(m["file"]))]
+        return ([{"type": "files", "files": files}] if files else []) + [
+            {"type": "proposal", "proposal": self.proposal_json(p)}]
 
     def notebook_json(self, course_id: int) -> dict:
         intro = self.intro(course_id)
@@ -790,6 +807,10 @@ def _pages(value) -> list[int]:
         lo, hi = int(a), int(b or a)
         out += range(lo, min(hi, lo + 500) + 1)
     return sorted(set(out))
+
+
+def _and(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 def _ranges(pages: list[int]) -> str:
@@ -1141,10 +1162,10 @@ class NotebookWorker:
         head = (f"I've written the {course['name']} Introduction (the exam, how to prepare for it, the textbook "
                 f"and instructors). " if intro else "")
         text = (f"{head}Here's how I'd lay out the notes, from {len(files)} files "
-                f"({sum(f['pages'] for f in files)} pages), one page per topic:\n\n{lines}\n\n"
-                "Each topic gets an explanation, key terms, formulas, worked examples, exam-style questions and "
-                "flashcards. Shall I write them? You can drop, merge or rename topics, or tell me what to stress.")
-        await self._post(course, self._note(p, course), text, push=True)
+                f"({sum(f['pages'] for f in files)} pages): {len(items)} topics, one page each, with an explanation, "
+                "key terms, formulas, worked examples, exam-style questions and flashcards. Shall I write them? Pick "
+                "below, or tell me what to drop, merge, rename or stress.")
+        await self._post(course, self._note(p, course, lines), text, push=True, attachments=self.store.attachments(p))
         return p
 
     async def triage(self, course: dict, material: list[dict]) -> dict | None:
@@ -1176,15 +1197,28 @@ class NotebookWorker:
                 items.append({"topic": topic["public_id"] if topic else None, "title": title,
                               "add": _line(it["add"], 300), "sources": sources,
                               "after": str(it.get("after")) if not topic and it.get("after") in by_id else None})
-        names = ", ".join(self.store.source_names(material))
+        names = self.store.source_names(material)
         if not items:
-            log.info("notebook: %s adds nothing to %s", names, course["name"])
+            log.info("notebook: %s adds nothing to %s", ", ".join(names), course["name"])
             return None
         p = self.store.add_proposal(cid, "update", items, material)
+        # A chat of its own, so it's easy to find from the notification and isn't lost at the end of the course's.
+        title = f"{course['name'][:1].upper()}{course['name'][1:]}: {names[0] if names else 'new material'}"
+        chat = self.study.new_chat(cid, title[:80] + (f" and {len(names) - 1} more" if len(names) > 1 else ""))
+        self.store.set_chat(p["id"], chat)
+        p["chat"] = chat
         lines = "\n".join(f"{n}. " + (f"Expand **{it['title']}**: " if it["topic"] else f"New topic **{it['title']}**: ")
                           + it["add"] for n, it in enumerate(items, 1))
-        text = f"New in {course['name']}: {names}. I'd add to the notes:\n\n{lines}\n\nShall I? All of it, some, or not now."
-        await self._post(course, self._note(p, course), text, push=True)
+        expand = sum(1 for it in items if it["topic"])
+        what = " and ".join(x for x in (f"expand {expand} topic{'s' * (expand != 1)}" if expand else "",
+                                        f"add {len(items) - expand} new one{'s' * (len(items) - expand != 1)}"
+                                        if len(items) > expand else "") if x)
+        # The items are on the card under the message; the model reads them in the note.
+        text = (f"New in {course['name']}: {_and([f'**{n}**' for n in names])}. From "
+                f"{'it' if len(names) == 1 else 'them'} I'd {what} in the notes. Pick below, or tell me which "
+                "(\"only 1 and 3\", \"also stress the graphs\").")
+        await self._post(course, self._note(p, course, lines), text, push=True, chat=chat,
+                         attachments=self.store.attachments(p))
         return p
 
     async def apply(self, p: dict) -> None:
@@ -1247,7 +1281,8 @@ class NotebookWorker:
                 + (f" {cards} flashcards in all." if p["kind"] == "outline" else "")
                 + (f" I couldn't write {', '.join(failed)}; ask me to try again." if failed else "")
                 + " They're in Obsidian.")
-        await self._post(course, f"[Notebook proposal {p['public_id']} applied: {result}]", text, push=True)
+        await self._post(course, f"[Notebook proposal {p['public_id']} applied: {result}]", text, push=True,
+                         chat=p.get("chat"))
 
     async def write(self, topic: dict, note: str = "") -> dict:
         cid = topic["course_id"]
@@ -1442,14 +1477,19 @@ class NotebookWorker:
         return text
 
     @staticmethod
-    def _note(p: dict, course: dict) -> str:
+    def _note(p: dict, course: dict, items: str = "") -> str:
         return (f"[Notebook proposal {p['public_id']} ({p['kind']}, {len(p['items'])} items) for {course['name']}. "
                 "When the user answers: apply_proposal with the items they want (all when they just agree) and "
-                "anything they add as note, or decline_proposal.]")
+                "anything they add as note, or decline_proposal. The app shows the items as a card with tick boxes "
+                "under your message, and the user may answer there instead."
+                + (f"\nThe items:\n{items}" if items else "") + "]")
 
-    async def _post(self, course: dict, note: str, text: str, push: bool = False) -> None:
-        chat = self.study.chat(course["id"])
-        await self.agent.post(chat, note, text)
+    async def _post(self, course: dict, note: str, text: str, push: bool = False, chat: str | None = None,
+                    attachments: list[dict] | None = None) -> None:
+        """In `chat` while it's there (a proposal's own), else the course's chat."""
+        if not chat or self.study.db.app_conversation(chat) is None:
+            chat = self.study.chat(course["id"])
+        await self.agent.post(chat, note, text, attachments)
         if push and self.push is not None:
             try:
                 await self.push.send_message(chat, f"Professor · {course['name']}", text[:180])

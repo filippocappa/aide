@@ -64,6 +64,8 @@ MARGIN = timedelta(days=30)  # a course is current from a month before it starts
 COURSE_TEXT = 40_000  # characters of a course page's text kept
 FORUM_POSTS = 8  # newest discussions read per forum
 FORUM_POST = 2000  # characters of each
+ANNOUNCE = 178  # characters of the push saying which files came
+ANNOUNCE_FILES = 20  # file ids it carries, for the app to list
 _FORUMS = re.compile(r"announce|annunc|avvis|news|notizi|textbook|book|libr|testi|exam|esam", re.I)
 
 
@@ -477,14 +479,21 @@ class MoodleSync:
             self.worker.kick()
 
     async def _announce(self, new: dict[int, list[dict]]) -> None:
+        """Which files, a line per course; the push carries their ids, so a tap lists them."""
         if self.push is None:
             return
-        names = [(self.study.course(cid) or {}).get("name", "a course") for cid in new]
         count = sum(len(fs) for fs in new.values())
-        files = "1 new file" if count == 1 else f"{count} new files"
-        where = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
-        body = (f"{new[next(iter(new))][0]['name']} in {where}" if count == 1 else f"{files} in {where}")
-        await self.push.send_moodle("Moodle", body)
+        lines = []
+        for cid, files in new.items():
+            name = (self.study.course(cid) or {}).get("name", "a course")
+            lines.append(f"{name[:1].upper()}{name[1:]}: "
+                         + ", ".join(re.sub(r"\.pdf$", "", f["name"], flags=re.I) for f in files))
+        body = "\n".join(lines)
+        if len(body) > ANNOUNCE:
+            body = body[:ANNOUNCE - 1].rstrip(" ,") + "…"
+        ids = [f["public_id"] for files in new.values() for f in files][:ANNOUNCE_FILES]
+        await self.push.send_moodle("Moodle · " + ("1 new file" if count == 1 else f"{count} new files"), body,
+                                    files=ids)
 
     async def _failed(self, error: MoodleError) -> dict:
         self._set("error", str(error))

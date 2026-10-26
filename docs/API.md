@@ -57,6 +57,10 @@ from the tools the assistant used in that turn, not parsed from its text:
 - `meals`: when it logged, changed or listed meals (see Food), `{"type": "meals", "meals": [Meal]}`.
 - `departures`: when it looked up GTT arrivals, a card per stop (see Transit), `{"type": "departures",
   "departures": [Board]}`.
+- `files`: study files a message is about, to open (since 2026-10-26; see Study files), `{"type": "files", "files":
+  [File]}`. On Professor's notebook proposals.
+- `proposal`: a notebook proposal to answer right there (since 2026-10-26; see Notebook), `{"type": "proposal",
+  "proposal": Proposal}`. `/v1/history` gives both as they are now: a proposal's `status`, and files still there.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
@@ -729,9 +733,12 @@ flashcards, built from the course's PDFs and lectures. In the vault as above.
 
 **Nothing is written without the user's OK.** Starting a notebook writes the Introduction (from the Moodle course
 page and the exam calendar) and proposes the topics; new material for a course with a notebook (a Moodle file, a
-lecture's notes) gets a proposal of which topics to expand or add. Each proposal is posted in the course's chat
-(Professor), with a push (`message`), and answered there ("yes", "only 1 and 3", "also stress the graphs"), or
-through the endpoints below. A proposal waits until it's answered; applying runs in the background (a few minutes)
+lecture's notes) gets a proposal of which topics to expand or add. Each proposal is posted in a Professor chat, with a
+push (`message`), and answered there ("yes", "only 1 and 3", "also stress the graphs"), on its card, or through the
+endpoints below. The outline goes in the course's chat; since 2026-10-26 each proposal for new material starts a chat
+of its own ("Macroeconomics: Lecture Notes: Monetary Policy", `course` set on the conversation row like the course's
+chat), with the files as a `files` card and the proposal as a `proposal` card under the message (Chat, attachments).
+The message names the files and says how many topics it would expand or add; the items are on the card. A proposal waits until it's answered; applying runs in the background (a few minutes)
 and posts the result in the same chat.
 
 | Endpoint | Body | Response |
@@ -767,8 +774,9 @@ Topic: `{"id": "t_…", "course": 2, "position": 1, "title": "The IS-LM model", 
 Proposal: `{"id": "p_…", "course": 2, "kind": "outline" | "update", "status": "pending" | "applying" | "applied" |
 "declined" | "superseded" | "failed", "items": [{"n": 1, "topic": "t_…" or null (a new topic), "title": "…", "add":
 "what it would write", "sources": ["Problem set 2, p. 1"]}], "material": ["Problem set 2"], "result": "Updated The
-IS-LM model." or null, "progress": {"done": 4, "total": 11} or null, "created_at": "…"}`. A new outline supersedes a
-pending one.
+IS-LM model." or null, "progress": {"done": 4, "total": 11} or null, "conversation_id": "c_…" or null, "created_at":
+"…"}`. A new outline supersedes a pending one. `conversation_id`: the chat it was posted in when it has its own
+(null: the course's chat); the result of applying it is posted there too.
 
 **Figures** come from a scan (since 2026-10-22): the cheap model looks at every slide once, small, and marks the
 ones with a graph, diagram or chart worth showing, whatever their text. A topic's figures are picked from its marked
@@ -1175,7 +1183,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens a new chat with that digest (`POST /v1/conversations` with `digest`) |
 | `message` | alert | Aide writes first (future use: briefings, leave-now alerts) | `conversation_id` | opens that conversation |
 | `lecture` | alert | a lecture's notes are ready, or it failed (title "Professor · macroeconomics") | `lecture_id` | opens that lecture |
-| `moodle` | alert | a Moodle sync brought new files ("3 new files in macroeconomics"), or the login expired | `login` (true: log in again) | opens Study, or the Moodle login with `login` |
+| `moodle` | alert | a Moodle sync brought new files (title "Moodle · 3 new files", a line per course naming them: "Macroeconomics: Lecture Notes: Monetary Policy, Lect: Monetary Policy"), or the login expired | `files` (the new files' ids, up to 20; since 2026-10-26), `login` (true: log in again) | lists the new files (`GET /v1/files/{id}`), each opening its PDF; the Moodle login with `login` |
 | `transit` | alert, `interruption-level: time-sensitive` | a tram alert fires ("Tram 4 in 7 min: leave now") | `alert_id` | nothing special (opens the app) |
 | `location` | silent (like `sync`) | a tram alert wants to know where the phone is | | (not shown) the app sends a fresh fix to `POST /v1/location` |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
