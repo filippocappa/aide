@@ -202,6 +202,9 @@ exams, food log, sleep, steps, a reminder) so it ticks itself; the rest are tick
 user's OK. `objectives` tools for every agent, an `objectives` digest section. App: an Objectives tab (badge: proposals
 waiting for the OK; Today / Week / Month, accept, drop, tick, add, propose now), objectives in the
 digest. First plan made live 2026-10-22; on the phone, the first proposals accepted 2026-10-22.
+Steps (2026-10-26): any objective can carry a checklist (`steps`); a hand-ticked one with steps is done when they all
+are. Only hand-ticked and reminder-linked objectives have a tick box; measured ones show a dashed ring and "Ticks
+itself". Tapping an objective opens its page (how it's ticked, steps, title).
 Since #19 (2026-10-22): a `notes` measure (notebook topics written or revised, logged in `topic_changes`), and
 `StudyReplanner` plans Professor's week and day again 10 min after a course's notes or dates change (not when
 they're all taken with none waiting); the planner sees each course's new notes and most-missed topics.

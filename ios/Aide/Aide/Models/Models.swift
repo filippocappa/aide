@@ -784,15 +784,39 @@ struct Objective: Decodable, Identifiable, Hashable {
     var status: String
     let parent: String?
     let addedBy: String?
+    /// A checklist; nil from a server older than steps.
+    var steps: [ObjectiveStep]?
 
     var isProposed: Bool { status == "proposed" }
     var isLapsed: Bool { status == "lapsed" }
-    /// Ticked by hand: no measure behind it.
+    /// Ticked by hand (or step by step): no measure behind it.
     var isManual: Bool { measure == nil }
     /// Ticked when this reminder is done.
     var reminderID: String? { measure?.type == "reminder" ? measure?.reminder : nil }
-    /// Can be ticked or unticked by hand: anything but a measured one its data has already done.
-    var canTick: Bool { !isLapsed && (isManual || reminderID != nil || progress < target) }
+    /// Ticked by tapping: a hand-ticked one, or one tied to a reminder (the tap completes the reminder). The rest
+    /// tick themselves from the data.
+    var canTick: Bool { !isLapsed && (isManual || reminderID != nil) }
+}
+
+struct ObjectiveStep: Codable, Hashable {
+    var text: String
+    var done: Bool
+}
+
+extension Objective.Measure {
+    /// Where its progress comes from, for people.
+    var source: String {
+        switch type {
+        case "habit": "your check-ins of that habit"
+        case "practice": "the practice exams you finish"
+        case "notes": "the notebook topics written or revised"
+        case "food": "your food log"
+        case "sleep": "your sleep in Apple Health"
+        case "steps": "your steps in Apple Health"
+        case "reminder": "its reminder"
+        default: "your data"
+        }
+    }
 }
 
 /// One period's objectives: the day, the week or the month around a date.
@@ -831,8 +855,10 @@ struct ObjectivePatch: Encodable {
     var done: Bool?
     var status: String?
     var target: Int?
+    /// Replaces the list.
+    var steps: [ObjectiveStep]?
 }
-struct NewObjective: Encodable { let agent: String; let period: String; let title: String }
+struct NewObjective: Encodable { let agent: String; let period: String; let title: String; var steps: [String] = [] }
 struct ObjectivesAccept: Encodable { let period: String; let date: String; var ids: [String]? }
 struct ObjectivesPlan: Encodable { let period: String; let date: String }
 
