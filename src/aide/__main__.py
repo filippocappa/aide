@@ -72,9 +72,9 @@ def main() -> None:
 
     db = Database(settings.db_path)
     reminders = ReminderStore(db.conn)
-    habits = HabitStore(db.conn, settings.timezone)
     health = HealthStore(db.conn, settings.timezone)
     food = FoodStore(db.conn, settings.timezone)
+    habits = HabitStore(db.conn, settings.timezone, food)
     photos = PhotoStore(settings.db_path.parent / "photos")
     push = Push(db.conn, settings.apns_key_path, settings.apns_key_id, settings.apns_team_id, settings.apns_bundle_id)
     if push.enabled:

@@ -224,7 +224,7 @@ async def deliver(agent: "Agent", channel: str, routine: dict, push: Push | None
     sent = False
     if push:
         try:
-            sent = await push.send_message(routine["public_id"], title, body)
+            sent = await push.send_message(routine["public_id"], title, body, routine=routine["id"])
         except Exception:
             log.exception("routine %s push failed", routine["id"])
     if not sent:

@@ -116,11 +116,14 @@ async def test_digest_and_message_payloads(env):
     await push.send_digest("weekly", "Busy week.")
     await push.send_digest("monthly", "New month.", date(2026, 11, 1))
     await push.send_message("c_1", "Leave now", "Traffic on the A4.")
+    await push.send_message("c_2", "Coach · Weekly recap", "Good week.", routine=3)
     p = apns.payloads()
     assert p[0] == {"aps": {"alert": {"title": "Morning", "body": "Two meetings today."}, "sound": "default",
                             "thread-id": "digest"}, "aide": {"kind": "digest", "digest": "daily"}}
-    assert [x["aps"]["alert"]["title"] for x in p] == ["Morning", "This week", "November", "Leave now"]
+    assert [x["aps"]["alert"]["title"] for x in p] == ["Morning", "This week", "November", "Leave now",
+                                                         "Coach · Weekly recap"]
     assert p[3]["aide"] == {"kind": "message", "conversation_id": "c_1"} and p[3]["aps"]["thread-id"] == "message"
+    assert p[4]["aide"] == {"kind": "message", "conversation_id": "c_2", "routine": 3}
 
 
 async def test_no_key_means_push_off(tmp_path):

@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from aide.agent import CONVERSATION, Agent
 from aide.channels.api import create_app
 from aide.db import Database
+from aide.food import FoodStore
 from aide.habits import HabitStore, streak
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
@@ -54,7 +55,8 @@ def test_habit_endpoints(api):
     gym = client.post("/v1/habits", json={"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}},
                       headers=AUTH).json()
     assert gym == {"id": 1, "name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "streak": 0,
-                   "done_today": False, "last_done": None, "history": [], "workouts": []}
+                   "done_today": False, "last_done": None, "history": [], "workouts": [], "food": None,
+                   "count": None, "counts": {}}
     read = client.post("/v1/habits", json={"name": "Read"}, headers=AUTH).json()
     assert read["cadence"] == {"type": "daily"}
 
@@ -125,3 +127,101 @@ def test_history_lists_the_last_26_weeks_of_checks_newest_first(api):
     after = client.post(f"/v1/habits/{read.id}/check", json={"date": (today - timedelta(days=1)).isoformat()},
                         headers=AUTH).json()
     assert after["history"] == [expected[0], (today - timedelta(days=1)).isoformat(), *expected[1:]]
+
+
+# -- limit habits -----------------------------------------------------------------------
+
+
+def test_limit_habit_counts_and_settles_at_midnight(api):
+    client, _, habits = api()
+    coffee = client.post("/v1/habits", json={"name": "Coffee", "cadence": {"type": "limit", "max": 5}},
+                        headers=AUTH).json()
+    assert coffee["cadence"] == {"type": "limit", "max": 5} and coffee["count"] == 0 and coffee["counts"] == {}
+    assert coffee["done_today"] and coffee["streak"] == 0 and coffee["history"] == []  # today isn't over yet
+    today = habits.today()
+    two = [client.post(f"/v1/habits/{coffee['id']}/count", headers=AUTH).json() for _ in range(2)][-1]
+    assert two["count"] == 2 and two["counts"] == {today.isoformat(): 2} and two["done_today"]
+    back = client.post(f"/v1/habits/{coffee['id']}/count", json={"add": -5}, headers=AUTH).json()
+    assert back["count"] == 0 and back["counts"] == {}  # never below 0
+    assert client.post(f"/v1/habits/{coffee['id']}/check", headers=AUTH).status_code == 400
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    assert client.post(f"/v1/habits/{coffee['id']}/count", json={"date": tomorrow}, headers=AUTH).status_code == 400
+    read = habits.add("Read")
+    assert client.post(f"/v1/habits/{read.id}/count", headers=AUTH).status_code == 400
+    assert client.post("/v1/habits/99/count", headers=AUTH).status_code == 404
+
+
+def test_limit_habit_streak_and_history_count_days_within_the_limit(api):
+    _, _, habits = api()
+    today = habits.today()
+    h = habits.add("Coffee", max_count=5)
+    habits.conn.execute("UPDATE habits SET since = ? WHERE id = ?", ((today - timedelta(days=5)).isoformat(), h.id))
+    for back, n in ((1, 3), (2, 5), (3, 7), (4, 1)):  # 3 days back was over the limit
+        habits.count(h.id, n, today - timedelta(days=back))
+    h = habits.find(h.id)
+    # Done: 5 back (nothing logged), 4, 2, 1; not 3 (over), not today (still going).
+    assert h.history == tuple(today - timedelta(days=b) for b in (1, 2, 4, 5))
+    assert h.streak == 2 and h.last_done == today - timedelta(days=1) and h.done_today
+    over = habits.count(h.id, 6)
+    assert over.count == 6 and not over.done_today and over.streak == 0  # broken today already
+    assert habits.done_days(h.id, today - timedelta(days=6), today) == set(h.history)
+
+
+def test_becoming_a_limit_habit_counts_from_that_day(api):
+    client, _, habits = api()
+    h = habits.add("Snacks")
+    habits.check(h.id, habits.today() - timedelta(days=3))
+    patched = client.patch(f"/v1/habits/{h.id}", json={"cadence": {"type": "limit", "max": 2}}, headers=AUTH).json()
+    assert patched["cadence"] == {"type": "limit", "max": 2} and patched["history"] == []
+    daily = client.patch(f"/v1/habits/{h.id}", json={"cadence": {"type": "daily"}}, headers=AUTH).json()
+    assert daily["cadence"] == {"type": "daily"} and daily["count"] is None and len(daily["history"]) == 1
+
+
+@pytest.mark.parametrize("body", [
+    {"name": "X", "cadence": {"type": "limit"}}, {"name": "X", "cadence": {"type": "limit", "max": 0}},
+    {"name": "X", "cadence": {"type": "limit", "max": 101}}, {"name": "X", "food": "pizza"},
+    {"name": "X", "cadence": {"type": "limit", "max": 3}, "food": "logged"},
+])
+def test_bad_limit_and_food_habits_are_400(api, body):
+    client, _, _ = api()
+    assert client.post("/v1/habits", json=body, headers=AUTH).status_code == 400
+
+
+async def test_tools_count_and_list_a_limit_habit():
+    db = Database(":memory:")
+    habits = HabitStore(db.conn, ROME)
+    h = habits.add("Coffee", max_count=5)
+    tools = {t.name: t.handler for t in habit_tools(habits)}
+    assert (await tools["count_habit"](habit_id=h.id)).startswith("Counted: [1] Coffee · at most 5 a day · 1 today")
+    assert "last 7 days, oldest first: 0, 0, 0, 0, 0, 0, 0" in await tools["list_habits"]()
+    added = await tools["add_habit"](name="Beer", max=2)
+    assert "at most 2 a day" in added
+    with pytest.raises(ValueError):
+        await tools["check_habit"](habit_id=h.id)
+
+
+# -- food habits ------------------------------------------------------------------------
+
+
+def test_food_habit_ticks_itself_from_the_food_log(api):
+    client, _, habits = api()
+    food = FoodStore(habits.conn, ROME)
+    habits.food = food
+    healthy = client.post("/v1/habits", json={"name": "Eat healthy", "food": "logged"}, headers=AUTH).json()
+    assert healthy["food"] == "logged" and not healthy["done_today"]
+    today = habits.today()
+    food.add("Salad", 400, 20, 30, 10)
+    two_back = datetime.combine(today - timedelta(days=2), datetime.min.time().replace(hour=13), ROME)
+    food.add("Soup", 300, 10, 30, 10, eaten_at=two_back)
+    h = client.get("/v1/habits", headers=AUTH).json()["habits"][0]
+    assert h["done_today"] and h["streak"] == 1
+    assert h["history"] == [today.isoformat(), (today - timedelta(days=2)).isoformat()]
+    client.post(f"/v1/habits/{healthy['id']}/check", json={"date": (today - timedelta(days=1)).isoformat()},
+                headers=AUTH)  # a check by hand still counts
+    assert client.get("/v1/habits", headers=AUTH).json()["habits"][0]["streak"] == 3
+    protein = client.patch(f"/v1/habits/{healthy['id']}", json={"food": "protein_g"}, headers=AUTH).json()
+    assert protein["food"] == "protein_g" and not protein["done_today"]  # no protein goal set
+    food.set_goals({"protein_g": 15})
+    assert client.get("/v1/habits", headers=AUTH).json()["habits"][0]["done_today"]
+    off = client.patch(f"/v1/habits/{healthy['id']}", json={"food": None}, headers=AUTH).json()
+    assert off["food"] is None and off["history"] == [(today - timedelta(days=1)).isoformat()]

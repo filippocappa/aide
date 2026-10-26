@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from . import activity
 from .agents import AGENTS, SPECIALISTS, check_agent
 from .db import utcnow
+from .food import FOOD_METRICS
 from .notebook import date_line
 
 log = logging.getLogger(__name__)
@@ -33,8 +34,6 @@ PERIODS = ("day", "week", "month")
 MOST = {"day": 2, "week": 3, "month": 2}  # proposals per specialist
 DAY_TOTAL = 6  # proposals for a day, all specialists together
 MEASURES = ("habit", "practice", "notes", "food", "sleep", "steps", "reminder")
-FOOD_METRICS = ("logged", "protein_g", "calories")
-CALORIE_BAND = 0.1  # a calorie goal is met within 10% either way
 COURSE_DATES_AHEAD = 120  # days: a course's exams and deadlines the planner sees
 NEW_NOTES_DAYS = 7  # the planner sees the notebook topics changed in this many days
 MISSED_QUIZZES = 10  # ... and the topics most missed in this many recent practice exams
@@ -333,8 +332,7 @@ class ObjectiveStore:
             return 0
         first, last = days
         if m["type"] == "habit":
-            return self.conn.execute("SELECT COUNT(*) FROM habit_checks WHERE habit_id = ? AND day >= ? AND day <= ?",
-                                     (m["habit"], first.isoformat(), last.isoformat())).fetchone()[0]
+            return len(self.habits.done_days(m["habit"], first, last)) if self.habits else 0
         if m["type"] == "practice":
             try:
                 rows = self.conn.execute(
@@ -352,18 +350,7 @@ class ObjectiveStore:
             except Exception:  # no notebooks: the table isn't there
                 return 0
         if m["type"] == "food":
-            if self.food is None:
-                return 0
-            goal = self.food.goals().get(m["metric"])
-            met = 0
-            for day in self.food.days(first, last):
-                if m["metric"] == "logged":
-                    met += day["meals"] > 0
-                elif goal and m["metric"] == "protein_g":
-                    met += day["totals"]["protein_g"] >= goal
-                elif goal:
-                    met += day["meals"] > 0 and abs(day["totals"]["calories"] - goal) <= goal * CALORIE_BAND
-            return met
+            return len(self.food.met_days(m["metric"], first, last)) if self.food else 0
         if self.health is None:
             return 0
         found = self.health.between(first, last)
@@ -481,11 +468,16 @@ goal in memory, what was missed last time (carry it over or make it smaller). Ne
 better than filler.
 - Don't repeat an objective already set for the period, nor copy one from the week or month above: a day's \
 objective is a step toward the week's, not the same thing again.
+- Habits are not objectives. They're what the person always does, with their own streaks, and they're tracked \
+already. Never make a day's objective of a habit's daily round ("Log your meals today", "Stretch today", "Under 5 \
+coffees today"). When a habit matters this period, make a week's or month's target of it, tied to the habit: \
+"Hit the protein goal 5 days this week", "Stay under the coffee limit 6 days this week".
 - A reminder is already on their to-do list. Make one an objective only when it's the period's real priority, at \
 one level only. Errands and appointments (picking someone up, a meeting) are not objectives.
 
 Tie each to a measure when one fits, so it ticks itself; otherwise the person ticks it:
-- {{"type": "habit", "habit": <habit id>}}: check-ins of that habit in the period; target = how many.
+- {{"type": "habit", "habit": <habit id>}}: days that habit was done in the period (for a limit habit, days that \
+ended within its limit); target = how many. Week and month only.
 - {{"type": "practice", "course": <course id>, "score": <percent, optional>}}: practice exams finished; target = \
 how many.
 - {{"type": "notes", "course": <course id>}}: notebook topics written or revised in the period (the notes Aide \
@@ -552,8 +544,11 @@ class ObjectivePlanner:
             if met:
                 log.info("objectives: left out as already met: %s", ", ".join(i["title"] for i in met))
             items = [i for i in items if i not in met]
-            if period == "day":
-                items = items[:DAY_TOTAL]
+            if period == "day":  # a habit's daily round is the habit itself, not an objective
+                rounds = [i for i in items if i["measure"] and i["measure"]["type"] == "habit"]
+                if rounds:
+                    log.info("objectives: left out as a habit's round: %s", ", ".join(i["title"] for i in rounds))
+                items = [i for i in items if i not in rounds][:DAY_TOTAL]
             made = self.store.replace_proposals(period, d, agents, items)
             log.info("objectives: %d proposed for the %s of %s", len(made), period, bounds(period, d)[0])
             for a in agents:
@@ -747,11 +742,19 @@ class ObjectivePlanner:
             if habits:
                 out.append("Habits:")
                 for h in habits:
-                    n = self.store.conn.execute(
-                        "SELECT COUNT(*) FROM habit_checks WHERE habit_id = ? AND day >= ?",
-                        (h.id, week_ago.isoformat())).fetchone()[0]
+                    if h.max_count is not None:
+                        counts = dict(h.counts)
+                        week = [counts.get(today - timedelta(days=i), 0) for i in range(7, 0, -1)]
+                        out.append(f"- [habit {h.id}] {h.name}, at most {h.max_count} a day; {h.count} today; the "
+                                   f"last 7 days, oldest first: {', '.join(map(str, week))}; streak {h.streak} days")
+                        continue
+                    n = len(self.store.habits.done_days(h.id, week_ago, today))
                     cadence = f"{h.per_week} a week" if h.per_week else "daily"
-                    out.append(f"- [habit {h.id}] {h.name}, {cadence}; streak {h.streak}; done {n} of the last 7 days")
+                    food = {"logged": "; ticks itself when meals are logged",
+                            "protein_g": "; ticks itself at the protein goal",
+                            "calories": "; ticks itself at the calorie goal"}.get(h.food or "", "")
+                    out.append(f"- [habit {h.id}] {h.name}, {cadence}{food}; streak {h.streak}; done {n} of the last 7 "
+                               "days")
         food = self.store.food
         if food:
             goals = {k: v for k, v in food.goals().items() if v}
@@ -780,10 +783,8 @@ class ObjectivePlanner:
             out += ["", f"So far this period ({since:%d %b} – yesterday, it counts toward the measures):"]
             yesterday = today - timedelta(days=1)
             for h in self.store.habits.all() if self.store.habits else []:
-                n = self.store.conn.execute(
-                    "SELECT COUNT(*) FROM habit_checks WHERE habit_id = ? AND day >= ? AND day <= ?",
-                    (h.id, since.isoformat(), yesterday.isoformat())).fetchone()[0]
-                out.append(f"- {h.name}: {n} check-ins")
+                n = len(self.store.habits.done_days(h.id, since, yesterday))
+                out.append(f"- {h.name}: {n} {'days within the limit' if h.max_count is not None else 'check-ins'}")
             if food:
                 out.append(f"- Meals logged on {sum(1 for x in food.days(since, yesterday) if x['meals'])} days")
             if health:

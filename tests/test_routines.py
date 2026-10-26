@@ -20,9 +20,11 @@ class FakePush:
     def __init__(self, works=True):
         self.works = works
         self.sent = []
+        self.routines = []  # the routine each push named
 
-    async def send_message(self, conversation_id, title, body):
+    async def send_message(self, conversation_id, title, body, routine=None):
         self.sent.append((conversation_id, title, body))
+        self.routines.append(routine)
         return self.works
 
 
@@ -174,6 +176,7 @@ def test_a_run_posts_in_the_chat_and_pushes(env):
     assert [(m["role"], m.get("routine")) for m in history["messages"]] == [
         ("assistant", {"id": r["id"], "title": "Weekly recap"})]  # the prompt stays hidden
     assert push.sent == [(r["conversation_id"], "Coach · Weekly recap", "Good week: 4 of 5 sessions.")]
+    assert push.routines == [r["id"]]  # the app opens Today on the note
     assert conversations(client)[r["conversation_id"]]["preview"].startswith("Good week")
 
     client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH)  # the next run sees the chat so far

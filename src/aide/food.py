@@ -37,6 +37,8 @@ LIMITS = {"calories": 10_000, "protein_g": 1_000, "carbs_g": 1_000, "fat_g": 1_0
 MAX_NAME = 100
 MAX_NOTES = 500
 EDITABLE = ("name", "eaten_at", *MACROS, "notes")
+FOOD_METRICS = ("logged", "protein_g", "calories")  # what a food objective or habit counts days by
+CALORIE_BAND = 0.1  # a calorie goal is met within 10% either way
 
 
 def _round(key: str, value: float) -> int:
@@ -139,6 +141,29 @@ class FoodStore:
         every = (start + timedelta(days=i) for i in range((end - start).days + 1))
         return [{"date": d.isoformat(), "totals": totals(by_day.get(d, [])), "meals": len(by_day.get(d, []))}
                 for d in every]
+
+    def met_days(self, metric: str, start: date, end: date) -> set[date]:
+        """The local days start..end (both included) that meet a food metric: a meal logged, the protein goal
+        reached, or calories within CALORIE_BAND of the goal. None without the goal it needs."""
+        goal = self.goals().get(metric)
+        met = set()
+        for day in self.days(start, end):
+            if metric == "logged":
+                ok = day["meals"] > 0
+            elif not goal:
+                ok = False
+            elif metric == "protein_g":
+                ok = day["totals"]["protein_g"] >= goal
+            else:
+                ok = day["meals"] > 0 and abs(day["totals"]["calories"] - goal) <= goal * CALORIE_BAND
+            if ok:
+                met.add(date.fromisoformat(day["date"]))
+        return met
+
+    def first_day(self) -> date | None:
+        """The local day of the first meal logged."""
+        row = self.conn.execute("SELECT * FROM meals ORDER BY eaten_at LIMIT 1").fetchone()
+        return self.local_day(dict(row)) if row else None
 
     def as_json(self, meal: dict) -> dict:
         return {"id": meal["id"], "name": meal["name"],

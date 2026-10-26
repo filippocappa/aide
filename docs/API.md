@@ -266,7 +266,11 @@ asking an agent ("every Sunday at 18 recap my week").
 | `POST /v1/routines/{id}/run` | `{}` | runs it now, as a scheduled run would (also when disabled), and returns `{"routine": …, "conversation_id": "c_7ab…", "spoke": true}` once the message is posted. `spoke` is false when a watch found nothing (nothing was posted). Can take 30 s. |
 
 - **Each run** posts the agent's reply in the routine's chat, then sends an alert push
-  (`aide.kind: "message"`, `conversation_id`, title "Coach · Weekly recap", body the first line). Actions it queues join the usual confirmation queue, and the push says so.
+  (`aide.kind: "message"`, `conversation_id`, `routine` (its id, since 2026-10-26), title "Coach · Weekly recap",
+  body the first line). Actions it queues join the usual confirmation queue, and the push says so.
+- **In the app** (since 2026-10-26) a routine's or watch's posts are notes on the Today page (from
+  `GET /v1/activity?kind=routine,watch`), and a push with `routine` opens Today on that note. The routine's chat
+  stays as its log on the server and opens from the note, to reply; the Chats tab leaves routine chats out.
 - A run missed while the server was down runs once when it's back, if it's less than 2 h late; else it's skipped.
 - **In history**, a message a routine posted has `"routine": {"id": 3, "title": "Weekly recap"}` (absent on others).
   **In the conversation list**, a routine's chat has `"routine": 3` (absent or `null` on others).
@@ -316,7 +320,7 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
 - `status`: `proposed` (waiting for your OK), `active`, `dropped`, or `lapsed` (a proposal whose period ended
   without an OK; read-only).
 - `measure` says what ticks it, with a readable `label`; `null` means you tick it. Types:
-  `habit` {`habit`}: check-ins in the period. `practice` {`course`, `score`?}: practice exams finished (at
+  `habit` {`habit`}: check-ins in the period (days done, for a limit or food habit). `practice` {`course`, `score`?}: practice exams finished (at
   `score`% or more). `notes` {`course`}: notebook topics written or revised (notes Aide wrote after your OK, or
   your edits in Obsidian; a topic counts once, added figures don't count). `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
   goal (calories within 10%). `sleep` {`hours`}: nights at or over. `steps` {`steps`}: days at or over.
@@ -334,6 +338,9 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
   the objectives above and how the last period went: at most 2 a day (6 a day in all), 3 a week and 2 a month
   per specialist, none when there's nothing real to go on. A new plan replaces only the proposals still waiting.
   Titles state the period's total, matching `target` ("Sleep 7h or more on 5 nights this week").
+- **Not habits** (since 2026-10-26): a day's objectives are never a habit's daily round ("Log your meals today",
+  "Stretch today"); habits keep their own streaks. When a habit matters, the plan proposes a week or month target
+  tied to it ("Hit the protein goal 5 days this week"). A day's proposal measured by a habit is left out.
 - **When the study material changes** (a course's notes written or edited, its dates read anew), Professor's week
   and day are planned again, 10 min after the last change and at most every 30 min. A period is left alone when
   it hasn't been planned yet, or when Professor's objectives in it are all taken with none waiting. No push.
@@ -355,9 +362,10 @@ What the agents did, and what's waiting for you, in one place outside the chats 
 
 ### Activity
 
-`GET /v1/activity` (`?agent=coach`, `?before=81`, `?limit=100`, all optional; `limit` at most 200) →
-`{"items": [Item], "next": 73}`, newest first. `next` is the `before` for the page after, or `null` at the end.
-An unknown `agent` is `400`. Lines are kept 90 days; the feed starts empty on 2026-10-22.
+`GET /v1/activity` (`?agent=coach`, `?kind=routine,watch`, `?before=81`, `?limit=100`, all optional; `limit` at
+most 200) → `{"items": [Item], "next": 73}`, newest first. `next` is the `before` for the page after, or `null` at
+the end. `kind` (since 2026-10-26) keeps only those kinds, comma-separated: `routine,watch` are the team's notes
+on the app's Today page. An unknown `agent` is `400`. Lines are kept 90 days; the feed starts empty on 2026-10-22.
 
 ```json
 {"id": 81, "ts": "2026-10-22T18:30:04+02:00", "agent": "secretary", "kind": "watch", "title": "Tomorrow",
@@ -464,9 +472,17 @@ existed are shared. An item saved with `"agent": "aide"` is stored as shared (`n
 ## Digest
 
 A summary the server builds on a schedule: morning (`daily`), evening, weekly or monthly, plus the wake-up
-briefing (`wake`), which runs when the user gets up instead of at a set time (see Apple Health). Its greeting opens a new chat (`POST /v1/conversations` with `digest`), the app shows the cards behind a "Details" link, and the server also sends it as a push notification (see Push). Sections are structured, so the app draws cards instead of parsing text.
+briefing (`wake`), which runs when the user gets up instead of at a set time (see Apple Health). The app shows the
+latest one as the first card on its Today page (the greeting, then the day; "Details" opens the rest), and the
+server also sends it as a push notification (see Push), whose tap opens Today. Sections are structured, so the app
+draws cards instead of parsing text.
 
-`GET /v1/digest?kind=daily` (`daily` default, `wake`, `evening`, `weekly`, `monthly`) →
+**Digests aren't chat messages** (since 2026-10-26): the app no longer opens a chat with the greeting from a
+notification. `POST /v1/conversations` with `digest` still works (the app's "Reply" under the card uses it: a chat
+you start, about that digest).
+
+`GET /v1/digest?kind=daily` (`daily` default, `wake`, `evening`, `weekly`, `monthly`, or `latest`: whichever was
+made last, since 2026-10-26) →
 ```json
 {
   "kind": "daily",
@@ -842,23 +858,42 @@ Unicode in `text`, `options` and `explanation` ($\pi_{t-1}$ as πₜ₋₁).
 
 ## Habits
 
-Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"]}`.
+Habits are what you always do: they never end, and they keep a streak and a grid. (What a day, week or month is
+about is an objective, see Objectives.)
+
+Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3} | {"type": "limit", "max": 5}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"], "food": null, "count": null, "counts": {}}`.
 
 `workouts` (default `[]`) lists the Apple Watch workout types that check the habit by themselves (see Apple Health,
 "Workout types"; `"any"` matches every type). When a health upload has a workout of a listed type that lasted at
 least 10 minutes, the server checks the habit for the workout's local date. Each workout (by its `id`) checks a
 habit at most once, so if you undo the check, a later upload of the same workout doesn't redo it.
 
-`history` is every local date the habit was checked in the last 26 weeks (182 days, today included), newest first,
-for a GitHub-style grid. Every endpoint that returns a Habit includes it, `POST /v1/habits/{id}/check` too, and
-so does the `habits` digest section.
+`food` (since 2026-10-26, default `null`) ticks a habit from the food log, like a `food` objective: `"logged"` on
+days with a meal logged, `"protein_g"` on days at the protein goal, `"calories"` on days within 10% of the calorie
+goal (see Food). Those days count as checked, worked out on every read, so they can't be unchecked by hand; checks
+by hand still add to them. "Eat healthy" with `"food": "logged"` ticks itself once a meal is in.
+
+**Limit habits** (since 2026-10-26): `{"type": "limit", "max": 5}` is a daily count that has to stay at or under
+`max` (1–100), like "5 coffees a day at most". You log each one (`POST /v1/habits/{id}/count`); nothing logged
+means 0.
+- `count` is today's count (`null` on other habits). `counts` maps each local date with a count in the last 26
+  weeks to it, `{"2026-10-25": 3, …}` (only days over 0; `{}` on other habits), for the trend and the grid.
+- A day is done when it ended at or under `max`, so `history` and `last_done` only hold days before today (from the
+  day the habit became a limit habit). `done_today` says whether today is still within the limit so far.
+- `streak` counts the days before today in a row that were done, and is 0 once today goes over.
+- Checking a limit habit (`/check`) is `400`; the count is its check.
+
+`history` is every local date the habit was checked (or done, for the two kinds above) in the last 26 weeks (182
+days, today included), newest first, for a GitHub-style grid. Every endpoint that returns a Habit includes it,
+`POST /v1/habits/{id}/check` too, and so does the `habits` digest section.
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/habits` | | `{"habits": [Habit]}` |
-| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "workouts": ["strength"]}` (`workouts` optional) | the new Habit |
-| `PATCH /v1/habits/{id}` | any of `name`, `cadence`, `workouts` | the updated Habit |
+| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "workouts": ["strength"], "food": null}` (`workouts`, `food` optional) | the new Habit |
+| `PATCH /v1/habits/{id}` | any of `name`, `cadence`, `workouts`, `food` | the updated Habit |
 | `POST /v1/habits/{id}/check` | `{"date": "2026-10-18"}` (optional, default today; send `"done": false` to undo) | the updated Habit |
+| `POST /v1/habits/{id}/count` | `{"add": 1}` (default 1; `-1` takes one back, never below 0), `"date"` optional (default today) | the updated Habit. `400` for a habit that isn't a limit habit, or a future date. |
 | `DELETE /v1/habits/{id}` | | `{"ok": true}` |
 
 `streak` counts consecutive scheduled periods done: days for a daily habit, Monday-to-Sunday weeks with at least
@@ -866,7 +901,8 @@ so does the `habits` digest section.
 while it's still in progress. Names are unique, ignoring case (a duplicate is `400`); checking a future date is
 `400`; an unknown id is `404`.
 
-The assistant also gets tools to add, check and list habits (deleting is queued for confirmation).
+The assistant also gets tools to add, check, count and list habits (deleting is queued for confirmation), so "I
+had another one" in chat logs one. Coach sees each limit habit's count today and the last 7 days.
 
 ## Apple Health
 
@@ -985,6 +1021,13 @@ Its answers are plain text; there are no health attachments yet.
 }
 ```
 All-day events have `"all_day": true`, and `start`/`end` are dates, with `end` **exclusive**.
+
+**The app's Today page** (since 2026-10-26, #21) is built from these, each part loading on its own, so one slow
+source (the calendar, mail) doesn't hold up the rest. There is no endpoint just for it.
+1. The latest digest: `GET /v1/digest?kind=latest`.
+2. Waiting for you: `GET /v1/approvals` (actions, proposed objectives, notebook proposals, mail drafts, the writer).
+3. Habits and objectives: `GET /v1/habits` and `GET /v1/objectives` (Today / Week / Month).
+4. Notes from the team: `GET /v1/activity?kind=routine,watch`, then the whole feed (`GET /v1/activity`).
 
 `POST /v1/reminders/{id}/complete` with `{"completed": true}` (false: not done after all) → the Reminder object.
 For the Today widget's tick box, which can't reach Apple Reminders: the server marks it (`modified_at` now, so it
@@ -1180,8 +1223,8 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 |---|---|---|---|---|
 | `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server | | (not shown) the app runs a reminders sync |
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
-| `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens a new chat with that digest (`POST /v1/conversations` with `digest`) |
-| `message` | alert | Aide writes first (future use: briefings, leave-now alerts) | `conversation_id` | opens that conversation |
+| `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens Today on the digest (since 2026-10-26; before: a new chat with it) |
+| `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |
 | `lecture` | alert | a lecture's notes are ready, or it failed (title "Professor · macroeconomics") | `lecture_id` | opens that lecture |
 | `moodle` | alert | a Moodle sync brought new files (title "Moodle · 3 new files", a line per course naming them: "Macroeconomics: Lecture Notes: Monetary Policy, Lect: Monetary Policy"), or the login expired | `files` (the new files' ids, up to 20; since 2026-10-26), `login` (true: log in again) | lists the new files (`GET /v1/files/{id}`), each opening its PDF; the Moodle login with `login` |
 | `transit` | alert, `interruption-level: time-sensitive` | a tram alert fires ("Tram 4 in 7 min: leave now") | `alert_id` | nothing special (opens the app) |
@@ -1303,7 +1346,7 @@ widgets after a sync, a chat reply, a check-in and the like. They use these endp
 | Widget | Reads | Taps |
 |---|---|---|
 | Today | `GET /v1/today` | a reminder's tick box: `POST /v1/reminders/{id}/complete`; the rest: `aide://today` |
-| Health | `GET /v1/food`, `GET /v1/habits` | a habit: `POST /v1/habits/{id}/check`; the rest: `aide://health` (the tab) |
-| Objectives | `GET /v1/objectives` (the day's, then the week's) | a hand-ticked one: `PATCH /v1/objectives/{id}` `{"done": true}`; the rest: `aide://objectives` (the tab) |
+| Health | `GET /v1/food`, `GET /v1/habits` | a habit: `POST /v1/habits/{id}/check`, a limit habit's +1: `POST /v1/habits/{id}/count`; the rest: `aide://health` (the tab) |
+| Objectives | `GET /v1/objectives` (the day's, then the week's) | a hand-ticked one: `PATCH /v1/objectives/{id}` `{"done": true}`; the rest: `aide://objectives` (Today's habits and objectives) |
 | Team | `GET /v1/agents` | an agent: `aide://agent/<id>` (its latest chat); the Lock Screen's "Talk to Aide": `aide://voice` |
 | Departures | `GET /v1/transit/nearby` | opens the app |

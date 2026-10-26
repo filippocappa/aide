@@ -68,12 +68,15 @@ def record(conn: sqlite3.Connection, agent: str, kind: str, title: str, detail: 
 
 
 def recent(conn: sqlite3.Connection, agent: str | None = None, before: int | None = None,
-           limit: int = 100) -> list[dict]:
-    """Newest first, all agents or one, older than the line `before`."""
+           limit: int = 100, kinds: list[str] | None = None) -> list[dict]:
+    """Newest first, all agents or one, older than the line `before`, of any kind or only `kinds`."""
     sql, params = "SELECT * FROM activity WHERE 1", []
     if agent is not None:
         sql += " AND agent = ?"
         params.append(agent)
+    if kinds:
+        sql += f" AND kind IN ({', '.join('?' * len(kinds))})"
+        params += kinds
     if before is not None:
         sql += " AND id < ?"
         params.append(before)

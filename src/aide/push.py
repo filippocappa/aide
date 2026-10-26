@@ -178,8 +178,10 @@ class Push:
         title = DIGEST_TITLES.get(kind) or f"{month or datetime.now():%B}"
         return await self._alert("digest", title, greeting, digest=kind)
 
-    async def send_message(self, conversation_id: str, title: str, body: str) -> bool:
-        return await self._alert("message", title, body, conversation_id=conversation_id)
+    async def send_message(self, conversation_id: str, title: str, body: str, routine: int | None = None) -> bool:
+        """`routine`: a routine's or watch's post, which the app shows as a note on Today."""
+        return await self._alert("message", title, body, conversation_id=conversation_id,
+                                 **({"routine": routine} if routine is not None else {}))
 
     async def send_lecture(self, lecture_id: str, title: str, body: str) -> bool:
         return await self._alert("lecture", title, body, lecture_id=lecture_id)

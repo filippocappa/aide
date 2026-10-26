@@ -124,6 +124,43 @@ def test_proposals_wait_for_an_ok_and_lapse(env):
         store.update(b["public_id"], status="proposed")
 
 
+def test_a_habit_measure_counts_days_done_for_limit_and_food_habits(env):
+    store, _, _, db, _ = env
+    week_start = bounds("week", TODAY)[0]
+    coffee = store.habits.add("Coffee", max_count=5)
+    db.conn.execute("UPDATE habits SET since = ? WHERE id = ?", (week_start.isoformat(), coffee.id))
+    o = store.add("coach", "week", TODAY, "Stay under the limit 5 days", measure={"type": "habit", "habit": coffee.id},
+                  target=5)
+    days_before = (TODAY - week_start).days  # days of this week already over, all within the limit
+    assert store.as_json(o)["progress"] == days_before
+    if days_before:
+        store.habits.count(coffee.id, 9, week_start)  # the Monday went over
+        assert store.as_json(store.get(o["public_id"]))["progress"] == days_before - 1
+
+    store.habits.food = store.food
+    healthy = store.habits.add("Eat healthy", food="logged")
+    h = store.add("coach", "week", TODAY, "Log meals 5 days", measure={"type": "habit", "habit": healthy.id}, target=5)
+    store.food.add("Salad", 400, 20, 30, 10)
+    assert store.as_json(store.get(h["public_id"]))["progress"] == 1
+
+
+async def test_a_days_plan_leaves_out_a_habits_daily_round(env):
+    store, planner, engine, _, _ = env
+    stretch = store.habits.add("Stretch")
+    coffee = store.habits.add("Coffee", max_count=5)
+    store.habits.count(coffee.id, 2)
+    engine.replies.append(json.dumps([
+        {"agent": "coach", "title": "Stretch today", "measure": {"type": "habit", "habit": stretch.id}, "target": 1},
+        {"agent": "coach", "title": "Book the physio", "measure": None},
+    ]))
+    made = await planner.plan("day", TODAY)
+    assert [o["title"] for o in made] == ["Book the physio"]
+    asked = engine.asked[0]
+    assert "Habits are not objectives" in asked["system"]
+    assert f"[habit {coffee.id}] Coffee, at most 5 a day; 2 today; the last 7 days, oldest first: 0, 0, 0, 0, 0, " \
+           "0, 0" in asked["text"]
+
+
 async def test_a_plan_proposes_from_the_data_within_limits(env):
     store, planner, engine, db, study = env
     run = store.habits.add("Run", per_week=3)

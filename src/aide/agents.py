@@ -22,7 +22,7 @@ MAPS = ("find_places", "travel_time")
 TRANSIT = ("transit_stops", "transit_arrivals", "list_transit_alerts", "add_transit_alert", "update_transit_alert",
            "delete_transit_alert")
 WEB = ("web_search", "fetch_page")
-HABITS = ("add_habit", "list_habits", "check_habit", "delete_habit")
+HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "delete_habit")
 HEALTH = ("health",)
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
@@ -97,7 +97,9 @@ again in its thread. Queue reply_mail only when they ask you to send it now."""
 
 _HABITS = """- Habits: list_habits shows each habit's id, streak and whether today is done. When the user says they did \
 something they track (went to the gym, read), check it off with check_habit; for a day other than today, pass \
-the date. Deleting a habit is queued like other deletions."""
+the date. A limit habit (at most N a day, like coffees) is counted, not checked: "I had another one" is count_habit; \
+list_habits shows its count today and the last 7 days, so you can say how it's going. A food habit ticks itself \
+from the food log. Deleting a habit is queued like other deletions."""
 
 _CARDS = """- In the app, the reminders, calendar events and meals your tools listed, created or changed this turn are \
 shown under your reply as cards (with tick boxes for reminders). So don't repeat them line \
@@ -341,7 +343,7 @@ _CONNECTORS = (
     ("reminders", "Reminders", REMINDERS, {"create_reminder", "update_reminder", "complete_reminder", "delete_reminder"}),
     ("mail", "Gmail", MAIL, {"send_mail", "reply_mail", "draft_reply", "discard_draft"}),
     ("health", "Apple Health", HEALTH, set()),
-    ("habits", "Habits", HABITS, {"add_habit", "check_habit", "delete_habit"}),
+    ("habits", "Habits", HABITS, {"add_habit", "check_habit", "count_habit", "delete_habit"}),
     ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "delete_meal"}),
     ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
                                      "edit_topic", "start_notebook", "rewrite_introduction", "find_figures",

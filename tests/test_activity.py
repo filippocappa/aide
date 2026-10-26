@@ -133,6 +133,11 @@ def test_the_feed_pages_and_filters(env):
     rest = feed(client, limit=10, before=page["next"])
     assert [i["title"] for i in rest["items"]] == ["Thing 2", "Thing 1", "Thing 0"] and rest["next"] is None
     assert [i["title"] for i in feed(client, agent="coach")["items"]] == ["Thing 3", "Thing 1"]
+    activity.record(agent.db.conn, "coach", "watch", "Recovery check", "Low HRV.")
+    activity.record(agent.db.conn, "coach", "routine", "Weekly recap", "Good week.")
+    activity.record(agent.db.conn, "aide", "digest", "Morning digest")
+    assert [i["title"] for i in feed(client, kind="routine,watch")["items"]] == ["Weekly recap", "Recovery check"]
+    assert [i["title"] for i in feed(client, kind="watch", agent="coach")["items"]] == ["Recovery check"]
     assert client.get("/v1/activity", params={"agent": "butler"}, headers=AUTH).status_code == 400
 
 

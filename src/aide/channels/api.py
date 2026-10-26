@@ -225,18 +225,26 @@ class MemoryIn(BaseModel):
 class Cadence(BaseModel):
     type: str = "daily"
     per_week: int | None = None
+    max: int | None = None  # a limit habit's most a day
 
 
 class HabitIn(BaseModel):
     name: str
     cadence: Cadence = Cadence()
     workouts: list[str] = []
+    food: str | None = None
 
 
 class HabitPatch(BaseModel):
     name: str | None = None
     cadence: Cadence | None = None
     workouts: list[str] | None = None
+    food: str | None = None
+
+
+class CountIn(BaseModel):
+    add: int = 1
+    day: date | None = Field(None, alias="date")
 
 
 class HealthDaysIn(BaseModel):
@@ -335,11 +343,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                live: LiveActivities | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
-    habits = habits or HabitStore(db.conn, tz)
+    food = food or FoodStore(db.conn, tz)
+    habits = habits or HabitStore(db.conn, tz, food)
+    if habits.food is None:  # food habits tick from the food log
+        habits.food = food
     health = health or HealthStore(db.conn, tz)
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
     wake = wake or WakeService(digest, health, tz, push=push)
-    food = food or FoodStore(db.conn, tz)
     study = study or StudyStore(db, tz, calendar)
     moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
@@ -475,9 +485,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/activity", dependencies=[Depends(auth)])
     async def get_activity(agent_id: str | None = Query(None, alias="agent"), before: int | None = None,
-                           limit: int = 100):
+                           limit: int = 100, kind: str | None = None):
         limit = max(1, min(limit, 200))
-        items = activity.recent(db.conn, check_agent(agent_id) if agent_id is not None else None, before, limit)
+        kinds = [k.strip() for k in kind.split(",") if k.strip()] if kind else None
+        items = activity.recent(db.conn, check_agent(agent_id) if agent_id is not None else None, before, limit, kinds)
         return {"items": [{**i, "ts": local(i["ts"])} for i in items],
                 "next": items[-1]["id"] if len(items) == limit else None}
 
@@ -784,25 +795,29 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def list_habits():
         return {"habits": [h.as_json() for h in habits.all()]}
 
-    def per_week(cadence: Cadence) -> int | None:
-        if cadence.type not in ("daily", "weekly"):
-            raise HTTPException(400, "cadence type must be daily or weekly")
-        if cadence.type == "weekly" and cadence.per_week is None:
+    def cadence(c: Cadence) -> dict:
+        """The cadence as the store's per_week and max_count."""
+        if c.type not in ("daily", "weekly", "limit"):
+            raise HTTPException(400, "cadence type must be daily, weekly or limit")
+        if c.type == "weekly" and c.per_week is None:
             raise HTTPException(400, "a weekly habit needs per_week")
-        return cadence.per_week if cadence.type == "weekly" else None
+        if c.type == "limit" and c.max is None:
+            raise HTTPException(400, "a limit habit needs max")
+        return {"per_week": c.per_week if c.type == "weekly" else None, "max_count": c.max if c.type == "limit" else None}
 
     @app.post("/v1/habits", dependencies=[Depends(auth)])
     async def add_habit(body: HabitIn):
-        return habits.add(body.name, per_week(body.cadence), body.workouts).as_json()
+        return habits.add(body.name, workouts=body.workouts, food=body.food, **cadence(body.cadence)).as_json()
 
     @app.patch("/v1/habits/{habit_id}", dependencies=[Depends(auth)])
     async def edit_habit(habit_id: int, body: HabitPatch):
         if habits.get(habit_id) is None:
             raise HTTPException(404, f"no habit {habit_id}")
         changes = body.model_dump(exclude_unset=True, exclude={"cadence"})
+        changes = {k: v for k, v in changes.items() if v is not None or k == "food"}  # food: null stops it
         if body.cadence is not None:
-            changes["per_week"] = per_week(body.cadence)
-        return habits.update(habit_id, **{k: v for k, v in changes.items() if v is not None or k == "per_week"}).as_json()
+            changes |= cadence(body.cadence)
+        return habits.update(habit_id, **changes).as_json()
 
     @app.post("/v1/habits/{habit_id}/check", dependencies=[Depends(auth)])
     async def check_habit(habit_id: int, body: CheckIn | None = None):
@@ -810,6 +825,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if habits.get(habit_id) is None:
             raise HTTPException(404, f"no habit {habit_id}")
         return habits.check(habit_id, body.day, body.done).as_json()
+
+    @app.post("/v1/habits/{habit_id}/count", dependencies=[Depends(auth)])
+    async def count_habit(habit_id: int, body: CountIn | None = None):
+        body = body or CountIn()
+        if habits.get(habit_id) is None:
+            raise HTTPException(404, f"no habit {habit_id}")
+        return habits.count(habit_id, body.add, body.day).as_json()
 
     @app.delete("/v1/habits/{habit_id}", dependencies=[Depends(auth)])
     async def delete_habit(habit_id: int):
@@ -1301,6 +1323,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/digest", dependencies=[Depends(auth)])
     async def latest_digest(kind: str = "daily"):
+        if kind == "latest":  # whichever was made last
+            kind = digest.newest_kind()
+            if kind is None:
+                raise HTTPException(404, "no digest yet")
         found = await digest.view(check_kind(kind))
         if found is None:
             raise HTTPException(404, f"no {kind} digest yet")

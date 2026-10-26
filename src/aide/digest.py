@@ -242,6 +242,11 @@ class DigestService:
                                 (check_kind(kind),)).fetchone()
         return json.loads(row["body"]) if row else None
 
+    def newest_kind(self) -> str | None:
+        """The kind of the digest made last, of any kind."""
+        row = self.conn.execute("SELECT kind FROM digests ORDER BY id DESC LIMIT 1").fetchone()
+        return row["kind"] if row else None
+
     def last_generated(self, kind: str) -> datetime | None:
         row = self.conn.execute("SELECT generated_at FROM digests WHERE kind = ? ORDER BY id DESC LIMIT 1",
                                 (kind,)).fetchone()
@@ -583,9 +588,12 @@ def to_text(greeting: str | None, sections: list[dict], tz: ZoneInfo) -> str:
             case "habits":
                 rows = []
                 for h in s["habits"]:
-                    unit = "day" if h["cadence"]["type"] == "daily" else "week"
-                    rows.append(f"{h['name']}: streak {h['streak']} {unit}{'s' if h['streak'] != 1 else ''}"
-                                + (" ✓ today" if h["done_today"] else ""))
+                    unit = "week" if h["cadence"]["type"] == "weekly" else "day"
+                    if h["cadence"]["type"] == "limit":  # settled at midnight: say where today stands
+                        today = f", {h['count']} of at most {h['cadence']['max']} today"
+                    else:
+                        today = " ✓ today" if h["done_today"] else ""
+                    rows.append(f"{h['name']}: streak {h['streak']} {unit}{'s' if h['streak'] != 1 else ''}{today}")
             case "sleep":
                 sl, usual = s["sleep"], s.get("usual_asleep_min")
                 when = (f", {datetime.fromisoformat(sl['bedtime']).astimezone(tz):%H:%M}–"

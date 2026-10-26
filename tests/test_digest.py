@@ -340,6 +340,18 @@ def test_new_conversation_can_open_with_the_digest_greeting(env):
     assert client.post("/v1/conversations", json={"digest": "yearly"}, headers=AUTH).status_code == 400
 
 
+def test_latest_is_whichever_digest_was_made_last(env):
+    make, _, _ = env
+    client, _, _ = make([done("Evening one.\n---\n- x"), done("Morning one.\n---\n- x")], Calendar([]))
+    assert client.get("/v1/digest?kind=latest", headers=AUTH).status_code == 404
+    client.post("/v1/digest/run", json={"kind": "evening"}, headers=AUTH)
+    assert client.get("/v1/digest?kind=latest", headers=AUTH).json()["kind"] == "evening"
+    client.post("/v1/digest/run", json={"kind": "daily"}, headers=AUTH)
+    latest = client.get("/v1/digest?kind=latest", headers=AUTH).json()
+    assert latest["kind"] == "daily" and latest["greeting"] == "Morning one."
+    assert client.post("/v1/digest/run", json={"kind": "latest"}, headers=AUTH).status_code == 400
+
+
 def test_opening_makes_a_fresh_digest_when_the_stored_one_is_stale(env):
     make, _, _ = env
     client, service, fake = make([done("Fresh one.\n---\n- x")], Calendar([]))
