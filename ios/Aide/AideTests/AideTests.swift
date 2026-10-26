@@ -608,6 +608,17 @@ final class HealthTests: XCTestCase {
         XCTAssertEqual(naps.first?.asleepMin, 130)
     }
 
+    func testANapWithoutStagesCountsNextToAWatchNight() {
+        let segments = [
+            seg(.asleep, (2, 0), (7, 50)), // the iPhone's copy of the night
+            seg(.core, (2, 16), (7, 53)), // the Watch's night
+            seg(.asleep, (10, 15), (12, 30)), // a nap with no stages
+        ]
+        let night = SleepSummary.night(endingOn: at(12), from: segments, calendar: calendar)
+        XCTAssertEqual(night?.asleepMin, 337)
+        XCTAssertEqual(SleepSummary.naps(on: at(12), from: segments, calendar: calendar).map(\.asleepMin), [135])
+    }
+
     func testNightEndingTheDayBeforeIsNotThisDays() {
         let segments = [seg(.core, (-24, 0), (-17, 0))] // ended 07:00 on the 18th
         XCTAssertNil(SleepSummary.night(endingOn: at(12), from: segments, calendar: calendar))

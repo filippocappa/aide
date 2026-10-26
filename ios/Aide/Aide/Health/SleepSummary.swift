@@ -55,10 +55,13 @@ enum SleepSummary {
             }
     }
 
-    /// The Watch writes stages; the iPhone only "asleep". When there are stages, the plain ones are duplicates.
+    /// The Watch writes stages; the iPhone (and other apps) only "asleep". A plain stretch that overlaps a staged one
+    /// is a duplicate; one on its own (a nap without the Watch's stages) is sleep too.
     private static func asleep(_ segments: [SleepSegment]) -> [SleepSegment] {
         let staged = segments.filter { [.core, .deep, .rem].contains($0.stage) }
-        return staged.isEmpty ? segments.filter { $0.stage == .asleep } : staged
+        let plain = segments.filter { $0.stage == .asleep }
+            .filter { p in !staged.contains { $0.start < p.end && p.start < $0.end } }
+        return staged + plain
     }
 
     private typealias Interval = (start: Date, end: Date)
