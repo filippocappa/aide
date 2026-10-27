@@ -287,7 +287,9 @@ day's `health_logged` and the app makes its own Inhaler Usage samples match, nev
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
 2. Ideas from the agent-app research, not yet chosen: (#15, digests in a feed, is mostly covered by Today; #14,
    Goals, by objectives.)
-3. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
+3. New, filed 2026-10-27, not yet chosen: a browser agent that logs in and shops for you (#22), Screen Time locks
+   in routines (#23), more in the Dynamic Island (#24).
+4. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
    for the other courses. Finance still has no data source (memory only).
 
 Later: Later for health: bedtime nudge in the evening digest,
