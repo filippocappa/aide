@@ -1,7 +1,12 @@
 """GTT tools: stops, live arrivals and tram alerts (docs/API.md, "Transit"). Reading and setting alerts run
 immediately; deleting an alert waits for the user's !yes."""
 
+import re
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from ..db import utcnow
+from ..leave import LeaveWatcher
 from ..transit import AlertStore, Boards, Location, Transit, line_key
 from . import Tool, ToolOutput
 
@@ -169,4 +174,73 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
         Tool("delete_transit_alert", "Delete a tram alert. Needs the user's confirmation: it is queued, and runs only "
              "when the user replies !yes.", _obj(aid, ["alert_id"]), delete_transit_alert, confirm=True,
              describe=describe_delete, target_arg="alert_id"),
+    ]
+
+
+def leave_tools(leave: LeaveWatcher, tz: ZoneInfo) -> list[Tool]:
+    """leave_for: "I need to be at uni at 9:30, what do I take?", answered and set up as leave-now for an event."""
+
+    def by(value: str, now: datetime) -> datetime:
+        value = value.strip()
+        if re.fullmatch(r"\d{1,2}:\d{2}", value):
+            h, m = map(int, value.split(":"))
+            at = now.astimezone(tz).replace(hour=h, minute=m, second=0, microsecond=0)
+            return at if at > now else at + timedelta(days=1)  # 9:30 asked at 22:00 is tomorrow's
+        at = datetime.fromisoformat(value)
+        return at if at.tzinfo else at.replace(tzinfo=tz)
+
+    def clock(at: datetime) -> str:
+        local = at.astimezone(tz)
+        return f"{local:%H:%M}" if local.date() == datetime.now(tz).date() else f"{local:%a %d %b %H:%M}"
+
+    def rides(route: dict) -> list[str]:
+        out = []
+        for t in (s["transitDetails"] for leg in route.get("legs", []) for s in leg.get("steps", [])
+                  if s.get("transitDetails")):
+            stops, tl = t.get("stopDetails", {}), t.get("transitLine", {})
+            vehicle = tl.get("vehicle", {}).get("name", {}).get("text", "")
+            name = f"{vehicle + ' ' if vehicle else ''}{tl.get('nameShort') or tl.get('name') or '?'}"
+            times = [datetime.fromisoformat(stops[k].replace("Z", "+00:00")) if stops.get(k) else None
+                     for k in ("departureTime", "arrivalTime")]
+            out.append(f"{name}{' towards ' + t['headsign'] if t.get('headsign') else ''}: "
+                       f"{clock(times[0]) if times[0] else '?'} from {stops.get('departureStop', {}).get('name', '?')}, "
+                       f"{clock(times[1]) if times[1] else '?'} at {stops.get('arrivalStop', {}).get('name', '?')}")
+        return out
+
+    async def leave_for(destination: str, arrive_by: str) -> str:
+        now = utcnow()
+        arrive = by(arrive_by, now)
+        if arrive - now > timedelta(days=2):
+            raise ValueError("only for the next two days: plan further ahead with travel_time")
+        t = await leave.trip(destination, arrive, now)
+        if t["there"]:
+            return f"The user is already at {destination} (or within a few minutes' walk): no tram needed."
+        out = []
+        if t["late"]:
+            out.append(f"Too late to be there by {clock(arrive)} on transit; the first way from now:")
+        out.append(f"Leave {'where the user is' if t['from'] == 'here' else 'home'} by {clock(t['leave'])}: "
+                   f"{max(1, round(t['walk'] / 60))} min walk to {t['stop']['name']} (stop {t['stop']['code']}), "
+                   f"there 2 min before line {t['line']} at {clock(t['departs'])}.")
+        out += [f"- {r}" for r in rides(t["route"])]
+        if t["alert"]:
+            out.append(f"Tram alert [{t['alert']['id']}] set: about 3 min before it's time to leave, the phone shows "
+                       "the countdown (Lock Screen and Dynamic Island) with the tram's live position, or a push; it "
+                       "follows the live times, so a late tram moves it. Deleting it in the app (or "
+                       "delete_transit_alert) stops it.")
+        elif t["covered"]:
+            out.append("The user's own tram alert for that line already covers it: no new one.")
+        return "\n".join(out)
+
+    return [
+        Tool("leave_for", "The user needs to be somewhere by a time and asks what to take or when to leave (\"I need "
+             "to be at uni at 9:30\"). Finds the GTT way there from where their phone is (else home), on the line "
+             "memory says they prefer if it fits, leaving as late as still gets them there, and sets a one-off tram "
+             "alert for its first ride: when it's time to leave the phone shows the tram's live countdown. Use it "
+             "instead of travel_time plus add_transit_alert. Runs immediately.",
+             {"type": "object", "properties": {
+                 "destination": {"type": "string", "description": "the place's real name or address (from memory for "
+                                 "\"uni\", \"the gym\"), not a nickname"},
+                 "arrive_by": {"type": "string", "description": "HH:MM (the next one: tomorrow's if today's has gone) or "
+                               "YYYY-MM-DDTHH:MM, local"}},
+              "required": ["destination", "arrive_by"], "additionalProperties": False}, leave_for),
     ]

@@ -178,3 +178,38 @@ def test_settings_endpoint(leave):
     assert c.patch("/v1/transit/settings", json={"calendar": False}, headers=AUTH).json() == {"calendar": False}
     c = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN))
     assert c.get("/v1/transit/settings", headers=AUTH).status_code == 404
+
+
+async def test_asked_to_be_somewhere_by_a_time_it_picks_the_tram_and_sets_the_alert(leave, monkeypatch):
+    make, (db, timetable, location, alerts, push) = leave
+    location.save(*HOME, 10, at(7, 25))
+    maps = FakeMaps(ride(departs=at(8, 5)), ride(departs=at(8, 15)))
+    w = make(FakeCal(), maps, lines=("4",))
+    t = await w.trip("Politecnico", utc(at(9, 0)), utc(at(7, 30)))
+    assert maps.bodies[0]["arrivalTime"] == "2026-10-22T07:00:00Z"  # by the time asked, not 10 min before
+    assert maps.bodies[0]["origin"]["location"]["latLng"]["latitude"] == HOME[0]
+    assert (t["line"], t["departs"], t["late"], t["from"]) == ("4", utc(at(8, 15)), False, "here")
+    assert t["leave"] == t["departs"] - timedelta(seconds=t["walk"] + 120)
+    (a,) = alerts.all()
+    assert (a["line"], a["time"], a["event"]) == ("4", "08:15", "getting to Politecnico by 09:00")
+    again = await w.trip("Politecnico", utc(at(9, 0)), utc(at(7, 31)))  # asked twice: one alert
+    assert again["covered"] and again["alert"] is None and len(alerts.all()) == 1
+
+    # Too late for the 8:15: the first way from now instead.
+    late = await w.trip("Politecnico", utc(at(9, 0)), utc(at(8, 13)))
+    assert late["late"] and "departureTime" in maps.bodies[-1] and "arrivalTime" not in maps.bodies[-1]
+    with pytest.raises(ValueError, match="train"):
+        await make(FakeCal(), FakeMaps(ride(line="SFM1"))).trip("Politecnico", utc(at(9, 0)), utc(at(7, 30)))
+    location.save(*UNI, 10, at(7, 29))
+    assert (await w.trip("Politecnico", utc(at(9, 0)), utc(at(7, 30))))["there"]
+
+
+async def test_leave_for_answers_with_the_line_the_stop_and_when_to_leave(leave, monkeypatch):
+    from aide.tools.transit import leave_tools
+    make, (db, timetable, location, alerts, push) = leave
+    location.save(*HOME, 10, at(7, 25))
+    monkeypatch.setattr("aide.tools.transit.utcnow", lambda: utc(at(7, 30)))
+    (tool,) = leave_tools(make(FakeCal(), FakeMaps(ride())), ROME)
+    text = await tool.handler(destination="Politecnico", arrive_by="2026-10-22T09:00")
+    assert "to Porta Nuova (stop 252), there 2 min before line 4 at" in text
+    assert "Tram alert [1] set" in text

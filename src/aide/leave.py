@@ -8,6 +8,9 @@ one-off tram alert around that departure. The tram alert watcher does the rest f
 walk from the phone, "Tram 4 in 7 min: leave now", the Live Activity. Until then the way is looked up again every
 REPLAN (sooner after a move), since the phone and the trams move.
 
+The same pick answers the user asking ("I need to be at uni at 9:30, what do I take?", the `leave_for` tool): `trip`
+sets the one-off tram alert straight away.
+
 One alert per event: deleting it in the app is final. An event that moves or goes takes its alert with it.
 An event with no place gets one from memory when the notes say where such events are (a lecture: the uni).
 Nothing is set when the phone is already at the place, or far from it (not going); when a note in memory says the
@@ -25,7 +28,7 @@ from zoneinfo import ZoneInfo
 
 from .db import utcnow
 from .digest import ARRIVE_EARLY, AWAY, Travel
-from .transit import (BUFFER, FIX_AGE, FIX_USABLE, WINDOW, AlertStore, Location, Walks, line_key, metres)
+from .transit import (AT_STOP, BUFFER, FIX_AGE, FIX_USABLE, WINDOW, AlertStore, Location, Walks, line_key, metres)
 
 log = logging.getLogger(__name__)
 
@@ -164,22 +167,10 @@ class LeaveWatcher:
         routes = await self._ways(e, place, here, now)
         if routes is None:
             return
-        rides = [ride for route in routes
-                 if (ride := next((s["transitDetails"] for leg in route.get("legs", []) for s in leg.get("steps", [])
-                                   if s.get("transitDetails")), None))]
-        if not rides:
-            return self._mark(e, "no_ride", now)
-        preferred = [line_key(l) for l in travel.lines]  # best first
-        rank = lambda line: len(preferred) - preferred.index(line_key(line)) if line_key(line) in preferred else 0  # noqa: E731
-        options = []
-        for ride in rides:
-            if found := self._gtt(ride):
-                departs = datetime.fromisoformat(ride["stopDetails"]["departureTime"].replace("Z", "+00:00"))
-                options.append((rank(found[1]), self._frequent(found[0]["id"], found[1], departs),
-                                departs, *found))
-        if not options:
-            return self._mark(e, "not_gtt", now)
-        *_, departs, stop, line = max(options, key=lambda o: o[:3])
+        chosen = self._choose(routes, travel.lines)
+        if isinstance(chosen, str):
+            return self._mark(e, chosen, now)
+        _, departs, stop, line = chosen
         walk = await self.walks.seconds(*here, stop)
         if departs - timedelta(seconds=walk + BUFFER) - now > COMMIT:
             return  # not yet: the way may change
@@ -191,7 +182,90 @@ class LeaveWatcher:
         self._mark(e, "alert", now, a["id"])
         log.info("leave-now: %s", self.alerts.describe(a))
 
-    async def _spot(self, place: str, near: tuple[float, float]) -> tuple[float, float] | None:
+    # -- asked: "I need to be there by 9:30" ------------------------------------------------------------------
+
+    async def trip(self, place: str, arrive: datetime, now: datetime) -> dict:
+        """The way to `place` by `arrive`, from where the phone is (else home), picked as for an event, with a
+        one-off tram alert for its first ride unless one already covers it. {"from": "here" or "home", "route",
+        "departs", "stop", "line", "walk", "leave", "late", "alert", "covered", "there"}. A ValueError says why
+        there's no GTT way to give (the model can fall back on travel_time)."""
+        travel = (await self.travel_plan({"uid": "", "title": place, "calendar": None, "location": place})
+                  if self.travel_plan else Travel(None))
+        fix = self.location.latest()
+        if fix is None or now - fix["at"] > FIX_AGE:
+            fix = await self.location.fresh()
+        if fix is not None and now - fix["at"] <= FIX_USABLE:
+            here, origin, start = (fix["lat"], fix["lon"]), None, "here"
+        elif travel.home and (spot := await self._spot(travel.home, None)):
+            here, origin, start = spot, {"address": travel.home}, "home"
+        else:
+            raise ValueError("the phone hasn't shared where it is and there's no home address: ask where the user "
+                             "leaves from")
+        there = await self._spot(place, here)
+        if there is None:
+            raise ValueError(f"Maps can't find {place!r}: ask for its address or real name")
+        if metres(*here, *there) < THERE:
+            return {"there": True, "from": start}
+        origin = origin or {"location": {"latLng": {"latitude": here[0], "longitude": here[1]}}}
+        body = {"origin": origin, "destination": {"address": place}, "travelMode": "TRANSIT",
+                "computeAlternativeRoutes": True}
+        chosen = self._choose(await self.maps.routes(
+            {**body, "arrivalTime": arrive.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}), travel.lines)
+        late = False
+        if not isinstance(chosen, str):
+            walk = await self.walks.seconds(*here, chosen[2])
+            late = chosen[1] - timedelta(seconds=walk + AT_STOP) < now
+        if late or chosen in ("no_ride", "not_gtt") and arrive - now < timedelta(hours=1):
+            # Too late for any way that's there in time: the first way from now.
+            chosen = self._choose(await self.maps.routes(
+                {**body, "departureTime": (now + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")}), travel.lines,
+                soonest=True)
+            late = True
+        if chosen == "no_ride":
+            raise ValueError(f"Maps has no transit way to {place!r}, only walking: try travel_time with mode walk")
+        if chosen == "not_gtt":
+            raise ValueError(f"the ways to {place!r} start with a train or another company's bus, not GTT: use "
+                             "travel_time with mode transit for them")
+        route, departs, stop, line = chosen
+        walk = await self.walks.seconds(*here, stop)
+        covered = self._covered(line, departs)
+        alert = None
+        if not covered:
+            local = departs.astimezone(self.tz)
+            alert = self.alerts.create(stop["id"], line, f"{local:%H:%M}", now=now, day=local.date(),
+                                       event=f"getting to {place} by {arrive.astimezone(self.tz):%H:%M}")
+            log.info("leave-now, asked: %s", self.alerts.describe(alert))
+        return {"there": False, "from": start, "route": route, "departs": departs, "stop": stop, "line": line,
+                "walk": walk, "leave": departs - timedelta(seconds=walk + AT_STOP), "late": late, "alert": alert,
+                "covered": covered}
+
+    # -- picking the way ----------------------------------------------------------------------------------------
+
+    def _choose(self, routes: list[dict], lines: tuple[str, ...],
+                soonest: bool = False) -> tuple[dict, datetime, dict, str] | str:
+        """(route, when its first ride leaves, that ride's GTT stop, its line), or why there's none: no_ride (walking
+        only) or not_gtt (the first ride isn't GTT's). The latest that's on time, or with `soonest` (already late)
+        the first."""
+        rides = [(route, ride) for route in routes
+                 if (ride := next((s["transitDetails"] for leg in route.get("legs", []) for s in leg.get("steps", [])
+                                   if s.get("transitDetails")), None))]
+        if not rides:
+            return "no_ride"
+        preferred = [line_key(l) for l in lines]  # best first
+        rank = lambda line: len(preferred) - preferred.index(line_key(line)) if line_key(line) in preferred else 0  # noqa: E731
+        options = []
+        for route, ride in rides:
+            if found := self._gtt(ride):
+                departs = datetime.fromisoformat(ride["stopDetails"]["departureTime"].replace("Z", "+00:00"))
+                options.append((rank(found[1]), self._frequent(found[0]["id"], found[1], departs), departs, route,
+                                *found))
+        if not options:
+            return "not_gtt"
+        _, _, departs, route, stop, line = max(options, key=lambda o: (*o[:2], -o[2].timestamp() if soonest
+                                                                          else o[2].timestamp()))
+        return route, departs, stop, line
+
+    async def _spot(self, place: str, near: tuple[float, float] | None) -> tuple[float, float] | None:
         if place not in self._spots:
             try:
                 found = await self.maps.locate(place, near)

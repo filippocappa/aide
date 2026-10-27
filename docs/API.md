@@ -883,7 +883,8 @@ means 0.
 - `count` is today's count (`null` on other habits). `counts` maps each local date with a count in the last 26
   weeks to it, `{"2026-10-25": 3, …}` (only days over 0; `{}` on other habits), for the trend and the grid.
 - A day is done when it ended at or under `max`, so `history` and `last_done` only hold days before today (from the
-  day the habit became a limit habit). `done_today` says whether today is still within the limit so far.
+  day the habit became a limit habit; since 2026-10-27 a count for an earlier day moves that start back to it, so
+  filled-in history counts). `done_today` says whether today is still within the limit so far.
 - `streak` counts the days before today in a row that were done, and is 0 once today goes over.
 - Checking a limit habit (`/check`) is `400`; the count is its check.
 - `health` (since 2026-10-26, default `null`): a limit habit can also count from Apple Health. `"inhaler_usage"`
@@ -891,11 +892,11 @@ means 0.
   is then the larger of Health's number and what was logged here, so one logged in both places counts once. `/count`
   adds to the count as shown (Health's included); taking back can't go below Health's number. `400` on a habit
   that isn't a limit habit, or for another value.
-- `health_logged` (since 2026-10-27, only on habits with `health`): each local date in the last 7 days with
-  something logged through Aide (the app, a widget, or an agent's `count_habit`), net of take-backs, to that number:
-  `{"2026-10-27": 2}`. The app writes these to Health as its own Inhaler Usage samples, so the user needn't log
-  twice: for each of the last 7 days it adds or deletes its own samples (never the user's) until they match
-  (`{}` or a missing day: 0). The server sends a `sync` push after each count on such a habit.
+- `health_logged` (since 2026-10-27, only on habits with `health`): each local date in the last 60 days (7 until
+  2026-10-27's second change) with something logged through Aide (the app, a widget, or an agent's `count_habit` or
+  `fill_habit_days`), net of take-backs, to that number: `{"2026-10-27": 2}`. The app writes these to Health as its
+  own Inhaler Usage samples, so the user needn't log twice: for each of the last 60 days it adds or deletes its own
+  samples (never the user's) until they match (`{}` or a missing day: 0). An app still on 7 days keeps working. The server sends a `sync` push after each count on such a habit.
 
 `history` is every local date the habit was checked (or done, for the two kinds above) in the last 26 weeks (182
 days, today included), newest first, for a GitHub-style grid. Every endpoint that returns a Habit includes it,

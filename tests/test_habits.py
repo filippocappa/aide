@@ -223,6 +223,38 @@ def test_what_is_logged_here_is_written_to_health(api):
     assert "health_logged" not in plain.as_json() and len(pushes) == 3
 
 
+async def test_a_month_of_history_goes_in_at_once():
+    db = Database(":memory:")
+    habits = HabitStore(db.conn, ROME)
+    today = habits.today()
+    coffee = habits.add("Coffee", max_count=5, health="inhaler_usage")
+    habits.count(coffee.id, 2, today - timedelta(days=1))
+    pushes = []
+    habits.on_health_count.append(lambda: pushes.append(1))
+    tools = {t.name: t.handler for t in habit_tools(habits)}
+    month = [{"date": (today - timedelta(days=b)).isoformat(), "count": 6 if b % 7 == 0 else 4} for b in range(1, 31)]
+    out = await tools["fill_habit_days"](habit_id=coffee.id, days=month)
+    assert out.startswith("Filled in 30 days: [1] Coffee")
+    h = habits.find(coffee.id)
+    # Totals, not added: yesterday's 2 became 4. The habit now counts from 30 days back, the 6s over the limit.
+    counts = dict(h.counts)
+    assert counts[today - timedelta(days=1)] == 4 and counts[today - timedelta(days=7)] == 6 and len(counts) == 30
+    assert len(h.history) == 30 - 4 and h.streak == 6
+    assert dict(h.health_logged)[today - timedelta(days=30)] == 4 and len(h.health_logged) == 30 and pushes
+    again = await tools["fill_habit_days"](habit_id=coffee.id, days=[{"date": month[0]["date"], "count": 0}])
+    assert "Filled in 1 day:" in again and today - timedelta(days=1) not in dict(habits.find(coffee.id).counts)
+
+    gym = habits.add("Gym")
+    mondays = [{"date": (today - timedelta(days=b)).isoformat(), "done": True} for b in (3, 10, 17)]
+    await tools["fill_habit_days"](habit_id=gym.id, days=mondays)
+    assert len(habits.find(gym.id).history) == 3
+    with pytest.raises(ValueError):
+        await tools["fill_habit_days"](habit_id=gym.id, days=[{"date": today.isoformat(), "count": 2}])
+    with pytest.raises(ValueError):
+        await tools["fill_habit_days"](habit_id=coffee.id, days=[{"date": (today + timedelta(days=1)).isoformat(),
+                                                                "count": 1}])
+
+
 @pytest.mark.parametrize("body", [
     {"name": "X", "cadence": {"type": "limit"}}, {"name": "X", "cadence": {"type": "limit", "max": 0}},
     {"name": "X", "cadence": {"type": "limit", "max": 101}}, {"name": "X", "food": "pizza"},

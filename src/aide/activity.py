@@ -24,6 +24,7 @@ LABELS = {
     "send_mail": "Sent a mail", "reply_mail": "Replied to a mail",
     "draft_reply": "Drafted a reply", "discard_draft": "Discarded a draft",
     "add_habit": "Added a habit", "check_habit": "Checked a habit", "delete_habit": "Deleted a habit",
+    "fill_habit_days": "Filled in a habit's days",
     "log_meal": "Logged a meal", "update_meal": "Changed a meal", "set_food_goals": "Set food goals",
     "delete_meal": "Deleted a meal",
     "update_notes": "Changed lecture notes", "delete_lecture": "Deleted a lecture",
@@ -36,7 +37,7 @@ LABELS = {
     "add_objective": "Added an objective", "update_objective": "Changed an objective",
     "accept_objectives": "Accepted objectives", "plan_objectives": "Planned objectives",
     "add_transit_alert": "Set a tram alert", "update_transit_alert": "Changed a tram alert",
-    "delete_transit_alert": "Deleted a tram alert",
+    "delete_transit_alert": "Deleted a tram alert", "leave_for": "Planned a trip",
     "cancel_queued": "Cancelled queued actions",
 }
 

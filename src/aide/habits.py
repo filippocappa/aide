@@ -60,7 +60,8 @@ HISTORY_DAYS = 182  # 26 weeks, for the app's grid
 MIN_WORKOUT = 10  # minutes a workout must last to check a habit
 MAX_LIMIT = 100
 HEALTH_COUNTS = ("inhaler_usage",)  # health day fields a limit habit can count from
-HEALTH_WRITE_DAYS = 7  # the days the phone keeps Health's samples in line with what was logged here
+HEALTH_WRITE_DAYS = 60  # the days the phone keeps Health's samples in line with what was logged here
+MAX_FILL = 92  # days set_days takes at once
 
 
 @dataclass(frozen=True)
@@ -355,7 +356,8 @@ class HabitStore:
     def count(self, habit_id: int, add: int = 1, day: date | None = None) -> Habit:
         """Add to a limit habit's count for a day (default today); a negative `add` takes some back, never below 0.
         It adds to the day's count as shown, Health's included; taking back can't go under Health's number.
-        Only what was logged here can be taken back from Health: the phone deletes its own samples, not the user's."""
+        Only what was logged here can be taken back from Health: the phone deletes its own samples, not the user's.
+        A day before the habit became a limit habit moves that start back to it: history filled in counts."""
         if self.find(habit_id).max_count is None:
             raise ValueError("only a limit habit has a count: check this one instead")
         day = day or self.today()
@@ -366,6 +368,8 @@ class HabitStore:
         before = self.conn.execute("SELECT logged FROM habit_counts WHERE habit_id = ? AND day = ?",
                                    (habit_id, day.isoformat())).fetchone()
         logged = min(new, max(0, (before["logged"] if before else 0) + int(add)))
+        if day < date.fromisoformat(row["since"]):
+            self.conn.execute("UPDATE habits SET since = ? WHERE id = ?", (day.isoformat(), habit_id))
         if new:
             self.conn.execute("INSERT INTO habit_counts (habit_id, day, count, logged) VALUES (?, ?, ?, ?) "
                               "ON CONFLICT(habit_id, day) DO UPDATE SET count = excluded.count, logged = excluded.logged",
@@ -375,6 +379,26 @@ class HabitStore:
         if row["health"]:
             for callback in self.on_health_count:
                 callback()
+        return self.find(habit_id)
+
+    def set_days(self, habit_id: int, days: dict[date, int | bool]) -> Habit:
+        """Fill in many days at once: a limit habit's count for each day (the day's total, Health's included), or
+        whether another habit was done. For history the user didn't log as it happened."""
+        habit = self.find(habit_id)
+        if len(days) > MAX_FILL:
+            raise ValueError(f"at most {MAX_FILL} days at once")
+        if any(day > self.today() for day in days):
+            raise ValueError("can't fill in a day that hasn't come yet")
+        row = self.conn.execute("SELECT * FROM habits WHERE id = ?", (habit_id,)).fetchone()
+        for day, value in sorted(days.items()):
+            if habit.max_count is None:
+                if not isinstance(value, bool):
+                    raise ValueError(f"{habit.name} isn't counted: give done true or false for each day")
+                self.check(habit_id, day, value)
+            else:
+                if isinstance(value, bool) or value < 0:
+                    raise ValueError(f"{habit.name} is counted: give a count (0 or more) for each day")
+                self.count(habit_id, value - self._counts(row, day, day).get(day, 0), day)
         return self.find(habit_id)
 
     def delete(self, habit_id: int) -> bool:

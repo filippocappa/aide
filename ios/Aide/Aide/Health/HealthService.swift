@@ -148,7 +148,7 @@ final class HealthService: ObservableObject {
 
     // MARK: Writing habit counts
 
-    /// Makes the app's own Inhaler Usage samples on each of the last 7 days match what was logged through Aide
+    /// Makes the app's own Inhaler Usage samples on each of the last 60 days match what was logged through Aide
     /// (`health_logged` on habits that count from Health), adding or deleting only the app's samples, never the
     /// user's. After a count here, a `sync` push (an agent's or a widget's count) and on foreground.
     func writeLogged() async {
@@ -162,7 +162,7 @@ final class HealthService: ObservableObject {
         repeat {
             writeAgain = false
             do {
-                if try await write(api.habits()) { _ = await upload(days: 7) }
+                if let days = try await write(api.habits()) { _ = await upload(days: days) }
             } catch {
                 lastError = error.localizedDescription
                 return
@@ -170,20 +170,28 @@ final class HealthService: ObservableObject {
         } while writeAgain
     }
 
-    /// True if Health changed.
-    private func write(_ habits: [Habit]) async throws -> Bool {
-        guard habits.contains(where: { $0.health == "inhaler_usage" }) else { return false }
+    /// The days back the server's `health_logged` covers (a filled-in month included).
+    private static let writeDays = 60
+
+    /// How many days back Health changed (for the upload that follows), or nil if it didn't.
+    private func write(_ habits: [Habit]) async throws -> Int? {
+        guard habits.contains(where: { $0.health == "inhaler_usage" }) else { return nil }
         var wanted: [String: Int] = [:]
         for habit in habits where habit.health == "inhaler_usage" {
             for (day, count) in habit.healthLogged ?? [:] { wanted[day, default: 0] += count }
         }
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
-        var changed = false
-        for back in 0..<7 {
-            guard let day = calendar.date(byAdding: .day, value: -back, to: today),
-                  let next = calendar.date(byAdding: .day, value: 1, to: day) else { continue }
-            let own = try await ownInhalerSamples(from: day, to: next) // newest first
+        guard let first = calendar.date(byAdding: .day, value: 1 - Self.writeDays, to: today),
+              let end = calendar.date(byAdding: .day, value: 1, to: today) else { return nil }
+        // One query for all the days, newest first within each.
+        let byDay = Dictionary(grouping: try await ownInhalerSamples(from: first, to: end)) {
+            calendar.startOfDay(for: $0.startDate)
+        }
+        var changed: Int?
+        for back in 0..<Self.writeDays {
+            guard let day = calendar.date(byAdding: .day, value: -back, to: today) else { continue }
+            let own = byDay[day] ?? []
             let want = wanted[Wire.dayString(day)] ?? 0
             if own.count < want {
                 let at = back == 0 ? Date() : calendar.date(byAdding: .hour, value: 12, to: day) ?? day
@@ -191,13 +199,13 @@ final class HealthService: ObservableObject {
                 try await store.save((own.count..<want).map { _ in
                     HKQuantitySample(type: Self.inhaler, quantity: one, start: at, end: at)
                 })
-                changed = true
+                changed = back + 1
             } else if own.count > want {
                 try await store.delete(Array(own.prefix(own.count - want)))
-                changed = true
+                changed = back + 1
             }
         }
-        return changed
+        return changed.map { max($0, 7) }
     }
 
     private func ownInhalerSamples(from: Date, to: Date) async throws -> [HKQuantitySample] {

@@ -47,7 +47,7 @@ from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
 from .tools.study import study_tools
-from .tools.transit import transit_tools
+from .tools.transit import leave_tools, transit_tools
 from .leave import LeaveWatcher
 from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts
 from .wake import WakeService
@@ -136,6 +136,14 @@ def main() -> None:
         tools += transit_tools(transit, alerts, location, boards)
     else:
         log.info("AIDE_GTT off: no GTT tools or tram alerts")
+    leave = digest = None
+    if transit and cal and maps:
+        # How the user travels comes from memory through the digest service, made below.
+        leave = LeaveWatcher(db.conn, settings.timezone, cal, maps, alerts, location, walks,
+                             lambda event: digest.travel_plan(event))
+        tools += leave_tools(leave, settings.timezone)
+    elif transit:
+        log.info("leave-now alerts for events need the calendar and GOOGLE_MAPS_API_KEY: off")
 
     objectives = ObjectiveStore(db.conn, settings.timezone, habits, food, health, reminders)
     planner = ObjectivePlanner(objectives, engine, db, cal, study, notebook)
@@ -165,11 +173,6 @@ def main() -> None:
     digest.objectives, digest.planner, digest.engine = objectives, planner, engine
     digest.whereabouts = whereabouts
     digest.drafts = drafts if gmail else None
-    leave = None
-    if transit and cal and maps:
-        leave = LeaveWatcher(db.conn, settings.timezone, cal, maps, alerts, location, walks, digest.travel_plan)
-    elif transit:
-        log.info("leave-now alerts for events need the calendar and GOOGLE_MAPS_API_KEY: off")
 
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")

@@ -52,6 +52,19 @@ def habit_tools(store: HabitStore) -> list[Tool]:
         day = datetime.date.fromisoformat(date) if date else None
         return "Counted: " + fmt(store.count(habit_id, add, day), store.today())
 
+    async def fill_habit_days(habit_id: int, days: list[dict]) -> str:
+        values: dict[datetime.date, int | bool] = {}
+        for d in days:
+            day = datetime.date.fromisoformat(d["date"])
+            if "count" in d:
+                values[day] = int(d["count"])
+            elif "done" in d:
+                values[day] = bool(d["done"])
+            else:
+                raise ValueError(f"{d['date']}: give count (a limit habit) or done")
+        habit = store.set_days(habit_id, values)
+        return f"Filled in {len(values)} day{'s' if len(values) != 1 else ''}: " + fmt(habit, store.today())
+
     async def delete_habit(habit_id: int) -> str:
         habit = store.find(habit_id)
         store.delete(habit_id)
@@ -82,6 +95,17 @@ def habit_tools(store: HabitStore) -> list[Tool]:
              "so the user needn't log it twice. Runs immediately.",
              _obj({**hid, "add": {"type": "integer", "description": "default 1"}, **date}, ["habit_id"]),
              count_habit),
+        Tool("fill_habit_days", "Fill in many past days of a habit at once, for history the user didn't log as it "
+             "happened (\"I had about 6 coffees a day this past month\", \"I went to the gym every Monday in October\"). "
+             "Each day sets that day's total for a limit habit (count, Apple Health's included, not added to it), or "
+             "done true/false for another. A limit habit counts every day from the first one filled in, a day left out "
+             "as none: so fill in each day of the stretch. Counts logged this way reach Apple Health too (the last 60 "
+             "days). Up to 92 days per call; runs immediately.",
+             _obj({**hid, "days": {"type": "array", "items": _obj({
+                 "date": {"type": "string", "description": "YYYY-MM-DD, not in the future"},
+                 "count": {"type": "integer", "description": "limit habits: the day's total"},
+                 "done": {"type": "boolean", "description": "other habits"}}, ["date"])}}, ["habit_id", "days"]),
+             fill_habit_days),
         Tool("delete_habit", "Stop tracking a habit and drop its history. Needs the user's confirmation: it is "
              "queued, and runs only when the user replies !yes.", _obj(hid, ["habit_id"]),
              delete_habit, confirm=True, describe=describe_delete, target_arg="habit_id"),

@@ -19,10 +19,10 @@ REMINDERS = ("create_reminder", "list_reminders", "update_reminder", "complete_r
 MAIL = ("search_mail", "list_unread", "read_mail", "read_thread", "send_mail", "reply_mail", "list_drafts",
         "draft_reply", "discard_draft")
 MAPS = ("find_places", "travel_time")
-TRANSIT = ("transit_stops", "transit_arrivals", "list_transit_alerts", "add_transit_alert", "update_transit_alert",
-           "delete_transit_alert")
+TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alerts", "add_transit_alert",
+           "update_transit_alert", "delete_transit_alert")
 WEB = ("web_search", "fetch_page")
-HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "delete_habit")
+HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
 HEALTH = ("health",)
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
@@ -101,7 +101,9 @@ _HABITS = """- Habits: list_habits shows each habit's id, streak and whether tod
 something they track (went to the gym, read), check it off with check_habit; for a day other than today, pass \
 the date. A limit habit (at most N a day, like coffees) is counted, not checked: "I had another one" is count_habit; \
 list_habits shows its count today and the last 7 days, so you can say how it's going. A food habit ticks itself \
-from the food log. Deleting a habit is queued like other deletions."""
+from the food log. History the user didn't log at the time (a week, a month) goes in with one fill_habit_days \
+call: ask what each day was if it isn't clear, or take the user's "about 6 a day" for every day of the stretch. \
+Deleting a habit is queued like other deletions."""
 
 _CARDS = """- In the app, the reminders, calendar events and meals your tools listed, created or changed this turn are \
 shown under your reply as cards (with tick boxes for reminders). So don't repeat them line \
@@ -137,7 +139,9 @@ departures as cards, so answer in a line or two (which to take, when to leave) r
 phone: a one-off for the next tram, or a commute on set days around a time. By default it fires when it's time to \
 leave (the walk from where the phone is, plus 2 minutes); "tell me when it's 10 minutes away" is minutes 10. Each \
 side of the road is its own stop, so when a name matches several, ask which direction (or take the stop number \
-from memory, where "my stop" may be saved), and remember the user's usual stops."""
+from memory, where "my stop" may be saved), and remember the user's usual stops. When the user has to be somewhere \
+by a time ("I need to be at uni at 9:30, what do I take?"), use leave_for: it picks the tram and when to leave and \
+sets the alert, so the countdown comes by itself; answer with the line, the stop and when to leave."""
 
 _HEALTH = """- Health: the health tool reads the user's Apple Health summaries (sleep, resting heart rate, HRV, steps, \
 workouts). Compare with the user's own usual numbers, never with population norms, and never make medical claims \
@@ -353,14 +357,14 @@ _CONNECTORS = (
     ("reminders", "Reminders", REMINDERS, {"create_reminder", "update_reminder", "complete_reminder", "delete_reminder"}),
     ("mail", "Gmail", MAIL, {"send_mail", "reply_mail", "draft_reply", "discard_draft"}),
     ("health", "Apple Health", HEALTH, set()),
-    ("habits", "Habits", HABITS, {"add_habit", "check_habit", "count_habit", "delete_habit"}),
+    ("habits", "Habits", HABITS, {"add_habit", "check_habit", "count_habit", "fill_habit_days", "delete_habit"}),
     ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "delete_meal"}),
     ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
                                      "edit_topic", "start_notebook", "rewrite_introduction", "find_figures",
                                      "notes_writer"}),
     ("web", "Web search", WEB, set()),
     ("maps", "Google Maps", MAPS, set()),
-    ("transit", "GTT", TRANSIT, {"add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
+    ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),
     ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
     ("objectives", "Objectives", OBJECTIVES, {"add_objective", "update_objective", "accept_objectives",

@@ -788,19 +788,21 @@ class AlertStore:
             raise ValueError("minutes must be 1 to 60")
         return stop, routes.pop()
 
-    def _window(self, time_: str | None, now: datetime) -> tuple[datetime, datetime]:
-        """A one-off's start and end: around its time (today, or tomorrow if that's gone), else from now."""
+    def _window(self, time_: str | None, now: datetime, day: date | None = None) -> tuple[datetime, datetime]:
+        """A one-off's start and end: around its time (on `day`; else today, or tomorrow if that's gone), else from
+        now."""
         if time_ is None:
             return now, now + ONCE_FOR
         hh, mm = map(int, time_.split(":"))
         local = now.astimezone(self.tz)
-        at = datetime.combine(local.date(), time(hh, mm), self.tz)
-        if at + WINDOW < local:
+        at = datetime.combine(day or local.date(), time(hh, mm), self.tz)
+        if day is None and at + WINDOW < local:
             at += timedelta(days=1)
         return (at - WINDOW).astimezone(timezone.utc), (at + WINDOW).astimezone(timezone.utc)
 
     def create(self, stop: str, line: str, time_: str | None = None, days: list[int] | None = None,
-               minutes: int | None = None, now: datetime | None = None, event: str | None = None) -> dict:
+               minutes: int | None = None, now: datetime | None = None, event: str | None = None,
+               day: date | None = None) -> dict:
         now = now or utcnow()
         stop, line = self._check(stop, line, minutes)
         if time_ is not None:
@@ -811,7 +813,7 @@ class AlertStore:
             days = check_days(days)
             starts = ends = None
         else:
-            starts, ends = (t.isoformat() for t in self._window(time_, now))
+            starts, ends = (t.isoformat() for t in self._window(time_, now, day))
         cur = self.conn.execute(
             "INSERT INTO transit_alerts (stop, line, time, days, minutes, starts_at, ends_at, created_at, event) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
