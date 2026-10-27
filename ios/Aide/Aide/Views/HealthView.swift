@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The Health tab, in two pages. Body: what Apple Health says (sleep, recovery, activity, workouts), each opening
-/// its chart. Food: what you ate, day by day; meals come from a photo (or a few words) that Coach names and
-/// estimates; tap one to fix the numbers, swipe to delete. (Habits are on Today.)
+/// its chart. Food: what you ate, day by day; meals come from photos with a few words, or the words alone, that
+/// Coach names and estimates; tap one to fix the numbers, swipe to delete. Every meal also goes to Apple Health
+/// (`HealthService.writeMeals`). (Habits are on Today.)
 struct HealthView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var settings: AppSettings
@@ -30,6 +31,8 @@ struct HealthView: View {
     @State private var showLibrary = false
     @State private var describing = false
     @State private var mealText = ""
+    /// Photos just picked or taken, waiting for their description.
+    @State private var pickedPhotos: PickedMeal?
     @State private var showGoals = false
     @State private var editingMeal: Meal?
 
@@ -91,7 +94,10 @@ struct HealthView: View {
                 }
             }
             .photoSources(camera: $showCamera, library: $showLibrary, limit: 4) { photos in
-                Task { await log(photos: photos) }
+                pickedPhotos = PickedMeal(photos: photos)
+            }
+            .sheet(item: $pickedPhotos) { picked in
+                MealPhotosSheet(photos: picked.photos) { text in Task { await log(photos: picked.photos, text: text) } }
             }
             .refreshable {
                 async let food: Void = loadFood()
@@ -262,6 +268,7 @@ struct HealthView: View {
             if let id = reply.conversationId { logChat = id }
             await loadFood()
             await chat.loadConversations()
+            await health.writeMeals()
         } catch {
             foodError = error.localizedDescription
         }
@@ -271,6 +278,7 @@ struct HealthView: View {
         do {
             _ = try await env.api.updateMeal(meal.id, changes)
             await loadFood() // the time may have moved it to another day
+            Task { await health.writeMeals() }
             return nil
         } catch { return error.localizedDescription }
     }
@@ -280,6 +288,7 @@ struct HealthView: View {
             try await env.api.deleteMeal(meal.id)
             food?.meals.removeAll { $0.id == meal.id }
             await loadFood()
+            Task { await health.writeMeals() }
             return nil
         } catch { return error.localizedDescription }
     }

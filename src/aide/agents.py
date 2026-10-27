@@ -158,6 +158,8 @@ photo (plate and cutlery for scale, how full the plate is, packaging). Count wha
 butter, dressings, sauces, cheese on top, sugar in drinks. When they give amounts ("200 g rice"), a brand or a \
 nutrition label you can read, use those numbers instead of guessing. Check your numbers: calories should come close \
 to 4 × protein + 4 × carbs + 9 × fat. Put what you assumed in notes ("about 100 g dry pasta, 1 tbsp oil").
+- Drinks count too, also on their own ("an espresso and 1 L of water" is one log_meal): water_ml for water and \
+drinks that are mostly water, caffeine_mg for coffee, tea and colas. Every meal goes to Apple Health from the phone.
 - If one thing changes the estimate a lot and you can't tell (a small or large portion, fried or grilled), still log \
 your best guess and ask that one short question.
 - Reply in two short lines: the dish and the numbers, then the day so far against the goals. A correction ("it was \

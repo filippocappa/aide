@@ -23,7 +23,7 @@ from ..db import Database
 from ..digest import DigestService, check_kind
 from ..drafts import Drafts
 from ..engine import Engine
-from ..food import FoodStore, totals
+from ..food import MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
 from ..icloud import CalendarBackend
@@ -69,6 +69,8 @@ class MealPatch(BaseModel):
     protein_g: float | None = None
     carbs_g: float | None = None
     fat_g: float | None = None
+    water_ml: float | None = None
+    caffeine_mg: float | None = None
     notes: str | None = None
 
 
@@ -872,6 +874,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if start > end or (end - start).days > 366:
             raise HTTPException(400, "from must be before to, at most a year apart")
         return {"days": food.days(start, end)}
+
+    @app.get("/v1/food/meals", dependencies=[Depends(auth)])
+    async def food_meals(start: date | None = Query(None, alias="from"), end: date | None = Query(None, alias="to")):
+        end = end or food.today()
+        start = start or end - timedelta(days=6)
+        if start > end or (end - start).days >= MAX_MEAL_DAYS:
+            raise HTTPException(400, f"from must be before to, at most {MAX_MEAL_DAYS} days")
+        return {"meals": [food.as_json(m) for m in food.between(start, end)]}
 
     def food_chat() -> str:
         """Coach's "Food log" chat, made once; made again if it was deleted."""

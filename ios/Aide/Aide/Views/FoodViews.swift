@@ -128,8 +128,21 @@ struct FoodSummary: View {
                 MacroBar(name: "Protein", grams: totals.proteinG, goal: goals.proteinG, share: share(totals.proteinG, 4), tint: tint)
                 MacroBar(name: "Carbs", grams: totals.carbsG, goal: goals.carbsG, share: share(totals.carbsG, 4), tint: tint)
                 MacroBar(name: "Fat", grams: totals.fatG, goal: goals.fatG, share: share(totals.fatG, 9), tint: tint)
+                if let drinks {
+                    Text(drinks).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
+    }
+
+    /// "1.0 L water · 65 mg caffeine", or nil when there's neither.
+    private var drinks: String? {
+        let parts = [
+            totals.waterMl > 0 ? (totals.waterMl >= 1000 ? String(format: "%.1f L water", Double(totals.waterMl) / 1000)
+                                                         : "\(totals.waterMl) ml water") : nil,
+            totals.caffeineMg > 0 ? "\(totals.caffeineMg) mg caffeine" : nil,
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func share(_ grams: Int, _ kcalPerGram: Double) -> Double {
@@ -212,6 +225,8 @@ struct MealSheet: View {
     @State private var protein: String
     @State private var carbs: String
     @State private var fat: String
+    @State private var water: String
+    @State private var caffeine: String
     @State private var notes: String
     @State private var error: String?
     @State private var working = false
@@ -227,6 +242,8 @@ struct MealSheet: View {
         _protein = State(initialValue: String(meal.proteinG))
         _carbs = State(initialValue: String(meal.carbsG))
         _fat = State(initialValue: String(meal.fatG))
+        _water = State(initialValue: String(meal.waterMl))
+        _caffeine = State(initialValue: String(meal.caffeineMg))
         _notes = State(initialValue: meal.notes)
     }
 
@@ -251,8 +268,10 @@ struct MealSheet: View {
                     NumberField(label: "Protein", unit: "g", text: $protein)
                     NumberField(label: "Carbs", unit: "g", text: $carbs)
                     NumberField(label: "Fat", unit: "g", text: $fat)
+                    NumberField(label: "Water", unit: "ml", text: $water)
+                    NumberField(label: "Caffeine", unit: "mg", text: $caffeine)
                 } footer: {
-                    Text("Coach's estimate. Change anything that's off.")
+                    Text("Coach's estimate. Change anything that's off; Apple Health gets the new numbers.")
                 }
                 Section("Notes") {
                     TextField("Notes", text: $notes, axis: .vertical).lineLimit(1...4)
@@ -277,6 +296,7 @@ struct MealSheet: View {
                             name: name.trimmingCharacters(in: .whitespaces), eatenAt: Wire.local(time),
                             calories: Int(calories) ?? meal.calories, proteinG: Int(protein) ?? meal.proteinG,
                             carbsG: Int(carbs) ?? meal.carbsG, fatG: Int(fat) ?? meal.fatG,
+                            waterMl: Int(water) ?? meal.waterMl, caffeineMg: Int(caffeine) ?? meal.caffeineMg,
                             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
                         run { await save(changes) }
                     }
@@ -293,6 +313,63 @@ struct MealSheet: View {
         Task {
             if let message = await action() { error = message; working = false } else { dismiss() }
         }
+    }
+}
+
+/// After photos are picked or taken: what they show, in a few words if you like, then Log sends both.
+struct MealPhotosSheet: View {
+    let photos: [PickedPhoto]
+    let log: (String?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(photos) { photo in
+                                Image(uiImage: photo.preview)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: photos.count == 1 ? 220 : 140, height: photos.count == 1 ? 220 : 140)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+                Section {
+                    TextField("Carbonara, about half the plate, and a coke", text: $text, axis: .vertical)
+                        .lineLimit(1...5)
+                        .focused($focused)
+                } header: {
+                    Text("What is it?")
+                } footer: {
+                    Text("Optional. Amounts, brands, what's hidden (oil, sugar in the coffee) make the numbers better.")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Theme.grouped)
+            .navigationTitle("Log a meal")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Log") {
+                        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        log(words.isEmpty ? nil : words)
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear { focused = true }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

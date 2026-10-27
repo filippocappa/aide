@@ -384,6 +384,14 @@ final class APIClient {
         try await send("POST", "/v1/food/log", body: request, timeout: 120)
     }
 
+    /// Every meal from `from` to `to` (local days, at most 92), oldest first: what the app writes to Apple Health.
+    func meals(from: Date, to: Date) async throws -> [Meal] {
+        let list: MealList = try await send("GET", "/v1/food/meals", query: [
+            URLQueryItem(name: "from", value: Wire.dayString(from)), URLQueryItem(name: "to", value: Wire.dayString(to)),
+        ])
+        return list.meals
+    }
+
     func updateMeal(_ id: Int, _ changes: MealChanges) async throws -> Meal {
         try await send("PATCH", "/v1/food/meals/\(id)", body: changes)
     }

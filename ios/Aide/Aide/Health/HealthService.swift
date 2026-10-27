@@ -2,7 +2,8 @@ import HealthKit
 
 /// Reads Apple Health and sends the server one summary per day (docs/API.md, "Apple Health"). Raw samples
 /// stay on the phone. Also sends the wake-up signal for the "I'm up" shortcut, and writes the habit counts logged
-/// through Aide to Health's Inhaler Usage (`health_logged`, docs/API.md "Habits").
+/// through Aide to Health's Inhaler Usage (`health_logged`, docs/API.md "Habits") and the meals as food entries
+/// (docs/API.md "Food").
 @MainActor
 final class HealthService: ObservableObject {
     let isAvailable = HKHealthStore.isHealthDataAvailable()
@@ -30,6 +31,8 @@ final class HealthService: ObservableObject {
     private var isWriting = false
     /// Another write was asked for while one was running.
     private var writeAgain = false
+    private var isWritingMeals = false
+    private var writeMealsAgain = false
 
     init(api: APIClient) {
         self.api = api
@@ -45,13 +48,25 @@ final class HealthService: ObservableObject {
     private static let activeEnergy = HKQuantityType(.activeEnergyBurned)
     private static let exercise = HKQuantityType(.appleExerciseTime)
     private static let inhaler = HKQuantityType(.inhalerUsage)
+    private static let energy = HKQuantityType(.dietaryEnergyConsumed)
+    /// What a meal is written as, each with the meal's number for it and its unit.
+    private static let food: [(HKQuantityType, KeyPath<Meal, Int>, HKUnit)] = [
+        (energy, \.calories, .kilocalorie()),
+        (HKQuantityType(.dietaryProtein), \.proteinG, .gram()),
+        (HKQuantityType(.dietaryCarbohydrates), \.carbsG, .gram()),
+        (HKQuantityType(.dietaryFatTotal), \.fatG, .gram()),
+        (HKQuantityType(.dietaryWater), \.waterMl, .literUnit(with: .milli)),
+        (HKQuantityType(.dietaryCaffeine), \.caffeineMg, .gramUnit(with: .milli)),
+    ]
 
-    private static let readTypes: Set<HKObjectType> = [
+    /// The food kinds are read too, so the app finds its own entries again.
+    private static let readTypes: Set<HKObjectType> = Set([
         sleep, restingHR, hrv, respiratory, wristTemp, steps, activeEnergy, exercise, inhaler,
         HKObjectType.workoutType(),
-    ]
+    ] + food.map(\.0))
     /// Inhaler Usage: a limit habit's counts logged through Aide are written there (the user logs coffees in it).
-    private static let shareTypes: Set<HKSampleType> = [inhaler]
+    /// The food kinds: every meal logged through Aide.
+    private static let shareTypes: Set<HKSampleType> = Set([inhaler] + food.map(\.0))
 
     // MARK: Permission and background delivery
 
@@ -69,6 +84,7 @@ final class HealthService: ObservableObject {
             await refreshStatus()
             await startObserving()
             _ = await upload()
+            await writeMeals()
         } catch {
             lastError = error.localizedDescription
         }
@@ -215,6 +231,108 @@ final class HealthService: ObservableObject {
         ])
         let query = HKSampleQueryDescriptor(predicates: [.quantitySample(type: Self.inhaler, predicate: predicate)],
                                             sortDescriptors: [SortDescriptor(\.startDate, order: .reverse)])
+        return try await query.result(for: store)
+    }
+
+    // MARK: Writing meals
+
+    /// Meals are written for this many days back (the server's meals since then).
+    private static let mealDays = 14
+
+    private enum MealKey {
+        static let id = "AideMeal"
+        /// The meal's numbers and time, to see when it changed on the server.
+        static let version = "AideMealVersion"
+    }
+
+    /// Makes the app's food entries in Health for the last `mealDays` days match the server's meals: a new meal
+    /// is added, a changed one written again, a deleted one removed. Only the app's own entries are touched. After a
+    /// log or an edit here, a `sync` push (a meal Coach logged in chat) and on foreground.
+    func writeMeals() async {
+        guard isAvailable, hasAsked, store.authorizationStatus(for: Self.energy) == .sharingAuthorized else { return }
+        if isWritingMeals {
+            writeMealsAgain = true
+            return
+        }
+        isWritingMeals = true
+        defer { isWritingMeals = false }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let first = calendar.date(byAdding: .day, value: 1 - Self.mealDays, to: today) else { return }
+        repeat {
+            writeMealsAgain = false
+            do {
+                try await write(meals: api.meals(from: first, to: today), since: first)
+            } catch APIError.server(let status, _) where status == 404 {
+                return // an older server without the meals read
+            } catch APIError.notConfigured {
+                return
+            } catch {
+                lastError = error.localizedDescription
+                return
+            }
+        } while writeMealsAgain
+    }
+
+    private func write(meals: [Meal], since first: Date) async throws {
+        let allowed = Self.food.filter { store.authorizationStatus(for: $0.0) == .sharingAuthorized }
+        let own = try await ownMeals(since: first)
+        var have: [Int: HKCorrelation] = [:]
+        for entry in own {
+            if let id = (entry.metadata?[MealKey.id] as? NSNumber)?.intValue, have[id] == nil {
+                have[id] = entry
+            } else {
+                try await remove(entry) // a second entry for the same meal
+            }
+        }
+        let wanted = Dictionary(meals.map { ($0.id, $0) }) { _, last in last }
+        for (id, entry) in have where wanted[id] == nil {
+            try await remove(entry)
+        }
+        for meal in meals {
+            let version = Self.version(meal, allowed.map(\.0))
+            if let entry = have[meal.id] {
+                if entry.metadata?[MealKey.version] as? String == version { continue }
+                try await remove(entry)
+            }
+            let at = meal.eatenDate ?? Date()
+            let named: [String: Any] = [HKMetadataKeyFoodType: meal.name]
+            var samples: Set<HKSample> = Set(allowed.compactMap { type, number, unit -> HKSample? in
+                let value = meal[keyPath: number]
+                guard value > 0 else { return nil }
+                return HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: Double(value)),
+                                        start: at, end: at, metadata: named)
+            })
+            if samples.isEmpty { // nothing but zeros: a correlation needs one sample, so 0 kcal
+                samples = [HKQuantitySample(type: Self.energy, quantity: HKQuantity(unit: .kilocalorie(), doubleValue: 0),
+                                            start: at, end: at, metadata: named)]
+            }
+            let entry = HKCorrelation(type: HKCorrelationType(.food), start: at, end: at, objects: samples,
+                                      metadata: [HKMetadataKeyFoodType: meal.name, MealKey.id: meal.id,
+                                                 MealKey.version: version])
+            try await store.save(entry)
+        }
+    }
+
+    nonisolated static func version(_ meal: Meal, _ types: [HKQuantityType]) -> String {
+        ([meal.name, meal.eatenAt] + [meal.calories, meal.proteinG, meal.carbsG, meal.fatG, meal.waterMl,
+                                      meal.caffeineMg].map(String.init) + types.map(\.identifier))
+            .joined(separator: "|")
+    }
+
+    /// The entry and what's in it (whether deleting a correlation takes its samples along isn't promised).
+    private func remove(_ entry: HKCorrelation) async throws {
+        try await store.delete(entry)
+        for sample in entry.objects { try? await store.delete(sample) }
+    }
+
+    private func ownMeals(since: Date) async throws -> [HKCorrelation] {
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            HKQuery.predicateForSamples(withStart: since, end: nil, options: .strictStartDate),
+            HKQuery.predicateForObjects(from: .default()),
+        ])
+        let query = HKSampleQueryDescriptor(predicates: [.correlation(type: HKCorrelationType(.food), predicate: predicate)],
+                                            sortDescriptors: [SortDescriptor(\.startDate)])
         return try await query.result(for: store)
     }
 

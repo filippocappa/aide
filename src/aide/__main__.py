@@ -81,6 +81,7 @@ def main() -> None:
     if push.enabled:
         reminders.on_change.append(push.request_sync)
         habits.on_health_count.append(push.request_sync)  # the phone writes the count to Apple Health
+        food.on_change.append(push.request_sync)  # and the meals
     elif not (settings.apns_key_path and settings.apns_key_id and settings.apns_team_id):
         log.warning("APNS_KEY_PATH / APNS_KEY_ID / APNS_TEAM_ID not set: push notifications off")
 

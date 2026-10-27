@@ -151,7 +151,8 @@ def test_food_endpoints(env):
     food.add("Toast", 300, 10, 40, 10, noon - timedelta(days=2))
     body = api.get("/v1/food", headers=AUTH).json()
     assert body["date"] == today.isoformat()
-    assert body["totals"] == {"calories": 420, "protein_g": 18, "carbs_g": 30, "fat_g": 25}
+    assert body["totals"] == {"calories": 420, "protein_g": 18, "carbs_g": 30, "fat_g": 25, "water_ml": 0,
+                              "caffeine_mg": 0}
     assert body["goals"] == {"calories": None, "protein_g": None, "carbs_g": None, "fat_g": None}
     assert body["meals"][0]["eaten_at"] == noon.isoformat() and body["meals"][0]["photo"] is None
 
@@ -184,6 +185,25 @@ async def test_tools_correct_list_and_queue_a_delete(env):
     await agent.respond(CONVERSATION, "delete the rice")
     assert food.get(1) is not None and agent.pending(CONVERSATION) == ["Delete meal 'Rice' (" +
                                                                        f"{datetime.fromisoformat(food.get(1)['eaten_at']).astimezone(ROME):%a %d %b %H:%M}, 330 kcal)"]
+
+
+async def test_drinks_carry_water_and_caffeine_and_every_change_asks_the_phone_to_sync(env):
+    api, agent, food, *_ = env([log_meal(name="Espresso and 1 L water", calories=5, protein_g=0, carbs_g=1, fat_g=0,
+                                         water_ml=1030, caffeine_mg=65), done("Logged.")])
+    synced = []
+    food.on_change.append(lambda: synced.append(1))
+    turn = await agent.respond(CONVERSATION, "an espresso and 1 L of water")
+    [meal] = turn.attachments[0]["meals"]
+    assert (meal["calories"], meal["water_ml"], meal["caffeine_mg"]) == (10, 1030, 65) and synced == [1]
+    assert api.get("/v1/food", headers=AUTH).json()["totals"]["water_ml"] == 1030
+    r = api.patch(f"/v1/food/meals/{meal['id']}", json={"water_ml": 530}, headers=AUTH)
+    assert r.json()["water_ml"] == 530 and synced == [1, 1]
+    old = food.add("Tea", 0, 0, 0, 0, datetime.now(ROME) - timedelta(days=3), caffeine_mg=40)
+    meals = api.get(f"/v1/food/meals?from={food.today() - timedelta(days=3)}", headers=AUTH).json()["meals"]
+    assert [m["name"] for m in meals] == ["Tea", "Espresso and 1 L water"] and meals[0]["caffeine_mg"] == 40
+    assert api.get("/v1/food/meals?from=2026-01-01&to=2026-12-31", headers=AUTH).status_code == 400
+    food.delete(old["id"])
+    assert len(synced) == 4
 
 
 def test_a_meal_in_the_future_is_refused(env):

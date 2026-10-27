@@ -581,21 +581,31 @@ owns food (it sees it next to sleep, training and habits); Aide has the same too
 Meal object:
 ```json
 {"id": 12, "name": "Pasta al pomodoro", "eaten_at": "2026-10-21T13:10:00+02:00", "calories": 650,
- "protein_g": 20, "carbs_g": 110, "fat_g": 15, "photo": "p_3f9a…", "notes": "about 120 g dry pasta"}
+ "protein_g": 20, "carbs_g": 110, "fat_g": 15, "water_ml": 0, "caffeine_mg": 0, "photo": "p_3f9a…",
+ "notes": "about 120 g dry pasta"}
 ```
 `photo` is null without one. Numbers are the model's estimates, rounded (calories to 10, grams to 1).
+`water_ml` and `caffeine_mg` (since 2026-10-27) are 0 when there's none: a drink is logged like a meal ("an espresso
+and 1 L of water" is one, 5 kcal, 1030 ml water, 65 mg caffeine).
+
+**Apple Health** (since 2026-10-27): the app writes every meal of the last 14 days as its own food entry (a
+`food` correlation: energy, protein, carbs, fat, and water and caffeine when not 0, named after the meal, with the
+meal's id in its metadata), from `GET /v1/food/meals`, and changes or removes its entries when a meal changes or
+goes. The server sends the silent `sync` push after every meal change, so this happens with the app closed too.
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/food?date=2026-10-21` | (default today) | `{"date": "2026-10-21", "meals": [Meal] (by time), "totals": Totals, "goals": Goals}` |
+| `GET /v1/food/meals?from=2026-10-15&to=2026-10-21` | (default the last 7 days; at most 92) | `{"meals": [Meal]}`, oldest first (since 2026-10-27, for Apple Health) |
 | `GET /v1/food/days?from=2026-10-15&to=2026-10-21` | (default the last 7 days) | `{"days": [{"date": "2026-10-21", "totals": Totals, "meals": 3}]}`, oldest first, every day included (zeros when empty) |
 | `POST /v1/food/log` | `{"photos": ["p_…"], "text": "half of it", "date": "2026-10-20"}` (`photos` or `text` needed; `text` and `date` optional) | `{"reply": "Pasta al pomodoro, about 650 kcal…", "meals": [Meal], "conversation_id": "c_…"}`: Coach logs it in its "Food log" chat (made once, then reused), so a correction can follow there. `meals` is the meals its tools showed: logged, changed or listed (can be empty when it only asked something). 5–30 s. |
-| `PATCH /v1/food/meals/{id}` | any of `name`, `eaten_at`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `notes` | the Meal |
+| `PATCH /v1/food/meals/{id}` | any of `name`, `eaten_at`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `water_ml`, `caffeine_mg`, `notes` | the Meal |
 | `DELETE /v1/food/meals/{id}` | | `{"ok": true}` (the user deleting from the app: immediate) |
 | `GET /v1/food/goals` | | Goals |
 | `PUT /v1/food/goals` | Goals | Goals |
 
-Totals: `{"calories": 1840, "protein_g": 96, "carbs_g": 210, "fat_g": 61}`. Goals has the same four keys, each a
+Totals: `{"calories": 1840, "protein_g": 96, "carbs_g": 210, "fat_g": 61, "water_ml": 1500, "caffeine_mg": 130}`
+(the last two since 2026-10-27). Goals has the first four keys, each a
 number or null (no goal); all null until set, here or by Coach in chat ("aim for 140 g protein").
 
 The agents get `log_meal`, `update_meal`, `list_meals`, `set_food_goals` (immediate) and `delete_meal` (queued).

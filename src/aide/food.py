@@ -1,7 +1,8 @@
 """Food log: meals with estimated calories and macros, and daily goals. Contract in docs/API.md, "Food".
 
 The numbers are the model's estimates from a photo or a description, so they're rounded: calories to 10,
-grams to 1. Days are local days (AIDE_TIMEZONE); eaten_at is stored in UTC.
+grams to 1. Days are local days (AIDE_TIMEZONE); eaten_at is stored in UTC. Water (ml) and caffeine (mg) go along,
+0 when there's none; the phone writes every meal to Apple Health.
 """
 
 import json
@@ -20,6 +21,8 @@ CREATE TABLE IF NOT EXISTS meals (
     protein_g  INTEGER NOT NULL,
     carbs_g    INTEGER NOT NULL,
     fat_g      INTEGER NOT NULL,
+    water_ml   INTEGER NOT NULL DEFAULT 0,
+    caffeine_mg INTEGER NOT NULL DEFAULT 0,
     photo      TEXT,  -- photo id (photos.py), NULL without one
     notes      TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
@@ -33,10 +36,13 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 MACROS = ("calories", "protein_g", "carbs_g", "fat_g")
-LIMITS = {"calories": 10_000, "protein_g": 1_000, "carbs_g": 1_000, "fat_g": 1_000}  # per meal, and per goal
+DRINKS = ("water_ml", "caffeine_mg")  # what a meal also carries to Apple Health; no goals for them
+LIMITS = {"calories": 10_000, "protein_g": 1_000, "carbs_g": 1_000, "fat_g": 1_000,  # per meal, and per goal
+          "water_ml": 10_000, "caffeine_mg": 2_000}
 MAX_NAME = 100
 MAX_NOTES = 500
-EDITABLE = ("name", "eaten_at", *MACROS, "notes")
+EDITABLE = ("name", "eaten_at", *MACROS, *DRINKS, "notes")
+MAX_RANGE = 92  # days of meals in one read
 FOOD_METRICS = ("logged", "protein_g", "calories")  # what a food objective or habit counts days by
 CALORIE_BAND = 0.1  # a calorie goal is met within 10% either way
 
@@ -51,7 +57,17 @@ class FoodStore:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo):
         self.conn = conn
         self.tz = tz
+        if self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'meals'").fetchone():
+            have = {c["name"] for c in self.conn.execute("PRAGMA table_info(meals)")}
+            for column in DRINKS:
+                if column not in have:
+                    self.conn.execute(f"ALTER TABLE meals ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
         self.conn.executescript(SCHEMA)
+        self.on_change: list = []  # called when a meal is added, changed or deleted (the phone writes it to Health)
+
+    def _changed(self) -> None:
+        for callback in self.on_change:
+            callback()
 
     def today(self) -> date:
         return datetime.now(self.tz).date()
@@ -78,7 +94,7 @@ class FoodStore:
                 value = str(value or "").strip()[:MAX_NOTES]
             elif key == "eaten_at":
                 value = self._eaten_at(value)
-            elif key in MACROS:
+            elif key in MACROS or key in DRINKS:
                 value = _round(key, value)
             out[key] = value
         return out
@@ -91,14 +107,18 @@ class FoodStore:
         return when.astimezone(ZoneInfo("UTC")).isoformat()
 
     def add(self, name: str, calories: float, protein_g: float, carbs_g: float, fat_g: float,
-            eaten_at: datetime | str | None = None, photo: str | None = None, notes: str = "") -> dict:
+            eaten_at: datetime | str | None = None, photo: str | None = None, notes: str = "",
+            water_ml: float = 0, caffeine_mg: float = 0) -> dict:
         clean = self._clean({"name": name, "calories": calories, "protein_g": protein_g, "carbs_g": carbs_g,
-                             "fat_g": fat_g, "notes": notes, "eaten_at": eaten_at or utcnow()})
+                             "fat_g": fat_g, "water_ml": water_ml, "caffeine_mg": caffeine_mg, "notes": notes,
+                             "eaten_at": eaten_at or utcnow()})
         now = utcnow().isoformat()
         cur = self.conn.execute(
-            "INSERT INTO meals (eaten_at, name, calories, protein_g, carbs_g, fat_g, photo, notes, created_at, "
-            "updated_at) VALUES (:eaten_at, :name, :calories, :protein_g, :carbs_g, :fat_g, :photo, :notes, :now, :now)",
+            "INSERT INTO meals (eaten_at, name, calories, protein_g, carbs_g, fat_g, water_ml, caffeine_mg, photo, "
+            "notes, created_at, updated_at) VALUES (:eaten_at, :name, :calories, :protein_g, :carbs_g, :fat_g, "
+            ":water_ml, :caffeine_mg, :photo, :notes, :now, :now)",
             {**clean, "photo": photo, "now": now})
+        self._changed()
         return self.find(cur.lastrowid)
 
     def update(self, meal_id: int, **changes) -> dict:
@@ -110,10 +130,14 @@ class FoodStore:
         if clean:
             self.conn.execute(f"UPDATE meals SET {', '.join(f'{c} = ?' for c in clean)}, updated_at = ? WHERE id = ?",
                               (*clean.values(), utcnow().isoformat(), meal_id))
+            self._changed()
         return self.find(meal_id)
 
     def delete(self, meal_id: int) -> bool:
-        return self.conn.execute("DELETE FROM meals WHERE id = ?", (meal_id,)).rowcount > 0
+        gone = self.conn.execute("DELETE FROM meals WHERE id = ?", (meal_id,)).rowcount > 0
+        if gone:
+            self._changed()
+        return gone
 
     def _bounds(self, start: date, end: date) -> tuple[str, str]:
         """UTC bounds of the local days start..end, both included."""
@@ -168,7 +192,7 @@ class FoodStore:
     def as_json(self, meal: dict) -> dict:
         return {"id": meal["id"], "name": meal["name"],
                 "eaten_at": datetime.fromisoformat(meal["eaten_at"]).astimezone(self.tz).replace(microsecond=0).isoformat(),
-                **{k: meal[k] for k in MACROS}, "photo": meal["photo"], "notes": meal["notes"]}
+                **{k: meal[k] for k in (*MACROS, *DRINKS)}, "photo": meal["photo"], "notes": meal["notes"]}
 
     # -- goals ----------------------------------------------------------------
 
@@ -199,4 +223,4 @@ class FoodStore:
 
 
 def totals(meals: list[dict]) -> dict:
-    return {k: sum(m[k] for m in meals) for k in MACROS}
+    return {k: sum(m[k] for m in meals) for k in (*MACROS, *DRINKS)}

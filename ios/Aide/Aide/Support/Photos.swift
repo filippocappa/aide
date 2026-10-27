@@ -4,6 +4,12 @@ import SwiftUI
 import UIKit
 
 /// A photo picked to send, already shrunk to the JPEG the server gets.
+/// Photos of one meal, between picking them and logging them with their description.
+struct PickedMeal: Identifiable {
+    let id = UUID()
+    let photos: [PickedPhoto]
+}
+
 struct PickedPhoto: Identifiable, Equatable {
     let id = UUID()
     let jpeg: Data

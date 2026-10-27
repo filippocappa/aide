@@ -486,6 +486,9 @@ struct Meal: Decodable, Identifiable, Hashable {
     var proteinG: Int
     var carbsG: Int
     var fatG: Int
+    /// 0 when there's none (since 2026-10-27).
+    var waterMl: Int
+    var caffeineMg: Int
     /// Photo id, nil without one.
     var photo: String?
     var notes: String
@@ -499,10 +502,14 @@ struct Meal: Decodable, Identifiable, Hashable {
         proteinG = try c.number(.proteinG) ?? 0
         carbsG = try c.number(.carbsG) ?? 0
         fatG = try c.number(.fatG) ?? 0
+        waterMl = try c.number(.waterMl) ?? 0
+        caffeineMg = try c.number(.caffeineMg) ?? 0
         photo = try c.decodeIfPresent(String.self, forKey: .photo)
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
     }
-    private enum CodingKeys: String, CodingKey { case id, name, eatenAt, calories, proteinG, carbsG, fatG, photo, notes }
+    private enum CodingKeys: String, CodingKey {
+        case id, name, eatenAt, calories, proteinG, carbsG, fatG, waterMl, caffeineMg, photo, notes
+    }
 
     var eatenDate: Date? { Wire.parse(eatenAt) }
 }
@@ -513,6 +520,8 @@ struct FoodTotals: Decodable, Hashable {
     var proteinG = 0
     var carbsG = 0
     var fatG = 0
+    var waterMl = 0
+    var caffeineMg = 0
 
     init() {}
 
@@ -522,8 +531,10 @@ struct FoodTotals: Decodable, Hashable {
         proteinG = try c.number(.proteinG) ?? 0
         carbsG = try c.number(.carbsG) ?? 0
         fatG = try c.number(.fatG) ?? 0
+        waterMl = try c.number(.waterMl) ?? 0
+        caffeineMg = try c.number(.caffeineMg) ?? 0
     }
-    private enum CodingKeys: String, CodingKey { case calories, proteinG, carbsG, fatG }
+    private enum CodingKeys: String, CodingKey { case calories, proteinG, carbsG, fatG, waterMl, caffeineMg }
 }
 
 /// Daily goals; nil is no goal. Saved with every key, so clearing one sends null.
@@ -617,7 +628,13 @@ struct MealChanges: Encodable, Equatable {
     var proteinG: Int
     var carbsG: Int
     var fatG: Int
+    var waterMl: Int
+    var caffeineMg: Int
     var notes: String
+}
+
+struct MealList: Decodable {
+    let meals: [Meal]
 }
 
 private extension KeyedDecodingContainer {

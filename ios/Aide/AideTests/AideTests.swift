@@ -885,6 +885,20 @@ final class FoodTests: XCTestCase {
         XCTAssertEqual(MealRow.macros(m), "P 20 g · C 110 g · F 15 g")
     }
 
+    func testDrinksDecodeAndAnOlderServerWithoutThemIsZero() throws {
+        XCTAssertEqual(try JSONDecoder.api.decode(Meal.self, from: Data(meal.utf8)).waterMl, 0)
+        let json = #"""
+        {"meals":[{"id":3,"name":"Espresso and 1 L water","eaten_at":"2026-10-27T10:00:00+01:00","calories":10,
+          "protein_g":0,"carbs_g":1,"fat_g":0,"water_ml":1030,"caffeine_mg":65,"photo":null,"notes":""}]}
+        """#
+        let m = try XCTUnwrap(JSONDecoder.api.decode(MealList.self, from: Data(json.utf8)).meals.first)
+        XCTAssertEqual(m.waterMl, 1030)
+        XCTAssertEqual(m.caffeineMg, 65)
+        var changed = m
+        changed.waterMl = 530
+        XCTAssertNotEqual(HealthService.version(m, []), HealthService.version(changed, [])) // written again
+    }
+
     func testFoodDayWithoutGoalsAndMealWithoutPhoto() throws {
         let json = #"""
         {"date":"2026-10-21","meals":[{"id":1,"name":"Apple","eaten_at":"2026-10-21T10:00:00+02:00","calories":80,

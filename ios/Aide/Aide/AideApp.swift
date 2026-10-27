@@ -59,7 +59,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     /// Silent pushes. `sync`: bring Apple Reminders up to date, so the alarms are set before they're due, and write
-    /// the habit counts logged through Aide to Health.
+    /// the habit counts and meals logged through Aide to Health.
     /// `location`: a tram alert wants to know how far the stop is.
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Task {
             await env.sync.sync()
             await env.health.writeLogged()
+            await env.health.writeMeals()
             WidgetCenter.shared.reloadTimelines(ofKind: "Today")
             completionHandler(env.sync.lastError == nil ? .newData : .failed)
         }
