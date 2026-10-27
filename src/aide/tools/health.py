@@ -23,7 +23,7 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
             parts.append(f"nap {hours(nap.get('asleep_min'))} ({datetime.fromisoformat(nap['start']).astimezone(tz):%H:%M}–"
                          f"{datetime.fromisoformat(nap['end']).astimezone(tz):%H:%M})")
         for key, label in (("resting_hr", "resting HR {} bpm"), ("hrv_ms", "HRV {} ms"), ("steps", "{} steps"),
-                           ("exercise_min", "{} exercise min")):
+                           ("exercise_min", "{} exercise min"), ("inhaler_usage", "inhaler usage {}")):
             if key in d:
                 parts.append(label.format(d[key]))
         for w in d.get("workouts", []):
@@ -45,6 +45,10 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
             return f"{fmt(mean(values))} (over {len(values)} days)" if values else "no data"
 
         sleep = [d["sleep"]["asleep_min"] for d in days if "asleep_min" in d.get("sleep", {})]
+        # Inhaler Usage: where the user logs coffees. A day without data from the phone counts as empty too.
+        have = {d["date"] for d in days if "inhaler_usage" in d}
+        empty = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        empty = [day for day in empty if day.isoformat() not in have]
         workouts = [w for d in days for w in d.get("workouts", [])]
         out = [f"Health from {start:%a %d %b} to {end:%a %d %b}, newest first:", *map(day_line, days), "",
                "Averages:",
@@ -52,12 +56,15 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
                f"- resting HR: {avg([d['resting_hr'] for d in days if 'resting_hr' in d], lambda v: f'{v:.0f} bpm')}",
                f"- HRV: {avg([d['hrv_ms'] for d in days if 'hrv_ms' in d], lambda v: f'{v:.0f} ms')}",
                f"- steps: {avg([d['steps'] for d in days if 'steps' in d], lambda v: f'{v:.0f}')}",
-               f"- workouts: {len(workouts)} in {len(days)} days with data"]
+               f"- workouts: {len(workouts)} in {len(days)} days with data",
+               f"- inhaler usage: logged on {len(have)} of {len(empty) + len(have)} days"
+               + (f"; nothing on {', '.join(f'{day:%a %d %b}' for day in reversed(empty))}" if empty else "")]
         return "\n".join(out)
 
     return [
         Tool("health", "Read the user's Apple Health summaries for a date range: sleep (time asleep, bedtime, "
-             "wake), naps, resting heart rate, HRV, steps, exercise minutes and workouts, per day and on average. "
+             "wake), naps, resting heart rate, HRV, steps, exercise minutes, workouts and Inhaler Usage (where the user "
+             "logs coffees; the days with nothing logged are listed), per day and on average. "
              "Default: the last 7 days. Data arrives from the phone, so the latest day may be partial. Compare with "
              "the user's own numbers; don't make medical claims.",
              {"type": "object", "additionalProperties": False, "required": [], "properties": {

@@ -19,7 +19,7 @@ struct TramLiveActivity: Widget {
                     TramCountdown(state: s).font(.title3.weight(.bold)).padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(a.towards.map { "to \($0)" } ?? a.stop).font(.subheadline).lineLimit(1)
+                    Text(TramLockScreen.heading(a, s)).font(.subheadline).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
@@ -47,7 +47,7 @@ struct TramCountdown: View {
 
     var body: some View {
         if state.gone || state.atDate <= Date() {
-            Text(state.gone ? "Gone" : "Now")
+            Text(state.gone ? (state.isRiding ? "There" : "Gone") : "Now")
         } else {
             Text(timerInterval: Date()...state.atDate, countsDown: true, showsHours: false)
                 .monospacedDigit().multilineTextAlignment(.trailing)
@@ -62,7 +62,16 @@ struct TramDetails: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if let leave = state.leaveDate, !state.gone {
+            if state.isRiding {
+                Label(state.gone ? (state.to.map { "At \($0)" } ?? "Off the tram") : "On board",
+                      systemImage: state.gone ? "checkmark.circle.fill" : "tram.fill")
+                    .foregroundStyle(.green)
+                if !state.gone {
+                    Text("arrive \(state.atDate.formatted(date: .omitted, time: .shortened))").foregroundStyle(.secondary)
+                }
+            } else if state.atStop == true, !state.gone {
+                Label("At the stop", systemImage: "mappin.and.ellipse").foregroundStyle(.green)
+            } else if let leave = state.leaveDate, !state.gone {
                 if leave > Date() {
                     Label { Text("Leave in ") + Text(leave, style: .timer) } icon: { Image(systemName: "figure.walk") }
                 } else {
@@ -80,7 +89,7 @@ struct TramDetails: View {
             } else {
                 Text("Timetable").foregroundStyle(.secondary)
             }
-            if let next = state.nextDate {
+            if let next = state.nextDate, !state.isRiding {
                 Text("then \(next.formatted(date: .omitted, time: .shortened))").foregroundStyle(.secondary)
             }
         }
@@ -128,6 +137,10 @@ struct TramTrack: View {
     }
 
     private func caption(_ stops: Int) -> String {
+        if state.isRiding, let to = state.to {
+            if stops == 0 { return "\(to) is next: get off there" }
+            return "\(stops) stop\(stops == 1 ? "" : "s") before \(to)" + (state.near.map { " · next \($0)" } ?? "")
+        }
         let away = stops == 0 ? "Your stop is next" : "\(stops) stop\(stops == 1 ? "" : "s") away"
         guard let near = state.near else { return away }
         if let starts = state.startsDate {
@@ -147,9 +160,8 @@ struct TramLockScreen: View {
             HStack(spacing: 10) {
                 LineBadge(line: attributes.line, vehicle: attributes.vehicle)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(attributes.towards.map { "to \($0)" } ?? attributes.vehicle).font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    Text("\(attributes.stop) · \(attributes.code)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(Self.heading(attributes, state)).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(subheading).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 0) {
@@ -164,5 +176,16 @@ struct TramLockScreen: View {
             }
         }
         .padding(16)
+    }
+
+    /// Where it's going; on board, where the user is going.
+    static func heading(_ attributes: TramActivityAttributes, _ state: TramActivityAttributes.ContentState) -> String {
+        if state.isRiding, let to = state.to { return "to \(to)" }
+        return attributes.towards.map { "to \($0)" } ?? attributes.vehicle
+    }
+
+    private var subheading: String {
+        if state.isRiding, !state.gone, let near = state.near { return "Next stop: \(near)" }
+        return "\(attributes.stop) · \(attributes.code)"
     }
 }

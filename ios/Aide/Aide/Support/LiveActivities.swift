@@ -12,6 +12,8 @@ final class LiveActivities {
     private var agents: [String: Activity<AgentActivityAttributes>] = [:]
     /// Activities whose tokens are already being handed over, by ActivityKit id.
     private var followed: Set<String> = []
+    /// Told whether a tram's activity is on, so the phone's location is followed closely while one is.
+    var onTrams: (@MainActor (Bool) -> Void)?
 
     init(api: APIClient) { self.api = api }
 
@@ -25,6 +27,7 @@ final class LiveActivities {
         started = true
         watch(TramActivityAttributes.self, kind: "tram", key: \.key)
         watch(AgentActivityAttributes.self, kind: "agent", key: \.key)
+        checkTrams()
         Task {
             for await on in ActivityAuthorizationInfo().activityEnablementUpdates where !on {
                 // Turned off in iOS Settings: the server goes back to plain pushes.
@@ -56,11 +59,19 @@ final class LiveActivities {
                 try? await api.registerLiveActivity(key: key, token: PushService.hex(data), environment: environment)
             }
         }
+        checkTrams()
         Task {
-            for await state in activity.activityStateUpdates where state == .dismissed {
-                try? await api.deleteLiveActivity(key: key)
+            for await state in activity.activityStateUpdates {
+                checkTrams()
+                if state == .dismissed { try? await api.deleteLiveActivity(key: key) }
             }
         }
+    }
+
+    private func checkTrams() {
+        onTrams?(Activity<TramActivityAttributes>.activities.contains {
+            $0.activityState == .active || $0.activityState == .stale
+        })
     }
 
     // MARK: An agent at work

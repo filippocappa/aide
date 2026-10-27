@@ -1140,6 +1140,10 @@ alerts in Settings. Off with `AIDE_GTT=0` on the server: the alert endpoints are
   the foreground, and when a silent `location` push asks for one (see Push). That needs "Always" location access.
 - An alert that fires "when it's time to leave" wants a fix under 10 minutes old: while it's watching, the server
   asks for one (a `location` push) at most every 5 minutes. Without any fix it assumes a 5 minute walk and says so.
+- Since 2026-10-27, **while a tram Live Activity is on** the app follows the phone closely (background location
+  updates, the blue pill in the status bar) and sends a fix every 20 s or so, or after 40 m, until the last tram
+  activity ends. The server uses fixes under 2 minutes old and 200 m accuracy to follow the user (see Live
+  Activities, `tram`).
 
 ### Departures
 
@@ -1301,7 +1305,8 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 Two kinds on the Lock Screen and in the Dynamic Island, both drawn by the app's widget extension:
 
 - **`tram`**: a tram alert's countdown. When an alert fires, the server starts it (APNs push-to-start) instead of
-  the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left.
+  the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left,
+  or, once the user is on it, until they get off.
 - **`agent`**: an agent at work. The app starts one when it sends a chat or Team chat message; the server keeps it
   up to date (asking another agent, writing) and ends it with the reply's first line, so a reply that comes in with
   the phone locked lights up the screen. The server also starts one for each scheduled routine run (not watches).
@@ -1366,10 +1371,24 @@ Push type `liveactivity`, topic `<bundle id>.push-type.liveactivity`, to the tok
 | `near` | since 2026-10-27: the stop it's at or has just left (its first stop, before it sets off), or null |
 | `starts` | since 2026-10-27: when it leaves its first stop, if it hasn't yet; else null |
 | `feed_down` | since 2026-10-27: GTT's live feed isn't coming through, so `live` is false for every tram |
+| `at_stop` | since 2026-10-27: the phone is at the stop (show that instead of when to leave) |
+| `riding` | since 2026-10-27: the user is on it. Then `at` is when it gets to `to` (or, without one, to `near`), `near` is its next stop, `stops` the stops before `to` (0: `to` is next; null without `to`), and `leave`, `walk`, `delay`, `next` are null |
+| `to` | since 2026-10-27: where the user gets off (the first ride's stop from Maps, for leave-now and "be there by"), or null |
 
-The server updates it every 30 s or so when `at` moves by 30 s or more, or the tram reaches another stop (`stops`,
-`near`, `starts`), or `live`, `next` or `feed_down` change, sets `stale-date` to `at` plus 2 minutes,
-and ends it once the tram has gone by (about 30 s after `at`) or the trip is cancelled, dismissed 2 minutes later.
+The server updates it every 30 s or so when `at` or `leave` moves by 30 s or more, or the tram reaches another stop
+(`stops`, `near`, `starts`), or `live`, `next`, `feed_down` or `at_stop` change, sets `stale-date` to `at` plus 2
+minutes.
+
+Since 2026-10-27 it follows the user with the app's fixes (see Location):
+- **Before the tram:** the walk and `leave` are worked out again from each fix, and the tram is the first the user
+  can make: an earlier one once they're closer (or at the stop), a later one when they can no longer make it (a
+  minute's hurry allowed). A switch is an `update` with an `alert` ("Tram 4 in 2 min"); the key stays the same.
+- **When it comes:** a phone moving along its line, away from the stop, is on board: `riding`. Still at the stop 90 s
+  after the tram's time, the user missed it, and the next one is followed (with an alert). Neither (off the line, or
+  no fixes): it ends as before, about 1 minute after `at`; with fixes, a fix has up to 4 minutes to say.
+- **On board:** an `update` with an `alert` ("Porta Susa is next": get off at the next stop) when `to` is next; the
+  end, dismissed 2 minutes later, once it has reached `to`, the phone is 600 m from the tram's stretch of line (they got
+  off), or it's at its last stop. The end state has `riding` and `gone` true.
 
 **`agent`** (`AgentActivityAttributes`). Attributes: `key` (`agent:<conversation id>`, the Team chat's is
 `agent:team`), `agent` (its id; for the Team chat, whoever answers first), `name`, `color` ("#RRGGBB"),

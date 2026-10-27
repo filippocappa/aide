@@ -13,6 +13,7 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 FOOD = {"logged": "ticks itself on days with a meal logged", "protein_g": "ticks itself on days at the protein goal",
         "calories": "ticks itself on days at the calorie goal"}
+HEALTH_NAMES = {"inhaler_usage": "Inhaler Usage"}
 
 
 def fmt(h: Habit, today: datetime.date) -> str:
@@ -20,7 +21,7 @@ def fmt(h: Habit, today: datetime.date) -> str:
         counts = dict(h.counts)
         week = [counts.get(today - datetime.timedelta(days=i), 0) for i in range(7, 0, -1)]
         streak = f"streak {h.streak} day{'s' if h.streak != 1 else ''} within the limit"
-        source = " (counted from Apple Health too)" if h.health else ""
+        source = f" (counted from Apple Health's {HEALTH_NAMES.get(h.health, h.health)} too)" if h.health else ""
         return (f"[{h.id}] {h.name} · at most {h.max_count} a day{source} · {h.count} today"
                 f"{' (over the limit)' if not h.done_today else ''} · last 7 days, oldest first: "
                 f"{', '.join(map(str, week))} · {streak}")

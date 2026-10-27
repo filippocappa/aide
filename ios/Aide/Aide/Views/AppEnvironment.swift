@@ -40,8 +40,10 @@ final class AppEnvironment: ObservableObject {
         self.digest = DigestViewModel(api: api)
         self.push = PushService(api: api)
         self.health = HealthService(api: api)
-        self.location = LocationService(api: api)
+        let location = LocationService(api: api)
+        self.location = location
         self.live = LiveActivities(api: api)
+        live.onTrams = { on in location.follow(on) }
         chat.live = live
 
         // The assistant may have created reminders or moved events: sync.

@@ -44,7 +44,9 @@ def ride(line="4", departs=at(8, 15), stop=(45.06254, 7.67561), headsign="Falche
     """Maps' transit step: the 4 from Porta Nuova at 08:15."""
     return {"stopDetails": {"departureStop": {"name": "Porta Nuova",
                                               "location": {"latLng": {"latitude": stop[0], "longitude": stop[1]}}},
-                            "departureTime": departs.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                            "departureTime": departs.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "arrivalStop": {"name": "Falchera",
+                                            "location": {"latLng": {"latitude": UNI[0], "longitude": UNI[1]}}}},
             "headsign": headsign, "transitLine": {"nameShort": line, "vehicle": {"type": "TRAM"}}}
 
 
@@ -82,6 +84,7 @@ async def test_an_event_with_a_tram_ride_becomes_a_tram_alert_that_says_leave_no
     (a,) = alerts.all()
     assert len(maps.bodies) == 2
     assert (a["stop"], a["line"], a["time"], a["days"], a["event"]) == ("1", "4", "08:15", None, "Macroeconomics at 09:00")
+    assert a["to_stop"] == "4"  # Falchera, where the ride gets off
     assert alerts.describe(a).endswith("when it's time to leave, for Macroeconomics at 09:00")
     await w.tick(utc(at(7, 40)))
     assert len(alerts.all()) == 1 and len(maps.bodies) == 2  # one alert per event, and no more lookups

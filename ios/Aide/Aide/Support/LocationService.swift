@@ -5,6 +5,8 @@ import UIKit
 /// A fix goes to the server when iOS reports a significant move (about 500 m, also with the app closed), when the
 /// app comes to the foreground, and when a silent `location` push asks for one. With the app closed that needs
 /// "Always"; with "While using", alerts use the last fix sent from the app.
+/// While a tram's Live Activity is on, it follows the phone closely, in the background too, so the server can tell
+/// when the user is at the stop or on the tram.
 @MainActor
 final class LocationService: NSObject, ObservableObject {
     @Published private(set) var authorization: CLAuthorizationStatus
@@ -20,6 +22,13 @@ final class LocationService: NSObject, ObservableObject {
 
     /// How long a `location` push waits for a fix; iOS gives a background push about 30 seconds.
     static let fixTimeout: Duration = .seconds(20)
+    /// While following: a fix goes to the server this often, or after this far.
+    static let followEvery: TimeInterval = 20
+    static let followDistance: CLLocationDistance = 40
+
+    /// A tram's Live Activity is on: location updates run, in the background too.
+    private(set) var following = false
+    private var lastFollowed: (at: Date, location: CLLocation)?
 
     private let manager = CLLocationManager()
     private let api: APIClient
@@ -60,6 +69,39 @@ final class LocationService: NSObject, ObservableObject {
     func requestAccess() {
         if authorization == .authorizedWhenInUse { UserDefaults.standard.set(true, forKey: Keys.askedAlways) }
         manager.requestAlwaysAuthorization()
+    }
+
+    /// Close updates while a tram's Live Activity is on (docs/API.md, "Location"), off when the last one ends.
+    func follow(_ on: Bool) {
+        guard on != following, !on || isOn else { return }
+        following = on
+        if on {
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+            manager.pausesLocationUpdatesAutomatically = false
+            manager.activityType = .otherNavigation
+            manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            manager.distanceFilter = 10
+            lastFollowed = nil
+            manager.startUpdatingLocation()
+        } else {
+            manager.stopUpdatingLocation()
+            manager.allowsBackgroundLocationUpdates = false
+            manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            manager.distanceFilter = kCLDistanceFilterNone
+        }
+    }
+
+    /// While following, every update comes here: only one per `followEvery` or `followDistance` goes on.
+    private func worthSending(_ location: CLLocation) -> Bool {
+        guard following, waiting.isEmpty, let last = lastFollowed else {
+            lastFollowed = (Date(), location)
+            return true
+        }
+        guard Date().timeIntervalSince(last.at) >= Self.followEvery
+                || location.distance(from: last.location) >= Self.followDistance else { return false }
+        lastFollowed = (Date(), location)
+        return true
     }
 
     /// A silent `location` push: a fresh fix to the server, or false within `fixTimeout`.
@@ -119,7 +161,10 @@ extension LocationService: CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let last = locations.last else { return }
-        Task { @MainActor in finish(await send(last)) }
+        Task { @MainActor in
+            guard worthSending(last) else { return }
+            finish(await send(last))
+        }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

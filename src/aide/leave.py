@@ -170,7 +170,7 @@ class LeaveWatcher:
         chosen = self._choose(routes, travel.lines)
         if isinstance(chosen, str):
             return self._mark(e, chosen, now)
-        _, departs, stop, line = chosen
+        route, departs, stop, line = chosen
         walk = await self.walks.seconds(*here, stop)
         if departs - timedelta(seconds=walk + BUFFER) - now > COMMIT:
             return  # not yet: the way may change
@@ -178,7 +178,7 @@ class LeaveWatcher:
             return self._mark(e, "covered", now)
         local = e["start"].astimezone(self.tz)
         a = self.alerts.create(stop["id"], line, f"{departs.astimezone(self.tz):%H:%M}", now=now,
-                               event=f"{e['title']} at {local:%H:%M}")
+                               event=f"{e['title']} at {local:%H:%M}", to_stop=self._get_off(route, line))
         self._mark(e, "alert", now, a["id"])
         log.info("leave-now: %s", self.alerts.describe(a))
 
@@ -233,7 +233,8 @@ class LeaveWatcher:
         if not covered:
             local = departs.astimezone(self.tz)
             alert = self.alerts.create(stop["id"], line, f"{local:%H:%M}", now=now, day=local.date(),
-                                       event=f"getting to {place} by {arrive.astimezone(self.tz):%H:%M}")
+                                       event=f"getting to {place} by {arrive.astimezone(self.tz):%H:%M}",
+                                       to_stop=self._get_off(route, line))
             log.info("leave-now, asked: %s", self.alerts.describe(alert))
         return {"there": False, "from": start, "route": route, "departs": departs, "stop": stop, "line": line,
                 "walk": walk, "leave": departs - timedelta(seconds=walk + AT_STOP), "late": late, "alert": alert,
@@ -322,6 +323,19 @@ class LeaveWatcher:
             return None
         _, _, stop, name = min(candidates, key=lambda c: c[:2])
         return stop, name
+
+    def _get_off(self, route: dict, line: str) -> str | None:
+        """The GTT stop where the route's first ride gets off (the nearest to Maps' where the line stops), so the
+        tram's Live Activity can count the stops to it."""
+        ride = next((s["transitDetails"] for leg in route.get("legs", []) for s in leg.get("steps", [])
+                     if s.get("transitDetails")), {})
+        point = ride.get("stopDetails", {}).get("arrivalStop", {}).get("location", {}).get("latLng")
+        if not point:
+            return None
+        for stop, _ in self.timetable.near(point["latitude"], point["longitude"], STOP_NEAR):
+            if any(l["name"] == line for l in self.timetable.lines(stop["id"])):
+                return stop["id"]
+        return None
 
     def _covered(self, line: str, departs: datetime) -> bool:
         """The user's own alert for this line already watches around this departure (any side of the road)."""

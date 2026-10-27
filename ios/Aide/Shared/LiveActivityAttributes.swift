@@ -29,11 +29,20 @@ struct TramActivityAttributes: ActivityAttributes {
         var starts: Double? = nil
         /// GTT's live feed isn't coming through: every tram is on the timetable.
         var feedDown: Bool? = nil
+        /// The phone is at the stop.
+        var atStop: Bool? = nil
+        /// The user is on it: `at` is when it gets to `to` (or to `near`, its next stop), `stops` the stops before `to`.
+        var riding: Bool? = nil
+        /// Where the user gets off, when known.
+        var to: String? = nil
 
         enum CodingKeys: String, CodingKey {
-            case at, leave, walk, live, delay, next, gone, stops, near, starts
+            case at, leave, walk, live, delay, next, gone, stops, near, starts, riding, to
             case feedDown = "feed_down"
+            case atStop = "at_stop"
         }
+
+        var isRiding: Bool { riding == true }
 
         var atDate: Date { Date(timeIntervalSince1970: at) }
         var startsDate: Date? { starts.map(Date.init(timeIntervalSince1970:)) }

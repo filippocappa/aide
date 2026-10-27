@@ -239,6 +239,9 @@ a place (or one from memory: lectures are at the uni), Maps' transit ways from t
 prefers (the 10 to uni), else on a frequent GTT line; ~45 min before leaving, its first ride becomes a one-off tram alert
 (`event` on the alert), so the usual "Tram 4 in 7 min: leave now" comes. On/off in Settings → Location and trams →
 Tram alerts (`/v1/transit/settings`). Not yet tried on the phone.
+Following the ride (2026-10-27): while a tram Live Activity is on, the app sends a fix every ~20 s (background location);
+the server re-picks the tram from where the user is (an earlier one once at the stop), sees them on board when the phone
+moves along the line, counts the stops to where they get off (`to_stop` from Maps) and says when it's next.
 Tram alerts (2026-10-27): leave-now 3 min before it's time to leave, at the stop 2 min early; the push and the Live
 Activity say where the tram is (stops to go, the stop it's near, or when it leaves its first stop, drawn as a track)
 and "GTT live down" when GTT's feed isn't answering (it was down 07:32–07:58 on 2026-10-27).

@@ -458,13 +458,16 @@ async def test_health_tool(world):
                          workouts=[workout("W1", day=TODAY - timedelta(days=1))],
                          naps=[{"start": f"{TODAY - timedelta(days=1)}T10:30:00+01:00",
                                 "end": f"{TODAY - timedelta(days=1)}T12:40:00+01:00", "asleep_min": 130}]),
-                   night(TODAY - timedelta(days=2), 440, resting_hr=54, steps=4000)])
+                   night(TODAY - timedelta(days=2), 440, resting_hr=54, steps=4000, inhaler_usage=6)])
     [tool] = health_tools(w.health, ROME)
     assert not tool.confirm
     out = await tool.handler()
     assert "· slept 6h40 (00:00–07:00) · nap 2h10 (10:30–12:40) · resting HR 52 bpm · HRV 60 ms · 8000 steps · workout: strength 52 min" in out
     assert "- sleep: 7h00 (over 2 days)" in out and "- resting HR: 53 bpm (over 2 days)" in out
     assert "- HRV: 60 ms (over 1 days)" in out and "- workouts: 1 in 2 days with data" in out
+    assert "4000 steps · inhaler usage 6" in out
+    empty = [f"{TODAY - timedelta(days=i):%a %d %b}" for i in (0, 1, 3, 4, 5, 6)]
+    assert f"- inhaler usage: logged on 1 of 7 days; nothing on {', '.join(empty)}" in out
     old = await tool.handler(from_date="2020-01-01", to_date="2020-01-07")
     assert old == "No health data from Wed 01 Jan to Tue 07 Jan."
     with pytest.raises(ValueError):

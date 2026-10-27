@@ -51,6 +51,7 @@ targets:
         # Silent pushes wake the app to sync reminders (docs/API.md, Push).
         UIBackgroundModes:
           - remote-notification
+          - location
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID)  # Config/Base.xcconfig; your own in Signing.local.xcconfig
