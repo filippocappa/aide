@@ -1414,7 +1414,7 @@ Three kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's
   the phone locked lights up the screen. The server also starts one for each scheduled routine run (not watches),
   and since 2026-10-27 one for Professor writing notes (a notebook proposal being applied, a lecture's notes).
 - **`event`** (since 2026-10-27): the next calendar event's countdown, started by the server 10 minutes before a
-  timed event ("Macroeconomics in 10 min · Aula 5"), unless leave-now has set a tram alert for it.
+  timed event on the Work calendar ("Macroeconomics in 10 min · Aula 5"), unless leave-now has set a tram alert for it.
 
 The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as before.
 
@@ -1540,12 +1540,13 @@ seconds: when the countdown began, for a bar filling up to `start`), `notes` (th
 80 characters, or null) and `then` (`{"title", "start"}`: the next timed event the same day, or null); the app
 treats them as optional.
 
-- Started 10 minutes before a timed (not all-day) event, in any calendar, with a quiet alert ("Macroeconomics in 10
-  min", body the place, else "At 09:00"); `stale-date` 10 minutes after the start. (30 minutes until 2026-10-27.)
+- Started 10 minutes before a timed (not all-day) event on the Work calendar, with a quiet alert ("Macroeconomics in
+  10 min", body the place, else "At 09:00"); `stale-date` 10 minutes after the start. (30 minutes and any calendar
+  until 2026-10-27.) `then` can be an event on any calendar. An event moved off Work ends its countdown at once.
 - Not for an event leave-now has set a tram alert for (the tram's activity takes you there); a tram alert set while
   it's on ends it at once.
 - An `update` when the event moves or its place changes; `end` with `started` true at the start, dismissed 10
-  minutes later; `end` dismissed at once when the event is deleted.
+  minutes later; `end` dismissed at once when the event is deleted or moved to another calendar.
 - Tapping it opens Today (`aide://today`).
 
 ## Widgets

@@ -282,7 +282,7 @@ habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departure
 team (Xcode's automatic signing adds them).
 
 **Done, both sides (2026-10-27), not yet tried on the phone:** more in the Dynamic Island (#24, two of its ideas;
-contract in `docs/API.md`, "Live Activities"). The next event: 10 min before a timed calendar event the server
+contract in `docs/API.md`, "Live Activities"). The next event: 10 min before a timed event on the Work calendar the server
 (`upcoming.py`) push-starts an `event` countdown with its place, follows a move, ends at the start; none when leave-now
 set a tram alert for it; off in Settings → Notifications (`/v1/live/settings`). Notes jobs: Professor's agent activity
 while a notebook proposal is applied (topics done of total, a bar and "2/5" in the island) or a lecture's notes are

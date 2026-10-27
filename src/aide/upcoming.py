@@ -1,4 +1,5 @@
-"""The next event's Live Activity (docs/API.md, "Live Activities", `event`): LEAD before a timed calendar event, the
+"""The next event's Live Activity (docs/API.md, "Live Activities", `event`): LEAD before a timed event on the Work
+calendar (CALENDARS), the
 server push-starts a countdown to it ("Macroeconomics in 8 min · Aula 5"), with a bar filling up to the start, its
 notes' first line and what comes after it today; keeps it right when the event moves or changes place, and ends it
 when the event starts (it stays up for SHOWN after) or goes.
@@ -21,6 +22,7 @@ log = logging.getLogger(__name__)
 
 TICK = 60  # seconds between checks
 LEAD = timedelta(minutes=10)  # the countdown starts this long before the event
+CALENDARS = {"work"}  # only events on these calendars (lowercased) get one; what comes after can be on any
 AHEAD = timedelta(hours=8)  # how far on the calendar is read, for what comes after the event
 NOTES_MAX = 80
 EVENTS_EVERY = timedelta(minutes=5)  # the calendar is read at most this often
@@ -37,6 +39,11 @@ CREATE TABLE IF NOT EXISTS event_activities (
     PRIMARY KEY (event, starts)
 );
 """
+
+
+def counts(e) -> bool:
+    """On a calendar that gets a countdown."""
+    return e.calendar.strip().lower() in CALENDARS
 
 
 def key_for(uid: str, start: datetime) -> str:
@@ -67,7 +74,7 @@ class EventWatcher:
         by_uid = {e.uid: e for e in events}
         for uid, row in on.items():
             e = by_uid.get(uid)
-            if e is None or self._tram(e):
+            if e is None or not counts(e) or self._tram(e):
                 await self._end(row, now, now)  # gone, or the tram's countdown takes over
             elif e.start.astimezone(timezone.utc) <= now:
                 await self._end(row, now, e.start.astimezone(timezone.utc) + SHOWN, e, events)
@@ -78,7 +85,7 @@ class EventWatcher:
         began = {(r["event"], r["starts"]) for r in self.conn.execute("SELECT event, starts FROM event_activities")}
         for e in events:
             start = e.start.astimezone(timezone.utc)
-            if (e.uid not in on and (e.uid, start.isoformat()) not in began and now < start <= now + LEAD
+            if (counts(e) and e.uid not in on and (e.uid, start.isoformat()) not in began and now < start <= now + LEAD
                     and not self._tram(e)):
                 await self._start(e, now, events)
         self.conn.execute("DELETE FROM event_activities WHERE starts < ?", ((now - timedelta(days=2)).isoformat(),))

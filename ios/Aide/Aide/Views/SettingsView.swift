@@ -397,8 +397,8 @@ private struct NotificationSettingsView: View {
                 } header: {
                     Text("Lock Screen")
                 } footer: {
-                    Text("30 minutes before a calendar event, a countdown to it on the Lock Screen and in the Dynamic "
-                         + "Island, with where it is. Not when a tram alert is taking you there: the tram's shows then.")
+                    Text("10 minutes before an event on your Work calendar, a countdown to it on the Lock Screen and in "
+                         + "the Dynamic Island, with where it is. Not when a tram alert is taking you there: the tram's shows then.")
                 }
             }
         }

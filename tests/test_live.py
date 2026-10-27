@@ -513,17 +513,19 @@ class Cal:
         return [e for e in self.list if start <= e.start <= end]
 
 
-def event(start, place="Aula 5", uid="lec", title="Macroeconomics", notes=""):
+def event(start, place="Aula 5", uid="lec", title="Macroeconomics", notes="", calendar="Work"):
     from aide.icloud import CalEvent
-    return CalEvent(uid, "Timetable", title, start, start + timedelta(hours=2), place, notes)
+    return CalEvent(uid, calendar, title, start, start + timedelta(hours=2), place, notes)
 
 
 async def test_the_next_event_counts_down(env):
     from aide.upcoming import EventWatcher
     db, _, live, apns = env
     nine = datetime(2026, 10, 27, 9, 0, tzinfo=ROME)
-    gym = event(nine + timedelta(hours=3), place="", uid="gym", title="Gym")
-    cal = Cal(event(nine, notes="Bring the problem set\nRoom changed"), gym)
+    gym = event(nine + timedelta(hours=3), place="", uid="gym", title="Gym", calendar="Health")
+    # Not on Work: no countdown of its own, but it's what comes next.
+    lunch = event(nine + timedelta(minutes=5), uid="lunch", title="Lunch with Ale", calendar="Friends")
+    cal = Cal(event(nine, notes="Bring the problem set\nRoom changed"), gym, lunch)
     watcher = EventWatcher(db.conn, ROME, cal, live)
     live.set_start_token("event", START, "sandbox")
     await watcher.tick(utc(nine - timedelta(minutes=30)))
@@ -537,17 +539,18 @@ async def test_the_next_event_counts_down(env):
     assert start["content-state"] == {"start": int(nine.timestamp()), "end": int((nine + timedelta(hours=2)).timestamp()),
                                       "place": "Aula 5", "started": False, "since": since,
                                       "notes": "Bring the problem set",
-                                      "then": {"title": "Gym", "start": int((nine + timedelta(hours=3)).timestamp())}}
+                                      "then": {"title": "Lunch with Ale", "start": int((nine + timedelta(minutes=5)).timestamp())}}
     assert start["alert"] == {"title": "Macroeconomics in 10 min", "body": "Aula 5"}
     key = start["attributes"]["key"]
     live.register(key, ACTIVITY, "sandbox")
     await watcher.tick(utc(nine - timedelta(minutes=9)))
     assert len(apns.requests) == 1  # nothing changed, nothing sent, no second start
-    cal.list = [event(nine, place="Aula 7"), gym]
+    cal.list = [event(nine, place="Aula 7"), gym, lunch]
     watcher._events = None
     await watcher.tick(utc(nine - timedelta(minutes=5)))
     assert aps(apns)[-1]["event"] == "update" and aps(apns)[-1]["content-state"]["place"] == "Aula 7"
     assert aps(apns)[-1]["content-state"]["since"] == since
+    assert [a["attributes"]["title"] for a in aps(apns) if a["event"] == "start"] == ["Macroeconomics"]  # not lunch
     watcher._events = None
     await watcher.tick(utc(nine + timedelta(minutes=1)))
     end = aps(apns)[-1]
