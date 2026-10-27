@@ -128,7 +128,7 @@ struct TeamChatView: View {
             MessageBox("Message the team, @ to mention", text: $draft, focused: $focused) {
                 SendButton(enabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.isPostingTeam) {
                     let text = draft
-                    draft = ""
+                    $draft.clearMessage()
                     Task { await chat.postTeam(text) }
                 }
             }

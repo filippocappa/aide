@@ -370,7 +370,7 @@ struct ChatView: View {
             } else {
                 SendButton(enabled: canSend) {
                     let text = draft, sending = photos
-                    draft = ""
+                    $draft.clearMessage()
                     photos = []
                     Task { await chat.send(text, photos: sending) }
                 }
@@ -422,6 +422,18 @@ struct MessageBox<Buttons: View>: View {
         // out over the voice panel's End button as a visible stripe.
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+extension Binding where Value == String {
+    /// Empties a message box after sending. The keyboard can write a pending autocorrection or predicted word back
+    /// into the box just after it's cleared, so the message seemed to stay there: it's cleared once more a moment later.
+    @MainActor func clearMessage() {
+        wrappedValue = ""
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            wrappedValue = ""
+        }
     }
 }
 
