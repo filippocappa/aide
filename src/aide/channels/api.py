@@ -1661,7 +1661,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.get("/v1/errands/{errand_id}", dependencies=[Depends(auth)])
     async def get_errand(errand_id: int):
         e = errand_or_404(errand_id)
-        return {**errand_store.as_json(e), "steps": e["steps"]}
+        return {**errand_store.as_json(e), "steps": [{**s, "ts": errand_store._local(s["ts"])} for s in e["steps"]]}
 
     @app.post("/v1/errands/{errand_id}/done", dependencies=[Depends(auth)])
     async def errand_done(errand_id: int):

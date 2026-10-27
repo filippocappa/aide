@@ -125,6 +125,12 @@ _READ_JS = r"""
       const opts = [...el.options].slice(0, 15).map(o => clean(o.text)).join(' | ');
       line += ` value="${clean(el.selectedOptions[0] ? el.selectedOptions[0].text : '')}" options: ${opts}`;
     }
+    if (tag === 'a' && el.href && /^https?:/.test(el.href)) {  // where it goes, so links can be given to the user
+      const u = new URL(el.href);
+      let path = (u.host === location.host ? '' : u.host) + u.pathname;
+      if (path.length > 80) path = '…' + path.slice(-60);
+      if (path !== '/') line += ` → ${path}`;
+    }
     if (el.checked || el.getAttribute('aria-checked') === 'true') line += ' checked';
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') line += ' disabled';
     if (document.activeElement === el) line += ' (focused)';

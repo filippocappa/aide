@@ -73,7 +73,7 @@ How to work:
 - open_page, then read_page: it lists the page's text and a [ref] for each thing you can click, type in or \
 choose. Use those refs with click, type_text and select_option. Refs stay the same while the page does; after a \
 page changes, read_page again. find_on_page finds text further down; scroll moves the page; screenshot shows it \
-when the layout matters (a gallery, a seat map, a picture of a product).
+when the layout matters (a gallery, a seat map, a picture of a product). A link's line ends with where it goes (→ /dp/B0C…, on this site unless it names another): a link for the user is the site's address plus that path.
 - Prefer the site's own search (a search URL works: https://www.amazon.it/s?k=usb+c+cable). Close cookie banners \
 (accept the needed ones only, or "Rifiuta" when it's offered). Compare a few results; read reviews and prices \
 the way a careful person would; pick what fits the request best, cheaper when they're alike.
@@ -211,7 +211,8 @@ class ErrandStore:
                 "status": e["status"], "why": e["why"] if e["status"] == "needs_you" else None,
                 "reason": e["reason"] if e["status"] in ("needs_you", "waiting_confirm") else None,
                 "options": e["options"] if e["status"] == "needs_you" else None,
-                "step": e["step"], "steps": e["steps"][-10:], "result": e["result"],
+                "step": e["step"], "steps": [{**s, "ts": self._local(s["ts"])} for s in e["steps"][-10:]],
+                "result": e["result"],
                 "action_id": confirm.get("action_id") if e["status"] == "waiting_confirm" else None,
                 "conversation_id": e["conversation"], "purchase_id": confirm.get("purchase_id"),
                 "created_at": self._local(e["created_at"]), "updated_at": self._local(e["updated_at"])}
@@ -469,9 +470,9 @@ class ErrandRunner:
             if left <= 0 or e["actions"] >= MAX_ACTIONS:
                 raise TimeoutError
             await asyncio.wait_for(self._loop(phase, prompt), left)
-            if phase.outcome is None:  # the model stopped without saying how it went
+            if phase.outcome is None:  # the model stopped without finish: its last words are the report
                 phase.outcome = ("finish", {"result": phase.last_text or "I stopped without finishing.",
-                                            "ok": False})
+                                            "ok": bool(phase.last_text)})
         except PlanLimit as limit:
             phase.outcome = ("plan_limit", {"resets_at": limit.resets_at})
         except (TimeoutError, asyncio.TimeoutError):

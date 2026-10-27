@@ -530,6 +530,7 @@ SHOP = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 <h1>Cavo USB-C</h1><p>Prezzo: 9,99 €</p>
 <form action="/order"><label>Email <input name="email" type="email" value="a@b.it"></label>
 <label>Password <input name="pw" type="password" value="hunter2"></label>
+<a href="/dp/B0TEST?ref=x">Scheda</a>
 <button type="button" onclick="document.title='added'">Aggiungi al carrello</button>
 <button type="submit">Acquista ora</button></form>
 <div style="height:3000px"></div><p>In fondo</p></body></html>"""
@@ -544,6 +545,7 @@ async def test_real_chromium_reads_and_clicks(tmp_path):
         assert "Shop" in await browser.open("errand:1", "https://shop.test/")
         page = await browser.read("errand:1")
         assert "Prezzo: 9,99 €" in page and "In fondo" not in page and "(more below" in page
+        assert '"Scheda" → /dp/B0TEST' in page
         assert "hunter2" not in page and "(filled, hidden)" in page and 'value="a@b.it"' in page
         ref = next(line.split("]")[0][1:] for line in page.splitlines() if line.startswith("[") and "Aggiungi" in line)
         buy = next(line.split("]")[0][1:] for line in page.splitlines() if line.startswith("[") and "Acquista" in line)
