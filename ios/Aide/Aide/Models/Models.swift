@@ -1514,6 +1514,22 @@ struct TransitAlertPatch: Encodable {
 struct LockList: Decodable {
     let locks: [ScreenLock]
     let device: ScreenTimeDevice
+    /// nil from an older server.
+    let passes: EmergencyPasses?
+}
+
+/// This month's emergency passes, the only way to end a strict lock early.
+struct EmergencyPasses: Decodable {
+    struct Used: Decodable, Hashable {
+        let title: String
+        let reason: String
+        let at: String
+    }
+    let left: Int
+    let month: Int
+    /// The day they come back, YYYY-MM-DD.
+    let renews: String
+    let used: [Used]
 }
 
 /// What the server knows about this phone: whether Aide may use Screen Time, and how many apps stay open.
@@ -1529,6 +1545,7 @@ struct NewLock: Encodable {
     var start: String?
     var end: String?
     var days: [Int]?
+    var strict: Bool?
 }
 
 /// Only what changes.
@@ -1538,9 +1555,14 @@ struct LockPatch: Encodable {
     var end: String?
     var days: [Int]?
     var enabled: Bool?
+    var strict: Bool?
 }
 
-struct UnlockReason: Encodable { let reason: String }
+struct UnlockReason: Encodable {
+    let reason: String
+    /// An emergency pass, for a strict lock.
+    var pass: Bool?
+}
 struct Unlocked: Decodable { let lock: ScreenLock? }
 
 /// A stop's next trams and buses, by line and direction (docs/API.md, "Departures"): a card in chat, kept live

@@ -110,6 +110,47 @@ def test_tools_queue_ending_and_deleting(store):
     assert "End 'Focus' early" in summary and "Reason: done" in summary
 
 
+def test_a_strict_lock_ends_only_with_a_pass(store):
+    now = at("2026-10-27T23:30")
+    bed = store.schedule("Bedtime", "23:00", "07:00", [], strict=True)
+    assert store.as_json(bed, now)["strict"] and "strict" in store.line(bed, now)
+    with pytest.raises(ValueError, match="only an emergency pass"):
+        store.unlock(bed["id"], "bored", now=now)
+    with pytest.raises(ValueError, match="is on now"):
+        store.update(bed["id"], now=now, strict=False)  # loosening it is unlocking
+    with pytest.raises(ValueError, match="strict and on now"):
+        store.delete(bed["id"], now=now)
+
+    # Three a month: the fourth is refused, and they come back on the 1st.
+    for day in (27, 28, 29):
+        night = at(f"2026-10-{day}T23:30")
+        store.unlock(bed["id"], "my sister called", use_pass=True, now=night)
+    passes = store.passes(at("2026-10-30T23:30"))
+    assert passes["left"] == 0 and len(passes["used"]) == 3 and passes["renews"] == "2026-11-01"
+    with pytest.raises(ValueError, match="no emergency passes left"):
+        store.unlock(bed["id"], "again", use_pass=True, now=at("2026-10-30T23:30"))
+    assert store.passes(at("2026-11-01T23:30"))["left"] == 3
+
+    # A pass isn't spent on a lock that isn't strict; making one strict while it's on is fine.
+    focus = store.lock_for("Focus", minutes=60, now=at("2026-11-02T15:00"))
+    focus = store.update(focus["id"], now=at("2026-11-02T15:10"), strict=True)
+    assert focus["strict"]
+    other = store.lock_for("Study", minutes=60, now=at("2026-11-02T15:00"))
+    store.unlock(other["id"], "done", use_pass=True, now=at("2026-11-02T15:20"))
+    assert store.passes(at("2026-11-02T15:30"))["left"] == 3
+
+
+def test_strict_locks_cant_be_ended_from_chat(store):
+    tools = {t.name: t for t in lock_tools(store, ROME)}
+    text = asyncio.run(tools["lock_now"].handler(title="Exam prep", minutes=60, strict=True))
+    assert "strict" in text
+    with pytest.raises(ValueError, match="can't be ended from chat"):
+        asyncio.run(tools["end_lock"].describe(lock_id=1, reason="please"))
+    with pytest.raises(ValueError, match="strict and on now"):
+        asyncio.run(tools["delete_lock"].describe(lock_id=1))
+    assert "3 of 3 left" in asyncio.run(tools["list_locks"].handler())
+
+
 @pytest.fixture
 def client():
     db = Database(":memory:")
@@ -140,3 +181,16 @@ def test_api(client):
 
     assert client.delete(f"/v1/locks/{bed['id']}", headers=AUTH).json() == {"ok": True}
     assert client.delete(f"/v1/locks/{bed['id']}", headers=AUTH).status_code == 404
+
+
+def test_api_strict_and_passes(client):
+    made = client.post("/v1/locks", json={"title": "Exam prep", "minutes": 30, "strict": True}, headers=AUTH).json()
+    assert made["strict"] and made["locked"]
+    assert client.post(f"/v1/locks/{made['id']}/unlock", json={"reason": "x"}, headers=AUTH).status_code == 400
+    assert client.get("/v1/locks", headers=AUTH).json()["passes"]["left"] == 3
+    assert client.post(f"/v1/locks/{made['id']}/unlock", json={"reason": "an emergency", "pass": True},
+                       headers=AUTH).json() == {"lock": None}
+    passes = client.get("/v1/locks", headers=AUTH).json()["passes"]
+    assert passes["left"] == 2 and passes["used"][0]["reason"] == "an emergency"
+    feed = client.get("/v1/activity", headers=AUTH).json()
+    assert any(item["title"] == "You unlocked 'Exam prep' early with an emergency pass" for item in feed["items"])

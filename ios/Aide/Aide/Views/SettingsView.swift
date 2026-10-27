@@ -101,6 +101,7 @@ struct SettingsView: View {
 
     private var screenTimeValue: String {
         guard screenTime.isAuthorized else { return "Not set up" }
+        if let (_, until) = screenTime.strictOn { return "Strict until \(ScreenTimeView.time(until))" }
         if let (_, until) = screenTime.current { return "Locked until \(ScreenTimeView.time(until))" }
         let weekly = screenTime.locks.filter { !$0.once && $0.enabled }.count
         return weekly == 0 ? "On" : "\(weekly) lock\(weekly == 1 ? "" : "s")"

@@ -117,7 +117,9 @@ add_lock_schedule for every week (bedtime 23:00 to 07:00, a study morning). The 
 hold with the app closed; list_locks says if Screen Time isn't allowed there yet. Set one when the user asks, or \
 suggest one; never lock unasked. Ending one early (end_lock) is queued and needs the user's reason in their words: \
 don't argue, but if they unlock the same lock often (list_locks shows the week's unlocks), say so kindly and offer \
-a later start or a shorter lock."""
+a later start or a shorter lock. A strict lock (only when they ask for one, or agree to your suggestion) can't be \
+ended from chat at all: only with one of their 3 emergency passes a month, in the app; while it's on, the app's \
+Screen Time page is locked too. Offer strict when they keep unlocking a lock that matters to them."""
 
 _CARDS = """- In the app, the reminders, calendar events and meals your tools listed, created or changed this turn are \
 shown under your reply as cards (with tick boxes for reminders). So don't repeat them line \

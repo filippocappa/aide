@@ -295,8 +295,9 @@ final class APIClient {
     }
 
     /// Ends a lock that's on now, early. The schedule it stays, or nil: a one-off, now gone.
-    func unlock(_ id: Int, reason: String) async throws -> ScreenLock? {
-        let answer: Unlocked = try await send("POST", "/v1/locks/\(id)/unlock", body: UnlockReason(reason: reason))
+    func unlock(_ id: Int, reason: String, pass: Bool = false) async throws -> ScreenLock? {
+        let answer: Unlocked = try await send("POST", "/v1/locks/\(id)/unlock",
+                                              body: UnlockReason(reason: reason, pass: pass ? true : nil))
         return answer.lock
     }
 

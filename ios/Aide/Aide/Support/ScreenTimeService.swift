@@ -20,6 +20,7 @@ final class ScreenTimeService: ObservableObject {
     /// The apps each lock picked for itself.
     @Published private(set) var apps: [Int: LockApps] = LockBook.apps
     @Published private(set) var lastError: String?
+    @Published private(set) var passes: EmergencyPasses?
 
     private let api: APIClient
     private let center = DeviceActivityCenter()
@@ -35,6 +36,11 @@ final class ScreenTimeService: ObservableObject {
     /// The lock on now that ends last.
     var current: (lock: ScreenLock, until: Date)? {
         locks.compactMap { lock in LockBook.until(lock).map { (lock, $0) } }.max { $0.1 < $1.1 }
+    }
+
+    /// A strict lock on now: the Screen Time page is locked until it ends, but for an emergency pass.
+    var strictOn: (lock: ScreenLock, until: Date)? {
+        locks.filter(\.isStrict).compactMap { lock in LockBook.until(lock).map { (lock, $0) } }.max { $0.1 < $1.1 }
     }
 
     /// A lock on now uses the usual apps: they can't change until it's over (that would be unlocking early).
@@ -69,6 +75,7 @@ final class ScreenTimeService: ObservableObject {
             let list = try await api.locks()
             locks = list.locks
             LockBook.locks = list.locks
+            passes = list.passes
             lastError = nil
             if list.device.authorized != isAuthorized || list.device.allowedApps != allowedCount { await report() }
         } catch APIError.server(404, _) {
@@ -124,21 +131,27 @@ final class ScreenTimeService: ObservableObject {
 
     // MARK: Changes from the app
 
-    func lockNow(minutes: Int, title: String = "Focus") async {
-        await change { _ = try await self.api.createLock(NewLock(title: title, minutes: minutes)) }
+    func lockNow(minutes: Int, strict: Bool = false) async {
+        await change {
+            _ = try await self.api.createLock(NewLock(title: strict ? "Strict focus" : "Focus", minutes: minutes,
+                                                      strict: strict ? true : nil))
+        }
     }
 
+    /// A lock that's on keeps its times and apps: only its title changes, or it becomes strict.
     func save(_ lock: ScreenLock?, title: String, start: String, end: String, days: [Int], enabled: Bool,
-              apps picked: LockApps) async -> Bool {
+              strict: Bool, apps picked: LockApps) async -> Bool {
         await change {
             if let lock {
-                _ = try await self.api.updateLock(lock.id, LockPatch(title: title, start: lock.locked ? nil : start,
-                                                                     end: lock.locked ? nil : end,
-                                                                     days: lock.locked ? nil : days,
-                                                                     enabled: lock.locked ? nil : enabled))
-                if !lock.locked { self.setApps(picked, for: lock.id) }
+                let on = lock.locked
+                _ = try await self.api.updateLock(lock.id, LockPatch(title: title, start: on ? nil : start,
+                                                                     end: on ? nil : end, days: on ? nil : days,
+                                                                     enabled: on ? nil : enabled,
+                                                                     strict: on && !strict ? nil : strict))
+                if !on { self.setApps(picked, for: lock.id) }
             } else {
-                let made = try await self.api.createLock(NewLock(title: title, start: start, end: end, days: days))
+                let made = try await self.api.createLock(NewLock(title: title, start: start, end: end, days: days,
+                                                                 strict: strict ? true : nil))
                 self.setApps(picked, for: made.id)
             }
         }
@@ -148,8 +161,8 @@ final class ScreenTimeService: ObservableObject {
         await change { _ = try await self.api.updateLock(lock.id, LockPatch(enabled: on)) }
     }
 
-    func unlock(_ lock: ScreenLock, reason: String) async -> Bool {
-        let done = await change { _ = try await self.api.unlock(lock.id, reason: reason) }
+    func unlock(_ lock: ScreenLock, reason: String, pass: Bool = false) async -> Bool {
+        let done = await change { _ = try await self.api.unlock(lock.id, reason: reason, pass: pass) }
         if done { LockBook.open(lock.id) } // sync already did, unless the server was slow to say so
         return done
     }

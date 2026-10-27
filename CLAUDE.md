@@ -292,7 +292,10 @@ End early with a reason and a 10 s wait); `ScreenTimeService` sets one DeviceAct
 extensions read the locks from the App Group (`ScreenTime/LockBook.swift`): `LockMonitor` shields and opens on time
 with the app closed, `LockShield` is the locked app's screen ("Locked until 07:00"). Needs the Family Controls
 entitlement (`Aide.entitlements` and both extensions): fine for development builds, TestFlight needs Apple's approval
-(a request form). Usage thresholds and a countdown in the Dynamic Island are not done.
+(a request form). Each lock picks its own apps on the phone (everything but some, or only some). Strict locks
+(2026-10-27): once on, only an emergency pass ends one early (3 a calendar month, `passes` on `/v1/locks`), not a
+reason or Coach, and the app's Screen Time page is locked until it's over. Usage thresholds and a countdown in the
+Dynamic Island are not done.
 
 **Done, both sides (2026-10-26), installed on the phone 2026-10-26:** Today and limit habits (#21, contract in
 `docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card

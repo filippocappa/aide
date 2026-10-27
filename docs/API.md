@@ -1305,20 +1305,24 @@ chat (`lock_now`, `add_lock_schedule`); ending one early there is queued and nee
 - **Unlocking early** takes a reason, which Coach sees for a week. A one-off is gone; a schedule is open until this
   time's end (`open_until`) and comes back next time. A lock that's on can't be moved or turned off with `PATCH`:
   that's unlocking early.
+- **Strict** (`strict` true): once on, it ends early only with an emergency pass (`"pass": true` on the unlock,
+  still with a reason); there are 3 a calendar month (`passes`). It can't be loosened (`strict: false`) or deleted
+  while it's on, and Coach can't end it from chat. Making a lock strict is fine any time. While one is on, the app
+  locks its Screen Time page, leaving only the emergency pass.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/locks` | | `{"locks": [lock], "device": {"authorized": true, "allowed_apps": 3, "at": "…"}}` |
-| `POST /v1/locks` | `{"title": "Focus", "minutes": 60}` (a one-off from now) or `{"title": "Bedtime", "start": "23:00", "end": "07:00", "days": []}` | the lock |
-| `PATCH /v1/locks/{id}` | any of `{"title", "start", "end", "days", "enabled"}` (a one-off: only `title`) | the lock; `400` for a lock that's on now |
-| `POST /v1/locks/{id}/unlock` | `{"reason": "a call with my sister"}` | `{"lock": lock}` (a schedule), `{"lock": null}` (a one-off, now gone); `400` if it isn't on |
-| `DELETE /v1/locks/{id}` | | `{"ok": true}` |
+| `GET /v1/locks` | | `{"locks": [lock], "device": {"authorized": true, "allowed_apps": 3, "at": "…"}, "passes": {"left": 2, "month": 3, "renews": "2026-11-01", "used": [{"title", "reason", "at"}]}}` |
+| `POST /v1/locks` | `{"title": "Focus", "minutes": 60}` (a one-off from now) or `{"title": "Bedtime", "start": "23:00", "end": "07:00", "days": []}`; either with `"strict": true` | the lock |
+| `PATCH /v1/locks/{id}` | any of `{"title", "start", "end", "days", "enabled", "strict"}` (a one-off: only `title` and `strict`) | the lock; `400` for a lock that's on now (but the title, or making it strict) |
+| `POST /v1/locks/{id}/unlock` | `{"reason": "a call with my sister"}`; a strict lock also `"pass": true` | `{"lock": lock}` (a schedule), `{"lock": null}` (a one-off, now gone); `400` if it isn't on, if it's strict without a pass, or no passes are left |
+| `DELETE /v1/locks/{id}` | | `{"ok": true}`; `400` for a strict lock that's on |
 | `PUT /v1/locks/device` | `{"authorized": true, "allowed_apps": 3}` | what the server now knows |
 
 ```json
 {
   "id": 2, "title": "Bedtime", "once": false, "start": "23:00", "end": "07:00", "days": [7, 1, 2, 3, 4],
-  "starts_at": null, "ends_at": null, "enabled": true, "agent": "coach",
+  "starts_at": null, "ends_at": null, "enabled": true, "strict": false, "agent": "coach",
   "locked": true, "until": "2026-10-28T07:00:00+01:00", "open_until": null, "next": "2026-10-28T23:00:00+01:00",
   "summary": "Sun, Mon, Tue, Wed, Thu 23:00–07:00"
 }

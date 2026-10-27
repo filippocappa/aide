@@ -310,6 +310,7 @@ class LockIn(BaseModel):
     start: str | None = None  # HH:MM local
     end: str | None = None
     days: list[int] = []
+    strict: bool = False
 
 
 class LockPatch(BaseModel):
@@ -318,10 +319,12 @@ class LockPatch(BaseModel):
     end: str | None = None
     days: list[int] | None = None
     enabled: bool | None = None
+    strict: bool | None = None
 
 
 class UnlockIn(BaseModel):
     reason: str
+    use_pass: bool = Field(False, alias="pass")  # an emergency pass, for a strict lock
 
 
 class ScreenTimeDevice(BaseModel):
@@ -1563,28 +1566,30 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/locks", dependencies=[Depends(auth)])
     async def list_locks():
-        return {"locks": [locks.as_json(lock) for lock in locks.all()], "device": locks.device()}
+        return {"locks": [locks.as_json(lock) for lock in locks.all()], "device": locks.device(),
+                "passes": locks.passes()}
 
     @app.post("/v1/locks", dependencies=[Depends(auth)])
     async def create_lock(body: LockIn):
         if body.minutes is not None:
-            return locks.as_json(locks.lock_for(body.title, minutes=body.minutes))
+            return locks.as_json(locks.lock_for(body.title, minutes=body.minutes, strict=body.strict))
         if body.start is None or body.end is None:
             raise HTTPException(400, "a lock needs minutes, or a start and an end")
-        return locks.as_json(locks.schedule(body.title, body.start, body.end, body.days))
+        return locks.as_json(locks.schedule(body.title, body.start, body.end, body.days, strict=body.strict))
 
     @app.patch("/v1/locks/{lock_id}", dependencies=[Depends(auth)])
     async def edit_lock(lock_id: int, body: LockPatch):
         lock_or_404(lock_id)
         lock = locks.update(lock_id, title=body.title, start_time=body.start, end_time=body.end, days=body.days,
-                            enabled=body.enabled)
+                            enabled=body.enabled, strict=body.strict)
         return locks.as_json(lock)
 
     @app.post("/v1/locks/{lock_id}/unlock", dependencies=[Depends(auth)])
     async def unlock(lock_id: int, body: UnlockIn):
         lock = lock_or_404(lock_id)
-        after = locks.unlock(lock_id, body.reason)
-        activity.record(db.conn, "coach", "action", f"You unlocked '{lock['title']}' early", body.reason)
+        after = locks.unlock(lock_id, body.reason, use_pass=body.use_pass)
+        used = " with an emergency pass" if lock["strict"] else ""
+        activity.record(db.conn, "coach", "action", f"You unlocked '{lock['title']}' early{used}", body.reason)
         return {"lock": locks.as_json(after) if after else None}
 
     @app.delete("/v1/locks/{lock_id}", dependencies=[Depends(auth)])

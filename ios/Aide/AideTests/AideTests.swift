@@ -1092,6 +1092,20 @@ final class ScreenTimeTests: XCTestCase {
         XCTAssertNotNil(LockBook.until(opened, at: local("23:30", days: 1))) // the next night it's back
     }
 
+    func testStrictAndPassesDecode() throws {
+        XCTAssertFalse(try lock().isStrict) // an older server sends no strict
+        let json = #"""
+        {"locks":[{"id":4,"title":"Exam prep","once":true,"starts_at":"2026-10-27T15:00:00+01:00",
+          "ends_at":"2026-10-27T17:00:00+01:00","enabled":true,"strict":true,"locked":true,"summary":"From 15:00 to 17:00"}],
+         "device":{"authorized":true,"allowed_apps":2,"at":null},
+         "passes":{"left":2,"month":3,"renews":"2026-11-01","used":[{"title":"Bedtime","reason":"a call","at":"2026-10-20T23:40:00+02:00"}]}}
+        """#
+        let list = try JSONDecoder.api.decode(LockList.self, from: Data(json.utf8))
+        XCTAssertTrue(list.locks[0].isStrict)
+        XCTAssertEqual(list.passes?.left, 2)
+        XCTAssertEqual(list.passes?.used.first?.reason, "a call")
+    }
+
     func testOneOffAndItsSchedule() throws {
         let focus = try lock(once: true, start: nil, end: nil, days: nil, startsAt: local("15:00"), endsAt: local("16:00"))
         XCTAssertEqual(LockBook.until(focus, at: local("15:30")), local("16:00"))
