@@ -38,6 +38,8 @@ LABELS = {
     "accept_objectives": "Accepted objectives", "plan_objectives": "Planned objectives",
     "add_transit_alert": "Set a tram alert", "update_transit_alert": "Changed a tram alert",
     "delete_transit_alert": "Deleted a tram alert", "leave_for": "Planned a trip",
+    "lock_now": "Locked the apps", "add_lock_schedule": "Set a Screen Time lock",
+    "update_lock": "Changed a Screen Time lock", "end_lock": "Ended a lock early", "delete_lock": "Deleted a lock",
     "cancel_queued": "Cancelled queued actions",
 }
 

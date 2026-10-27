@@ -1047,3 +1047,62 @@ final class PhotoAPITests: XCTestCase {
         XCTAssertEqual(seen.count, 1) // from memory, no download
     }
 }
+
+final class ScreenTimeTests: XCTestCase {
+    /// A local wall-clock time on 2026-10-27, a Tuesday, plus `days`.
+    private func local(_ hhmm: String, days: Int = 0) -> Date {
+        let parts = hhmm.split(separator: ":").compactMap { Int($0) }
+        let base = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 27 + days, hour: parts[0], minute: parts[1]))!
+        return base
+    }
+
+    private func iso(_ date: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.timeZone = .current
+        return f.string(from: date)
+    }
+
+    private func lock(once: Bool = false, start: String? = "23:00", end: String? = "07:00", days: [Int]? = [],
+                      startsAt: Date? = nil, endsAt: Date? = nil, enabled: Bool = true, openUntil: Date? = nil) throws -> ScreenLock {
+        var json: [String: Any] = ["id": 1, "title": "Bedtime", "once": once, "enabled": enabled, "locked": false,
+                                   "summary": "Every day 23:00–07:00"]
+        if let start { json["start"] = start }
+        if let end { json["end"] = end }
+        if let days { json["days"] = days }
+        if let startsAt { json["starts_at"] = iso(startsAt) }
+        if let endsAt { json["ends_at"] = iso(endsAt) }
+        if let openUntil { json["open_until"] = iso(openUntil) }
+        return try JSONDecoder.api.decode(ScreenLock.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    func testOvernightScheduleHoldsOnItsDays() throws {
+        // Sunday to Thursday nights: Tuesday's runs into Wednesday morning; Friday night has none.
+        let bedtime = try lock(days: [7, 1, 2, 3, 4])
+        XCTAssertNil(LockBook.until(bedtime, at: local("22:59")))
+        XCTAssertEqual(LockBook.until(bedtime, at: local("23:30")), local("07:00", days: 1))
+        XCTAssertEqual(LockBook.until(bedtime, at: local("06:59", days: 1)), local("07:00", days: 1))
+        XCTAssertNil(LockBook.until(bedtime, at: local("07:00", days: 1)))
+        XCTAssertNil(LockBook.until(bedtime, at: local("23:30", days: 3))) // Friday
+        XCTAssertNil(LockBook.until(try lock(days: [], enabled: false), at: local("23:30")))
+    }
+
+    func testEndedEarlyStaysOpenUntilItsEnd() throws {
+        let opened = try lock(openUntil: local("07:00", days: 1))
+        XCTAssertNil(LockBook.until(opened, at: local("23:30")))
+        XCTAssertNotNil(LockBook.until(opened, at: local("23:30", days: 1))) // the next night it's back
+    }
+
+    func testOneOffAndItsSchedule() throws {
+        let focus = try lock(once: true, start: nil, end: nil, days: nil, startsAt: local("15:00"), endsAt: local("16:00"))
+        XCTAssertEqual(LockBook.until(focus, at: local("15:30")), local("16:00"))
+        XCTAssertNil(LockBook.until(focus, at: local("16:00")))
+        let schedule = try XCTUnwrap(LockBook.schedule(for: focus, now: local("15:30")))
+        XCTAssertFalse(schedule.repeats)
+        XCTAssertEqual(schedule.intervalStart.minute, 30) // from now, not from its start
+        XCTAssertNil(LockBook.schedule(for: focus, now: local("16:01")))
+        let weekly = try XCTUnwrap(LockBook.schedule(for: try lock()))
+        XCTAssertTrue(weekly.repeats)
+        XCTAssertEqual(weekly.intervalStart.hour, 23)
+        XCTAssertEqual(weekly.intervalEnd.hour, 7)
+    }
+}

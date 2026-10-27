@@ -25,6 +25,7 @@ from .health import HealthStore
 from .photos import PhotoStore
 from .icloud import ICloudCalendar
 from .live import LiveActivities
+from .locks import LockStore
 from .push import Push
 from .quiz import QuizStore
 from .reminders import ReminderStore
@@ -43,6 +44,7 @@ from .tools.clock import clock_tool
 from .tools.food import food_tools
 from .tools.objectives import objective_tools
 from .tools.habits import habit_tools
+from .tools.locks import lock_tools
 from .tools.health import health_tools
 from .tools.mail import draft_tools, mail_tools
 from .tools.maps import GoogleMaps, maps_tools
@@ -82,8 +84,10 @@ def main() -> None:
     habits = HabitStore(db.conn, settings.timezone, food, health)
     photos = PhotoStore(settings.db_path.parent / "photos")
     push = Push(db.conn, settings.apns_key_path, settings.apns_key_id, settings.apns_team_id, settings.apns_bundle_id)
+    locks = LockStore(db.conn, settings.timezone)
     if push.enabled:
         reminders.on_change.append(push.request_sync)
+        locks.on_change.append(push.request_sync)  # the phone sets the locks itself
         habits.on_health_count.append(push.request_sync)  # the phone writes the count to Apple Health
         food.on_change.append(push.request_sync)  # and the meals
     elif not (settings.apns_key_path and settings.apns_key_id and settings.apns_team_id):
@@ -92,7 +96,8 @@ def main() -> None:
     live = LiveActivities(db.conn, push)
 
     tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits),
-             *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone)]
+             *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone),
+             *lock_tools(locks, settings.timezone)]
     cal = None
     if settings.icloud_email and settings.icloud_app_password:
         cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
@@ -244,7 +249,7 @@ def main() -> None:
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
-                             quizzes, reviews)
+                             quizzes, reviews, locks)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

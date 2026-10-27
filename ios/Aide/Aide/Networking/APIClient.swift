@@ -280,6 +280,34 @@ final class APIClient {
         let _: OKResponse = try await send("DELETE", "/v1/transit/alerts/\(id)", body: EmptyBody())
     }
 
+    // MARK: Screen Time (docs/API.md, "Screen Time")
+
+    func locks() async throws -> LockList {
+        try await send("GET", "/v1/locks")
+    }
+
+    func createLock(_ lock: NewLock) async throws -> ScreenLock {
+        try await send("POST", "/v1/locks", body: lock)
+    }
+
+    func updateLock(_ id: Int, _ patch: LockPatch) async throws -> ScreenLock {
+        try await send("PATCH", "/v1/locks/\(id)", body: patch)
+    }
+
+    /// Ends a lock that's on now, early. The schedule it stays, or nil: a one-off, now gone.
+    func unlock(_ id: Int, reason: String) async throws -> ScreenLock? {
+        let answer: Unlocked = try await send("POST", "/v1/locks/\(id)/unlock", body: UnlockReason(reason: reason))
+        return answer.lock
+    }
+
+    func deleteLock(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/locks/\(id)", body: EmptyBody())
+    }
+
+    func reportScreenTime(_ device: ScreenTimeDevice) async throws {
+        let _: ScreenTimeDevice = try await send("PUT", "/v1/locks/device", body: device)
+    }
+
     func transitSettings() async throws -> TransitSettings {
         try await send("GET", "/v1/transit/settings")
     }

@@ -1509,6 +1509,40 @@ struct TransitAlertPatch: Encodable {
     private enum CodingKeys: String, CodingKey { case time, days, minutes, enabled }
 }
 
+// MARK: Screen Time (docs/API.md, "Screen Time"; the lock itself is ScreenLock, in ScreenTime/)
+
+struct LockList: Decodable {
+    let locks: [ScreenLock]
+    let device: ScreenTimeDevice
+}
+
+/// What the server knows about this phone: whether Aide may use Screen Time, and how many apps stay open.
+struct ScreenTimeDevice: Codable {
+    var authorized: Bool
+    var allowedApps: Int
+}
+
+/// `minutes`: a one-off from now. Else a schedule: `start` to `end` on `days`.
+struct NewLock: Encodable {
+    var title: String
+    var minutes: Int?
+    var start: String?
+    var end: String?
+    var days: [Int]?
+}
+
+/// Only what changes.
+struct LockPatch: Encodable {
+    var title: String?
+    var start: String?
+    var end: String?
+    var days: [Int]?
+    var enabled: Bool?
+}
+
+struct UnlockReason: Encodable { let reason: String }
+struct Unlocked: Decodable { let lock: ScreenLock? }
+
 /// A stop's next trams and buses, by line and direction (docs/API.md, "Departures"): a card in chat, kept live
 /// through GET /v1/transit/departures while it's on screen.
 struct DepartureBoard: Decodable, Identifiable, Hashable {

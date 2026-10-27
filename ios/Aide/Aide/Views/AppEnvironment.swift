@@ -16,6 +16,7 @@ final class AppEnvironment: ObservableObject {
     let health: HealthService
     let location: LocationService
     let live: LiveActivities
+    let screenTime: ScreenTimeService
     let voice = VoiceController()
     /// The Moodle screen as a sheet, from a `moodle` notification.
     @Published var showMoodle = false
@@ -43,6 +44,8 @@ final class AppEnvironment: ObservableObject {
         let location = LocationService(api: api)
         self.location = location
         self.live = LiveActivities(api: api)
+        let screenTime = ScreenTimeService(api: api)
+        self.screenTime = screenTime
         live.onTrams = { on in location.follow(on) }
         chat.live = live
 
@@ -69,6 +72,7 @@ final class AppEnvironment: ObservableObject {
 
         chat.onServerChange = { [weak self] in
             await self?.sync.sync()
+            await self?.screenTime.sync() // "no phone for an hour" said in chat holds at once
             WidgetCenter.shared.reloadAllTimelines() // a reply may have added a reminder, ticked a habit, …
         }
         digest.completeReminder = { [weak sync] reminder, done in await sync?.setCompleted(reminder, done) ?? false }
@@ -94,6 +98,7 @@ final class AppEnvironment: ObservableObject {
         location.refresh()
         live.appBecameActive()
         await sync.sync()
+        await screenTime.sync()
         await agents
         await history
         await conversations

@@ -42,6 +42,7 @@ from ..quiz import MOST as MOST_QUESTIONS, QuizStore, plain_math
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..leave import LeaveWatcher
+from ..locks import LockStore
 from ..transit import AlertStore, Boards, Location
 from ..wake import WakeService
 
@@ -303,6 +304,31 @@ class TransitAlertPatch(BaseModel):
     enabled: bool | None = None
 
 
+class LockIn(BaseModel):
+    title: str
+    minutes: int | None = None  # a one-off from now; else a schedule
+    start: str | None = None  # HH:MM local
+    end: str | None = None
+    days: list[int] = []
+
+
+class LockPatch(BaseModel):
+    title: str | None = None
+    start: str | None = None
+    end: str | None = None
+    days: list[int] | None = None
+    enabled: bool | None = None
+
+
+class UnlockIn(BaseModel):
+    reason: str
+
+
+class ScreenTimeDevice(BaseModel):
+    authorized: bool
+    allowed_apps: int = 0
+
+
 class DeviceIn(BaseModel):
     token: str
     environment: str
@@ -356,11 +382,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                location: Location | None = None, transit_alerts: AlertStore | None = None,
                boards: Boards | None = None, drafts: Drafts | None = None,
                live: LiveActivities | None = None, leave: LeaveWatcher | None = None,
-               quizzes: QuizStore | None = None, reviews: ReviewStore | None = None) -> FastAPI:
+               quizzes: QuizStore | None = None, reviews: ReviewStore | None = None,
+               locks: LockStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
     habits = habits or HabitStore(db.conn, tz, food)
+    locks = locks or LockStore(db.conn, tz)
     if habits.food is None:  # food habits tick from the food log
         habits.food = food
     health = health or HealthStore(db.conn, tz)
@@ -1526,6 +1554,48 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         alert_or_404(alert_id)
         transit_alerts.delete(alert_id)
         return {"ok": True}
+
+    def lock_or_404(lock_id: int) -> dict:
+        try:
+            return locks.get(lock_id)
+        except ValueError:
+            raise HTTPException(404, f"no lock {lock_id}") from None
+
+    @app.get("/v1/locks", dependencies=[Depends(auth)])
+    async def list_locks():
+        return {"locks": [locks.as_json(lock) for lock in locks.all()], "device": locks.device()}
+
+    @app.post("/v1/locks", dependencies=[Depends(auth)])
+    async def create_lock(body: LockIn):
+        if body.minutes is not None:
+            return locks.as_json(locks.lock_for(body.title, minutes=body.minutes))
+        if body.start is None or body.end is None:
+            raise HTTPException(400, "a lock needs minutes, or a start and an end")
+        return locks.as_json(locks.schedule(body.title, body.start, body.end, body.days))
+
+    @app.patch("/v1/locks/{lock_id}", dependencies=[Depends(auth)])
+    async def edit_lock(lock_id: int, body: LockPatch):
+        lock_or_404(lock_id)
+        lock = locks.update(lock_id, title=body.title, start_time=body.start, end_time=body.end, days=body.days,
+                            enabled=body.enabled)
+        return locks.as_json(lock)
+
+    @app.post("/v1/locks/{lock_id}/unlock", dependencies=[Depends(auth)])
+    async def unlock(lock_id: int, body: UnlockIn):
+        lock = lock_or_404(lock_id)
+        after = locks.unlock(lock_id, body.reason)
+        activity.record(db.conn, "coach", "action", f"You unlocked '{lock['title']}' early", body.reason)
+        return {"lock": locks.as_json(after) if after else None}
+
+    @app.delete("/v1/locks/{lock_id}", dependencies=[Depends(auth)])
+    async def delete_lock(lock_id: int):
+        lock_or_404(lock_id)
+        locks.delete(lock_id)
+        return {"ok": True}
+
+    @app.put("/v1/locks/device", dependencies=[Depends(auth)])
+    async def screen_time_device(body: ScreenTimeDevice):
+        return locks.set_device(body.authorized, body.allowed_apps)
 
     @app.post("/v1/devices", dependencies=[Depends(auth)])
     async def register_device(body: DeviceIn):

@@ -21,8 +21,11 @@ targets:
     sources:
       - Aide
       - Shared
+      - ScreenTime
     dependencies:
       - target: AideWidgets
+      - target: LockMonitor
+      - target: LockShield
     info:
       path: Aide/Info.plist
       properties:
@@ -72,6 +75,7 @@ targets:
       - Aide/Support/Keychain.swift
       - Aide/Support/Theme.swift
       - Aide/Support/Figure.swift
+      - ScreenTime/ScreenLock.swift
     info:
       path: AideWidgets/Info.plist
       properties:
@@ -84,6 +88,48 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).widgets
         CODE_SIGN_ENTITLEMENTS: AideWidgets/AideWidgets.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+  # Screen Time locks (docs/API.md, "Screen Time"): the monitor shields and opens the apps on each lock's schedule,
+  # the shield is what a locked app shows. Both read the locks the app keeps in the App Group (ScreenTime/).
+  LockMonitor:
+    type: app-extension
+    platform: iOS
+    sources:
+      - LockMonitor
+      - ScreenTime
+    info:
+      path: LockMonitor/Info.plist
+      properties:
+        CFBundleDisplayName: Aide
+        AideAppGroup: group.$(AIDE_BUNDLE_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).LockMonitor
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).lockmonitor
+        CODE_SIGN_ENTITLEMENTS: LockMonitor/LockMonitor.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+  LockShield:
+    type: app-extension
+    platform: iOS
+    sources:
+      - LockShield
+      - ScreenTime
+    info:
+      path: LockShield/Info.plist
+      properties:
+        CFBundleDisplayName: Aide
+        AideAppGroup: group.$(AIDE_BUNDLE_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ManagedSettingsUI.shield-configuration-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShieldConfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).lockshield
+        CODE_SIGN_ENTITLEMENTS: LockShield/LockShield.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
   AideTests:

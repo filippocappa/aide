@@ -49,6 +49,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   feed, the phone's location, and tram alerts with their watcher. `tools/transit.py`: the agents' transit tools.
   `leave.py`: leave-now for calendar events (the event's GTT ride from Maps becomes a one-off tram alert).
 - `upcoming.py`: the next calendar event's Live Activity (a countdown from 30 min before; `live.py` sends it).
+- `locks.py`: Screen Time locks (one-offs and weekly schedules, unlocking early with a reason); `tools/locks.py`: Coach's.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -282,6 +283,17 @@ set a tram alert for it; off in Settings → Notifications (`/v1/live/settings`)
 while a notebook proposal is applied (topics done of total, a bar and "2/5" in the island) or a lecture's notes are
 written (`NotesRun` in `live.py`). An activity ended before the app sent its token is ended when the token comes.
 
+**Done, both sides (2026-10-27), not yet tried on the phone:** Screen Time locks (#23, contract in `docs/API.md`,
+"Screen Time"). Server (`locks.py`): one-offs (15 min to 24 h) and weekly schedules (overnight ones run into the next
+morning), `/v1/locks`, a sync push on every change; Coach's tools (`lock_now`, `add_lock_schedule`, `update_lock`;
+`end_lock` and `delete_lock` queued, ending early needs the user's reason, and Coach sees the week's unlocks). App:
+Settings → Screen Time (allow it, what stays open through `FamilyActivityPicker`, lock now, the locks and an editor,
+End early with a reason and a 10 s wait); `ScreenTimeService` sets one DeviceActivity schedule per lock; two
+extensions read the locks from the App Group (`ScreenTime/LockBook.swift`): `LockMonitor` shields and opens on time
+with the app closed, `LockShield` is the locked app's screen ("Locked until 07:00"). Needs the Family Controls
+entitlement (`Aide.entitlements` and both extensions): fine for development builds, TestFlight needs Apple's approval
+(a request form). Usage thresholds and a countdown in the Dynamic Island are not done.
+
 **Done, both sides (2026-10-26), installed on the phone 2026-10-26:** Today and limit habits (#21, contract in
 `docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card
 (`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
@@ -306,8 +318,7 @@ day's `health_logged` and the app makes its own Inhaler Usage samples match, nev
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
 2. Ideas from the agent-app research, not yet chosen: (#15, digests in a feed, is mostly covered by Today; #14,
    Goals, by objectives.)
-3. New, filed 2026-10-27, not yet chosen: a browser agent that logs in and shops for you (#22), Screen Time locks
-   in routines (#23). The rest of #24 (buttons in the expanded view, voice chat in the background).
+3. New, filed 2026-10-27, not yet chosen: a browser agent that logs in and shops for you (#22). The rest of #24 (buttons in the expanded view, voice chat in the background).
 4. Recording a lecture in the app. Notebooks for the other courses. Finance still has no data source (memory
    only).
 

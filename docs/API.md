@@ -1291,6 +1291,46 @@ after a 300 m move.
 `calendar` (default true) turns the event alerts on or off. `404` when the server can't make them (GTT off, or no
 calendar or Maps key).
 
+## Screen Time
+
+Locks shield the phone's apps on a schedule or for a while (since 2026-10-27, #23). The server keeps the locks; the
+phone sets them itself with Apple's Screen Time API (DeviceActivity and ManagedSettings), so they start and end on
+time with the app closed. What a lock shields is chosen on the phone and never leaves it (Apple's tokens are
+device-only): every app except the ones the user allows (Phone and emergency calls always work). Coach sets locks in
+chat (`lock_now`, `add_lock_schedule`); ending one early there is queued and needs the user's reason.
+
+- **One-off** (`once` true): from `starts_at` to `ends_at`, 15 minutes to 24 hours. Dropped once over.
+- **Schedule** (`once` false): every week from `start` to `end` (HH:MM local; an `end` before `start` is the next
+  morning, and the two can't be the same) on the ISO weekdays in `days` it starts on (`[]` every day). At least 15 minutes (DeviceActivity's floor).
+- **Unlocking early** takes a reason, which Coach sees for a week. A one-off is gone; a schedule is open until this
+  time's end (`open_until`) and comes back next time. A lock that's on can't be moved or turned off with `PATCH`:
+  that's unlocking early.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/locks` | | `{"locks": [lock], "device": {"authorized": true, "allowed_apps": 3, "at": "…"}}` |
+| `POST /v1/locks` | `{"title": "Focus", "minutes": 60}` (a one-off from now) or `{"title": "Bedtime", "start": "23:00", "end": "07:00", "days": []}` | the lock |
+| `PATCH /v1/locks/{id}` | any of `{"title", "start", "end", "days", "enabled"}` (a one-off: only `title`) | the lock; `400` for a lock that's on now |
+| `POST /v1/locks/{id}/unlock` | `{"reason": "a call with my sister"}` | `{"lock": lock}` (a schedule), `{"lock": null}` (a one-off, now gone); `400` if it isn't on |
+| `DELETE /v1/locks/{id}` | | `{"ok": true}` |
+| `PUT /v1/locks/device` | `{"authorized": true, "allowed_apps": 3}` | what the server now knows |
+
+```json
+{
+  "id": 2, "title": "Bedtime", "once": false, "start": "23:00", "end": "07:00", "days": [7, 1, 2, 3, 4],
+  "starts_at": null, "ends_at": null, "enabled": true, "agent": "coach",
+  "locked": true, "until": "2026-10-28T07:00:00+01:00", "open_until": null, "next": "2026-10-28T23:00:00+01:00",
+  "summary": "Sun, Mon, Tue, Wed, Thu 23:00–07:00"
+}
+```
+- `locked` and `until`: on right now, until then. `open_until`: unlocked early, open until then. `next`: the next
+  start (null for a one-off already started, or a schedule that's off). `agent`: who set it, null for the user.
+- Every change (from chat or the app) sends a silent `sync` push; the app fetches the list and sets the device's
+  schedules (one DeviceActivity per lock, repeating daily for a schedule; the monitor checks `days` and
+  `open_until` when it starts). It also syncs after every chat turn and when it opens.
+- The app sends `PUT /v1/locks/device` when it opens and when Screen Time access or the allowed apps change, so the
+  agents can say when locks won't hold.
+
 ## Push
 
 The server notifies the phone through APNs. It sends only when it has a key (`APNS_*` in `.env`) and at least one registered device; otherwise nothing is sent and everything is still in the app.
@@ -1316,7 +1356,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 
 | `aide.kind` | Type | When | Extra fields | On tap |
 |---|---|---|---|---|
-| `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server, or a habit with `health` was counted | | (not shown) the app runs a reminders sync and writes `health_logged` to Health |
+| `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server, a habit with `health` was counted, a meal or a Screen Time lock changed | | (not shown) the app runs a reminders sync, writes `health_logged` and meals to Health, and sets the locks |
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
 | `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens Today on the digest (since 2026-10-26; before: a new chat with it) |
 | `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |

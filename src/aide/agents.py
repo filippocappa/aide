@@ -25,6 +25,7 @@ WEB = ("web_search", "fetch_page")
 HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
 HEALTH = ("health",)
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal")
+LOCKS = ("list_locks", "lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
          "start_notebook", "rewrite_introduction", "find_figures", "notes_writer", "quiz_me", "quiz_answer", "end_quiz",
@@ -107,6 +108,14 @@ list_habits shows its count today and the last 7 days, so you can say how it's g
 from the food log. History the user didn't log at the time (a week, a month) goes in with one fill_habit_days \
 call: ask what each day was if it isn't clear, or take the user's "about 6 a day" for every day of the stretch. \
 Deleting a habit is queued like other deletions."""
+
+_LOCKS = """- Screen Time: you can lock the phone's apps (all but Phone and the ones the user lets through, chosen on the \
+phone) so a plan sticks. lock_now for a while ("no phone for an hour", "until 16:00"), add_lock_schedule for every \
+week (bedtime 23:00 to 07:00, a study morning). The phone sets them itself, so they hold with the app closed; \
+list_locks says if Screen Time isn't allowed there yet. Set one when the user asks, or suggest one; never lock \
+unasked. Ending one early (end_lock) is queued and needs the user's reason in their words: don't argue, but if \
+they unlock the same lock often (list_locks shows the week's unlocks), say so kindly and offer a later start or \
+a shorter lock."""
 
 _CARDS = """- In the app, the reminders, calendar events and meals your tools listed, created or changed this turn are \
 shown under your reply as cards (with tick boxes for reminders). So don't repeat them line \
@@ -217,11 +226,11 @@ _FOOD_ELSEWHERE = """- Food: you don't keep the food log; Coach does. If the use
 
 _DELEGATE = """- Your team does the work; you run the front desk. Hand each request to the specialist whose work \
 it is, with ask_agent: Secretary for the calendar, reminders and mail; Coach for sleep, recovery, training, health, \
-food (a meal photo goes to Coach to log) and habits; Professor for study and lectures; Finance for money and budgets. \
-You don't have their tools, so never answer those from memory or guess: ask. A request that spans several (plan my \
-week) goes to each one that has a part, at most 3 asks per turn, in parallel when they don't depend on each other. \
-Only small talk, general questions, web lookups, places and travel times, GTT trams and tram alerts, what to \
-remember, and routines are yours to answer yourself.
+food (a meal photo goes to Coach to log), habits and Screen Time locks ("no phone for an hour"); Professor for \
+study and lectures; Finance for money and budgets. You don't have their tools, so never answer those from memory \
+or guess: ask. A request that spans several (plan my week) goes to each one that has a part, at most 3 asks per \
+turn, in parallel when they don't depend on each other. Only small talk, general questions, web lookups, places \
+and travel times, GTT trams and tram alerts, what to remember, and routines are yours to answer yourself.
 - A specialist doesn't see this chat, so put everything it needs into the request: what the user asked in their \
 words, the dates and names, what was said before that matters ("the dentist you found, Tue 15:00"). The user's \
 photos from this message go along by themselves. You know what each specialist remembers (marked with its name in \
@@ -238,10 +247,10 @@ on, and the app shows your tools' cards under it. You can't ask back or ask othe
 missing, do what you can and say what you need.
 
 - Your teammates: Secretary has the calendar (adding, moving, deleting events), reminders and mail; Coach health, \
-food and habits; Professor study notes and lectures; Finance money. When the user wants something done that needs \
-a teammate's tools (study sessions or a training slot put in the calendar, a reminder set), hand that part to them \
-with ask_agent rather than telling the user to do it themselves. They don't see your chat, so put everything into \
-the request: what to do, exact dates and times, titles, the calendar if the user named one. Then say in a line who \
+food, habits and Screen Time locks; Professor study notes and lectures; Finance money. When the user wants \
+something done that needs a teammate's tools (study sessions or a training slot put in the calendar, a reminder \
+set), hand that part to them with ask_agent rather than telling the user to do it themselves. They don't see your \
+chat, so put everything into the request: what to do, exact dates and times, titles, the calendar if the user named one. Then say in a line who \
 did it ("Secretary added the six sessions to your calendar.")."""
 
 
@@ -309,7 +318,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day; to put a session in it, ask Secretary.",
-    _BASICS, _QUEUE, _HEALTH, _HABITS, _CARDS, _PHOTOS, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _HEALTH, _HABITS, _LOCKS, _CARDS, _PHOTOS, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 FINANCE_PROMPT = _prompt(
@@ -357,7 +366,7 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training, food and habits", "#23A26D",
              ("How did I sleep this week?", "Should I train hard today?", "What have I eaten today?"),
-             COACH_PROMPT, (*HEALTH, *HABITS, *FOOD, *CALENDAR_READ, *WEB),
+             COACH_PROMPT, (*HEALTH, *HABITS, *FOOD, *LOCKS, *CALENDAR_READ, *WEB),
              routine_ideas=(_idea("Weekly recap", "Recap my sleep, training and habits for the week, and suggest one "
                                   "thing for next week.", "18:00", (7,)),
                             *(i for a, i in _STARTING_WATCHES if a == "coach"))),
@@ -377,6 +386,7 @@ _CONNECTORS = (
     ("health", "Apple Health", HEALTH, set()),
     ("habits", "Habits", HABITS, {"add_habit", "check_habit", "count_habit", "fill_habit_days", "delete_habit"}),
     ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "delete_meal"}),
+    ("screen_time", "Screen Time", LOCKS, {"lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock"}),
     ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
                                      "edit_topic", "start_notebook", "rewrite_introduction", "find_figures",
                                      "notes_writer", "add_review_session", "cancel_review_session"}),

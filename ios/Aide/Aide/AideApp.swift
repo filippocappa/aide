@@ -22,6 +22,7 @@ struct AideApp: App {
                 .environmentObject(env.push)
                 .environmentObject(env.health)
                 .environmentObject(env.location)
+                .environmentObject(env.screenTime)
                 .tint(Theme.accent)
                 .task { await env.refreshAll() }
                 .onChange(of: scenePhase) { _, phase in
@@ -58,8 +59,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         env.push.didFailToRegister(error)
     }
 
-    /// Silent pushes. `sync`: bring Apple Reminders up to date, so the alarms are set before they're due, and write
-    /// the habit counts and meals logged through Aide to Health.
+    /// Silent pushes. `sync`: bring Apple Reminders up to date, so the alarms are set before they're due, set the
+    /// Screen Time locks, and write the habit counts and meals logged through Aide to Health.
     /// `location`: a tram alert wants to know how far the stop is.
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
@@ -70,6 +71,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         guard PushRoute.isSync(userInfo), env.settings.isConfigured else { return completionHandler(.noData) }
         Task {
             await env.sync.sync()
+            await env.screenTime.sync()
             await env.health.writeLogged()
             await env.health.writeMeals()
             WidgetCenter.shared.reloadTimelines(ofKind: "Today")

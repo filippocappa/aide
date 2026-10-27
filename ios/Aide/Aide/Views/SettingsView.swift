@@ -9,6 +9,7 @@ struct SettingsView: View {
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var health: HealthService
     @EnvironmentObject private var location: LocationService
+    @EnvironmentObject private var screenTime: ScreenTimeService
     @EnvironmentObject private var env: AppEnvironment
     @StateObject private var connection = ConnectionCheck()
     @State private var path = NavigationPath()
@@ -36,6 +37,9 @@ struct SettingsView: View {
                         HealthSettingsView()
                     }
                     row("Location and trams", "tram.fill", .green, value: locationValue, off: !location.isOn) { LocationSettingsView() }
+                    row("Screen Time", "hourglass", .indigo, value: screenTimeValue, off: !screenTime.isAuthorized) {
+                        ScreenTimeView()
+                    }
                 }
                 Section {
                     row("Moodle", "graduationcap.fill", .orange) { MoodleView() }
@@ -60,7 +64,7 @@ struct SettingsView: View {
             .task { await health.refreshStatus() }
             #if DEBUG
             // Simulator screenshots: `-previewSettings digests` (or memory, voice, plan, notifications, reminders,
-            // health, location, connection) opens that page.
+            // health, location, screentime, connection) opens that page.
             .navigationDestination(for: String.self) { page in
                 switch page {
                 case "digests": DigestSettingsView()
@@ -71,6 +75,7 @@ struct SettingsView: View {
                 case "reminders": ReminderSettingsView()
                 case "health": HealthSettingsView()
                 case "location": LocationSettingsView()
+                case "screentime": ScreenTimeView()
                 default: ConnectionSettingsView(connection: connection)
                 }
             }
@@ -92,6 +97,13 @@ struct SettingsView: View {
                 Label { Text(title) } icon: { SettingsIcon(systemName: icon, color: color) }
             }
         }
+    }
+
+    private var screenTimeValue: String {
+        guard screenTime.isAuthorized else { return "Not set up" }
+        if let (_, until) = screenTime.current { return "Locked until \(ScreenTimeView.time(until))" }
+        let weekly = screenTime.locks.filter { !$0.once && $0.enabled }.count
+        return weekly == 0 ? "On" : "\(weekly) lock\(weekly == 1 ? "" : "s")"
     }
 
     private var notificationsValue: String {
