@@ -192,8 +192,9 @@ async def test_live_waits_for_the_first_fetch_then_refreshes_behind_the_scenes(m
     monkeypatch.setattr(transit_mod, "LIVE_TTL", -1)  # as if it were old
     assert ("T1", "20261022") in await live.trips()  # the refresh fails behind the scenes; the last feed stays
     await live._task
+    assert not live.down
     monkeypatch.setattr(transit_mod, "STALE", -1)
-    assert await live.trips() == {}  # too old to trust
+    assert await live.trips() == {} and live.down  # too old to trust: GTT's live times aren't coming through
 
 
 async def test_unknown_line_is_an_error(timetable):
@@ -243,19 +244,35 @@ def test_a_one_off_watches_from_now_or_around_its_time_and_ends(env):
     assert datetime.fromisoformat(early["starts_at"]) == at(6, 30, day=DAY + timedelta(days=1))
 
 
-async def test_leave_now_fires_when_the_tram_is_the_walk_plus_two_minutes_away(env, monkeypatch):
+async def test_leave_now_fires_a_few_minutes_before_it_is_time_to_leave(env, monkeypatch):
     db, timetable, location, alerts, push = env
     a = alerts.create("1", "4", now=at(7, 50).astimezone(timezone.utc))
     feed = live_feed(("T1", [(2, 120)]), ("T5", None))
     watcher = AlertWatcher(alerts, Transit(timetable, FakeLive(feed)), location, Walks(), push)
-    location.save(45.0650, 7.6756, 10, at(7, 59))  # about 270 m north of the stop: a 5 min walk
-    await watcher.tick(at(7, 59, 30))  # T1 comes at 08:07: 7.5 min away, more than 4.7 + 2
+    location.save(45.0650, 7.6756, 10, at(7, 55))  # about 270 m north of the stop: a 5 min walk
+    await watcher.tick(at(7, 57))  # T1 comes at 08:07: 10 min away, more than 4.7 + 2 at the stop + 3 to get ready
     assert push.alerts == []
-    await watcher.tick(at(8, 0, 20))
+    await watcher.tick(at(7, 57, 30))
     (alert_id, title, body), = push.alerts
-    assert (alert_id, title) == (a["id"], "Tram 4 in 7 min: leave now")
-    assert body == ("Porta Nuova (stop 252), towards Falchera. 5 min walk from where you are. Next one in 15 min.")
+    assert (alert_id, title) == (a["id"], "Tram 4 in 10 min: leave in 3 min")
+    assert body == ("Porta Nuova (stop 252), towards Falchera. 5 min walk from where you are. Your stop is its "
+                    "next. Next one in 18 min.")
     assert alerts.all() == []  # a one-off is done
+
+
+async def test_where_the_tram_is(env):
+    db, timetable, *_ = env
+    t1 = lambda feed: Transit(timetable, FakeLive(feed))  # noqa: E731
+    [mine] = [x for x in await t1(b"").arrivals(["1"], "4", at(7, 59)) if x.trip == "T1"]
+    # On the timetable: T1 leaves stop 100 at 08:02, so before then it hasn't started.
+    assert await t1(b"").position(mine, at(7, 59)) == {
+        "stops": 1, "near": "Vittorio Emanuele II Cap", "starts": int(at(8, 2).timestamp())}
+    assert await t1(b"").position(mine, at(8, 3)) == {"stops": 0, "near": "Vittorio Emanuele II Cap", "starts": None}
+    # Live: the feed's next stop for it, whatever the clock says.
+    live = t1(live_feed(("T1", [(1, 240), (2, 120)])))
+    [late] = [x for x in await live.arrivals(["1"], "4", at(8, 3)) if x.trip == "T1"]
+    assert late.live and await live.position(late, at(8, 3)) == {
+        "stops": 1, "near": "Vittorio Emanuele II Cap", "starts": int(at(8, 6).timestamp())}  # its own stop's delay
 
 
 async def test_leave_now_skips_a_tram_too_close_to_catch_and_asks_for_a_location(env):
@@ -266,7 +283,7 @@ async def test_leave_now_skips_a_tram_too_close_to_catch_and_asks_for_a_location
     assert push.location_requests == 1
     (_, title, body), = push.alerts  # T1 at 08:05 is too close to catch: T5 at 08:07 is the one
     assert title == "Tram 4 in 6 min: leave now"
-    assert "assumes a 5 min walk" in body and "From the timetable" in body
+    assert "assumes a 5 min walk" in body and "From the timetable (no live data for it)" in body
 
 
 async def test_fixed_minutes_and_a_commute_alert_once_a_day(env):

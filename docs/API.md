@@ -1191,10 +1191,13 @@ An alert watches one line at one stop (each side of the road is its own stop, wi
   it at the earliest). Watched from 30 min before `time` to 30 min after; at most one push a day.
 - **One-off** (`days` null, `once` true): the next tram (watched for 2 hours), or the first from about `time` (today,
   or tomorrow if that's gone). Deleted once it fires or ends.
-- **When:** `minutes` null pushes when it's time to leave: the tram is the walk from the phone to the stop plus 2
-  minutes away (a tram you can't reach in time is skipped). `minutes: 10` pushes when it's 10 minutes away.
+- **When:** `minutes` null pushes a few minutes before it's time to leave: when the tram is the walk from the phone
+  to the stop, plus 2 minutes at the stop, plus 3 to get going, away (since 2026-10-27; it was the walk plus 2). So
+  "Tram 4 in 10 min: leave in 3 min", or "leave now" when that's under a minute. A tram you can't reach in time is
+  skipped. `minutes: 10` pushes when it's 10 minutes away.
 - Times are live from GTT where it has them (a trip's delay carried on to the later stops), else the timetable,
-  and the push says which.
+  and the push says which, and whether GTT's live feed is down. It also says where the tram is ("3 stops away, near
+  Politecnico", or when it leaves its first stop).
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -1352,14 +1355,19 @@ Push type `liveactivity`, topic `<bundle id>.push-type.liveactivity`, to the tok
 | Field | Meaning |
 |---|---|
 | `at` | when the tram is expected at the stop (live delay included) |
-| `leave` | when to leave to make it: `at` minus the walk, or null for an "N minutes away" alert |
+| `leave` | when to leave: `at` minus the walk minus 2 minutes (so you're at the stop early), or null for an "N minutes away" alert |
 | `walk` | seconds from the phone to the stop, or null when the location isn't known |
 | `live` | false: timetable only |
 | `delay` | seconds late (negative: early), null when not live |
 | `next` | the next one's expected time, or null |
 | `gone` | the tram has left the stop (the last update, sent with `end`) |
+| `stops` | since 2026-10-27: the stops it has still to reach before yours (0: yours is its next), or null |
+| `near` | since 2026-10-27: the stop it's at or has just left (its first stop, before it sets off), or null |
+| `starts` | since 2026-10-27: when it leaves its first stop, if it hasn't yet; else null |
+| `feed_down` | since 2026-10-27: GTT's live feed isn't coming through, so `live` is false for every tram |
 
-The server updates it every 30 s or so while `at` moves by 30 s or more, sets `stale-date` to `at` plus 2 minutes,
+The server updates it every 30 s or so when `at` moves by 30 s or more, or the tram reaches another stop (`stops`,
+`near`, `starts`), or `live`, `next` or `feed_down` change, sets `stale-date` to `at` plus 2 minutes,
 and ends it once the tram has gone by (about 30 s after `at`) or the trip is cancelled, dismissed 2 minutes later.
 
 **`agent`** (`AgentActivityAttributes`). Attributes: `key` (`agent:<conversation id>`, the Team chat's is

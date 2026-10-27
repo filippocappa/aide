@@ -73,12 +73,12 @@ async def test_an_event_with_a_tram_ride_becomes_a_tram_alert_that_says_leave_no
     maps = FakeMaps(ride())
     w = make(FakeCal(lecture()), maps)
     location.save(*HOME, 10, at(7, 15))
-    await w.tick(utc(at(7, 20)))  # leaving at about 08:08: still 48 min away
+    await w.tick(utc(at(7, 17)))  # the alert would come at about 08:05: still 48 min away
     assert alerts.all() == [] and len(maps.bodies) == 1
     assert maps.bodies[0]["arrivalTime"] == "2026-10-22T06:50:00Z"  # there 10 min early
-    await w.tick(utc(at(7, 22)))  # the way is looked up again only after 10 minutes
+    await w.tick(utc(at(7, 19)))  # the way is looked up again only after 10 minutes
     assert alerts.all() == [] and len(maps.bodies) == 1
-    await w.tick(utc(at(7, 30)))  # leaving in 38 min
+    await w.tick(utc(at(7, 27)))  # the alert in 38 min
     (a,) = alerts.all()
     assert len(maps.bodies) == 2
     assert (a["stop"], a["line"], a["time"], a["days"], a["event"]) == ("1", "4", "08:15", None, "Macroeconomics at 09:00")

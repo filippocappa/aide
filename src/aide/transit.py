@@ -3,10 +3,11 @@
 The timetable is GTT's GTFS, rebuilt every night into its own SQLite file (data/gtt.db). Live times come from its
 GTFS-Realtime trip updates: each running trip's delay at its next few stops. A delay carries on to the stops after
 it, so a stop further along gets the latest delay before it; a trip whose next stop is already past ours has gone by.
-A trip with no live data runs on the timetable.
+A trip with no live data runs on the timetable. Where a followed tram is (the stops it has left before yours) comes
+from the same: the feed's next stop for it, else its timetable shifted by its delay.
 
 The phone sends its location (only the latest fix is kept): it gives the walk to the stop, so an alert can say
-"leave now" when the tram is that walk plus a little away. When an alert needs a fresher fix, the server asks the
+"leave now" a few minutes before you need to go, timed to have you at the stop a little before the tram. When an alert needs a fresher fix, the server asks the
 phone for one with a silent push.
 """
 
@@ -43,8 +44,9 @@ REBUILD_AT = 4  # local hour from which the nightly rebuild runs (GTT publishes 
 SERVICE_DAYS = 8  # service days kept, from yesterday
 LIVE_TTL = 20  # seconds: a live feed older than this is refreshed in the background when read
 WAIT_AFTER = 90  # seconds: older than this, a read waits for the refresh
-STALE = 180  # seconds: older than this, the live feed isn't used
-FETCH_TIMEOUT = 45  # seconds: GTT takes about 20 to answer
+STALE = 600  # seconds: older than this, the live feed isn't used (a delay changes slowly, so a late one still helps)
+FETCH_TIMEOUT = 90  # seconds: GTT takes about 20 to answer, and over 45 at rush hour some days
+READ_WAIT = 45  # seconds a read waits for a fetch at most
 LATE = timedelta(minutes=40)  # a scheduled arrival this far back may still be coming, running late
 VEHICLES = {"0": "Tram", "1": "Metro", "2": "Train", "3": "Bus"}
 
@@ -52,7 +54,9 @@ TICK = 30  # seconds between alert checks
 WINDOW = timedelta(minutes=30)  # a timed alert watches from this long before its time to this long after
 EARLY = timedelta(minutes=5)  # a timed alert's tram can come this much before the time
 ONCE_FOR = timedelta(hours=2)  # how long an untimed one-off alert waits for its tram
-BUFFER = 120  # seconds on top of the walk: leave-now alerts fire when the tram is the walk plus this away
+AT_STOP = 120  # seconds: "leave" has you at the stop this long before the tram
+HEADS_UP = 180  # seconds: a leave-now alert comes this long before it's time to leave
+BUFFER = AT_STOP + HEADS_UP  # on top of the walk: leave-now alerts fire when the tram is the walk plus this away
 DEFAULT_WALK = 5 * 60  # seconds, when there's no location to work it out from
 FIX_AGE = timedelta(minutes=10)  # a leave-now alert wants a fix younger than this
 FIX_EVERY = timedelta(minutes=5)  # at most one location request per this long
@@ -82,6 +86,7 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 GTFS_INDEXES = """
 CREATE INDEX stop_times_stop ON stop_times(stop, at);
+CREATE INDEX stop_times_trip ON stop_times(trip, seq);
 CREATE INDEX service_days_day ON service_days(service, day);
 CREATE INDEX stops_code ON stops(code);
 CREATE INDEX stop_lines_stop ON stop_lines(stop);
@@ -344,6 +349,12 @@ class Timetable:
         return sorted(out, key=lambda a: a["at"])
 
 
+    def trip_stops(self, trip: str) -> list[dict]:
+        """A trip's stops in order: seq, name, at (seconds from its service day's midnight)."""
+        rows = self.conn.execute("SELECT st.seq, s.name, st.at FROM stop_times st JOIN stops s ON s.id = st.stop "
+                                 "WHERE st.trip = ? ORDER BY st.seq", (trip,)).fetchall()
+        return [dict(r) for r in rows]
+
     def reaches(self, trips: list[tuple[str, int]], to: list[str]) -> dict[str, tuple[str, int]]:
         """Which of these trips (id, the stop_sequence they're at) go on to one of the `to` stops later:
         {trip: (stop, seconds from the service day's midnight)}, the first such stop."""
@@ -372,7 +383,9 @@ class Live:
 
     GTT takes about 20 seconds to answer, so the latest feed is kept and, while someone is reading it, refreshed in
     the background. A read waits for a fetch only when what's kept is older than `wait_after`; a feed older than
-    STALE is dropped, and everything runs on the timetable until a fetch works again."""
+    STALE is dropped, and everything runs on the timetable until a fetch works again (`down`)."""
+
+    down = False  # the last read had no feed fresh enough to use: GTT's live data isn't coming through
 
     def __init__(self, http: httpx.AsyncClient | None = None, url: str = LIVE_URL):
         self._http = http or httpx.AsyncClient(timeout=FETCH_TIMEOUT)
@@ -397,10 +410,11 @@ class Live:
             self._task = asyncio.create_task(self._fetch())
         if age > wait_after and self._task and not self._task.done():
             try:
-                await asyncio.wait_for(asyncio.shield(self._task), FETCH_TIMEOUT)
+                await asyncio.wait_for(asyncio.shield(self._task), READ_WAIT)
             except TimeoutError:
                 pass
             age = asyncio.get_running_loop().time() - self._at if self._at is not None else math.inf
+        self.down = age > STALE
         return self._trips if age <= STALE else {}
 
 
@@ -497,6 +511,32 @@ class Transit:
                            + timedelta(seconds=reach[a.trip][1]) + (a.at - a.scheduled))
                    for a in out if a.trip in reach]
         return sorted(out, key=lambda a: a.at)
+
+    async def position(self, a: Arrival, now: datetime) -> dict:
+        """Where a's trip is now: `stops`, how many it has still to reach before a's stop (0: that's its next one);
+        `near`, the stop it's at or has just left; `starts`, when it leaves its first stop, if it hasn't yet.
+        With live data, the feed's next stop for it; else its timetable shifted by its delay."""
+        stops = [s for s in self.timetable.trip_stops(a.trip) if s["seq"] <= a.seq]
+        if not stops or a.day is None:
+            return {"stops": None, "near": None, "starts": None}
+        midnight = datetime.combine(a.day, time(), self.timetable.tz)
+        updates = (await self.live.trips()).get((a.trip, a.day.strftime("%Y%m%d"))) if a.live else None
+
+        def expected(s: dict) -> datetime:
+            if not updates:
+                return midnight + timedelta(seconds=s["at"]) + (a.at - a.scheduled)
+            known = [delay for seq, delay in updates if seq <= s["seq"]]
+            return midnight + timedelta(seconds=s["at"] + (known[-1] if known else updates[0][1]))
+
+        if updates:
+            heading = updates[0][0]
+        else:
+            heading = next((s["seq"] for s in stops if expected(s) > now), a.seq)
+        first = stops[0]
+        if heading <= first["seq"] and expected(first) > now:
+            return {"stops": len(stops) - 1, "near": first["name"], "starts": int(expected(first).timestamp())}
+        left = [s for s in stops if s["seq"] < heading]
+        return {"stops": len(stops) - len(left) - 1, "near": (left[-1] if left else first)["name"], "starts": None}
 
 
 def _iso(dt: datetime) -> str:
@@ -929,8 +969,9 @@ class AlertWatcher:
         if tram.seconds(now) > lead:
             return
         after = catchable[1] if len(catchable) > 1 else None
-        title, body = alert_text(tram, after, stop, walk, leave, now, a["event"])
-        if await self.start_live(a, tram, after, stop, walk, leave, title, body, now):
+        where = await self.transit.position(tram, now)
+        title, body = alert_text(tram, after, stop, walk, leave, now, a["event"], where, self.transit.live.down)
+        if await self.start_live(a, tram, after, stop, walk, leave, title, body, now, where):
             log.info("tram alert %s: Live Activity started", a["id"])
         elif not (self.push and await self.push.send_transit(a["id"], title, body)):
             log.warning("tram alert %s: push didn't go out", a["id"])
@@ -940,21 +981,21 @@ class AlertWatcher:
 
     # -- the Live Activity (docs/API.md, "Live Activities", tram) -----------------------------------------------
 
-    @staticmethod
-    def live_state(tram: Arrival, after: Arrival | None, leave_by: int | None, walk: int | None,
-                   gone: bool = False) -> dict:
+    def live_state(self, tram: Arrival, after: Arrival | None, leave_by: int | None, walk: int | None,
+                   where: dict, gone: bool = False) -> dict:
         at = int(tram.at.timestamp())
         return {"at": at, "leave": at - leave_by if leave_by is not None else None, "walk": walk, "live": tram.live,
-                "delay": tram.delay, "next": int(after.at.timestamp()) if after else None, "gone": gone}
+                "delay": tram.delay, "next": int(after.at.timestamp()) if after else None, "gone": gone, **where,
+                "feed_down": self.transit.live.down}
 
     async def start_live(self, a: dict, tram: Arrival, after: Arrival | None, stop: dict, walk: int | None,
-                         leave: bool, title: str, body: str, now: datetime) -> bool:
+                         leave: bool, title: str, body: str, now: datetime, where: dict) -> bool:
         """Push-start the tram's countdown instead of the plain push. False if there's no start token."""
         if not (self.live and self.live.start_token("tram")):
             return False
         key = f"tram:{a['id']}:{tram.trip}:{tram.day:%Y%m%d}" if tram.day else f"tram:{a['id']}:{tram.trip}"
-        leave_by = (walk if walk is not None else DEFAULT_WALK) if leave else None
-        state = self.live_state(tram, after, leave_by, walk)
+        leave_by = (walk if walk is not None else DEFAULT_WALK) + AT_STOP if leave else None
+        state = self.live_state(tram, after, leave_by, walk, where)
         attributes = {"key": key, "line": tram.line, "vehicle": tram.vehicle, "stop": stop["name"],
                       "code": stop["code"], "towards": tram.headsign or None, "alert": a["id"]}
         try:
@@ -981,24 +1022,33 @@ class AlertWatcher:
             await self.live.end(key, {**f["state"], "gone": True}, now + LIVE_STALE)
             return
         after = next((x for x in arrivals if x.at > mine.at and x.trip != mine.trip), None)
-        state = self.live_state(mine, after, f["leave_by"], f["walk"])
-        if abs(state["at"] - f["state"]["at"]) < LIVE_MOVE and state["next"] == f["state"]["next"]:
+        state = self.live_state(mine, after, f["leave_by"], f["walk"], await self.transit.position(mine, now))
+        same = ("next", "live", "stops", "near", "starts", "feed_down")
+        if abs(state["at"] - f["state"]["at"]) < LIVE_MOVE and all(state[k] == f["state"].get(k) for k in same):
             return
         if await self.live.update(key, state, stale=mine.at + LIVE_STALE):
             f["state"] = state  # not sent (no token yet): compared with what the phone shows, so tried again
 
 
 def alert_text(tram: Arrival, after: Arrival | None, stop: dict, walk: int | None, leave: bool,
-               now: datetime, event: str | None = None) -> tuple[str, str]:
+               now: datetime, event: str | None = None, where: dict | None = None,
+               feed_down: bool = False) -> tuple[str, str]:
     m = tram.minutes(now)
     when = "now" if m == 0 else f"in {m} min"
-    title = f"{tram.name()} {when}" + (": leave now" if leave else "")
+    go = round((tram.seconds(now) - (walk if walk is not None else DEFAULT_WALK) - AT_STOP) / 60)
+    title = f"{tram.name()} {when}" + ((": leave now" if go <= 1 else f": leave in {go} min") if leave else "")
     body = f"{stop['name']} (stop {stop['code']})" + (f", towards {tram.headsign}" if tram.headsign else "") + "."
     if leave:
         body += (f" {max(1, round(walk / 60))} min walk from where you are." if walk is not None
                  else " Your location isn't known, so this assumes a 5 min walk.")
+    if where and where.get("starts"):
+        body += f" It leaves {where['near']} at {datetime.fromtimestamp(where['starts'], tram.at.tzinfo):%H:%M}."
+    elif where and where.get("stops") is not None:
+        body += (" Your stop is its next." if where["stops"] == 0
+                 else f" {where['stops']} stop{'s' if where['stops'] > 1 else ''} away, near {where['near']}.")
     if not tram.live:
-        body += " From the timetable (no live data for it)."
+        body += (" From the timetable: GTT's live times aren't coming through." if feed_down
+                 else " From the timetable (no live data for it).")
     if after:
         body += f" Next one in {after.minutes(now)} min."
     if event:
