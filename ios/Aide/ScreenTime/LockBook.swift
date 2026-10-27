@@ -3,6 +3,24 @@ import FamilyControls
 import Foundation
 import ManagedSettings
 
+/// The apps a lock covers: only `selection` (social apps while studying), or everything but it (bedtime). Its
+/// tokens only mean something on this phone, so the server never sees them.
+struct LockApps: Codable, Equatable {
+    var only: Bool
+    var selection: FamilyActivitySelection
+
+    /// "Everything but 3 apps", "4 apps and 1 category". Whole categories can't be kept open, only apps.
+    var text: String {
+        let apps = selection.applicationTokens.count + selection.webDomainTokens.count
+        let categories = selection.categoryTokens.count
+        let appsText = "\(apps) app\(apps == 1 ? "" : "s")"
+        if !only { return apps == 0 ? "Everything" : "Everything but \(appsText)" }
+        let parts = [apps > 0 ? appsText : nil,
+                     categories > 0 ? "\(categories) categor\(categories == 1 ? "y" : "ies")" : nil].compactMap { $0 }
+        return parts.isEmpty ? "Nothing picked" : parts.joined(separator: " and ")
+    }
+}
+
 /// The locks and what they let through, kept in the App Group so the monitor and shield extensions read them with
 /// the app closed. The app writes; the extensions only read. Each lock shields through its own named store, so
 /// two locks that overlap don't undo each other when one ends.
@@ -24,6 +42,20 @@ enum LockBook {
         set { defaults?.set(try? JSONEncoder().encode(newValue), forKey: "screenAllowed") }
     }
 
+    /// The apps each lock picked for itself, by lock id. A lock without its own locks everything but `allowed`.
+    static var apps: [Int: LockApps] {
+        get {
+            let stored = defaults?.data(forKey: "screenApps").flatMap { try? JSONDecoder().decode([String: LockApps].self, from: $0) }
+            return Dictionary(uniqueKeysWithValues: (stored ?? [:]).compactMap { key, value in Int(key).map { ($0, value) } })
+        }
+        set {
+            let stored = Dictionary(uniqueKeysWithValues: newValue.map { (String($0.key), $0.value) })
+            defaults?.set(try? JSONEncoder().encode(stored), forKey: "screenApps")
+        }
+    }
+
+    static func apps(for id: Int) -> LockApps { apps[id] ?? LockApps(only: false, selection: allowed) }
+
     /// What each lock was last scheduled with, so a sync only restarts the ones that changed.
     static var scheduled: [String: String] {
         get { defaults?.dictionary(forKey: "screenScheduled") as? [String: String] ?? [:] }
@@ -38,12 +70,22 @@ enum LockBook {
 
     private static func store(_ id: Int) -> ManagedSettingsStore { ManagedSettingsStore(named: .init("lock-\(id)")) }
 
-    /// Shield everything but the allowed apps and sites.
+    /// Shield what the lock covers: only its apps, or everything but them.
     static func shield(_ id: Int) {
-        let allowed = allowed
+        let apps = apps(for: id)
+        let picked = apps.selection
         let store = store(id)
-        store.shield.applicationCategories = .all(except: allowed.applicationTokens)
-        store.shield.webDomainCategories = .all(except: allowed.webDomainTokens)
+        if apps.only {
+            store.shield.applications = picked.applicationTokens.isEmpty ? nil : picked.applicationTokens
+            store.shield.webDomains = picked.webDomainTokens.isEmpty ? nil : picked.webDomainTokens
+            store.shield.applicationCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+            store.shield.webDomainCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+        } else {
+            store.shield.applications = nil
+            store.shield.webDomains = nil
+            store.shield.applicationCategories = .all(except: picked.applicationTokens)
+            store.shield.webDomainCategories = .all(except: picked.webDomainTokens)
+        }
     }
 
     static func open(_ id: Int) {

@@ -1,8 +1,9 @@
 import FamilyControls
 import SwiftUI
 
-/// Settings → Screen Time (docs/API.md, "Screen Time"): allow it, pick what stays open, lock now, and the weekly
-/// locks. Coach sets them in chat too. Ending one early takes a reason and a short wait.
+/// Settings → Screen Time (docs/API.md, "Screen Time"): allow it, the apps a lock usually leaves open, lock now, and
+/// the weekly locks, each with its own apps if it wants (everything but a few at bedtime, only social apps while
+/// studying). Coach sets locks in chat too. Ending one early takes a reason and a short wait.
 struct ScreenTimeView: View {
     @EnvironmentObject private var screenTime: ScreenTimeService
     @State private var picking = false
@@ -25,16 +26,16 @@ struct ScreenTimeView: View {
                 }
             }
             Section {
-                Button {
-                    picking = true
-                } label: {
-                    LabeledContent("Stays open", value: screenTime.allowedCount == 0 ? "Nothing yet"
-                                   : "\(screenTime.allowedCount) app\(screenTime.allowedCount == 1 ? "" : "s")")
-                }
-                .disabled(!screenTime.isAuthorized)
+                PickRow(title: "Stays open", value: screenTime.allowedCount == 0 ? "Nothing yet"
+                        : "\(screenTime.allowedCount) app\(screenTime.allowedCount == 1 ? "" : "s")") { picking = true }
+                    .disabled(!screenTime.isAuthorized || screenTime.usualInUse)
+            } header: {
+                Text("Usually")
             } footer: {
-                Text("Everything else is locked during a lock. Calls and emergency always work. Pick Aide too, so you "
-                     + "can still end a lock early here, and anything you need on the way (Maps, your bank's app).")
+                Text(screenTime.usualInUse ? "A lock that uses these is on now: change them once it's over."
+                     : "For Lock now and the locks Coach sets: everything else is locked. Pick Aide too, so you can "
+                        + "still end a lock early, and what you need on the way (Maps, your bank). Calls always work. "
+                        + "Each lock can pick its own apps.")
             }
             Section {
                 if let (lock, until) = screenTime.current {
@@ -63,12 +64,13 @@ struct ScreenTimeView: View {
             }
             Section {
                 ForEach(screenTime.locks.filter { !$0.once }) { lock in
-                    NavigationLink { LockEditor(lock: lock) } label: { LockRow(lock: lock) }
+                    NavigationLink { LockEditor(lock: lock, apps: screenTime.apps(for: lock)) } label: { LockRow(lock: lock) }
                 }
                 ForEach(screenTime.locks.filter { $0.once && !$0.locked }) { lock in
                     LockRow(lock: lock)
                 }
-                Button("Add a lock") { adding = true }
+                Button { adding = true } label: { Label("Add a lock", systemImage: "plus") }
+                    .disabled(!screenTime.isAuthorized)
             } header: {
                 Text("Locks")
             } footer: {
@@ -82,7 +84,7 @@ struct ScreenTimeView: View {
         .navigationBarTitleDisplayMode(.inline)
         .familyActivityPicker(isPresented: $picking, selection: $screenTime.allowed)
         .sheet(item: $unlocking) { lock in UnlockSheet(lock: lock) }
-        .sheet(isPresented: $adding) { NavigationStack { LockEditor(lock: nil) } }
+        .sheet(isPresented: $adding) { NavigationStack { LockEditor(lock: nil, apps: LockApps(only: false, selection: screenTime.allowed)) } }
         .refreshable { await screenTime.sync() }
         .task { await screenTime.sync() }
     }
@@ -93,7 +95,26 @@ struct ScreenTimeView: View {
     }
 }
 
-/// Title, when, and who set it, with a switch for a weekly lock.
+/// A row that opens something: its value and a chevron, so it reads as tappable.
+private struct PickRow: View {
+    let title: String
+    let value: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(title).foregroundStyle(Color.primary)
+                Spacer()
+                Text(value).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+    }
+}
+
+/// Title, when, which apps, and who set it, with a switch for a weekly lock.
 private struct LockRow: View {
     @EnvironmentObject private var screenTime: ScreenTimeService
     let lock: ScreenLock
@@ -103,6 +124,7 @@ private struct LockRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(lock.title)
                 Text(lock.summary).font(.subheadline).foregroundStyle(.secondary)
+                Text(appsLine).font(.caption).foregroundStyle(.secondary)
                 if let note {
                     Text(note).font(.caption).foregroundStyle(.secondary)
                 }
@@ -117,6 +139,12 @@ private struct LockRow: View {
             }
         }
         .opacity(lock.enabled ? 1 : 0.6)
+    }
+
+    /// "Locks everything but 3 apps", "Locks 4 apps".
+    private var appsLine: String {
+        let text = screenTime.apps(for: lock).text
+        return text == "Nothing picked" ? "Locks nothing yet: pick its apps" : "Locks " + text.prefix(1).lowercased() + text.dropFirst()
     }
 
     private var note: String? {
@@ -143,15 +171,25 @@ private struct LockEditor: View {
     @State private var days: Set<Int>
     @State private var enabled: Bool
     @State private var isBusy = false
+    /// Lock only `blocked`, or everything but `kept`. Each mode keeps its own pick, so switching loses nothing.
+    @State private var only: Bool
+    @State private var kept: FamilyActivitySelection
+    @State private var blocked: FamilyActivitySelection
+    @State private var picking = false
 
-    init(lock: ScreenLock?) {
+    init(lock: ScreenLock?, apps: LockApps) {
         self.lock = lock
         _title = State(initialValue: lock?.title ?? "Bedtime")
         _start = State(initialValue: RoutineEditor.date(from: lock?.start ?? "23:00"))
         _end = State(initialValue: RoutineEditor.date(from: lock?.end ?? "07:00"))
         _days = State(initialValue: Set(lock?.days ?? []))
         _enabled = State(initialValue: lock?.enabled ?? true)
+        _only = State(initialValue: apps.only)
+        _kept = State(initialValue: apps.only ? LockBook.allowed : apps.selection)
+        _blocked = State(initialValue: apps.only ? apps.selection : FamilyActivitySelection())
     }
+
+    private var apps: LockApps { LockApps(only: only, selection: only ? blocked : kept) }
 
     var body: some View {
         Form {
@@ -168,6 +206,25 @@ private struct LockEditor: View {
                 Text(lock?.locked == true ? "It's on now: change it once it's over, or end it early."
                      : "A \"to\" before the \"from\" is the next morning. The days are the ones it starts on; none "
                         + "picked is every day.")
+            }
+            .listRowBackground(Theme.row)
+            .disabled(lock?.locked == true)
+            Section {
+                Picker("Lock", selection: $only) {
+                    Text("Everything except…").tag(false)
+                    Text("Only some apps").tag(true)
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                PickRow(title: only ? "Apps to lock" : "Stays open", value: appsValue) { picking = true }
+            } header: {
+                Text("Apps")
+            } footer: {
+                Text(only ? (blocked == FamilyActivitySelection() ? "Pick what to lock: nothing is locked until you do."
+                             : "Only these are locked; everything else stays open. Picking a category (Social) "
+                                + "covers apps you install later too.")
+                     : "Everything else is locked. Pick Aide too, so you can still end the lock early. Calls always "
+                        + "work. Pick single apps here: a whole category can't be kept open.")
             }
             .listRowBackground(Theme.row)
             .disabled(lock?.locked == true)
@@ -190,6 +247,7 @@ private struct LockEditor: View {
         }
         .scrollContentBackground(.hidden)
         .background(Theme.grouped)
+        .familyActivityPicker(isPresented: $picking, selection: only ? $blocked : $kept)
         .navigationTitle(lock?.title ?? "New lock")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -205,12 +263,17 @@ private struct LockEditor: View {
         }
     }
 
+    private var appsValue: String {
+        let text = apps.text
+        return only ? text : text == "Everything" ? "Nothing" : text.replacingOccurrences(of: "Everything but ", with: "")
+    }
+
     private func save() async {
         isBusy = true
         defer { isBusy = false }
         if await screenTime.save(lock, title: title.trimmingCharacters(in: .whitespaces),
                                  start: RoutineEditor.string(from: start), end: RoutineEditor.string(from: end),
-                                 days: days.sorted(), enabled: enabled) {
+                                 days: days.sorted(), enabled: enabled, apps: apps) {
             dismiss()
         }
     }

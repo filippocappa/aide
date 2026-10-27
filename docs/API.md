@@ -1328,6 +1328,9 @@ chat (`lock_now`, `add_lock_schedule`); ending one early there is queued and nee
 - Every change (from chat or the app) sends a silent `sync` push; the app fetches the list and sets the device's
   schedules (one DeviceActivity per lock, repeating daily for a schedule; the monitor checks `days` and
   `open_until` when it starts). It also syncs after every chat turn and when it opens.
+- Which apps a lock covers is picked on the phone and stays there (Apple's app tokens only mean something on that
+  device): the usual "everything but these", or per lock its own, either everything but some apps or only some
+  (`LockBook.apps`). A lock without its own, like one set in chat, uses the usual.
 - The app sends `PUT /v1/locks/device` when it opens and when Screen Time access or the allowed apps change, so the
   agents can say when locks won't hold.
 

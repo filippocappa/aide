@@ -10,14 +10,15 @@ import Foundation
 final class ScreenTimeService: ObservableObject {
     @Published private(set) var authorization: AuthorizationStatus
     @Published private(set) var locks: [ScreenLock] = LockBook.locks
-    /// The apps and sites that stay open in a lock.
+    /// The apps and sites that stay open in a lock without its own apps (Lock now, the ones Coach sets).
     @Published var allowed: FamilyActivitySelection = LockBook.allowed {
         didSet {
             LockBook.allowed = allowed
-            for lock in locks where LockBook.until(lock) != nil { LockBook.shield(lock.id) } // the new set, now
             Task { await report() }
         }
     }
+    /// The apps each lock picked for itself.
+    @Published private(set) var apps: [Int: LockApps] = LockBook.apps
     @Published private(set) var lastError: String?
 
     private let api: APIClient
@@ -29,11 +30,23 @@ final class ScreenTimeService: ObservableObject {
     }
 
     var isAuthorized: Bool { authorization == .approved }
-    var allowedCount: Int { allowed.applicationTokens.count + allowed.categoryTokens.count }
+    var allowedCount: Int { allowed.applicationTokens.count + allowed.webDomainTokens.count }
 
     /// The lock on now that ends last.
     var current: (lock: ScreenLock, until: Date)? {
         locks.compactMap { lock in LockBook.until(lock).map { (lock, $0) } }.max { $0.1 < $1.1 }
+    }
+
+    /// A lock on now uses the usual apps: they can't change until it's over (that would be unlocking early).
+    var usualInUse: Bool { locks.contains { apps[$0.id] == nil && LockBook.until($0) != nil } }
+
+    func apps(for lock: ScreenLock) -> LockApps { apps[lock.id] ?? LockApps(only: false, selection: allowed) }
+
+    /// A lock's own apps, or nil for the usual ones. Not for a lock that's on.
+    private func setApps(_ picked: LockApps?, for id: Int) {
+        let usual = LockApps(only: false, selection: allowed)
+        apps[id] = picked == usual ? nil : picked
+        LockBook.apps = apps
     }
 
     /// iOS asks once (Face ID or the passcode); after a no, only iOS Settings → Screen Time can change it.
@@ -95,6 +108,10 @@ final class ScreenTimeService: ObservableObject {
             if let id = LockBook.id(of: DeviceActivityName(key)), !known.contains(id) { LockBook.open(id) }
         }
         LockBook.scheduled = scheduled
+        if apps.keys.contains(where: { !known.contains($0) }) {
+            apps = apps.filter { known.contains($0.key) }
+            LockBook.apps = apps
+        }
         for lock in locks {
             if LockBook.until(lock) != nil { LockBook.shield(lock.id) } else { LockBook.open(lock.id) }
         }
@@ -111,15 +128,18 @@ final class ScreenTimeService: ObservableObject {
         await change { _ = try await self.api.createLock(NewLock(title: title, minutes: minutes)) }
     }
 
-    func save(_ lock: ScreenLock?, title: String, start: String, end: String, days: [Int], enabled: Bool) async -> Bool {
+    func save(_ lock: ScreenLock?, title: String, start: String, end: String, days: [Int], enabled: Bool,
+              apps picked: LockApps) async -> Bool {
         await change {
             if let lock {
                 _ = try await self.api.updateLock(lock.id, LockPatch(title: title, start: lock.locked ? nil : start,
                                                                      end: lock.locked ? nil : end,
                                                                      days: lock.locked ? nil : days,
                                                                      enabled: lock.locked ? nil : enabled))
+                if !lock.locked { self.setApps(picked, for: lock.id) }
             } else {
-                _ = try await self.api.createLock(NewLock(title: title, start: start, end: end, days: days))
+                let made = try await self.api.createLock(NewLock(title: title, start: start, end: end, days: days))
+                self.setApps(picked, for: made.id)
             }
         }
     }
