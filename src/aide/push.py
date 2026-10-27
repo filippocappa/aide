@@ -206,7 +206,8 @@ class Push:
     # -- silent sync -------------------------------------------------------
 
     def request_sync(self) -> None:
-        """Reminders changed on the server: tell the phone to sync, at most once per SYNC_EVERY seconds."""
+        """Reminders (or a count the phone writes to Health) changed on the server: tell the phone to sync, at most
+        once per SYNC_EVERY seconds."""
         if not self.enabled:
             return
         if self._sync_task and not self._sync_task.done():

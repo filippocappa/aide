@@ -891,6 +891,11 @@ means 0.
   is then the larger of Health's number and what was logged here, so one logged in both places counts once. `/count`
   adds to the count as shown (Health's included); taking back can't go below Health's number. `400` on a habit
   that isn't a limit habit, or for another value.
+- `health_logged` (since 2026-10-27, only on habits with `health`): each local date in the last 7 days with
+  something logged through Aide (the app, a widget, or an agent's `count_habit`), net of take-backs, to that number:
+  `{"2026-10-27": 2}`. The app writes these to Health as its own Inhaler Usage samples, so the user needn't log
+  twice: for each of the last 7 days it adds or deletes its own samples (never the user's) until they match
+  (`{}` or a missing day: 0). The server sends a `sync` push after each count on such a habit.
 
 `history` is every local date the habit was checked (or done, for the two kinds above) in the last 26 weeks (182
 days, today included), newest first, for a GitHub-style grid. Every endpoint that returns a Habit includes it,
@@ -1263,7 +1268,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 
 | `aide.kind` | Type | When | Extra fields | On tap |
 |---|---|---|---|---|
-| `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server | | (not shown) the app runs a reminders sync |
+| `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server, or a habit with `health` was counted | | (not shown) the app runs a reminders sync and writes `health_logged` to Health |
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
 | `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens Today on the digest (since 2026-10-26; before: a new chat with it) |
 | `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |

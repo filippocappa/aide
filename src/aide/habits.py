@@ -8,7 +8,8 @@ A food habit is also done on the days the food log meets its metric (worked out 
 is a daily count that has to stay at or under its max: a day is done once it has ended within the limit, from the
 day it became a limit habit; nothing logged is 0. A limit habit can also count from Apple Health (`health`, e.g.
 inhaler_usage, the field of the health day the app uploads): a day's count is then the larger of Health's number and
-what was logged here, so one logged in both places counts once.
+what was logged here, so one logged in both places counts once. What's logged here is also written to Health by the
+phone (`health_logged`: each day's net count logged through Aide, which the phone's own Health samples follow).
 """
 
 import json
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS habit_counts (
     habit_id INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
     day      TEXT NOT NULL,
     count    INTEGER NOT NULL,
+    logged   INTEGER NOT NULL DEFAULT 0, -- of it, logged through Aide (net): the phone writes these to Health
     PRIMARY KEY (habit_id, day)
 );
 -- Workouts that already checked a habit, so undoing the check isn't redone by the next upload.
@@ -58,6 +60,7 @@ HISTORY_DAYS = 182  # 26 weeks, for the app's grid
 MIN_WORKOUT = 10  # minutes a workout must last to check a habit
 MAX_LIMIT = 100
 HEALTH_COUNTS = ("inhaler_usage",)  # health day fields a limit habit can count from
+HEALTH_WRITE_DAYS = 7  # the days the phone keeps Health's samples in line with what was logged here
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,7 @@ class Habit:
     count: int | None = None  # a limit habit: today's count
     counts: tuple[tuple[date, int], ...] = ()  # a limit habit: days over 0 in the last HISTORY_DAYS, newest first
     health: str | None = None  # a limit habit: the Apple Health count it follows
+    health_logged: tuple[tuple[date, int], ...] = ()  # with health: logged here in the last HEALTH_WRITE_DAYS
 
     @property
     def cadence(self) -> dict:
@@ -88,7 +92,8 @@ class Habit:
                 "done_today": self.done_today, "last_done": self.last_done.isoformat() if self.last_done else None,
                 "history": [d.isoformat() for d in self.history], "workouts": list(self.workouts),
                 "food": self.food, "count": self.count, "counts": {d.isoformat(): n for d, n in self.counts},
-                "health": self.health}
+                "health": self.health,
+                **({"health_logged": {d.isoformat(): n for d, n in self.health_logged}} if self.health else {})}
 
 
 def monday(d: date) -> date:
@@ -120,6 +125,7 @@ class HabitStore:
         self.tz = tz
         self.food = food  # food.FoodStore: food habits tick from it; without it they're ticked by hand only
         self.health_days = health  # health.HealthStore: limit habits with `health` count from it
+        self.on_health_count: list = []  # called when a habit with `health` is counted (the phone writes it to Health)
         if self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'habits'").fetchone():
             have = {c["name"] for c in self.conn.execute("PRAGMA table_info(habits)")}
             for column, kind in (("workouts", "TEXT NOT NULL DEFAULT '[]'"), ("max_count", "INTEGER"),
@@ -127,6 +133,8 @@ class HabitStore:
                 if column not in have:
                     self.conn.execute(f"ALTER TABLE habits ADD COLUMN {column} {kind}")
         self.conn.executescript(SCHEMA)
+        if "logged" not in {c["name"] for c in self.conn.execute("PRAGMA table_info(habit_counts)")}:
+            self.conn.execute("ALTER TABLE habit_counts ADD COLUMN logged INTEGER NOT NULL DEFAULT 0")
 
     def today(self) -> date:
         return datetime.now(self.tz).date()
@@ -191,10 +199,14 @@ class HabitStore:
             run, d = 0, today - timedelta(days=1)
             while within and d in days:
                 run, d = run + 1, d - timedelta(days=1)
+            logged = tuple(self.conn.execute(
+                "SELECT day, logged FROM habit_counts WHERE habit_id = ? AND day > ? AND logged > 0 ORDER BY day DESC",
+                (row["id"], (today - timedelta(days=HEALTH_WRITE_DAYS)).isoformat())).fetchall()) if row["health"] else ()
             return Habit(id=row["id"], name=row["name"], per_week=None, streak=run, done_today=within,
                          last_done=max(days, default=None), this_week=0, history=history,
                          workouts=tuple(json.loads(row["workouts"])), max_count=row["max_count"], count=count,
-                         counts=counts, health=row["health"])
+                         counts=counts, health=row["health"],
+                         health_logged=tuple((date.fromisoformat(d), n) for d, n in logged))
         return Habit(
             id=row["id"], name=row["name"], per_week=row["per_week"],
             streak=streak(days, row["per_week"], today), done_today=today in days,
@@ -342,7 +354,8 @@ class HabitStore:
 
     def count(self, habit_id: int, add: int = 1, day: date | None = None) -> Habit:
         """Add to a limit habit's count for a day (default today); a negative `add` takes some back, never below 0.
-        It adds to the day's count as shown, Health's included; taking back can't go under Health's number."""
+        It adds to the day's count as shown, Health's included; taking back can't go under Health's number.
+        Only what was logged here can be taken back from Health: the phone deletes its own samples, not the user's."""
         if self.find(habit_id).max_count is None:
             raise ValueError("only a limit habit has a count: check this one instead")
         day = day or self.today()
@@ -350,12 +363,18 @@ class HabitStore:
             raise ValueError("can't count for a day that hasn't come yet")
         row = self.conn.execute("SELECT * FROM habits WHERE id = ?", (habit_id,)).fetchone()
         new = max(0, self._counts(row, day, day).get(day, 0) + int(add))
+        before = self.conn.execute("SELECT logged FROM habit_counts WHERE habit_id = ? AND day = ?",
+                                   (habit_id, day.isoformat())).fetchone()
+        logged = min(new, max(0, (before["logged"] if before else 0) + int(add)))
         if new:
-            self.conn.execute("INSERT INTO habit_counts (habit_id, day, count) VALUES (?, ?, ?) "
-                              "ON CONFLICT(habit_id, day) DO UPDATE SET count = excluded.count",
-                              (habit_id, day.isoformat(), new))
+            self.conn.execute("INSERT INTO habit_counts (habit_id, day, count, logged) VALUES (?, ?, ?, ?) "
+                              "ON CONFLICT(habit_id, day) DO UPDATE SET count = excluded.count, logged = excluded.logged",
+                              (habit_id, day.isoformat(), new, logged))
         else:
             self.conn.execute("DELETE FROM habit_counts WHERE habit_id = ? AND day = ?", (habit_id, day.isoformat()))
+        if row["health"]:
+            for callback in self.on_health_count:
+                callback()
         return self.find(habit_id)
 
     def delete(self, habit_id: int) -> bool:

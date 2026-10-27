@@ -78,7 +78,8 @@ def habit_tools(store: HabitStore) -> list[Tool]:
              "habits (count_habit). Runs immediately.",
              _obj({**hid, **date, "done": {"type": "boolean"}}, ["habit_id"]), check_habit),
         Tool("count_habit", "Log one (or add more) for a limit habit, e.g. the user had a coffee. add=-1 takes "
-             "one back. Runs immediately.",
+             "one back. For a habit that counts from Apple Health, the phone also writes it there (Inhaler Usage), "
+             "so the user needn't log it twice. Runs immediately.",
              _obj({**hid, "add": {"type": "integer", "description": "default 1"}, **date}, ["habit_id"]),
              count_habit),
         Tool("delete_habit", "Stop tracking a habit and drop its history. Needs the user's confirmation: it is "

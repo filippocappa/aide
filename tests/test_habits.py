@@ -200,6 +200,29 @@ def test_limit_habit_counts_from_apple_health_too(api):
     assert off["health"] is None and off["count"] == 4  # what was logged here
 
 
+def test_what_is_logged_here_is_written_to_health(api):
+    client, _, habits = api()
+    today = habits.today()
+    coffee = habits.add("Coffee", max_count=5, health="inhaler_usage")
+    pushes = []
+    habits.on_health_count.append(lambda: pushes.append(1))
+    client.post("/v1/health/days", json={"days": [{"date": today.isoformat(), "inhaler_usage": 2}]}, headers=AUTH)
+    assert client.get("/v1/habits", headers=AUTH).json()["habits"][0]["health_logged"] == {}
+    # Two logged here, on top of Health's 2: the phone writes those two to Health, and is told to.
+    client.post(f"/v1/habits/{coffee.id}/count", json={"add": 2}, headers=AUTH)
+    h = client.get("/v1/habits", headers=AUTH).json()["habits"][0]
+    assert h["count"] == 4 and h["health_logged"] == {today.isoformat(): 2} and len(pushes) == 1
+    # Health catches up (2 of the user's own + the phone's 2): still 4. Taking one back takes back one of Aide's.
+    client.post("/v1/health/days", json={"days": [{"date": today.isoformat(), "inhaler_usage": 4}]}, headers=AUTH)
+    after = client.post(f"/v1/habits/{coffee.id}/count", json={"add": -1}, headers=AUTH).json()
+    assert after["health_logged"] == {today.isoformat(): 1}
+    habits.count(coffee.id, -5)
+    assert habits.find(coffee.id).health_logged == ()
+    plain = habits.add("Coffee", max_count=3)
+    habits.count(plain.id)
+    assert "health_logged" not in plain.as_json() and len(pushes) == 3
+
+
 @pytest.mark.parametrize("body", [
     {"name": "X", "cadence": {"type": "limit"}}, {"name": "X", "cadence": {"type": "limit", "max": 0}},
     {"name": "X", "cadence": {"type": "limit", "max": 101}}, {"name": "X", "food": "pizza"},
