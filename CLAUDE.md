@@ -239,6 +239,9 @@ a place (or one from memory: lectures are at the uni), Maps' transit ways from t
 prefers (the 10 to uni), else on a frequent GTT line; ~45 min before leaving, its first ride becomes a one-off tram alert
 (`event` on the alert), so the usual "Tram 4 in 7 min: leave now" comes. On/off in Settings → Location and trams →
 Tram alerts (`/v1/transit/settings`). Not yet tried on the phone.
+Tram alerts (2026-10-27): leave-now 3 min before it's time to leave, at the stop 2 min early; the push and the Live
+Activity say where the tram is (stops to go, the stop it's near, or when it leaves its first stop, drawn as a track)
+and "GTT live down" when GTT's feed isn't answering (it was down 07:32–07:58 on 2026-10-27).
 
 **Done, both sides (2026-10-22), not yet tried on the phone:** mail drafts (#7, contract in `docs/API.md`, "Mail
 drafts"). Server (live, `drafts.py`): before the evening digest Secretary reads the last 3 days' inbox (each message
@@ -275,7 +278,8 @@ leaves habits out of a day's objectives, and Coach sees each limit habit's last 
 Intent (Shortcuts, Action Button), the Health widget's +, a Control Center control (iOS 18,
 `AideWidgets/HabitControl.swift`). A limit habit can count from Apple Health (`health: "inhaler_usage"`: the user logs
 coffees as Inhaler Usage; the day's count is the larger of Health's and the app's). "Coffee" (at most 5) is set up
-that way.
+that way. Counts logged through Aide (an agent, the app, a widget) go back to Health (2026-10-27): the server keeps each
+day's `health_logged` and the app makes its own Inhaler Usage samples match, never touching the user's.
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from

@@ -22,7 +22,11 @@ struct TramLiveActivity: Widget {
                     Text(a.towards.map { "to \($0)" } ?? a.stop).font(.subheadline).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    TramDetails(attributes: a, state: s).padding(.horizontal, 4)
+                    VStack(spacing: 8) {
+                        TramTrack(state: s, color: LineBadge(line: a.line, vehicle: a.vehicle).color)
+                        TramDetails(attributes: a, state: s)
+                    }
+                    .padding(.horizontal, 4)
                 }
             } compactLeading: {
                 LineBadge(line: a.line, vehicle: a.vehicle, compact: true)
@@ -51,7 +55,7 @@ struct TramCountdown: View {
     }
 }
 
-/// When to leave, the walk, live or timetable, and the next one.
+/// When to leave, the walk, live (or timetable, or GTT's feed down), and the next one.
 struct TramDetails: View {
     let attributes: TramActivityAttributes
     let state: TramActivityAttributes.ContentState
@@ -69,7 +73,10 @@ struct TramDetails: View {
             }
             Spacer(minLength: 0)
             if state.live {
-                Text(delayText).foregroundStyle(state.delay ?? 0 > 60 ? .orange : .green)
+                Label(delayText, systemImage: "dot.radiowaves.left.and.right")
+                    .foregroundStyle(state.delay ?? 0 > 60 ? .orange : .green)
+            } else if state.feedDown == true {
+                Label("GTT live down", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             } else {
                 Text("Timetable").foregroundStyle(.secondary)
             }
@@ -87,13 +94,56 @@ struct TramDetails: View {
     }
 }
 
+/// Where the tram is: a dot per stop it has still to reach (up to 5), then yours, with a line on what it's near.
+struct TramTrack: View {
+    let state: TramActivityAttributes.ContentState
+    let color: Color
+
+    private static let shown = 5
+
+    var body: some View {
+        if let stops = state.stops, !state.gone {
+            VStack(alignment: .leading, spacing: 5) {
+                ZStack {
+                    Capsule().fill(.secondary.opacity(0.35)).frame(height: 2)
+                    HStack(spacing: 0) {
+                        Image(systemName: "tram.fill").font(.caption2.weight(.bold)).foregroundStyle(.white)
+                            .padding(4).background(color, in: Circle())
+                        if stops > Self.shown {
+                            Spacer(minLength: 2)
+                            Text("···").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                        }
+                        ForEach(0..<min(stops, Self.shown), id: \.self) { _ in
+                            Spacer(minLength: 2)
+                            Circle().fill(.secondary).frame(width: 6, height: 6)
+                        }
+                        Spacer(minLength: 2)
+                        Circle().strokeBorder(color, lineWidth: 3).frame(width: 14, height: 14)
+                            .background(Circle().fill(.background))
+                    }
+                }
+                Text(caption(stops)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+    }
+
+    private func caption(_ stops: Int) -> String {
+        let away = stops == 0 ? "Your stop is next" : "\(stops) stop\(stops == 1 ? "" : "s") away"
+        guard let near = state.near else { return away }
+        if let starts = state.startsDate {
+            return "\(away) · leaves \(near) at \(starts.formatted(date: .omitted, time: .shortened))"
+        }
+        return "\(away) · near \(near)"
+    }
+}
+
 struct TramLockScreen: View {
     let attributes: TramActivityAttributes
     let state: TramActivityAttributes.ContentState
     let stale: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 LineBadge(line: attributes.line, vehicle: attributes.vehicle)
                 VStack(alignment: .leading, spacing: 1) {
@@ -107,6 +157,7 @@ struct TramLockScreen: View {
                     Text(state.atDate, style: .time).font(.caption2).foregroundStyle(.secondary)
                 }
             }
+            TramTrack(state: state, color: LineBadge(line: attributes.line, vehicle: attributes.vehicle).color)
             TramDetails(attributes: attributes, state: state)
             if stale && !state.gone {
                 Text("Not updated for a while: times may be off.").font(.caption2).foregroundStyle(.secondary)

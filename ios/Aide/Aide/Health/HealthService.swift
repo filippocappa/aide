@@ -1,7 +1,8 @@
 import HealthKit
 
 /// Reads Apple Health and sends the server one summary per day (docs/API.md, "Apple Health"). Raw samples
-/// stay on the phone. Also sends the wake-up signal for the "I'm up" shortcut.
+/// stay on the phone. Also sends the wake-up signal for the "I'm up" shortcut, and writes the habit counts logged
+/// through Aide to Health's Inhaler Usage (`health_logged`, docs/API.md "Habits").
 @MainActor
 final class HealthService: ObservableObject {
     let isAvailable = HKHealthStore.isHealthDataAvailable()
@@ -26,6 +27,9 @@ final class HealthService: ObservableObject {
     private var observing = false
     /// Another upload was asked for while one was running.
     private var uploadAgain = false
+    private var isWriting = false
+    /// Another write was asked for while one was running.
+    private var writeAgain = false
 
     init(api: APIClient) {
         self.api = api
@@ -46,19 +50,21 @@ final class HealthService: ObservableObject {
         sleep, restingHR, hrv, respiratory, wristTemp, steps, activeEnergy, exercise, inhaler,
         HKObjectType.workoutType(),
     ]
+    /// Inhaler Usage: a limit habit's counts logged through Aide are written there (the user logs coffees in it).
+    private static let shareTypes: Set<HKSampleType> = [inhaler]
 
     // MARK: Permission and background delivery
 
     func refreshStatus() async {
         guard isAvailable else { return }
-        let status = try? await store.statusForAuthorizationRequest(toShare: [], read: Self.readTypes)
+        let status = try? await store.statusForAuthorizationRequest(toShare: Self.shareTypes, read: Self.readTypes)
         hasAsked = status == .unnecessary
     }
 
     func requestAccess() async {
         guard isAvailable else { return }
         do {
-            try await store.requestAuthorization(toShare: [], read: Self.readTypes)
+            try await store.requestAuthorization(toShare: Self.shareTypes, read: Self.readTypes)
             UserDefaults.standard.set(false, forKey: Keys.backfilled) // newly allowed kinds need their history
             await refreshStatus()
             await startObserving()
@@ -72,7 +78,7 @@ final class HealthService: ObservableObject {
     func startObserving() async {
         await refreshStatus()
         if !hasAsked, !observing, UserDefaults.standard.object(forKey: Keys.backfilled) != nil {
-            // Allowed before, but there's a new kind to read (Inhaler Usage): ask for it; that comes back here.
+            // Allowed before, but there's a new kind to read or write (Inhaler Usage): ask; that comes back here.
             return await requestAccess()
         }
         guard hasAsked, !observing else { return }
@@ -138,6 +144,70 @@ final class HealthService: ObservableObject {
             lastError = error.localizedDescription
             return .retry
         }
+    }
+
+    // MARK: Writing habit counts
+
+    /// Makes the app's own Inhaler Usage samples on each of the last 7 days match what was logged through Aide
+    /// (`health_logged` on habits that count from Health), adding or deleting only the app's samples, never the
+    /// user's. After a count here, a `sync` push (an agent's or a widget's count) and on foreground.
+    func writeLogged() async {
+        guard isAvailable, hasAsked, store.authorizationStatus(for: Self.inhaler) == .sharingAuthorized else { return }
+        if isWriting {
+            writeAgain = true
+            return
+        }
+        isWriting = true
+        defer { isWriting = false }
+        repeat {
+            writeAgain = false
+            do {
+                if try await write(api.habits()) { _ = await upload(days: 7) }
+            } catch {
+                lastError = error.localizedDescription
+                return
+            }
+        } while writeAgain
+    }
+
+    /// True if Health changed.
+    private func write(_ habits: [Habit]) async throws -> Bool {
+        guard habits.contains(where: { $0.health == "inhaler_usage" }) else { return false }
+        var wanted: [String: Int] = [:]
+        for habit in habits where habit.health == "inhaler_usage" {
+            for (day, count) in habit.healthLogged ?? [:] { wanted[day, default: 0] += count }
+        }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        var changed = false
+        for back in 0..<7 {
+            guard let day = calendar.date(byAdding: .day, value: -back, to: today),
+                  let next = calendar.date(byAdding: .day, value: 1, to: day) else { continue }
+            let own = try await ownInhalerSamples(from: day, to: next) // newest first
+            let want = wanted[Wire.dayString(day)] ?? 0
+            if own.count < want {
+                let at = back == 0 ? Date() : calendar.date(byAdding: .hour, value: 12, to: day) ?? day
+                let one = HKQuantity(unit: .count(), doubleValue: 1)
+                try await store.save((own.count..<want).map { _ in
+                    HKQuantitySample(type: Self.inhaler, quantity: one, start: at, end: at)
+                })
+                changed = true
+            } else if own.count > want {
+                try await store.delete(Array(own.prefix(own.count - want)))
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    private func ownInhalerSamples(from: Date, to: Date) async throws -> [HKQuantitySample] {
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            HKQuery.predicateForSamples(withStart: from, end: to, options: .strictStartDate),
+            HKQuery.predicateForObjects(from: .default()),
+        ])
+        let query = HKSampleQueryDescriptor(predicates: [.quantitySample(type: Self.inhaler, predicate: predicate)],
+                                            sortDescriptors: [SortDescriptor(\.startDate, order: .reverse)])
+        return try await query.result(for: store)
     }
 
     // MARK: Wake-up

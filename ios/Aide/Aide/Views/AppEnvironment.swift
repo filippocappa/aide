@@ -98,6 +98,7 @@ final class AppEnvironment: ObservableObject {
         await digestLoad
         await pushRefresh
         _ = await healthUpload
+        await health.writeLogged()
     }
 
     /// A tapped notification (docs/API.md, Push).

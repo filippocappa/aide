@@ -407,6 +407,8 @@ struct Habit: Decodable, Identifiable, Hashable {
     var counts: [String: Int]? = nil
     /// A limit habit that also counts from Apple Health: "inhaler_usage". nil: logged here only.
     var health: String? = nil
+    /// With `health`: what was logged through Aide on each of the last 7 days, which the app writes to Health.
+    var healthLogged: [String: Int]? = nil
 
     var isLimit: Bool { cadence.type == "limit" }
     var isWeekly: Bool { cadence.type == "weekly" }

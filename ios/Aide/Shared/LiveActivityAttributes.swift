@@ -21,8 +21,22 @@ struct TramActivityAttributes: ActivityAttributes {
         var next: Double?
         /// The tram has left the stop.
         var gone: Bool
+        /// Stops it has still to reach before yours (0: yours is its next). nil from older servers, or not known.
+        var stops: Int? = nil
+        /// The stop it's at or has just left (its first stop, before it sets off).
+        var near: String? = nil
+        /// When it leaves its first stop, if it hasn't yet.
+        var starts: Double? = nil
+        /// GTT's live feed isn't coming through: every tram is on the timetable.
+        var feedDown: Bool? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case at, leave, walk, live, delay, next, gone, stops, near, starts
+            case feedDown = "feed_down"
+        }
 
         var atDate: Date { Date(timeIntervalSince1970: at) }
+        var startsDate: Date? { starts.map(Date.init(timeIntervalSince1970:)) }
         var leaveDate: Date? { leave.map(Date.init(timeIntervalSince1970:)) }
         var nextDate: Date? { next.map(Date.init(timeIntervalSince1970:)) }
     }

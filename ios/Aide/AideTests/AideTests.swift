@@ -419,6 +419,16 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(t.atDate, Date(timeIntervalSince1970: 1792483800))
         XCTAssertEqual(t.leaveDate, Date(timeIntervalSince1970: 1792483380))
         XCTAssertEqual(t.walk, 300)
+        XCTAssertNil(t.stops)
+        let placed = """
+        {"at": 1792483800, "live": false, "gone": false, "stops": 8, "near": "Statuto Cap", "starts": 1792483300,
+         "feed_down": true}
+        """
+        let p = try JSONDecoder().decode(TramActivityAttributes.ContentState.self, from: Data(placed.utf8))
+        XCTAssertEqual(p.stops, 8)
+        XCTAssertEqual(p.near, "Statuto Cap")
+        XCTAssertEqual(p.startsDate, Date(timeIntervalSince1970: 1792483300))
+        XCTAssertEqual(p.feedDown, true)
         let bare = #"{"at": 1792483800, "live": false, "gone": true}"#
         let b = try JSONDecoder().decode(TramActivityAttributes.ContentState.self, from: Data(bare.utf8))
         XCTAssertNil(b.leaveDate)

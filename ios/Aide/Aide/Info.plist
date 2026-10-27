@@ -41,6 +41,8 @@
 	<string>Aide uses the camera when you take a photo to send, like a meal to log.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Aide reads your sleep, heart rate, HRV, steps and workouts to write your wake-up briefing and tick off workout habits.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Aide writes the coffees you log through it to Inhaler Usage, so you don't have to log them twice.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>With Always, tram alerts know the walk to the stop with the app closed. Aide sends your location only when you move about 500 m or an alert is about to fire.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

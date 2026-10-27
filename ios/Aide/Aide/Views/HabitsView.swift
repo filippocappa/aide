@@ -181,6 +181,7 @@ enum HabitActions {
         if add > 0 { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
         do { replace(try await env.api.countHabit(habit.id, add: add), in: habits); problem.wrappedValue = nil }
         catch { problem.wrappedValue = error.localizedDescription }
+        if habit.health != nil { await env.health.writeLogged() }
     }
 
     static func replace(_ habit: Habit, in habits: Binding<[Habit]>) {
