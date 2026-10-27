@@ -44,7 +44,9 @@ class CalendarBackend(Protocol):
     def get(self, uid: str) -> CalEvent | None: ...
     def create(self, calendar: str, title: str, start: date | datetime, end: date | datetime,
                location: str = "", notes: str = "") -> CalEvent: ...
-    def move(self, uid: str, start: date | datetime, end: date | datetime) -> CalEvent: ...
+    def update(self, uid: str, *, start: date | datetime | None = None, end: date | datetime | None = None,
+               calendar: str | None = None, title: str | None = None, location: str | None = None,
+               notes: str | None = None) -> CalEvent: ...
     def delete(self, uid: str) -> None: ...
 
 
@@ -178,23 +180,46 @@ class ICloudCalendar:
         self._where[created.uid] = (calendar, str(obj.url))
         return created
 
-    def move(self, uid, start, end) -> CalEvent:
+    def update(self, uid, *, start=None, end=None, calendar=None, title=None, location=None, notes=None) -> CalEvent:
+        """Change what's given and leave the rest. A new calendar moves the event there, keeping its UID."""
         found = self._find(uid)
         if not found:
             raise KeyError(f"no event with id {uid}")
         name, obj = found
         if _event_from_component(obj.icalendar_component, name).recurring:
             raise RecurringEventError("recurring events can't be changed by Aide yet")
+        cals = self._cals()
+        if calendar is not None and calendar not in cals:
+            raise KeyError(f"no calendar named {calendar!r}; available: {', '.join(cals)}")
+        original = obj.icalendar_instance.to_ical().decode()
         with obj.edit_icalendar_component() as comp:
-            for key in ("DTSTART", "DTEND", "DURATION"):
-                comp.pop(key, None)
-            comp.add("dtstart", start)
-            comp.add("dtend", end)
+            if start is not None:
+                for key in ("DTSTART", "DTEND", "DURATION"):
+                    comp.pop(key, None)
+                comp.add("dtstart", start)
+                comp.add("dtend", end)
+            for key, value in (("SUMMARY", title), ("LOCATION", location), ("DESCRIPTION", notes)):
+                if value is not None:
+                    comp.pop(key, None)
+                    if value:
+                        comp.add(key.lower(), value)
             comp["SEQUENCE"] = int(comp.get("SEQUENCE", 0)) + 1
         with obj.edit_icalendar_instance() as cal:
             cal.add_missing_timezones()
-        obj.save()
-        return _event_from_component(obj.icalendar_component, name)
+        if calendar is None or calendar == name:
+            obj.save()
+            return _event_from_component(obj.icalendar_component, name)
+        # CalDAV has no "change calendar": the event is written into the new one under the same UID. The old copy
+        # goes first, so the UID is never in two calendars at once, and comes back if the new one can't be written.
+        data = obj.icalendar_instance.to_ical().decode()
+        obj.delete()
+        try:
+            new = cals[calendar].add_event(data)
+        except Exception:
+            cals[name].add_event(original)
+            raise
+        self._where[uid] = (calendar, str(new.url))
+        return _event_from_component(obj.icalendar_component, calendar)
 
     def delete(self, uid) -> None:
         found = self._find(uid)

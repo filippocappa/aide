@@ -18,7 +18,7 @@ DETAIL = 280  # characters of detail kept
 
 # What a tool that changes something did, in the past tense. Others read as their name.
 LABELS = {
-    "create_event": "Added an event", "move_event": "Moved an event", "delete_event": "Deleted an event",
+    "create_event": "Added an event", "edit_event": "Changed an event", "delete_event": "Deleted an event",
     "create_reminder": "Added a reminder", "update_reminder": "Changed a reminder",
     "complete_reminder": "Completed a reminder", "delete_reminder": "Deleted a reminder",
     "send_mail": "Sent a mail", "reply_mail": "Replied to a mail",

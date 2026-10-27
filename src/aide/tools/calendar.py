@@ -1,4 +1,4 @@
-"""Calendar tools. Moving and deleting events wait for the user's !yes."""
+"""Calendar tools. Changing and deleting events wait for the user's !yes."""
 
 import asyncio
 from datetime import date, datetime, time, timedelta
@@ -111,18 +111,46 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
         ev = await asyncio.to_thread(cal.create, calendar, title, s, e, location or "", notes or "")
         return "Created: " + fmt(ev)
 
-    async def move_event(event_id: str, new_start: str, new_end: str) -> str:
-        s, e = parse_range(new_start, new_end)
-        ev = await asyncio.to_thread(cal.move, event_id, s, e)
-        return "Moved: " + fmt(ev)
+    def edits(new_start, new_end, calendar, title, location, notes) -> dict:
+        changes = {k: v for k, v in (("calendar", calendar), ("title", title), ("location", location),
+                                     ("notes", notes)) if v is not None}
+        if (new_start is None) != (new_end is None):
+            raise ValueError("give both new_start and new_end, or neither")
+        if new_start is not None:
+            changes["start"], changes["end"] = parse_range(new_start, new_end)
+        if not changes:
+            raise ValueError("nothing to change")
+        return changes
 
-    async def describe_move(event_id: str, new_start: str, new_end: str) -> str:
+    async def edit_event(event_id: str, new_start: str | None = None, new_end: str | None = None,
+                         calendar: str | None = None, title: str | None = None, location: str | None = None,
+                         notes: str | None = None) -> str:
+        changes = edits(new_start, new_end, calendar, title, location, notes)
+        ev = await asyncio.to_thread(lambda: cal.update(event_id, **changes))
+        return "Changed: " + fmt(ev)
+
+    async def describe_edit(event_id: str, new_start: str | None = None, new_end: str | None = None,
+                            calendar: str | None = None, title: str | None = None, location: str | None = None,
+                            notes: str | None = None) -> str:
         ev = await lookup(event_id)
         if ev.recurring:
             raise ValueError("recurring events can't be changed by Aide yet; edit it on your iPhone")
-        s, e = parse_range(new_start, new_end)
-        target = CalEvent(ev.uid, ev.calendar, ev.title, s, e)
-        return f"Move '{ev.title}' from {when(ev)} to {when(target)}"
+        changes = edits(new_start, new_end, calendar, title, location, notes)
+        if calendar is not None and calendar not in await asyncio.to_thread(cal.calendars):
+            raise ValueError(f"no calendar named {calendar!r}; see list_calendars")
+        target = CalEvent(ev.uid, ev.calendar, ev.title, changes["start"], changes["end"]) if "start" in changes else None
+        if set(changes) == {"start", "end"}:
+            return f"Move '{ev.title}' from {when(ev)} to {when(target)}"
+        parts = [f"time to {when(target)}"] if target else []
+        if calendar is not None and calendar != ev.calendar:
+            parts.append(f"from {ev.calendar} to {calendar}")
+        if title is not None:
+            parts.append(f"title to '{title}'")
+        if location is not None:
+            parts.append(f"place to {location}" if location else "no place")
+        if notes is not None:
+            parts.append("new notes" if notes else "no notes")
+        return f"Change '{ev.title}' on {when(ev)}: {', '.join(parts) or 'nothing'}"
 
     async def delete_event(event_id: str) -> str:
         ev = await lookup(event_id)
@@ -157,13 +185,18 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
                    "location": {"type": "string"},
                    "notes": {"type": "string"}},
                   ["title", "start", "end", "calendar"]), create_event),
-        Tool("move_event", "Move an event to a new time. Needs the user's confirmation: it is queued, "
-             "and runs only when the user replies !yes.",
+        Tool("edit_event", "Change an event: its time, its calendar (moves it to another calendar), title, "
+             "place or notes. Give only what changes. Needs the user's confirmation: it is queued, and runs only "
+             "when the user replies !yes.",
              _obj({"event_id": {"type": "string"},
-                   "new_start": {"type": "string", "description": DATETIME_HELP},
-                   "new_end": {"type": "string", "description": DATETIME_HELP}},
-                  ["event_id", "new_start", "new_end"]),
-             move_event, confirm=True, describe=describe_move, target_arg="event_id"),
+                   "new_start": {"type": "string", "description": DATETIME_HELP + " With new_end."},
+                   "new_end": {"type": "string", "description": DATETIME_HELP + " With new_start."},
+                   "calendar": {"type": "string", "description": "Exact calendar name from list_calendars."},
+                   "title": {"type": "string"},
+                   "location": {"type": "string", "description": "The place; an empty string removes it."},
+                   "notes": {"type": "string", "description": "Replaces the notes; an empty string removes them."}},
+                  ["event_id"]),
+             edit_event, confirm=True, describe=describe_edit, target_arg="event_id"),
         Tool("delete_event", "Delete an event. Needs the user's confirmation: it is queued, "
              "and runs only when the user replies !yes.",
              _obj({"event_id": {"type": "string"}}, ["event_id"]),

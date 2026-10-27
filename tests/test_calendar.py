@@ -37,10 +37,11 @@ class FakeCalendar:
         self.store[ev.uid] = ev
         return ev
 
-    def move(self, uid, start, end):
+    def update(self, uid, *, start=None, end=None, calendar=None, title=None, location=None, notes=None):
         if self.store[uid].recurring:
             raise RecurringEventError("recurring")
-        self.store[uid] = replace(self.store[uid], start=start, end=end)
+        given = dict(start=start, end=end, calendar=calendar, title=title, location=location, notes=notes)
+        self.store[uid] = replace(self.store[uid], **{k: v for k, v in given.items() if v is not None})
         return self.store[uid]
 
     def delete(self, uid):
@@ -155,7 +156,7 @@ async def test_delete_waits_for_yes(tools, cal):
 
 
 async def test_no_cancels(tools, cal):
-    agent, _ = agent_with(tools, [("tool_use", call("move_event", event_id="d1", new_start="2026-10-21T10:00",
+    agent, _ = agent_with(tools, [("tool_use", call("edit_event", event_id="d1", new_start="2026-10-21T10:00",
                                                      new_end="2026-10-21T11:00")), done()])
     await agent.reply("discord", "move it")
     assert agent.pending("discord") == ["Move 'Dentist' from Tue 20 Oct 15:00–16:00 to Wed 21 Oct 10:00–11:00"]
@@ -205,7 +206,7 @@ def test_parse_component_with_duration_and_rrule():
 
 
 async def test_new_move_replaces_earlier_queued_move(tools, cal):
-    move = lambda start, end: ("tool_use", call("move_event", event_id="d1", new_start=start, new_end=end))
+    move = lambda start, end: ("tool_use", call("edit_event", event_id="d1", new_start=start, new_end=end))
     agent, db = agent_with(tools, [move("2026-10-21T10:00", "2026-10-21T11:00"), done(),
                                    move("2026-10-21T14:00", "2026-10-21T15:00"), done()])
     await agent.reply("discord", "move dentist to 10")
@@ -224,14 +225,14 @@ def test_migration_backfills_target(tmp_path):
     old.execute("CREATE TABLE pending_actions (id INTEGER PRIMARY KEY, channel TEXT NOT NULL, tool TEXT NOT NULL, "
                 "args TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending')")
     old.execute("INSERT INTO pending_actions (channel, tool, args, summary, created_at) VALUES "
-                "('discord', 'move_event', '{\"event_id\": \"d1\"}', 's', '2026-01-01')")
+                "('discord', 'edit_event', '{\"event_id\": \"d1\"}', 's', '2026-01-01')")
     old.commit(); old.close()
     db = Database(path)
     assert db.conn.execute("SELECT target FROM pending_actions").fetchone()[0] == "d1"
 
 
 async def test_model_sees_queue_and_can_cancel_items(tools, cal):
-    move = ("tool_use", call("move_event", event_id="d1", new_start="2026-10-21T10:00", new_end="2026-10-21T11:00"))
+    move = ("tool_use", call("edit_event", event_id="d1", new_start="2026-10-21T10:00", new_end="2026-10-21T11:00"))
     agent, db = agent_with(tools, [move, done(), ("tool_use", call("cancel_queued", action_ids=[1])), done()])
     await agent.reply("discord", "move dentist to 10")
     await agent.reply("discord", "actually leave it")
@@ -248,3 +249,25 @@ def test_cancel_specific_ids_only():
     assert db.cancel_pending("discord", [a]) == 1
     assert db.cancel_pending("discord", []) == 0
     assert [p["id"] for p in db.pending_actions("discord", timedelta(hours=1))] == [b]
+
+
+async def test_edit_moves_to_another_calendar_and_sets_the_place(tools, cal):
+    edit = ("tool_use", call("edit_event", event_id="d1", calendar="Work", location="Piazza Castello 32"))
+    agent, _ = agent_with(tools, [edit, done()])
+    await agent.reply("discord", "put it in work, at the office")
+    assert agent.pending("discord") == ["Change 'Dentist' on Tue 20 Oct 15:00–16:00: from Home to Work, "
+                                        "place to Piazza Castello 32"]
+    assert cal.store["d1"].calendar == "Home"
+    await agent.confirm("discord")
+    assert cal.store["d1"].calendar == "Work" and cal.store["d1"].location == "Piazza Castello 32"
+    assert cal.store["d1"].start == at(20, 15)
+
+
+async def test_edit_refuses_unknown_calendar_and_empty_changes(tools):
+    agent, _ = agent_with(tools, [("tool_use", call("edit_event", event_id="d1", calendar="Gym")), done(),
+                                  ("tool_use", call("edit_event", event_id="d1")), done()])
+    await agent.reply("discord", "gym calendar")
+    assert "no calendar named 'Gym'" in agent.client.requests[1]["messages"][-1]["content"][0]["content"]
+    await agent.reply("discord", "change it")
+    assert "nothing to change" in agent.client.requests[3]["messages"][-1]["content"][0]["content"]
+    assert agent.pending("discord") == []
