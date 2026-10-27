@@ -523,6 +523,7 @@ class StudyWorker:
         self.photos: PhotoStore | None = agent.photos
         self.notebook = None  # NotebookStore, set after: a lecture's first notes are offered to its course's notebook
         self.engine = None  # Engine, set after: OpenRouter or the user's Claude plan; None calls OpenRouter directly
+        self.live = None  # LiveActivities, set after: a course's lecture being written shows on the Lock Screen
         self._wake = asyncio.Event()
         audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -544,17 +545,27 @@ class StudyWorker:
         lid = lecture["id"]
         started = clock.monotonic()
         course_var.set(lecture["course_id"])
+        run = None
+        if self.live is not None and (name := self._course_name(lecture)):
+            run = self.live.notes(f"notes:{lecture['public_id']}", self.store.chat(lecture["course_id"]),
+                                  f"{name[:1].upper()}{name[1:]}")
         try:
             if lecture["audio"] and not lecture["transcript"]:  # a rewrite with new slides has one
                 if self.transcribe is None:
                     raise RuntimeError("transcription isn't set up on the server")
                 lecture = self.store.set_status(lid, "transcribing")
+                if run:
+                    run.start("Transcribing the lecture")
                 text, language, duration = await self.transcribe(self.audio_dir / lecture["audio"])
                 if not text.strip():
                     raise RuntimeError("no speech found in the recording")
                 self.store.set_transcript(lid, text, language, duration)
                 log.info("lecture %s transcribed in %.0f s", lecture["public_id"], clock.monotonic() - started)
             lecture = self.store.set_status(lid, "writing")
+            if run and run.detail:
+                run.step("Writing the notes")
+            elif run:
+                run.start("Writing the notes")
             if lecture["course_id"] and not self.store.files.files(lecture_id=lid):
                 for f in self.store.files.slides_for(lecture["course_id"], datetime.fromisoformat(lecture["recorded_at"])):
                     self.store.files.update(f["public_id"], lecture_id=lid)  # the slides Moodle had for it
@@ -565,9 +576,13 @@ class StudyWorker:
             log.exception("lecture %s failed", lecture["public_id"])
             lecture = self.store.set_status(lid, "failed", str(e)[:200] if isinstance(e, RuntimeError)
                                             else "Something went wrong on the server. It's in the logs.")
+            if run:
+                run.failed(lecture["error"])
             await self._alert(lecture, f"Couldn't make notes from this lecture: {lecture['error']}")
             return lecture
         log.info("lecture %s ready in %.0f s", lecture["public_id"], clock.monotonic() - started)
+        if run:
+            run.finished(f"Notes ready: {lecture['title']}" if lecture["title"] else "Notes ready")
         await self._post(lecture, rewrite)
         if self.notebook is not None and lecture["course_id"] and not rewrite:
             self.notebook.new_material(lecture["course_id"], [{"lecture": lecture["public_id"]}])

@@ -582,3 +582,27 @@ def test_set_body_tidies_aides_text_not_the_users(nb):
     t = nb.notebook.set_body(topic["id"], "GDP is $13.5 trillion.", cards=[("GDP in $?", "$13.5 trillion")])
     assert t["body"] == "GDP is \\$13.5 trillion." and json.loads(t["cards"]) == [["GDP in $?", "\\$13.5 trillion"]]
     assert nb.notebook.set_body(topic["id"], "Mine: $5 here.", by_user=True)["body"] == "Mine: $5 here."
+
+
+async def test_writing_topics_shows_on_the_lock_screen(nb):
+    calls = []
+
+    class Run:
+        detail = ""
+
+        def start(self, detail): calls.append(("start", detail))
+        def step(self, detail): calls.append(("step", detail))
+        def progress(self): calls.append(("progress",))
+        def finished(self, result): calls.append(("finished", result))
+        def failed(self, error): calls.append(("failed", error))
+
+    class Live:
+        def notes(self, key, conversation, title, total=None):
+            calls.append(("notes", key.split(":")[0], conversation == nb.study.chat(nb.macro["id"]), title, total))
+            return Run()
+    nb.worker.live = Live()
+    await built(nb)
+    assert calls[0] == ("notes", "notes", True, "Macroeconomics", 2)
+    assert calls[1] == ("start", "Writing 2 topics")
+    assert sum(c == ("progress",) for c in calls) == 2 and any(c[0] == "step" for c in calls)
+    assert calls[-1] == ("finished", "Wrote The IS-LM model, Crowding out.")

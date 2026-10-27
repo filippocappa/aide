@@ -339,8 +339,11 @@ private struct VoiceSettingsView: View {
 
 private struct NotificationSettingsView: View {
     @EnvironmentObject private var push: PushService
+    @EnvironmentObject private var env: AppEnvironment
     @State private var testing = false
     @State private var result: (ok: Bool, text: String)?
+    /// nil: not loaded, or an older server.
+    @State private var live: LiveSettings?
 
     var body: some View {
         Form {
@@ -374,11 +377,32 @@ private struct NotificationSettingsView: View {
                     }
                 }
             }
+            if let live {
+                Section {
+                    Toggle("Next event", isOn: Binding(get: { live.events }, set: { on in Task { await setEvents(on) } }))
+                        .tint(Theme.toggle)
+                } header: {
+                    Text("Lock Screen")
+                } footer: {
+                    Text("30 minutes before a calendar event, a countdown to it on the Lock Screen and in the Dynamic "
+                         + "Island, with where it is. Not when a tram alert is taking you there: the tram's shows then.")
+                }
+            }
         }
         .scrollContentBackground(.hidden)
         .background(Theme.grouped)
         .navigationTitle("Notifications")
         .navigationBarTitleDisplayMode(.inline)
+        .task { live = try? await env.api.liveSettings() }
+    }
+
+    private func setEvents(_ on: Bool) async {
+        live?.events = on
+        do {
+            live = try await env.api.updateLiveSettings(LiveSettings(events: on))
+        } catch {
+            live?.events = !on
+        }
     }
 }
 

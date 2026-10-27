@@ -2,7 +2,8 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
-/// An agent at work on a reply or a routine, then its first line (docs/API.md, "Live Activities").
+/// An agent at work on a reply, a routine or notes (with how far it's got), then its first line (docs/API.md,
+/// "Live Activities").
 struct AgentLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: AgentActivityAttributes.self) { context in
@@ -22,13 +23,21 @@ struct AgentLiveActivity: Widget {
                     Text(a.title ?? a.name).font(.subheadline.weight(.semibold)).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text(s.line(name: a.name)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(s.line(name: a.name)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        AgentProgress(state: s, tint: a.agentModel.tint)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
                 }
             } compactLeading: {
                 PebbleMark(size: 20, figure: a.agentModel.figure).foregroundStyle(a.agentModel.tint)
             } compactTrailing: {
-                AgentStatusIcon(state: s, tint: a.agentModel.tint)
+                if let total = s.total, let done = s.done, !s.isOver {
+                    Text("\(done)/\(total)").font(.caption.weight(.semibold)).monospacedDigit()
+                        .foregroundStyle(a.agentModel.tint)
+                } else {
+                    AgentStatusIcon(state: s, tint: a.agentModel.tint)
+                }
             } minimal: {
                 PebbleMark(size: 18, figure: a.agentModel.figure).foregroundStyle(a.agentModel.tint)
             }
@@ -54,6 +63,22 @@ struct AgentElapsed: View {
             Text(state.status == "done" ? "Done" : "Failed")
         } else {
             Text(state.sinceDate, style: .timer).monospacedDigit().multilineTextAlignment(.trailing).frame(maxWidth: 48)
+        }
+    }
+}
+
+/// A notes job's topics: a bar and "2 of 5 topics". Nothing for the rest.
+struct AgentProgress: View {
+    let state: AgentActivityAttributes.ContentState
+    let tint: Color
+
+    var body: some View {
+        if let total = state.total, total > 0, let done = state.done, !state.isOver {
+            HStack(spacing: 8) {
+                ProgressView(value: Double(min(done, total)), total: Double(total)).tint(tint)
+                Text("\(done) of \(total) topics").font(.caption2.weight(.medium)).monospacedDigit()
+                    .foregroundStyle(.secondary).fixedSize()
+            }
         }
     }
 }
@@ -90,6 +115,7 @@ struct AgentLockScreen: View {
                 }
                 Text(state.line(name: agent.name)).font(.subheadline)
                     .foregroundStyle(state.isOver ? .primary : .secondary).lineLimit(3)
+                AgentProgress(state: state, tint: agent.tint).padding(.top, 4)
             }
         }
         .padding(16)

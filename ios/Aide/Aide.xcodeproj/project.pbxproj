@@ -26,6 +26,7 @@
 		3ED4F27F4BDF47BC7C5CCE36 /* HealthWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2F5F2B76D809AD012067BF /* HealthWidget.swift */; };
 		44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289CE8321C0A5A80F6B92C /* MoodleView.swift */; };
 		491F45628A791B6298C0076C /* DeparturesCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F38E82A30132956316CD8AC /* DeparturesCard.swift */; };
+		4C69EEB628BC4CE89610B781 /* EventLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BD448611F6C2528A4B7C49A /* EventLiveActivity.swift */; };
 		4FB496AD42CA08D51DDFEF94 /* AgentLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A69E8EEFF682D9CF99C9B61 /* AgentLiveActivity.swift */; };
 		51273D15EB4478AF03C06D80 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA08F1D7D45CEF403CEF6E48 /* TodayView.swift */; };
 		538C12160BE5E1402129DBF0 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
@@ -164,6 +165,7 @@
 		81B15B4A9C146D208E461D58 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		87320B5BA6327928E4CC8A7D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		87678035748931339F27CC91 /* Photos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photos.swift; sourceTree = "<group>"; };
+		8BD448611F6C2528A4B7C49A /* EventLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventLiveActivity.swift; sourceTree = "<group>"; };
 		8F38E82A30132956316CD8AC /* DeparturesCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeparturesCard.swift; sourceTree = "<group>"; };
 		91B4431689B0F772EB8EDA27 /* LivePebble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePebble.swift; sourceTree = "<group>"; };
 		93B823567631C9266E89C0C5 /* SpeechDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechDetector.swift; sourceTree = "<group>"; };
@@ -302,6 +304,7 @@
 				DFD117E9E143D868B430B441 /* AideWidgets.entitlements */,
 				F7399AF7109C6333CB3244BC /* AideWidgets.swift */,
 				50F534E81CB6CBAEDF422485 /* DeparturesWidget.swift */,
+				8BD448611F6C2528A4B7C49A /* EventLiveActivity.swift */,
 				2FF2F172DF24BB3119602573 /* HabitControl.swift */,
 				3D2F5F2B76D809AD012067BF /* HealthWidget.swift */,
 				E6A623639391457CF5AA5349 /* Info.plist */,
@@ -506,6 +509,7 @@
 				61A1F84D398D52BD6F25287F /* AideWidgets.swift in Sources */,
 				5896E96FF0FB87722CA47D83 /* AppSettings.swift in Sources */,
 				E4BACF93150EA9F47597B833 /* DeparturesWidget.swift in Sources */,
+				4C69EEB628BC4CE89610B781 /* EventLiveActivity.swift in Sources */,
 				7F9041E9C2D02598155BA0C1 /* Figure.swift in Sources */,
 				DFBDF3B9BAA93D0DEB902233 /* HabitControl.swift in Sources */,
 				731F6A69DA90B3592DCAF24B /* HabitIntents.swift in Sources */,

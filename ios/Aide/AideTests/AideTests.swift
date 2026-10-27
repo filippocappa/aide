@@ -457,6 +457,23 @@ final class PushTests: XCTestCase {
         XCTAssertTrue(s.isOver)
         XCTAssertEqual(s.line(name: "Coach"), "Logged it.")
         XCTAssertEqual(AgentActivityAttributes.ContentState.working().line(name: "Coach"), "Coach is working on it")
+        XCTAssertNil(s.total)
+        let notes = #"{"status": "writing", "detail": "Writing Crowding out", "text": "", "since": 1, "done": 2, "total": 5}"#
+        let n = try JSONDecoder().decode(AgentActivityAttributes.ContentState.self, from: Data(notes.utf8))
+        XCTAssertEqual(n.done, 2)
+        XCTAssertEqual(n.total, 5)
+        XCTAssertEqual(n.line(name: "Professor"), "Writing Crowding out")
+    }
+
+    func testEventActivityDecodes() throws {
+        let attrs = #"{"key": "event:3f2a9c1b7d4e:1792483800", "title": "Macroeconomics", "calendar": "Timetable"}"#
+        let a = try JSONDecoder().decode(EventActivityAttributes.self, from: Data(attrs.utf8))
+        XCTAssertEqual(a.title, "Macroeconomics")
+        let state = #"{"start": 1792483800, "end": null, "place": "Aula 5", "started": false}"#
+        let s = try JSONDecoder().decode(EventActivityAttributes.ContentState.self, from: Data(state.utf8))
+        XCTAssertEqual(s.startDate, Date(timeIntervalSince1970: 1792483800))
+        XCTAssertNil(s.endDate)
+        XCTAssertEqual(s.place, "Aula 5")
     }
 
     func testNearbyBoardsDecode() throws {

@@ -1342,14 +1342,17 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 
 ## Live Activities
 
-Two kinds on the Lock Screen and in the Dynamic Island, both drawn by the app's widget extension:
+Three kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's widget extension:
 
 - **`tram`**: a tram alert's countdown. When an alert fires, the server starts it (APNs push-to-start) instead of
   the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left,
   or, once the user is on it, until they get off.
 - **`agent`**: an agent at work. The app starts one when it sends a chat or Team chat message; the server keeps it
   up to date (asking another agent, writing) and ends it with the reply's first line, so a reply that comes in with
-  the phone locked lights up the screen. The server also starts one for each scheduled routine run (not watches).
+  the phone locked lights up the screen. The server also starts one for each scheduled routine run (not watches),
+  and since 2026-10-27 one for Professor writing notes (a notebook proposal being applied, a lecture's notes).
+- **`event`** (since 2026-10-27): the next calendar event's countdown, started by the server 30 minutes before a
+  timed event ("Macroeconomics in 30 min · Aula 5"), unless leave-now has set a tram alert for it.
 
 The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as before.
 
@@ -1357,10 +1360,12 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
+| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent" \| "event", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
 | `DELETE /v1/live/tokens/{kind}` | | `{"ok": true}` |
 | `POST /v1/live/activities` | `{"key": "agent:3f2a…", "token": "a91c…", "environment": "sandbox"}` | `{"ok": true}` |
 | `DELETE /v1/live/activities/{key}` | | `{"ok": true}`, also for an unknown key |
+| `GET /v1/live/settings` | | `{"events": true}` |
+| `PATCH /v1/live/settings` | `{"events": false}` | the settings |
 
 - `/v1/live/tokens`: a **push-to-start** token (`Activity<…>.pushToStartTokenUpdates`), one per kind; a new one
   replaces the old. The app sends it on launch and when it changes, and deletes it when Live Activities are turned
@@ -1368,7 +1373,9 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
 - `/v1/live/activities`: one activity's **update** token (`activity.pushTokenUpdates`), by the `key` in its
   attributes. For an activity the server started, the app gets its token in a short background wake and sends it.
   The app deletes the key when it ends an activity itself (the reply came in with the app open); the server then
-  stops pushing. Keys and tokens older than 12 hours are dropped.
+  stops pushing. Keys and tokens older than 12 hours are dropped. Since 2026-10-27, an activity the server started
+  and ended before its token came (a short job) is ended as soon as the token comes, within an hour.
+- `/v1/live/settings` (since 2026-10-27): `events` (default true) turns the `event` countdowns on or off.
 - Tokens are hex, like device tokens; `environment` as for devices. A token APNs refuses (`410`, `BadDeviceToken`)
   is deleted.
 
@@ -1449,7 +1456,28 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
   `title` the routine's), with a quiet alert (title "Coach · Weekly plan", body "Working on it", no sound; a start needs one).
   When the run ends it sends `end` with `done`, dismissed at once: the `message` push that follows is the
   notification.
+- A notes job (since 2026-10-27): the server push-starts it under the key `notes:<proposal id>` (a notebook
+  proposal being applied) or `notes:<lecture id>` (a lecture of a course), agent `professor`, `conversation` the chat
+  the result goes to (the proposal's own, else the course's), `title` the course's name, with a quiet alert
+  ("Professor · Macroeconomics", "Writing 5 topics"). Updates as it goes (status `writing`, `detail` the step:
+  "Transcribing the lecture", "Writing the notes", "Writing The IS-LM model, Crowding out"), at most one per 2 s,
+  then `end` with `done` (`text` the result) or `failed`, dismissed at once: the `message` or `lecture` push that
+  follows is the notification. Its content state has two more fields, `done` (topics written so far, failed ones
+  included) and `total` (the topics being written); both null on lecture notes and absent on every other agent
+  activity.
 - Tapping the activity opens the conversation (`aide://conversation/<id>`; the Team chat: `aide://team`).
+
+**`event`** (`EventActivityAttributes`). Attributes: `key` (`event:<12 hex of the uid's hash>:<start, Unix>`),
+`title`, `calendar`. Content state: `start` and `end` (Unix seconds; `end` null when there's none), `place` (the
+event's location, or null) and `started` (it has begun: the last update).
+
+- Started 30 minutes before a timed (not all-day) event, in any calendar, with a quiet alert ("Macroeconomics in 30
+  min", body the place, else "At 09:00"); `stale-date` 10 minutes after the start.
+- Not for an event leave-now has set a tram alert for (the tram's activity takes you there); a tram alert set while
+  it's on ends it at once.
+- An `update` when the event moves or its place changes; `end` with `started` true at the start, dismissed 10
+  minutes later; `end` dismissed at once when the event is deleted.
+- Tapping it opens Today (`aide://today`).
 
 ## Widgets
 

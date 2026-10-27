@@ -1027,6 +1027,7 @@ class NotebookWorker:
         self.push = push
         self.vault = vault  # set after: reads the user's edits back before a merge, kicked after changes
         self.engine = None  # Engine, set after: OpenRouter or the user's Claude plan; None calls OpenRouter directly
+        self.live = None  # LiveActivities, set after: writing topics shows on the Lock Screen
         self._visual: dict[tuple[int, str], set[int] | None] = {}  # (file id, updated_at) → visual_pages, None: all
         self._wake = asyncio.Event()
         store.on_job.append(self.kick)
@@ -1239,9 +1240,17 @@ class NotebookWorker:
                 jobs.append((topic, {**it, "new": True}))
         gate = asyncio.Semaphore(PARALLEL)
         active: list[str] = []
+        run = None
+        if self.live is not None:
+            name = f"{course['name'][:1].upper()}{course['name'][1:]}"
+            run = self.live.notes(f"notes:{p['public_id']}", p.get("chat") or self.study.chat(p["course_id"]), name,
+                                  total=len(jobs))
+            run.start(f"Writing {len(jobs)} topic{'s' * (len(jobs) != 1)}")
 
         def writing() -> None:
             self.store.set_step(p["course_id"], f"Writing {', '.join(active)}" if active else None)
+            if run and active:
+                run.step(f"Writing {', '.join(active)}")
 
         async def one(topic: dict, it: dict) -> str | None:
             async with gate:
@@ -1261,20 +1270,33 @@ class NotebookWorker:
                     else:
                         await self.merge(self.store.topic(topic["public_id"]), it, note)
                     self.store.topic_done(p["id"])
+                    if run:
+                        run.progress()
                     return None
                 except Exception as e:
                     log.warning("topic %s, attempt %d: %s", topic["public_id"], attempt, e)
                     error = str(e)
             self.store.topic_done(p["id"])
+            if run:
+                run.progress()
             return error
 
-        errors = await asyncio.gather(*(one(t, it) for t, it in jobs))
+        try:
+            errors = await asyncio.gather(*(one(t, it) for t, it in jobs))
+        except Exception as e:
+            if run:
+                run.failed(str(e))
+            raise
         done = [t["title"] for (t, _), e in zip(jobs, errors) if e is None]
         failed = [t["title"] for (t, _), e in zip(jobs, errors) if e is not None]
         if not done:
+            if run:
+                run.failed("None of the topics could be written")
             raise RuntimeError(f"none of the topics could be written ({errors[0]})")
         verb = "Wrote" if p["kind"] == "outline" else "Updated"
         result = f"{verb} {', '.join(done)}." + (f" Couldn't do {', '.join(failed)}." if failed else "")
+        if run:
+            run.finished(result)
         self.store.set_proposal(p["id"], "applied", result=result)
         cards = sum(len(json.loads(self.store.topic(t["public_id"])["cards"])) for t, _ in jobs)
         text = (f"{verb} the notes: {', '.join(f'**{t}**' for t in done)}."

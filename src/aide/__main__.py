@@ -53,6 +53,7 @@ from .tools.study import study_tools
 from .tools.transit import leave_tools, transit_tools
 from .leave import LeaveWatcher
 from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts
+from .upcoming import EventWatcher
 from .wake import WakeService
 from .whisper import available as whisper_available
 
@@ -189,6 +190,8 @@ def main() -> None:
     review_watcher = ReviewWatcher(reviews, agent, push)
     reader = PageReader(study.files, agent)  # scans, read once with the model
     worker.engine = notes.engine = reader.engine = engine
+    worker.live = notes.live = live
+    events = EventWatcher(db.conn, settings.timezone, cal, live) if cal else None
 
     async def plan_limit(paused: dict) -> None:
         """The plan's limit, mid-job: asked in the job's course chat (Professor), with a push."""
@@ -233,6 +236,7 @@ def main() -> None:
             *([moodle.run()] if settings.moodle_url else []),
             *([transit.timetable.run(), watcher.run()] if transit else []),
             *([leave.run()] if leave else []),
+            *([events.run()] if events else []),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)

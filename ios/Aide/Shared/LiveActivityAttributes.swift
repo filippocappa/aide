@@ -1,7 +1,7 @@
 import ActivityKit
 import Foundation
 
-// The two Live Activities (docs/API.md, "Live Activities"). The server sends these fields in its pushes, so the
+// The three Live Activities (docs/API.md, "Live Activities"). The server sends these fields in its pushes, so the
 // names are the contract's, and times are Unix seconds: ActivityKit decodes the JSON with no date strategy.
 
 /// A tram alert's countdown, started by the server when the alert fires.
@@ -62,8 +62,8 @@ struct TramActivityAttributes: ActivityAttributes {
     var alert: Int
 }
 
-/// An agent at work: on a chat reply (started here, kept up to date by the server) or a scheduled routine (started
-/// by the server).
+/// An agent at work: on a chat reply (started here, kept up to date by the server), a scheduled routine or a notes job
+/// (started by the server).
 struct AgentActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         /// working, asking, writing, done or failed.
@@ -74,6 +74,9 @@ struct AgentActivityAttributes: ActivityAttributes {
         var text: String
         /// When it started working.
         var since: Double
+        /// A notes job's topics written so far, and how many in all; nil for the rest.
+        var done: Int? = nil
+        var total: Int? = nil
 
         var sinceDate: Date { Date(timeIntervalSince1970: since) }
         var isOver: Bool { status == "done" || status == "failed" }
@@ -83,7 +86,7 @@ struct AgentActivityAttributes: ActivityAttributes {
         }
     }
 
-    /// `agent:<conversation id>`, or `agent:team`.
+    /// `agent:<conversation id>`, `agent:team`, or `notes:<proposal or lecture id>`.
     var key: String
     var agent: String
     var name: String
@@ -111,4 +114,25 @@ extension AgentActivityAttributes.ContentState {
         default: detail.isEmpty ? "\(name) is working on it" : detail
         }
     }
+}
+
+/// The next calendar event, counting down from 30 minutes before it (started by the server).
+struct EventActivityAttributes: ActivityAttributes {
+    struct ContentState: Codable, Hashable {
+        var start: Double
+        /// nil: no end time.
+        var end: Double?
+        /// Where it is, as the calendar says.
+        var place: String?
+        /// It has begun (the last update, sent with the end).
+        var started: Bool
+
+        var startDate: Date { Date(timeIntervalSince1970: start) }
+        var endDate: Date? { end.map(Date.init(timeIntervalSince1970:)) }
+    }
+
+    /// `event:<uid hash>:<start>`
+    var key: String
+    var title: String
+    var calendar: String
 }

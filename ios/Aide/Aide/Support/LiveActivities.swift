@@ -27,12 +27,14 @@ final class LiveActivities {
         started = true
         watch(TramActivityAttributes.self, kind: "tram", key: \.key)
         watch(AgentActivityAttributes.self, kind: "agent", key: \.key)
+        watch(EventActivityAttributes.self, kind: "event", key: \.key)
         checkTrams()
         Task {
             for await on in ActivityAuthorizationInfo().activityEnablementUpdates where !on {
                 // Turned off in iOS Settings: the server goes back to plain pushes.
                 try? await api.deleteLiveToken(kind: "tram")
                 try? await api.deleteLiveToken(kind: "agent")
+                try? await api.deleteLiveToken(kind: "event")
             }
         }
     }
@@ -122,9 +124,11 @@ final class LiveActivities {
         Task { await activity.update(ActivityContent(state: state, staleDate: nil)) }
     }
 
-    /// Back in the app: replies already in have been seen, so their activities go.
+    /// Back in the app: replies already in have been seen, so their activities go, and so do ones the server stopped
+    /// keeping up to date (a job whose end never reached the phone).
     func appBecameActive() {
-        for activity in Activity<AgentActivityAttributes>.activities where activity.content.state.isOver {
+        for activity in Activity<AgentActivityAttributes>.activities
+        where activity.content.state.isOver || activity.activityState == .stale {
             let key = activity.attributes.key
             Task {
                 try? await api.deleteLiveActivity(key: key)

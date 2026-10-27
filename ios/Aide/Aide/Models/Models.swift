@@ -1489,6 +1489,9 @@ struct TransitAlertList: Decodable { let alerts: [TransitAlert] }
 /// `calendar`: the server sets leave-now alerts for calendar events with a place (docs/API.md, "Leaving for an event").
 struct TransitSettings: Codable { var calendar: Bool }
 
+/// `events`: the next calendar event's countdown on the Lock Screen.
+struct LiveSettings: Codable { var events: Bool }
+
 /// Only what changes. `minutes: .some(nil)` sends `"minutes": null`: back to when it's time to leave.
 struct TransitAlertPatch: Encodable {
     var time: String?

@@ -315,6 +315,10 @@ class LiveTokenIn(BaseModel):
     environment: str
 
 
+class LiveSettingsPatch(BaseModel):
+    events: bool | None = None
+
+
 class LiveActivityIn(BaseModel):
     key: str = Field(min_length=1, max_length=200)
     token: str
@@ -1559,9 +1563,18 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         live.remove_start_token(kind)
         return {"ok": True}
 
+    @app.get("/v1/live/settings", dependencies=[Depends(auth)])
+    async def live_settings():
+        return live.settings()
+
+    @app.patch("/v1/live/settings", dependencies=[Depends(auth)])
+    async def edit_live_settings(body: LiveSettingsPatch):
+        return live.update_settings(events=body.events)
+
     @app.post("/v1/live/activities", dependencies=[Depends(auth)])
     async def live_activity(body: LiveActivityIn):
         live.register(body.key, body.token, body.environment)
+        await live.registered(body.key)
         return {"ok": True}
 
     @app.delete("/v1/live/activities/{key}", dependencies=[Depends(auth)])

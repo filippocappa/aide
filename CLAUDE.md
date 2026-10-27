@@ -48,6 +48,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `transit.py`: GTT (Turin's buses and trams): the GTFS timetable (rebuilt nightly into `data/gtt.db`), the live
   feed, the phone's location, and tram alerts with their watcher. `tools/transit.py`: the agents' transit tools.
   `leave.py`: leave-now for calendar events (the event's GTT ride from Maps becomes a one-off tram alert).
+- `upcoming.py`: the next calendar event's Live Activity (a countdown from 30 min before; `live.py` sends it).
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -274,6 +275,13 @@ habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departure
 `aide://` links (`PushRoute(url:)`). The first phone install needs the App Group and the `.widgets` bundle ID on the
 team (Xcode's automatic signing adds them).
 
+**Done, both sides (2026-10-27), not yet tried on the phone:** more in the Dynamic Island (#24, two of its ideas;
+contract in `docs/API.md`, "Live Activities"). The next event: 30 min before a timed calendar event the server
+(`upcoming.py`) push-starts an `event` countdown with its place, follows a move, ends at the start; none when leave-now
+set a tram alert for it; off in Settings → Notifications (`/v1/live/settings`). Notes jobs: Professor's agent activity
+while a notebook proposal is applied (topics done of total, a bar and "2/5" in the island) or a lecture's notes are
+written (`NotesRun` in `live.py`). An activity ended before the app sent its token is ended when the token comes.
+
 **Done, both sides (2026-10-26), installed on the phone 2026-10-26:** Today and limit habits (#21, contract in
 `docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card
 (`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
@@ -299,7 +307,7 @@ day's `health_logged` and the app makes its own Inhaler Usage samples match, nev
 2. Ideas from the agent-app research, not yet chosen: (#15, digests in a feed, is mostly covered by Today; #14,
    Goals, by objectives.)
 3. New, filed 2026-10-27, not yet chosen: a browser agent that logs in and shops for you (#22), Screen Time locks
-   in routines (#23), more in the Dynamic Island (#24).
+   in routines (#23). The rest of #24 (buttons in the expanded view, voice chat in the background).
 4. Recording a lecture in the app. Notebooks for the other courses. Finance still has no data source (memory
    only).
 

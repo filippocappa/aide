@@ -394,3 +394,145 @@ def test_nearby_boards(env, timetable, monkeypatch):  # noqa: F811
     assert c.get("/v1/transit/nearby", headers=AUTH).json() == {"boards": [], "fix_at": "2026-10-22T07:59:00+02:00"}
     off = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN))
     assert off.get("/v1/transit/nearby", headers=AUTH).status_code == 404
+
+
+# -- notes jobs ------------------------------------------------------------------------------------
+
+
+async def test_a_notes_run_shows_progress_and_ends_at_once(env, monkeypatch):
+    _, _, live, apns = env
+    monkeypatch.setattr(live_mod, "THROTTLE", 0)
+    run = live.notes("notes:p_1", "c_9", "Macroeconomics", total=3)
+    run.start("Writing 3 topics")
+    await settle()
+    assert apns.requests == []  # no start token: nothing
+    live.set_start_token("agent", START, "sandbox")
+    run = live.notes("notes:p_1", "c_9", "Macroeconomics", total=3)
+    run.start("Writing 3 topics")
+    await settle()
+    [start] = aps(apns)
+    assert start["attributes"]["key"] == "notes:p_1" and start["attributes"]["agent"] == "professor"
+    assert start["attributes"]["conversation"] == "c_9" and start["attributes"]["title"] == "Macroeconomics"
+    assert start["alert"] == {"title": "Professor · Macroeconomics", "body": "Writing 3 topics"}
+    assert (start["content-state"]["done"], start["content-state"]["total"]) == (0, 3)
+    live.register("notes:p_1", ACTIVITY, "sandbox")
+    run.step("Writing The IS-LM model")
+    await settle()
+    run.progress()
+    await settle()
+    update = aps(apns)[-1]
+    assert update["event"] == "update" and update["content-state"]["detail"] == "Writing The IS-LM model"
+    assert update["content-state"]["done"] == 1
+    run.finished("Wrote The IS-LM model.")
+    await settle()
+    end = aps(apns)[-1]
+    assert end["event"] == "end" and end["content-state"]["status"] == "done"
+    assert end["content-state"]["text"] == "Wrote The IS-LM model." and end["dismissal-date"] <= int(time.time())
+
+
+async def test_an_end_before_the_token_goes_when_it_comes(env):
+    _, _, live, apns = env
+    live.set_start_token("agent", START, "sandbox")
+    run = live.notes("notes:l_1", "c_9", "Macroeconomics")
+    run.start("Writing the notes")
+    run.finished("Notes ready")
+    await settle()
+    assert [a["event"] for a in aps(apns)] == ["start"]  # no update token yet
+    assert aps(apns)[0]["content-state"]["total"] is None
+    live.register("notes:l_1", ACTIVITY, "sandbox")
+    await live.registered("notes:l_1")
+    assert [a["event"] for a in aps(apns)] == ["start", "end"]
+    assert live.token("notes:l_1") is None
+    await live.registered("notes:l_1")  # once
+    assert len(apns.requests) == 2
+
+
+def test_live_settings(env):
+    db, push, live, _ = env
+    agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", delegate=False, tz=ROME)
+    c = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN, push=push, live=live))
+    assert c.get("/v1/live/settings", headers=AUTH).json() == {"events": True}
+    assert c.patch("/v1/live/settings", json={"events": False}, headers=AUTH).json() == {"events": False}
+    assert c.patch("/v1/live/settings", json={}, headers=AUTH).json() == {"events": False}
+    assert live.settings() == {"events": False}
+
+
+# -- the next event ----------------------------------------------------------------------------------
+
+
+class Cal:
+    def __init__(self, *events):
+        self.list = list(events)
+
+    def events(self, start, end):
+        return [e for e in self.list if start <= e.start <= end]
+
+
+def event(start, place="Aula 5", uid="lec", title="Macroeconomics"):
+    from aide.icloud import CalEvent
+    return CalEvent(uid, "Timetable", title, start, start + timedelta(hours=2), place)
+
+
+async def test_the_next_event_counts_down(env):
+    from aide.upcoming import EventWatcher
+    db, _, live, apns = env
+    nine = datetime(2026, 10, 27, 9, 0, tzinfo=ROME)
+    cal = Cal(event(nine))
+    watcher = EventWatcher(db.conn, ROME, cal, live)
+    live.set_start_token("event", START, "sandbox")
+    await watcher.tick(utc(nine - timedelta(minutes=45)))
+    assert apns.requests == []  # not yet
+    watcher._events = None
+    await watcher.tick(utc(nine - timedelta(minutes=30)))
+    [start] = aps(apns)
+    assert start["attributes-type"] == "EventActivityAttributes"
+    assert start["attributes"]["title"] == "Macroeconomics" and start["attributes"]["key"].startswith("event:")
+    assert start["content-state"] == {"start": int(nine.timestamp()), "end": int((nine + timedelta(hours=2)).timestamp()),
+                                      "place": "Aula 5", "started": False}
+    assert start["alert"] == {"title": "Macroeconomics in 30 min", "body": "Aula 5"}
+    key = start["attributes"]["key"]
+    live.register(key, ACTIVITY, "sandbox")
+    await watcher.tick(utc(nine - timedelta(minutes=29)))
+    assert len(apns.requests) == 1  # nothing changed, nothing sent, no second start
+    cal.list = [event(nine, place="Aula 7")]
+    watcher._events = None
+    await watcher.tick(utc(nine - timedelta(minutes=20)))
+    assert aps(apns)[-1]["event"] == "update" and aps(apns)[-1]["content-state"]["place"] == "Aula 7"
+    watcher._events = None
+    await watcher.tick(utc(nine + timedelta(minutes=1)))
+    end = aps(apns)[-1]
+    assert end["event"] == "end" and end["content-state"]["started"] is True
+    assert end["dismissal-date"] == int((nine + timedelta(minutes=10)).timestamp())
+    watcher._events = None
+    await watcher.tick(utc(nine + timedelta(minutes=2)))
+    assert len(apns.requests) == 3  # over
+
+
+async def test_no_event_countdown_with_a_tram_or_turned_off(env):
+    from aide.upcoming import EventWatcher
+    db, _, live, apns = env
+    nine = datetime(2026, 10, 27, 9, 0, tzinfo=ROME)
+    cal = Cal(event(nine), event(nine + timedelta(minutes=5), uid="gym", title="Gym"))
+    db.conn.execute("CREATE TABLE IF NOT EXISTS leave_plans (event TEXT, starts TEXT, state TEXT, alert INTEGER, "
+                    "at TEXT)")
+    db.conn.execute("INSERT INTO leave_plans VALUES ('lec', ?, 'alert', 1, '')", (utc(nine).isoformat(),))
+    live.set_start_token("event", START, "sandbox")
+    live.update_settings(events=False)
+    watcher = EventWatcher(db.conn, ROME, cal, live)
+    await watcher.tick(utc(nine - timedelta(minutes=20)))
+    assert apns.requests == []
+    live.update_settings(events=True)
+    await watcher.tick(utc(nine - timedelta(minutes=19)))
+    assert [a["attributes"]["title"] for a in aps(apns)] == ["Gym"]  # the lecture has its tram
+    # A tram alert set for the gym too: its countdown ends at once.
+    live.register(aps(apns)[0]["attributes"]["key"], ACTIVITY, "sandbox")
+    db.conn.execute("INSERT INTO leave_plans VALUES ('gym', ?, 'alert', 2, '')",
+                    (utc(nine + timedelta(minutes=5)).isoformat(),))
+    await watcher.tick(utc(nine - timedelta(minutes=18)))
+    assert aps(apns)[-1]["event"] == "end"
+    await watcher.tick(utc(nine - timedelta(minutes=17)))
+    assert len(apns.requests) == 2
+
+
+def utc(dt: datetime) -> datetime:
+    return dt.astimezone(timezone.utc)
