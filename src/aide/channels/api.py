@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 import httpx
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
@@ -22,7 +22,9 @@ from ..agents import AGENTS, ORCHESTRATOR, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
 from ..drafts import Drafts
+from ..browser import BrowserError, check_site, full_url, site_of
 from ..engine import Engine
+from ..errands import ErrandRunner, ErrandStore
 from ..food import MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
@@ -327,6 +329,14 @@ class UnlockIn(BaseModel):
     use_pass: bool = Field(False, alias="pass")  # an emergency pass, for a strict lock
 
 
+class ErrandReplyIn(BaseModel):
+    answer: str
+
+
+class SiteIn(BaseModel):
+    url: str  # a site (amazon.it) or a page on it, to log in there
+
+
 class ScreenTimeDevice(BaseModel):
     authorized: bool
     allowed_apps: int = 0
@@ -386,7 +396,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                boards: Boards | None = None, drafts: Drafts | None = None,
                live: LiveActivities | None = None, leave: LeaveWatcher | None = None,
                quizzes: QuizStore | None = None, reviews: ReviewStore | None = None,
-               locks: LockStore | None = None) -> FastAPI:
+               locks: LockStore | None = None, errands: ErrandRunner | None = None,
+               errand_store: ErrandStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -409,6 +420,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     live = live or LiveActivities(db.conn, push)
     drafts = drafts or Drafts(db.conn, tz)  # no mail account: none are made, and sending is a 503
     photos: PhotoStore | None = agent.photos
+    errand_store = errands.store if errands else (errand_store or ErrandStore(db.conn, tz))
     app = FastAPI(title="Aide", version=VERSION, docs_url=None, redoc_url=None)
 
     def auth(authorization: str = Header(default="")) -> None:
@@ -547,7 +559,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def approvals():
         actions = [{"id": a["id"], "summary": a["summary"], "agent": a["agent"] or "aide",
                     "conversation_id": a["conversation"] or CONVERSATION, "created_at": local(a["created_at"]),
-                    "expires_at": local((datetime.fromisoformat(a["created_at"]) + PENDING_TTL).isoformat())}
+                    "expires_at": local((datetime.fromisoformat(a["created_at"]) + PENDING_TTL).isoformat()),
+                    **({"detail": a["detail"]} if a["detail"] else {})}
                    for a in db.pending_actions(CONVERSATION, PENDING_TTL)]
         today = objectives.today()
         proposed = [o for p in ("month", "week", "day") for o in objectives.block(p, today)["objectives"]
@@ -560,8 +573,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         paused = engine.status()["paused"] if engine else None
         coming = sorted(((n, r) for r in routines.all() if (n := routines.next_run(r))), key=lambda x: x[0])
         replies = drafts.waiting()
-        return {"waiting": len(actions) + len(proposed) + len(proposals) + len(replies) + (1 if paused else 0),
+        stuck = [errand_store.as_json(e) for e in errands.waiting()] if errands else []
+        return {"waiting": len(actions) + len(proposed) + len(proposals) + len(replies) + len(stuck)
+                + (1 if paused else 0),
                 "actions": actions, "objectives": proposed, "proposals": proposals, "drafts": replies,
+                "errands": stuck,
                 "writer": paused, "upcoming": [routines.as_json(r) for _, r in coming[:5]]}
 
     # -- mail drafts ---------------------------------------------------------------------------
@@ -1623,6 +1639,208 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def delete_device(token: str):
         push.remove(token)
         return {"ok": True}
+
+    # -- browser errands -------------------------------------------------------
+
+    def runner() -> ErrandRunner:
+        if errands is None:
+            raise HTTPException(503, "the browser isn't installed on the server")
+        return errands
+
+    def errand_or_404(errand_id: int) -> dict:
+        e = errand_store.get(errand_id)
+        if e is None:
+            raise HTTPException(404, f"no errand {errand_id}")
+        return e
+
+    @app.get("/v1/errands", dependencies=[Depends(auth)])
+    async def list_errands(open_only: bool = Query(False, alias="open"), limit: int = 30):
+        rows = errand_store.recent(max(1, min(limit, 100)), open_only)
+        return {"errands": [errand_store.as_json(e) for e in rows], "enabled": errands is not None}
+
+    @app.get("/v1/errands/{errand_id}", dependencies=[Depends(auth)])
+    async def get_errand(errand_id: int):
+        e = errand_or_404(errand_id)
+        return {**errand_store.as_json(e), "steps": e["steps"]}
+
+    @app.post("/v1/errands/{errand_id}/done", dependencies=[Depends(auth)])
+    async def errand_done(errand_id: int):
+        errand_or_404(errand_id)
+        try:
+            return errand_store.as_json(runner().done(errand_id))
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.post("/v1/errands/{errand_id}/reply", dependencies=[Depends(auth)])
+    async def errand_reply(errand_id: int, body: ErrandReplyIn):
+        errand_or_404(errand_id)
+        try:
+            return errand_store.as_json(runner().reply(errand_id, body.answer))
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.post("/v1/errands/{errand_id}/cancel", dependencies=[Depends(auth)])
+    async def errand_cancel(errand_id: int):
+        errand_or_404(errand_id)
+        return errand_store.as_json(runner().cancel(errand_id))
+
+    @app.get("/v1/errands/{errand_id}/frame", dependencies=[Depends(auth)])
+    async def errand_frame(errand_id: int):
+        errand_or_404(errand_id)
+        frame = await runner().frame(errand_id)
+        if frame is None:
+            raise HTTPException(404, "the errand has no page open")
+        return Response(frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.get("/v1/browser/sites", dependencies=[Depends(auth)])
+    async def browser_sites():
+        return {"sites": runner().browser.sites() if errands else [], "enabled": errands is not None}
+
+    @app.post("/v1/browser/sites", dependencies=[Depends(auth)])
+    async def open_site(body: SiteIn):
+        """Open a site to log in there from the app (then the live view with ?site=)."""
+        url = full_url(body.url)
+        site = site_of(url)
+        try:
+            await runner().browser.open(f"site:{site}", url)
+        except BrowserError as e:
+            raise HTTPException(502, str(e)) from None
+        return {"site": site, "url": runner().browser.where(f"site:{site}")["url"]}
+
+    @app.delete("/v1/browser/sites/{site}", dependencies=[Depends(auth)])
+    async def forget_site(site: str):
+        try:
+            check_site(site)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        if not await runner().browser.forget(site):
+            raise HTTPException(404, f"no profile for {site}")
+        return {"ok": True}
+
+    @app.get("/v1/purchases", dependencies=[Depends(auth)])
+    async def list_purchases(days: int | None = None, site: str | None = None):
+        since = datetime.now(tz) - timedelta(days=days) if days else None
+        rows = errand_store.purchases(since, site)
+        totals: dict[str, float] = {}
+        for p in rows:
+            if p["amount"] is not None and p["currency"]:
+                totals[p["currency"]] = round(totals.get(p["currency"], 0) + p["amount"], 2)
+        return {"purchases": rows, "totals": totals}
+
+    @app.websocket("/v1/browser/live")
+    async def browser_live(ws: WebSocket, errand: int | None = None, site: str | None = None):
+        """The live view: the page's frames to the app, the user's taps and typing to the page. What the user
+        types is never logged, stored or shown to the model."""
+        scheme, _, given = ws.headers.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not hmac.compare_digest(given.encode(), token.encode()):
+            await ws.close(code=1008)
+            return
+        if errands is None or (errand is None) == (site is None):
+            await ws.close(code=1008 if errands else 1011)
+            return
+        browser = errands.browser
+        if errand is not None:
+            if errand_store.get(errand) is None or not await errands.ensure_page(errand):
+                await ws.close(code=1008)
+                return
+            owner = f"errand:{errand}"
+        else:
+            try:
+                site = check_site(site)
+            except ValueError:
+                await ws.close(code=1008)
+                return
+            owner = f"site:{site}"
+            if browser.page(owner) is None:
+                try:
+                    await browser.open(owner, f"https://www.{site}")
+                except BrowserError:
+                    await ws.close(code=1011)
+                    return
+        await ws.accept()
+        frames: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+        def on_frame(data: str, width: int, height: int) -> None:
+            if frames.full():
+                frames.get_nowait()  # only the latest matters
+            frames.put_nowait({"type": "frame", "data": data, "width": width, "height": height})
+
+        def control() -> bool:
+            return errand is None or errands.can_take_over(errand)
+
+        def status() -> dict:
+            if errand is None:
+                where = browser.where(owner) or {}
+                return {"type": "status", "status": "login", "step": None, "control": True, "url": where.get("url")}
+            e = errand_store.get(errand)
+            return {"type": "status", "status": e["status"], "step": e["step"], "control": control(),
+                    "reason": e["reason"] if e["status"] in ("needs_you", "waiting_confirm") else None,
+                    "url": (browser.where(owner) or {}).get("url") or e["url"]}
+
+        watching = {"page": browser.page(owner), "stop": await browser.screencast(owner, on_frame)}
+
+        async def send() -> None:
+            last_status, last_focus = None, None
+            while True:
+                try:
+                    frame = await asyncio.wait_for(frames.get(), 1.0)
+                    await ws.send_json(frame)
+                except asyncio.TimeoutError:
+                    pass
+                page = browser.page(owner)
+                if page is not None and page is not watching["page"]:  # a click opened another tab
+                    await watching["stop"]()
+                    watching.update(page=page, stop=await browser.screencast(owner, on_frame))
+                if (now := status()) != last_status:
+                    await ws.send_json(now)
+                    last_status = now
+                focus = await browser.focus(owner) if page is not None and control() else {"field": None}
+                if focus != last_focus:
+                    await ws.send_json({"type": "focus", **focus})
+                    last_focus = focus
+
+        sender = asyncio.create_task(send())
+        try:
+            while True:
+                message = await ws.receive_json()
+                kind = message.get("type")
+                if kind == "done":
+                    if errand is not None:
+                        e = errand_store.get(errand)
+                        if e["status"] in ("needs_you", "interrupted"):
+                            errands.done(errand)
+                    else:
+                        await browser.close(owner)
+                    break
+                if not control() or browser.page(owner) is None:
+                    continue  # Aide is working on the page: watching only
+                try:
+                    if kind == "tap":
+                        await browser.tap(owner, float(message["x"]), float(message["y"]))
+                    elif kind == "scroll":
+                        await browser.wheel(owner, float(message.get("x", 0.5)), float(message.get("y", 0.5)),
+                                            float(message["dy"]))
+                    elif kind == "text":
+                        await browser.type_text(owner, str(message["text"])[:500])
+                    elif kind == "key":
+                        key = message.get("key")
+                        if key == "Back":
+                            await browser.back(owner)
+                        elif key in ("Enter", "Tab", "Backspace", "Escape"):
+                            await browser.key(owner, key)
+                except (KeyError, TypeError, ValueError, BrowserError):
+                    continue
+                except Exception as e:  # never with the message: it may hold what the user typed
+                    log.warning("live view: a %s didn't reach the page (%s)", kind, type(e).__name__)
+        except (WebSocketDisconnect, RuntimeError, ValueError):
+            pass
+        finally:
+            sender.cancel()
+            await watching["stop"]()
+            try:
+                await ws.close()
+            except RuntimeError:
+                pass
 
     # -- Live Activities ---------------------------------------------------------
 

@@ -128,7 +128,8 @@ class Agent:
         self.db.new_conversation(channel)
 
     def pending_with_ids(self, channel: str) -> list[dict]:
-        return [{"id": p["id"], "summary": p["summary"]} for p in self.db.pending_actions(channel, PENDING_TTL)]
+        return [{"id": p["id"], "summary": p["summary"], **({"detail": p["detail"]} if p["detail"] else {})}
+                for p in self.db.pending_actions(channel, PENDING_TTL)]
 
     def _resolve(self, channel: str, conversation: str | None) -> int:
         """Internal id of an app chat, or of the shared conversation when `conversation` is None."""
@@ -204,7 +205,7 @@ class Agent:
                 if not isinstance(content, str) or content.startswith(("[The user replied", _OPENED)):
                     continue  # tool results, confirm/cancel notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
-                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK)):
+                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND)):
                     continue  # a routine's prompt, the note before new lecture notes or a notebook proposal
                 if photos := _PHOTO.findall(text):
                     out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
@@ -701,7 +702,7 @@ def _merge(attachments: list[dict]) -> list[dict]:
     merged: dict[str, dict[str, dict]] = {}
     for a in attachments:
         key = {"reminders": "reminders", "events": "events", "meals": "meals", "departures": "departures",
-               "routes": "routes"}.get(a["type"])
+               "routes": "routes", "errands": "errands", "purchases": "purchases"}.get(a["type"])
         if key is None:
             continue
         items = merged.setdefault(a["type"], {})
@@ -717,6 +718,7 @@ _OPENED = "[The user opened a new chat in the app"
 _ROUTINE = "[Scheduled routine"
 _LECTURE = "[Lecture notes ready"
 _NOTEBOOK = "[Notebook"
+_ERRAND = "[Errand #"
 
 
 def _nothing(reply: str) -> bool:

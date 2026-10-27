@@ -213,6 +213,9 @@ class LiveActivities:
     def notes(self, key: str, conversation: str, title: str, total: int | None = None) -> "NotesRun":
         return NotesRun(self, key, conversation, title, total)
 
+    def errand(self, errand_id: int, conversation: str, title: str) -> "ErrandRun":
+        return ErrandRun(self, f"errand:{errand_id}", conversation, title, None)
+
     async def routine_ended(self, key: str, since: int, reply: str | None) -> None:
         state = {"status": "done", "detail": "", "text": clip(reply) if reply else "", "since": since}
         try:
@@ -367,6 +370,51 @@ class NotesRun(AgentTurn):
             await self.live.end(self.key, state, datetime.now(timezone.utc))
         except Exception:
             log.exception("%s: Live Activity didn't end", self.key)
+
+
+class ErrandRun(NotesRun):
+    """A browser errand's activity: Aide `browsing` with the step it's on, `needs_you` (with an alert) when it waits
+    for the user (a login, a choice, a Confirm), then done or failed. Push-started once, kept across the errand's
+    phases."""
+
+    AGENT = "aide"
+
+    def __init__(self, live: LiveActivities, key: str, conversation: str, title: str, total: int | None):
+        super().__init__(live, key, conversation, title, total)
+        self.errand = int(key.split(":")[1])
+
+    def _state_of(self, status: str, detail: str = "", text: str = "") -> dict:
+        status = "browsing" if status == "writing" else status
+        return {**super()._state_of(status, detail, text), "errand": self.errand}
+
+    def start(self, detail: str) -> None:
+        if self._started is None:
+            super().start(detail)
+        else:
+            self.browsing(detail)
+
+    def browsing(self, detail: str) -> None:
+        self.detail = detail
+        self._want(self._state_of("browsing", detail))
+
+    def step(self, detail: str) -> None:
+        if detail and detail != self.detail:
+            self.browsing(detail)
+
+    def needs_you(self, detail: str) -> None:
+        if not (self.live.enabled and self._started):
+            return
+        self.detail = detail
+
+        async def send() -> None:
+            try:
+                await self._started
+                await self.live.update(self.key, self._state_of("needs_you", clip(detail)),
+                                       alert={"title": f"Aide · {self.title}", "body": clip(detail),
+                                              "sound": "default"})
+            except Exception:
+                log.exception("%s: Live Activity update failed", self.key)
+        self._spawn(send())
 
 
 def hooks(*callbacks: Callable | None) -> Callable:

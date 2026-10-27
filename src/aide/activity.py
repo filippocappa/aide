@@ -41,6 +41,8 @@ LABELS = {
     "lock_now": "Locked the apps", "add_lock_schedule": "Set a Screen Time lock",
     "update_lock": "Changed a Screen Time lock", "end_lock": "Ended a lock early", "delete_lock": "Deleted a lock",
     "cancel_queued": "Cancelled queued actions",
+    "start_errand": "Started an errand", "reply_errand": "Answered an errand", "cancel_errand": "Cancelled an errand",
+    "errand_go": "Went on with an errand",
 }
 
 DIGESTS = {"daily": "Morning digest", "wake": "Wake-up briefing", "evening": "Evening digest",

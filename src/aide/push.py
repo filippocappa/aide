@@ -190,6 +190,12 @@ class Push:
         return await self._alert("moodle", title, body, **({"login": True} if login else {}),
                                  **({"files": files} if files else {}))
 
+    async def send_errand(self, errand_id: int, conversation_id: str | None, title: str, body: str,
+                          level: str | None = None) -> bool:
+        """A browser errand that needs the user (time-sensitive: a login, a Confirm) or is over."""
+        return await self._alert("errand", title, body, level=level, errand_id=errand_id,
+                                 **({"conversation_id": conversation_id} if conversation_id else {}))
+
     async def send_transit(self, alert_id: int, title: str, body: str) -> bool:
         # Time-sensitive: it's worth breaking through a Focus, and stale a few minutes later.
         return await self._alert("transit", title, body, level="time-sensitive", alert_id=alert_id)

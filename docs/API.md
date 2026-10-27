@@ -71,6 +71,12 @@ from the tools the assistant used in that turn, not parsed from its text:
   [File]}`. On Professor's notebook proposals.
 - `proposal`: a notebook proposal to answer right there (since 2026-10-26; see Notebook), `{"type": "proposal",
   "proposal": Proposal}`. `/v1/history` gives both as they are now: a proposal's `status`, and files still there.
+- `errands`: a browser errand's card (since 2026-10-27; see Browser errands), `{"type": "errands", "errands":
+  [Errand]}`: when Aide started or looked up one, and on the messages an errand posts in its chat (needs you, a
+  question, ready to confirm, done, failed). A message's card is the errand as it was then; fetch
+  `GET /v1/errands/{id}` for now.
+- `purchases`: an order an errand placed (since 2026-10-27; see Browser errands), `{"type": "purchases",
+  "purchases": [Purchase]}`, on the errand's last message and when Finance lists them.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
@@ -413,15 +419,20 @@ Reads (listing events, searching mail) aren't recorded.
 {"waiting": 4,
  "actions": [{"id": 42, "summary": "Send the reply to Marco", "agent": "secretary", "conversation_id": "c_91f…",
               "created_at": "2026-10-22T10:02:11+02:00", "expires_at": "2026-10-22T10:32:11+02:00"}],
+ "errands": [ /* browser errands waiting for you: status needs_you or interrupted (see Browser errands) */ ],
  "objectives": [ /* Objective objects with "status": "proposed", for this month, week and day */ ],
  "proposals": [ /* notebook Proposals still pending, plus "course_name" and "conversation_id" (the course chat, or null) */ ],
  "drafts": [ /* reply Drafts waiting to be sent, newest mail first (see Mail drafts) */ ],
  "writer": null,
  "upcoming": [ /* the next 5 enabled routines (watches too), soonest first: Routine objects */ ]}
 ```
-- `waiting` counts actions, objectives, proposals, drafts and the writer's question: the app's badge.
+- `waiting` counts actions, objectives, proposals, drafts, errands and the writer's question: the app's badge.
 - `actions`: the confirmation queue, with who queued it and from which chat. An action expires 30 min after it's
-  queued. Confirm or cancel one with `POST /v1/confirm` / `/v1/cancel` and `{"ids": [42]}`.
+  queued. Confirm or cancel one with `POST /v1/confirm` / `/v1/cancel` and `{"ids": [42]}`. Since 2026-10-27 an
+  action can carry a `detail` object to draw instead of the plain summary (absent otherwise); so far only an errand's
+  order, `{"kind": "purchase", …}` (see Browser errands). `detail` is on `pending` rows too.
+- `errands` (since 2026-10-27): Errand objects that need you (log in, answer, or go on after a restart); open the
+  live view, answer with `POST /v1/errands/{id}/reply`, or cancel.
 - `objectives`: accept with `POST /v1/objectives/accept` (`period`, `date` = the objective's `start`, `ids`), drop
   with `PATCH /v1/objectives/{id}` (see Objectives).
 - `proposals`: apply or decline with `/v1/proposals/{id}/apply` and `/decline` (see Notebook).
@@ -1353,6 +1364,105 @@ chat (`lock_now`, `add_lock_schedule`); ending one early there is queued and nee
 - The app sends `PUT /v1/locks/device` when it opens and when Screen Time access or the allowed apps change, so the
   agents can say when locks won't hold.
 
+## Browser errands
+
+Aide does things on websites for you in its own browser (since 2026-10-27, #22): "order me a USB-C cable on
+Amazon", "what does the 8:05 to Milan cost", "fill my cart on Glovo". An **errand** runs in the background on the
+server (Chromium, a phone-sized page, one profile per site so you log in once) and reports in the chat it was asked
+from (Aide's). Aide starts one with `start_errand`; the specialists don't.
+
+**What Aide may do on its own:** search, read, compare, fill a cart, go to the checkout. **What waits for your
+Confirm:** anything that changes something (buying, booking, sending, signing up, cancelling, account changes). The
+server refuses those clicks and Enters in code; the errand asks with a queued `errand_go` action carrying the order's
+`detail` (items, total, address, a screenshot). After Confirm only the confirmed button is clicked, and only while
+the page still shows the confirmed total: a different total means a new Confirm. It uses the site's saved card and
+address and never types card numbers or passwords: logins, codes, CAPTCHAs, card forms and 3-D Secure are yours, in
+the **live view** (below). The model never sees what you type there.
+
+One errand runs at a time (others are `queued`). Each has at most 80 browser actions and 20 minutes of model time.
+It runs on the Claude plan when the notes run there, else on OpenRouter; at the plan's limit it asks (`why`
+`plan_limit`): "Wait for the reset" or "Finish on OpenRouter", as a reply.
+
+Statuses: `queued`, `running`, `needs_you`, `waiting_confirm`, `done`, `failed`, `cancelled`, `interrupted` (the
+server restarted while it ran: the profile keeps you logged in, the page is opened again; reply "go on" or tap "I'm
+done" to carry on). An unanswered Confirm expires after 30 minutes and cancels the errand; so does Cancel.
+
+Errand:
+```json
+{"id": 7, "title": "USB-C cable", "task": "A cheap 2 m USB-C cable, delivered by Friday", "site": "amazon.it",
+ "url": "https://www.amazon.it/gp/buy/spc/handlers/display.html", "status": "waiting_confirm",
+ "why": null, "reason": "Order the Anker USB-C cable", "options": null,
+ "step": "Waiting for your Confirm", "steps": [{"ts": "2026-10-27T18:02:11+01:00", "text": "Opened amazon.it"}],
+ "result": null, "action_id": 42, "conversation_id": "c_91f…", "purchase_id": null,
+ "created_at": "2026-10-27T18:01:50+01:00", "updated_at": "2026-10-27T18:03:20+01:00"}
+```
+- `why` (only on `needs_you`): `login`, `captcha`, `code`, `card` or `other` (take over in the live view, then "I'm
+  done"), `question` (answer with a reply; `options` may list answers), `plan_limit` (reply with one of `options`).
+- `reason`: on `needs_you`, what you're asked; on `waiting_confirm`, what waits for the Confirm. Else null.
+- `step`: what it's doing now. `steps`: the last 10 (all of them, up to 60, on `GET /v1/errands/{id}`).
+- `action_id`: on `waiting_confirm`, the queued action to confirm (`POST /v1/confirm` with `{"ids": [42]}`).
+- `result`: on `done` or `failed`, what it says. `purchase_id`: the order it placed, if any.
+
+The Confirm's `detail` (on that action in `/v1/approvals` and `pending`):
+```json
+{"kind": "purchase", "errand_id": 7, "site": "amazon.it", "summary": "Order the Anker USB-C cable",
+ "items": [{"title": "Anker USB-C cable 2 m", "quantity": 1, "price": "9,99 €", "image": "https://m.media-amazon.com/…"}],
+ "total": "12,98 €", "delivery": "Tomorrow, 28 Oct", "address": "Via Roma 1, Torino",
+ "screenshot": "p_3f2a…", "button": "Acquista ora"}
+```
+`total`, prices and `delivery` are as the site wrote them. `screenshot` is a photo id (`GET /v1/photos/{id}`) of
+the checkout page; `image`, `delivery` and `address` may be null.
+
+Purchase (an order placed):
+```json
+{"id": 3, "errand_id": 7, "site": "amazon.it", "title": "Anker USB-C cable", "items": [ /* as above */ ],
+ "total": "12,98 €", "amount": 12.98, "currency": "EUR", "order_ref": "402-1234567-7654321",
+ "delivery": "Tomorrow, 28 Oct", "receipt": "p_9c1e…", "placed_at": "2026-10-27T18:04:02+01:00"}
+```
+`amount` and `currency` are read from `total` (null when they can't be). `receipt`: a photo id of the confirmation
+page. Finance reads these (`list_purchases`).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/errands?open=true&limit=30` | | `{"errands": [Errand], "enabled": true}`, newest first; `open` leaves out finished ones. `enabled` false: no browser on the server |
+| `GET /v1/errands/{id}` | | the Errand with all its `steps` |
+| `POST /v1/errands/{id}/done` | | the Errand (`queued`): you finished in the live view. `409` unless it's `needs_you` or `interrupted` |
+| `POST /v1/errands/{id}/reply` | `{"answer": "the 2 m one"}` | the Errand (`queued`). `409` unless it's `needs_you` or `interrupted`, or with an empty answer |
+| `POST /v1/errands/{id}/cancel` | | the Errand (`cancelled`); also drops its queued Confirm. Nothing is ordered |
+| `GET /v1/errands/{id}/frame` | | the page now, `image/jpeg`; `404` when it has no page open |
+| `GET /v1/browser/sites` | | `{"sites": [{"site": "amazon.it", "used_at": "…", "open": false}], "enabled": true}`: the sites with a profile |
+| `POST /v1/browser/sites` | `{"url": "amazon.it"}` | `{"site": "amazon.it", "url": "https://www.amazon.it/"}`: opens it to log in, then the live view with `?site=` |
+| `DELETE /v1/browser/sites/{site}` | | `{"ok": true}`: its cookies and profile are deleted (logged out); `404` without one, `400` for a bad name |
+| `GET /v1/purchases?days=30&site=amazon.it` | | `{"purchases": [Purchase], "totals": {"EUR": 12.98}}`, newest first |
+
+Without the browser (Playwright's Chromium not installed) the errand endpoints answer `503`, the lists are empty with
+`enabled` false, and Aide has no `start_errand`.
+
+### Live view
+
+`wss://…/v1/browser/live?errand=7` (an errand's page) or `?site=amazon.it` (logging in from Settings, after
+`POST /v1/browser/sites`), with `Authorization: Bearer <token>`; without it the socket is closed with `1008`. JSON
+messages each way:
+
+Server to app:
+- `{"type": "frame", "data": "<base64 JPEG>", "width": 824, "height": 1830}`: the page, as often as it changes
+  (the device pixels of a 412×915 page).
+- `{"type": "status", "status": "needs_you", "step": "Log in to Amazon.", "control": true, "reason": "Log in to
+  Amazon.", "url": "https://www.amazon.it/ap/signin…"}` when any of it changes. `control` false: Aide is working
+  and the view is watch-only (your input is ignored). With `?site=`, `status` is `login` and `control` true.
+- `{"type": "focus", "field": "password", "label": "Password"}` when the focused field changes: `field` is
+  `password`, `username` (an email or user name), `code` (a one-time code), `phone`, `number`, `text`, or null (none:
+  hide the keyboard bar). Show the matching native field, so the phone's AutoFill offers your password or code.
+
+App to server (only while `control` is true):
+- `{"type": "tap", "x": 0.42, "y": 0.61}`: a tap, as fractions of the frame.
+- `{"type": "scroll", "x": 0.5, "y": 0.5, "dy": 300}`: a scroll, `dy` in page pixels (positive: down).
+- `{"type": "text", "text": "…"}`: typed into the focused field (up to 500 characters a message). Never logged,
+  stored or given to the model.
+- `{"type": "key", "key": "Enter" | "Tab" | "Backspace" | "Escape" | "Back"}` (`Back`: the page's back).
+- `{"type": "done"}`: you're done. For an errand waiting on you, the same as `POST /v1/errands/{id}/done`; with
+  `?site=`, the page is closed (the login stays). The server then closes the socket.
+
 ## Push
 
 The server notifies the phone through APNs. It sends only when it has a key (`APNS_*` in `.env`) and at least one registered device; otherwise nothing is sent and everything is still in the app.
@@ -1386,6 +1496,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `moodle` | alert | a Moodle sync brought new files (title "Moodle · 3 new files", a line per course naming them: "Macroeconomics: Lecture Notes: Monetary Policy, Lect: Monetary Policy"), or the login expired | `files` (the new files' ids, up to 20; since 2026-10-26), `login` (true: log in again) | lists the new files (`GET /v1/files/{id}`), each opening its PDF; the Moodle login with `login` |
 | `transit` | alert, `interruption-level: time-sensitive` | a tram alert fires ("Tram 4 in 7 min: leave now") | `alert_id` | nothing special (opens the app) |
 | `location` | silent (like `sync`) | a tram alert wants to know where the phone is | | (not shown) the app sends a fresh fix to `POST /v1/location` |
+| `errand` | alert; `interruption-level: time-sensitive` when it needs you in the live view or waits for a Confirm | a browser errand needs you (a login, a code, a card step), asks something, waits for a Confirm, is done or failed (since 2026-10-27) | `errand_id`, `conversation_id` | needing you in the live view: opens it (`aide://errand/<id>`); else the conversation |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
 ```json
@@ -1509,7 +1620,7 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
 
 | Field | Meaning |
 |---|---|
-| `status` | `working`, `asking` (Aide asked another agent), `writing` (the reply is coming), `done`, `failed` |
+| `status` | `working`, `asking` (Aide asked another agent), `writing` (the reply is coming), `done`, `failed`; for an errand also `browsing` and `needs_you` (since 2026-10-27) |
 | `detail` | a few words for `asking` ("Asking Coach") or `failed`; else empty |
 | `text` | `done`: the reply's first line, cut to about 140 characters; else empty |
 | `since` | when it started working |
@@ -1531,6 +1642,14 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
   follows is the notification. Its content state has two more fields, `done` (topics written so far, failed ones
   included) and `total` (the topics being written); both null on lecture notes and absent on every other agent
   activity.
+- A browser errand (since 2026-10-27): the server push-starts it when the errand begins, under the key
+  `errand:<errand id>`, agent `aide`, `conversation` the errand's chat, `title` the errand's, with a quiet alert
+  ("Aide · USB-C cable"). Status `browsing` with `detail` the step ("Opened amazon.it", "Clicked Aggiungi al
+  carrello"), at most one update per 2 s; `needs_you` with an `alert` when it waits for the user (`detail`: "Log in
+  to Amazon", the question, "Confirm: Order the cable"); back to `browsing` when it goes on (one activity across the
+  whole errand); then `end` with `done` (`text` the result) or `failed`, dismissed at once. Its content state has one
+  more field, `errand` (the errand's id), absent on every other agent activity; `done` and `total` are null.
+  Tapping it opens the live view while it needs you (`aide://errand/<id>`), else the conversation.
 - Tapping the activity opens the conversation (`aide://conversation/<id>`; the Team chat: `aide://team`).
 
 **`event`** (`EventActivityAttributes`). Attributes: `key` (`event:<12 hex of the uid's hash>:<start, Unix>`),

@@ -22,6 +22,8 @@ MAPS = ("find_places", "travel_time")
 TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alerts", "add_transit_alert",
            "update_transit_alert", "delete_transit_alert")
 WEB = ("web_search", "fetch_page")
+BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
+PURCHASES = ("list_purchases",)
 HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
 HEALTH = ("health",)
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal")
@@ -238,7 +240,7 @@ food (a meal photo goes to Coach to log), habits and Screen Time locks ("no phon
 study and lectures; Finance for money and budgets. You don't have their tools, so never answer those from memory \
 or guess: ask. A request that spans several (plan my week) goes to each one that has a part, at most 3 asks per \
 turn, in parallel when they don't depend on each other. Only small talk, general questions, web lookups, places \
-and travel times, GTT trams and tram alerts, what to remember, and routines are yours to answer yourself.
+and travel times, GTT trams and tram alerts, errands on websites, what to remember, and routines are yours to answer yourself.
 - A specialist doesn't see this chat, so put everything it needs into the request: what the user asked in their \
 words, the dates and names, what was said before that matters ("the dentist you found, Tue 15:00"). The user's \
 photos from this message go along by themselves. You know what each specialist remembers (marked with its name in \
@@ -246,6 +248,9 @@ your memory list), so you can use that to word the request.
 - Then report back in a few lines, in your own voice, saying who did it ("Secretary moved the dentist to Friday \
 10:00."). Actions a specialist queued join the usual queue: say they're waiting for Confirm, never that they're \
 done. Cards from its tools show under your reply, so don't list them again."""
+
+_BROWSER = """- Errands on websites: when the user wants something done on a website (order a product, find the cheapest and buy it, book a train, order dinner, check something behind their login), start_errand does it in your own browser, logged in to their accounts, in the background. Put the whole request in `task`: what, how many, sizes, budget, deadlines, and preferences from memory (their usual shop, "always the cheapest delivery"). Then say in a line that you're on it; the errand reports in this chat by itself, with a card. Don't start one for what web_search answers.
+- Errands stop for the user: a login, a code or a card form they do themselves in the live view (Take over on the card; never ask for passwords, codes or card numbers in chat); a question you pass on with reply_errand when they answer in chat; and a Confirm before anything that buys, books, sends or changes something, which they give on the card or in Waiting for you (never say it's ordered before the errand says so). cancel_errand stops one. errand_status says where one is."""
 
 _ASKED = """- Aide, the assistant the user talks to first, hands you their requests, and your teammates ask you for \
 what only you have the tools for. Then the message starts with "[Asked by Aide]" (or a teammate's name) and there \
@@ -300,8 +305,8 @@ AIDE_PROMPT = _prompt(
     "You are Aide, a personal assistant for one person, and the one they talk to first. Like an executive "
     "assistant with a team behind them, you understand what they want, hand it to the specialist whose work it "
     "is, and report back. You look things up on the web and on maps yourself.",
-    _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _MAPS, _TRANSIT, _DELEGATE, _ROUTINES, _WATCHES, _ROUTINES_ANY,
-    _OBJECTIVES, _OBJECTIVES_ANY,
+    _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _MAPS, _TRANSIT, _BROWSER, _DELEGATE, _ROUTINES, _WATCHES,
+    _ROUTINES_ANY, _OBJECTIVES, _OBJECTIVES_ANY,
 )
 
 SECRETARY_PROMPT = _prompt(
@@ -332,7 +337,9 @@ COACH_PROMPT = _prompt(
 FINANCE_PROMPT = _prompt(
     "You are Finance, one of the user's assistants: money and budgets. You are practical and careful. There is "
     "no bank data: you know what the user tells you (income, spending, goals), so save what matters with "
-    "remember (your own scope) and keep the numbers straight; when they're missing, ask. Budgets are simple and "
+    "remember (your own scope) and keep the numbers straight; when they're missing, ask. What Aide ordered for "
+    "them on websites (Amazon, delivery, trains) is in list_purchases, with the totals: count it as spending. "
+    "Budgets are simple and "
     "concrete. You give no investment advice beyond general principles (an emergency fund, diversification, "
     "low fees, not betting money you need), and you never recommend specific securities.",
     _BASICS, _QUEUE, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
@@ -357,7 +364,8 @@ STARTING_WATCHES = tuple((a, dict(i, days=list(i["days"]))) for a, i in _STARTIN
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
-             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *MAPS, *TRANSIT), orchestrator=True,
+             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *MAPS, *TRANSIT, *BROWSER),
+             orchestrator=True,
              routine_ideas=(_idea("Plan my week", "Look at my calendar, reminders and habits for the coming week and "
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
     AgentDef("secretary", "Secretary", "Calendar, reminders and mail", "#3B6FD8",
@@ -379,7 +387,7 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   "thing for next week.", "18:00", (7,)),
                             *(i for a, i in _STARTING_WATCHES if a == "coach"))),
     AgentDef("finance", "Finance", "Money and budgets", "#B8921C",
-             ("Help me set a monthly budget", "I spent "), FINANCE_PROMPT, WEB,
+             ("Help me set a monthly budget", "I spent "), FINANCE_PROMPT, (*PURCHASES, *WEB),
              routine_ideas=(_idea("Week's spending", "Ask me what I spent this week, then compare it with my budget "
                                   "and say where I stand.", "19:00", (7,)),)),
 )}
@@ -401,6 +409,8 @@ _CONNECTORS = (
     ("web", "Web search", WEB, set()),
     ("maps", "Google Maps", MAPS, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
+    ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand"}),
+    ("purchases", "Purchases", PURCHASES, set()),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),
     ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
     ("objectives", "Objectives", OBJECTIVES, {"add_objective", "update_objective", "accept_objectives",

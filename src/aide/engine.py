@@ -104,6 +104,21 @@ class Engine:
                 and self.paused is None and not (self._wait_until and _now() < self._wait_until)
                 and not self._on_openrouter())
 
+    def plan_now(self) -> bool:
+        """The notes engine is the plan, and it can be used now: not at the limit, nor paused on it. (Errands.)"""
+        if self._limited_until and _now() >= self._limited_until:
+            self._limited_until = None
+        return (self.engine == "claude" and self.available and self._limited_until is None and self.paused is None
+                and not (self._wait_until and _now() < self._wait_until) and not self._on_openrouter())
+
+    def plan_blocked(self) -> datetime | None:
+        """The plan is the notes engine but can't be used now (the limit): until when. None otherwise, and when the
+        user already chose OpenRouter until the reset."""
+        if self.engine != "claude" or not self.available or self._on_openrouter() or self.plan_now():
+            return None
+        return (self._limited_until or (self.paused or {}).get("resets_at") or self._wait_until
+                or _now() + UNKNOWN_RESET)
+
     @property
     def available(self) -> bool:
         return self.claude is not None
@@ -165,7 +180,10 @@ class Engine:
         def wrap(t: "Tool"):
             async def handler(args: dict) -> dict:
                 out, err = await call(t.name, args)
-                return {"content": [{"type": "text", "text": str(out)}], "is_error": err}
+                content = [{"type": "text", "text": str(out)}]
+                if image := getattr(out, "image", None):  # a browser screenshot
+                    content.append({"type": "image", "data": image["data"], "mimeType": image["media_type"]})
+                return {"content": content, "is_error": err}
             return tool(t.name, t.description, t.input_schema)(handler)
 
         self.workdir.mkdir(parents=True, exist_ok=True)

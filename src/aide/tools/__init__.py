@@ -10,13 +10,16 @@ class ToolOutput(str):
     """A tool result: the text the model reads, plus data the app shows as cards under the reply.
 
     `attachment` is one docs/API.md attachment, e.g. {"type": "reminders", "reminders": [...]}.
+    `image` is a picture the model sees with the text (a browser screenshot): {"media_type", "data" (base64)}.
     """
 
     attachment: dict | None
+    image: dict | None
 
-    def __new__(cls, text: str, attachment: dict | None = None):
+    def __new__(cls, text: str, attachment: dict | None = None, image: dict | None = None):
         out = super().__new__(cls, text)
         out.attachment = attachment
+        out.image = image
         return out
 
 

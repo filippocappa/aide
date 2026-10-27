@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -9,7 +10,8 @@ from pathlib import Path
 import anthropic
 import uvicorn
 
-from .agent import CONVERSATION, Agent
+from .agent import CONVERSATION, TEAM, Agent
+from .browser import Browser
 from .channels.api import create_app
 from .transcribe import Transcriber
 from .config import OPENROUTER_BASE_URL, load_settings, save_env
@@ -17,6 +19,7 @@ from .db import Database
 from .digest import DigestService, digest_schedule
 from .drafts import Drafts
 from .engine import Engine
+from .errands import ErrandRunner, ErrandStore, errand_tools, purchase_tools
 from .gmail import Gmail
 from .food import FoodStore
 from .objectives import ObjectivePlanner, ObjectiveStore, StudyReplanner
@@ -125,10 +128,25 @@ def main() -> None:
         tools += mail_tools(gmail, settings.timezone) + draft_tools(drafts, gmail)
     else:
         log.warning("GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN not set: mail tools disabled")
-    if settings.tavily_api_key:
-        tools += search_tools(Tavily(settings.tavily_api_key), settings.timezone)
+    web = search_tools(Tavily(settings.tavily_api_key), settings.timezone) if settings.tavily_api_key else []
+    if web:
+        tools += web
     else:
         log.warning("TAVILY_API_KEY not set: web search disabled")
+    errand_store = ErrandStore(db.conn, settings.timezone)
+    tools += purchase_tools(errand_store, settings.timezone)
+    errands = None
+    if Browser.available():
+        # Headed when there's a display (Xvfb): harder for a site to tell from a person's browser.
+        browser = Browser(settings.db_path.parent / "browser", headed=bool(os.environ.get("DISPLAY")))
+        errands = ErrandRunner(errand_store, browser, client, settings.smart_model, CONVERSATION, engine, photos,
+                               push, live, extra_tools=[t for t in web if t.name == "web_search"], audit=db.audit)
+
+        def errand_chat() -> str:  # the chat of the turn that starts one (the Team chat's go to the first chat)
+            return CONVERSATION if agent._conversation in (None, TEAM) else agent._conversation
+        tools += errand_tools(errands, errand_chat)
+    else:
+        log.warning("Playwright's Chromium not installed (uv run playwright install chromium): no browser errands")
     location = Location(db.conn, push)
     maps = None
     if settings.google_maps_api_key:
@@ -176,6 +194,8 @@ def main() -> None:
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
+    if errands:
+        errands.agent = agent
     whereabouts = Whereabouts(location, maps) if maps is not None else None
     if whereabouts:
         agent.whereabouts = whereabouts.describe
@@ -242,6 +262,7 @@ def main() -> None:
             *([transit.timetable.run(), watcher.run()] if transit else []),
             *([leave.run()] if leave else []),
             *([events.run()] if events else []),
+            *([errands.run()] if errands else []),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
@@ -249,7 +270,7 @@ def main() -> None:
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
-                             quizzes, reviews, locks)
+                             quizzes, reviews, locks, errands, errand_store)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
