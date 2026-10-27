@@ -66,7 +66,7 @@ struct TramActivityAttributes: ActivityAttributes {
 /// (started by the server).
 struct AgentActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
-        /// working, asking, writing, done or failed.
+        /// working, asking, writing, browsing (an errand), needs_you (an errand waiting for you), done or failed.
         var status: String
         /// "Asking Coach", or what went wrong.
         var detail: String
@@ -77,6 +77,8 @@ struct AgentActivityAttributes: ActivityAttributes {
         /// A notes job's topics written so far, and how many in all; nil for the rest.
         var done: Int? = nil
         var total: Int? = nil
+        /// A browser errand's id; nil for the rest.
+        var errand: Int? = nil
 
         var sinceDate: Date { Date(timeIntervalSince1970: since) }
         var isOver: Bool { status == "done" || status == "failed" }
@@ -86,7 +88,7 @@ struct AgentActivityAttributes: ActivityAttributes {
         }
     }
 
-    /// `agent:<conversation id>`, `agent:team`, or `notes:<proposal or lecture id>`.
+    /// `agent:<conversation id>`, `agent:team`, `notes:<proposal or lecture id>` or `errand:<errand id>`.
     var key: String
     var agent: String
     var name: String
@@ -99,7 +101,8 @@ struct AgentActivityAttributes: ActivityAttributes {
 
     /// Where a tap goes (PushRoute).
     var url: URL? {
-        URL(string: conversation == "team" ? "aide://team" : "aide://conversation/\(conversation)")
+        if key.hasPrefix("errand:") { return URL(string: "aide://errand/\(key.dropFirst("errand:".count))") }
+        return URL(string: conversation == "team" ? "aide://team" : "aide://conversation/\(conversation)")
     }
 }
 
@@ -111,6 +114,8 @@ extension AgentActivityAttributes.ContentState {
         case "failed": detail.isEmpty ? "Something went wrong" : detail
         case "asking", "writing": detail.isEmpty ? (status == "asking" ? "\(name) is asking the team" : "\(name) is writing")
                                                  : detail
+        case "browsing": detail.isEmpty ? "\(name) is browsing" : detail
+        case "needs_you": detail.isEmpty ? "Needs you" : detail
         default: detail.isEmpty ? "\(name) is working on it" : detail
         }
     }

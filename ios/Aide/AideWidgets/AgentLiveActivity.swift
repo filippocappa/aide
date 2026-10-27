@@ -93,6 +93,8 @@ struct AgentStatusIcon: View {
         case "failed": Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
         case "asking": Image(systemName: "person.2.fill").foregroundStyle(tint)
         case "writing": Image(systemName: "text.cursor").foregroundStyle(tint)
+        case "browsing": Image(systemName: "safari").foregroundStyle(tint)
+        case "needs_you": Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
         default: ProgressView().tint(tint)
         }
     }

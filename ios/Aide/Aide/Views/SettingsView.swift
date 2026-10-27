@@ -27,6 +27,7 @@ struct SettingsView: View {
                         VoiceSettingsView()
                     }
                     row("Claude plan", "sparkles", Color(red: 0.85, green: 0.47, blue: 0.34)) { NotesWriterView() }
+                    row("Browser", "safari.fill", .blue) { BrowserSettingsView() }
                 }
                 Section("This iPhone") {
                     row("Notifications", "bell.badge.fill", .red, value: notificationsValue, off: push.authorization != .authorized && push.authorization != .provisional) {

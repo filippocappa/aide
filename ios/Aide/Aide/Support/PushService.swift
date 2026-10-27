@@ -22,9 +22,11 @@ enum PushRoute: Equatable {
     /// Today's habits and objectives, and the Health tab.
     case objectives
     case health
+    /// A browser errand: its live view while it needs you on the page, else its chat.
+    case errand(Int)
 
     /// `aide://conversation/<id>`, `aide://team`, `aide://agent/<id>`, `aide://voice`, `aide://today`,
-    /// `aide://objectives`, `aide://health`.
+    /// `aide://objectives`, `aide://health`, `aide://errand/<id>`.
     init?(url: URL) {
         guard url.scheme == "aide" else { return nil }
         let id = url.pathComponents.dropFirst().first
@@ -36,6 +38,7 @@ enum PushRoute: Equatable {
         case "today": self = .today
         case "objectives": self = .objectives
         case "health": self = .health
+        case "errand": guard let id = id.flatMap(Int.init) else { return nil }; self = .errand(id)
         default: return nil
         }
     }
@@ -50,6 +53,9 @@ enum PushRoute: Equatable {
             guard let id = aide["conversation_id"] as? String else { return nil }
             self = aide["routine"] != nil ? .note(id) : .conversation(id)
         case "moodle": self = .moodle(login: aide["login"] as? Bool ?? false, files: aide["files"] as? [String] ?? [])
+        case "errand":
+            guard let id = (aide["errand_id"] as? Int) ?? (aide["errand_id"] as? NSNumber)?.intValue else { return nil }
+            self = .errand(id)
         default: return nil
         }
     }

@@ -178,6 +178,8 @@ struct WaitingSection: View {
     @State private var busy: Set<String> = []
     @State private var error: String?
     @State private var editing: MailDraft?
+    @State private var browser: BrowserTarget?
+    @State private var reviewing: QueuedAction?
 
     var body: some View {
         let actions = (approvals?.actions ?? []).filter(mine(\.agent))
@@ -185,19 +187,34 @@ struct WaitingSection: View {
         let objectives = (approvals?.objectives ?? []).filter(mine(\.agent))
         let proposals = agent == nil || agent?.id == "professor" ? approvals?.proposals ?? [] : []
         let writer = agent == nil || agent?.id == "professor" ? approvals?.writer : nil
-        if !actions.isEmpty || !drafts.isEmpty || !objectives.isEmpty || !proposals.isEmpty || writer != nil {
+        let errands = agent == nil || agent?.id == "aide" ? approvals?.errands ?? [] : []
+        // Orders are confirmed one at a time, from their own page.
+        let plain = actions.filter { $0.purchase == nil }
+        if !actions.isEmpty || !drafts.isEmpty || !objectives.isEmpty || !proposals.isEmpty || writer != nil
+            || !errands.isEmpty {
             Section {
-                ForEach(actions) { action in
-                    QueuedActionRow(action: action, agent: chat.agent(action.agent), busy: busy.contains("a\(action.id)"),
-                                    confirm: { Task { await decide(action, confirm: true) } },
-                                    cancel: { Task { await decide(action, confirm: false) } })
+                ForEach(errands) { e in
+                    ErrandWaitingRow(errand: e, agent: chat.agent("aide"), busy: busy.contains("e\(e.id)"),
+                                     takeOver: { browser = .errand(e.id, title: e.title) },
+                                     answer: { text in Task { await act("e\(e.id)") { _ = try await env.api.replyErrand(e.id, answer: text); return nil } } },
+                                     cancel: { Task { await act("e\(e.id)") { _ = try await env.api.cancelErrand(e.id); return nil } } })
                         .contentShape(Rectangle())
-                        .onTapGesture { go(action.conversationId) }
+                        .onTapGesture { go(e.conversationId) }
                         .listRowBackground(Theme.row)
                 }
-                if actions.count > 1 {
-                    Button { Task { await confirmAll(actions) } } label: {
-                        Label("Confirm all \(actions.count)", systemImage: "checkmark").font(.body.weight(.semibold))
+                ForEach(actions) { action in
+                    QueuedActionRow(action: action, agent: chat.agent(action.agent), busy: busy.contains("a\(action.id)"),
+                                    confirm: {
+                                        if action.purchase != nil { reviewing = action } else { Task { await decide(action, confirm: true) } }
+                                    },
+                                    cancel: { Task { await decide(action, confirm: false) } })
+                        .contentShape(Rectangle())
+                        .onTapGesture { if action.purchase != nil { reviewing = action } else { go(action.conversationId) } }
+                        .listRowBackground(Theme.row)
+                }
+                if plain.count > 1 {
+                    Button { Task { await confirmAll(plain) } } label: {
+                        Label("Confirm all \(plain.count)", systemImage: "checkmark").font(.body.weight(.semibold))
                     }
                     .disabled(!busy.isEmpty)
                     .listRowBackground(Theme.row)
@@ -259,6 +276,12 @@ struct WaitingSection: View {
             }
             .sheet(item: $editing) { draft in
                 DraftEditor(draft: draft, send: { await answer(draft, send: $0) }, dismiss: { await answer(draft, send: nil) })
+            }
+            .sheet(item: $reviewing) { action in
+                PurchaseConfirmSheet(action: action) { await load() }
+            }
+            .fullScreenCover(item: $browser) { target in
+                BrowserSheet(target: target) { Task { await load() } }
             }
         }
     }
@@ -417,15 +440,18 @@ private struct QueuedActionRow: View {
             HStack(alignment: .top, spacing: 10) {
                 AgentMark(agent: agent, size: 22).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(action.summary)
+                    Text(action.purchase?.summary ?? action.summary)
                     if let expires = action.expiresAt.flatMap(Wire.parse) {
                         Text("\(agent.name) · expires \(expires.formatted(date: .omitted, time: .shortened))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
+            if let order = action.purchase { PurchaseSummary(detail: order) }
             HStack(spacing: 10) {
-                Button(action: confirm) { Text("Confirm").frame(maxWidth: .infinity) }
+                Button(action: confirm) {
+                    Text(action.purchase.map { _ in "Review and confirm" } ?? "Confirm").frame(maxWidth: .infinity)
+                }
                     .buttonStyle(.borderedProminent)
                     .foregroundStyle(Theme.onAccent)
                 Button(role: .cancel, action: cancel) { Text("Cancel").frame(maxWidth: .infinity) }

@@ -66,6 +66,8 @@ enum Attachment: Decodable, Hashable {
     case routes([TravelRoute])
     case files([StudyFile])
     case proposal(NotebookProposal)
+    case errands([Errand])
+    case purchases([Purchase])
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -78,10 +80,14 @@ enum Attachment: Decodable, Hashable {
         case "routes": self = .routes(try c.decode([TravelRoute].self, forKey: .routes))
         case "files": self = .files(try c.decode([StudyFile].self, forKey: .files))
         case "proposal": self = .proposal(try c.decode(NotebookProposal.self, forKey: .proposal))
+        case "errands": self = .errands(try c.decode([Errand].self, forKey: .errands))
+        case "purchases": self = .purchases(try c.decode([Purchase].self, forKey: .purchases))
         default: self = .unknown
         }
     }
-    private enum CodingKeys: String, CodingKey { case type, reminders, events, meals, departures, routes, files, proposal }
+    private enum CodingKeys: String, CodingKey {
+        case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases
+    }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
         (list ?? []).filter { $0 != .unknown }
@@ -1061,6 +1067,11 @@ struct QueuedAction: Decodable, Identifiable, Hashable {
     var conversationId: String?
     var createdAt: String?
     var expiresAt: String?
+    /// What to draw instead of the plain summary: an errand's order. nil for the rest.
+    var detail: PurchaseDetail?
+
+    /// An order to place: its items, total and address, with the Confirm.
+    var purchase: PurchaseDetail? { detail?.kind == "purchase" ? detail : nil }
 }
 
 /// Everything waiting for your OK, and the routines coming up.
@@ -1073,6 +1084,8 @@ struct Approvals: Decodable {
     var drafts: [MailDraft]?
     var writer: WriterPause?
     var upcoming: [Routine]
+    /// Browser errands that need you (log in, answer, go on); nil from a server before them.
+    var errands: [Errand]?
 }
 
 /// A draft's text as edited in the app; nil sends it as drafted.
@@ -1667,3 +1680,137 @@ struct NearbyBoards: Decodable {
     /// The fix they're from; nil without one.
     let fixAt: String?
 }
+
+// MARK: - Browser errands (docs/API.md, "Browser errands")
+
+/// Something Aide does on a website for you, in its own browser on the server.
+struct Errand: Decodable, Identifiable, Hashable {
+    let id: Int
+    let title: String
+    let task: String
+    var site: String?
+    var url: String?
+    /// queued, running, needs_you, waiting_confirm, done, failed, cancelled or interrupted.
+    let status: String
+    /// needs_you: login, captcha, code, card, other (the live view), question or plan_limit (an answer).
+    var why: String?
+    var reason: String?
+    var options: [String]?
+    var step: String?
+    var steps: [ErrandStep] = []
+    var result: String?
+    /// waiting_confirm: the queued action to confirm.
+    var actionId: Int?
+    var conversationId: String?
+    var purchaseId: Int?
+    var createdAt: String?
+    var updatedAt: String?
+
+    var isOver: Bool { ["done", "failed", "cancelled"].contains(status) }
+    var isWorking: Bool { status == "queued" || status == "running" }
+    /// Waiting for you to do something on the page: log in, a code, a CAPTCHA, a card step.
+    var needsLiveView: Bool { status == "needs_you" && !["question", "plan_limit"].contains(why ?? "") }
+    /// Waiting for an answer in words (or one of `options`).
+    var needsAnswer: Bool { status == "needs_you" && ["question", "plan_limit"].contains(why ?? "") }
+    var siteName: String { site ?? "the web" }
+
+    /// What it's doing or waiting for, in a line.
+    var line: String {
+        switch status {
+        case "queued": "Waiting to start"
+        case "running": step ?? "Working"
+        case "needs_you", "waiting_confirm": reason ?? step ?? "Needs you"
+        case "interrupted": "Stopped by a server restart"
+        case "cancelled": result ?? "Cancelled"
+        default: result ?? step ?? status.prefix(1).uppercased() + status.dropFirst()
+        }
+    }
+}
+
+struct ErrandStep: Decodable, Hashable {
+    let ts: String
+    let text: String
+}
+
+struct ErrandList: Decodable {
+    let errands: [Errand]
+    var enabled: Bool = true
+}
+
+struct ErrandAnswer: Encodable { let answer: String }
+
+/// One thing in an order, as the site shows it.
+struct PurchaseItem: Decodable, Hashable {
+    let title: String
+    var quantity: Int?
+    var price: String?
+    var image: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decode(String.self, forKey: .title)
+        // As the model read it off the page: 1, 1.0 or "1".
+        quantity = (try? c.decodeIfPresent(Int.self, forKey: .quantity))
+            ?? (try? c.decodeIfPresent(Double.self, forKey: .quantity)).flatMap { $0 }.map { Int($0) }
+            ?? (try? c.decodeIfPresent(String.self, forKey: .quantity)).flatMap { $0 }.flatMap { Int($0) }
+        price = try? c.decodeIfPresent(String.self, forKey: .price)
+        image = try? c.decodeIfPresent(String.self, forKey: .image)
+    }
+    private enum CodingKeys: String, CodingKey { case title, quantity, price, image }
+}
+
+/// What an errand asks you to confirm: the order as the checkout page showed it.
+struct PurchaseDetail: Decodable, Hashable {
+    let kind: String
+    var errandId: Int?
+    var site: String?
+    var summary: String?
+    var items: [PurchaseItem]?
+    var total: String?
+    var delivery: String?
+    var address: String?
+    /// A photo id of the checkout page.
+    var screenshot: String?
+    /// The button it will press once you confirm.
+    var button: String?
+}
+
+/// An order an errand placed.
+struct Purchase: Decodable, Identifiable, Hashable {
+    let id: Int
+    var errandId: Int?
+    let site: String
+    let title: String
+    var items: [PurchaseItem] = []
+    let total: String
+    var amount: Double?
+    var currency: String?
+    var orderRef: String?
+    var delivery: String?
+    /// A photo id of the confirmation page.
+    var receipt: String?
+    let placedAt: String
+
+    var date: Date? { Wire.parse(placedAt) }
+}
+
+struct PurchaseList: Decodable {
+    let purchases: [Purchase]
+    var totals: [String: Double] = [:]
+}
+
+/// A site Aide's browser has a profile for (so you may be logged in there).
+struct BrowserSite: Decodable, Identifiable, Hashable {
+    let site: String
+    var usedAt: String?
+    var open: Bool?
+    var id: String { site }
+}
+
+struct BrowserSites: Decodable {
+    let sites: [BrowserSite]
+    var enabled: Bool = true
+}
+
+struct SiteToOpen: Encodable { let url: String }
+struct OpenedSite: Decodable { let site: String; let url: String }

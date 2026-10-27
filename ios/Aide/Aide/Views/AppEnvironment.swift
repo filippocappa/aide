@@ -28,6 +28,8 @@ final class AppEnvironment: ObservableObject {
     @Published var todayFocus: TodayFocus?
     /// The Today page, open over the Team tab.
     @Published var showToday = false
+    /// The live view of an errand that needs you, from its push or Live Activity, over everything.
+    @Published var browser: BrowserTarget?
 
     private init() {
         let settings = AppSettings()
@@ -138,6 +140,13 @@ final class AppEnvironment: ObservableObject {
             await chat.open(id: id)
             if voice.isActive { voice.stopAll() }
             await voice.start(saying: "Quiz me")
+        case .errand(let id):
+            guard let errand = try? await api.errand(id) else { return }
+            if errand.needsLiveView {
+                browser = .errand(id, title: errand.title)
+            } else if let conversation = errand.conversationId {
+                await chat.open(id: conversation)
+            }
         case .health, .chats:
             break // tabs, switched by ContentView
         }

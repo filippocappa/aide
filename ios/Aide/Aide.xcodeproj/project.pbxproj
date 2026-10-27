@@ -27,6 +27,7 @@
 		3B94BC79A60AEAD6626F4EEA /* LockShield.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ACCD638FA0D9F230CF15238B /* LockShield.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3CA6E37A3296746227026CF7 /* ShieldConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21264FA61ED8665DC82B517 /* ShieldConfig.swift */; };
 		3DDC6EFD08DE031E76848EBC /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */; };
+		3E1727F77882BD2842BC741B /* ErrandViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4B434BFB9F5B347D240B333 /* ErrandViews.swift */; };
 		3ED4F27F4BDF47BC7C5CCE36 /* HealthWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2F5F2B76D809AD012067BF /* HealthWidget.swift */; };
 		44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289CE8321C0A5A80F6B92C /* MoodleView.swift */; };
 		488BB48F32166377BFAA5086 /* ScreenLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5A6ADA18164E31DD49CD71 /* ScreenLock.swift */; };
@@ -238,6 +239,7 @@
 		E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSettingsView.swift; sourceTree = "<group>"; };
 		EBA213D456FF8A690E35B36F /* ScreenTimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeService.swift; sourceTree = "<group>"; };
 		F32DFE4D7AD03B872AE8A96C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		F4B434BFB9F5B347D240B333 /* ErrandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrandViews.swift; sourceTree = "<group>"; };
 		F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSheet.swift; sourceTree = "<group>"; };
 		F7399AF7109C6333CB3244BC /* AideWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideWidgets.swift; sourceTree = "<group>"; };
 		FBBFAA140586D1B2AF141D34 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -262,6 +264,7 @@
 				3E5F1E3C560D08D523718D2F /* DigestView.swift */,
 				78FD630BFAF2C84AC4AF0659 /* DigestViewModel.swift */,
 				772E51ADF548B97CFFD4C44D /* DraftViews.swift */,
+				F4B434BFB9F5B347D240B333 /* ErrandViews.swift */,
 				DDFDB90CA977D76111828E4F /* FoodViews.swift */,
 				BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */,
 				591D1D0440D0AE931595EE83 /* HealthView.swift */,
@@ -706,6 +709,7 @@
 				08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */,
 				AA355EF0C809637B2B575280 /* DigestViewModel.swift in Sources */,
 				FA49E57FDF31B7507D385EA8 /* DraftViews.swift in Sources */,
+				3E1727F77882BD2842BC741B /* ErrandViews.swift in Sources */,
 				B498B793AEFA7987A267B6D0 /* Figure.swift in Sources */,
 				DCCB151C61A44732969A6427 /* FoodViews.swift in Sources */,
 				F4CBC49331862920D6DD3CC7 /* HabitIntents.swift in Sources */,

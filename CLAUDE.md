@@ -50,6 +50,9 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   `leave.py`: leave-now for calendar events (the event's GTT ride from Maps becomes a one-off tram alert).
 - `upcoming.py`: the next calendar event's Live Activity (a countdown from 30 min before; `live.py` sends it).
 - `locks.py`: Screen Time locks (one-offs and weekly schedules, unlocking early with a reason); `tools/locks.py`: Coach's.
+- `browser.py`: Aide's own Chromium (Playwright, headless, a phone-sized page, a profile per site in `data/browser/`),
+  the page listing the model reads, the live view's screencast and input. `errands.py`: browser errands (the store,
+  the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -302,6 +305,20 @@ entitlement (`Aide.entitlements` and both extensions): fine for development buil
 reason or Coach, and the app's Screen Time page is locked until it's over. Usage thresholds and a countdown in the
 Dynamic Island are not done.
 
+**Done, both sides (2026-10-27), tried on the server, not yet on the phone:** browser errands (#22, contract in
+`docs/API.md`, "Browser errands"). Aide starts an errand (`start_errand`) for anything a shop or booking site shows now
+or does for you; it runs in the background in Aide's Chromium on `cappa` and reports in Aide's chat. It searches,
+reads, compares and fills carts on its own; anything that changes something (buying, booking, sending, signing up,
+cancelling) is refused in code and asked as a queued `errand_go` with the order's `detail`, and after Confirm only the
+confirmed button is clicked while the page shows the confirmed total. Logins, codes, CAPTCHAs and card steps are the
+user's, in the live view (a WebSocket; typed text is never logged or shown to the model). It uses the site's saved
+card and address. Placed orders go into `purchases`, which Finance reads (`list_purchases`). Tried headless on
+Amazon.it (prices, product links). App (`Views/ErrandViews.swift`): the errand card in chat (Take over, answers, Review
+and confirm, Watch, Cancel), the live view (`BrowserSheet`: taps, drags, a native field that follows the page's focus
+so AutoFill offers passwords and codes), the order's Confirm sheet, errands and orders in Waiting for you, purchase
+cards, Settings → Browser (sites, logging in, Purchases), `aide://errand/<id>` and the `errand` push. Next: a login
+and a small real order from the phone, then food delivery and trains.
+
 **Done, both sides (2026-10-26), installed on the phone 2026-10-26:** Today and limit habits (#21, contract in
 `docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card
 (`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
@@ -326,7 +343,7 @@ day's `health_logged` and the app makes its own Inhaler Usage samples match, nev
    replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
 2. Ideas from the agent-app research, not yet chosen: (#15, digests in a feed, is mostly covered by Today; #14,
    Goals, by objectives.)
-3. New, filed 2026-10-27, not yet chosen: a browser agent that logs in and shops for you (#22). The rest of #24 (buttons in the expanded view, voice chat in the background).
+3. New, filed 2026-10-27, not yet chosen: the rest of #24 (buttons in the expanded view, voice chat in the background).
 4. Recording a lecture in the app. Notebooks for the other courses. Finance still has no data source (memory
    only).
 

@@ -1456,7 +1456,8 @@ Server to app:
 
 App to server (only while `control` is true):
 - `{"type": "tap", "x": 0.42, "y": 0.61}`: a tap, as fractions of the frame.
-- `{"type": "scroll", "x": 0.5, "y": 0.5, "dy": 300}`: a scroll, `dy` in page pixels (positive: down).
+- `{"type": "scroll", "x": 0.5, "y": 0.5, "dy": 0.4}`: a scroll at that point, `dy` in screen heights (positive:
+  down).
 - `{"type": "text", "text": "…"}`: typed into the focused field (up to 500 characters a message). Never logged,
   stored or given to the model.
 - `{"type": "key", "key": "Enter" | "Tab" | "Backspace" | "Escape" | "Back"}` (`Back`: the page's back).

@@ -309,6 +309,70 @@ final class APIClient {
         let _: ScreenTimeDevice = try await send("PUT", "/v1/locks/device", body: device)
     }
 
+    // MARK: Browser errands (docs/API.md, "Browser errands")
+
+    func errands(open: Bool = false, limit: Int = 30) async throws -> ErrandList {
+        try await send("GET", "/v1/errands", query: [URLQueryItem(name: "open", value: open ? "true" : "false"),
+                                                    URLQueryItem(name: "limit", value: String(limit))])
+    }
+
+    func errand(_ id: Int) async throws -> Errand {
+        try await send("GET", "/v1/errands/\(id)")
+    }
+
+    /// You did your part in the live view: it goes on.
+    func errandDone(_ id: Int) async throws -> Errand {
+        try await send("POST", "/v1/errands/\(id)/done", body: EmptyBody())
+    }
+
+    func replyErrand(_ id: Int, answer: String) async throws -> Errand {
+        try await send("POST", "/v1/errands/\(id)/reply", body: ErrandAnswer(answer: answer))
+    }
+
+    func cancelErrand(_ id: Int) async throws -> Errand {
+        try await send("POST", "/v1/errands/\(id)/cancel", body: EmptyBody())
+    }
+
+    /// The errand's page as it is now (JPEG), or nil when none is open.
+    func errandFrame(_ id: Int) async throws -> Data? {
+        let req = try request("GET", "/v1/errands/\(id)/frame", query: [], auth: true, timeout: 20, body: nil)
+        let (data, http) = try await fetch(req)
+        if http.statusCode == 404 { return nil }
+        try check(data, http)
+        return data
+    }
+
+    func browserSites() async throws -> BrowserSites {
+        try await send("GET", "/v1/browser/sites")
+    }
+
+    /// Opens a site in Aide's browser to log in there (then the live view with `site`).
+    func openSite(_ url: String) async throws -> OpenedSite {
+        try await send("POST", "/v1/browser/sites", body: SiteToOpen(url: url), timeout: 45)
+    }
+
+    func forgetSite(_ site: String) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/browser/sites/\(site)", body: EmptyBody())
+    }
+
+    func purchases(days: Int? = nil) async throws -> PurchaseList {
+        try await send("GET", "/v1/purchases", query: days.map { [URLQueryItem(name: "days", value: String($0))] } ?? [])
+    }
+
+    /// The live view's socket: an errand's page, or a site to log in to. The token goes in the header, as for
+    /// every other call.
+    func browserLiveRequest(errand: Int? = nil, site: String? = nil) throws -> URLRequest {
+        let query = errand.map { [URLQueryItem(name: "errand", value: String($0))] }
+            ?? [URLQueryItem(name: "site", value: site ?? "")]
+        var req = try request("GET", "/v1/browser/live", query: query, auth: true, timeout: 30, body: nil)
+        guard let url = req.url, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw APIError.notConfigured
+        }
+        comps.scheme = comps.scheme == "https" ? "wss" : "ws"
+        req.url = comps.url
+        return req
+    }
+
     func transitSettings() async throws -> TransitSettings {
         try await send("GET", "/v1/transit/settings")
     }

@@ -568,6 +568,10 @@ struct AttachmentCard: View {
             if !files.isEmpty { card { FilesCard(files: files) } }
         case .proposal(let proposal):
             card { ProposalAnswerCard(proposal: proposal) }
+        case .errands(let errands):
+            VStack(spacing: 10) { ForEach(errands) { ErrandCard(errand: $0) } }
+        case .purchases(let purchases):
+            VStack(spacing: 10) { ForEach(purchases) { PurchaseCard(purchase: $0) } }
         case .unknown:
             EmptyView()
         }

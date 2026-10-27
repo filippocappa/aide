@@ -1155,3 +1155,79 @@ final class ScreenTimeTests: XCTestCase {
         XCTAssertEqual(weekly.intervalEnd.hour, 7)
     }
 }
+
+final class ErrandTests: XCTestCase {
+    static let errand = #"""
+    {"id": 7, "title": "USB-C cable", "task": "A cheap 2 m USB-C cable", "site": "amazon.it",
+     "url": "https://www.amazon.it/ap/signin", "status": "needs_you", "why": "login", "reason": "Log in to Amazon.",
+     "options": null, "step": "Log in to Amazon.", "steps": [{"ts": "2026-10-27T18:02:11+01:00", "text": "Opened amazon.it"}],
+     "result": null, "action_id": null, "conversation_id": "c_91f", "purchase_id": null,
+     "created_at": "2026-10-27T18:01:50+01:00", "updated_at": "2026-10-27T18:03:20+01:00"}
+    """#
+
+    func testErrandDecodesAndSaysWhatItNeeds() throws {
+        let e = try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand.utf8))
+        XCTAssertTrue(e.needsLiveView)
+        XCTAssertFalse(e.needsAnswer)
+        XCTAssertEqual(e.line, "Log in to Amazon.")
+        XCTAssertEqual(e.conversationId, "c_91f")
+        XCTAssertEqual(e.steps.first?.text, "Opened amazon.it")
+        let question = try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand
+            .replacingOccurrences(of: #""why": "login""#, with: #""why": "question""#)
+            .replacingOccurrences(of: #""options": null"#, with: #""options": ["2 m", "1 m"]"#).utf8))
+        XCTAssertTrue(question.needsAnswer)
+        XCTAssertFalse(question.needsLiveView)
+        XCTAssertEqual(question.options, ["2 m", "1 m"])
+    }
+
+    func testApprovalsCarryErrandsAndTheOrder() throws {
+        let json = """
+        {"waiting": 2,
+         "actions": [{"id": 42, "summary": "Order the Anker USB-C cable", "agent": "aide", "conversation_id": "c_91f",
+                      "created_at": "2026-10-27T18:03:00+01:00", "expires_at": "2026-10-27T18:33:00+01:00",
+                      "detail": {"kind": "purchase", "errand_id": 7, "site": "amazon.it", "summary": "Order the Anker USB-C cable",
+                                 "items": [{"title": "Anker USB-C cable 2 m", "quantity": "2", "price": "9,99 €", "image": null}],
+                                 "total": "12,98 €", "delivery": null, "address": "Via Roma 1, Torino",
+                                 "screenshot": "p_3f2a", "button": "Acquista ora"}},
+                     {"id": 43, "summary": "Delete reminder 'Bins'", "agent": "secretary", "detail": null}],
+         "objectives": [], "proposals": [], "writer": null, "upcoming": [],
+         "errands": [\(Self.errand)]}
+        """
+        let a = try JSONDecoder.api.decode(Approvals.self, from: Data(json.utf8))
+        let order = try XCTUnwrap(a.actions[0].purchase)
+        XCTAssertEqual(order.total, "12,98 €")
+        XCTAssertEqual(order.items?.first?.quantity, 2)
+        XCTAssertEqual(order.button, "Acquista ora")
+        XCTAssertNil(a.actions[1].purchase)
+        XCTAssertEqual(a.errands?.first?.id, 7)
+    }
+
+    func testErrandAndPurchaseAttachmentsDecode() throws {
+        let json = """
+        [{"type": "errands", "errands": [\(Self.errand)]},
+         {"type": "purchases", "purchases": [{"id": 3, "errand_id": 7, "site": "amazon.it", "title": "Anker USB-C cable",
+           "items": [{"title": "Anker USB-C cable 2 m", "quantity": 1, "price": "9,99 €", "image": null}],
+           "total": "12,98 €", "amount": 12.98, "currency": "EUR", "order_ref": "402-1234567-7654321",
+           "delivery": "Tomorrow, 28 Oct", "receipt": "p_9c1e", "placed_at": "2026-10-27T18:04:02+01:00"}]}]
+        """
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .errands(let errands) = attachments[0], case .purchases(let purchases) = attachments[1] else {
+            return XCTFail("expected an errand and a purchase")
+        }
+        XCTAssertEqual(errands.first?.siteName, "amazon.it")
+        XCTAssertEqual(purchases.first?.orderRef, "402-1234567-7654321")
+        XCTAssertNotNil(purchases.first?.date)
+    }
+
+    func testErrandRoutes() throws {
+        XCTAssertEqual(PushRoute(url: try XCTUnwrap(URL(string: "aide://errand/7"))), .errand(7))
+        XCTAssertNil(PushRoute(url: try XCTUnwrap(URL(string: "aide://errand/x"))))
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "errand", "errand_id": 7, "conversation_id": "c_91f"]]), .errand(7))
+        XCTAssertNil(PushRoute(userInfo: ["aide": ["kind": "errand"]]))
+        let activity = AgentActivityAttributes(key: "errand:7", agent: "aide", name: "Aide", color: "#34413F",
+                                               conversation: "c_91f", title: "USB-C cable")
+        XCTAssertEqual(activity.url?.absoluteString, "aide://errand/7")
+        let state = AgentActivityAttributes.ContentState(status: "browsing", detail: "", text: "", since: 0, errand: 7)
+        XCTAssertEqual(state.line(name: "Aide"), "Aide is browsing")
+    }
+}
