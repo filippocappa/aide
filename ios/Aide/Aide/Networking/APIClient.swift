@@ -51,11 +51,12 @@ final class APIClient {
     /// The chat, streamed: `onTeam` gets each message Aide and the agents send each other while Aide works,
     /// `onText` each piece of the reply as it's written, true when the draft starts over (docs/API.md, "Chat").
     /// A server without streaming answers plain JSON: same reply, nothing live. `photos` are uploaded ids.
-    func chatLive(_ text: String, photos: [String] = [], conversationID: String? = nil,
+    func chatLive(_ text: String, photos: [String] = [], conversationID: String? = nil, voice: Bool = false,
                   onText: @escaping @MainActor (String, Bool) -> Void = { _, _ in },
                   onTeam: @escaping @MainActor (TeamMessage) -> Void) async throws -> ChatReply {
         let body = try JSONEncoder.api.encode(ChatRequest(text: text, conversationId: conversationID, stream: true,
-                                                          photos: photos.isEmpty ? nil : photos))
+                                                          photos: photos.isEmpty ? nil : photos,
+                                                          voice: voice ? true : nil))
         return try await stream("/v1/chat", body: body, onEvent: { event in
             switch event {
             case .team(let message): onTeam(message)
@@ -633,6 +634,18 @@ final class APIClient {
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
         return try decode(data, http)
+    }
+
+    /// Review sessions not yet over, soonest first.
+    func reviewSessions(course: Int) async throws -> [ReviewSession] {
+        let list: ReviewSessionList = try await send("GET", "/v1/reviews",
+                                                     query: [URLQueryItem(name: "course", value: String(course))])
+        return list.sessions
+    }
+
+    /// Takes it off the calendar.
+    func cancelReviewSession(_ id: String) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/reviews/\(id)", body: EmptyBody())
     }
 
     func quizBank(course: Int) async throws -> QuizBank {

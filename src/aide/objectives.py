@@ -27,6 +27,7 @@ from .agents import AGENTS, SPECIALISTS, check_agent
 from .db import utcnow
 from .food import FOOD_METRICS
 from .notebook import date_line
+from .quiz import correct
 
 log = logging.getLogger(__name__)
 
@@ -336,7 +337,8 @@ class ObjectiveStore:
         if m["type"] == "practice":
             try:
                 rows = self.conn.execute(
-                    "SELECT score, questions FROM quizzes WHERE course_id = ? AND finished_at >= ? AND finished_at < ?",
+                    "SELECT score, questions FROM quizzes WHERE course_id = ? AND kind = 'exam' AND finished_at >= ? "
+                    "AND finished_at < ?",
                     (m["course"], self._utc(first), self._utc(last + timedelta(days=1)))).fetchall()
             except Exception:  # no practice exams yet: the table isn't there
                 return 0
@@ -687,8 +689,8 @@ class ObjectivePlanner:
                 line += f"; the exam: {intro['exam']}"
             try:
                 rows = self.store.conn.execute(
-                    "SELECT finished_at, score, questions FROM quizzes WHERE course_id = ? AND finished_at IS NOT NULL "
-                    "ORDER BY finished_at DESC LIMIT 5", (c["id"],)).fetchall()
+                    "SELECT finished_at, score, questions FROM quizzes WHERE course_id = ? AND kind = 'exam' "
+                    "AND finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 5", (c["id"],)).fetchall()
             except Exception:
                 rows = []
             if rows:
@@ -707,7 +709,7 @@ class ObjectivePlanner:
                         f"{t['title']} ({datetime.fromisoformat(t['at']).astimezone(self.tz):%a %d %b}"
                         f"{', by the user' if t['by_user'] else ''})" for t in new[:12]))
             if missed := self._missed(c["id"]):
-                out.append(f"  - Topics most missed in recent practice exams: {missed}")
+                out.append(f"  - Topics most missed in recent practice exams and quizzes: {missed}")
         lectures = [e for e in await self._events(start, end) if self.study.calendar
                     and e.calendar == self.study.study_calendar]
         if lectures:
@@ -715,7 +717,8 @@ class ObjectivePlanner:
         return out if len(out) > 1 else []
 
     def _missed(self, course_id: int) -> str:
-        """The weakest topics in the course's recent practice exams: "IS-LM 2/6 right, ..."; '' with none."""
+        """The weakest topics in the course's recent practice exams and quizzes: "IS-LM 2/6 right, ..."; '' with
+        none."""
         try:
             rows = self.store.conn.execute(
                 "SELECT questions, answers FROM quizzes WHERE course_id = ? AND finished_at IS NOT NULL "
@@ -728,7 +731,7 @@ class ObjectivePlanner:
             for n, q in enumerate(json.loads(questions), 1):
                 if q.get("topic_title"):
                     t = topics.setdefault(q["topic_title"], [0, 0])
-                    t[0] += given.get(str(n)) == q.get("key")
+                    t[0] += correct(q, given.get(str(n)))
                     t[1] += 1
         weak = sorted((r / n, title, r, n) for title, (r, n) in topics.items() if n >= 2 and r / n < 0.7)
         return ", ".join(f"{title} {r}/{n} right" for _, title, r, n in weak[:3])

@@ -1,9 +1,12 @@
 import random
 
+import pytest
+
 from aide.notebook import mcqs
 from aide.quiz import QuizStore, parse_question, plain_math
 from test_api import AUTH
 from test_notebook import chat_messages, nb  # noqa: F401 (the fixture)
+from test_study import ROME
 
 
 def page(topic: str, questions: list[tuple[str, str]]) -> str:
@@ -118,3 +121,85 @@ def test_the_study_tab_reads_notes_as_plain_text(nb):
 
 def test_escaped_money_is_not_maths():
     assert plain_math(r"From \$13.5 trillion to \$9,700, and $\Delta Y$.") == "From $13.5 trillion to $9,700, and ΔY."
+
+
+# -- quizzes in a chat ---------------------------------------------------------------------
+
+def quiz_tools_for(nb) -> dict:
+    from aide.tools.quiz import quiz_tools
+    return {t.name: t.handler for t in quiz_tools(QuizStore(nb.notebook), None, nb.study, nb.notebook, ROME)}
+
+
+def with_cards(nb, t) -> None:
+    nb.notebook.set_body(t["islm"]["id"], t["islm"]["body"], cards=[("What does IS stand for?", "Investment = saving"),
+                                                                      ("What shifts LM?", "The money supply")])
+
+
+async def test_a_quiz_in_chat_asks_questions_and_cards_one_at_a_time(nb):
+    t = notebook_with_questions(nb)
+    with_cards(nb, t)
+    tools, quizzes = quiz_tools_for(nb), QuizStore(nb.notebook)
+    out = await tools["quiz_me"](course="macroeconomics", count=4, topics=["the is-lm model"])
+    qid = out.split()[1].rstrip(",")
+    assert out.startswith(f"Quiz {qid}, 4 questions.") and "Question 1 of 4, The IS-LM model" in out
+    assert "[For you, not to say before they answer: the answer is " in out
+    questions = quizzes.quiz(qid)["questions"]
+    assert all(q["topic_title"] == "The IS-LM model" for q in questions)
+    assert {q.get("type", "mcq") for q in questions} == {"mcq", "card"}  # both kinds from 3 questions and 2 cards
+
+    for n, q in enumerate(questions, 1):
+        card = q.get("type") == "card"
+        if card:
+            assert "a flashcard: they answer in their own words" in out and "\nA) " not in out
+        else:
+            assert "(multiple choice)" in out and "\nA) one\nB) two" in out
+        right = n != 2  # the second one wrong
+        answer = ("right" if right else "wrong") if card else (q["key"] if right else "ABCD".replace(q["key"], "")[0])
+        out = await tools["quiz_answer"](quiz=qid, answer=answer.lower())
+        assert out.startswith("Right." if right else "Wrong: the answer is ")
+        if n < 4:
+            assert f"({n - (n >= 2)} of {n} right so far.)" in out and f"Question {n + 1} of 4" in out
+    assert "The quiz is over: 3 of 4 right (1 wrong, 0 blank). To go over: The IS-LM model (3 of 4)." in out
+    with pytest.raises(ValueError, match="over"):
+        await tools["quiz_answer"](quiz=qid, answer="A")
+
+    # Its answers count for the next pick, but it isn't a practice exam.
+    assert nb.db.conn.execute("SELECT COUNT(*) FROM quiz_answers").fetchone()[0] == 4
+    bank = nb.api.get(f"/v1/quizzes?course={nb.macro['id']}", headers=AUTH).json()
+    asked = [q for q in questions if q.get("type") != "card"]
+    assert bank["past"] == [] and bank["unseen"] == 6 - len(asked)
+    assert bank["to_review"] == (questions[1].get("type") != "card")  # the second, if it was multiple choice
+    done = nb.api.get(f"/v1/quizzes/{qid}", headers=AUTH).json()
+    assert done["score"]["right"] == 3 and {q.get("type") for q in done["questions"]} == {None, "card"}
+
+
+async def test_a_card_answered_wrong_comes_back_and_stopping_keeps_what_was_answered(nb):
+    t = notebook_with_questions(nb)
+    with_cards(nb, t)
+    tools, quizzes = quiz_tools_for(nb), QuizStore(nb.notebook)
+    out = await tools["quiz_me"](course="macroeconomics", count=2, style="cards")
+    qid = out.split()[1].rstrip(",")
+    first = quizzes.quiz(qid)["questions"][0]
+    assert first["type"] == "card" and f"the answer is {first['key']}" in out
+    out = await tools["quiz_answer"](quiz=qid, answer="wrong")
+    assert out.startswith(f"Wrong: the answer is {first['key']}.") and "Question 2 of 2" in out
+    assert await tools["end_quiz"](quiz=qid) == ("The quiz is over: 0 of 1 right (1 wrong, 0 blank). To go over: "
+                                                 "The IS-LM model (0 of 1). Tell the user, and offer to go through "
+                                                 "what they missed.")
+    assert len(quizzes.quiz(qid)["questions"]) == 1
+
+    again = await tools["quiz_me"](course="macroeconomics", count=1, style="cards")
+    assert f"the answer is {first['key']}" in again  # the missed one first
+    # Starting another ends this one; with no answers it's dropped.
+    await tools["quiz_me"](course="macroeconomics", style="questions")
+    assert quizzes.quiz(again.split()[1].rstrip(",")) is None
+
+    with pytest.raises(ValueError, match="isn't one of the options"):
+        await tools["quiz_answer"](quiz=quizzes.conn.execute(
+            "SELECT public_id FROM quizzes WHERE finished_at IS NULL").fetchone()[0], answer="F")
+
+
+async def test_a_quiz_needs_something_to_ask(nb):
+    notebook_with_questions(nb)  # questions, no cards
+    with pytest.raises(ValueError, match="no flashcards"):
+        await quiz_tools_for(nb)["quiz_me"](course="macroeconomics", style="cards")

@@ -31,6 +31,7 @@ from ..live import KINDS as LIVE_KINDS, LiveActivities, hooks
 from ..photos import MAX_BYTES as MAX_PHOTO, TYPES as PHOTO_TYPES, PhotoStore
 from ..push import Push
 from ..reminders import ReminderStore
+from ..reviews import ReviewStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError, page_image
@@ -54,6 +55,7 @@ class ChatIn(BaseModel):
     conversation_id: str | None = None  # None: the first chat, "main"
     stream: bool = False  # answer as text/event-stream, with team talk as it happens
     photos: list[str] = []  # ids from POST /v1/photos
+    voice: bool = False  # said in a voice chat: the reply is read aloud
 
 
 class FoodLogIn(BaseModel):
@@ -349,7 +351,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                objectives: ObjectiveStore | None = None, planner: ObjectivePlanner | None = None,
                location: Location | None = None, transit_alerts: AlertStore | None = None,
                boards: Boards | None = None, drafts: Drafts | None = None,
-               live: LiveActivities | None = None, leave: LeaveWatcher | None = None) -> FastAPI:
+               live: LiveActivities | None = None, leave: LeaveWatcher | None = None,
+               quizzes: QuizStore | None = None, reviews: ReviewStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -364,7 +367,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     study = study or StudyStore(db, tz, calendar)
     moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
-    quizzes = QuizStore(notebook)
+    quizzes = quizzes or QuizStore(notebook)
+    reviews = reviews or ReviewStore(db.conn, tz, calendar, study)
     objectives = objectives or ObjectiveStore(db.conn, tz, habits, food, health, store)
     location = location or Location(db.conn, push)
     live = live or LiveActivities(db.conn, push)
@@ -470,7 +474,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         async def respond(on_team=None, on_text=None) -> Turn:
             try:
                 turn = await agent.respond(CONVERSATION, text, conversation, hooks(on_team, activity_turn.team),
-                                           hooks(on_text, activity_turn.text) if on_text else None, body.photos)
+                                           hooks(on_text, activity_turn.text) if on_text else None, body.photos,
+                                           body.voice)
             except BaseException:
                 activity_turn.failed()
                 raise
@@ -1335,6 +1340,20 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         except Exception:
             log.exception("couldn't post a practice exam's result")
         return quizzes.quiz_json(quiz)
+
+    # -- review sessions ---------------------------------------------------------------
+
+    @app.get("/v1/reviews", dependencies=[Depends(auth)])
+    async def review_sessions(course: int | None = None):
+        return {"sessions": [reviews.as_json(s) for s in reviews.upcoming(course_or_404(course) if course else None)]}
+
+    @app.delete("/v1/reviews/{session_id}", dependencies=[Depends(auth)])
+    async def cancel_review(session_id: str):
+        try:
+            await reviews.cancel(session_id)
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'\""))
+        return {"ok": True}
 
     @app.get("/v1/vault", dependencies=[Depends(auth)])
     async def vault_setup():

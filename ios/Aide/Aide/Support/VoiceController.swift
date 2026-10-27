@@ -104,6 +104,28 @@ final class VoiceController: ObservableObject {
         if isActive { stopAll() } else { conversation = true; said = ""; await startListening() }
     }
 
+    /// A voice chat that opens as if you'd said `text` ("Quiz me"): the reply is read out, then it's your turn.
+    func start(saying text: String) async {
+        guard !isActive else { return }
+        conversation = true
+        guard await authorize(speech: transcribe == nil || serverOff) else {
+            error = "Allow the microphone for Aide in iOS Settings."
+            stopAll()
+            return
+        }
+        do {
+            try startEngine() // the reply plays through it
+        } catch {
+            self.error = error.localizedDescription
+            stopAll()
+            return
+        }
+        guard conversation else { return } // stopped while asking for permission
+        said = text
+        phase = .thinking
+        await onUtterance?(text)
+    }
+
     func stopAll() {
         conversation = false
         finishListening(send: false)

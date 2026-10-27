@@ -379,7 +379,8 @@ final class ChatViewModel: ObservableObject {
     /// Sends a message; the reply shows as it's written. `onDraft` gets the draft each time it grows, and true
     /// when it started over (text written before a tool call is dropped). Photos go up first; the text may then
     /// be empty.
-    func send(_ raw: String, photos: [PickedPhoto] = [], onDraft: ((String, Bool) -> Void)? = nil) async {
+    func send(_ raw: String, photos: [PickedPhoto] = [], voice: Bool = false,
+              onDraft: ((String, Bool) -> Void)? = nil) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !photos.isEmpty, !isSending, !isOpening else { return }
         let asked = Message(role: .user, text: text, localPhotos: photos.map(\.jpeg))
@@ -399,7 +400,7 @@ final class ChatViewModel: ObservableObject {
             started = turn
             working[turn] = Working(agent: speaker, status: "Thinking…")
             live?.agentStarted(conversation: turn, agent: agent)
-            let reply = try await api.chatLive(text, photos: ids, conversationID: conversationID, onText: { [weak self] delta, restart in
+            let reply = try await api.chatLive(text, photos: ids, conversationID: conversationID, voice: voice, onText: { [weak self] delta, restart in
                 guard let self else { return }
                 working[turn]?.status = "Writing…"
                 live?.agentUpdate(conversation: turn, status: "writing")

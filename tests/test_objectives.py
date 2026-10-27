@@ -383,7 +383,7 @@ async def test_the_plan_sees_new_notes_and_missed_topics(env):
     await planner.plan("week", TODAY, ["professor"])
     text, system = engine.asked[0]["text"], engine.asked[0]["system"]
     assert "Notes written or changed in the last 7 days: Money markets (" in text and "by the user)" in text
-    assert "Topics most missed in recent practice exams: IS-LM 1/3 right" in text
+    assert "Topics most missed in recent practice exams and quizzes: IS-LM 1/3 right" in text
     assert "Inflation" not in text.split("most missed")[1].split("\n")[0]  # 2/2 right
     assert '"type": "notes"' in system and 'never "3 more nights"' in system
 

@@ -31,6 +31,8 @@ Omitting `conversation_id` means the first chat (`main`, from before there were 
 ```
 With photos: `{"text": "", "photos": ["p_3f9a…"]}`. Upload each one first (see Photos); up to 4 per message, and
 `text` may be empty when there are photos. An unknown photo id is `400`.
+`"voice": true` (since 2026-10-27, default `false`) says the message was spoken in voice chat: the reply is then
+written to be read aloud (short plain sentences, no lists or markdown, numbers and formulas in words).
 → `200`
 ```json
 {
@@ -863,12 +865,40 @@ Bank: `{"course": 2, "exam": "20 to 35 multiple-choice questions…" or null, "q
 "to_review": 6, "topics": [{"id": "t_…", "title": "…", "questions": 6}], "scoring": {"right": 1, "wrong": -0.25,
 "blank": 0}, "past": [Quiz without questions, newest first, finished only]}`.
 
-Quiz: `{"id": "x_…", "course": 2, "minutes": 45 or null, "count": 30, "started_at": "…", "finished_at": "…" or null,
+Quiz: `{"id": "x_…", "kind": "exam" or "chat" (since 2026-10-27), "course": 2, "minutes": 45 or null, "count": 30, "started_at": "…", "finished_at": "…" or null,
 "score": null or {"points": 22.75, "max": 30, "right": 24, "wrong": 5, "blank": 1, "topics": [{"id": "t_…", "title":
 "…", "right": 1, "wrong": 2, "blank": 0}] (weakest first)}, "questions": [{"n": 1, "topic": {"id": "t_…", "title":
 "…"}, "text": "markdown", "options": [{"letter": "A", "text": "…"}]}]}`. Once finished, each question also has
 `"answer": "B" or null, "key": "C", "correct": false, "explanation": "markdown"`. The notes' LaTeX comes as plain
 Unicode in `text`, `options` and `explanation` ($\pi_{t-1}$ as πₜ₋₁).
+
+### Quizzes and review sessions
+
+Since 2026-10-27 (`quiz.py`, `reviews.py`, `tools/quiz.py`; #4).
+
+**Quizzes in chat.** "Quiz me" in a course's Professor chat, typed or spoken, starts a quiz there: one question at a
+time from the notebook's multiple-choice questions and its flashcards (what was missed last time first, then what's
+never been asked, the same order as practice exams, which share the answers). For a flashcard the user answers in
+their own words and Professor judges it. Each answer is recorded as it's given, so stopping halfway loses nothing.
+Nothing new for the app to call: it's chat. To start one by voice, open the course chat in voice mode and send
+"Quiz me" with `"voice": true` (the app's "Quiz me" in a course chat's ••• menu and on the course page).
+- These quizzes are Quiz objects with `"kind": "chat"` (`GET /v1/quizzes/{id}` reads one); a flashcard question
+  has `"type": "card"`, no `options`, and `answer` `"right"`, `"wrong"` or null. They're not in the bank's `past`,
+  and don't count for practice-exam objectives; their answers do count in `unseen` and `to_review`.
+
+**Review sessions.** Professor plans them with the user in the course chat (free time in the calendar, the exam date,
+the weakest topics) and, once they agree, puts each in the timetable calendar as "Review: Macroeconomics" with the
+topics in its notes. When one starts, Professor says so in the course chat with a push (a plain chat message push,
+`conversation_id` the course chat) and offers the quiz on its topics. A session moved in the calendar is followed;
+one deleted there is dropped. Review events never count as lectures or courses.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/reviews?course=2` | `course` optional (all courses without it) | `{"sessions": [Session]}`, not yet over, soonest first. `404` no such course. |
+| `DELETE /v1/reviews/{id}` | | `{"ok": true}`; takes it off the calendar (the user's tap is the confirmation). `404`. |
+
+Session: `{"id": "v_…", "course": 2, "start": "2026-10-28T15:00:00+01:00", "minutes": 90, "topics": ["The IS-LM
+model", "Phillips curve"]}`.
 
 ## Habits
 

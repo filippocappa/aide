@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -477,3 +478,19 @@ def test_listing_events_attaches_event_objects():
 def test_system_prompt_says_the_app_shows_cards(env):
     _, agent, _ = env()
     assert "as cards" in agent._system()[0]["text"]
+
+
+def test_a_spoken_message_is_stamped_by_voice(env):
+    client, agent, _ = env([done("a"), done("b")])
+    requests = []
+    create = agent.client.beta.messages.create
+
+    async def spy(**kwargs):
+        requests.append(kwargs)
+        return await create(**kwargs)
+    agent.client.beta.messages.create = spy
+
+    client.post("/v1/chat", json={"text": "typed"}, headers=AUTH)
+    client.post("/v1/chat", json={"text": "spoken", "voice": True}, headers=AUTH)
+    typed, spoken = (str(r["messages"][-1]["content"]) for r in requests)
+    assert "by voice" not in typed and re.search(r"\d\d:\d\d, by voice\] spoken", spoken)

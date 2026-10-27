@@ -290,7 +290,7 @@ class Agent:
     async def respond(self, channel: str, text: str, conversation: str | None = None,
                       on_team: Callable[[dict], None] | None = None,
                       on_text: Callable[[str, bool], None] | None = None,
-                      photos: list[str] | tuple[str, ...] = ()) -> Turn:
+                      photos: list[str] | tuple[str, ...] = (), voice: bool = False) -> Turn:
         """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
 
         `photos` are ids from the photo store, sent with the text (which may then be empty). The message stores a
@@ -299,6 +299,7 @@ class Agent:
         `on_team` gets each team message as it happens: an ask when Aide sends it, the answer when it's back.
         `on_text` gets the reply as it's written, piece by piece, and True with the first piece of a model round
         after one that called tools: the draft starts over (the reply is the last round's text).
+        `voice`: the user said it in a voice chat, and the reply is read aloud; the stamp says so.
         """
         conversation = self._key(channel, conversation)
         async with self._lock:
@@ -311,7 +312,7 @@ class Agent:
             agent = self.db.conversation_agent(conversation_id)
             self.check_photos(photos)
             body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
-            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body)}]
+            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice)}]
             try:
                 reply = await self._run(agent, channel, model, history, turn, on_text)
             finally:
@@ -332,11 +333,13 @@ class Agent:
             if self.photos is None or not self.photos.exists(p):
                 raise ValueError(f"no photo {p}")
 
-    async def _stamp(self, channel: str, text: str) -> str:
+    async def _stamp(self, channel: str, text: str, voice: bool = False) -> str:
         """Stamped so the model never reuses a stale time from earlier in the conversation (with where the phone
-        is, when that's known), and shown the real queue, which may differ from what it remembers queuing."""
+        is, when that's known, and "by voice" for a spoken message), and shown the real queue, which may differ
+        from what it remembers queuing."""
         where = await self.whereabouts() if self.whereabouts else None
-        stamped = f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{', ' + where if where else ''}] {text}"
+        stamped = (f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{', ' + where if where else ''}"
+                   f"{', by voice' if voice else ''}] {text}")
         if queued := self.db.pending_actions(channel, PENDING_TTL):
             lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
             stamped += f"{_QUEUE_MARK}\n{lines}]"

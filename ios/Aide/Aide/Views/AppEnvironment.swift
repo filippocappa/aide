@@ -57,7 +57,7 @@ final class AppEnvironment: ObservableObject {
             // You talked over a reply that's still being written: yours goes once it's in.
             while self.chat.isSending { try? await Task.sleep(for: .milliseconds(100)) }
             let spoken = self.voice.replyStarted()
-            await self.chat.send(text) { draft, restarted in
+            await self.chat.send(text, voice: true) { draft, restarted in
                 self.voice.replyGrew(spoken, draft: draft, restarted: restarted)
             }
             if let reply = self.chat.messages.last, reply.role == .assistant, !reply.isError {
@@ -128,6 +128,10 @@ final class AppEnvironment: ObservableObject {
         case .voice:
             await chat.newChat(with: chat.orchestrator)
             if !voice.isActive { await voice.toggle() }
+        case .quiz(let id):
+            await chat.open(id: id)
+            if voice.isActive { voice.stopAll() }
+            await voice.start(saying: "Quiz me")
         case .health, .chats:
             break // tabs, switched by ContentView
         }

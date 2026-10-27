@@ -957,6 +957,32 @@ final class FoodTests: XCTestCase {
         XCTAssertNil((try JSONSerialization.jsonObject(with: without) as? [String: Any])?["photos"])
     }
 
+    func testChatSaysWhenItWasSpoken() throws {
+        let spoken = try JSONEncoder.api.encode(ChatRequest(text: "quiz me", voice: true))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: spoken) as? [String: Any])?["voice"] as? Bool, true)
+        let typed = try JSONEncoder.api.encode(ChatRequest(text: "quiz me"))
+        XCTAssertNil((try JSONSerialization.jsonObject(with: typed) as? [String: Any])?["voice"])
+    }
+
+    func testReviewSessionsAndChatQuizzesDecode() throws {
+        let json = #"""
+        {"sessions": [{"id": "v_1a2b3c4d5e6f", "course": 2, "start": "2026-10-28T15:00:00+01:00", "minutes": 90,
+                       "topics": ["The IS-LM model", "Phillips curve"]}]}
+        """#
+        let list = try JSONDecoder.api.decode(ReviewSessionList.self, from: Data(json.utf8))
+        XCTAssertEqual(list.sessions.first?.minutes, 90)
+        XCTAssertEqual(list.sessions.first?.topics, ["The IS-LM model", "Phillips curve"])
+        let quiz = #"""
+        {"id": "x_1", "kind": "chat", "course": 2, "minutes": null, "count": 1, "started_at": "2026-10-27T10:00:00+01:00",
+         "finished_at": null, "score": null,
+         "questions": [{"n": 1, "topic": {"id": "t_1", "title": "IS-LM"}, "text": "What shifts LM?", "options": [],
+                        "type": "card"}]}
+        """#
+        let q = try JSONDecoder.api.decode(Quiz.self, from: Data(quiz.utf8))
+        XCTAssertEqual(q.kind, "chat")
+        XCTAssertEqual(q.questions.first?.options, [])
+    }
+
     func testFoodLogLeavesOutTodayAndText() throws {
         let data = try JSONEncoder.api.encode(FoodLogRequest(photos: ["p_1"]))
         let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

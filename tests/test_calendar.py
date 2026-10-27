@@ -271,3 +271,15 @@ async def test_edit_refuses_unknown_calendar_and_empty_changes(tools):
     await agent.reply("discord", "change it")
     assert "nothing to change" in agent.client.requests[3]["messages"][-1]["content"][0]["content"]
     assert agent.pending("discord") == []
+
+
+async def test_free_time_leaves_room_around_events(cal, tools):
+    cal.store["late"] = CalEvent("late", "Work", "Seminar", at(20, 18), at(20, 20, 30))
+    out = await tools.call("free_time", {"start_date": "2026-10-20", "end_date": "2026-10-22", "minutes": 90})
+    assert out.splitlines() == [
+        "Tue 20 Oct: 09:30–14:45, 16:15–17:45",  # 15 min clear around the standup, the dentist and the seminar
+        "Wed 21 Oct: 08:30–21:00",
+        "Thu 22 Oct: 08:30–21:00",  # all-day events don't count
+    ]
+    assert await tools.call("free_time", {"start_date": "2026-10-20", "end_date": "2026-10-20", "minutes": 600}) == \
+        "No free stretch of 600 min in those days."

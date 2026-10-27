@@ -26,7 +26,9 @@ from .photos import PhotoStore
 from .icloud import ICloudCalendar
 from .live import LiveActivities
 from .push import Push
+from .quiz import QuizStore
 from .reminders import ReminderStore
+from .reviews import ReviewStore, ReviewWatcher
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
 from .material import PageReader
@@ -46,6 +48,7 @@ from .tools.mail import draft_tools, mail_tools
 from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
+from .tools.quiz import quiz_tools
 from .tools.study import study_tools
 from .tools.transit import leave_tools, transit_tools
 from .leave import LeaveWatcher
@@ -105,6 +108,9 @@ def main() -> None:
     if not engine.available:
         log.info("Claude Code not found: notes are written through OpenRouter only")
     tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
+    quizzes = QuizStore(notebook)
+    reviews = ReviewStore(db.conn, settings.timezone, cal, study)
+    tools += quiz_tools(quizzes, reviews, study, notebook, settings.timezone)
     gmail = None
     drafts = Drafts(db.conn, settings.timezone)
     if settings.gmail_client_id and settings.gmail_client_secret and settings.gmail_refresh_token:
@@ -180,6 +186,7 @@ def main() -> None:
     worker = StudyWorker(study, agent, push, audio_dir, whisper_transcribe if whisper_available() else None)
     worker.notebook = notebook
     notes = NotebookWorker(notebook, agent, push)
+    review_watcher = ReviewWatcher(reviews, agent, push)
     reader = PageReader(study.files, agent)  # scans, read once with the model
     worker.engine = notes.engine = reader.engine = engine
 
@@ -221,6 +228,7 @@ def main() -> None:
             worker.run(),
             notes.run(),
             reader.run(),
+            *([review_watcher.run()] if cal else []),
             *([vault.run()] if vault else []),
             *([moodle.run()] if settings.moodle_url else []),
             *([transit.timetable.run(), watcher.run()] if transit else []),
@@ -231,7 +239,8 @@ def main() -> None:
                            if settings.openrouter_api_key else None)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
-                             notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave)
+                             notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
+                             quizzes, reviews)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

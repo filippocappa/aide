@@ -165,13 +165,14 @@ class StudyStore:
 
     def _lectures(self, events: list[CalEvent]) -> list[CalEvent]:
         """The study calendar's lectures: titles that come back at least MIN_EVENTS times (a one-off appointment
-        isn't a course), minus the skipped ones (the user's own "study" blocks)."""
+        isn't a course), minus the skipped ones (the user's own "study" blocks) and the review sessions."""
         counts: dict[str, int] = {}
         for e in events:
             if e.calendar == self.study_calendar:
                 counts[_name(e.title).casefold()] = counts.get(_name(e.title).casefold(), 0) + 1
         return [e for e in events if e.calendar == self.study_calendar and _name(e.title)
-                and counts[_name(e.title).casefold()] >= MIN_EVENTS and _name(e.title).casefold() not in self.skip]
+                and counts[_name(e.title).casefold()] >= MIN_EVENTS and _name(e.title).casefold() not in self.skip
+                and not _name(e.title).startswith(REVIEW_PREFIX)]
 
     async def courses(self) -> list[dict]:
         """Every course: the calendar's (added to the table as they appear) and the stored ones with lectures."""
@@ -432,6 +433,9 @@ class StudyStore:
                 "last_lecture": self.local(c["last_lecture"]) if c["last_lecture"] else None,
                 "next_exam": {"date": exam.start.astimezone(self.tz).isoformat(), "title": exam.title} if exam else None,
                 "chat": self.course_chat(c)}
+
+
+REVIEW_PREFIX = "Review: "  # review sessions (reviews.py) in the study calendar: never a course
 
 
 def _name(title: str) -> str:

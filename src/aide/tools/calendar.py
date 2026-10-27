@@ -13,6 +13,9 @@ SEARCH_BACK, SEARCH_AHEAD = timedelta(days=30), timedelta(days=365)
 NOTES_LIMIT = 200
 
 DATETIME_HELP = "Local time as YYYY-MM-DDTHH:MM, or YYYY-MM-DD for an all-day event."
+FREE_FROM, FREE_UNTIL = time(8, 30), time(21, 0)  # the waking day free_time looks in
+FREE_GAP = timedelta(minutes=15)  # kept clear around events
+FREE_DAYS = 21
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -105,6 +108,32 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
             return f"No events matching {query!r} between {SEARCH_BACK.days} days ago and a year ahead."
         return cards(sorted(hits, key=sort_key)[:30])
 
+    async def free_time(start_date: str, end_date: str, minutes: int = 60) -> str:
+        s, e = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        if e < s:
+            raise ValueError("end_date is before start_date")
+        if (e - s).days >= FREE_DAYS:
+            raise ValueError(f"ask for at most {FREE_DAYS} days at a time")
+        events = await asyncio.to_thread(cal.events, day_start(s), day_start(e + timedelta(days=1)))
+        busy = sorted((local(ev.start) - FREE_GAP, local(ev.end) + FREE_GAP) for ev in events if not ev.all_day)
+        now, need, lines = datetime.now(tz), timedelta(minutes=max(15, minutes)), []
+        for i in range((e - s).days + 1):
+            day = s + timedelta(days=i)
+            cursor, until = datetime.combine(day, FREE_FROM, tz), datetime.combine(day, FREE_UNTIL, tz)
+            cursor = max(cursor, now.replace(second=0, microsecond=0)) if day == now.date() else cursor
+            slots = []
+            for b_start, b_end in busy:
+                if b_end <= cursor or b_start >= until:
+                    continue
+                if b_start - cursor >= need:
+                    slots.append((cursor, b_start))
+                cursor = max(cursor, b_end)
+            if until - cursor >= need:
+                slots.append((cursor, until))
+            if slots:
+                lines.append(f"{day:%a %d %b}: " + ", ".join(f"{a:%H:%M}–{b:%H:%M}" for a, b in slots))
+        return "\n".join(lines) or f"No free stretch of {minutes} min in those days."
+
     async def create_event(title: str, start: str, end: str, calendar: str,
                            location: str | None = None, notes: str | None = None) -> str:
         s, e = parse_range(start, end)
@@ -174,6 +203,14 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
         Tool("search_events", "Find events whose title, location or notes contain some text, "
              "from 30 days ago to a year ahead.",
              _obj({"query": {"type": "string"}}, ["query"]), search_events),
+        Tool("free_time", f"The free stretches between two local dates (inclusive, at most {FREE_DAYS} days), "
+             f"{FREE_FROM:%H:%M}–{FREE_UNTIL:%H:%M} each day, at least `minutes` long, keeping "
+             f"{FREE_GAP.seconds // 60} min clear around timed events (all-day ones don't count). For finding when "
+             "something fits.",
+             _obj({"start_date": {"type": "string", "description": "YYYY-MM-DD"},
+                   "end_date": {"type": "string", "description": "YYYY-MM-DD, inclusive"},
+                   "minutes": {"type": "integer", "description": "The shortest stretch worth listing; default 60"}},
+                  ["start_date", "end_date"]), free_time),
         Tool("create_event", "Create a calendar event. Runs immediately.",
              _obj({"title": {"type": "string"},
                    "start": {"type": "string", "description": DATETIME_HELP},

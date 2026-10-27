@@ -104,7 +104,8 @@ struct EmptyBody: Encodable {}
 /// `digest` and `agent` nil send `{}`: a blank chat with Aide.
 struct NewConversation: Encodable { var digest: String?; var agent: String? }
 /// `conversationId` nil keeps the old behaviour: the one shared conversation. `photos` nil when there are none.
-struct ChatRequest: Encodable { let text: String; var conversationId: String?; var stream: Bool?; var photos: [String]? }
+/// `voice`: spoken in voice chat, so the reply is written to be read aloud.
+struct ChatRequest: Encodable { let text: String; var conversationId: String?; var stream: Bool?; var photos: [String]?; var voice: Bool? }
 struct PhotoUpload: Decodable { let id: String }
 struct ConversationBody: Encodable { var conversationId: String? }
 /// `agent` nil: shared by every agent.
@@ -1254,6 +1255,8 @@ struct QuizScoring: Decodable { let right: Double; let wrong: Double }
 
 struct Quiz: Decodable, Identifiable {
     let id: String
+    /// "exam" (a practice exam) or "chat" (Professor quizzing in the course chat).
+    var kind: String?
     let course: Int
     var minutes: Int?
     var count = 0
@@ -1296,6 +1299,16 @@ struct QuizTopicScore: Decodable, Identifiable {
     let blank: Int
     var total: Int { right + wrong + blank }
 }
+
+/// A review session in the timetable calendar (docs/API.md, "Quizzes and review sessions").
+struct ReviewSession: Decodable, Identifiable, Hashable {
+    let id: String
+    let course: Int
+    let start: String
+    let minutes: Int
+    var topics: [String] = []
+}
+struct ReviewSessionList: Decodable { let sessions: [ReviewSession] }
 
 struct QuizStartBody: Encodable { let course: Int; let count: Int; let minutes: Int? }
 struct QuizFinishBody: Encodable { let answers: [String: String] }

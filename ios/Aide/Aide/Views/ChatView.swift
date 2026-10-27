@@ -150,6 +150,7 @@ struct ChatView: View {
                 Button("Past chats", systemImage: "clock") { showPastChats = true }
                 Button("Routines", systemImage: "alarm") { showRoutines = true }
                 if chat.course != nil {
+                    Button("Quiz me", systemImage: "waveform") { Task { await voice.start(saying: "Quiz me") } }
                     Button("Practice exam", systemImage: "checklist") { showPractice = true }
                 }
                 Button("Think harder", systemImage: "brain") { Task { await chat.think() } }

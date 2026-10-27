@@ -92,6 +92,7 @@ struct CourseView: View {
     @State private var note: String?
     @State private var lectures: [Lecture] = []
     @State private var files: [StudyFile] = []
+    @State private var reviews: [ReviewSession] = []
     @State private var error: String?
     @State private var busy: String?
     @State private var showPractice = false
@@ -137,7 +138,27 @@ struct CourseView: View {
                     Label("Ask Professor", systemImage: "bubble.left.and.text.bubble.right")
                 }
                 if (notebook?.topics ?? []).contains(where: { ($0.questions ?? 0) > 0 }) {
+                    Button { Task { await openChat(quiz: true) } } label: { Label("Quiz me", systemImage: "waveform") }
                     Button { showPractice = true } label: { Label("Practice exam", systemImage: "checklist") }
+                }
+            }
+            if !reviews.isEmpty {
+                Section {
+                    ForEach(reviews) { session in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(reviewTime(session))
+                            if !session.topics.isEmpty {
+                                Text(session.topics.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .swipeActions {
+                            Button("Cancel", role: .destructive) { Task { await cancel(session) } }
+                        }
+                    }
+                } header: {
+                    Text("Review sessions")
+                } footer: {
+                    Text("In your calendar. Professor offers a quiz on the topics when one starts.")
                 }
             }
             if !lectures.isEmpty {
@@ -260,6 +281,7 @@ struct CourseView: View {
             async let ls = env.api.lectures(course: course.id)
             async let fs = env.api.files(course: course.id)
             (notebook, lectures, files) = try await (nb, ls, fs)
+            reviews = (try? await env.api.reviewSessions(course: course.id)) ?? [] // an older server has none
             writer = try? await env.api.notesWriter()
             error = nil
         } catch {
@@ -299,11 +321,26 @@ struct CourseView: View {
         }
     }
 
-    private func openChat() async {
+    /// The course chat; `quiz`: with Professor quizzing out loud.
+    private func openChat(quiz: Bool = false) async {
         do {
             let id: String
             if let chat = course.chat { id = chat } else { id = try await env.api.courseChat(course.id) }
-            push.route = .conversation(id)
+            push.route = quiz ? .quiz(id) : .conversation(id)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func reviewTime(_ session: ReviewSession) -> String {
+        guard let start = Wire.parse(session.start) else { return "\(session.minutes) min" }
+        return "\(start.formatted(.dateTime.weekday(.wide).day().month().hour().minute())), \(session.minutes) min"
+    }
+
+    private func cancel(_ session: ReviewSession) async {
+        do {
+            try await env.api.cancelReviewSession(session.id)
+            reviews.removeAll { $0.id == session.id }
         } catch {
             self.error = error.localizedDescription
         }

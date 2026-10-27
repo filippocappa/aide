@@ -189,6 +189,14 @@ are written. Live on macroeconomics (11 topics, 25 figures).
 Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's checked MCQs, no model call, missed
 questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
 result in the chat.
+Quizzes and review sessions (2026-10-27, closes #4; `reviews.py`, `tools/quiz.py`, contract "Quizzes and review
+sessions"): Professor quizzes in the course chat, one question at a time from the notebook's MCQs and flashcards (missed
+first, answers recorded as they come, shared with practice exams; `kind: "chat"` quizzes don't count for objectives).
+By voice: `voice` on `/v1/chat` makes replies speakable, and "Quiz me" (course page, course chat's ••• menu) opens the
+chat in voice mode with "Quiz me" said for you (`VoiceController.start(saying:)`). Review sessions: planned with the
+user from `free_time`, `study_progress` and the exam date, put in the timetable calendar as "Review: <course>" (never
+a lecture), followed when moved or deleted there; when one starts Professor offers the quiz in the chat, with a push.
+The course page lists them (swipe to cancel). Not yet tried on the phone.
 Since 2026-10-22 (`engine.py`, contract "Who writes the notes"): lecture notes and notebook jobs can run on the
 user's Claude plan through Claude Code on `cappa` (`claude -p`, Sonnet writes, Haiku reads; set in Settings → Claude
 plan; on now). At the plan's limit a job pauses and Professor asks: wait, or finish on OpenRouter.
@@ -292,8 +300,8 @@ day's `health_logged` and the app makes its own Inhaler Usage samples match, nev
    Goals, by objectives.)
 3. New, filed 2026-10-27, not yet chosen: a browser agent that logs in and shops for you (#22), Screen Time locks
    in routines (#23), more in the Dynamic Island (#24).
-4. The rest of #4: quizzes by voice, review sessions on the calendar. Recording a lecture in the app. Notebooks
-   for the other courses. Finance still has no data source (memory only).
+4. Recording a lecture in the app. Notebooks for the other courses. Finance still has no data source (memory
+   only).
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
