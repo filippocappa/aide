@@ -116,7 +116,7 @@ extension AgentActivityAttributes.ContentState {
     }
 }
 
-/// The next calendar event, counting down from 30 minutes before it (started by the server).
+/// The next calendar event, counting down from 10 minutes before it (started by the server).
 struct EventActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         var start: Double
@@ -126,9 +126,31 @@ struct EventActivityAttributes: ActivityAttributes {
         var place: String?
         /// It has begun (the last update, sent with the end).
         var started: Bool
+        /// When the countdown began: the bar fills from here to `start`. nil from older servers.
+        var since: Double? = nil
+        /// The event's notes, first line.
+        var notes: String? = nil
+        /// What comes after it today.
+        var then: Next? = nil
+
+        struct Next: Codable, Hashable {
+            var title: String
+            var start: Double
+            var startDate: Date { Date(timeIntervalSince1970: start) }
+        }
 
         var startDate: Date { Date(timeIntervalSince1970: start) }
         var endDate: Date? { end.map(Date.init(timeIntervalSince1970:)) }
+        var sinceDate: Date? { since.map(Date.init(timeIntervalSince1970:)) }
+
+        /// "1 h", "45 min", "1 h 30"; nil without an end.
+        var length: String? {
+            guard let end else { return nil }
+            let minutes = Int((end - start) / 60)
+            guard minutes > 0 else { return nil }
+            if minutes < 60 { return "\(minutes) min" }
+            return minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60)"
+        }
     }
 
     /// `event:<uid hash>:<start>`

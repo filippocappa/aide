@@ -474,6 +474,15 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(s.startDate, Date(timeIntervalSince1970: 1792483800))
         XCTAssertNil(s.endDate)
         XCTAssertEqual(s.place, "Aula 5")
+        XCTAssertNil(s.since)
+        XCTAssertNil(s.then)
+        XCTAssertNil(s.length)
+        let full = #"{"start": 1792483800, "end": 1792489200, "place": "Aula 5", "started": false, "since": 1792483200, "notes": "Bring the problem set", "then": {"title": "Gym", "start": 1792494600}}"#
+        let f = try JSONDecoder().decode(EventActivityAttributes.ContentState.self, from: Data(full.utf8))
+        XCTAssertEqual(f.sinceDate, Date(timeIntervalSince1970: 1792483200))
+        XCTAssertEqual(f.notes, "Bring the problem set")
+        XCTAssertEqual(f.then?.title, "Gym")
+        XCTAssertEqual(f.length, "1 h 30")
     }
 
     func testNearbyBoardsDecode() throws {
@@ -532,6 +541,32 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(first.arrivesDate?.timeIntervalSince(first.date!), 25 * 60)
         XCTAssertNil(board.lines[0].arrivals[1].delay)
         XCTAssertNil(board.lines[0].arrivals[1].toAt)
+    }
+
+    func testRoutesAttachmentDecodes() throws {
+        let json = """
+        [{"type": "routes", "routes": [
+          {"id": "a1", "mode": "drive", "from": "where you are", "to": "SME, Torino", "duration": 380, "usual": 300,
+           "distance": 2200, "depart": "2026-10-27T12:54:00Z", "arrive": "2026-10-27T13:00:20Z", "rides": [],
+           "url": "https://www.google.com/maps/dir/?api=1"},
+          {"id": "b2", "mode": "transit", "from": "SME", "to": "Piazza Castello 32", "duration": 1080, "usual": null,
+           "distance": 5100, "depart": "2026-10-27T12:11:00Z", "arrive": "2026-10-27T12:27:00Z",
+           "rides": [{"line": "4", "vehicle": "Tram", "towards": "Drosso", "from": "Porta Nuova",
+                      "depart": "2026-10-27T12:11:00Z", "to": "Castello", "arrive": "2026-10-27T12:27:00Z"},
+                     {"line": null, "vehicle": "Bus", "towards": null, "from": null, "depart": null, "to": null,
+                      "arrive": null}],
+           "url": "https://www.google.com/maps/dir/?api=1"}]}]
+        """
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .routes(let routes) = attachments[0] else { return XCTFail("expected routes") }
+        XCTAssertEqual(routes.count, 2)
+        XCTAssertEqual(routes[0].usual, 300)
+        XCTAssertEqual(routes[0].arriveDate?.timeIntervalSince(routes[0].departDate!), 380)
+        XCTAssertEqual(routes[1].rides[0].line, "4")
+        XCTAssertNil(routes[1].rides[1].departDate)
+        XCTAssertEqual(RouteCard.duration(380), "6 min")
+        XCTAssertEqual(RouteCard.duration(3900), "1 h 5 min")
+        XCTAssertEqual(RouteCard.distance(2200), "2.2 km")
     }
 
     func testFilesAndProposalAttachmentsDecode() throws {

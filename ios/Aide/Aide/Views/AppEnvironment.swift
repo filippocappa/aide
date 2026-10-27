@@ -47,6 +47,7 @@ final class AppEnvironment: ObservableObject {
         let screenTime = ScreenTimeService(api: api)
         self.screenTime = screenTime
         live.onTrams = { on in location.follow(on) }
+        location.onSent = { [live] in live.resendTokens() }
         chat.live = live
 
         // The assistant may have created reminders or moved events: sync.

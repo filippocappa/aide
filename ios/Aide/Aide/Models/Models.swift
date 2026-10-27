@@ -63,6 +63,7 @@ enum Attachment: Decodable, Hashable {
     case events([CalendarEvent])
     case meals([Meal])
     case departures([DepartureBoard])
+    case routes([TravelRoute])
     case files([StudyFile])
     case proposal(NotebookProposal)
     case unknown // a type this app version doesn't know: skipped
@@ -74,12 +75,13 @@ enum Attachment: Decodable, Hashable {
         case "events": self = .events(try c.decode([CalendarEvent].self, forKey: .events))
         case "meals": self = .meals(try c.decode([Meal].self, forKey: .meals))
         case "departures": self = .departures(try c.decode([DepartureBoard].self, forKey: .departures))
+        case "routes": self = .routes(try c.decode([TravelRoute].self, forKey: .routes))
         case "files": self = .files(try c.decode([StudyFile].self, forKey: .files))
         case "proposal": self = .proposal(try c.decode(NotebookProposal.self, forKey: .proposal))
         default: self = .unknown
         }
     }
-    private enum CodingKeys: String, CodingKey { case type, reminders, events, meals, departures, files, proposal }
+    private enum CodingKeys: String, CodingKey { case type, reminders, events, meals, departures, routes, files, proposal }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
         (list ?? []).filter { $0 != .unknown }
@@ -1619,6 +1621,44 @@ struct DepartureBoard: Decodable, Identifiable, Hashable {
     let lines: [Line]
 
     var madeDate: Date? { Wire.parse(at) }
+}
+
+/// How long it takes to get somewhere, from Google Maps (docs/API.md, Chat, the `routes` attachment).
+struct TravelRoute: Decodable, Identifiable, Hashable {
+    /// One ride on a transit route.
+    struct Ride: Decodable, Hashable {
+        let line: String?
+        /// Tram, Bus, Metro or Train.
+        let vehicle: String
+        let towards: String?
+        let from: String?
+        let depart: String?
+        let to: String?
+        let arrive: String?
+
+        var departDate: Date? { depart.flatMap(Wire.parse) }
+        var arriveDate: Date? { arrive.flatMap(Wire.parse) }
+    }
+
+    let id: String
+    /// drive, walk, bicycle or transit.
+    let mode: String
+    let from: String
+    let to: String
+    /// Seconds, with live traffic when driving.
+    let duration: Int
+    /// Seconds without traffic (driving only).
+    let usual: Int?
+    /// Metres.
+    let distance: Int
+    let depart: String?
+    let arrive: String?
+    let rides: [Ride]
+    /// Google Maps directions.
+    let url: String
+
+    var departDate: Date? { depart.flatMap(Wire.parse) }
+    var arriveDate: Date? { arrive.flatMap(Wire.parse) }
 }
 
 /// `GET /v1/transit/nearby`: the departures widget.

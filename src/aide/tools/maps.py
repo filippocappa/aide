@@ -3,6 +3,7 @@
 Plain HTTP with an API key. Field masks keep each request to the fields shown, which is what Google bills.
 """
 
+import hashlib
 import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from . import Tool
+from . import Tool, ToolOutput
 
 PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
 NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby"
@@ -24,6 +25,11 @@ ROUTE_FIELDS = ("routes.duration,routes.staticDuration,routes.distanceMeters,"
 MAX_PLACES = 5
 MODES = {"drive": ("DRIVE", "driving"), "walk": ("WALK", "walking"),
          "transit": ("TRANSIT", "transit"), "bicycle": ("BICYCLE", "bicycling")}
+
+# Routes API vehicle types, as the app's line badges name them (Tram, Metro, Train, Bus).
+VEHICLES = {"TRAM": "Tram", "LIGHT_RAIL": "Tram", "MONORAIL": "Tram", "SUBWAY": "Metro", "METRO_RAIL": "Metro",
+            "RAIL": "Train", "HEAVY_RAIL": "Train", "COMMUTER_TRAIN": "Train", "HIGH_SPEED_TRAIN": "Train",
+            "LONG_DISTANCE_TRAIN": "Train"}
 
 TIME_HELP = "Local time as YYYY-MM-DDTHH:MM, or HH:MM for today."
 HERE = "here"  # origin or near: where the user's phone is
@@ -108,6 +114,10 @@ def _human(seconds: int) -> str:
 
 def _distance(meters: int) -> str:
     return f"{meters} m" if meters < 1000 else f"{meters / 1000:.1f} km"
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(ZoneInfo("UTC")).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None,
@@ -204,16 +214,23 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None,
             return f"No {mode} route found from {start} to {destination}.\n{link}"
 
         seconds = _seconds(route.get("duration"))
+        distance = route.get("distanceMeters", 0)
         line = f"{mode.capitalize()} from {start} to {destination}: {_human(seconds)}"
+        usual = None
         if mode == "drive":
-            usual = _seconds(route.get("staticDuration"))
+            usual = _seconds(route.get("staticDuration")) or None
             if usual and abs(seconds - usual) >= 120:
                 line += f" with traffic ({_human(usual)} without)"
-        line += f", {_distance(route.get('distanceMeters', 0))}."
+        line += f", {_distance(distance)}."
         out = [line]
-        if mode != "transit" and when and departure_time:
-            out.append(f"Leaving {clock(when)}, arriving about {clock(when + timedelta(seconds=seconds))}.")
+        depart = arrive = None
+        if mode != "transit":
+            depart = when if when and departure_time else datetime.now(tz)
+            arrive = depart + timedelta(seconds=seconds)
+            if when and departure_time:
+                out.append(f"Leaving {clock(when)}, arriving about {clock(arrive)}.")
 
+        card_rides = []
         if mode == "transit":
             rides = [s["transitDetails"] for leg in route.get("legs", []) for s in leg.get("steps", [])
                      if s.get("transitDetails")]
@@ -224,16 +241,30 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None,
                 towards = f" towards {t['headsign']}" if t.get("headsign") else ""
                 dep = local(stops["departureTime"]) if stops.get("departureTime") else None
                 arr = local(stops["arrivalTime"]) if stops.get("arrivalTime") else None
+                board, alight = stops.get("departureStop", {}).get("name"), stops.get("arrivalStop", {}).get("name")
                 out.append(f"- {vehicle + ' ' if vehicle else ''}{name}{towards}: "
-                           f"{clock(dep) if dep else '?'} from {stops.get('departureStop', {}).get('name', '?')}, "
-                           f"{clock(arr) if arr else '?'} at {stops.get('arrivalStop', {}).get('name', '?')}")
+                           f"{clock(dep) if dep else '?'} from {board or '?'}, {clock(arr) if arr else '?'} at "
+                           f"{alight or '?'}")
+                card_rides.append({
+                    "line": name, "vehicle": VEHICLES.get(tl.get("vehicle", {}).get("type", ""), "Bus"),
+                    "towards": t.get("headsign") or None, "from": board, "depart": _iso(dep) if dep else None,
+                    "to": alight, "arrive": _iso(arr) if arr else None})
             if rides and rides[0].get("stopDetails", {}).get("departureTime"):
                 first = local(rides[0]["stopDetails"]["departureTime"])
                 out.insert(1, f"First departure {clock(first)}.")
             elif not rides:
                 out.append("No transit rides on this route (it's walking only).")
-        out.append(link)
-        return "\n".join(out)
+            depart = next((local(r["depart"]) for r in card_rides[:1] if r["depart"]), None)
+            arrive = next((local(r["arrive"]) for r in card_rides[-1:] if r["arrive"]), None)
+        out.append(f"The app shows this route as a card with a button to open it in Maps, so don't paste the link: "
+                   f"{link}")
+        card = {
+            "id": hashlib.sha1(f"{mode}|{link_start}|{destination}|{departure_time}|{arrival_time}".encode())
+            .hexdigest()[:12],
+            "mode": mode, "from": start, "to": destination, "duration": seconds, "usual": usual,
+            "distance": distance, "depart": _iso(depart) if depart else None,
+            "arrive": _iso(arrive) if arrive else None, "rides": card_rides, "url": link}
+        return ToolOutput("\n".join(out), {"type": "routes", "routes": [card]})
 
     return [
         Tool("find_places", "Find places with Google Maps: shops, pharmacies, restaurants, stations. Returns up to "
@@ -246,7 +277,8 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None,
                                            "user's phone is; default the user's home"}},
                   ["query"]), find_places),
         Tool("travel_time", "How long it takes to get somewhere, with Google Maps. Driving includes live traffic; "
-             "transit lists the lines and departure times. Ends with a Google Maps directions link.",
+             "transit lists the lines and departure times. The app shows the route as a card (time, distance, rides and a "
+             "button to open it in Maps), so answer in a line and don't paste the link.",
              _obj({"destination": {"type": "string", "description": "Address or place name"},
                    "origin": {"type": "string", "description": "Address or place name, or \"here\" for where "
                                                          "the user's phone is; default the user's home"},

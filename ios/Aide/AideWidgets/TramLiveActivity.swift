@@ -97,9 +97,10 @@ struct TramDetails: View {
         .lineLimit(1)
     }
 
+    /// The tram against its timetable ("Tram 5 min early"), not the user against the tram.
     private var delayText: String {
         guard let delay = state.delay, abs(delay) >= 60 else { return "On time" }
-        return delay > 0 ? "\(delay / 60) min late" : "\(-delay / 60) min early"
+        return "\(attributes.vehicle) \(abs(delay) / 60) min \(delay > 0 ? "late" : "early")"
     }
 }
 

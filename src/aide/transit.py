@@ -75,6 +75,7 @@ FIX_FRESH = timedelta(minutes=2)  # a fix this young says where the user is now 
 # tram's Live Activity is on)
 FIX_GOOD = 200  # metres: a fix vaguer than this doesn't say which stop the user is at, or whether they're on board
 AT_THE_STOP = 100  # metres: a fix this close to the stop (or within its accuracy) has the user there
+TOKEN_NUDGE = timedelta(minutes=1)  # at most one wake-up for a countdown's missing token per this long
 HURRY = 60  # seconds: the tram being followed is kept while the walk is at most this much longer than its wait
 BOARDING = timedelta(seconds=90)  # after the tram's time, a fix still at the stop may be the user on it, not yet off
 BOARD_WAIT = timedelta(minutes=4)  # after the tram's time, how long a fix may take to say whether the user got on
@@ -116,7 +117,12 @@ CREATE TABLE IF NOT EXISTS transit_alerts (
     last_alert TEXT,              -- UTC
     created_at TEXT NOT NULL,
     event      TEXT,              -- set for a calendar event ("Macroeconomics at 09:30"), by leave.py
-    to_stop    TEXT               -- GTFS stop_id where the user gets off, when known (leave.py, from Maps)
+    to_stop    TEXT,              -- GTFS stop_id where the user gets off, when known (leave.py, from Maps)
+    right_away INTEGER NOT NULL DEFAULT 0  -- one-offs: the countdown starts at once, not when it's time to leave
+);
+CREATE TABLE IF NOT EXISTS tram_follows (
+    key  TEXT PRIMARY KEY,        -- the Live Activity's key
+    data TEXT NOT NULL            -- JSON: AlertWatcher.following's entry, kept so a restart goes on following it
 );
 CREATE TABLE IF NOT EXISTS location (
     id       INTEGER PRIMARY KEY CHECK (id = 1),  -- only the latest fix is kept
@@ -785,11 +791,13 @@ class AlertStore:
             self.conn.execute("ALTER TABLE transit_alerts ADD COLUMN event TEXT")  # from before leave-now for events
         if "to_stop" not in columns:
             self.conn.execute("ALTER TABLE transit_alerts ADD COLUMN to_stop TEXT")  # from before following the ride
+        if "right_away" not in columns:
+            self.conn.execute("ALTER TABLE transit_alerts ADD COLUMN right_away INTEGER NOT NULL DEFAULT 0")
 
     def _row(self, row) -> dict:
         a = dict(row)
         a["days"] = json.loads(a["days"]) if a["days"] is not None else None
-        a["enabled"] = bool(a["enabled"])
+        a["enabled"], a["right_away"] = bool(a["enabled"]), bool(a["right_away"])
         return a
 
     def all(self) -> list[dict]:
@@ -827,7 +835,9 @@ class AlertStore:
 
     def create(self, stop: str, line: str, time_: str | None = None, days: list[int] | None = None,
                minutes: int | None = None, now: datetime | None = None, event: str | None = None,
-               day: date | None = None, to_stop: str | None = None) -> dict:
+               day: date | None = None, to_stop: str | None = None, right_away: bool = False) -> dict:
+        """A one-off just like one already waiting (same stop, line and time) isn't added again: that one is
+        returned, its window from now."""
         now = now or utcnow()
         stop, line = self._check(stop, line, minutes)
         if time_ is not None:
@@ -839,11 +849,19 @@ class AlertStore:
             starts = ends = None
         else:
             starts, ends = (t.isoformat() for t in self._window(time_, now, day))
+            same = self.conn.execute(
+                "SELECT id FROM transit_alerts WHERE days IS NULL AND enabled = 1 AND stop = ? AND line = ? AND "
+                "time IS ? AND event IS ? AND ends_at >= ?", (stop, line, time_, event, now.isoformat())).fetchone()
+            if same:
+                self.conn.execute("UPDATE transit_alerts SET starts_at = ?, ends_at = ?, minutes = ?, "
+                                  "right_away = right_away OR ? WHERE id = ?",
+                                  (starts, ends, minutes, int(right_away), same["id"]))
+                return self.get(same["id"])
         cur = self.conn.execute(
-            "INSERT INTO transit_alerts (stop, line, time, days, minutes, starts_at, ends_at, created_at, event, to_stop) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO transit_alerts (stop, line, time, days, minutes, starts_at, ends_at, created_at, event, to_stop, "
+            "right_away) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (stop, line, time_, json.dumps(days) if days is not None else None, minutes, starts, ends, now.isoformat(),
-             event, to_stop))
+             event, to_stop, int(right_away and days is None)))
         return self.get(cur.lastrowid)
 
     def update(self, alert_id: int, now: datetime | None = None, **changes) -> dict:
@@ -921,7 +939,8 @@ class AlertStore:
             text += f": once, around {a['time']}" + ("" if today else f" on {start:%a %d %b}")
         else:
             text += ": once, the next one"
-        text += f", when it's {a['minutes']} min away" if a["minutes"] else ", when it's time to leave"
+        text += (", counting down from now" if a["right_away"] else f", when it's {a['minutes']} min away"
+                 if a["minutes"] else ", when it's time to leave")
         if a["event"]:
             text += f", for {a['event']}"
         return text + ("" if a["enabled"] else " (off)")
@@ -934,7 +953,8 @@ class AlertStore:
                 "stop": {"id": a["stop"], "code": stop["code"], "name": stop["name"]} if stop else
                 {"id": a["stop"], "code": None, "name": None},
                 "time": a["time"], "days": a["days"], "once": a["days"] is None, "minutes": a["minutes"],
-                "enabled": a["enabled"], "event": a["event"], "summary": self.describe(a)}
+                "enabled": a["enabled"], "event": a["event"], "right_away": a["right_away"],
+                "summary": self.describe(a)}
 
 
 class AlertWatcher:
@@ -946,7 +966,10 @@ class AlertWatcher:
         self.live = live
         # Trams with a Live Activity, by its key: {"trip", "day", "stop", "line", "leave_by", "walk", "state",
         # "started", "at", "shift", "seq", "to"}, and once the user is on board "riding", "told", "board_at", "to_seq".
-        self.following: dict[str, dict] = {}
+        # Saved after each tick (tram_follows), so a restart doesn't leave an activity on the phone that nothing updates.
+        self.following: dict[str, dict] = {
+            r["key"]: _thaw(json.loads(r["data"])) for r in store.conn.execute("SELECT * FROM tram_follows")}
+        self._asked_token: datetime | None = None
 
     async def run(self) -> None:
         while True:
@@ -969,6 +992,16 @@ class AlertWatcher:
                 await self.follow(key, now)
             except Exception:
                 log.exception("tram Live Activity %s failed", key)
+        self.save()
+
+    def save(self) -> None:
+        self.store.conn.execute("DELETE FROM tram_follows")
+        self.store.conn.executemany("INSERT INTO tram_follows (key, data) VALUES (?, ?)",
+                                    ((k, json.dumps(_freeze(f))) for k, f in self.following.items()))
+
+    def followed(self, stop: str, line: str) -> str | None:
+        """The key of a tram countdown already on for this stop and line: one per tram, however many alerts ask."""
+        return next((k for k, f in self.following.items() if f["stop"] == stop and f["line"] == line), None)
 
     async def walk(self, stop: dict, now: datetime) -> int | None:
         """Seconds from where the phone is to the stop; None if it's not known."""
@@ -980,6 +1013,10 @@ class AlertWatcher:
     async def check(self, a: dict, earliest: datetime | None, now: datetime) -> None:
         stop = self.transit.timetable.stop(a["stop"])
         if stop is None:
+            return
+        if key := self.followed(a["stop"], a["line"]):
+            log.info("tram alert %s: %s is already counting down", a["id"], key)
+            self.store.alerted(a, now)
             return
         leave = a["minutes"] is None
         if leave:
@@ -994,12 +1031,15 @@ class AlertWatcher:
             return
         tram = catchable[0]
         lead = a["minutes"] * 60 if not leave else (walk if walk is not None else DEFAULT_WALK) + BUFFER
-        if tram.seconds(now) > lead:
+        if tram.seconds(now) > lead and not a["right_away"]:
             return
         after = catchable[1] if len(catchable) > 1 else None
         where = await self.transit.position(tram, now)
-        title, body = alert_text(tram, after, stop, walk, leave, now, a["event"], where, self.transit.live.down)
-        if await self.start_live(a, tram, after, stop, walk, leave, title, body, now, where):
+        fix = self.location.latest()
+        at_stop = bool(fix and now - fix["at"] <= FIX_FRESH and metres(fix["lat"], fix["lon"], stop["lat"], stop["lon"])
+                       <= max(AT_THE_STOP, fix["accuracy"] or 0))
+        title, body = alert_text(tram, after, stop, walk, leave, now, a["event"], where, self.transit.live.down, at_stop)
+        if await self.start_live(a, tram, after, stop, walk, leave, title, body, now, where, at_stop):
             log.info("tram alert %s: Live Activity started", a["id"])
         elif not (self.push and await self.push.send_transit(a["id"], title, body)):
             log.warning("tram alert %s: push didn't go out", a["id"])
@@ -1017,13 +1057,13 @@ class AlertWatcher:
                 "feed_down": self.transit.live.down, "at_stop": at_stop, "riding": False, "to": None}
 
     async def start_live(self, a: dict, tram: Arrival, after: Arrival | None, stop: dict, walk: int | None,
-                         leave: bool, title: str, body: str, now: datetime, where: dict) -> bool:
+                         leave: bool, title: str, body: str, now: datetime, where: dict, at_stop: bool = False) -> bool:
         """Push-start the tram's countdown instead of the plain push. False if there's no start token."""
         if not (self.live and self.live.start_token("tram")):
             return False
         key = f"tram:{a['id']}:{tram.trip}:{tram.day:%Y%m%d}" if tram.day else f"tram:{a['id']}:{tram.trip}"
         leave_by = (walk if walk is not None else DEFAULT_WALK) + AT_STOP if leave else None
-        state = self.live_state(tram, after, leave_by, walk, where)
+        state = self.live_state(tram, after, leave_by, walk, where, at_stop=at_stop)
         attributes = {"key": key, "line": tram.line, "vehicle": tram.vehicle, "stop": stop["name"],
                       "code": stop["code"], "towards": tram.headsign or None, "alert": a["id"]}
         try:
@@ -1045,9 +1085,10 @@ class AlertWatcher:
         it has come, a phone moving along its line is on it (`ride`). It ends when the tram has left without them,
         or won't come."""
         f = self.following[key]
-        if now - f["started"] > LIVE_FOR:
+        if now - f["started"] > LIVE_FOR or self.live.dismissed(key):
             del self.following[key]
             return
+        await self.nudge(key, now)
         if f.get("riding"):
             return await self.ride(key, now)
         stop = self.transit.timetable.stop(f["stop"])
@@ -1165,6 +1206,42 @@ class AlertWatcher:
             return
         if await self.live.update(key, state, alert, stale=upcoming["when"] + LIVE_STALE):
             f["state"] = state
+
+    async def nudge(self, key: str, now: datetime) -> None:
+        """The app hasn't handed over the countdown's token, so nothing reaches it: a silent `location` push wakes the
+        app, which sends its activities' tokens with the fix. At most one per TOKEN_NUDGE."""
+        if self.live.token(key) is not None or not (self.push and self.push.enabled):
+            return
+        if self._asked_token and now - self._asked_token < TOKEN_NUDGE:
+            return
+        self._asked_token = now
+        log.info("tram Live Activity %s: no token yet, waking the app", key)
+        await self.push.request_location()
+
+
+def _freeze(value):
+    """A following entry as JSON: datetimes, dates and timedeltas tagged, so _thaw gives them back."""
+    if isinstance(value, dict):
+        return {k: _freeze(v) for k, v in value.items()}
+    if isinstance(value, datetime):
+        return {"$dt": value.isoformat()}
+    if isinstance(value, date):
+        return {"$date": value.isoformat()}
+    if isinstance(value, timedelta):
+        return {"$s": value.total_seconds()}
+    return value
+
+
+def _thaw(value):
+    if isinstance(value, dict):
+        if "$dt" in value:
+            return datetime.fromisoformat(value["$dt"])
+        if "$date" in value:
+            return date.fromisoformat(value["$date"])
+        if "$s" in value:
+            return timedelta(seconds=value["$s"])
+        return {k: _thaw(v) for k, v in value.items()}
+    return value
 
 
 def alert_text(tram: Arrival, after: Arrival | None, stop: dict, walk: int | None, leave: bool,

@@ -28,6 +28,8 @@ final class LocationService: NSObject, ObservableObject {
 
     /// A tram's Live Activity is on: location updates run, in the background too.
     private(set) var following = false
+    /// After each fix the server took (the Live Activities hand over any token it's missing).
+    var onSent: (@MainActor () -> Void)?
     private var lastFollowed: (at: Date, location: CLLocation)?
 
     private let manager = CLLocationManager()
@@ -135,6 +137,7 @@ final class LocationService: NSObject, ObservableObject {
             try await api.sendLocation(fix)
             lastSent = Date()
             lastError = nil
+            onSent?()
             return true
         } catch APIError.notConfigured {
             return false

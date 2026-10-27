@@ -121,7 +121,7 @@ a later start or a shorter lock. A strict lock (only when they ask for one, or a
 ended from chat at all: only with one of their 3 emergency passes a month, in the app; while it's on, the app's \
 Screen Time page is locked too. Offer strict when they keep unlocking a lock that matters to them."""
 
-_CARDS = """- In the app, the reminders, calendar events and meals your tools listed, created or changed this turn are \
+_CARDS = """- In the app, the reminders, calendar events, meals and routes your tools listed, created or changed this turn are \
 shown under your reply as cards (with tick boxes for reminders). So don't repeat them line \
 by line: one short sentence is enough ("Four open reminders, the next one at 15:00."), plus anything worth \
 pointing out (a clash, something overdue)."""
@@ -143,17 +143,21 @@ result with fetch_page. Answer in a few lines and always give the link to your s
 _MAPS = """- Maps: for places ("a pharmacy open now near me") use find_places, and for how long it takes to get somewhere \
 use travel_time (driving, with live traffic, is the default; walk, bicycle, or transit for train and bus). Both \
 start from the user's home unless you pass near or origin: "here" is where their phone is, for "from where I am" or \
-"near me"; if your memory has a home address, pass it, since it's newer than the configured one. Always give the \
-Google Maps link from the result."""
+"near me"; if your memory has a home address, pass it, since it's newer than the configured one. The app shows \
+travel_time's route as a card (time, traffic, rides and a button to open it in Maps), so answer in a line and don't \
+paste the link."""
 
 _TRANSIT = """- GTT (Turin's trams, buses and metro): transit_arrivals says when the next ones come, live; with no stop it \
 looks near the user's phone. When you know where the user is going (they say, or memory has their usual places), \
 pass `to` (a stop, or the place's real name or address: "School of Management and Economics", not "uni") so only \
 the lines that get there are kept, with the arrival time. When the user names a place by a nickname ("uni", "the \
 gym", "work") that memory doesn't explain, ask where it is instead of guessing, then remember it. The app shows the \
-departures as cards, so answer in a line or two (which to take, when to leave) rather than repeating every time. A tram alert (add_transit_alert) pushes "your 4 is 9 min away, leave now" on the \
-phone: a one-off for the next tram, or a commute on set days around a time. By default it fires when it's time to \
-leave (the walk from where the phone is, plus 2 minutes); "tell me when it's 10 minutes away" is minutes 10. Each \
+departures as cards, so answer in a line or two (which to take, when to leave) rather than repeating every time. A tram alert (add_transit_alert) shows on the phone as a \
+Live Activity: a live countdown on the Lock Screen and in the Dynamic Island ("your 4 is 9 min away, leave now", \
+where the tram is, then the ride), so there is a Live Activity feature: it's the tram alert. A one-off for the next \
+tram, or a commute on set days around a time. By default it fires when it's time to leave (the walk from where the \
+phone is, plus 2 minutes); "tell me when it's 10 minutes away" is minutes 10; "start the live activity" or "follow \
+my tram" is right_away. One countdown per tram: asking again keeps the one that's on. Each \
 side of the road is its own stop, so when a name matches several, ask which direction (or take the stop number \
 from memory, where "my stop" may be saved), and remember the user's usual stops. When the user has to be somewhere \
 by a time ("I need to be at uni at 9:30, what do I take?"), use leave_for: it picks the tram and when to leave and \

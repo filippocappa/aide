@@ -59,6 +59,14 @@ from the tools the assistant used in that turn, not parsed from its text:
 - `meals`: when it logged, changed or listed meals (see Food), `{"type": "meals", "meals": [Meal]}`.
 - `departures`: when it looked up GTT arrivals, a card per stop (see Transit), `{"type": "departures",
   "departures": [Board]}`.
+- `routes`: when it worked out how long it takes to get somewhere with Google Maps (`travel_time`; since
+  2026-10-27), a card per route, `{"type": "routes", "routes": [Route]}`. A Route: `{"id", "mode": "drive" | "walk" |
+  "bicycle" | "transit", "from", "to"` (as asked: an address, a place, or "where you are"), `"duration"` (seconds,
+  with live traffic when driving), `"usual"` (seconds without traffic, driving only, else `null`), `"distance"`
+  (metres), `"depart"`, `"arrive"` (UTC ISO 8601 or `null`: driving, walking and cycling set off now or at the asked
+  time; transit, the first ride's departure and the last ride's arrival), `"rides"` (transit, in order, else `[]`:
+  `{"line", "vehicle": "Tram" | "Metro" | "Train" | "Bus", "towards", "from", "depart", "to", "arrive"}`, any of them
+  `null` when Maps doesn't say), `"url"` (Google Maps directions)`}`.
 - `files`: study files a message is about, to open (since 2026-10-26; see Study files), `{"type": "files", "files":
   [File]}`. On Professor's notebook proposals.
 - `proposal`: a notebook proposal to answer right there (since 2026-10-26; see Notebook), `{"type": "proposal",
@@ -1235,7 +1243,13 @@ An alert watches one line at one stop (each side of the road is its own stop, wi
 - **Commute** (`days` set): on those ISO weekdays (`[]` every day), the first tram from about `time` (5 min before
   it at the earliest). Watched from 30 min before `time` to 30 min after; at most one push a day.
 - **One-off** (`days` null, `once` true): the next tram (watched for 2 hours), or the first from about `time` (today,
-  or tomorrow if that's gone). Deleted once it fires or ends.
+  or tomorrow if that's gone). Deleted once it fires or ends. Since 2026-10-27 a one-off asked for again (same stop,
+  line and time) isn't added twice: the one waiting is kept, watching from now. `right_away` (true only on one-offs
+  set with "start the live activity") starts the countdown at once for the next tram the user can make, instead of
+  when it's time to leave.
+- **One countdown per tram** (since 2026-10-27): an alert that fires while a tram countdown is already on for its
+  line at its stop (two alerts for the same tram: a leave-now one and one set in chat) doesn't start another; it's
+  done. Countdowns being followed survive a server restart.
 - **When:** `minutes` null pushes a few minutes before it's time to leave: when the tram is the walk from the phone
   to the stop, plus 2 minutes at the stop, plus 3 to get going, away (since 2026-10-27; it was the walk plus 2). So
   "Tram 4 in 10 min: leave in 3 min", or "leave now" when that's under a minute. A tram you can't reach in time is
@@ -1258,6 +1272,7 @@ edits and deletes them.
   "id": 1, "line": "4", "vehicle": "Tram", "towards": ["Falchera"],
   "stop": {"id": "1687", "code": "253", "name": "Porta Nuova"},
   "time": "08:10", "days": [1, 2, 3, 4, 5], "once": false, "minutes": null, "enabled": true, "event": null,
+  "right_away": false,
   "summary": "Tram 4 at Porta Nuova (stop 253), towards Falchera: Mon–Fri around 08:10, when it's time to leave"
 }
 ```
@@ -1398,8 +1413,8 @@ Three kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's
   up to date (asking another agent, writing) and ends it with the reply's first line, so a reply that comes in with
   the phone locked lights up the screen. The server also starts one for each scheduled routine run (not watches),
   and since 2026-10-27 one for Professor writing notes (a notebook proposal being applied, a lecture's notes).
-- **`event`** (since 2026-10-27): the next calendar event's countdown, started by the server 30 minutes before a
-  timed event ("Macroeconomics in 30 min · Aula 5"), unless leave-now has set a tram alert for it.
+- **`event`** (since 2026-10-27): the next calendar event's countdown, started by the server 10 minutes before a
+  timed event ("Macroeconomics in 10 min · Aula 5"), unless leave-now has set a tram alert for it.
 
 The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as before.
 
@@ -1420,11 +1435,15 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
 - `/v1/live/activities`: one activity's **update** token (`activity.pushTokenUpdates`), by the `key` in its
   attributes. For an activity the server started, the app gets its token in a short background wake and sends it.
   The app deletes the key when it ends an activity itself (the reply came in with the app open); the server then
-  stops pushing. Keys and tokens older than 12 hours are dropped. Since 2026-10-27, an activity the server started
+  stops pushing (and, for a tram, stops following it). Keys and tokens older than 12 hours are dropped. Since 2026-10-27, an activity the server started
   and ended before its token came (a short job) is ended as soon as the token comes, within an hour.
 - `/v1/live/settings` (since 2026-10-27): `events` (default true) turns the `event` countdowns on or off.
 - Tokens are hex, like device tokens; `environment` as for devices. A token APNs refuses (`410`, `BadDeviceToken`)
   is deleted.
+- Since 2026-10-27 every `start` push carries `"input-push-token": 1`, so iOS gives the new activity an update token
+  (without it a push-started activity got one only now and then, and stayed as it started). When a tram countdown's
+  token still hasn't come, the server sends a silent `location` push (at most one a minute), and the app sends the
+  update tokens of its activities that the server hasn't had yet (`activity.pushToken`), with the fix.
 
 ### Pushes
 
@@ -1516,10 +1535,13 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
 
 **`event`** (`EventActivityAttributes`). Attributes: `key` (`event:<12 hex of the uid's hash>:<start, Unix>`),
 `title`, `calendar`. Content state: `start` and `end` (Unix seconds; `end` null when there's none), `place` (the
-event's location, or null) and `started` (it has begun: the last update).
+event's location, or null) and `started` (it has begun: the last update). Since 2026-10-27 also `since` (Unix
+seconds: when the countdown began, for a bar filling up to `start`), `notes` (the event's notes' first line, at most
+80 characters, or null) and `then` (`{"title", "start"}`: the next timed event the same day, or null); the app
+treats them as optional.
 
-- Started 30 minutes before a timed (not all-day) event, in any calendar, with a quiet alert ("Macroeconomics in 30
-  min", body the place, else "At 09:00"); `stale-date` 10 minutes after the start.
+- Started 10 minutes before a timed (not all-day) event, in any calendar, with a quiet alert ("Macroeconomics in 10
+  min", body the place, else "At 09:00"); `stale-date` 10 minutes after the start. (30 minutes until 2026-10-27.)
 - Not for an event leave-now has set a tram alert for (the tram's activity takes you there); a tram alert set while
   it's on ends it at once.
 - An `update` when the event moves or its place changes; `end` with `started` true at the start, dismissed 10

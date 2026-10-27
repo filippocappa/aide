@@ -125,7 +125,7 @@ async def test_a_tram_alert_starts_follows_and_ends_its_live_activity(env, timet
                           "next": int(at(8, 15).timestamp()), "gone": False, "stops": 0,
                           "near": "Vittorio Emanuele II Cap", "starts": None, "feed_down": False, "at_stop": False,
                           "riding": False, "to": None},
-        "stale-date": tram + 120,
+        "stale-date": tram + 120, "input-push-token": 1,
         "alert": {"title": "Tram 4 in 7 min: leave now", "body": start["alert"]["body"], "sound": "default"}}
     assert apns.requests[0].headers["apns-priority"] == "10"
     assert str(apns.requests[0].url).endswith(START)
@@ -217,6 +217,51 @@ async def test_still_at_the_stop_once_it_has_gone_it_follows_the_next(env, timet
     location.save(45.0716, 7.6756, 15, at(8, 9))  # walked off, nowhere along its line
     await watcher.tick(at(8, 9, 10))
     assert aps(apns)[2]["event"] == "end" and watcher.following == {}
+
+
+async def test_one_countdown_per_tram_kept_across_a_restart(env, timetable):  # noqa: F811
+    db, push, live, apns = env
+    fake = FakePush()
+    location = Location(db.conn, fake)
+    alerts = AlertStore(db.conn, ROME, timetable)
+    alerts.create("1", "4", now=at(7, 50).astimezone(timezone.utc))
+    alerts.create("1", "4", "08:05", now=at(7, 50).astimezone(timezone.utc), event="Macroeconomics at 09:00")
+    transit = Transit(timetable, FakeLive())
+    watcher = AlertWatcher(alerts, transit, location, Walks(), fake, live)
+    location.save(*STOP_252, 15, at(8, 0))
+    live.set_start_token("tram", START, "sandbox")
+    await watcher.tick(at(8, 0, 20))
+    assert [a["event"] for a in aps(apns)] == ["start"] and alerts.all() == []  # both alerts, one countdown
+    [key] = watcher.following
+
+    again = AlertWatcher(alerts, transit, location, Walks(), fake, live)  # a restart
+    assert again.following == watcher.following
+    # No token from the app yet: a silent push wakes it, at most once a minute.
+    asked = fake.location_requests
+    await again.tick(at(8, 0, 50))
+    await again.tick(at(8, 1, 20))
+    assert fake.location_requests == asked + 1
+    live.register(key, ACTIVITY, "sandbox")
+    live.dismiss(key)  # swiped away
+    await again.tick(at(8, 1, 50))
+    assert again.following == {} and fake.location_requests == asked + 1
+
+
+async def test_a_one_off_asked_again_is_kept_once_and_right_away_starts_now(env, timetable):  # noqa: F811
+    db, _, _, _ = env
+    fake = FakePush()
+    location = Location(db.conn, fake)
+    alerts = AlertStore(db.conn, ROME, timetable)
+    a = alerts.create("1", "4", now=at(7, 40).astimezone(timezone.utc))
+    b = alerts.create("1", "4", now=at(7, 45).astimezone(timezone.utc), right_away=True)
+    assert b["id"] == a["id"] and b["right_away"] and len(alerts.all()) == 1
+    assert datetime.fromisoformat(b["starts_at"]) == at(7, 45)
+    assert alerts.create("1", "4", "08:10", now=at(7, 45).astimezone(timezone.utc))["id"] != a["id"]
+    location.save(*STOP_252, 15, at(7, 50))
+    watcher = AlertWatcher(alerts, Transit(timetable, FakeLive()), location, Walks(), fake)
+    await watcher.tick(at(7, 50, 10))  # 15 min before the tram, but it was asked for now
+    [(_, title, body)] = fake.alerts
+    assert title == "Tram 4 in 8 min" and "You're at the stop." in body
 
 
 async def test_without_a_start_token_the_plain_push_goes(env, timetable):  # noqa: F811
@@ -468,36 +513,41 @@ class Cal:
         return [e for e in self.list if start <= e.start <= end]
 
 
-def event(start, place="Aula 5", uid="lec", title="Macroeconomics"):
+def event(start, place="Aula 5", uid="lec", title="Macroeconomics", notes=""):
     from aide.icloud import CalEvent
-    return CalEvent(uid, "Timetable", title, start, start + timedelta(hours=2), place)
+    return CalEvent(uid, "Timetable", title, start, start + timedelta(hours=2), place, notes)
 
 
 async def test_the_next_event_counts_down(env):
     from aide.upcoming import EventWatcher
     db, _, live, apns = env
     nine = datetime(2026, 10, 27, 9, 0, tzinfo=ROME)
-    cal = Cal(event(nine))
+    gym = event(nine + timedelta(hours=3), place="", uid="gym", title="Gym")
+    cal = Cal(event(nine, notes="Bring the problem set\nRoom changed"), gym)
     watcher = EventWatcher(db.conn, ROME, cal, live)
     live.set_start_token("event", START, "sandbox")
-    await watcher.tick(utc(nine - timedelta(minutes=45)))
+    await watcher.tick(utc(nine - timedelta(minutes=30)))
     assert apns.requests == []  # not yet
     watcher._events = None
-    await watcher.tick(utc(nine - timedelta(minutes=30)))
+    await watcher.tick(utc(nine - timedelta(minutes=10)))
     [start] = aps(apns)
-    assert start["attributes-type"] == "EventActivityAttributes"
+    assert start["attributes-type"] == "EventActivityAttributes" and start["input-push-token"] == 1
     assert start["attributes"]["title"] == "Macroeconomics" and start["attributes"]["key"].startswith("event:")
+    since = int((nine - timedelta(minutes=10)).timestamp())
     assert start["content-state"] == {"start": int(nine.timestamp()), "end": int((nine + timedelta(hours=2)).timestamp()),
-                                      "place": "Aula 5", "started": False}
-    assert start["alert"] == {"title": "Macroeconomics in 30 min", "body": "Aula 5"}
+                                      "place": "Aula 5", "started": False, "since": since,
+                                      "notes": "Bring the problem set",
+                                      "then": {"title": "Gym", "start": int((nine + timedelta(hours=3)).timestamp())}}
+    assert start["alert"] == {"title": "Macroeconomics in 10 min", "body": "Aula 5"}
     key = start["attributes"]["key"]
     live.register(key, ACTIVITY, "sandbox")
-    await watcher.tick(utc(nine - timedelta(minutes=29)))
+    await watcher.tick(utc(nine - timedelta(minutes=9)))
     assert len(apns.requests) == 1  # nothing changed, nothing sent, no second start
-    cal.list = [event(nine, place="Aula 7")]
+    cal.list = [event(nine, place="Aula 7"), gym]
     watcher._events = None
-    await watcher.tick(utc(nine - timedelta(minutes=20)))
+    await watcher.tick(utc(nine - timedelta(minutes=5)))
     assert aps(apns)[-1]["event"] == "update" and aps(apns)[-1]["content-state"]["place"] == "Aula 7"
+    assert aps(apns)[-1]["content-state"]["since"] == since
     watcher._events = None
     await watcher.tick(utc(nine + timedelta(minutes=1)))
     end = aps(apns)[-1]
@@ -519,18 +569,18 @@ async def test_no_event_countdown_with_a_tram_or_turned_off(env):
     live.set_start_token("event", START, "sandbox")
     live.update_settings(events=False)
     watcher = EventWatcher(db.conn, ROME, cal, live)
-    await watcher.tick(utc(nine - timedelta(minutes=20)))
+    await watcher.tick(utc(nine - timedelta(minutes=4)))
     assert apns.requests == []
     live.update_settings(events=True)
-    await watcher.tick(utc(nine - timedelta(minutes=19)))
+    await watcher.tick(utc(nine - timedelta(minutes=3)))
     assert [a["attributes"]["title"] for a in aps(apns)] == ["Gym"]  # the lecture has its tram
     # A tram alert set for the gym too: its countdown ends at once.
     live.register(aps(apns)[0]["attributes"]["key"], ACTIVITY, "sandbox")
     db.conn.execute("INSERT INTO leave_plans VALUES ('gym', ?, 'alert', 2, '')",
                     (utc(nine + timedelta(minutes=5)).isoformat(),))
-    await watcher.tick(utc(nine - timedelta(minutes=18)))
+    await watcher.tick(utc(nine - timedelta(minutes=2)))
     assert aps(apns)[-1]["event"] == "end"
-    await watcher.tick(utc(nine - timedelta(minutes=17)))
+    await watcher.tick(utc(nine - timedelta(minutes=1)))
     assert len(apns.requests) == 2
 
 

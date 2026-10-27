@@ -700,7 +700,8 @@ def _merge(attachments: list[dict]) -> list[dict]:
     """One attachment per type, in the order first shown; an item shown twice keeps its place and latest state."""
     merged: dict[str, dict[str, dict]] = {}
     for a in attachments:
-        key = {"reminders": "reminders", "events": "events", "meals": "meals", "departures": "departures"}.get(a["type"])
+        key = {"reminders": "reminders", "events": "events", "meals": "meals", "departures": "departures",
+               "routes": "routes"}.get(a["type"])
         if key is None:
             continue
         items = merged.setdefault(a["type"], {})

@@ -255,6 +255,11 @@ moves along the line, counts the stops to where they get off (`to_stop` from Map
 Tram alerts (2026-10-27): leave-now 3 min before it's time to leave, at the stop 2 min early; the push and the Live
 Activity say where the tram is (stops to go, the stop it's near, or when it leaves its first stop, drawn as a track)
 and "GTT live down" when GTT's feed isn't answering (it was down 07:32–07:58 on 2026-10-27).
+Fixes from the first ride (2026-10-27): push-started activities ask iOS for their update token (`input-push-token`),
+and when one's missing the server wakes the app (a `location` push) to send it again; the trams being followed survive
+a restart (`tram_follows`); one countdown per tram (a second alert for the same stop and line, or a one-off asked again,
+doesn't start another); "follow my tram" is a one-off with `right_away`. Driving and transit times come as a `routes`
+card (`Views/RouteCard.swift`). The event activity has a bar to the start, the notes and what comes after.
 
 **Done, both sides (2026-10-22), not yet tried on the phone:** mail drafts (#7, contract in `docs/API.md`, "Mail
 drafts"). Server (live, `drafts.py`): before the evening digest Secretary reads the last 3 days' inbox (each message
@@ -277,7 +282,7 @@ habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departure
 team (Xcode's automatic signing adds them).
 
 **Done, both sides (2026-10-27), not yet tried on the phone:** more in the Dynamic Island (#24, two of its ideas;
-contract in `docs/API.md`, "Live Activities"). The next event: 30 min before a timed calendar event the server
+contract in `docs/API.md`, "Live Activities"). The next event: 10 min before a timed calendar event the server
 (`upcoming.py`) push-starts an `event` countdown with its place, follows a move, ends at the start; none when leave-now
 set a tram alert for it; off in Settings → Notifications (`/v1/live/settings`). Notes jobs: Professor's agent activity
 while a notebook proposal is applied (topics done of total, a bar and "2/5" in the island) or a lecture's notes are

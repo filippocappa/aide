@@ -130,7 +130,15 @@ async def test_drive_reports_traffic_and_link():
     assert body["travelMode"] == "DRIVE" and body["routingPreference"] == "TRAFFIC_AWARE"
     assert body["origin"] == {"address": HOME} and "departureTime" not in body
     assert out.startswith(f"Drive from {HOME} to Linate Airport: 33 min with traffic (25 min without), 12.4 km.")
-    assert out.endswith("travelmode=driving")
+    assert out.endswith("travelmode=driving") and "don't paste the link" in out
+    [card] = out.attachment["routes"]
+    assert out.attachment["type"] == "routes"
+    assert {k: card[k] for k in ("mode", "from", "to", "duration", "usual", "distance", "rides")} == {
+        "mode": "drive", "from": HOME, "to": "Linate Airport", "duration": 1980, "usual": 1500, "distance": 12400,
+        "rides": []}
+    depart, arrive = (datetime.fromisoformat(card[k].replace("Z", "+00:00")) for k in ("depart", "arrive"))
+    assert arrive - depart == timedelta(seconds=1980) and abs(depart - datetime.now(ROME)) < timedelta(minutes=1)
+    assert card["url"].startswith("https://www.google.com/maps/dir/?") and card["id"]
 
 
 async def test_here_starts_from_the_phone():
@@ -180,7 +188,8 @@ async def test_transit_arrival_time_lists_lines_in_local_time():
             {"transitDetails": {
                 "stopDetails": {"departureStop": {"name": "Duomo"}, "arrivalStop": {"name": "Centrale FS"},
                                 "departureTime": "2099-01-05T07:40:00Z", "arrivalTime": "2099-01-05T07:52:00Z"},
-                "headsign": "Comasina", "transitLine": {"nameShort": "M3", "vehicle": {"name": {"text": "Subway"}}}}},
+                "headsign": "Comasina", "transitLine": {"nameShort": "M3", "vehicle": {"name": {"text": "Subway"},
+                                                                                      "type": "SUBWAY"}}}},
         ]}]}]}))
     out = await maps(rec)["travel_time"].handler(destination="Milano Centrale", mode="transit",
                                                   arrival_time="2099-01-05T09:00")
@@ -191,6 +200,10 @@ async def test_transit_arrival_time_lists_lines_in_local_time():
     assert "First departure Mon 05 Jan 08:40." in out
     assert "- Subway M3 towards Comasina: Mon 05 Jan 08:40 from Duomo, Mon 05 Jan 08:52 at Centrale FS" in out
     assert "travelmode=transit" in out
+    [card] = out.attachment["routes"]
+    assert card["rides"] == [{"line": "M3", "vehicle": "Metro", "towards": "Comasina", "from": "Duomo",
+                              "depart": "2099-01-05T07:40:00Z", "to": "Centrale FS", "arrive": "2099-01-05T07:52:00Z"}]
+    assert (card["depart"], card["arrive"], card["usual"]) == ("2099-01-05T07:40:00Z", "2099-01-05T07:52:00Z", None)
 
 
 async def test_departure_at_a_clock_time_today_and_validation():

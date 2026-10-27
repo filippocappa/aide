@@ -1654,7 +1654,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.delete("/v1/live/activities/{key}", dependencies=[Depends(auth)])
     async def delete_live_activity(key: str):
-        live.remove(key)
+        live.dismiss(key)
         return {"ok": True}
 
     return app

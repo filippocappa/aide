@@ -4,7 +4,8 @@ agent at work: a chat turn the app started, a scheduled routine or a notes job t
 next calendar event's countdown, kept by upcoming.EventWatcher).
 
 Push-to-start tokens are kept per kind until the app deletes one or APNs refuses it. An activity's update token is
-kept under the key in its attributes, for TOKEN_AGE at most.
+kept under the key in its attributes, for TOKEN_AGE at most. A start asks iOS for that token (`input-push-token`):
+without it iOS hands the app one only now and then, and the activity stays as it started.
 """
 
 import asyncio
@@ -59,6 +60,7 @@ class LiveActivities:
         # key -> (end state, dismissal, when): ended before the app handed over the token (a short job the server
         # started); the end goes out when the token comes, so the activity doesn't stay on "working".
         self._ended: dict[str, tuple[dict, datetime, datetime]] = {}
+        self._dismissed: set[str] = set()  # keys of activities the user swiped away
 
     @property
     def enabled(self) -> bool:
@@ -102,9 +104,18 @@ class LiveActivities:
         if not key or key.startswith("start:"):
             raise ValueError("key must be the activity's key")
         self._put(key, token, environment)
+        self._dismissed.discard(key)
 
     def remove(self, key: str) -> None:
         self.conn.execute("DELETE FROM live_tokens WHERE key = ?", (key,))
+
+    def dismiss(self, key: str) -> None:
+        """The app says the user swiped the activity away: no more pushes for it."""
+        self.remove(key)
+        self._dismissed.add(key)
+
+    def dismissed(self, key: str) -> bool:
+        return key in self._dismissed
 
     def token(self, key: str) -> dict | None:
         cutoff = (datetime.now(timezone.utc) - TOKEN_AGE).isoformat()
@@ -139,7 +150,7 @@ class LiveActivities:
         if not (self.enabled and row):
             return False
         aps = {"event": "start", "attributes-type": KINDS[kind], "attributes": attributes,
-               "content-state": state, "alert": alert}
+               "content-state": state, "alert": alert, "input-push-token": 1}
         if stale:
             aps["stale-date"] = unix(stale)
         return await self._send(attributes["key"], row, aps, 10)

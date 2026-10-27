@@ -146,7 +146,7 @@ def main() -> None:
         walks = Walks(maps)
         watcher = AlertWatcher(alerts, transit, location, walks, push, live)
         boards = Boards(transit, location, walks)
-        tools += transit_tools(transit, alerts, location, boards)
+        tools += transit_tools(transit, alerts, location, boards, watcher)
     else:
         log.info("AIDE_GTT off: no GTT tools or tram alerts")
     leave = digest = None

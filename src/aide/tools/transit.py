@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from ..db import utcnow
 from ..leave import LeaveWatcher
-from ..transit import AlertStore, Boards, Location, Transit, line_key
+from ..transit import AlertStore, AlertWatcher, Boards, Location, Transit, line_key
 from . import Tool, ToolOutput
 
 STOPS_NEAR = 4  # stops shown for "near me"
@@ -18,7 +18,8 @@ def _obj(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boards: Boards) -> list[Tool]:
+def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boards: Boards,
+                  watcher: AlertWatcher | None = None) -> list[Tool]:
     timetable = transit.timetable
 
     async def here() -> dict:
@@ -114,9 +115,15 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
         return "\n".join(f"[{a['id']}] {alerts.describe(a)}" for a in found) if found else "No tram alerts."
 
     async def add_transit_alert(stop: str, line: str, time: str | None = None, days: list[int] | None = None,  # noqa: A002
-                                minutes: int | None = None) -> str:
-        a = alerts.create(one_stop(stop, line)["id"], line, time, days, minutes)
-        return f"Set [{a['id']}]: {alerts.describe(a)}."
+                                minutes: int | None = None, right_away: bool | None = None) -> str:
+        before = {x["id"] for x in alerts.all()}
+        a = alerts.create(one_stop(stop, line)["id"], line, time, days, minutes, right_away=bool(right_away))
+        out = f"{'Already set, kept' if a['id'] in before else 'Set'} [{a['id']}]: {alerts.describe(a)}."
+        if watcher and watcher.followed(a["stop"], a["line"]):
+            out += " Its countdown is already on the phone's Lock Screen: that one goes on, no second one."
+        elif a["right_away"]:
+            out += " The countdown appears on the phone within about 30 seconds."
+        return out
 
     async def update_transit_alert(alert_id: int, stop: str | None = None, line: str | None = None,
                                    time: str | None = None, days: list[int] | None = None,  # noqa: A002
@@ -161,11 +168,16 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
              transit_arrivals),
         Tool("list_transit_alerts", "List the tram alerts: id in brackets, line, stop, when, and how early.",
              _obj({}, []), list_transit_alerts),
-        Tool("add_transit_alert", "Set a tram alert: a push on the user's phone when their GTT tram or bus is coming "
-             "(\"your 4 is 9 min away, leave now\"), live. A one-off (the next one, or one around a time) or a "
-             "commute (days and a time, every week). Runs immediately.",
+        Tool("add_transit_alert", "Set a tram alert: when the user's GTT tram or bus is coming (\"your 4 is 9 min "
+             "away, leave now\"), the phone shows a Live Activity: a live countdown on the Lock Screen and in the "
+             "Dynamic Island, with where the tram is, when to leave, and the ride once they're on (a plain push if "
+             "Live Activities are off). A one-off (the next one, or one around a time) or a commute (days and a time, "
+             "every week). \"Start the live activity\" or \"follow my tram\" means a one-off with right_away. "
+             "Runs immediately.",
              _obj({"stop": {"type": "string", "description": stop_help},
-                   "line": {"type": "string", "description": "e.g. 4, 15, M1"}, **timing},
+                   "line": {"type": "string", "description": "e.g. 4, 15, M1"}, **timing,
+                   "right_away": {"type": "boolean", "description": "one-offs: start the countdown now for the next "
+                                  "tram the user can make, instead of when it's time to leave"}},
                   ["stop", "line"]), add_transit_alert),
         Tool("update_transit_alert", "Change a tram alert: stop, line, time, days, minutes (0: back to when it's time "
              "to leave), or turn it off and on (enabled). Pass only what changes. Runs immediately.",

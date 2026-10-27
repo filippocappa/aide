@@ -12,6 +12,8 @@ final class LiveActivities {
     private var agents: [String: Activity<AgentActivityAttributes>] = [:]
     /// Activities whose tokens are already being handed over, by ActivityKit id.
     private var followed: Set<String> = []
+    /// The update token the server last took for each activity, by ActivityKit id.
+    private var sent: [String: Data] = [:]
     /// Told whether a tram's activity is on, so the phone's location is followed closely while one is.
     var onTrams: (@MainActor (Bool) -> Void)?
 
@@ -57,15 +59,40 @@ final class LiveActivities {
     private func follow<A: ActivityAttributes>(_ activity: Activity<A>, key: String) {
         guard followed.insert(activity.id).inserted else { return }
         Task {
-            for await data in activity.pushTokenUpdates {
-                try? await api.registerLiveActivity(key: key, token: PushService.hex(data), environment: environment)
-            }
+            for await data in activity.pushTokenUpdates { await hand(data, key: key, id: activity.id) }
         }
         checkTrams()
         Task {
             for await state in activity.activityStateUpdates {
                 checkTrams()
                 if state == .dismissed { try? await api.deleteLiveActivity(key: key) }
+            }
+        }
+    }
+
+    private func hand(_ token: Data, key: String, id: String) async {
+        guard sent[id] != token else { return }
+        do {
+            try await api.registerLiveActivity(key: key, token: PushService.hex(token), environment: environment)
+            sent[id] = token
+        } catch {}
+    }
+
+    /// The tokens the server hasn't taken yet, again: a push-started activity's token can come while the app is
+    /// asleep, or its upload fail. Sent with each location fix (the server wakes the app with a `location` push when
+    /// a tram's countdown has no token) and on return to the app.
+    func resendTokens() {
+        resend(TramActivityAttributes.self, key: \.key)
+        resend(AgentActivityAttributes.self, key: \.key)
+        resend(EventActivityAttributes.self, key: \.key)
+    }
+
+    private func resend<A: ActivityAttributes>(_: A.Type, key: KeyPath<A, String>) {
+        for activity in Activity<A>.activities where activity.activityState == .active || activity.activityState == .stale {
+            follow(activity, key: activity.attributes[keyPath: key])
+            if let token = activity.pushToken {
+                let id = activity.id, key = activity.attributes[keyPath: key]
+                Task { await hand(token, key: key, id: id) }
             }
         }
     }
@@ -127,6 +154,7 @@ final class LiveActivities {
     /// Back in the app: replies already in have been seen, so their activities go, and so do ones the server stopped
     /// keeping up to date (a job whose end never reached the phone).
     func appBecameActive() {
+        resendTokens()
         for activity in Activity<AgentActivityAttributes>.activities
         where activity.content.state.isOver || activity.activityState == .stale {
             let key = activity.attributes.key

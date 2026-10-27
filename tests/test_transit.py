@@ -470,7 +470,7 @@ def test_alert_endpoints(client):
     assert got == [{"id": a["id"], "line": "4", "vehicle": "Tram", "towards": ["Falchera"],
                     "stop": {"id": "1", "code": "252", "name": "Porta Nuova"}, "time": "08:10",
                     "days": [1, 2, 3, 4, 5], "once": False, "minutes": None, "enabled": True, "event": None,
-                    "summary": alerts.describe(a)}]
+                    "right_away": False, "summary": alerts.describe(a)}]
     r = c.patch(f"/v1/transit/alerts/{a['id']}", json={"minutes": 8, "time": "08:20"}, headers=AUTH).json()
     assert (r["minutes"], r["time"]) == (8, "08:20")
     r = c.patch(f"/v1/transit/alerts/{a['id']}", json={"minutes": None, "enabled": False}, headers=AUTH).json()
