@@ -68,7 +68,7 @@ final class BrowserLive: ObservableObject {
         /// What to say under the stage: Aide's words, else what it did.
         var said: String { note ?? line }
         var addsToCart: Bool {
-            kind == "click" && (label ?? "").range(of: #"aggiungi|carrello|add to|cart|basket|bag|warenkorb|panier"#,
+            kind == "click" && (label ?? "").range(of: #"aggiungi|carrello|add to|cart|basket|bag|warenkorb|panier|increase quantity|aumenta|^\+"#,
                                                   options: [.regularExpression, .caseInsensitive]) != nil
         }
     }

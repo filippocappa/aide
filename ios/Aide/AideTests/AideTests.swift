@@ -1267,6 +1267,14 @@ final class ErrandTests: XCTestCase {
         let tap = BrowserLive.Action(seq: 1, kind: "click", label: "KICHLY Padella in ghisa 12 pollici, pre-stagionata")
         XCTAssertEqual(results.item(clicked: tap)?.ref, "42")
         XCTAssertNil(results.item(clicked: BrowserLive.Action(seq: 2, kind: "scroll", label: "down")))
+        // A menu's "+": the label names its dish.
+        let menu = try JSONDecoder.api.decode(PageScene.self, from: Data("""
+        {"kind": "results", "items": [{"title": "farinata", "price": "4,40 €", "ref": "20"},
+                                      {"title": "diavola", "price": "8,00 €", "ref": "22"}]}
+        """.utf8))
+        let plus = BrowserLive.Action(seq: 3, kind: "click", label: "Increase quantity · diavola")
+        XCTAssertEqual(menu.item(clicked: plus)?.ref, "22")
+        XCTAssertTrue(plus.addsToCart)
 
         let login = try JSONDecoder.api.decode(PageScene.self, from: Data("""
         {"kind": "login", "site": "amazon.it", "title": "Accedi", "url": "https://www.amazon.it/ap/signin", "icon": null, "query": null,

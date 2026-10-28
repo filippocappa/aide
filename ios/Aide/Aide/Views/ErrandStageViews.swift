@@ -103,9 +103,11 @@ struct PageScene: Decodable, Equatable {
         }
     }
 
-    /// The result Aide just tapped, from what the tap was on (a tile's link carries its name).
+    /// The result Aide just tapped, from what the tap was on: a tile's link carries its name, a "+" its card's
+    /// ("Increase quantity · diavola").
     func item(clicked action: BrowserLive.Action?) -> Item? {
-        guard let action, action.kind == "click", let label = action.label?.lowercased(), label.count >= 4 else {
+        guard let action, action.kind == "click",
+              let label = action.label?.components(separatedBy: " · ").last?.lowercased(), label.count >= 3 else {
             return nil
         }
         return items.first { item in
