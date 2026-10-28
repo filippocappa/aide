@@ -43,6 +43,7 @@ class FakeBrowser:
         self._objects: dict[str, object] = {}
         self.clicked, self.typed, self.live_typed, self.taps = [], [], [], []
         self.pictures: dict[str, list[dict]] = {}  # a page's pictures by link
+        self.acts: dict[str, dict] = {}
         self.product_pages: list[str] = []
 
     def page(self, owner):
@@ -80,9 +81,13 @@ class FakeBrowser:
     async def focused(self, owner):
         return {"submits": ""}
 
+    def last_action(self, owner):
+        return self.acts.get(owner)
+
     async def click(self, owner, ref):
         e = self._here(owner)[2][ref]
         self.clicked.append(e["text"])
+        self.acts[owner] = {"seq": len(self.clicked), "kind": "click", "x": 0.5, "y": 0.4, "label": e["text"]}
         if "goes" in e:
             self.at[owner] = e["goes"]
         return "Clicked."
@@ -559,6 +564,10 @@ async def test_the_live_view(env):
         assert first[0] == {"type": "frame", "data": "AAAA", "width": 824, "height": 1830}
         assert first[1]["type"] == "status" and first[1]["control"] is False
         ws.send_json({"type": "tap", "x": 0.5, "y": 0.5})  # Aide is working: ignored
+        browser.pages["https://www.amazon.it/login"][2]["8"] = {"text": "Accedi"}
+        await browser.click(f"errand:{e['id']}", "8")  # what Aide does shows up as it happens
+        action = next(m for m in iter(ws.receive_json, None) if m["type"] == "action")
+        assert action == {"type": "action", "seq": 1, "kind": "click", "x": 0.5, "y": 0.4, "label": "Accedi"}
         ws.send_json({"type": "done"})
     assert browser.taps == []
     runner.store.update(e["id"], status="needs_you", why="login", reason="Log in to Amazon.")
@@ -620,6 +629,10 @@ async def test_real_chromium_reads_and_clicks(tmp_path):
         assert (await browser.inspect("errand:1", pw))["sensitive"]
         await browser.click("errand:1", ref)
         assert await browser._page("errand:1").title() == "added"
+        act = browser.last_action("errand:1")
+        assert act["kind"] == "click" and act["label"] == "Aggiungi al carrello" and 0 < act["x"] < 1 and 0 < act["y"] < 1
+        await browser.fill("errand:1", pw, "hunter3")
+        assert browser.last_action("errand:1")["label"] is None  # never a password
         assert "In fondo" in await browser.read("errand:1", everything=True)
         shot = await browser.screenshot("errand:1")
         assert shot[:2] == b"\xff\xd8"

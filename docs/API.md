@@ -1468,6 +1468,13 @@ Server to app:
 - `{"type": "focus", "field": "password", "label": "Password"}` when the focused field changes: `field` is
   `password`, `username` (an email or user name), `code` (a one-time code), `phone`, `number`, `text`, or null (none:
   hide the keyboard bar). Show the matching native field, so the phone's AutoFill offers your password or code.
+- `{"type": "action", "seq": 12, "kind": "click", "x": 0.5, "y": 0.38, "label": "Aggiungi al carrello"}` (since
+  2026-10-28, errands only): what Aide just did, as it does it, for the app to show over the frames. `kind`: `open`
+  (`label` the site and path), `click`, `type` (`label` what it types; null in a password field), `choose` (the
+  option), `press` (the key), `scroll` (`up` or `down`), `back`. `x`, `y`: the element's middle as fractions of the
+  frame, or null. Only what it does after the socket opened; `seq` goes up by one or more each time.
+The app shows the errand's page live in its chat card while it's going (a socket per card on screen; a refused
+socket, `1008` because the page isn't open yet, is tried again every few seconds).
 
 App to server (only while `control` is true):
 - `{"type": "tap", "x": 0.42, "y": 0.61}`: a tap, as fractions of the frame.

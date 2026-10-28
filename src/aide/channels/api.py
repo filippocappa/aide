@@ -1781,9 +1781,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
         async def send() -> None:
             last_status, last_focus = None, None
+            seen = (browser.last_action(owner) or {}).get("seq")  # only what it does from now on
             while True:
                 try:
-                    frame = await asyncio.wait_for(frames.get(), 1.0)
+                    frame = await asyncio.wait_for(frames.get(), 0.5)
                     await ws.send_json(frame)
                 except asyncio.TimeoutError:
                     pass
@@ -1794,6 +1795,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 if (now := status()) != last_status:
                     await ws.send_json(now)
                     last_status = now
+                act = browser.last_action(owner) if errand is not None else None
+                if act and act["seq"] != seen:
+                    await ws.send_json({"type": "action", **act})
+                    seen = act["seq"]
                 focus = await browser.focus(owner) if page is not None and control() else {"field": None}
                 if focus != last_focus:
                     await ws.send_json({"type": "focus", **focus})

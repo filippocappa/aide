@@ -288,6 +288,8 @@ class Browser:
         self._used: dict[str, float] = {}  # site -> monotonic time its pages were last used
         self._pages: dict[tuple[str, str], object] = {}  # (owner, site) -> Page
         self._current: dict[str, str] = {}  # owner -> site of its current page
+        self._acts: dict[str, dict] = {}  # owner -> what the model did last, for the live view
+        self._seq = 0
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -369,9 +371,37 @@ class Browser:
             return None
         return {"url": page.url, "site": self._current[owner]}
 
+    def last_action(self, owner: str) -> dict | None:
+        """What the model did last on the owner's page, for the live view to show:
+        {seq, kind (open, click, type, choose, press, scroll, back), x, y (the element's middle, 0–1 across the
+        visible page, or None), label}. Typing into a password field has no label."""
+        return self._acts.get(owner)
+
+    def _did(self, owner: str, kind: str, label: str | None = None, box: dict | None = None) -> None:
+        self._seq += 1
+        x = y = None
+        if box:
+            x = round(min(1.0, max(0.0, (box["x"] + box["width"] / 2) / VIEWPORT["width"])), 3)
+            y = round(min(1.0, max(0.0, (box["y"] + box["height"] / 2) / VIEWPORT["height"])), 3)
+        self._acts[owner] = {"seq": self._seq, "kind": kind, "x": x, "y": y,
+                             "label": (" ".join(label.split())[:60] or None) if label else None}
+
+    async def _where_is(self, locator) -> tuple[dict | None, str | None]:
+        """The element's box on screen (scrolled into view) and what it says (None for a password field)."""
+        try:
+            await locator.scroll_into_view_if_needed(timeout=3000)
+            box = await locator.bounding_box(timeout=1000)
+            label = await locator.evaluate(
+                "e => e.type === 'password' ? null : (e.innerText || e.value || e.getAttribute('aria-label')"
+                " || e.getAttribute('placeholder') || e.title || e.alt || '').trim()", timeout=1000)
+            return box, label
+        except Exception:
+            return None, None
+
     async def open(self, owner: str, url: str) -> str:
         url = full_url(url)
         site = site_of(url)
+        self._did(owner, "open", urlparse(url).netloc.removeprefix("www.") + urlparse(url).path[:40].rstrip("/"))
         page = self._pages.get((owner, site))
         if page is None or page.is_closed():
             context = await self._context(site)
@@ -395,6 +425,7 @@ class Browser:
             except Exception:
                 pass
         self._current.pop(owner, None)
+        self._acts.pop(owner, None)
 
     async def prune(self) -> None:
         """Close the browsers of sites with no page in use for IDLE."""
@@ -500,6 +531,8 @@ class Browser:
         locator = self._ref(page, ref)
         if await locator.count() == 0:
             raise BrowserError(f"There's no [{ref}] on the page now: read_page again.")
+        box, label = await self._where_is(locator)
+        self._did(owner, "click", label, box)
         try:
             await locator.scroll_into_view_if_needed(timeout=3000)
             await locator.click()
@@ -513,6 +546,8 @@ class Browser:
         locator = self._ref(page, ref)
         if await locator.count() == 0:
             raise BrowserError(f"There's no [{ref}] on the page now: read_page again.")
+        box, label = await self._where_is(locator)
+        self._did(owner, "type", None if label is None else text, box)  # never what goes in a password field
         try:
             await locator.fill(text)
             if submit:
@@ -526,6 +561,8 @@ class Browser:
 
     async def choose(self, owner: str, ref: str, option: str) -> str:
         locator = self._ref(self._page(owner), ref)
+        box, _ = await self._where_is(locator)
+        self._did(owner, "choose", option, box)
         try:
             await locator.select_option(label=option)
         except Exception:
@@ -538,18 +575,21 @@ class Browser:
 
     async def press(self, owner: str, key: str) -> str:
         page = self._page(owner)
+        self._did(owner, "press", key)
         await page.keyboard.press(key)
         await self._settle(page)
         return f"Pressed {key}. Now: " + await self._heading(self._page(owner))
 
     async def scroll(self, owner: str, direction: str) -> str:
         page = self._page(owner)
+        self._did(owner, "scroll", direction)
         await page.evaluate("d => window.scrollBy(0, d * window.innerHeight * 0.8)", 1 if direction == "down" else -1)
         await asyncio.sleep(0.4)
         return f"Scrolled {direction}."
 
     async def back(self, owner: str) -> str:
         page = self._page(owner)
+        self._did(owner, "back")
         try:
             await page.go_back(wait_until="domcontentloaded")
         except Exception as e:
