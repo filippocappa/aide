@@ -280,8 +280,8 @@ struct WaitingSection: View {
             .sheet(item: $reviewing) { action in
                 PurchaseConfirmSheet(action: action) { await load() }
             }
-            .fullScreenCover(item: $browser) { target in
-                BrowserSheet(target: target) { Task { await load() } }
+            .sheet(item: $browser) { target in
+                StageSheet(target: target, tint: chat.agent("aide").tint) { Task { await load() } }
             }
         }
     }

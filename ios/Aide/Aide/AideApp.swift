@@ -185,6 +185,6 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { digest.isPresented && !env.showToday }, set: { digest.isPresented = $0 })) {
             DigestSheet()
         }
-        .fullScreenCover(item: $env.browser) { BrowserSheet(target: $0) }
+        .sheet(item: $env.browser) { StageSheet(target: $0) }
     }
 }

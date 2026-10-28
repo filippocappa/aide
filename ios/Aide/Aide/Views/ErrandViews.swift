@@ -39,11 +39,13 @@ final class BrowserLive: ObservableObject {
     /// What Aide just did on the page: where (the element's middle, 0–1 across the visible page) and on what.
     struct Action: Decodable, Equatable {
         let seq: Int
-        /// open, click, type, choose, press, scroll, back
+        /// open, click, type, choose, press, scroll, back, read, find, look
         let kind: String
         var x: Double?
         var y: Double?
         var label: String?
+        /// Aide's own line for it ("Guardo le recensioni"), when it gave one.
+        var note: String?
 
         var line: String {
             let quoted = label.map { "“\($0)”" }
@@ -55,17 +57,39 @@ final class BrowserLive: ObservableObject {
             case "scroll": return label == "up" ? "Scrolling up" : "Scrolling down"
             case "back": return "Going back"
             case "press": return "Pressing \(label ?? "a key")"
+            case "read": return "Reading the page"
+            case "find": return quoted.map { "Looking for \($0)" } ?? "Looking"
+            case "look": return "Looking at the page"
             default: return label ?? kind
             }
         }
 
         var point: CGPoint? { x.flatMap { x in y.map { CGPoint(x: x, y: $0) } } }
+        /// What to say under the stage: Aide's words, else what it did.
+        var said: String { note ?? line }
+        var addsToCart: Bool {
+            kind == "click" && (label ?? "").range(of: #"aggiungi|carrello|add to|cart|basket|bag|warenkorb|panier"#,
+                                                  options: [.regularExpression, .caseInsensitive]) != nil
+        }
+    }
+
+    /// The CAPTCHA's picture and where it is on the page (fractions of the frame).
+    struct Crop: Equatable {
+        let image: UIImage
+        let box: CGRect
+
+        /// A tap at (u, v) across the picture (0–1), as a point on the page.
+        func pagePoint(u: Double, v: Double) -> CGPoint {
+            CGPoint(x: box.minX + u * box.width, y: box.minY + v * box.height)
+        }
     }
 
     @Published private(set) var frame: UIImage?
     @Published private(set) var status: Status?
     @Published private(set) var focus = Focus()
     @Published private(set) var action: Action?
+    @Published private(set) var scene: PageScene?
+    @Published private(set) var crop: Crop?
     /// Why the socket closed, when it did on its own.
     @Published private(set) var closed: String?
 
@@ -97,6 +121,11 @@ final class BrowserLive: ObservableObject {
     func scroll(x: Double, y: Double, dy: Double) { send(["type": "scroll", "x": x, "y": y, "dy": dy]) }
     func type(_ text: String) { send(["type": "text", "text": text]) }
     func key(_ name: String) { send(["type": "key", "key": name]) }
+    /// Your text into one of the scene's fields (the app's own login screen). Straight to the page, never kept.
+    func fill(ref: String, text: String) { send(["type": "fill", "ref": ref, "text": text]) }
+    func press(ref: String) { send(["type": "press", "ref": ref]) }
+    /// The page's frames on ("Show the real page") or off.
+    func frames(on: Bool) { send(["type": "frames", "on": on]) }
 
     /// You're done: the errand goes on (or the login page closes). Waits for the server to take it.
     func done() async {
@@ -139,12 +168,16 @@ final class BrowserLive: ObservableObject {
             case .status(let s): status = s
             case .focus(let f): focus = f
             case .action(let a): action = a
+            case .scene(let s): scene = s
+            case .crop(let c): crop = c
             case nil: break
             }
         }
     }
 
-    private enum Incoming: @unchecked Sendable { case frame(UIImage), status(Status), focus(Focus), action(Action) }
+    private enum Incoming: @unchecked Sendable {
+        case frame(UIImage), status(Status), focus(Focus), action(Action), scene(PageScene), crop(Crop)
+    }
 
     nonisolated private static func parse(_ data: Data) -> Incoming? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -160,6 +193,13 @@ final class BrowserLive: ObservableObject {
             return .focus(Focus(field: object["field"] as? String, label: object["label"] as? String))
         case "action":
             return (try? JSONDecoder.api.decode(Action.self, from: data)).map(Incoming.action)
+        case "scene":
+            return (try? JSONDecoder.api.decode(PageScene.self, from: data)).map(Incoming.scene)
+        case "crop":
+            guard let b64 = object["data"] as? String, let jpeg = Data(base64Encoded: b64),
+                  let image = UIImage(data: jpeg), let box = object["box"] as? [String: Double] else { return nil }
+            return .crop(Crop(image: image, box: CGRect(x: box["x"] ?? 0, y: box["y"] ?? 0,
+                                                        width: box["width"] ?? 1, height: box["height"] ?? 1)))
         default:
             return nil
         }
@@ -289,32 +329,7 @@ struct BrowserSheet: View {
 
     private func inputBar(_ field: String) -> some View {
         HStack(spacing: 10) {
-            Group {
-                switch field {
-                case "password":
-                    SecureField(live.focus.label ?? "Password", text: $typed)
-                        .textContentType(.password)
-                case "username":
-                    TextField(live.focus.label ?? "Email or username", text: $typed)
-                        .textContentType(.username)
-                        .keyboardType(.emailAddress)
-                case "code":
-                    TextField(live.focus.label ?? "Code", text: $typed)
-                        .textContentType(.oneTimeCode)
-                        .keyboardType(.numberPad)
-                case "phone":
-                    TextField(live.focus.label ?? "Phone", text: $typed)
-                        .textContentType(.telephoneNumber)
-                        .keyboardType(.phonePad)
-                case "number":
-                    TextField(live.focus.label ?? "Number", text: $typed)
-                        .keyboardType(.decimalPad)
-                default:
-                    TextField(live.focus.label ?? "Type here", text: $typed)
-                }
-            }
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
+            PageField(kind: field, label: live.focus.label, text: $typed)
             .focused($typing)
             .submitLabel(.send)
             .onSubmit(sendTyped)
@@ -397,6 +412,8 @@ struct ErrandCard: View {
     @EnvironmentObject private var chat: ChatViewModel
     @State private var errand: Errand
     @State private var browser: BrowserTarget?
+    /// The real page (the card's menu): for what Aide's own screens don't cover.
+    @State private var realPage: BrowserTarget?
     @State private var confirming: QueuedAction?
     @State private var busy = false
     @State private var error: String?
@@ -437,7 +454,17 @@ struct ErrandCard: View {
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .animation(.spring(duration: 0.45), value: ErrandLiveBox.shows(errand))
         .task(id: errand.id) { await follow() }
-        .fullScreenCover(item: $browser) { target in
+        .contextMenu {
+            if ErrandLiveBox.shows(errand) {
+                Button("Show the real page", systemImage: "safari") {
+                    realPage = .errand(errand.id, title: errand.title)
+                }
+            }
+        }
+        .sheet(item: $browser) { target in
+            StageSheet(target: target, tint: chat.agent("aide").tint) { Task { await refresh() } }
+        }
+        .fullScreenCover(item: $realPage) { target in
             BrowserSheet(target: target) { Task { await refresh() } }
         }
         .sheet(item: $confirming) { action in
@@ -498,8 +525,8 @@ struct ErrandCard: View {
     }
 }
 
-/// The errand's page, live, in its card while it's going: the page as it changes, a ring where Aide taps, and what
-/// it's doing under it. The view follows what Aide does down the page. A tap opens it full screen (to take over).
+/// The errand in its card while it's going, drawn by the app (ErrandStage) from what the page is and what Aide
+/// does, with Aide's line for it underneath. A tap opens it full size; on a login, its button opens your part.
 struct ErrandLiveBox: View {
     let errand: Errand
     let tint: Color
@@ -515,6 +542,11 @@ struct ErrandLiveBox: View {
         !e.isOver && e.status != "interrupted" && (e.status != "queued" || e.url != nil)
     }
 
+    /// The line under it: what Aide says it's doing, else what it did, else the errand's step.
+    static func narration(action: BrowserLive.Action?, step: String?) -> String {
+        action?.said ?? step ?? "Opening the page…"
+    }
+
     private static let height: CGFloat = 340
 
     var body: some View {
@@ -523,11 +555,11 @@ struct ErrandLiveBox: View {
                 withAnimation(.spring(duration: 0.4)) { shown.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Circle().fill(live.frame != nil && live.connected ? Color.red : Color.secondary)
-                        .frame(width: 7, height: 7)
-                    Text("Live").font(.caption.weight(.semibold))
-                    Text(caption ?? errand.step ?? "Opening the page…").font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Image(systemName: "safari").font(.caption.weight(.semibold)).foregroundStyle(tint)
+                    Text("Aide's browser").font(.caption.weight(.semibold))
+                    if !shown {
+                        Text(caption ?? errand.step ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         .rotationEffect(.degrees(shown ? 0 : -90))
@@ -535,80 +567,46 @@ struct ErrandLiveBox: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(shown ? "Hide the live page" : "Show the live page")
+            .accessibilityLabel(shown ? "Hide Aide's browser" : "Show Aide's browser")
             if shown {
-                screen
-                    .transition(.asymmetric(insertion: .scale(scale: 0.97, anchor: .top).combined(with: .opacity),
-                                            removal: .opacity))
+                VStack(alignment: .leading, spacing: 8) {
+                    stage
+                    if !errand.needsLiveView {
+                        Narration(text: caption ?? errand.step ?? "Opening the page…", tint: tint)
+                    }
+                }
+                .transition(.asymmetric(insertion: .scale(scale: 0.97, anchor: .top).combined(with: .opacity),
+                                        removal: .opacity))
             }
         }
         .task(id: shown) {
             guard shown else { return live.disconnect() }
             // Keeps it open: a page that isn't there yet (just started) or a dropped socket is tried again.
             while !Task.isCancelled {
-                if !live.connected, let request = try? env.api.browserLiveRequest(errand: errand.id) {
+                if !live.connected, let request = try? env.api.browserLiveRequest(errand: errand.id, frames: false) {
                     live.connect(request)
                 }
                 try? await Task.sleep(for: .seconds(3))
             }
         }
         .onDisappear { live.disconnect() }
-        .onChange(of: live.action) { _, action in if let action { caption = action.line } }
+        .onChange(of: live.action) { _, action in caption = Self.narration(action: action, step: caption) }
         .onChange(of: live.status?.step) { _, step in if let step { caption = step } }
     }
 
-    private var screen: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            let ratio = live.frame.map { $0.size.height / max($0.size.width, 1) } ?? 2.2
-            let pageHeight = width * ratio
-            // Keep where Aide is acting in the middle of the box, within the page.
-            let focusY = (live.action?.point?.y ?? 0) * pageHeight
-            let offset = min(max(focusY - Self.height / 2, 0), max(pageHeight - Self.height, 0))
-            ZStack(alignment: .topLeading) {
-                if let frame = live.frame {
-                    Image(uiImage: frame)
-                        .resizable()
-                        .frame(width: width, height: pageHeight)
-                        .overlay {
-                            if let action = live.action, let point = action.point {
-                                TapMark(tint: tint)
-                                    .id(action.seq)
-                                    .position(x: point.x * width, y: point.y * pageHeight)
-                            }
-                        }
-                        .offset(y: -offset)
-                        .animation(.easeInOut(duration: 0.5), value: offset)
-                } else {
-                    VStack(spacing: 8) {
-                        ProgressView()
-                        Text(live.closed == nil ? "Opening the page…" : "Waiting for the page…")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(width: width, height: Self.height)
-                }
-            }
-            .frame(width: width, height: Self.height, alignment: .top)
-            .clipped()
-            .overlay(alignment: .topTrailing) {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.caption.weight(.bold))
-                    .padding(8)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .padding(8)
-            }
-        }
-        .frame(height: Self.height)
-        .background(Theme.background)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.line))
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onTapGesture(perform: open)
-        .accessibilityElement()
-        .accessibilityLabel("Aide's browser, live")
-        .accessibilityValue(caption ?? "")
-        .accessibilityHint("Opens it full screen")
-        .accessibilityAddTraits(.isButton)
+    private var stage: some View {
+        ErrandStage(scene: live.scene, action: live.action, tint: tint,
+                    confirming: errand.status == "waiting_confirm",
+                    yourTurn: errand.needsLiveView ? open : nil)
+            .frame(height: Self.height)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.line))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .onTapGesture(perform: open)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Aide's browser")
+            .accessibilityValue(caption ?? "")
+            .accessibilityHint("Opens it full size")
     }
 }
 
@@ -686,14 +684,14 @@ struct ErrandButtons: View {
                 }
                 HStack(spacing: 10) {
                     if errand.needsLiveView {
-                        primary("Take over", action: takeOver)
+                        primary(Self.yourPart(errand), action: takeOver)
                     } else if errand.status == "waiting_confirm" {
                         primary("Review and confirm", action: review)
                     } else if errand.status == "interrupted" {
                         primary("Go on") { answer("go on") }
                     } else if errand.isWorking {
                         Button(action: takeOver) {
-                            Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right").frame(maxWidth: .infinity)
+                            Label("Watch", systemImage: "arrow.up.left.and.arrow.down.right").frame(maxWidth: .infinity)
                         }
                             .buttonStyle(.bordered)
                     }
@@ -702,6 +700,16 @@ struct ErrandButtons: View {
                 }
             }
             .disabled(busy)
+        }
+    }
+
+    /// The button for your part of an errand that needs you.
+    static func yourPart(_ e: Errand) -> String {
+        switch e.why {
+        case "login": "Log in"
+        case "code": "Enter the code"
+        case "captcha": "Solve it"
+        default: "Take over"
         }
     }
 
@@ -978,7 +986,7 @@ struct BrowserSettingsView: View {
             } header: {
                 Text("Log in to a site")
             } footer: {
-                Text("Opens the site in Aide's browser, live here. Log in as you would on your phone; your passwords and codes go to the page, never to Aide.")
+                Text("Opens the site in Aide's browser and its login here, on Aide's own screen. Your passwords and codes go to the page, never to Aide.")
             }
             Section {
                 NavigationLink("Purchases") { PurchasesView() }
@@ -994,8 +1002,8 @@ struct BrowserSettingsView: View {
         .navigationTitle("Browser")
         .task { await load() }
         .refreshable { await load() }
-        .fullScreenCover(item: $browser) { target in
-            BrowserSheet(target: target) { Task { await load() } }
+        .sheet(item: $browser) { target in
+            StageSheet(target: target) { Task { await load() } }
         }
     }
 

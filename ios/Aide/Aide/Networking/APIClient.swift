@@ -361,9 +361,11 @@ final class APIClient {
 
     /// The live view's socket: an errand's page, or a site to log in to. The token goes in the header, as for
     /// every other call.
-    func browserLiveRequest(errand: Int? = nil, site: String? = nil) throws -> URLRequest {
-        let query = errand.map { [URLQueryItem(name: "errand", value: String($0))] }
+    /// `frames` false: no frames until `frames(on:)`, for the app's own drawing of the page (its `scene`).
+    func browserLiveRequest(errand: Int? = nil, site: String? = nil, frames: Bool = true) throws -> URLRequest {
+        var query = errand.map { [URLQueryItem(name: "errand", value: String($0))] }
             ?? [URLQueryItem(name: "site", value: site ?? "")]
+        if !frames { query.append(URLQueryItem(name: "frames", value: "false")) }
         var req = try request("GET", "/v1/browser/live", query: query, auth: true, timeout: 30, body: nil)
         guard let url = req.url, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             throw APIError.notConfigured

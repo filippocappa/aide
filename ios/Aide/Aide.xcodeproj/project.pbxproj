@@ -50,6 +50,7 @@
 		6DA7ACDE971323C214D45600 /* TeamWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0183C66CE418FFB138873C0E /* TeamWidget.swift */; };
 		6F50A0BBCD8AE4B87A0300EC /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32DFE4D7AD03B872AE8A96C /* Models.swift */; };
 		6FFB4761315BC0B5CD78D8C6 /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36387E8AE9A51ED3851F3281 /* PushService.swift */; };
+		717B9649EF5B1FF87668F918 /* ErrandStageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31033B32F4A37807EB1A7190 /* ErrandStageViews.swift */; };
 		731F6A69DA90B3592DCAF24B /* HabitIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FA885056211A769DEA36F2 /* HabitIntents.swift */; };
 		74C5766DA6E89237B0FBC0F7 /* LockBook.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938D864748A9931323F00F20 /* LockBook.swift */; };
 		7688764763680AE215A25A25 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB893CFE71A535E6990CADF /* SettingsView.swift */; };
@@ -170,6 +171,7 @@
 		27B91716B1D5968DBC47F553 /* AideWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AideWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		27BEC0AC212082C70D663841 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		2FF2F172DF24BB3119602573 /* HabitControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitControl.swift; sourceTree = "<group>"; };
+		31033B32F4A37807EB1A7190 /* ErrandStageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrandStageViews.swift; sourceTree = "<group>"; };
 		31E717ACC950E43DC53B945E /* RichText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichText.swift; sourceTree = "<group>"; };
 		36387E8AE9A51ED3851F3281 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		390203A3696FD54CC8786945 /* RouteCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteCard.swift; sourceTree = "<group>"; };
@@ -264,6 +266,7 @@
 				3E5F1E3C560D08D523718D2F /* DigestView.swift */,
 				78FD630BFAF2C84AC4AF0659 /* DigestViewModel.swift */,
 				772E51ADF548B97CFFD4C44D /* DraftViews.swift */,
+				31033B32F4A37807EB1A7190 /* ErrandStageViews.swift */,
 				F4B434BFB9F5B347D240B333 /* ErrandViews.swift */,
 				DDFDB90CA977D76111828E4F /* FoodViews.swift */,
 				BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */,
@@ -709,6 +712,7 @@
 				08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */,
 				AA355EF0C809637B2B575280 /* DigestViewModel.swift in Sources */,
 				FA49E57FDF31B7507D385EA8 /* DraftViews.swift in Sources */,
+				717B9649EF5B1FF87668F918 /* ErrandStageViews.swift in Sources */,
 				3E1727F77882BD2842BC741B /* ErrandViews.swift in Sources */,
 				B498B793AEFA7987A267B6D0 /* Figure.swift in Sources */,
 				DCCB151C61A44732969A6427 /* FoodViews.swift in Sources */,

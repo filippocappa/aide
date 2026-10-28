@@ -1251,6 +1251,79 @@ final class ErrandTests: XCTestCase {
         XCTAssertNil(secret.point)
     }
 
+    func testScenesDecode() throws {
+        let results = try JSONDecoder.api.decode(PageScene.self, from: Data("""
+        {"type": "scene", "kind": "results", "site": "amazon.it", "title": "Amazon.it : padella", "url": "https://www.amazon.it/s?k=padella",
+         "icon": "https://www.amazon.it/favicon.ico", "query": "padella in ghisa",
+         "items": [{"title": "VICTORIA Padella in Ghisa 30 cm", "price": "49,52 €", "image": "https://m.media-amazon.com/a.jpg", "ref": "41"},
+                   {"title": "KICHLY Padella in ghisa 12 pollici", "price": null, "image": null, "ref": "42"}],
+         "product": null, "cart": {"count": 2, "total": null}, "form": null, "captcha": null, "signin": "3"}
+        """.utf8))
+        XCTAssertEqual(results.items.map(\.ref), ["41", "42"])
+        XCTAssertEqual(results.cart?.count, 2)
+        XCTAssertFalse(results.isYourTurn)
+        XCTAssertEqual(results.signin, "3")
+        // The result Aide tapped, from what the tap was on.
+        let tap = BrowserLive.Action(seq: 1, kind: "click", label: "KICHLY Padella in ghisa 12 pollici, pre-stagionata")
+        XCTAssertEqual(results.item(clicked: tap)?.ref, "42")
+        XCTAssertNil(results.item(clicked: BrowserLive.Action(seq: 2, kind: "scroll", label: "down")))
+
+        let login = try JSONDecoder.api.decode(PageScene.self, from: Data("""
+        {"kind": "login", "site": "amazon.it", "title": "Accedi", "url": "https://www.amazon.it/ap/signin", "icon": null, "query": null,
+         "items": [], "product": null, "cart": null, "captcha": null,
+         "form": {"fields": [{"ref": "7", "kind": "username", "label": "E-mail", "filled": false},
+                             {"ref": "9", "kind": "password", "label": null, "filled": true}],
+                  "submit": {"ref": "8", "text": "Continua"}, "choices": [], "remember": "10", "remembered": false,
+                  "error": "Password errata"}}
+        """.utf8))
+        XCTAssertTrue(login.isYourTurn)
+        XCTAssertEqual(login.turnTitle, "Log in to amazon.it")
+        XCTAssertEqual(login.form?.submit?.text, "Continua")
+        let form = try XCTUnwrap(login.form)
+        XCTAssertFalse(StageSheet.ready(form, [:]))  // the email is missing; the password was there
+        XCTAssertTrue(StageSheet.ready(form, ["7": "me@example.it"]))
+
+        let captcha = try JSONDecoder.api.decode(PageScene.self, from: Data("""
+        {"kind": "captcha", "site": "amazon.it", "title": "Amazon.it", "url": null, "icon": null, "query": null, "items": [],
+         "product": null, "cart": null, "form": null,
+         "captcha": {"kind": "text", "ref": "12", "input_ref": "13", "submit_ref": null}}
+        """.utf8))
+        XCTAssertEqual(captcha.captcha?.inputRef, "13")
+        XCTAssertEqual(captcha.turnButton, "Solve it")
+
+        let product = try JSONDecoder.api.decode(PageScene.self, from: Data("""
+        {"kind": "product", "site": "amazon.it", "title": "Lodge", "url": "https://www.amazon.it/dp/B0", "icon": null, "query": null,
+         "items": [], "product": {"title": "Lodge L8SK3", "price": "49,15 €", "image": null, "rating": 4.4},
+         "cart": null, "form": null, "captcha": null}
+        """.utf8))
+        XCTAssertEqual(product.product?.rating, 4.4)
+    }
+
+    func testNarrationAndTheCaptchaTaps() throws {
+        let said = try JSONDecoder.api.decode(BrowserLive.Action.self, from: Data("""
+        {"seq": 5, "kind": "read", "x": null, "y": null, "label": null, "note": "Guardo le recensioni"}
+        """.utf8))
+        XCTAssertEqual(ErrandLiveBox.narration(action: said, step: "Clicked [3]"), "Guardo le recensioni")
+        let plain = BrowserLive.Action(seq: 6, kind: "click", label: "Aggiungi al carrello")
+        XCTAssertEqual(ErrandLiveBox.narration(action: plain, step: nil), "Tapping “Aggiungi al carrello”")
+        XCTAssertTrue(plain.addsToCart)
+        XCTAssertEqual(ErrandLiveBox.narration(action: nil, step: "Cerco padelle"), "Cerco padelle")
+        XCTAssertEqual(ErrandLiveBox.narration(action: nil, step: nil), "Opening the page…")
+
+        // A tap on the CAPTCHA's picture lands where the picture is on the page.
+        let crop = BrowserLive.Crop(image: UIImage(), box: CGRect(x: 0.1, y: 0.3, width: 0.8, height: 0.2))
+        let point = crop.pagePoint(u: 0.5, v: 0.5)
+        XCTAssertEqual(point.x, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(point.y, 0.4, accuracy: 1e-9)
+
+        var e = try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand.utf8))
+        XCTAssertEqual(ErrandButtons.yourPart(e), "Log in")
+        e.why = "captcha"
+        XCTAssertEqual(ErrandButtons.yourPart(e), "Solve it")
+        e.why = "card"
+        XCTAssertEqual(ErrandButtons.yourPart(e), "Take over")
+    }
+
     func testErrandRoutes() throws {
         XCTAssertEqual(PushRoute(url: try XCTUnwrap(URL(string: "aide://errand/7"))), .errand(7))
         XCTAssertNil(PushRoute(url: try XCTUnwrap(URL(string: "aide://errand/x"))))
