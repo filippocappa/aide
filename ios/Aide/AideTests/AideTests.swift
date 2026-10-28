@@ -1238,6 +1238,19 @@ final class ErrandTests: XCTestCase {
         XCTAssertNil(try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand.utf8)).products)
     }
 
+    func testLiveActionLines() throws {
+        let tap = try JSONDecoder.api.decode(BrowserLive.Action.self, from: Data("""
+        {"type": "action", "seq": 3, "kind": "click", "x": 0.5, "y": 0.38, "label": "Aggiungi al carrello"}
+        """.utf8))
+        XCTAssertEqual(tap.line, "Tapping “Aggiungi al carrello”")
+        XCTAssertEqual(tap.point, CGPoint(x: 0.5, y: 0.38))
+        let secret = try JSONDecoder.api.decode(BrowserLive.Action.self, from: Data("""
+        {"seq": 4, "kind": "type", "x": null, "y": null, "label": null}
+        """.utf8))
+        XCTAssertEqual(secret.line, "Typing")
+        XCTAssertNil(secret.point)
+    }
+
     func testErrandRoutes() throws {
         XCTAssertEqual(PushRoute(url: try XCTUnwrap(URL(string: "aide://errand/7"))), .errand(7))
         XCTAssertNil(PushRoute(url: try XCTUnwrap(URL(string: "aide://errand/x"))))

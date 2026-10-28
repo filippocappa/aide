@@ -36,9 +36,36 @@ final class BrowserLive: ObservableObject {
         var label: String?
     }
 
+    /// What Aide just did on the page: where (the element's middle, 0–1 across the visible page) and on what.
+    struct Action: Decodable, Equatable {
+        let seq: Int
+        /// open, click, type, choose, press, scroll, back
+        let kind: String
+        var x: Double?
+        var y: Double?
+        var label: String?
+
+        var line: String {
+            let quoted = label.map { "“\($0)”" }
+            switch kind {
+            case "click": return quoted.map { "Tapping \($0)" } ?? "Tapping"
+            case "type": return quoted.map { "Typing \($0)" } ?? "Typing"
+            case "choose": return quoted.map { "Choosing \($0)" } ?? "Choosing"
+            case "open": return "Opening \(label ?? "a page")"
+            case "scroll": return label == "up" ? "Scrolling up" : "Scrolling down"
+            case "back": return "Going back"
+            case "press": return "Pressing \(label ?? "a key")"
+            default: return label ?? kind
+            }
+        }
+
+        var point: CGPoint? { x.flatMap { x in y.map { CGPoint(x: x, y: $0) } } }
+    }
+
     @Published private(set) var frame: UIImage?
     @Published private(set) var status: Status?
     @Published private(set) var focus = Focus()
+    @Published private(set) var action: Action?
     /// Why the socket closed, when it did on its own.
     @Published private(set) var closed: String?
 
@@ -46,6 +73,8 @@ final class BrowserLive: ObservableObject {
     private var reader: Task<Void, Never>?
 
     var control: Bool { status?.control ?? false }
+    /// Open and not closed by the server.
+    var connected: Bool { task != nil && closed == nil }
 
     func connect(_ request: URLRequest) {
         disconnect()
@@ -109,12 +138,13 @@ final class BrowserLive: ObservableObject {
             case .frame(let image): frame = image
             case .status(let s): status = s
             case .focus(let f): focus = f
+            case .action(let a): action = a
             case nil: break
             }
         }
     }
 
-    private enum Incoming: @unchecked Sendable { case frame(UIImage), status(Status), focus(Focus) }
+    private enum Incoming: @unchecked Sendable { case frame(UIImage), status(Status), focus(Focus), action(Action) }
 
     nonisolated private static func parse(_ data: Data) -> Incoming? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -128,6 +158,8 @@ final class BrowserLive: ObservableObject {
             return (try? JSONDecoder.api.decode(Status.self, from: data)).map(Incoming.status)
         case "focus":
             return .focus(Focus(field: object["field"] as? String, label: object["label"] as? String))
+        case "action":
+            return (try? JSONDecoder.api.decode(Action.self, from: data)).map(Incoming.action)
         default:
             return nil
         }
@@ -194,7 +226,7 @@ struct BrowserSheet: View {
             .background(Color.orange.opacity(0.15))
         } else if let status = live.status {
             let text = status.control ? (status.reason ?? (isLogin ? "Log in as you would on your phone. Aide never sees what you type." : "Your turn: do what the page needs, then tap I'm done."))
-                : "Aide is working: \(status.step ?? "on it"). You're watching."
+                : "Aide is working: \(live.action?.line ?? status.step ?? "on it"). You're watching."
             Label(text, systemImage: status.control ? "hand.point.up.left.fill" : "eye")
                 .font(.footnote)
                 .foregroundStyle(status.control ? Color.primary : Color.secondary)
@@ -217,6 +249,12 @@ struct BrowserSheet: View {
                                 .gesture(DragGesture(minimumDistance: 0).onEnded { value in
                                     touch(value, in: geo.size)
                                 })
+                            if !live.control, let action = live.action, let point = action.point {
+                                TapMark(tint: Theme.glow)
+                                    .id(action.seq)
+                                    .position(x: point.x * geo.size.width, y: point.y * geo.size.height)
+                                    .allowsHitTesting(false)
+                            }
                         }
                     }
                     .overlay(alignment: .bottom) {
@@ -378,6 +416,13 @@ struct ErrandCard: View {
             if !errand.isOver {
                 Text(errand.line).font(.subheadline).foregroundStyle(.secondary).lineLimit(4)
             }
+            if ErrandLiveBox.shows(errand) {
+                ErrandLiveBox(errand: errand, tint: chat.agent("aide").tint) {
+                    browser = .errand(errand.id, title: errand.title)
+                }
+                .transition(.asymmetric(insertion: .scale(scale: 0.96, anchor: .top).combined(with: .opacity),
+                                        removal: .opacity))
+            }
             ErrandButtons(errand: errand, busy: busy,
                           takeOver: { browser = .errand(errand.id, title: errand.title) },
                           answer: { answer in Task { await act { try await env.api.replyErrand(errand.id, answer: answer) } } },
@@ -390,6 +435,7 @@ struct ErrandCard: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .animation(.spring(duration: 0.45), value: ErrandLiveBox.shows(errand))
         .task(id: errand.id) { await follow() }
         .fullScreenCover(item: $browser) { target in
             BrowserSheet(target: target) { Task { await refresh() } }
@@ -449,6 +495,140 @@ struct ErrandCard: View {
                 await refresh()
             }
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+/// The errand's page, live, in its card while it's going: the page as it changes, a ring where Aide taps, and what
+/// it's doing under it. The view follows what Aide does down the page. A tap opens it full screen (to take over).
+struct ErrandLiveBox: View {
+    let errand: Errand
+    let tint: Color
+    let open: () -> Void
+
+    @StateObject private var live = BrowserLive()
+    @EnvironmentObject private var env: AppEnvironment
+    @AppStorage("errandLiveBox") private var shown = true
+    @State private var caption: String?
+
+    /// While there's a page to show: not before it starts, not after it's over, not after a restart closed it.
+    static func shows(_ e: Errand) -> Bool {
+        !e.isOver && e.status != "interrupted" && (e.status != "queued" || e.url != nil)
+    }
+
+    private static let height: CGFloat = 340
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.spring(duration: 0.4)) { shown.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Circle().fill(live.frame != nil && live.connected ? Color.red : Color.secondary)
+                        .frame(width: 7, height: 7)
+                    Text("Live").font(.caption.weight(.semibold))
+                    Text(caption ?? errand.step ?? "Opening the page…").font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(shown ? 0 : -90))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(shown ? "Hide the live page" : "Show the live page")
+            if shown {
+                screen
+                    .transition(.asymmetric(insertion: .scale(scale: 0.97, anchor: .top).combined(with: .opacity),
+                                            removal: .opacity))
+            }
+        }
+        .task(id: shown) {
+            guard shown else { return live.disconnect() }
+            // Keeps it open: a page that isn't there yet (just started) or a dropped socket is tried again.
+            while !Task.isCancelled {
+                if !live.connected, let request = try? env.api.browserLiveRequest(errand: errand.id) {
+                    live.connect(request)
+                }
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+        .onDisappear { live.disconnect() }
+        .onChange(of: live.action) { _, action in if let action { caption = action.line } }
+        .onChange(of: live.status?.step) { _, step in if let step { caption = step } }
+    }
+
+    private var screen: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let ratio = live.frame.map { $0.size.height / max($0.size.width, 1) } ?? 2.2
+            let pageHeight = width * ratio
+            // Keep where Aide is acting in the middle of the box, within the page.
+            let focusY = (live.action?.point?.y ?? 0) * pageHeight
+            let offset = min(max(focusY - Self.height / 2, 0), max(pageHeight - Self.height, 0))
+            ZStack(alignment: .topLeading) {
+                if let frame = live.frame {
+                    Image(uiImage: frame)
+                        .resizable()
+                        .frame(width: width, height: pageHeight)
+                        .overlay {
+                            if let action = live.action, let point = action.point {
+                                TapMark(tint: tint)
+                                    .id(action.seq)
+                                    .position(x: point.x * width, y: point.y * pageHeight)
+                            }
+                        }
+                        .offset(y: -offset)
+                        .animation(.easeInOut(duration: 0.5), value: offset)
+                } else {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text(live.closed == nil ? "Opening the page…" : "Waiting for the page…")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(width: width, height: Self.height)
+                }
+            }
+            .frame(width: width, height: Self.height, alignment: .top)
+            .clipped()
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.caption.weight(.bold))
+                    .padding(8)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .padding(8)
+            }
+        }
+        .frame(height: Self.height)
+        .background(Theme.background)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.line))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture(perform: open)
+        .accessibilityElement()
+        .accessibilityLabel("Aide's browser, live")
+        .accessibilityValue(caption ?? "")
+        .accessibilityHint("Opens it full screen")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// Where Aide just tapped or typed: a dot with a ring spreading from it.
+struct TapMark: View {
+    let tint: Color
+    @State private var spread = false
+
+    var body: some View {
+        ZStack {
+            Circle().fill(tint.opacity(0.35)).frame(width: 26, height: 26)
+            Circle().stroke(tint, lineWidth: 2.5).frame(width: 26, height: 26)
+                .scaleEffect(spread ? 2.4 : 1)
+                .opacity(spread ? 0 : 1)
+        }
+        .shadow(color: .black.opacity(0.25), radius: 3)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.9).repeatCount(3, autoreverses: false)) { spread = true }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -512,7 +692,9 @@ struct ErrandButtons: View {
                     } else if errand.status == "interrupted" {
                         primary("Go on") { answer("go on") }
                     } else if errand.isWorking {
-                        Button(action: takeOver) { Label("Watch", systemImage: "eye").frame(maxWidth: .infinity) }
+                        Button(action: takeOver) {
+                            Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right").frame(maxWidth: .infinity)
+                        }
                             .buttonStyle(.bordered)
                     }
                     Button(role: .destructive, action: cancel) { Text("Cancel").frame(maxWidth: .infinity) }
