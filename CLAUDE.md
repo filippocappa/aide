@@ -316,8 +316,10 @@ card and address. Placed orders go into `purchases`, which Finance reads (`list_
 Amazon.it (prices, product links). App (`Views/ErrandViews.swift`): the errand card in chat (Take over, answers, Review
 and confirm, Watch, Cancel), the live view (`BrowserSheet`: taps, drags, a native field that follows the page's focus
 so AutoFill offers passwords and codes), the order's Confirm sheet, errands and orders in Waiting for you, purchase
-cards, Settings → Browser (sites, logging in, Purchases), `aide://errand/<id>` and the `errand` push. Next: a login
-and a small real order from the phone, then food delivery and trains.
+cards, Settings → Browser (sites, logging in, Purchases), `aide://errand/<id>` and the `errand` push. Since 2026-10-28:
+the app draws the errand (scenes: results, menus, timetables as `rows`, product, cart), logins open on their own;
+Glovo (menu, "+", the address dialog) and Trenitalia (stations, search, timetable) tried headless. Next: a login and
+a small real order from the phone.
 
 **Done, both sides (2026-10-26), installed on the phone 2026-10-26:** Today and limit habits (#21, contract in
 `docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card

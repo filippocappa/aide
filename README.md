@@ -9,7 +9,7 @@
 
 <p align="center">
   A personal assistant for one person, backed by Claude.<br>
-  Calendar, reminders, mail, health, habits and study notes, through chat on the phone.
+  Calendar, reminders, mail, health, habits, study notes, trams and errands on the web, through chat on the phone.
 </p>
 
 ---
@@ -19,14 +19,18 @@ Aide is a Python server that runs on a home machine and an iOS app that talks to
 
 | Agent | Looks after |
 |---|---|
-| **Aide** | the orchestrator: web, maps, memory, routines; asks the others |
-| **Secretary** | calendar (iCloud), reminders (Apple Reminders), mail (Gmail) |
-| **Professor** | courses, lectures, study files, course notebooks, practice exams |
-| **Coach** | Apple Health, sleep and recovery, habits, food |
-| **Finance** | money (memory only, for now) |
+| **Aide** | the orchestrator: web, maps, memory, routines, errands in its own browser; asks the others |
+| **Secretary** | calendar (iCloud), reminders (Apple Reminders), mail (Gmail), trams and buses (GTT, Turin) |
+| **Professor** | courses, lectures, study files, course notebooks, quizzes and practice exams |
+| **Coach** | Apple Health, sleep and recovery, habits, food, Screen Time locks |
+| **Finance** | money: the orders Aide placed (otherwise memory only, for now) |
 
-Anything destructive or outward-facing (sending mail, deleting an event, moving a reminder) is queued in code and
-runs only after you tap **Confirm** in the app. The model never runs it directly.
+Anything destructive or outward-facing (sending mail, deleting an event, moving a reminder, placing an order) is
+queued in code and runs only after you tap **Confirm** in the app. The model never runs it directly.
+
+Besides chat, the app has a Today page (the briefing, what's waiting for you, habits and objectives), routines and
+watches (an agent's scheduled job, or a check that posts only when something needs you), widgets, and Live
+Activities on the Lock Screen and in the Dynamic Island (the next tram, the next event, an agent at work).
 
 The API is in [docs/API.md](docs/API.md), the contract between the server and the app. [SPEC.md](SPEC.md) is the
 original plan, and [CLAUDE.md](CLAUDE.md) is where things stand.
@@ -50,6 +54,7 @@ flowchart TB
         DB[("SQLite")]
         Workers["Study workers<br/>Whisper · notebook"]
         Vault["Obsidian vault<br/>WebDAV"]
+        Browser["Aide's browser<br/>Chromium, headless"]
     end
 
     subgraph Outside["☁️ Outside"]
@@ -57,6 +62,8 @@ flowchart TB
         LLM["Claude<br/>OpenRouter or Claude plan"]
         Services["iCloud Calendar · Gmail<br/>Tavily · Google Maps"]
         Moodle["University Moodle"]
+        Sites["Shops, delivery, trains"]
+        GTT["GTT live feed"]
         APNs["APNs"]
     end
 
@@ -72,6 +79,8 @@ flowchart TB
     Workers --> Vault
     Vault <-->|"WebDAV over Tailscale"| Obs
     Sched -->|"push"| APNs --> App
+    Loop --> Browser -->|"reads, fills carts;<br/>orders after Confirm"| Sites
+    Sched -->|"tram alerts"| GTT
 ```
 
 ## How study notes are made
@@ -247,6 +256,11 @@ src/aide/
   notebook.py, quiz.py   course notebooks; practice exams
   engine.py              who writes the notes: OpenRouter or the Claude plan
   vault.py, webdav.py    the Obsidian vault and its WebDAV server
+  browser.py, errands.py Aide's Chromium (pages read for the model, scenes and the live view for the app); errands
+  transit.py, leave.py   GTT timetable and live feed, tram alerts; leave-now for calendar events
+  live.py, upcoming.py   Live Activities (trams, the next event, agents at work)
+  routines.py            routines and watches; activity.py: the feed of what the agents did
+  locks.py               Screen Time locks
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
 ios/Aide/                the iOS app (SwiftUI, iOS 17+)
 brand/                   Pebble, the logo
@@ -439,6 +453,35 @@ Course PDFs from the university's Moodle, every 4 hours (docs/API.md, "Moodle").
 (UniTo: `https://elearning.unito.it/sme`), restart, then log in from the app (Study → Moodle): it's the university's
 own login page, so the password stays with you; the server keeps only Moodle's token, as `MOODLE_TOKEN` in `.env`.
 Logging out in the app removes it.
+
+## Errands on the web
+
+Aide runs errands in its own Chromium on the server: "order me a diavola from Glovo", "find a train to Ivrea
+tomorrow morning", "compare three cast-iron pans on Amazon". The errand card in the chat draws what Aide is doing
+(results with their pictures and prices, a menu, a timetable, the cart), with a line for each step. It isn't a
+video of the site; the real page is in the card's long-press menu.
+
+- **Reading, comparing and filling a cart** happen on their own.
+- **Anything that changes something** (buying, booking, sending, signing up, cancelling) is refused in code and
+  comes to you as **Review and confirm**, with the total. After Confirm only that button is pressed, and only while
+  the page still shows the total you confirmed. Placed orders are logged for Finance.
+- **Logins, codes and CAPTCHAs are yours.** When an errand reaches one, you get a push ("Aide needs you on
+  glovoapp.com") and the app's own login screen opens: native fields, so iOS fills in passwords and SMS codes.
+  It types into the site for you, and Aide goes on once you're in. There's nothing to set up per site; Settings →
+  Browser only lists the sites you're logged in to (and can log in ahead of time). Google or Apple sign-in buttons
+  open popups the app's screen can't show; use the real page for those.
+- What you type there is never logged, stored or shown to the model. Each site keeps its own browser profile
+  (cookies, the login) in `data/browser/`.
+
+Setup on the server, once: `uv run playwright install chromium` (and `uv run playwright install-deps chromium` on a
+fresh Ubuntu for its libraries).
+
+## Trams and buses (Turin)
+
+Secretary knows GTT: the timetable (rebuilt nightly from GTT's GTFS) and the live feed. Tram alerts push "Tram 4 in
+7 min: leave now" from where the phone is, for a weekday commute or a one-off, and follow the ride in a Live Activity.
+For a calendar event with a place, Aide works out the ride (Google Maps) and sets a one-off alert before it's time
+to leave. It needs the app's location permission (Settings → Location and trams). It's Turin's network only.
 
 ## Tests
 
