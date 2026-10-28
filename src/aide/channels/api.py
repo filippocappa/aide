@@ -1,6 +1,7 @@
 """HTTP API for the iOS app. The contract is docs/API.md; keep the two in step."""
 
 import asyncio
+import base64
 import hmac
 import json
 import logging
@@ -1728,9 +1729,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"purchases": rows, "totals": totals}
 
     @app.websocket("/v1/browser/live")
-    async def browser_live(ws: WebSocket, errand: int | None = None, site: str | None = None):
-        """The live view: the page's frames to the app, the user's taps and typing to the page. What the user
-        types is never logged, stored or shown to the model."""
+    async def browser_live(ws: WebSocket, errand: int | None = None, site: str | None = None, frames: bool = True):
+        """The live view: the page's frames (unless `frames=false`) and its scene to the app, the user's taps,
+        typing and the app's own login screen to the page. What the user types is never logged, stored or shown
+        to the model."""
         scheme, _, given = ws.headers.get("authorization", "").partition(" ")
         if scheme.lower() != "bearer" or not hmac.compare_digest(given.encode(), token.encode()):
             await ws.close(code=1008)
@@ -1758,12 +1760,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     await ws.close(code=1011)
                     return
         await ws.accept()
-        frames: asyncio.Queue = asyncio.Queue(maxsize=1)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
 
         def on_frame(data: str, width: int, height: int) -> None:
-            if frames.full():
-                frames.get_nowait()  # only the latest matters
-            frames.put_nowait({"type": "frame", "data": data, "width": width, "height": height})
+            if queue.full():
+                queue.get_nowait()  # only the latest matters
+            queue.put_nowait({"type": "frame", "data": data, "width": width, "height": height})
 
         def control() -> bool:
             return errand is None or errands.can_take_over(errand)
@@ -1777,21 +1779,47 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     "reason": e["reason"] if e["status"] in ("needs_you", "waiting_confirm") else None,
                     "url": (browser.where(owner) or {}).get("url") or e["url"]}
 
-        watching = {"page": browser.page(owner), "stop": await browser.screencast(owner, on_frame)}
+        async def no_frames() -> None:
+            pass
+
+        watching = {"page": browser.page(owner), "stop": no_frames, "on": frames}
+        if frames:
+            watching["stop"] = await browser.screencast(owner, on_frame)
+
+        async def show_frames(on: bool) -> None:
+            await watching["stop"]()
+            watching.update(page=browser.page(owner), on=on, stop=no_frames)
+            if on and watching["page"] is not None:
+                watching["stop"] = await browser.screencast(owner, on_frame)
+
+        # The last scene sent: the app's fill and press reach only the refs in it.
+        shown: dict = {"scene": None, "again": True}
+
+        def refs(scene: dict | None) -> tuple[set[str], set[str]]:
+            """The refs the app may fill and press in a scene: its form's and its CAPTCHA's."""
+            fill, press = set(), set()
+            form, captcha = (scene or {}).get("form") or {}, (scene or {}).get("captcha") or {}
+            fill |= {f["ref"] for f in form.get("fields") or []}
+            press |= {c["ref"] for c in form.get("choices") or []}
+            press |= {r for r in ((form.get("submit") or {}).get("ref"), form.get("remember")) if r}
+            if captcha.get("input_ref"):
+                fill.add(captcha["input_ref"])
+            press |= {r for r in (captcha.get("submit_ref"), captcha.get("ref")) if r}
+            return fill, press
 
         async def send() -> None:
-            last_status, last_focus = None, None
+            last_status, last_focus, last_url, last_crop, checked = None, None, None, None, 0.0
             seen = (browser.last_action(owner) or {}).get("seq")  # only what it does from now on
             while True:
                 try:
-                    frame = await asyncio.wait_for(frames.get(), 0.5)
-                    await ws.send_json(frame)
+                    frame = await asyncio.wait_for(queue.get(), 0.5)
+                    if watching["on"]:
+                        await ws.send_json(frame)
                 except asyncio.TimeoutError:
                     pass
                 page = browser.page(owner)
                 if page is not None and page is not watching["page"]:  # a click opened another tab
-                    await watching["stop"]()
-                    watching.update(page=page, stop=await browser.screencast(owner, on_frame))
+                    await show_frames(watching["on"])
                 if (now := status()) != last_status:
                     await ws.send_json(now)
                     last_status = now
@@ -1799,10 +1827,27 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 if act and act["seq"] != seen:
                     await ws.send_json({"type": "action", **act})
                     seen = act["seq"]
-                focus = await browser.focus(owner) if page is not None and control() else {"field": None}
-                if focus != last_focus:
-                    await ws.send_json({"type": "focus", **focus})
-                    last_focus = focus
+                    shown["again"] = True
+                # The scene: after an action, a new address, the user's press, and every 2 s for what pages do alone.
+                url = (browser.where(owner) or {}).get("url") if page is not None else None
+                clock = asyncio.get_running_loop().time()
+                if page is not None and (shown["again"] or url != last_url or clock - checked >= 2):
+                    shown["again"], last_url, checked = False, url, clock
+                    scene = await browser.scene(owner)
+                    if scene is not None and scene != shown["scene"]:
+                        shown["scene"] = scene
+                        await ws.send_json({"type": "scene", **scene})
+                        captcha = scene.get("captcha")
+                        crop = await browser.crop(owner, captcha["ref"]) if captcha else None
+                        if crop and crop[0] != last_crop:
+                            last_crop = crop[0]
+                            await ws.send_json({"type": "crop", "data": base64.b64encode(crop[0]).decode(),
+                                                "box": crop[1]})
+                if watching["on"]:
+                    focus = await browser.focus(owner) if page is not None and control() else {"field": None}
+                    if focus != last_focus:
+                        await ws.send_json({"type": "focus", **focus})
+                        last_focus = focus
 
         sender = asyncio.create_task(send())
         try:
@@ -1817,11 +1862,26 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     else:
                         await browser.close(owner)
                     break
+                if kind == "frames":
+                    await show_frames(bool(message.get("on")))
+                    continue
                 if not control() or browser.page(owner) is None:
                     continue  # Aide is working on the page: watching only
                 try:
-                    if kind == "tap":
+                    if kind == "fill":
+                        if (ref := str(message["ref"])) in refs(shown["scene"])[0]:
+                            await browser.put(owner, ref, str(message["text"])[:500])
+                    elif kind == "press":
+                        if (ref := str(message["ref"])) in refs(shown["scene"])[1]:
+                            form = (shown["scene"] or {}).get("form") or {}
+                            submit = (form.get("submit") or {}).get("ref")
+                            # "Stay logged in", ticked for the user before sending the form.
+                            tick = form.get("remember") if ref == submit and form.get("remembered") is False else None
+                            await browser.press_ref(owner, ref, tick)
+                            shown["again"] = True
+                    elif kind == "tap":
                         await browser.tap(owner, float(message["x"]), float(message["y"]))
+                        shown["again"] = True
                     elif kind == "scroll":
                         await browser.wheel(owner, float(message.get("x", 0.5)), float(message.get("y", 0.5)),
                                             float(message["dy"]))

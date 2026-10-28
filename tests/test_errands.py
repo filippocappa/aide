@@ -45,6 +45,8 @@ class FakeBrowser:
         self.pictures: dict[str, list[dict]] = {}  # a page's pictures by link
         self.acts: dict[str, dict] = {}
         self.product_pages: list[str] = []
+        self.scenes: dict[str, dict] = {}  # a page's scene by address (none: the live view sends none)
+        self.notes, self.put_in, self.pressed = [], [], []
 
     def page(self, owner):
         return self._objects.get(owner) if owner in self.at else None
@@ -83,6 +85,22 @@ class FakeBrowser:
 
     def last_action(self, owner):
         return self.acts.get(owner)
+
+    def narrate(self, owner, note):
+        if note:
+            self.notes.append(note)
+
+    async def scene(self, owner):
+        return self.scenes.get(self.at.get(owner))
+
+    async def crop(self, owner, ref):
+        return b"\xff\xd8 crop", {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.1}
+
+    async def put(self, owner, ref, text):
+        self.put_in.append((ref, text))
+
+    async def press_ref(self, owner, ref, tick=None):
+        self.pressed.append((ref, tick))
 
     async def click(self, owner, ref):
         e = self._here(owner)[2][ref]
@@ -584,6 +602,74 @@ async def test_the_live_view(env):
     assert "s3cret" not in logged and "s3cret" not in json.dumps(runner.store.get(e["id"]))
 
 
+LOGIN = {"kind": "login", "site": "amazon.it", "title": "Accedi", "url": "https://www.amazon.it/login", "icon": None,
+         "query": None, "items": [], "product": None, "cart": None, "captcha": None,
+         "form": {"fields": [{"ref": "7", "kind": "username", "label": "Email", "filled": False},
+                             {"ref": "9", "kind": "password", "label": "Password", "filled": False}],
+                  "submit": {"ref": "10", "text": "Accedi"}, "choices": [], "remember": "11", "remembered": False,
+                  "error": None}}
+
+
+async def test_the_live_view_draws_scenes_and_logs_in_through_the_app(env):
+    make, db, browser = env
+    client, runner, agent = api(make)
+    e = runner.start("A cable", "Cable", "amazon.it", CONVERSATION)
+    runner.queue.get_nowait()
+    await browser.open(f"errand:{e['id']}", "https://www.amazon.it/login")
+    browser.scenes["https://www.amazon.it/login"] = LOGIN
+    runner.store.update(e["id"], status="running")
+    with client.websocket_connect(f"/v1/browser/live?errand={e['id']}&frames=false", headers=AUTH) as ws:
+        first = [ws.receive_json() for _ in range(2)]
+        assert [m["type"] for m in first] == ["status", "scene"]  # no frames
+        assert first[1] == {"type": "scene", **LOGIN}
+        ws.send_json({"type": "fill", "ref": "7", "text": "me@example.it"})  # Aide is working: ignored
+        ws.send_json({"type": "done"})
+    assert browser.put_in == []
+    runner.store.update(e["id"], status="needs_you", why="login", reason="Log in to Amazon.")
+    with client.websocket_connect(f"/v1/browser/live?errand={e['id']}&frames=false", headers=AUTH) as ws:
+        assert [ws.receive_json()["type"] for _ in range(2)] == ["status", "scene"]
+        ws.send_json({"type": "fill", "ref": "7", "text": "me@example.it"})
+        ws.send_json({"type": "fill", "ref": "9", "text": "s3cret-pass"})
+        ws.send_json({"type": "fill", "ref": "3", "text": "elsewhere"})  # not in the scene: ignored
+        ws.send_json({"type": "press", "ref": "4"})  # nor this
+        ws.send_json({"type": "press", "ref": "10"})  # Accedi, "stay logged in" ticked first
+        ws.send_json({"type": "frames", "on": True})  # "Show the real page"
+        assert next(m for m in iter(ws.receive_json, None) if m["type"] == "frame")["data"] == "AAAA"
+        # A CAPTCHA comes with its picture.
+        browser.scenes["https://www.amazon.it/login"] = {**LOGIN, "kind": "captcha", "form": None, "captcha": {
+            "kind": "text", "ref": "12", "input_ref": "13", "submit_ref": "14"}}
+        crop = next(m for m in iter(ws.receive_json, None) if m["type"] == "crop")
+        assert crop["box"] == {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.1} and crop["data"]
+        ws.send_json({"type": "fill", "ref": "13", "text": "XKCD42"})
+        ws.send_json({"type": "press", "ref": "14"})
+        ws.send_json({"type": "fill", "ref": "9", "text": "late"})  # the login's field is gone from the scene
+        ws.send_json({"type": "done"})
+    assert browser.put_in == [("7", "me@example.it"), ("9", "s3cret-pass"), ("13", "XKCD42")]
+    assert browser.pressed == [("10", "11"), ("14", None)]
+    logged = json.dumps([list(r) for r in db.conn.execute("SELECT * FROM audit_log")])
+    assert "s3cret" not in logged and "s3cret" not in json.dumps(runner.store.get(e["id"]))
+
+
+async def test_each_step_carries_what_aide_says_its_doing(env):
+    make, db, browser = env
+    runner, agent, _ = make()
+    e = runner.start("A USB-C cable", "USB-C cable", "amazon.it", CONVERSATION)
+    runner.queue.get_nowait()
+    runner.store.update(e["id"], status="running")
+    phase = Phase(runner, runner.store.get(e["id"]))
+    tools = {t.name: t for t in phase.tools()}
+    await tools["open_page"].handler(url="https://www.amazon.it/s?k=cavo", doing="Cerco un cavo USB-C")
+    assert runner.store.get(e["id"])["step"] == "Cerco un cavo USB-C"
+    await tools["read_page"].handler(doing="Guardo   i risultati")
+    await tools["click"].handler(ref="2")
+    e = runner.store.get(e["id"])
+    assert browser.notes == ["Cerco un cavo USB-C", "Guardo i risultati"]
+    assert e["step"].startswith("Clicked [2]")  # no line of its own: the plain one
+    assert [s.get("doing") for s in e["steps"]][-3:] == ["Cerco un cavo USB-C", "Guardo i risultati", None]
+    assert e["steps"][-2]["text"] == "Read the page"  # the model's log keeps the plain lines
+    assert e["actions"] == 2  # reading doesn't count
+
+
 def test_site_names():
     assert site_of("https://www.amazon.it/s?k=x") == "amazon.it"
     assert site_of("amazon.co.uk") == "amazon.co.uk"
@@ -642,5 +728,97 @@ async def test_real_chromium_reads_and_clicks(tmp_path):
         await stop()
         assert frames and frames[0] == (824, 1830)
         assert [s["site"] for s in browser.sites()] == ["shop.test"]
+    finally:
+        await browser.stop()
+
+
+def _html(body: str, title: str = "Shop", head: str = "") -> str:
+    return (f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+            f"<title>{title}</title>{head}</head><body>{body}</body></html>")
+
+
+SCENE_PAGES = {
+    "/s": _html("".join(f'<div class="card"><a href="/p/lamp{i}"><img src="/lamp{i}.jpg" width="160" height="160" '
+                        f'alt=""></a><h3><a href="/p/lamp{i}">Lampada da tavolo FADO {i}, bianco</a></h3>'
+                        f"<span>€{i}9,95</span></div>" for i in range(1, 5)), "Cerca lampada"),
+    "/dp/B0LODGE": _html('<h1>Lodge L8SK3 Tegame tondo</h1><img src="/lodge.jpg" width="300" height="300">'
+                         "<button>Aggiungi al carrello</button>", "Lodge L8SK3 Tegame tondo : Shop",
+                         '<script type="application/ld+json">{"@context": "https://schema.org", "@type": "Product", '
+                         '"name": "Lodge L8SK3", "image": "https://shop.test/lodge.jpg", "offers": {"price": "49.15", '
+                         '"priceCurrency": "EUR"}, "aggregateRating": {"ratingValue": "4.7"}}</script>'),
+    "/ap/signin": _html('<form action="/ap/password"><label>Indirizzo e-mail <input type="email" name="email"></label>'
+                        '<button type="submit">Continua</button></form>', "Accedi"),
+    "/ap/password": _html('<form onsubmit="document.title = this.rememberMe.checked ? \'remembered\' : \'forgot\'; '
+                          'return false"><div role="alert">Password errata</div>'
+                          '<label>Password <input type="password" name="password" value="hunter2"></label>'
+                          '<label><input type="checkbox" name="rememberMe"> Resta connesso</label>'
+                          '<input type="submit" value="Accedi"></form>', "Accedi"),
+    "/ap/otp": _html('<p>Inserisci il codice che ti abbiamo inviato</p><form><input name="otp" '
+                     'autocomplete="one-time-code" maxlength="6"><button type="submit">Invia codice</button></form>',
+                     "Verifica"),
+    "/captcha": _html('<form><p>Inserisci i caratteri che vedi</p><img src="/captcha.jpg" alt="captcha" width="200" '
+                      'height="70"><input type="text" name="captchacharacters"><button type="submit">Continua'
+                      "</button></form>", "Amazon.it"),
+}
+
+
+@pytest.mark.skipif(not Browser.available(), reason="Playwright's Chromium isn't installed")
+async def test_real_chromium_scenes(tmp_path):
+    from urllib.parse import urlparse
+    browser = Browser(tmp_path / "browser")
+    picture = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200"/></svg>'
+
+    async def serve(route):
+        path = urlparse(route.request.url).path
+        if path.endswith(".jpg"):
+            await route.fulfill(body=picture, content_type="image/svg+xml")
+        else:
+            await route.fulfill(body=SCENE_PAGES.get(path, _html("<p>Nothing</p>")), content_type="text/html")
+    try:
+        await (await browser._context("shop.test")).route("**/*", serve)
+        owner = "errand:1"
+
+        await browser.open(owner, "https://shop.test/s?k=lampada")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "results" and scene["query"] == "lampada" and scene["site"] == "shop.test"
+        assert [(i["title"], i["price"]) for i in scene["items"][:2]] == \
+            [("Lampada da tavolo FADO 1, bianco", "€19,95"), ("Lampada da tavolo FADO 2, bianco", "€29,95")]
+        assert scene["items"][0]["image"] == "https://shop.test/lamp1.jpg"
+        await browser.click(owner, scene["items"][0]["ref"])  # the scene's refs are the model's
+        assert browser.where(owner)["url"] == "https://shop.test/p/lamp1"
+
+        await browser.open(owner, "https://shop.test/dp/B0LODGE")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "product"
+        assert scene["product"] == {"title": "Lodge L8SK3", "price": "49.15 EUR",
+                                    "image": "https://shop.test/lodge.jpg", "rating": 4.7}
+
+        await browser.open(owner, "https://shop.test/ap/signin")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "login" and [f["kind"] for f in scene["form"]["fields"]] == ["username"]
+        assert scene["form"]["submit"]["text"] == "Continua"
+        await browser.put(owner, scene["form"]["fields"][0]["ref"], "me@example.it")
+        await browser.press_ref(owner, scene["form"]["submit"]["ref"])
+        assert browser.where(owner)["url"].startswith("https://shop.test/ap/password")
+        assert browser.last_action(owner)["kind"] == "open"  # the user's typing isn't recorded as Aide's
+
+        scene = await browser.scene(owner)
+        form = scene["form"]
+        assert scene["kind"] == "login" and form["fields"][0]["kind"] == "password" and form["fields"][0]["filled"]
+        assert "hunter2" not in json.dumps(scene)
+        assert form["remember"] and form["remembered"] is False and form["error"] == "Password errata"
+        await browser.press_ref(owner, form["submit"]["ref"], tick=form["remember"])
+        assert await browser._page(owner).title() == "remembered"
+
+        await browser.open(owner, "https://shop.test/ap/otp")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "code" and scene["form"]["fields"][0]["kind"] == "code"
+
+        await browser.open(owner, "https://shop.test/captcha")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "captcha" and scene["captcha"]["kind"] == "text"
+        assert scene["captcha"]["input_ref"] and scene["captcha"]["submit_ref"]
+        shot, box = await browser.crop(owner, scene["captcha"]["ref"])
+        assert shot[:2] == b"\xff\xd8" and 0 < box["width"] < 1 and 0 <= box["y"] < 1
     finally:
         await browser.stop()

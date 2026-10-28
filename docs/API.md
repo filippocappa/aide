@@ -1403,7 +1403,9 @@ Errand:
 - `why` (only on `needs_you`): `login`, `captcha`, `code`, `card` or `other` (take over in the live view, then "I'm
   done"), `question` (answer with a reply; `options` may list answers), `plan_limit` (reply with one of `options`).
 - `reason`: on `needs_you`, what you're asked; on `waiting_confirm`, what waits for the Confirm. Else null.
-- `step`: what it's doing now. `steps`: the last 10 (all of them, up to 60, on `GET /v1/errands/{id}`).
+- `step`: what it's doing now, in Aide's own words when it gave them ("Guardo le recensioni della Lodge", since
+  2026-10-28), else a plain line ("Clicked [12] …"). `steps`: the last 10 (all of them, up to 60, on
+  `GET /v1/errands/{id}`); each `{ts, text}` with `doing` (Aide's line) when it gave one.
 - `action_id`: on `waiting_confirm`, the queued action to confirm (`POST /v1/confirm` with `{"ids": [42]}`).
 - `result`: on `done` or `failed`, what it says. `purchase_id`: the order it placed, if any.
 - `products` (since 2026-10-28): what it found, as Product cards, best first (up to 10); `[]` when there's nothing
@@ -1456,8 +1458,9 @@ Without the browser (Playwright's Chromium not installed) the errand endpoints a
 ### Live view
 
 `wss://…/v1/browser/live?errand=7` (an errand's page) or `?site=amazon.it` (logging in from Settings, after
-`POST /v1/browser/sites`), with `Authorization: Bearer <token>`; without it the socket is closed with `1008`. JSON
-messages each way:
+`POST /v1/browser/sites`), with `Authorization: Bearer <token>`; without it the socket is closed with `1008`. Add
+`&frames=false` (since 2026-10-28) for no frames until the app asks for them: the app draws the page itself from its
+`scene`. JSON messages each way:
 
 Server to app:
 - `{"type": "frame", "data": "<base64 JPEG>", "width": 824, "height": 1830}`: the page, as often as it changes
@@ -1472,9 +1475,38 @@ Server to app:
   2026-10-28, errands only): what Aide just did, as it does it, for the app to show over the frames. `kind`: `open`
   (`label` the site and path), `click`, `type` (`label` what it types; null in a password field), `choose` (the
   option), `press` (the key), `scroll` (`up` or `down`), `back`. `x`, `y`: the element's middle as fractions of the
-  frame, or null. Only what it does after the socket opened; `seq` goes up by one or more each time.
-The app shows the errand's page live in its chat card while it's going (a socket per card on screen; a refused
-socket, `1008` because the page isn't open yet, is tried again every few seconds).
+  frame, or null. Only what it does after the socket opened; `seq` goes up by one or more each time. Since
+  2026-10-28 also `read` (it reads the page), `find` (`label` what it looks for) and `look` (a screenshot), and
+  `note`: Aide's own line for it ("Guardo le recensioni"), or null.
+- `{"type": "scene", …}` (since 2026-10-28): what kind of page it is and the few real things on it, when it changes
+  (after Aide's actions and your presses, on a new address, else checked every 2 s). The app draws its own screen
+  for it; it never needs to draw the site.
+  ```json
+  {"kind": "results", "site": "amazon.it", "title": "Amazon.it : padella in ghisa", "url": "https://www.amazon.it/s?k=…",
+   "icon": "https://www.amazon.it/favicon.ico", "query": "padella in ghisa",
+   "items": [{"title": "VICTORIA Padella in Ghisa 30 cm", "price": "49,52 €", "image": "https://m.media-amazon.com/…", "ref": "41"}],
+   "product": null, "cart": {"count": 0, "total": null}, "form": null, "captcha": null}
+  ```
+  - `kind`: `results` (search results: `items`, up to 6, each with its picture, name, price or null, and `ref`),
+    `product` (`product`: `{title, price, image, rating}`, any but `title` may be null), `cart`, `checkout`,
+    `confirmation` (an order placed), `login`, `code` (a one-time code), `captcha`, or `page` (anything else: show
+    `title`).
+  - `query`: what was searched, or null. `icon`: the site's icon, or null. `cart`: `{count, total}` when the page shows
+    a cart badge or a total (each may be null), else null.
+  - `form` (on `login` and `code`): `{"fields": [{"ref": "7", "kind": "username", "label": "Indirizzo e-mail",
+    "filled": false}], "submit": {"ref": "8", "text": "Continua"}, "choices": [{"ref": "9", "text": "SMS al
+    ***12"}], "remember": "10", "remembered": false, "error": "Password errata"}`. Field `kind`: `username`,
+    `password`, `code`, `phone` or `text`; `filled`: it has a value (a password's is never read). `submit`, `remember`
+    (a "stay logged in" box) and `error` may be null; `choices`: radio options (where to send a code), often empty.
+  - `captcha` (on `captcha`): `{"kind": "text" | "grid" | "checkbox" | "other", "ref": "12", "input_ref": "13",
+    "submit_ref": "14"}`: `text` is a picture of characters to type in `input_ref`, then press `submit_ref` (either may
+    be null); the others are solved by tapping its picture (`crop`).
+  - Refs are the same as the model's (`read_page`), and may change when the page does.
+- `{"type": "crop", "data": "<base64 JPEG>", "box": {"x": 0.1, "y": 0.3, "width": 0.8, "height": 0.2}}` (since
+  2026-10-28): the CAPTCHA's picture, with a scene of kind `captcha` (again when it changes). `box` is where it is on
+  the page, as fractions of the frame: a tap at (u, v) on the picture is `tap` at (x + u·width, y + v·height).
+The app shows the errand in its chat card while it's going (a socket per card on screen; a refused socket, `1008`
+because the page isn't open yet, is tried again every few seconds).
 
 App to server (only while `control` is true):
 - `{"type": "tap", "x": 0.42, "y": 0.61}`: a tap, as fractions of the frame.
@@ -1483,6 +1515,11 @@ App to server (only while `control` is true):
 - `{"type": "text", "text": "…"}`: typed into the focused field (up to 500 characters a message). Never logged,
   stored or given to the model.
 - `{"type": "key", "key": "Enter" | "Tab" | "Backspace" | "Escape" | "Back"}` (`Back`: the page's back).
+- `{"type": "fill", "ref": "7", "text": "…"}` (since 2026-10-28): your text into one of the last scene's `form`
+  fields or its CAPTCHA's `input_ref` (other refs are ignored). Never logged, stored or given to the model.
+- `{"type": "press", "ref": "8"}` (since 2026-10-28): press the last scene's form `submit`, one of its `choices`,
+  `remember`, or the CAPTCHA's `submit_ref`. Pressing `submit` ticks `remember` first when it isn't ticked.
+- `{"type": "frames", "on": true}` (since 2026-10-28, any time): start or stop the frames ("Show the real page").
 - `{"type": "done"}`: you're done. For an errand waiting on you, the same as `POST /v1/errands/{id}/done`; with
   `?site=`, the page is closed (the login stays). The server then closes the socket.
 

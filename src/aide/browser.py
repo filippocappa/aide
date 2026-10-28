@@ -277,6 +277,190 @@ _FOCUS_JS = r"""
 }
 """
 
+# What kind of page this is and the few real things on it, for the app's animated view of an errand (it never draws
+# the site itself) and its own login screen: {kind, site, title, url, icon, query, items, product, cart, form,
+# captcha}. kind: captcha, login, code, checkout, confirmation, cart, product, results or page. Refs are the page
+# listing's (data-aide-ref), so the model's and the app's are the same. Password values are never read.
+_SCENE_JS = r"""
+() => {
+  let next = Number(document.documentElement.dataset.aideNext || 1);
+  const refOf = el => { let r = el.dataset.aideRef; if (!r) { r = String(next++); el.dataset.aideRef = r; } return r; };
+  const clean = t => (t || '').replace(/\s+/g, ' ').trim();
+  const vh = innerHeight;
+  const visible = el => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+    return r.width >= 2 && r.height >= 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0';
+  };
+  const abs = u => { try { return u ? new URL(u, location.href).href : null; } catch (e) { return null; } };
+  const PRICE = /(?:(?:[€$£]|EUR|USD|GBP)\s?\d{1,3}(?:[.\s]?\d{3})*(?:\s?[.,]\s?\d{2})?|\d{1,3}(?:[.\s]?\d{3})*(?:\s?[.,]\s?\d{2})?\s?(?:€|EUR\b|USD\b|GBP\b))/;
+  const priceIn = t => { const m = clean(t).match(PRICE); return m ? m[0].replace(/\s?([.,])\s?(\d{2})\b/, '$1$2').trim() : null; };
+  const imgSrc = img => {
+    const s = img && (img.currentSrc || img.src) || '';
+    if (!/^https?:/.test(s)) return null;
+    const r = img.getBoundingClientRect();
+    return (img.naturalWidth || r.width) >= 60 && (img.naturalHeight || r.height) >= 60 ? s : null;
+  };
+  const labelOf = el => clean(el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) ||
+    el.placeholder || el.getAttribute('title') || '').slice(0, 60);
+  const textOf = el => clean(el.innerText || el.value || el.getAttribute('aria-label') || '').slice(0, 120);
+  const body = clean(document.body ? document.body.innerText.slice(0, 30000) : '');
+  const lower = body.toLowerCase();
+  const path = decodeURIComponent(location.pathname).toLowerCase();
+  const params = new URLSearchParams(location.search);
+  const meta = n => { const m = document.querySelector(`meta[property="${n}"],meta[name="${n}"]`); return m ? clean(m.content) : null; };
+  const buttons = () => [...document.querySelectorAll('button,input[type=submit],input[type=button],a[role=button],[role=button]')].filter(visible);
+
+  // The fields on the page, by what they want.
+  const kindOf = el => {
+    const hint = [el.autocomplete, el.name, el.id, el.getAttribute('inputmode'), el.placeholder, labelOf(el)].join(' ').toLowerCase();
+    if (['checkbox', 'radio', 'submit', 'button', 'image', 'reset', 'file', 'range', 'color', 'hidden'].includes(el.type)) return null;
+    if (el.type === 'password') return 'password';
+    if (el.type === 'search' || /search|cerca|field-keywords|query|\bq\b/.test(hint)) return 'search';
+    if (el.type !== 'email' && /one-time-code|otp|2fa|mfa|verif|codice|\bcode\b|\bpin\b/.test(hint)) return 'code';
+    if (el.type === 'email' || /email|e-mail|username|user|login|account|claim/.test(hint)) return 'username';
+    if (el.type === 'tel' || /\btel\b|phone|cellulare|telefono|mobile/.test(hint)) return 'phone';
+    return 'text';
+  };
+  const inputs = [...document.querySelectorAll('input,textarea')].filter(visible).map(el => ({el, kind: kindOf(el)})).filter(f => f.kind);
+  const search = inputs.find(f => f.kind === 'search');
+  const query = clean((search && search.el.value) || params.get('k') || params.get('q') || params.get('query') ||
+    params.get('search') || params.get('keywords') || '').slice(0, 80) || null;
+  const pathOf = a => { try { const u = new URL(a.href); return u.host + u.pathname.replace(/\/ref=.*$/, ''); } catch (e) { return null; } };
+  const iconEl = document.querySelector('link[rel~="apple-touch-icon"],link[rel~="icon"],link[rel="shortcut icon"]');
+  const out = {kind: 'page', site: location.hostname.replace(/^www\./, ''), title: clean(document.title).slice(0, 100),
+               url: location.href, icon: abs(iconEl ? iconEl.getAttribute('href') : '/favicon.ico'), query,
+               items: [], product: null, cart: null, form: null, captcha: null};
+
+  // A CAPTCHA: a challenge frame, or a picture of characters to type.
+  const challenge = /captcha|robot|human|umano|verifica|verify|security check|controllo di sicurezza|caratteri/i.test(body.slice(0, 4000));
+  const frame = [...document.querySelectorAll('iframe')].find(f => visible(f) && !f.closest('.grecaptcha-badge') &&
+    /recaptcha|hcaptcha|turnstile|challenges\.cloudflare|arkose|funcaptcha|captcha/i.test((f.src || '') + ' ' + (f.title || '')) &&
+    f.getBoundingClientRect().width >= 120);
+  const picture = [...document.images].find(img => visible(img) && /captcha/i.test([img.src, img.alt, img.id, img.className].join(' ')));
+  if (picture || (frame && challenge)) {
+    const holder = picture ? (picture.closest('form') || document.body) : document.body;
+    const input = picture && [...holder.querySelectorAll('input')].find(i => visible(i) && ['text', 'search', ''].includes(i.type || ''));
+    const submit = picture && [...holder.querySelectorAll('button,input[type=submit]')].find(visible);
+    const kind = picture ? 'text' : /bframe|challenge/i.test(frame.src) ? 'grid'
+      : /recaptcha|turnstile|hcaptcha/i.test(frame.src) ? 'checkbox' : 'other';
+    out.kind = 'captcha';
+    out.captcha = {kind, ref: refOf(picture || frame), input_ref: input ? refOf(input) : null,
+                   submit_ref: submit ? refOf(submit) : null};
+  }
+
+  // A login or a code: the fields, the button that sends them, the choices and "stay logged in".
+  const pw = inputs.find(f => f.kind === 'password'), code = inputs.find(f => f.kind === 'code');
+  const user = inputs.find(f => f.kind === 'username' || f.kind === 'phone');
+  const loginish = /sign.?in|log.?in|signin|accedi|accesso|anmelden|connexion|iniciar|\/ap\/|auth|account/.test(path + ' ' + out.title.toLowerCase());
+  const codeish = code && (code.el.autocomplete === 'one-time-code' || (code.el.maxLength > 0 && code.el.maxLength <= 8) ||
+    /codice|code|otp|verifica|verification|sms/.test(lower.slice(0, 3000)));
+  if (out.kind === 'page' && (pw || codeish || (user && loginish && !search))) {
+    const first = (pw || (codeish && code) || user).el;
+    const root = first.form || first.closest('form,[role=dialog],main') || document.body;
+    const fields = inputs.filter(f => root.contains(f.el) && ['username', 'password', 'code', 'phone', 'text'].includes(f.kind))
+      .slice(0, 4).map(f => ({ref: refOf(f.el), kind: f.kind, label: labelOf(f.el) || null, filled: !!f.el.value}));
+    const GO = /continu|accedi|sign.?in|log.?in|avanti|next|verific|verify|invia|submit|conferma|confirm|ok\b|entra/i;
+    const submit = [...root.querySelectorAll('button[type=submit],input[type=submit]')].find(visible) ||
+      [...root.querySelectorAll('button,[role=button],input[type=button],a')].filter(visible).find(b => GO.test(textOf(b)));
+    const choices = [...root.querySelectorAll('input[type=radio]')].filter(r => visible(r) || (r.labels && r.labels[0] && visible(r.labels[0])))
+      .slice(0, 6).map(r => ({ref: refOf(r), text: clean((r.labels && r.labels[0] && r.labels[0].innerText) || r.value).slice(0, 80)}));
+    const remember = [...root.querySelectorAll('input[type=checkbox]')].find(c =>
+      /resta|ricorda|remember|keep me|stay|mantieni/i.test(clean((c.labels && c.labels[0] && c.labels[0].innerText) || c.name || c.id)));
+    const alert = [...document.querySelectorAll('[role=alert],[aria-live=assertive],[class*=error],[class*=alert],[id*=error]')]
+      .find(a => visible(a) && clean(a.innerText).length > 3 && clean(a.innerText).length < 300);
+    out.kind = pw || !codeish ? 'login' : 'code';
+    const said = submit && (textOf(submit) || (submit.parentElement && textOf(submit.parentElement)));
+    out.form = {fields, submit: submit ? {ref: refOf(submit), text: said || null} : null, choices,
+                remember: remember ? refOf(remember) : null, remembered: remember ? remember.checked : null,
+                error: alert ? clean(alert.innerText).slice(0, 200) : null};
+  }
+
+  // Result tiles: each product link's card (the biggest box around it with no other link's picture), with its
+  // picture, name and price.
+  const tiles = [], seen = new Set(), pictures = new Set(), names = new Set();
+  const AD = /^(annuncio sponsorizzato|sponsorizzato|sponsored|ad|pubblicità)\s*[–:-]?\s*/i;
+  const CTA = /^(scopri|discover|shop now|acquista ora|vedi tutt|see all|mostra|show more)/i;
+  for (const a of document.querySelectorAll('a[href]')) {
+    if (tiles.length >= 24) break;
+    const p = pathOf(a);
+    if (!p || seen.has(p) || !visible(a) || a.closest('header,nav,footer,[role=navigation],[role=banner],#nav-belt,#nav-main')) continue;
+    seen.add(p);
+    let card = null;
+    for (let i = 0, el = a; i < 8 && el && el !== document.body; i++, el = el.parentElement) {
+      const imgs = [...el.querySelectorAll('img')].filter(imgSrc);
+      if (imgs.some(img => { const l = img.closest('a[href]'); return l && pathOf(l) !== p; })) break;
+      if (imgs.length) card = el;
+    }
+    if (!card) continue;
+    const img = [...card.querySelectorAll('img')].find(imgSrc);
+    const named = [...card.querySelectorAll('h2,h3,h4'), ...card.querySelectorAll('[class*=title],[class*=Title],[class*=name],[class*=Name]'),
+                   ...card.querySelectorAll('a')].map(textOf).map(t => t.replace(AD, '')).filter(t => t.length >= 6 && !PRICE.test(t) && !CTA.test(t));
+    const title = (named[0] || clean(img.alt).replace(AD, '')).slice(0, 120);
+    const image = imgSrc(img), key = title.toLowerCase().slice(0, 30);
+    if (title.length < 6 || CTA.test(title) || pictures.has(image) || names.has(key)) continue;
+    pictures.add(image); names.add(key);
+    tiles.push({title, price: priceIn(card.textContent), image, ref: refOf(a)});
+  }
+
+  // A product: JSON-LD first, then the page's own tags, then its heading, price and biggest picture.
+  const ld = [];
+  const take = o => {
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)) return o.forEach(take);
+    const t = o['@type'];
+    if (t === 'Product' || (Array.isArray(t) && t.includes('Product'))) ld.push(o);
+    if (o['@graph']) take(o['@graph']);
+  };
+  for (const sc of document.querySelectorAll('script[type="application/ld+json"]')) { try { take(JSON.parse(sc.textContent)); } catch (e) {} }
+  // The product's name: a heading the tab's title starts with (an h1 can be a hidden "summary" one), else the h1.
+  const docTitle = out.title.toLowerCase();
+  const headings = [...document.querySelectorAll('h1,[id*=productTitle],[id*=product-title],[class*=product-title],[class*=productTitle],[itemprop=name]')]
+    .filter(h => visible(h) && clean(h.innerText).length >= 4);
+  const h1 = headings.find(h => docTitle.includes(clean(h.innerText).toLowerCase().slice(0, 16))) || headings[0];
+  const cartButton = buttons().find(b => /aggiungi al carrello|add to (cart|basket|bag)|in den einkaufswagen|ajouter au panier|añadir a la cesta/i.test(textOf(b)));
+  const productPath = /\/dp\/|\/gp\/product|\/gp\/aw\/d\/|\/products?\/|\/p\/|\/item\/|\/prodotto/.test(path);
+  if (ld.length || meta('og:type') === 'product' || (productPath && h1) || (cartButton && h1 && !query && tiles.length < 6)) {
+    const p = ld[0] || {};
+    const offer = Array.isArray(p.offers) ? p.offers[0] : (p.offers || {});
+    const image = typeof p.image === 'string' ? p.image : Array.isArray(p.image) ? (typeof p.image[0] === 'string' ? p.image[0] : p.image[0] && p.image[0].url) : p.image && p.image.url;
+    let best = null, area = 0;
+    for (const img of document.images) {
+      const r = img.getBoundingClientRect();
+      if (!imgSrc(img) || r.width < 100 || r.top + scrollY > vh * 1.5) continue;
+      if (r.width * r.height > area) { area = r.width * r.height; best = imgSrc(img); }
+    }
+    const priced = [...document.querySelectorAll('[itemprop=price],[class*=price],[id*=price]')].filter(visible).map(e => priceIn(e.textContent)).find(Boolean);
+    const amount = offer.price || offer.lowPrice || meta('product:price:amount');
+    const currency = offer.priceCurrency || meta('product:price:currency');
+    const rating = (p.aggregateRating && p.aggregateRating.ratingValue) || ((lower.match(/(\d[.,]\d)\s*(?:su|out of|von|sur|de)\s*5/) || [])[1]);
+    out.product = {title: clean(p.name || (h1 && h1.innerText) || meta('og:title') || out.title).slice(0, 140),
+                   price: amount ? `${amount}${currency ? ' ' + currency : ''}` : priced || null,
+                   image: abs(image) || meta('og:image') || best,
+                   rating: rating ? Number(String(rating).replace(',', '.')) || null : null};
+  }
+
+  // The cart: how many and the total.
+  const badge = document.querySelector('#nav-cart-count,[id*=cart-count],[class*=cart-count],[class*=cartCount],[data-cart-count]');
+  const count = badge ? parseInt(clean(badge.innerText || badge.getAttribute('data-cart-count')), 10) : NaN;
+  const total = !/cart|basket|carrello|checkout|\/buy|spc|cassa|aw\/c\b/.test(path) ? null : (body.match(new RegExp('(?:subtotale|totale ordine|totale|subtotal|order total|total)[^€$£\\d]{0,40}(' + PRICE.source + ')', 'i')) || [])[1];
+  if (!isNaN(count) || total) out.cart = {count: isNaN(count) ? null : count, total: total || null};
+
+  if (out.kind === 'page') {
+    if (/ordine (effettuato|confermato|ricevuto)|grazie per (il tuo |l')?ordine|order (placed|confirmed)|thank(s| you) for your order/.test(lower)) out.kind = 'confirmation';
+    else if (/checkout|\/buy\/|\/spc\b|gp\/buy|\/cassa|\/pagamento|\/payment/.test(path)) out.kind = 'checkout';
+    else if (/\/cart\b|\/basket\b|\/carrello|\/bag\b|gp\/aw\/c\b|gp\/cart/.test(path)) out.kind = 'cart';
+    else if (out.product && (ld.length || productPath || meta('og:type') === 'product')) out.kind = 'product';
+    else if (tiles.length >= 3 && (query || /search|\/s\b|cerca|ricerca/.test(path))) out.kind = 'results';
+    else if (out.product) out.kind = 'product';
+  }
+  if (out.kind === 'results') out.items = tiles.filter(t => t.price).concat(tiles.filter(t => !t.price)).slice(0, 6);
+  if (out.kind !== 'product') out.product = out.kind === 'checkout' || out.kind === 'cart' ? null : out.product;
+  document.documentElement.dataset.aideNext = String(next);
+  return out;
+}
+"""
+
 
 class Browser:
     def __init__(self, root: Path, headed: bool = False):
@@ -289,6 +473,7 @@ class Browser:
         self._pages: dict[tuple[str, str], object] = {}  # (owner, site) -> Page
         self._current: dict[str, str] = {}  # owner -> site of its current page
         self._acts: dict[str, dict] = {}  # owner -> what the model did last, for the live view
+        self._notes: dict[str, str] = {}  # owner -> the model's line for its next action
         self._seq = 0
         self._lock = asyncio.Lock()
 
@@ -374,8 +559,14 @@ class Browser:
     def last_action(self, owner: str) -> dict | None:
         """What the model did last on the owner's page, for the live view to show:
         {seq, kind (open, click, type, choose, press, scroll, back), x, y (the element's middle, 0–1 across the
-        visible page, or None), label}. Typing into a password field has no label."""
+        visible page, or None), label, note (the model's line, or None)}. Also read, find and look (a screenshot).
+        Typing into a password field has no label."""
         return self._acts.get(owner)
+
+    def narrate(self, owner: str, note: str | None) -> None:
+        """The model's own line for what it does next ("Checking the reviews"), shown with that action."""
+        if note and note.strip():
+            self._notes[owner] = " ".join(note.split())[:90]
 
     def _did(self, owner: str, kind: str, label: str | None = None, box: dict | None = None) -> None:
         self._seq += 1
@@ -384,7 +575,8 @@ class Browser:
             x = round(min(1.0, max(0.0, (box["x"] + box["width"] / 2) / VIEWPORT["width"])), 3)
             y = round(min(1.0, max(0.0, (box["y"] + box["height"] / 2) / VIEWPORT["height"])), 3)
         self._acts[owner] = {"seq": self._seq, "kind": kind, "x": x, "y": y,
-                             "label": (" ".join(label.split())[:60] or None) if label else None}
+                             "label": (" ".join(label.split())[:60] or None) if label else None,
+                             "note": self._notes.pop(owner, None)}
 
     async def _where_is(self, locator) -> tuple[dict | None, str | None]:
         """The element's box on screen (scrolled into view) and what it says (None for a password field)."""
@@ -426,6 +618,7 @@ class Browser:
                 pass
         self._current.pop(owner, None)
         self._acts.pop(owner, None)
+        self._notes.pop(owner, None)
 
     async def prune(self) -> None:
         """Close the browsers of sites with no page in use for IDLE."""
@@ -498,6 +691,7 @@ class Browser:
 
     async def read(self, owner: str, everything: bool = False) -> str:
         page = self._page(owner)
+        self._did(owner, "read")
         try:
             got = await page.evaluate(_READ_JS, {"everything": everything, "limit": READ_LIMIT})
         except Exception as e:
@@ -507,6 +701,7 @@ class Browser:
         return head + "\n" + "\n".join(got["lines"]) + tail
 
     async def find(self, owner: str, text: str) -> str:
+        self._did(owner, "find", text)
         found = await self._page(owner).evaluate(_FIND_JS, text)
         return "\n".join(found) if found else f"Nothing on this page says {text!r}."
 
@@ -616,6 +811,8 @@ class Browser:
 
     async def screenshot(self, owner: str, sharp: bool = False) -> bytes:
         """The visible part of the page as a JPEG: CSS pixels for the model, device pixels with `sharp`."""
+        if not sharp:
+            self._did(owner, "look")
         return await self._page(owner).screenshot(type="jpeg", quality=70 if sharp else 60,
                                                   scale="device" if sharp else "css")
 
@@ -624,6 +821,47 @@ class Browser:
         return await self._page(owner).evaluate("() => document.body ? document.body.innerText : ''")
 
     # -- the user's live view ------------------------------------------------
+
+    async def scene(self, owner: str) -> dict | None:
+        """What kind of page the owner's is and what's on it (_SCENE_JS), or None with no page."""
+        page = self.page(owner)
+        if page is None:
+            return None
+        try:
+            return await page.evaluate(_SCENE_JS)
+        except Exception:
+            return None  # mid-navigation: next time
+
+    async def crop(self, owner: str, ref: str) -> tuple[bytes, dict] | None:
+        """A JPEG of one element (a CAPTCHA) and its box on the visible page (0–1), or None."""
+        locator = self._ref(self._page(owner), ref)
+        try:
+            await locator.scroll_into_view_if_needed(timeout=2000)
+            box = await locator.bounding_box(timeout=1000)
+            shot = await locator.screenshot(type="jpeg", quality=80, timeout=3000)
+        except Exception:
+            return None
+        if not box:
+            return None
+        w, h = VIEWPORT["width"], VIEWPORT["height"]
+        return shot, {"x": round(box["x"] / w, 4), "y": round(box["y"] / h, 4),
+                      "width": round(box["width"] / w, 4), "height": round(box["height"] / h, 4)}
+
+    async def put(self, owner: str, ref: str, text: str) -> None:
+        """The user's text into a field (from the app's own login screen). Never recorded or logged."""
+        locator = self._ref(self._page(owner), ref)
+        await locator.fill(text, timeout=ACTION_TIMEOUT)
+
+    async def press_ref(self, owner: str, ref: str, tick: str | None = None) -> None:
+        """The user's press on a button or choice (`tick`: a "stay logged in" box to tick first)."""
+        page = self._page(owner)
+        if tick:
+            try:
+                await self._ref(page, tick).check(timeout=2000)
+            except Exception:
+                pass
+        await self._ref(page, ref).click(timeout=ACTION_TIMEOUT)
+        await self._settle(page)
 
     async def screencast(self, owner: str, on_frame: Callable[[str, int, int], None]) -> Callable[[], Awaitable]:
         """Start sending the owner's page as JPEG frames (base64, width, height) as it changes. Returns `stop`."""
