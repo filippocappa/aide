@@ -73,10 +73,14 @@ from the tools the assistant used in that turn, not parsed from its text:
   "proposal": Proposal}`. `/v1/history` gives both as they are now: a proposal's `status`, and files still there.
 - `errands`: a browser errand's card (since 2026-10-27; see Browser errands), `{"type": "errands", "errands":
   [Errand]}`: when Aide started or looked up one, and on the messages an errand posts in its chat (needs you, a
-  question, ready to confirm, done, failed). A message's card is the errand as it was then; fetch
-  `GET /v1/errands/{id}` for now.
+  question, ready to confirm, failed). A message's card is the errand as it was then; fetch
+  `GET /v1/errands/{id}` for now. Since 2026-10-28 the closing message of a finished errand carries no card of its
+  own: the first one follows the errand to its end.
 - `purchases`: an order an errand placed (since 2026-10-27; see Browser errands), `{"type": "purchases",
   "purchases": [Purchase]}`, on the errand's last message and when Finance lists them.
+- `products`: what an errand found, best first (since 2026-10-28; see Browser errands), `{"type": "products",
+  "errand_id": 7, "site": "amazon.it", "products": [Product]}`, on the errand's closing message. The text above it
+  is short (which one and why); the cards carry names, prices and links.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
@@ -1393,7 +1397,7 @@ Errand:
  "url": "https://www.amazon.it/gp/buy/spc/handlers/display.html", "status": "waiting_confirm",
  "why": null, "reason": "Order the Anker USB-C cable", "options": null,
  "step": "Waiting for your Confirm", "steps": [{"ts": "2026-10-27T18:02:11+01:00", "text": "Opened amazon.it"}],
- "result": null, "action_id": 42, "conversation_id": "c_91f…", "purchase_id": null,
+ "result": null, "action_id": 42, "conversation_id": "c_91f…", "purchase_id": null, "products": [],
  "created_at": "2026-10-27T18:01:50+01:00", "updated_at": "2026-10-27T18:03:20+01:00"}
 ```
 - `why` (only on `needs_you`): `login`, `captcha`, `code`, `card` or `other` (take over in the live view, then "I'm
@@ -1402,6 +1406,17 @@ Errand:
 - `step`: what it's doing now. `steps`: the last 10 (all of them, up to 60, on `GET /v1/errands/{id}`).
 - `action_id`: on `waiting_confirm`, the queued action to confirm (`POST /v1/confirm` with `{"ids": [42]}`).
 - `result`: on `done` or `failed`, what it says. `purchase_id`: the order it placed, if any.
+- `products` (since 2026-10-28): what it found, as Product cards, best first (up to 10); `[]` when there's nothing
+  to show.
+
+Product:
+```json
+{"title": "Lodge L8SK3, 26 cm", "url": "https://www.amazon.it/dp/B00006JSUA", "price": "49,15 €", "rating": 4.4,
+ "reviews": 72015, "note": "Arriva domani", "image": "https://m.media-amazon.com/images/I/81q….jpg"}
+```
+`url` is always a full http(s) link (open it on tap). `price`, `rating` (out of 5), `reviews` (how many ratings),
+`note` (one short line: delivery, a catch) and `image` may be null. `image` is a picture from the site itself,
+taken from the page where the errand saw the product, else from the product's own page.
 
 The Confirm's `detail` (on that action in `/v1/approvals` and `pending`):
 ```json

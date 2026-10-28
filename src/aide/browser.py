@@ -205,6 +205,60 @@ _INSPECT_JS = r"""
 }
 """
 
+# Each link's picture, for the product cards: [{path, src, alt}] (path as the page listing writes it), plus pictures
+# with a long alt text and no link (a checkout's items). The picture is the first one in the link's card: the link,
+# or an ancestor up to 6 levels that holds no picture linked somewhere else (that would be the whole list).
+_IMAGES_JS = r"""
+() => {
+  const src = img => {
+    const s = img.currentSrc || img.src || '';
+    if (!/^https?:/.test(s)) return null;
+    const r = img.getBoundingClientRect();
+    return (img.naturalWidth || r.width) >= 60 && (img.naturalHeight || r.height) >= 60 ? s : null;
+  };
+  const pathOf = a => {
+    try { const u = new URL(a.href); return (u.host === location.host ? '' : u.host) + u.pathname; } catch (e) { return null; }
+  };
+  const same = (a, b) => a.replace(/\/ref=.*$/, '') === b.replace(/\/ref=.*$/, '');
+  const out = [], seen = new Set();
+  for (const a of document.querySelectorAll('a[href]')) {
+    const path = pathOf(a);
+    if (!path || path === '/' || seen.has(path)) continue;
+    let el = a;
+    for (let i = 0; i < 6 && el && el !== document.body; i++, el = el.parentElement) {
+      const imgs = [...el.querySelectorAll('img')].filter(src);
+      if (imgs.some(img => { const l = img.closest('a[href]'); const p = l && pathOf(l); return p && !same(p, path); })) break;
+      if (imgs.length) {
+        seen.add(path);
+        out.push({path, src: src(imgs[0]), alt: (imgs[0].alt || '').slice(0, 200)});
+        break;
+      }
+    }
+  }
+  for (const img of document.querySelectorAll('img[alt]')) {
+    if (!img.closest('a[href]') && img.alt.trim().length >= 12 && src(img)) {
+      out.push({path: null, src: src(img), alt: img.alt.trim().slice(0, 200)});
+    }
+  }
+  return out.slice(0, 400);
+}
+"""
+
+# A product page's picture: its og:image, else the largest picture near the top.
+_MAIN_IMAGE_JS = r"""
+() => {
+  const meta = document.querySelector('meta[property="og:image"],meta[name="og:image"],meta[name="twitter:image"]');
+  if (meta && /^https?:/.test(meta.content || '')) return meta.content;
+  let best = null, area = 0;
+  for (const img of document.images) {
+    const r = img.getBoundingClientRect(), s = img.currentSrc || img.src || '';
+    if (!/^https?:/.test(s) || r.width < 100 || r.top > innerHeight * 1.5) continue;
+    if (r.width * r.height > area) { area = r.width * r.height; best = s; }
+  }
+  return best;
+}
+"""
+
 # What the focused element wants, so the app can show the right native field (AutoFill for passwords and codes).
 _FOCUS_JS = r"""
 () => {
@@ -502,6 +556,23 @@ class Browser:
             raise BrowserError(f"Couldn't go back: {str(e).splitlines()[0][:160]}") from None
         await self._settle(page)
         return "Went back. Now: " + await self._heading(page)
+
+    async def images(self, owner: str) -> list[dict]:
+        """The page's pictures by link: [{path, src, alt}] (path as read() writes it; None for an unlinked one)."""
+        try:
+            return await self._page(owner).evaluate(_IMAGES_JS)
+        except BrowserError:
+            raise
+        except Exception:
+            return []
+
+    async def main_image(self, owner: str, url: str) -> str | None:
+        """Opens a product page and returns its picture's URL, or None."""
+        await self.open(owner, url)
+        try:
+            return await self._page(owner).evaluate(_MAIN_IMAGE_JS)
+        except Exception:
+            return None
 
     async def screenshot(self, owner: str, sharp: bool = False) -> bytes:
         """The visible part of the page as a JPEG: CSS pixels for the model, device pixels with `sharp`."""

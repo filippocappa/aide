@@ -9,8 +9,8 @@ from aide.agents import AGENTS, connectors
 from aide.browser import Browser, BrowserError, site_of
 from aide.channels.api import create_app
 from aide.db import Database
-from aide.errands import (ErrandRunner, ErrandStore, Phase, commits, errand_tools, parse_money, purchase_tools,
-                          _same_total)
+from aide.errands import (ErrandRunner, ErrandStore, Phase, commits, errand_tools, parse_money, picture_for,
+                          purchase_tools, _same_total)
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
@@ -42,6 +42,8 @@ class FakeBrowser:
         self.at: dict[str, str] = {}
         self._objects: dict[str, object] = {}
         self.clicked, self.typed, self.live_typed, self.taps = [], [], [], []
+        self.pictures: dict[str, list[dict]] = {}  # a page's pictures by link
+        self.product_pages: list[str] = []
 
     def page(self, owner):
         return self._objects.get(owner) if owner in self.at else None
@@ -103,6 +105,14 @@ class FakeBrowser:
 
     async def screenshot(self, owner, sharp=False):
         return b"\xff\xd8\xff fake jpeg"
+
+    async def images(self, owner):
+        self._here(owner)
+        return self.pictures.get(self.at[owner], [])
+
+    async def main_image(self, owner, url):
+        self.product_pages.append(url)
+        return f"https://img.test/{url.rsplit('/', 1)[-1]}.jpg"
 
     async def text(self, owner):
         return self._here(owner)[1]
@@ -239,8 +249,9 @@ async def test_an_order_waits_for_confirm_then_goes_through(env):
     # Its chat got the cards: the errand, then the purchase.
     history = agent.visible_history(CONVERSATION)
     last = history[-1]
-    assert last["text"].startswith("Ordered") and [a["type"] for a in last["attachments"]] == ["errands", "purchases"]
-    assert last["attachments"][1]["purchases"][0]["order_ref"] == "402-1234"
+    # Its chat got the purchase card (the errand's own card is on Aide's first message and follows it).
+    assert last["text"].startswith("Ordered") and [a["type"] for a in last["attachments"]] == ["purchases"]
+    assert last["attachments"][0]["purchases"][0]["order_ref"] == "402-1234"
     # Finance sees it.
     listed = await purchase_tools(runner.store, ROME)[0].handler(days=7, site=None)
     assert "amazon.it" in listed and "Total: 12.98 EUR" in listed
@@ -255,6 +266,55 @@ def prompt_of(request) -> str:
 def runner_ttl():
     from aide.agent import PENDING_TTL
     return PENDING_TTL
+
+
+async def test_products_come_with_their_pictures(env):
+    make, db, browser = env
+    search = "https://www.amazon.it/s?k=cavo"
+    browser.pictures[search] = [
+        {"path": "/Anker-Cavo-USB-C/dp/B0ANKER/ref=sr_1_1", "src": "https://m.media-amazon.com/anker.jpg", "alt": ""},
+        {"path": None, "src": "https://m.media-amazon.com/ugreen.jpg", "alt": "UGREEN cavo USB C 2 m nylon"}]
+    runner, agent, _ = make([
+        calls(("open_page", {"url": search})),
+        calls(("read_page", {"everything": None})),
+        calls(("finish", {"result": "Prenderei l'Anker: costa poco ed è molto recensito.", "ok": True, "products": [
+            {"title": "Anker USB-C, 2 m", "url": "https://www.amazon.it/dp/B0ANKER", "price": "9,99 €",
+             "rating": "4,6", "reviews": "12.463", "note": "Arriva domani"},
+            {"title": "UGREEN cavo USB C 2 m", "url": "https://www.amazon.it/dp/B0UGREEN", "price": "8,49 €",
+             "rating": 4.5, "reviews": 800, "note": None},
+            {"title": "Belkin 2 m", "url": "https://www.amazon.it/dp/B0BELKIN", "price": None, "rating": None,
+             "reviews": None, "note": None},
+            {"title": "No link", "url": "/dp/B0X", "price": None, "rating": None, "reviews": None, "note": None}]})),
+    ])
+    e = runner.start("Compare USB-C cables", "USB-C cables", "amazon.it", CONVERSATION)
+    e = await next_phase(runner)
+    assert e["status"] == "done"
+    anker, ugreen, belkin = e["products"]  # the one without a full link is left out
+    assert anker["image"] == "https://m.media-amazon.com/anker.jpg"  # from its link on the results
+    assert (anker["rating"], anker["reviews"]) == (4.6, 12463)
+    assert ugreen["image"] == "https://m.media-amazon.com/ugreen.jpg"  # by its picture's alt text
+    assert belkin["image"] == "https://img.test/B0BELKIN.jpg"  # no page showed it: its own page
+    assert browser.product_pages == ["https://www.amazon.it/dp/B0BELKIN"]
+    assert runner.store.as_json(e)["products"][0]["title"] == "Anker USB-C, 2 m"
+    # The closing message: short text and the product cards; Aide's note lists them with their links.
+    last = agent.visible_history(CONVERSATION)[-1]
+    [cards] = last["attachments"]
+    assert cards["type"] == "products" and cards["errand_id"] == e["id"] and cards["site"] == "amazon.it"
+    assert [p["title"] for p in cards["products"]] == ["Anker USB-C, 2 m", "UGREEN cavo USB C 2 m", "Belkin 2 m"]
+    note = json.loads(db.conn.execute("SELECT content FROM messages WHERE role = 'user' ORDER BY id DESC LIMIT 1")
+                      .fetchone()[0])
+    assert "1. Anker USB-C, 2 m, 9,99 €: https://www.amazon.it/dp/B0ANKER" in note
+
+
+def test_picture_for_a_product():
+    images = [{"path": "/Lodge-L8SK3/dp/B00006JSUA/ref=sr_1_1", "src": "https://a/lodge.jpg", "alt": "Lodge"},
+              {"path": "other.site/dp/B00006JSUA", "src": "https://a/elsewhere.jpg", "alt": ""},
+              {"path": None, "src": "https://a/victoria.jpg", "alt": "VICTORIA Padella in ghisa 30 cm stagionata"}]
+    assert picture_for("https://www.amazon.it/dp/B00006JSUA", "Lodge", images) == "https://a/lodge.jpg"
+    assert picture_for("https://www.amazon.it/dp/B01726HD72", "Victoria padella in ghisa 30 cm", images) == \
+        "https://a/victoria.jpg"
+    assert picture_for("https://www.amazon.it/dp/B0NOTHERE", "Something else entirely", images) is None
+    assert picture_for("https://www.amazon.it/", "x", images) is None  # a bare site isn't a product
 
 
 async def test_a_changed_total_isnt_clicked(env):
@@ -439,7 +499,7 @@ async def test_errands_api(env):
     got = client.get("/v1/errands", headers=AUTH).json()
     assert got["enabled"] and got["errands"][0]["id"] == e["id"]
     assert set(got["errands"][0]) == {"id", "title", "task", "site", "url", "status", "why", "reason", "options",
-                                      "step", "steps", "result", "action_id", "conversation_id", "purchase_id",
+                                      "step", "steps", "result", "action_id", "conversation_id", "purchase_id", "products",
                                       "created_at", "updated_at"}
     assert client.post(f"/v1/errands/{e['id']}/done", headers=AUTH).status_code == 409  # not waiting for you
     assert client.get(f"/v1/errands/{e['id']}/frame", headers=AUTH).status_code == 404  # no page yet
@@ -526,11 +586,12 @@ def test_site_names():
 # -- the real browser ------------------------------------------------------------
 
 SHOP = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<meta property="og:image" content="https://shop.test/og.jpg">
 <title>Shop</title></head><body>
 <h1>Cavo USB-C</h1><p>Prezzo: 9,99 €</p>
 <form action="/order"><label>Email <input name="email" type="email" value="a@b.it"></label>
 <label>Password <input name="pw" type="password" value="hunter2"></label>
-<a href="/dp/B0TEST?ref=x">Scheda</a>
+<img src="https://shop.test/pic.jpg" width="100" height="100" alt="Cavo USB-C"><a href="/dp/B0TEST?ref=x">Scheda</a>
 <button type="button" onclick="document.title='added'">Aggiungi al carrello</button>
 <button type="submit">Acquista ora</button></form>
 <div style="height:3000px"></div><p>In fondo</p></body></html>"""
@@ -541,11 +602,16 @@ async def test_real_chromium_reads_and_clicks(tmp_path):
     browser = Browser(tmp_path / "browser")
     try:
         context = await browser._context("shop.test")
-        await context.route("**/*", lambda route: route.fulfill(body=SHOP, content_type="text/html"))
+        picture = '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80"/></svg>'
+        await context.route("**/*", lambda route: route.fulfill(body=picture, content_type="image/svg+xml")
+                            if route.request.url.endswith(".jpg") else route.fulfill(body=SHOP, content_type="text/html"))
         assert "Shop" in await browser.open("errand:1", "https://shop.test/")
         page = await browser.read("errand:1")
         assert "Prezzo: 9,99 €" in page and "In fondo" not in page and "(more below" in page
         assert '"Scheda" → /dp/B0TEST' in page
+        pictures = await browser.images("errand:1")
+        assert {"path": "/dp/B0TEST", "src": "https://shop.test/pic.jpg", "alt": "Cavo USB-C"} in pictures
+        assert await browser.main_image("errand:2", "https://shop.test/dp/B0TEST") == "https://shop.test/og.jpg"
         assert "hunter2" not in page and "(filled, hidden)" in page and 'value="a@b.it"' in page
         ref = next(line.split("]")[0][1:] for line in page.splitlines() if line.startswith("[") and "Aggiungi" in line)
         buy = next(line.split("]")[0][1:] for line in page.splitlines() if line.startswith("[") and "Acquista" in line)
