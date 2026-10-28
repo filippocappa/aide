@@ -410,6 +410,7 @@ struct BrowserSheet: View {
 struct ErrandCard: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var chat: ChatViewModel
+    @Environment(\.scenePhase) private var phase
     @State private var errand: Errand
     @State private var browser: BrowserTarget?
     /// The real page (the card's menu): for what Aide's own screens don't cover.
@@ -499,8 +500,17 @@ struct ErrandCard: View {
     private func refresh() async {
         guard let fresh = try? await env.api.errand(errand.id) else { return }
         let changed = fresh.status != errand.status
+        // It just reached a login, a code or a CAPTCHA while you're watching: its screen opens by itself (the app's
+        // one sheet, so two cards for the same errand open it once).
+        if !errand.needsLiveView, Self.opensByItself(fresh), phase == .active, browser == nil, env.browser == nil {
+            env.browser = .errand(fresh.id, title: fresh.title)
+        }
         errand = fresh
         if changed, let id = fresh.conversationId, id == chat.conversationID { await chat.loadHistory() }
+    }
+
+    static func opensByItself(_ e: Errand) -> Bool {
+        e.needsLiveView && ["login", "code", "captcha"].contains(e.why ?? "")
     }
 
     private func act(_ call: () async throws -> Errand) async {

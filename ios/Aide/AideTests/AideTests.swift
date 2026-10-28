@@ -1307,6 +1307,23 @@ final class ErrandTests: XCTestCase {
         XCTAssertEqual(product.product?.rating, 4.4)
     }
 
+    func testTimetableScene() throws {
+        let scene = try JSONDecoder.api.decode(PageScene.self, from: Data("""
+        {"kind": "rows", "site": "lefrecce.it", "items": [], "rows": [
+          {"times": ["05:20", "06:14"], "title": "Regionale Veloce 2713", "places": ["Torino Porta Nuova", "Ivrea"],
+           "detail": "54min", "price": "7,10€", "ref": "2"},
+          {"times": ["05:54", "07:39"], "title": "Regionale Veloce 2013", "places": ["Torino Porta Nuova", "Ivrea"],
+           "detail": "1h 45min · 1 cambio", "price": null, "ref": "3"}]}
+        """.utf8))
+        XCTAssertEqual(scene.rows?.map(\.leaves), ["05:20", "05:54"])
+        XCTAssertEqual(scene.rows?.first?.symbol, "train.side.front.car")
+        let tap = BrowserLive.Action(seq: 1, kind: "click", label: "2013 1 da 7,10€ 05:54 1h 45min 07:39 Torino Porta Nuova Ivrea")
+        XCTAssertEqual(scene.tapped(tap), "3")
+        // A server from before rows: none.
+        let old = try JSONDecoder.api.decode(PageScene.self, from: Data(#"{"kind": "page", "items": []}"#.utf8))
+        XCTAssertNil(old.rows)
+    }
+
     func testNarrationAndTheCaptchaTaps() throws {
         let said = try JSONDecoder.api.decode(BrowserLive.Action.self, from: Data("""
         {"seq": 5, "kind": "read", "x": null, "y": null, "label": null, "note": "Guardo le recensioni"}

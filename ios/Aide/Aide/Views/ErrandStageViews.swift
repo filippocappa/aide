@@ -7,7 +7,7 @@ import SwiftUI
 
 /// What kind of page the errand is on and what's on it: the socket's `scene`.
 struct PageScene: Decodable, Equatable {
-    /// results, product, cart, checkout, confirmation, login, code, captcha, page
+    /// results, rows, product, cart, checkout, confirmation, login, code, captcha, page
     let kind: String
     var site: String?
     var title: String?
@@ -15,6 +15,8 @@ struct PageScene: Decodable, Equatable {
     var icon: String?
     var query: String?
     var items: [Item]
+    /// A timetable's rows (trains, buses, flights): `rows`.
+    var rows: [Row]?
     var product: Shown?
     var cart: Cart?
     var form: Fields?
@@ -28,6 +30,27 @@ struct PageScene: Decodable, Equatable {
         var image: String?
         let ref: String
         var id: String { ref }
+    }
+
+    struct Row: Decodable, Equatable, Identifiable {
+        /// Leaves, arrives ("05:20", "06:14").
+        let times: [String]
+        /// The train or the bus ("Regionale Veloce 2713").
+        var title: String?
+        /// From, to.
+        var places: [String]?
+        /// How long and the changes ("1h 45min · 1 cambio").
+        var detail: String?
+        var price: String?
+        let ref: String
+        var id: String { ref }
+
+        var leaves: String { times.first ?? "" }
+        var arrives: String { times.count > 1 ? times[1] : "" }
+        var symbol: String {
+            (title ?? "").range(of: #"bus|flix(?!train)"#, options: [.regularExpression, .caseInsensitive]) != nil
+                ? "bus.fill" : "train.side.front.car"
+        }
     }
 
     struct Shown: Decodable, Equatable {
@@ -103,6 +126,19 @@ struct PageScene: Decodable, Equatable {
         }
     }
 
+    /// What Aide just tapped on this page, by its ref: a result or a timetable's row.
+    func tapped(_ action: BrowserLive.Action?) -> String? {
+        item(clicked: action)?.ref ?? row(clicked: action)?.ref
+    }
+
+    /// The row Aide just tapped: its label has the row's two times ("2713 da 7,10€ 05:20 54min 06:14 …").
+    func row(clicked action: BrowserLive.Action?) -> Row? {
+        guard let action, action.kind == "click", let label = action.label else { return nil }
+        return (rows ?? []).first { row in
+            row.times.count > 1 && label.contains(row.leaves) && label.contains(row.arrives)
+        }
+    }
+
     /// The result Aide just tapped, from what the tap was on: a tile's link carries its name, a "+" its card's
     /// ("Increase quantity · diavola").
     func item(clicked action: BrowserLive.Action?) -> Item? {
@@ -159,8 +195,8 @@ struct ErrandStage: View {
     private func advance(to new: PageScene?) {
         guard let new else { return }
         let samePage = new.kind == shown?.kind && new.url == shown?.url
-        if !samePage, let tile = shown?.item(clicked: action) {
-            withAnimation(.spring(duration: 0.3)) { picked = tile.ref }
+        if !samePage, let ref = shown?.tapped(action) {
+            withAnimation(.spring(duration: 0.3)) { picked = ref }
             Task {
                 try? await Task.sleep(for: .milliseconds(650))
                 move(to: new)
@@ -183,6 +219,7 @@ struct ErrandStage: View {
         if let s = shown {
             switch s.kind {
             case "results": ResultsStage(scene: s, picked: picked, tint: tint, large: large)
+            case "rows": RowsStage(scene: s, picked: picked, tint: tint, large: large)
             case "product": ProductStage(scene: s, action: action, tint: tint)
             case "cart", "checkout": CartStage(scene: s, confirming: confirming, tint: tint)
             case "confirmation": DoneStage(text: "Order placed", tint: tint)
@@ -317,6 +354,112 @@ private struct ResultsStage: View {
                 withAnimation(.spring(duration: 0.55)) { looking += 1 }
             }
         }
+    }
+}
+
+/// A timetable: the route, then a row per train (leaves, a line, arrives; the train, how long, the changes; the
+/// price), coming in one after another, with Aide's finger going down them.
+private struct RowsStage: View {
+    let scene: PageScene
+    let picked: String?
+    let tint: Color
+    let large: Bool
+    @State private var arrived = 0
+    @State private var looking = 0
+    @Namespace private var cursor
+
+    var body: some View {
+        let rows = Array((scene.rows ?? []).prefix(large ? 7 : 4))
+        VStack(alignment: .leading, spacing: 8) {
+            RoutePill(places: rows.first?.places ?? [], fallback: scene.title ?? "", tint: tint)
+            ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
+                let lit = picked == row.ref || (picked == nil && arrived >= rows.count && looking % rows.count == i)
+                StageRow(row: row, lit: lit, chosen: picked == row.ref, tint: tint)
+                    .overlay(alignment: .trailing) {
+                        if lit {
+                            Cursor(tint: tint, pressing: picked == row.ref)
+                                .matchedGeometryEffect(id: "cursor", in: cursor)
+                                .offset(x: -54, y: 10)
+                        }
+                    }
+                    .opacity(i < arrived ? 1 : 0)
+                    .offset(x: i < arrived ? 0 : 18)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .task(id: rows.map(\.ref)) {
+            arrived = 0
+            for i in 0..<rows.count {
+                try? await Task.sleep(for: .milliseconds(120))
+                withAnimation(.spring(duration: 0.4)) { arrived = i + 1 }
+            }
+            while !Task.isCancelled && !rows.isEmpty {
+                try? await Task.sleep(for: .seconds(1.2))
+                withAnimation(.spring(duration: 0.5)) { looking += 1 }
+            }
+        }
+    }
+}
+
+private struct RoutePill: View {
+    let places: [String]
+    let fallback: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill").foregroundStyle(tint)
+            if places.count == 2 {
+                Text(places[0]).lineLimit(1)
+                Image(systemName: "arrow.right").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                Text(places[1]).lineLimit(1)
+            } else {
+                Text(fallback).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.footnote.weight(.medium))
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Theme.chip, in: Capsule())
+    }
+}
+
+private struct StageRow: View {
+    let row: PageScene.Row
+    let lit: Bool
+    let chosen: Bool
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(row.leaves).font(.callout.weight(.bold))
+                    Capsule().fill(tint.opacity(0.5)).frame(height: 2).frame(maxWidth: 46)
+                        .overlay(alignment: .leading) { Circle().fill(tint).frame(width: 5, height: 5) }
+                        .overlay(alignment: .trailing) { Circle().fill(tint).frame(width: 5, height: 5) }
+                    Text(row.arrives).font(.callout.weight(.bold))
+                }
+                .monospacedDigit()
+                HStack(spacing: 4) {
+                    Image(systemName: row.symbol).foregroundStyle(tint)
+                    Text([row.detail, row.title].compactMap { $0 }.joined(separator: " · ")).lineLimit(1)
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Text(row.price ?? "–")
+                .font(.footnote.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(row.price == nil ? .secondary : .primary)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(tint, lineWidth: lit ? 2 : 0))
+        .scaleEffect(chosen ? 1.04 : lit ? 1.01 : 1)
+        .shadow(color: .black.opacity(lit ? 0.15 : 0), radius: 6, y: 3)
     }
 }
 
