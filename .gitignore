@@ -11,3 +11,17 @@ ios/**/DerivedData/
 ios/build/
 .DS_Store
 ios/Aide/Config/Signing.local.xcconfig
+
+# Never published, wherever they end up: keys, tokens, databases, logs, local agent settings
+.env.*
+!.env.example
+*.p8
+*.pem
+*.key
+token.json
+credentials.json
+*.db
+*.db-wal
+*.db-shm
+*.log
+.claude/
