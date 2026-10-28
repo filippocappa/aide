@@ -95,6 +95,28 @@ _READ_JS = r"""
     lines.push(line); chars += line.length + 1;
   };
   const flush = () => { if (text) { push(text); text = ''; } };
+  // A button that only says "+" or "Add" (one per dish or product): the first name in its card, so it isn't a guess.
+  const GENERIC = /^(\+|add|aggiungi|increase quantity|aumenta( la)? quantit[aà]|add to (cart|basket|bag)|aggiungi al carrello|select|seleziona|scegli|choose|buy|acquista|book|prenota|details|dettagli)$/i;
+  const PRICED = /\d\s?[.,]\s?\d{2}\s?(€|EUR)|[€$£]\s?\d/;
+  const cardOf = (el, said) => {
+    let card = el;
+    for (let i = 0; i < 6 && card.parentElement && card.parentElement !== document.body; i++) {
+      const up = card.parentElement;
+      if ([...up.querySelectorAll('button,[role=button],a[href]')].some(o => o !== el &&
+          clean(o.getAttribute('aria-label') || o.innerText).toLowerCase() === said.toLowerCase())) break;
+      card = up;
+    }
+    if (card === el) return '';
+    // Its first words that aren't on a control (a neighbour's "Acquista ora" isn't its name).
+    const texts = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+    let name = '';
+    for (let n = texts.nextNode(); n && !name; n = texts.nextNode()) {
+      const t = clean(n.textContent);
+      if (t.length >= 3 && !n.parentElement.closest('button,[role=button],a[href],select,label,option') &&
+          !PRICED.test(t) && !/^-?\d+\s?%/.test(t) && !GENERIC.test(t) && shown(n.parentElement)) name = t;
+    }
+    return name ? name.slice(0, 60) : '';
+  };
   const sensitive = (el) => el.type === 'password' ||
     /cc-|card|cvv|cvc|csc|iban|expir/i.test([el.autocomplete, el.name, el.id].join(' '));
   const label = (el) => {
@@ -115,7 +137,12 @@ _READ_JS = r"""
       kind = ['submit', 'button', 'image', 'reset'].includes(el.type) ? 'button'
         : ['checkbox', 'radio'].includes(el.type) ? el.type : 'input:' + (el.type || 'text');
     }
-    let line = `[${ref}] ${kind} "${label(el)}"`;
+    const said = label(el);
+    let line = `[${ref}] ${kind} "${said}"`;
+    if (GENERIC.test(said) || (!said && kind === 'button')) {
+      const card = cardOf(el, said);
+      if (card) { line += ` (for "${card}")`; el.dataset.aideFor = card; }
+    }
     if (tag === 'input' || tag === 'textarea') {
       if (sensitive(el)) line += el.value ? ' (filled, hidden)' : ' (for the user)';
       else if (el.value && !['submit', 'button', 'checkbox', 'radio'].includes(el.type))
@@ -147,6 +174,7 @@ _READ_JS = r"""
       return;
     }
     if (node.nodeType !== 1 || SKIP.has(node.tagName.toUpperCase())) return;
+    if (covered && dialogs.includes(node)) return;
     if (node.tagName === 'IFRAME') {
       if (shown(node)) { flush(); push(`[frame: ${(node.title || node.src || '').slice(0, 80)}]`); }
       return;
@@ -157,6 +185,21 @@ _READ_JS = r"""
     for (const c of node.childNodes) walk(c);
     if (/^(H[1-6]|P|LI|TR|DIV|SECTION|ARTICLE|HEADER|FOOTER|NAV|FORM|UL|OL|TABLE)$/.test(node.tagName)) flush();
   };
+  // An open dialog (an address picker, a cookie banner, a size to choose) first: it's what's on top, and a long page
+  // would otherwise push it past the limit.
+  const DIALOG = 'dialog[open],[role=dialog],[role=alertdialog],[aria-modal=true]';
+  const dialogs = [...document.querySelectorAll(DIALOG)].filter(d => {
+    const r = d.getBoundingClientRect();
+    return r.width >= 120 && r.height >= 60 && shown(d) && !(d.parentElement && d.parentElement.closest(DIALOG));
+  });
+  let covered = false;
+  if (dialogs.length) {
+    push('A dialog is open over the page:');
+    for (const d of dialogs) walk(d);
+    flush();
+    push('Under it:');
+    covered = true;
+  }
   walk(document.body || document.documentElement);
   flush();
   document.documentElement.dataset.aideNext = String(next);
@@ -384,7 +427,7 @@ _SCENE_JS = r"""
   for (const a of document.querySelectorAll('a[href]')) {
     if (tiles.length >= 24) break;
     const p = pathOf(a);
-    if (!p || seen.has(p) || !visible(a) || a.closest('header,nav,footer,[role=navigation],[role=banner],#nav-belt,#nav-main')) continue;
+    if (!p || p === location.host + location.pathname || seen.has(p) || !visible(a) || a.closest('header,nav,footer,[role=navigation],[role=banner],#nav-belt,#nav-main')) continue;
     seen.add(p);
     let card = null;
     for (let i = 0, el = a; i < 8 && el && el !== document.body; i++, el = el.parentElement) {
@@ -401,6 +444,31 @@ _SCENE_JS = r"""
     if (title.length < 6 || CTA.test(title) || pictures.has(image) || names.has(key)) continue;
     pictures.add(image); names.add(key);
     tiles.push({title, price: priceIn(card.textContent), image, ref: refOf(a)});
+  }
+
+  // Things with their own "+" / "Add" button and no link (a menu's dishes): the button's card, with its picture,
+  // name and price. Pressing the button adds it.
+  const ADD = /^(\+|add|aggiungi|increase quantity|aumenta( la)? quantit[aà]|add to (cart|basket|bag)|aggiungi al carrello)$/i;
+  const said = b => clean(b.getAttribute('aria-label') || b.innerText || b.value || '');
+  for (const b of buttons()) {
+    if (tiles.length >= 24) break;
+    if (!ADD.test(said(b)) || b.closest('a[href],header,nav,footer')) continue;
+    let card = b;
+    for (let i = 0; i < 6 && card.parentElement && card.parentElement !== document.body; i++) {
+      const up = card.parentElement;
+      if ([...up.querySelectorAll('button,[role=button]')].some(o => o !== b && ADD.test(said(o)))) break;
+      card = up;
+    }
+    const img = [...card.querySelectorAll('img')].find(imgSrc);
+    const price = priceIn(card.textContent);
+    if (card === b || (!img && !price)) continue;
+    const title = ((card.innerText || '').split('\n').map(clean)
+      .find(t => t.length >= 3 && !ADD.test(t) && !PRICE.test(t) && !/^-?\d+\s?%/.test(t)) || '').replace(AD, '').slice(0, 120);
+    const image = img ? imgSrc(img) : null, key = title.toLowerCase().slice(0, 30);
+    if (title.length < 3 || names.has(key) || (image && pictures.has(image))) continue;
+    if (image) pictures.add(image);
+    names.add(key);
+    tiles.push({title, price, image, ref: refOf(b)});
   }
 
   // A product: JSON-LD first, then the page's own tags, then its heading, price and biggest picture.
@@ -451,7 +519,9 @@ _SCENE_JS = r"""
     else if (/checkout|\/buy\/|\/spc\b|gp\/buy|\/cassa|\/pagamento|\/payment/.test(path)) out.kind = 'checkout';
     else if (/\/cart\b|\/basket\b|\/carrello|\/bag\b|gp\/aw\/c\b|gp\/cart/.test(path)) out.kind = 'cart';
     else if (out.product && (ld.length || productPath || meta('og:type') === 'product')) out.kind = 'product';
-    else if (tiles.length >= 3 && (query || /search|\/s\b|cerca|ricerca/.test(path))) out.kind = 'results';
+    // A list of things: search results, a shop's or a restaurant's menu, a list of restaurants.
+    else if (tiles.length >= 3 && (query || /search|\/s\b|cerca|ricerca/.test(path) ||
+             (!out.product && tiles.filter(t => t.image || t.price).length >= 3))) out.kind = 'results';
     else if (out.product) out.kind = 'product';
   }
   // The way to the login, on a page that isn't one ("Accedi ›" on a shop's home).
@@ -592,8 +662,9 @@ class Browser:
             await locator.scroll_into_view_if_needed(timeout=3000)
             box = await locator.bounding_box(timeout=1000)
             label = await locator.evaluate(
-                "e => e.type === 'password' ? null : (e.innerText || e.value || e.getAttribute('aria-label')"
-                " || e.getAttribute('placeholder') || e.title || e.alt || '').trim()", timeout=1000)
+                "e => e.type === 'password' ? null : [(e.innerText || e.value || e.getAttribute('aria-label')"
+                " || e.getAttribute('placeholder') || e.title || e.alt || '').trim(), e.dataset.aideFor]"
+                ".filter(Boolean).join(' · ')", timeout=1000)
             return box, label
         except Exception:
             return None, None

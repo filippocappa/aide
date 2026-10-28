@@ -1474,7 +1474,8 @@ Server to app:
 - `{"type": "action", "seq": 12, "kind": "click", "x": 0.5, "y": 0.38, "label": "Aggiungi al carrello"}` (since
   2026-10-28, errands only): what Aide just did, as it does it, for the app to show over the frames. `kind`: `open`
   (`label` the site and path), `click`, `type` (`label` what it types; null in a password field), `choose` (the
-  option), `press` (the key), `scroll` (`up` or `down`), `back`. `x`, `y`: the element's middle as fractions of the
+  option), `press` (the key), `scroll` (`up` or `down`), `back`. Since 2026-10-28 a button that only says "+" or "Add"
+  carries its card's name after ` · ` ("Increase quantity · diavola"). `x`, `y`: the element's middle as fractions of the
   frame, or null. Only what it does after the socket opened; `seq` goes up by one or more each time. Since
   2026-10-28 also `read` (it reads the page), `find` (`label` what it looks for) and `look` (a screenshot), and
   `note`: Aide's own line for it ("Guardo le recensioni"), or null.
@@ -1487,7 +1488,9 @@ Server to app:
    "items": [{"title": "VICTORIA Padella in Ghisa 30 cm", "price": "49,52 €", "image": "https://m.media-amazon.com/…", "ref": "41"}],
    "product": null, "cart": {"count": 0, "total": null}, "form": null, "captcha": null, "signin": "3"}
   ```
-  - `kind`: `results` (search results: `items`, up to 6, each with its picture, name, price or null, and `ref`),
+  - `kind`: `results` (a list of things: search results, a shop's or a restaurant's menu, a list of restaurants;
+    `items`, up to 6, each with its picture or null, name, price or null, and `ref`: its link, or for a dish with its
+    own "+" that button, which adds it),
     `product` (`product`: `{title, price, image, rating}`, any but `title` may be null), `cart`, `checkout`,
     `confirmation` (an order placed), `login`, `code` (a one-time code), `captcha`, or `page` (anything else: show
     `title`).

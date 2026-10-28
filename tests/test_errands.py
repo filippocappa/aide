@@ -738,6 +738,13 @@ def _html(body: str, title: str = "Shop", head: str = "") -> str:
 
 
 SCENE_PAGES = {
+    # A restaurant's menu: dishes with a "+" each and no links, and the address picker open over it.
+    "/stores/pizzeria": _html('<a href="/stores/pizzeria"><img src="/logo.jpg" width="80" height="80" alt=""></a><h1>Pizzeria</h1>' + "".join(
+        f'<div class="dish"><button aria-label="Increase quantity"></button><span>-20%</span><p>{name}</p>'
+        f'<img src="/{name}.jpg" width="120" height="120" alt=""><span>{price} €</span></div>'
+        for name, price in [("margherita", "6,40"), ("diavola", "8,00"), ("capricciosa", "9,20")]) +
+        '<div role="dialog" aria-modal="true"><h2>Dove dobbiamo consegnare l\'ordine?</h2>'
+        '<button>Aggiungi un nuovo indirizzo</button></div>', "Pizzeria | Delivery"),
     "/s": _html("".join(f'<div class="card"><a href="/p/lamp{i}"><img src="/lamp{i}.jpg" width="160" height="160" '
                         f'alt=""></a><h3><a href="/p/lamp{i}">Lampada da tavolo FADO {i}, bianco</a></h3>'
                         f"<span>€{i}9,95</span></div>" for i in range(1, 5)), "Cerca lampada"),
@@ -786,6 +793,20 @@ async def test_real_chromium_scenes(tmp_path):
         assert scene["items"][0]["image"] == "https://shop.test/lamp1.jpg"
         await browser.click(owner, scene["items"][0]["ref"])  # the scene's refs are the model's
         assert browser.where(owner)["url"] == "https://shop.test/p/lamp1"
+
+        # A menu is a list too: each dish by its "+", named after it for the model and the live view.
+        await browser.open(owner, "https://shop.test/stores/pizzeria")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "results"
+        assert [(i["title"], i["price"]) for i in scene["items"]] == \
+            [("margherita", "6,40 €"), ("diavola", "8,00 €"), ("capricciosa", "9,20 €")]
+        page = await browser.read(owner)
+        lines = page.splitlines()
+        assert lines[lines.index("A dialog is open over the page:") + 1] == "Dove dobbiamo consegnare l'ordine?"
+        assert lines.index("Under it:") < next(i for i, l in enumerate(lines) if "Increase quantity" in l)
+        assert f'[{scene["items"][1]["ref"]}] button "Increase quantity" (for "diavola")' in page
+        await browser.click(owner, scene["items"][1]["ref"])
+        assert browser.last_action(owner)["label"] == "Increase quantity · diavola"
 
         await browser.open(owner, "https://shop.test/dp/B0LODGE")
         scene = await browser.scene(owner)
