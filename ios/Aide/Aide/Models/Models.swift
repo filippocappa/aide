@@ -68,6 +68,7 @@ enum Attachment: Decodable, Hashable {
     case proposal(NotebookProposal)
     case errands([Errand])
     case purchases([Purchase])
+    case products([Product])
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -82,11 +83,12 @@ enum Attachment: Decodable, Hashable {
         case "proposal": self = .proposal(try c.decode(NotebookProposal.self, forKey: .proposal))
         case "errands": self = .errands(try c.decode([Errand].self, forKey: .errands))
         case "purchases": self = .purchases(try c.decode([Purchase].self, forKey: .purchases))
+        case "products": self = .products(try c.decode([Product].self, forKey: .products))
         default: self = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
-        case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases
+        case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
@@ -1703,6 +1705,8 @@ struct Errand: Decodable, Identifiable, Hashable {
     var actionId: Int?
     var conversationId: String?
     var purchaseId: Int?
+    /// What it found, as cards: nil from a server before them.
+    var products: [Product]?
     var createdAt: String?
     var updatedAt: String?
 
@@ -1724,6 +1728,29 @@ struct Errand: Decodable, Identifiable, Hashable {
         case "cancelled": result ?? "Cancelled"
         default: result ?? step ?? status.prefix(1).uppercased() + status.dropFirst()
         }
+    }
+}
+
+/// Something an errand found: a product to compare, the item it put in the cart, a train.
+struct Product: Decodable, Hashable, Identifiable {
+    let title: String
+    let url: String
+    var price: String?
+    /// Out of 5.
+    var rating: Double?
+    /// How many ratings.
+    var reviews: Int?
+    var note: String?
+    var image: String?
+
+    var id: String { url }
+    var link: URL? { URL(string: url) }
+
+    /// "4,6 ★ · 12.463"
+    var stars: String? {
+        guard let rating else { return nil }
+        let r = rating.formatted(.number.precision(.fractionLength(1)))
+        return reviews.map { "\(r) ★ · \($0.formatted())" } ?? "\(r) ★"
     }
 }
 

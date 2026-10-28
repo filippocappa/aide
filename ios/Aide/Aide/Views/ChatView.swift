@@ -572,6 +572,8 @@ struct AttachmentCard: View {
             VStack(spacing: 10) { ForEach(errands) { ErrandCard(errand: $0) } }
         case .purchases(let purchases):
             VStack(spacing: 10) { ForEach(purchases) { PurchaseCard(purchase: $0) } }
+        case .products(let products):
+            if !products.isEmpty { ProductsCard(products: products) }
         case .unknown:
             EmptyView()
         }

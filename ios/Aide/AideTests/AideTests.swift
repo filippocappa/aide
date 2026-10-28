@@ -1219,6 +1219,25 @@ final class ErrandTests: XCTestCase {
         XCTAssertNotNil(purchases.first?.date)
     }
 
+    func testProductsAttachmentDecodes() throws {
+        let json = """
+        [{"type": "products", "errand_id": 3, "site": "amazon.it", "products": [
+          {"title": "Lodge L8SK3, 26 cm", "url": "https://www.amazon.it/dp/B00006JSUA", "price": "49,15 €",
+           "rating": 4.4, "reviews": 72015, "note": null, "image": "https://m.media-amazon.com/images/I/81q.jpg"},
+          {"title": "Victoria, 30 cm", "url": "https://www.amazon.it/dp/B01726HD72", "price": null,
+           "rating": null, "reviews": null, "note": "6 left", "image": null}]}]
+        """
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .products(let products) = attachments[0] else { return XCTFail("expected products") }
+        XCTAssertEqual(products.count, 2)
+        XCTAssertEqual(products[0].link?.host, "www.amazon.it")
+        XCTAssertNotNil(products[0].stars)
+        XCTAssertNil(products[1].stars)
+        XCTAssertEqual(products[1].note, "6 left")
+        // An errand from before products has none.
+        XCTAssertNil(try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand.utf8)).products)
+    }
+
     func testErrandRoutes() throws {
         XCTAssertEqual(PushRoute(url: try XCTUnwrap(URL(string: "aide://errand/7"))), .errand(7))
         XCTAssertNil(PushRoute(url: try XCTUnwrap(URL(string: "aide://errand/x"))))

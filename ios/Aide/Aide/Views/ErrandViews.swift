@@ -898,3 +898,78 @@ struct PurchasesView: View {
         do { list = try await env.api.purchases(days: 90) } catch { self.error = error.localizedDescription }
     }
 }
+
+// MARK: - What an errand found
+
+/// The products an errand found, best first, side by side: picture, name, price, stars. A tap opens it on the site
+/// (the shop's app when it's installed).
+struct ProductsCard: View {
+    let products: [Product]
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(Array(products.enumerated()), id: \.offset) { ProductTile(product: $0.element) }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollIndicators(.hidden)
+        .scrollTargetBehavior(.viewAligned)
+    }
+}
+
+struct ProductTile: View {
+    @Environment(\.openURL) private var openURL
+    let product: Product
+
+    var body: some View {
+        Button {
+            if let link = product.link { openURL(link) }
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                picture
+                    .frame(width: 168, height: 150)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(product.title)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(2, reservesSpace: true)
+                        .multilineTextAlignment(.leading)
+                    if let price = product.price {
+                        Text(price).font(.headline).monospacedDigit()
+                    }
+                    if let stars = product.stars {
+                        Text(stars).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let note = product.note, !note.isEmpty {
+                        Text(note).font(.caption).foregroundStyle(.orange).lineLimit(2)
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+            .padding(8)
+            .frame(width: 184, alignment: .topLeading)
+            .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens it on the site")
+    }
+
+    @ViewBuilder
+    private var picture: some View {
+        AsyncImage(url: product.image.flatMap(URL.init(string:))) { phase in
+            switch phase {
+            case .success(let image): image.resizable().aspectRatio(contentMode: .fit).padding(8)
+            case .failure: placeholder
+            default: if product.image == nil { placeholder } else { ProgressView() }
+            }
+        }
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "bag").font(.title).foregroundStyle(.tertiary)
+    }
+}
