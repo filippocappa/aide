@@ -1490,8 +1490,10 @@ Server to app:
   ```
   - `kind`: `results` (a list of things: search results, a shop's or a restaurant's menu, a list of restaurants;
     `items`, up to 6, each with its picture or null, name, price or null, and `ref`: its link, or for a dish with its
-    own "+" that button, which adds it),
-    `product` (`product`: `{title, price, image, rating}`, any but `title` may be null), `cart`, `checkout`,
+    own "+" that button, which adds it), `rows` (since 2026-10-28: a timetable, trains, buses or flights with no
+    pictures; `rows`, up to 8, each `{times: [leaves, arrives] ("05:20"), title (the train: "Regionale Veloce 2713",
+    or null), places ([from, to], may be empty), detail ("1h 45min · 1 cambio", or null), price (or null), ref}`;
+    `rows` is `[]` on every other kind), `product` (`product`: `{title, price, image, rating}`, any but `title` may be null), `cart`, `checkout`,
     `confirmation` (an order placed), `login`, `code` (a one-time code), `captcha`, or `page` (anything else: show
     `title`).
   - `query`: what was searched, or null. `icon`: the site's icon, or null. `cart`: `{count, total}` when the page shows

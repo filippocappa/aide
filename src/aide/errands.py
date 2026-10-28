@@ -600,10 +600,12 @@ class ErrandRunner:
             if run:
                 run.needs_you(reason)
             activity.record(self.store.conn, "aide", "errand", e["title"], f"Needs you: {reason}", e["conversation"])
+            button = {"login": "Log in", "code": "Enter the code", "captcha": "Solve it"}.get(why)
             await self._post(e, "An errand needs the user in the live view",
-                             f"I need you on {e['site'] or 'the site'}: {reason} Tap Take over, and tell me when "
-                             "you're done.", card=True, push=f"Aide needs you on {e['site'] or 'the site'}",
-                             level="time-sensitive")
+                             f"I need you on {e['site'] or 'the site'}: {reason} "
+                             + (f"Tap {button}: I go on by myself once it's done." if button
+                                else "Tap Take over, and tell me when you're done."),
+                             card=True, push=f"Aide needs you on {e['site'] or 'the site'}", level="time-sensitive")
         elif kind == "ask_user":
             question, options = args["question"].strip(), args.get("options") or []
             e = self.store.update(errand_id, status="needs_you", why="question", reason=question,

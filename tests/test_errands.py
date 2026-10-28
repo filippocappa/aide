@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -745,6 +746,20 @@ SCENE_PAGES = {
         for name, price in [("margherita", "6,40"), ("diavola", "8,00"), ("capricciosa", "9,20")]) +
         '<div role="dialog" aria-modal="true"><h2>Dove dobbiamo consegnare l\'ordine?</h2>'
         '<button>Aggiungi un nuovo indirizzo</button></div>', "Pizzeria | Delivery"),
+    # A timetable: rows of times, no pictures; the train's name is screen-reader text beside its row, a station
+    # field opens its own search when tapped (read-only, under a see-through link) and suggests on a keystroke.
+    "/trains": _html('<header style="position:sticky;top:0;height:60px;background:#fff"><a href="/news">Infotraffico</a>'
+                     '</header><div style="position:relative"><input readonly placeholder="Partenza" id="from">'
+                     '<a href="#search" style="position:absolute;inset:0" onclick="document.getElementById(\'panel\')'
+                     '.hidden = false; document.getElementById(\'q\').focus(); return false"><span hidden>Cerca</span></a>'
+                     '</div><div id="panel" hidden><input id="q" aria-label="Stazione di partenza" onkeyup="document'
+                     '.getElementById(\'hint\').hidden = false"><div id="hint" role="option" hidden>Torino Porta Nuova'
+                     '</div></div>' + "".join(
+        f'<section><span style="position:absolute;left:-9999px">Treno: Regionale Veloce;{n}</span>'
+        f'<button><b>{a}</b> {span} <b>{b}</b><p>Torino Porta Nuova</p><p>Ivrea</p>{extra}'
+        f'<span>da 7,10€</span></button></section>'
+        for n, a, b, span, extra in [(2713, "05:20", "06:14", "54min", ""), (2013, "05:54", "07:39", "1h 45min", "<span>1 cambio</span>"),
+                                     (2717, "07:20", "08:23", "1h 3min", "")]), "Soluzioni | Treni"),
     "/s": _html("".join(f'<div class="card"><a href="/p/lamp{i}"><img src="/lamp{i}.jpg" width="160" height="160" '
                         f'alt=""></a><h3><a href="/p/lamp{i}">Lampada da tavolo FADO {i}, bianco</a></h3>'
                         f"<span>€{i}9,95</span></div>" for i in range(1, 5)), "Cerca lampada"),
@@ -793,6 +808,21 @@ async def test_real_chromium_scenes(tmp_path):
         assert scene["items"][0]["image"] == "https://shop.test/lamp1.jpg"
         await browser.click(owner, scene["items"][0]["ref"])  # the scene's refs are the model's
         assert browser.where(owner)["url"] == "https://shop.test/p/lamp1"
+
+        # A timetable: a row per train, its times, how long, its changes and price, named after the train.
+        await browser.open(owner, "https://shop.test/trains")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "rows" and scene["items"] == []
+        assert [(r["times"], r["title"], r["places"], r["detail"], r["price"]) for r in scene["rows"]] == [
+            (["05:20", "06:14"], "Regionale Veloce 2713", ["Torino Porta Nuova", "Ivrea"], "54min", "7,10€"),
+            (["05:54", "07:39"], "Regionale Veloce 2013", ["Torino Porta Nuova", "Ivrea"], "1h 45min · 1 cambio", "7,10€"),
+            (["07:20", "08:23"], "Regionale Veloce 2717", ["Torino Porta Nuova", "Ivrea"], "1h 3min", "7,10€")]
+        # The station field: typing in it taps it, types in the search it opens, the last letter as a keystroke.
+        page = await browser.read(owner)
+        field = re.search(r'\[(\d+)\] input:text "Partenza"', page).group(1)
+        await browser.fill(owner, field, "Torino")
+        assert "Torino Porta Nuova" in await browser.read(owner)
+        await browser.click(owner, scene["rows"][1]["ref"])
 
         # A menu is a list too: each dish by its "+", named after it for the model and the live view.
         await browser.open(owner, "https://shop.test/stores/pizzeria")

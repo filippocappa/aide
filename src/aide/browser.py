@@ -37,6 +37,23 @@ _SITE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
 _UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v} Mobile Safari/537.36"
 
 
+_ON_TOP_JS = """e => {
+  e.scrollIntoView({block: 'center', inline: 'center'});
+  const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
+  const t = document.elementFromPoint(x, y);
+  if (!t) return null;
+  const w = t.getBoundingClientRect();
+  // The element, something in it, its label, a box just around it (a styled field's wrapper), or a see-through link
+  // laid over it that opens what it's for (Trenitalia's search box opens its booking panel). Never a banner or a
+  // dialog's button.
+  const over = t.closest('a[href],button,[role=button]');
+  const covers = over && !over.closest('dialog,[role=dialog],[role=alertdialog],[aria-modal=true],[id*=onetrust],[class*=cookie],[id*=cookie]') &&
+    (o => o.left <= r.left + 1 && o.top <= r.top + 1 && o.right >= r.right - 1 && o.bottom >= r.bottom - 1)(over.getBoundingClientRect());
+  return t === e || e.contains(t) || t.control === e || covers ||
+    (t.contains(e) && w.width * w.height <= 4 * r.width * r.height + 1) ? {x, y} : null;
+}"""
+
+
 class BrowserError(Exception):
     """Something the model should read and act on (no such ref, a page that didn't load)."""
 
@@ -373,7 +390,7 @@ _SCENE_JS = r"""
   const iconEl = document.querySelector('link[rel~="apple-touch-icon"],link[rel~="icon"],link[rel="shortcut icon"]');
   const out = {kind: 'page', site: location.hostname.replace(/^www\./, ''), title: clean(document.title).slice(0, 100),
                url: location.href, icon: abs(iconEl ? iconEl.getAttribute('href') : '/favicon.ico'), query,
-               items: [], product: null, cart: null, form: null, captcha: null, signin: null};
+               items: [], rows: [], product: null, cart: null, form: null, captcha: null, signin: null};
 
   // A CAPTCHA: a challenge frame, or a picture of characters to type.
   const challenge = /captcha|robot|human|umano|verifica|verify|security check|controllo di sicurezza|caratteri/i.test(body.slice(0, 4000));
@@ -471,6 +488,56 @@ _SCENE_JS = r"""
     tiles.push({title, price, image, ref: refOf(b)});
   }
 
+  // Rows with a start and an end time and no pictures (trains, buses, flights, slots): each row is the biggest box
+  // around two to six times that has no other row's times; its line, how long, how many changes and the price.
+  const TIME = /(?<![\d:.,])([01]?\d|2[0-3])[:.]([0-5]\d)(?![\d:.,])(?!\s?(€|EUR|%))/g;  // text runs together: no \b
+  // An element's text with a space between its pieces, hidden ones too (textContent runs "2713" into "05:20").
+  const spaced = el => {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let t = '', n;
+    while ((n = w.nextNode())) t += n.nodeValue + ' ';
+    return t;
+  };
+  const timesIn = t => [...t.matchAll(TIME)].map(m => `${m[1].padStart(2, '0')}:${m[2]}`);
+  const rows = [], held = [];
+  const SPOTS = 'li,tr,article,a[href],button,[role=button],[role=listitem],[role=option],[role=row],div,section';
+  for (const el of document.querySelectorAll(SPOTS)) {
+    if (rows.length >= 12) break;
+    const raw = el.textContent || '';  // fast first: most of the page has no two times
+    if (raw.length > 1500 || (raw.match(/\d[:.][0-5]\d/g) || []).length < 2 || timesIn(spaced(el)).length < 2) continue;
+    // The smallest box with two times (none of its children has two), grown while its parent has no more.
+    if ([...el.querySelectorAll(SPOTS)].some(c => timesIn(spaced(c)).length >= 2)) continue;
+    if (!visible(el) || el.closest('header,nav,footer')) continue;
+    const times = timesIn(el.innerText || '');
+    if (times.length < 2 || times.length > 6) continue;
+    let row = el;
+    while (row.parentElement && row.parentElement !== document.body &&
+           timesIn(row.parentElement.innerText || '').length === times.length) row = row.parentElement;
+    if (held.some(h => h.contains(row) || row.contains(h))) continue;
+    held.push(row);
+    const lines = (row.innerText || '').split('\n').map(clean).filter(Boolean);
+    const span = clean(spaced(row)).match(/\b(\d{1,2}\s?h(?:\s?\d{1,2}\s?(?:min|m)\b)?|\d{1,3}\s?min)\b/i);
+    const changes = clean(spaced(row)).match(/\b(diretto|direct|nonstop|senza cambi|\d+\s?(?:cambi[oi]?|changes?|scali?|stops?))\b/i);
+    const names = lines.filter(t => /[a-z]{3}/i.test(t) && !/\d/.test(t) && t.length <= 40 &&
+      !/dettagli|details|selezion|select|acquista|buy|book|prenota|cambi|change|scal|stop|diretto|direct/i.test(t));
+    // The train, the bus or the flight ("Regionale Veloce 2747", "Frecciarossa 9512", "Italo 8971"), from the row's
+    // text (screen-reader text too), else its first name.
+    const SERVICE = /\b(Frecciarossa|Frecciargento|Frecciabianca|Intercity(?: Notte)?|Eurocity|Euronight|Regionale Veloce|Regionale|Italo|Railjet|TGV|ICE|Flixbus|FlixTrain|Bus)\b[\s;:]*(\d{2,5})?/i;
+    let svc = null;
+    const own = timesIn(spaced(row));  // hidden ones too (a change's times in its folded details)
+    for (let box = row, up = 0; box && up < 4 && !svc; box = box.parentElement, up++) {
+      if (timesIn(spaced(box)).some(t => !own.includes(t))) break;  // another row's times: too far
+      svc = spaced(box).match(SERVICE);
+    }
+    const name = svc ? clean(svc[1] + (svc[2] ? ' ' + svc[2] : '')) : names[0];
+    const places = [...new Set(names)].filter(t => !svc || !t.includes(svc[1])).slice(0, 2);
+    const go = row.matches('a[href],button,[role=button],[role=option]') ? row
+      : row.querySelector('a[href],button,[role=button],input[type=radio]') || row;
+    rows.push({times: [times[0], times[1]], title: name || null, places,
+               detail: [span && span[0], changes && changes[0]].filter(Boolean).join(' · ') || null,
+               price: priceIn(spaced(row)), ref: refOf(go)});
+  }
+
   // A product: JSON-LD first, then the page's own tags, then its heading, price and biggest picture.
   const ld = [];
   const take = o => {
@@ -519,6 +586,7 @@ _SCENE_JS = r"""
     else if (/checkout|\/buy\/|\/spc\b|gp\/buy|\/cassa|\/pagamento|\/payment/.test(path)) out.kind = 'checkout';
     else if (/\/cart\b|\/basket\b|\/carrello|\/bag\b|gp\/aw\/c\b|gp\/cart/.test(path)) out.kind = 'cart';
     else if (out.product && (ld.length || productPath || meta('og:type') === 'product')) out.kind = 'product';
+    else if (rows.length >= 3 && tiles.filter(t => t.image).length < 3) out.kind = 'rows';
     // A list of things: search results, a shop's or a restaurant's menu, a list of restaurants.
     else if (tiles.length >= 3 && (query || /search|\/s\b|cerca|ricerca/.test(path) ||
              (!out.product && tiles.filter(t => t.image || t.price).length >= 3))) out.kind = 'results';
@@ -533,6 +601,7 @@ _SCENE_JS = r"""
     if (way) out.signin = refOf(way);
   }
   if (out.kind === 'results') out.items = tiles.filter(t => t.price).concat(tiles.filter(t => !t.price)).slice(0, 6);
+  out.rows = out.kind === 'rows' ? rows.slice(0, 8) : [];
   if (out.kind !== 'product') out.product = out.kind === 'checkout' || out.kind === 'cart' ? null : out.product;
   document.documentElement.dataset.aideNext = String(next);
   return out;
@@ -808,12 +877,32 @@ class Browser:
         box, label = await self._where_is(locator)
         self._did(owner, "click", label, box)
         try:
-            await locator.scroll_into_view_if_needed(timeout=3000)
-            await locator.click()
+            await self._tap(locator)
         except Exception as e:
-            raise BrowserError(f"Couldn't click [{ref}]: {str(e).splitlines()[0][:200]}") from None
+            raise BrowserError(f"Couldn't click [{ref}]: {self._why(e)}") from None
         await self._settle(page)
         return "Clicked. Now: " + await self._heading(self._page(owner))
+
+    @staticmethod
+    def _why(e: Exception) -> str:
+        """Playwright's error in a line, naming what covers the element when something does (a banner, a bar)."""
+        text = str(e)
+        if m := re.findall(r"(<[^/>][^>]{0,119}>)[^<\n]*(?:</\w+>)?(?: from <[^>]{1,80}>…</\w+> subtree)? intercepts pointer events", text):
+            return f"something is over it: {m[-1]}. Close or scroll past it first (read_page)."
+        return text.splitlines()[0][:200]
+
+    @staticmethod
+    async def _tap(locator) -> None:
+        try:
+            await locator.scroll_into_view_if_needed(timeout=3000)
+            await locator.click(timeout=4000)
+        except Exception:
+            # Playwright's retries scroll it under a sticky bar (Trenitalia's): in the middle of the screen, and a tap
+            # on that spot when it's the element that's there (not a banner over it).
+            spot = await locator.evaluate(_ON_TOP_JS)
+            if not spot:
+                raise
+            await locator.page.mouse.click(spot["x"], spot["y"])
 
     async def fill(self, owner: str, ref: str, text: str, submit: bool = False) -> str:
         page = self._page(owner)
@@ -823,11 +912,23 @@ class Browser:
         box, label = await self._where_is(locator)
         self._did(owner, "type", None if label is None else text, box)  # never what goes in a password field
         try:
-            await locator.fill(text)
+            if await locator.evaluate("e => e.readOnly === true"):
+                # A field that opens its own search when tapped (stations, places, dates): type in that one.
+                await self._tap(locator)
+                await page.wait_for_timeout(700)
+                locator = page.locator("input:focus:not([readonly]), textarea:focus, [contenteditable=true]:focus")
+                if await locator.count() == 0:
+                    raise BrowserError(f"[{ref}] can't be typed in: tapping it opened something else. read_page to "
+                                       "see what.")
+            # The last letter as a real keystroke: autocompletes that wait for one (stations, places) open their list.
+            await locator.fill(text[:-1])
+            await locator.press_sequentially(text[-1:])
             if submit:
                 await locator.press("Enter")
+        except BrowserError:
+            raise
         except Exception as e:
-            raise BrowserError(f"Couldn't type in [{ref}]: {str(e).splitlines()[0][:200]}") from None
+            raise BrowserError(f"Couldn't type in [{ref}]: {self._why(e)}") from None
         if submit:
             await self._settle(page)
             return "Typed and pressed Enter. Now: " + await self._heading(self._page(owner))
