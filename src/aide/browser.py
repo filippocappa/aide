@@ -330,7 +330,7 @@ _SCENE_JS = r"""
   const iconEl = document.querySelector('link[rel~="apple-touch-icon"],link[rel~="icon"],link[rel="shortcut icon"]');
   const out = {kind: 'page', site: location.hostname.replace(/^www\./, ''), title: clean(document.title).slice(0, 100),
                url: location.href, icon: abs(iconEl ? iconEl.getAttribute('href') : '/favicon.ico'), query,
-               items: [], product: null, cart: null, form: null, captcha: null};
+               items: [], product: null, cart: null, form: null, captcha: null, signin: null};
 
   // A CAPTCHA: a challenge frame, or a picture of characters to type.
   const challenge = /captcha|robot|human|umano|verifica|verify|security check|controllo di sicurezza|caratteri/i.test(body.slice(0, 4000));
@@ -453,6 +453,14 @@ _SCENE_JS = r"""
     else if (out.product && (ld.length || productPath || meta('og:type') === 'product')) out.kind = 'product';
     else if (tiles.length >= 3 && (query || /search|\/s\b|cerca|ricerca/.test(path))) out.kind = 'results';
     else if (out.product) out.kind = 'product';
+  }
+  // The way to the login, on a page that isn't one ("Accedi ›" on a shop's home).
+  if (!out.form && !out.captcha) {
+    const way = [...document.querySelectorAll('a[href],button,[role=button]')].filter(visible).find(el => {
+      const t = textOf(el);
+      return t.length <= 40 && /\b(accedi|log ?in|sign ?in|anmelden|se connecter|iniciar sesi[oó]n)\b/i.test(t);
+    });
+    if (way) out.signin = refOf(way);
   }
   if (out.kind === 'results') out.items = tiles.filter(t => t.price).concat(tiles.filter(t => !t.price)).slice(0, 6);
   if (out.kind !== 'product') out.product = out.kind === 'checkout' || out.kind === 'cart' ? null : out.product;

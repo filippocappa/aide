@@ -1485,7 +1485,7 @@ Server to app:
   {"kind": "results", "site": "amazon.it", "title": "Amazon.it : padella in ghisa", "url": "https://www.amazon.it/s?k=…",
    "icon": "https://www.amazon.it/favicon.ico", "query": "padella in ghisa",
    "items": [{"title": "VICTORIA Padella in Ghisa 30 cm", "price": "49,52 €", "image": "https://m.media-amazon.com/…", "ref": "41"}],
-   "product": null, "cart": {"count": 0, "total": null}, "form": null, "captcha": null}
+   "product": null, "cart": {"count": 0, "total": null}, "form": null, "captcha": null, "signin": "3"}
   ```
   - `kind`: `results` (search results: `items`, up to 6, each with its picture, name, price or null, and `ref`),
     `product` (`product`: `{title, price, image, rating}`, any but `title` may be null), `cart`, `checkout`,
@@ -1501,9 +1501,11 @@ Server to app:
   - `captcha` (on `captcha`): `{"kind": "text" | "grid" | "checkbox" | "other", "ref": "12", "input_ref": "13",
     "submit_ref": "14"}`: `text` is a picture of characters to type in `input_ref`, then press `submit_ref` (either may
     be null); the others are solved by tapping its picture (`crop`).
+  - `signin`: on a page that isn't a login, the ref of its "Accedi" / "Log in" link or button, or null: `press` it to
+    go to the login (the app's "Go to the login").
   - Refs are the same as the model's (`read_page`), and may change when the page does.
 - `{"type": "crop", "data": "<base64 JPEG>", "box": {"x": 0.1, "y": 0.3, "width": 0.8, "height": 0.2}}` (since
-  2026-10-28): the CAPTCHA's picture, with a scene of kind `captcha` (again when it changes). `box` is where it is on
+  2026-10-28): the CAPTCHA's picture, with a scene of kind `captcha` (again whenever the picture changes). `box` is where it is on
   the page, as fractions of the frame: a tap at (u, v) on the picture is `tap` at (x + u·width, y + v·height).
 The app shows the errand in its chat card while it's going (a socket per card on screen; a refused socket, `1008`
 because the page isn't open yet, is tried again every few seconds).
@@ -1518,7 +1520,7 @@ App to server (only while `control` is true):
 - `{"type": "fill", "ref": "7", "text": "…"}` (since 2026-10-28): your text into one of the last scene's `form`
   fields or its CAPTCHA's `input_ref` (other refs are ignored). Never logged, stored or given to the model.
 - `{"type": "press", "ref": "8"}` (since 2026-10-28): press the last scene's form `submit`, one of its `choices`,
-  `remember`, or the CAPTCHA's `submit_ref`. Pressing `submit` ticks `remember` first when it isn't ticked.
+  `remember`, its `signin`, or the CAPTCHA's `submit_ref`. Pressing `submit` ticks `remember` first when it isn't ticked.
 - `{"type": "frames", "on": true}` (since 2026-10-28, any time): start or stop the frames ("Show the real page").
 - `{"type": "done"}`: you're done. For an errand waiting on you, the same as `POST /v1/errands/{id}/done`; with
   `?site=`, the page is closed (the login stays). The server then closes the socket.

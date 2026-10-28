@@ -1804,7 +1804,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             press |= {r for r in ((form.get("submit") or {}).get("ref"), form.get("remember")) if r}
             if captcha.get("input_ref"):
                 fill.add(captcha["input_ref"])
-            press |= {r for r in (captcha.get("submit_ref"), captcha.get("ref")) if r}
+            press |= {r for r in (captcha.get("submit_ref"), captcha.get("ref"), (scene or {}).get("signin")) if r}
             return fill, press
 
         async def send() -> None:
@@ -1837,12 +1837,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     if scene is not None and scene != shown["scene"]:
                         shown["scene"] = scene
                         await ws.send_json({"type": "scene", **scene})
-                        captcha = scene.get("captcha")
-                        crop = await browser.crop(owner, captcha["ref"]) if captcha else None
-                        if crop and crop[0] != last_crop:
-                            last_crop = crop[0]
-                            await ws.send_json({"type": "crop", "data": base64.b64encode(crop[0]).decode(),
-                                                "box": crop[1]})
+                    # The CAPTCHA's picture, again when it changes (a grid's tiles change under your taps).
+                    captcha = (shown["scene"] or {}).get("captcha") if scene is not None else None
+                    crop = await browser.crop(owner, captcha["ref"]) if captcha else None
+                    if crop and crop[0] != last_crop:
+                        last_crop = crop[0]
+                        await ws.send_json({"type": "crop", "data": base64.b64encode(crop[0]).decode(),
+                                            "box": crop[1]})
                 if watching["on"]:
                     focus = await browser.focus(owner) if page is not None and control() else {"field": None}
                     if focus != last_focus:

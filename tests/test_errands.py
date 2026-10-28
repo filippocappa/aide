@@ -603,7 +603,7 @@ async def test_the_live_view(env):
 
 
 LOGIN = {"kind": "login", "site": "amazon.it", "title": "Accedi", "url": "https://www.amazon.it/login", "icon": None,
-         "query": None, "items": [], "product": None, "cart": None, "captcha": None,
+         "query": None, "items": [], "product": None, "cart": None, "captcha": None, "signin": None,
          "form": {"fields": [{"ref": "7", "kind": "username", "label": "Email", "filled": False},
                              {"ref": "9", "kind": "password", "label": "Password", "filled": False}],
                   "submit": {"ref": "10", "text": "Accedi"}, "choices": [], "remember": "11", "remembered": False,
@@ -741,7 +741,7 @@ SCENE_PAGES = {
     "/s": _html("".join(f'<div class="card"><a href="/p/lamp{i}"><img src="/lamp{i}.jpg" width="160" height="160" '
                         f'alt=""></a><h3><a href="/p/lamp{i}">Lampada da tavolo FADO {i}, bianco</a></h3>'
                         f"<span>€{i}9,95</span></div>" for i in range(1, 5)), "Cerca lampada"),
-    "/dp/B0LODGE": _html('<h1>Lodge L8SK3 Tegame tondo</h1><img src="/lodge.jpg" width="300" height="300">'
+    "/dp/B0LODGE": _html('<a href="/ap/signin">Ciao, accedi</a><h1>Lodge L8SK3 Tegame tondo</h1><img src="/lodge.jpg" width="300" height="300">'
                          "<button>Aggiungi al carrello</button>", "Lodge L8SK3 Tegame tondo : Shop",
                          '<script type="application/ld+json">{"@context": "https://schema.org", "@type": "Product", '
                          '"name": "Lodge L8SK3", "image": "https://shop.test/lodge.jpg", "offers": {"price": "49.15", '
@@ -792,6 +792,9 @@ async def test_real_chromium_scenes(tmp_path):
         assert scene["kind"] == "product"
         assert scene["product"] == {"title": "Lodge L8SK3", "price": "49.15 EUR",
                                     "image": "https://shop.test/lodge.jpg", "rating": 4.7}
+        assert scene["signin"] is not None  # its "Accedi" link
+        await browser.press_ref(owner, scene["signin"])
+        assert browser.where(owner)["url"] == "https://shop.test/ap/signin"
 
         await browser.open(owner, "https://shop.test/ap/signin")
         scene = await browser.scene(owner)
