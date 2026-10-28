@@ -526,7 +526,7 @@ struct ErrandCard: View {
 }
 
 /// The errand in its card while it's going, drawn by the app (ErrandStage) from what the page is and what Aide
-/// does, with Aide's line for it underneath. A tap opens it full size; on a login, its button opens your part.
+/// does, with Aide's line for it underneath. On a login, a code or a CAPTCHA, it (and its button) opens your part.
 struct ErrandLiveBox: View {
     let errand: Errand
     let tint: Color
@@ -602,11 +602,10 @@ struct ErrandLiveBox: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.line))
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .onTapGesture(perform: open)
+            .onTapGesture { if errand.needsLiveView { open() } }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Aide's browser")
             .accessibilityValue(caption ?? "")
-            .accessibilityHint("Opens it full size")
     }
 }
 
@@ -682,25 +681,35 @@ struct ErrandButtons: View {
                             .buttonStyle(.bordered)
                     }
                 }
-                HStack(spacing: 10) {
-                    if errand.needsLiveView {
-                        primary(Self.yourPart(errand), action: takeOver)
-                    } else if errand.status == "waiting_confirm" {
-                        primary("Review and confirm", action: review)
-                    } else if errand.status == "interrupted" {
-                        primary("Go on") { answer("go on") }
-                    } else if errand.isWorking {
-                        Button(action: takeOver) {
-                            Label("Watch", systemImage: "arrow.up.left.and.arrow.down.right").frame(maxWidth: .infinity)
-                        }
+                if let title = primaryTitle {
+                    HStack(spacing: 10) {
+                        primary(title, action: primaryAction)
+                        Button(role: .destructive, action: cancel) { Text("Cancel").frame(maxWidth: .infinity) }
                             .buttonStyle(.bordered)
                     }
-                    Button(role: .destructive, action: cancel) { Text("Cancel").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered)
+                } else {
+                    // Only watching: the box above shows it, so just a small way to stop it.
+                    Button("Stop", role: .destructive, action: cancel)
+                        .font(.subheadline)
+                        .buttonStyle(.borderless)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
             .disabled(busy)
         }
+    }
+
+    private var primaryTitle: String? {
+        if errand.needsLiveView { return Self.yourPart(errand) }
+        if errand.status == "waiting_confirm" { return "Review and confirm" }
+        if errand.status == "interrupted" { return "Go on" }
+        return nil
+    }
+
+    private func primaryAction() {
+        if errand.needsLiveView { takeOver() }
+        else if errand.status == "waiting_confirm" { review() }
+        else { answer("go on") }
     }
 
     /// The button for your part of an errand that needs you.

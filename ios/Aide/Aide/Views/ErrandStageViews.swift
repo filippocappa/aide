@@ -713,8 +713,19 @@ struct StageSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) { content }
-                    .padding(16)
+                VStack(alignment: .leading, spacing: 16) {
+                    content
+                    if !loggedIn {
+                        // Out of the way: for what Aide's own screens don't cover.
+                        Button { realPage = true } label: {
+                            Text("Open the real page").font(.footnote).underline().foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 8)
+                    }
+                }
+                .padding(16)
             }
             .scrollBounceBehavior(.basedOnSize)
             .safeAreaInset(edge: .bottom) { footer }
@@ -900,27 +911,21 @@ struct StageSheet: View {
 
     @ViewBuilder
     private var footer: some View {
-        VStack(spacing: 6) {
-            if live.control && !loggedIn && !(live.scene?.isYourTurn ?? false) {
-                Button {
-                    Task { await finish() }
-                } label: {
-                    Group { if finishing { ProgressView() } else { Text(isSite ? "Done" : "I'm done") } }
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .foregroundStyle(Theme.onAccent)
-                .controlSize(.large)
-                .disabled(finishing)
+        if live.control && !loggedIn && !(live.scene?.isYourTurn ?? false) {
+            Button {
+                Task { await finish() }
+            } label: {
+                Group { if finishing { ProgressView() } else { Text(isSite ? "Done" : "I'm done") } }
+                    .frame(maxWidth: .infinity)
             }
-            if !loggedIn {
-                Button("Open the real page") { realPage = true }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+            .buttonStyle(.borderedProminent)
+            .foregroundStyle(Theme.onAccent)
+            .controlSize(.large)
+            .disabled(finishing)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(Theme.grouped)
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(.bar)
     }
 
     /// Every field has something, or the page already had it.
