@@ -446,7 +446,7 @@ private struct DigestCard: View {
                 let upcoming = events.filter { $0.allDay || ($0.startDate ?? .distantFuture) > Date() }
                 for event in upcoming.prefix(2) {
                     let time = event.allDay ? "All day" : event.startDate?.formatted(date: .omitted, time: .shortened) ?? ""
-                    out.append(Line(icon: "calendar", color: Theme.tint(for: event.calendar ?? event.title),
+                    out.append(Line(icon: "calendar", color: event.tint,
                                     text: "\(time) \(event.title)"))
                 }
                 if upcoming.count > 2 {

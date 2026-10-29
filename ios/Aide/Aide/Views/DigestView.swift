@@ -99,7 +99,7 @@ struct EventRows: View {
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
             }
-            .foregroundStyle(Theme.tint(for: event.calendar ?? event.title))
+            .foregroundStyle(event.tint)
             .frame(width: 58, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(event.title)

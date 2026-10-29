@@ -1518,7 +1518,7 @@ final class EventWeekTests: XCTestCase {
 
     private func at(_ s: String) -> Date { Wire.parse(s)! }
 
-    func testPastEventsAreLeftOutAndTheWeekOpensOnTheFirstNewOne() throws {
+    func testPastEventsAreLeftOutAndTheStripOpensOnTheFirstNewOne() throws {
         let card = try events("""
         [{"id": "a", "title": "Lecture", "start": "2026-10-27T10:00:00+01:00", "end": "2026-10-27T12:00:00+01:00"},
          {"id": "b", "title": "Macro midterm", "start": "2026-11-04T08:00:00+01:00", "end": "2026-11-04T11:00:00+01:00",
@@ -1529,10 +1529,10 @@ final class EventWeekTests: XCTestCase {
         """)
         let now = at("2026-10-29T12:00:00+01:00")
         XCTAssertEqual(EventWeek.shown(card, now: now).map(\.id), ["c", "ep_1-1", "b"])
-        let week = EventWeek.opening(card, now: now, calendar: rome)
-        XCTAssertEqual(Wire.dayString(week), "2026-11-02")  // the proposed session's Monday, not this week
-        let day = EventWeek.selection(in: week, events: EventWeek.shown(card, now: now), now: now, calendar: rome)
-        XCTAssertEqual(rome.component(.day, from: day), 3)
+        let days = EventWeek.span(EventWeek.shown(card, now: now), now: now, calendar: rome)
+        XCTAssertEqual(days.map { rome.component(.day, from: $0) }, [29, 30, 31, 1, 2, 3, 4])  // today to the last
+        let day = EventWeek.selection(in: days, events: EventWeek.shown(card, now: now), now: now, calendar: rome)
+        XCTAssertEqual(rome.component(.day, from: day), 3)  // the proposed session's day, not today
         XCTAssertTrue(card[2].isProposed && card[2].isNew && card[2].calendarID == nil)
         XCTAssertEqual(card[1].calendarID, "b")
     }
@@ -1552,6 +1552,21 @@ final class EventWeekTests: XCTestCase {
         [{"id": "a", "title": "Lecture", "start": "2026-10-20T10:00:00+02:00", "end": "2026-10-20T12:00:00+02:00"}]
         """)
         XCTAssertEqual(EventWeek.shown(card, now: at("2026-10-29T12:00:00+01:00")).map(\.id), ["a"])
+    }
+
+    func testAStripIsAtLeastAWeekAndReachesAMovedEvent() throws {
+        let now = at("2026-10-29T12:00:00+01:00")
+        XCTAssertEqual(EventWeek.span([], now: now, calendar: rome).count, 7)
+        let moved = at("2026-11-20T09:00:00+01:00")
+        XCTAssertEqual(EventWeek.span([], through: moved, now: now, calendar: rome).last.map(Wire.dayString), "2026-11-20")
+    }
+
+    func testAnEventCarriesItsCalendarsColour() throws {
+        let card = try events("""
+        [{"id": "a", "title": "Run", "calendar": "Run", "color": "#00274A",
+          "start": "2026-10-29T17:00:00+01:00", "end": "2026-10-29T18:00:00+01:00"}]
+        """)
+        XCTAssertEqual(card[0].color, "#00274A")
     }
 
     func testAnAddedItemMovesItsEvent() throws {

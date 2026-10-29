@@ -336,6 +336,8 @@ struct CalendarEvent: Decodable, Identifiable, Hashable {
     let location: String?
     let notes: String?
     let recurring: Bool
+    /// Its calendar's colour in iCloud, `#RRGGBB`.
+    let color: String?
     /// On a chat card (docs/API.md, "Chat"): "found" (a search hit), "created" this turn or "proposed" (in a plan).
     let change: String?
     /// A proposed item's plan (`ep_…`), its status ("proposed", "added", "dropped") and, once added, its event's id.
@@ -355,6 +357,7 @@ struct CalendarEvent: Decodable, Identifiable, Hashable {
         location = try c.decodeIfPresent(String.self, forKey: .location)
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
         recurring = try c.decodeIfPresent(Bool.self, forKey: .recurring) ?? false
+        color = try c.decodeIfPresent(String.self, forKey: .color)
         change = try c.decodeIfPresent(String.self, forKey: .change)
         plan = try c.decodeIfPresent(String.self, forKey: .plan)
         status = try c.decodeIfPresent(String.self, forKey: .status)
@@ -362,7 +365,7 @@ struct CalendarEvent: Decodable, Identifiable, Hashable {
         error = try c.decodeIfPresent(String.self, forKey: .error)
     }
     private enum CodingKeys: String, CodingKey {
-        case id, title, calendar, start, end, allDay, location, notes, recurring, change, plan, status, event, error
+        case id, title, calendar, start, end, allDay, location, notes, recurring, color, change, plan, status, event, error
     }
 
     var startDate: Date? { allDay ? Wire.day(start) : Wire.parse(start) }

@@ -38,6 +38,17 @@ enum Theme {
         return palette[Int(h % UInt32(palette.count))]
     }
 
+    /// A colour from the server (`#RRGGBB`), lightened a little in dark mode so a dark one stays readable on black.
+    static func readable(_ hex: UInt32) -> Color {
+        Color(uiColor: UIColor { traits in
+            let base = UIColor(hex: hex)
+            guard traits.userInterfaceStyle == .dark else { return base }
+            var (r, g, b, a): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+            base.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return UIColor(red: r + (1 - r) * 0.3, green: g + (1 - g) * 0.3, blue: b + (1 - b) * 0.3, alpha: a)
+        })
+    }
+
     /// Switch colour: Sand-on-white switches vanish in dark mode, so switches get a sage green.
     static let toggle = Color(red: 0.15, green: 0.68, blue: 0.36)
     /// Soft halo behind Pebble.
@@ -71,13 +82,15 @@ extension Agent {
     /// in dark mode so they stay readable on the dark background.
     var tint: Color {
         guard !orchestrator, let hex else { return Theme.accent }
-        return Color(uiColor: UIColor { traits in
-            let base = UIColor(hex: hex)
-            guard traits.userInterfaceStyle == .dark else { return base }
-            var (r, g, b, a): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
-            base.getRed(&r, green: &g, blue: &b, alpha: &a)
-            return UIColor(red: r + (1 - r) * 0.3, green: g + (1 - g) * 0.3, blue: b + (1 - b) * 0.3, alpha: a)
-        })
+        return Theme.readable(hex)
+    }
+}
+
+extension CalendarEvent {
+    /// Its calendar's own colour, as in the Calendar app; a stable one from the calendar's name when iCloud gave none.
+    var tint: Color {
+        if let color, color.hasPrefix("#"), let hex = UInt32(color.dropFirst(), radix: 16) { return Theme.readable(hex) }
+        return Theme.tint(for: calendar ?? title)
     }
 }
 
