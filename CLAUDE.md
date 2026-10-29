@@ -232,8 +232,9 @@ its pill until it leaves the picture). The packet page (`ScanSheet`, redesigned 
 tile, Ultra-processed, a big grams field prefilled with the usual portion or a serving, portion chips, the kcal and
 macros, "Log 240 kcal". Chat photos keep the system camera. Since 2026-10-30: the phone's virtual back camera (triple,
 dual wide…) with lens buttons as in the Camera app (0.5, 1, 2, the telephoto), pinch to zoom, tap to focus, macro
-switched on by the phone up close (a Macro badge), the preview kept upright by following the rotation coordinator,
-a viewfinder that turns sand and wide on a barcode, a white shutter.
+switched on by the phone up close (a Macro badge), the preview kept upright by following the rotation coordinator.
+Barcodes are read by Vision on the live frames (~8 a second, 10–20 ms each), not `AVCaptureMetadataOutput`: asking it
+for any barcode type held the camera's start up exactly 9 s on the 15 Pro Max; now it runs in ~0.15 s.
 Weight (2026-10-29, both sides, contract "Apple Health", Weight; `weight.py`, `tools/weight.py`): readings logged in
 chat (`log_weight`) or the app plus Health's, the 7-day average, the change over 3 weeks and the rate a week (28 days)
 against the goal's pace (gain +0.25–0.5% a month), with a verdict. The phone writes Aide's readings to Health as Body
