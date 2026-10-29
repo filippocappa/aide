@@ -11,8 +11,12 @@ MAX_RANGE = 366  # days
 
 
 def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
-    def day_line(d: dict) -> str:
+    def day_line(d: dict, scored: dict) -> str:
         parts = [f"{date.fromisoformat(d['date']):%a %d %b}"]
+        got = [f"{name} {scored[key]}%" for key, name in (("recovery", "recovery"), ("sleep", "sleep score"),
+                                                          ("strain", "strain")) if scored.get(key) is not None]
+        if got:
+            parts.append(", ".join(got))
         if sleep := d.get("sleep"):
             when = ""
             if "bedtime" in sleep and "wake" in sleep:
@@ -50,7 +54,13 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
         empty = [start + timedelta(days=i) for i in range((end - start).days + 1)]
         empty = [day for day in empty if day.isoformat() not in have]
         workouts = [w for d in days for w in d.get("workouts", [])]
-        out = [f"Health from {start:%a %d %b} to {end:%a %d %b}, newest first:", *map(day_line, days), "",
+        scored = {s["date"]: s for s in store.score_history(start, end)}
+        today = store.scores(end)
+        load = today["load"]
+        out = [f"Health from {start:%a %d %b} to {end:%a %d %b}, newest first:",
+               *(day_line(d, scored.get(d["date"], {})) for d in days), "",
+               f"{end:%a %d %b}: {today['line']}"
+               + (f" Cardio load {load['label']} (last 7 days {load['ratio']}× the last 28)." if load else ""), "",
                "Averages:",
                f"- sleep: {avg(sleep, hours)}",
                f"- resting HR: {avg([d['resting_hr'] for d in days if 'resting_hr' in d], lambda v: f'{v:.0f} bpm')}",
@@ -62,8 +72,9 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
         return "\n".join(out)
 
     return [
-        Tool("health", "Read the user's Apple Health summaries for a date range: sleep (time asleep, bedtime, "
-             "wake), naps, resting heart rate, HRV, steps, exercise minutes, workouts and Inhaler Usage (where the user "
+        Tool("health", "Read the user's Apple Health summaries for a date range: the day's scores (recovery, sleep "
+             "and strain, 0–100%, the same numbers the app shows; strain's target comes from recovery), sleep (time "
+             "asleep, bedtime, wake), naps, resting heart rate, HRV, steps, exercise minutes, workouts and Inhaler Usage (where the user "
              "logs coffees; the days with nothing logged are listed), per day and on average. "
              "Default: the last 7 days. Data arrives from the phone, so the latest day may be partial. Compare with "
              "the user's own numbers; don't make medical claims.",

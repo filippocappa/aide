@@ -535,9 +535,10 @@ made last, since 2026-10-26) →
     {"type": "mail", "title": "Mail", "items": [{"id": "…", "from": "Dr. Rossi", "subject": "Appointment", "preview": "…", "received_at": "…", "unread": true}]},
     {"type": "reminders", "title": "Due today", "reminders": [ /* Reminder objects, plus "overdue": true | false */ ]},
     {"type": "habits", "title": "Habits", "habits": [ /* Habit objects, see below */ ]},
-    {"type": "sleep", "title": "Last night", "sleep": { /* Sleep object, see Apple Health */ }, "usual_asleep_min": 438},
+    {"type": "sleep", "title": "Last night", "sleep": { /* Sleep object, see Apple Health */ }, "usual_asleep_min": 438,
+     "score": 84},
     {"type": "recovery", "title": "Recovery", "level": "good", "summary": "HRV above your usual, resting heart rate normal.",
-     "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54},
+     "score": 72, "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54},
     {"type": "replies", "title": "Replies to send", "drafts": [ /* Draft objects, see Mail drafts; evening only */ ]},
     {"type": "objectives", "title": "Objectives for today", "period": "day", "start": "2026-10-19",
      "objectives": [ /* Objective objects, see Objectives */ ]},
@@ -585,6 +586,9 @@ The app skips section types it doesn't know. `404` if none has been generated ye
   is under 85% of usual or resting HR is 5 or more above usual, `good` if HRV is at or above usual and resting HR
   at or below usual, otherwise `normal`. `summary` is one plain sentence from code. Both are comparisons with
   the user's own usual numbers, not medical advice, and are worded that way.
+  Since 2026-10-30 both carry `score`, the day's Sleep and Recovery scores (Apple Health, "Scores"; `null` while
+  they can't be worked out). When the recovery `score` is there, `level` comes from it (under 34 `low`, under 67
+  `normal`, else `good`) instead of the rule above.
 - **Objectives** (live like the other data sections, left out when there are none): `daily` and `wake` show the
   day's (`active` and `proposed`), `evening` reviews today's (`active` only), `weekly` reviews last week's and shows
   the week's, `monthly` reviews last month's and shows the month's. The plans for those periods are made just
@@ -1226,9 +1230,13 @@ the server's liveness check; these routes sit under it and need the token like e
      "end": "2026-10-19T08:24:00+02:00", "minutes": 54, "kcal": 656, "km": 9.8}
   ],
   "weight_kg": 74.2,
-  "vo2max": 51.3
+  "vo2max": 51.3,
+  "max_hr": 184,
+  "hr_minutes": [[90, 212.5], [95, 96.0], [100, 41.5], [140, 12.0], [145, 18.5], [150, 9.0]],
+  "hr_hourly": [52, 50, 49, null, 48, 50, 51, 74, 98, 81, …, 66]
 }
 ```
+Each workout may also carry `"avg_hr": 151, "max_hr": 184`.
 - **Missing or `null` means no data** for that field. Every number may be missing.
 - `date` is the local calendar day. `steps`, `active_kcal`, `exercise_min`, `inhaler_usage` and `workouts` cover
   00:00–24:00. `inhaler_usage` (since 2026-10-26) is Health's Inhaler Usage count, for a limit habit's `health`.
@@ -1249,6 +1257,11 @@ the server's liveness check; these routes sit under it and need the token like e
   body mass, `vo2max` Apple's latest VO2 max estimate that day (mL/kg/min); both only on days with a sample. The food
   targets' proposal reads them.
 - `workouts[].id` is the HealthKit workout UUID: stable, so re-sending the same workout is harmless.
+- Heart rate (since 2026-10-30, for Strain; summaries, raw samples never leave the phone): `hr_minutes` is the day's
+  minutes per 5-bpm bucket, `[bpm_floor, minutes]`, from 90 bpm up, buckets with no time left out. Each heart-rate
+  sample counts until the next one, at most 10 min. `hr_hourly` is 24 averages (00:00 to 23:00, `null` for an hour
+  with no sample), for the day chart. `max_hr` is the day's highest sample. `workouts[].avg_hr` and `max_hr` come from
+  the workout's own heart-rate statistics.
 
 ### Workout types
 
@@ -1262,6 +1275,8 @@ added; treat an unknown one like `other`.
 |---|---|---|
 | `POST /v1/health/days` | `{"days": [Health day]}` (up to 90) | `{"ok": true, "saved": 7, "checked": [Habit]}`: `checked` = habits this upload checked through workouts |
 | `GET /v1/health/days` | `?from=2026-10-01&to=2026-10-19` (both optional; default the last 30 days) | `{"days": [Health day]}`, newest first |
+| `GET /v1/health/scores` | `?date=2026-10-19` (default today) | the day's Scores, below |
+| `GET /v1/health/scores/history` | `?days=30&to=2026-10-19` (`days` 1–366, default 30; `to` default today) | `{"days": [{"date", "sleep", "recovery", "strain"}]}`: each day's three scores (`null` where there's none), newest first |
 | `POST /v1/wake` | `{"at": "2026-10-19T07:42:10+02:00", "source": "shortcut", "day": Health day \| null}` | `{"started": true}`, or `{"started": false, "reason": "already"}` (`already`, `off`, `outside_hours`) |
 
 - **Uploads replace by `date`.** A day that's sent again overwrites the stored one, because data arrives late
@@ -1271,6 +1286,74 @@ added; treat an unknown one like `other`.
     numbers work from the first morning;
   - when HealthKit wakes the app in the background with new sleep or a new workout (right away) or new steps
     (at most hourly): the last 2 days.
+
+### Scores
+
+Three 0–100 numbers for a day, worked out by the server from the stored days (`scores.py`), so the app, Coach,
+the digests and the widgets all see the same ones. Each compares the day with the user's own past (medians over
+the weeks before), in the spirit of Whoop and Bevel. The formulas are Aide's own and may be tuned. They are not
+medical advice.
+
+```json
+{
+  "date": "2026-10-30",
+  "sleep": {
+    "score": 84, "asleep_min": 400, "need_min": 486, "debt_min": 36,
+    "contributors": [
+      {"key": "duration", "label": "Hours vs need", "value": "6h40 of 8h06", "score": 82, "weight": 50},
+      {"key": "restorative", "label": "Deep and REM", "value": "2h31 · 38%", "score": 94, "weight": 20},
+      {"key": "efficiency", "label": "Time asleep in bed", "value": "91%", "score": 94, "weight": 15},
+      {"key": "consistency", "label": "Bedtime vs usual", "value": "0h38 later", "score": 91, "weight": 15}
+    ]
+  },
+  "recovery": {
+    "score": 72, "level": "good", "calibrating": null, "flags": [],
+    "contributors": [
+      {"key": "hrv", "label": "HRV", "value": 61.5, "usual": 55.0, "unit": "ms", "score": 93, "weight": 50},
+      {"key": "resting_hr", "label": "Resting heart rate", "value": 52, "usual": 54, "unit": "bpm", "score": 82, "weight": 30},
+      {"key": "sleep", "label": "Sleep", "value": 84, "usual": null, "unit": "%", "score": 80, "weight": 20}
+    ]
+  },
+  "strain": {
+    "score": 41, "trimp": 79.3, "estimated": false, "target": [55, 80], "rest_hr": 53, "max_hr": 192,
+    "zones": [14, 22, 18, 6, 0],
+    "workouts": [{"id": "A04C…", "type": "run", "minutes": 54, "strain": 38}]
+  },
+  "load": {"acute": 62.1, "chronic": 55.4, "ratio": 1.12, "label": "building"},
+  "vitals": {
+    "hrv_ms": {"value": 61.5, "usual": 55.0, "low": 49.2, "high": 60.8},
+    "resting_hr": {"value": 52, "usual": 54, "low": 52, "high": 56},
+    "respiratory_rate": {"value": 14.2, "usual": 14.0, "low": 13.6, "high": 14.4},
+    "wrist_temp_c": {"value": 35.91, "usual": 35.88, "low": 35.73, "high": 36.03},
+    "asleep_min": {"value": 400, "usual": 438, "low": 413, "high": 463}
+  },
+  "line": "Recovery 72% after 6h40 asleep: a good day to push, aim for 55–80% strain."
+}
+```
+- **`sleep`** (`null` without a night): duration against the night's need 50%, deep plus REM share of the night
+  20% (full marks at 40%), asleep / in bed 15% (full at 92%, none at 75%), bedtime against the median of the 14
+  nights before 15% (full within 30 min, none at 2 h; needs 5 nights). A part without data (no stages, no history)
+  is left out (`score` and `value` `null`) and the rest re-weighted. `need_min` is 7h30 plus the shortfall of the 3
+  nights before, at most 1h30 more. `debt_min` is the shortfall against 7h30 over the last 3 nights, this one
+  included.
+- **`recovery`** (`null` without last night's `hrv_ms`): ln HRV (50%), resting HR (30%, lower is better; left out
+  when missing) and the sleep score (20%), each as how far it is from the user's usual (median and spread of the 60
+  days before) and combined into a score where a usual night lands in the 60s. While fewer than 14 days of HRV are
+  stored: `score` and `level` `null`, `calibrating: {"days": 9, "needs": 14}`. `flags`: `respiratory_rate` (1 or more
+  breaths/min above usual) and `wrist_temp` (0.5 °C or more above), each caps the score at 50. `level`: under 34
+  `low`, under 67 `normal`, else `good`. A contributor's `score` is that part alone on the same scale.
+- **`strain`** (`null` without a stored day): cardio load from heart rate. Banister's TRIMP over `hr_minutes`
+  (heart-rate reserve from `rest_hr`, the 30-day median resting HR, to `max_hr`, the highest workout max of 90
+  days, else the day max, never under 208 − 0.7 × age from the food profile), counting only time above 40% of the
+  reserve; `score` = 100 × (1 − e^(−TRIMP/150)). Without `hr_minutes`, from the workouts (`avg_hr` × minutes, else
+  kcal / 5) and `estimated: true`. `target` is the day's band from recovery (`good` 55–80, `normal` 35–60, `low`
+  10–35; `null` without recovery). `zones` are minutes in 50–60, 60–70, 70–80, 80–90 and 90–100% of the reserve.
+  Each workout carries its own `strain`.
+- **`load`**: the last 7 days' average TRIMP against the last 28's; `ratio` under 0.8 `detraining`, under 1.0
+  `maintaining`, up to 1.3 `building`, above `overreaching`. `null` with fewer than 14 days stored in the 28.
+- **`vitals`**: each night number with its usual (median of the 60 days before) and usual range (`low`–`high`,
+  one spread either side), for the app's gauges. `usual`, `low` and `high` are `null` with fewer than 14 days.
+- **`line`**: one sentence from code, no model call.
 
 ### Weight
 
@@ -1347,8 +1430,9 @@ morning digest, which runs at its time as before.
 
 ### In chat
 
-The assistant gets a read-only `health` tool over the stored days: sleep, resting heart rate, HRV, steps and
-workouts for a date range, with averages, so "how did I sleep this week?" or "when did I last work out?" works.
+The assistant gets a read-only `health` tool over the stored days: each day's scores (the same as
+`/v1/health/scores`), sleep, resting heart rate, HRV, steps and workouts for a date range, with averages, the last
+day's `line` and cardio load, so "how did I sleep this week?" or "when did I last work out?" works.
 Its answers are plain text; there are no health attachments yet.
 
 ## Today

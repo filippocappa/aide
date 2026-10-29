@@ -634,8 +634,10 @@ def to_text(greeting: str | None, sections: list[dict], tz: ZoneInfo) -> str:
                 when = (f", {datetime.fromisoformat(sl['bedtime']).astimezone(tz):%H:%M}–"
                         f"{datetime.fromisoformat(sl['wake']).astimezone(tz):%H:%M}") if "bedtime" in sl and "wake" in sl else ""
                 rows = [f"Asleep {hours(sl.get('asleep_min'))}" + (f" (usual {hours(usual)})" if usual else "") + when]
+                if s.get("score") is not None:
+                    rows.append(f"Sleep score {s['score']}%")
             case "recovery":
-                rows = [s["summary"]]
+                rows = ([f"Recovery {s['score']}%"] if s.get("score") is not None else []) + [s["summary"]]
             case "objectives":
                 rows = [f"{o['agent'].capitalize()}: {o['title']}"
                         + (f" ({o['progress']}/{o['target']})" if o["measure"] and o["target"] > 1 else "")

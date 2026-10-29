@@ -488,6 +488,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         habits.food = food
     health = health or HealthStore(db.conn, tz)
     nutrition = Nutrition(food, health)
+    health.age = lambda: nutrition.targets()["profile"].get("age")
     weights = weights or WeightStore(db.conn, tz, health)
     today_events: dict = {}  # today's calendar events for a planned run: {"at": loop time, "day", "events"}
     if habits.health_days is None:  # limit habits count from Apple Health
@@ -1910,6 +1911,15 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         end = end or datetime.now(tz).date()
         start = start or end - timedelta(days=29)
         return {"days": health.between(start, end)}
+
+    @app.get("/v1/health/scores", dependencies=[Depends(auth)])
+    async def health_scores(day: date | None = Query(None, alias="date")):
+        return health.scores(day or datetime.now(tz).date())
+
+    @app.get("/v1/health/scores/history", dependencies=[Depends(auth)])
+    async def health_score_history(days: int = Query(30, ge=1, le=366), end: date | None = Query(None, alias="to")):
+        end = end or datetime.now(tz).date()
+        return {"days": health.score_history(end - timedelta(days=days - 1), end)}
 
     @app.get("/v1/health/weight", dependencies=[Depends(auth)])
     async def weight(days: int = Query(90, ge=1, le=366)):

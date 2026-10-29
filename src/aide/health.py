@@ -7,10 +7,12 @@ makes no medical claims.
 
 import json
 import sqlite3
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from statistics import median
 from zoneinfo import ZoneInfo
 
+from . import scores
 from .db import utcnow
 
 SCHEMA = """
@@ -66,6 +68,7 @@ class HealthStore:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo):
         self.conn = conn
         self.tz = tz
+        self.age: Callable[[], int | None] = lambda: None  # the food profile's age, for max heart rate (create_app)
         self.conn.executescript(SCHEMA)
 
     def today(self) -> date:
@@ -98,6 +101,27 @@ class HealthStore:
     def _before(self, day: date) -> list[dict]:
         return self.between(day - timedelta(days=WINDOW), day - timedelta(days=1))
 
+    # -- scores (scores.py) ----------------------------------------------------------
+
+    def _window(self, start: date, end: date) -> dict[str, dict]:
+        """The days the scores for start..end look at, by date."""
+        return {d["date"]: d for d in self.between(start - timedelta(days=scores.MAX_WINDOW), end)}
+
+    def scores(self, day: date) -> dict:
+        return scores.day_scores(self._window(day, day), day, self.age())
+
+    def score_history(self, start: date, end: date) -> list[dict]:
+        """Each day's three scores (null where there's no data), newest first."""
+        days, age, out = self._window(start, end), self.age(), []
+        for i in range((end - start).days + 1):
+            day = end - timedelta(days=i)
+            sleep = scores.sleep_score(days, day)
+            recovery = scores.recovery_score(days, day, sleep)
+            strain = scores.strain_score(days, day, recovery, age)
+            out.append({"date": day.isoformat(), "sleep": sleep and sleep["score"],
+                        "recovery": recovery and recovery["score"], "strain": strain and strain["score"]})
+        return out
+
     # -- digest sections -------------------------------------------------------
 
     def usual_asleep(self, day: date) -> int | None:
@@ -108,7 +132,9 @@ class HealthStore:
         found = self.get(day)
         if not found or not found.get("sleep"):
             return None
-        return {"type": "sleep", "title": "Last night", "sleep": found["sleep"], "usual_asleep_min": self.usual_asleep(day)}
+        sleep = scores.sleep_score(self._window(day, day), day)
+        return {"type": "sleep", "title": "Last night", "sleep": found["sleep"], "usual_asleep_min": self.usual_asleep(day),
+                "score": sleep and sleep["score"]}
 
     def recovery_section(self, day: date) -> dict | None:
         found = self.get(day) or {}
@@ -121,7 +147,11 @@ class HealthStore:
         hrv_usual = median(d["hrv_ms"] for d in past)
         rhr_usual = median(d["resting_hr"] for d in past)
         level, summary = recovery(hrv, hrv_usual, rhr, rhr_usual)
-        return {"type": "recovery", "title": "Recovery", "level": level, "summary": summary,
+        days = self._window(day, day)
+        score = (scores.recovery_score(days, day, scores.sleep_score(days, day)) or {}).get("score")
+        if score is not None:  # the score has the last word on the level
+            level = scores.level(score)
+        return {"type": "recovery", "title": "Recovery", "level": level, "summary": summary, "score": score,
                 "hrv_ms": hrv, "hrv_usual_ms": round(hrv_usual, 1), "resting_hr": rhr,
                 "resting_hr_usual": round(rhr_usual)}
 

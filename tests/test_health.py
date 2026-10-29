@@ -192,10 +192,13 @@ def test_sleep_and_recovery_sections(world):
     assert health.recovery_section(TODAY) is None  # under 14 days
     history(health, 14, hrv=55.0, rhr=54)
     rec = health.recovery_section(TODAY)
+    assert 67 <= rec.pop("score") <= 99
     assert rec == {"type": "recovery", "title": "Recovery", "level": "good",
                    "summary": "HRV above your usual, resting heart rate below your usual.",
                    "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54}
-    health.save([{"date": (TODAY - timedelta(days=31)).isoformat(), "hrv_ms": 1, "resting_hr": 200}])  # outside
+    rec["score"] = health.recovery_section(TODAY)["score"]
+    assert 70 <= health.sleep_section(TODAY)["score"] <= 90  # 6h40 of a 8h06 need, a bedtime 38 min late
+    health.save([{"date": (TODAY - timedelta(days=61)).isoformat(), "hrv_ms": 1, "resting_hr": 200}])  # outside
     assert health.recovery_section(TODAY) == rec
 
 
@@ -208,7 +211,9 @@ async def test_daily_has_sleep_and_recovery_first(world):
     assert d["sections"][1]["level"] == "low"
     text = to_text(None, d["sections"], ROME)
     assert "**Last night**\n• Asleep 6h40 (usual 7h18), 00:00–07:00" in text
-    assert "**Recovery**\n• HRV well below your usual, resting heart rate well above your usual." in text
+    assert d["sections"][1]["score"] < 34
+    assert f"**Recovery**\n• Recovery {d['sections'][1]['score']}%\n• HRV well below your usual, resting heart rate " \
+           "well above your usual." in text
     view = await w.digest.view("daily")
     assert view["sections"][0]["type"] == "sleep"
 
