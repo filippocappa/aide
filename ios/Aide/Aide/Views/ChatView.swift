@@ -545,7 +545,7 @@ private struct MessagePhotos: View {
 }
 
 /// The reminders, events, meals, departures, routes or study files a reply was about, as a card: reminders tick off right
-/// here, files open, a notebook proposal is answered. A long list shows its first few until you ask for the rest.
+/// here, events show on a week, files open, a notebook proposal is answered. A long list shows its first few until you ask for the rest.
 struct AttachmentCard: View {
     let attachment: Attachment
     @State private var expanded = false
@@ -557,7 +557,7 @@ struct AttachmentCard: View {
             let reminders = all.filter { !$0.deleted } // deleted since the reply
             if !reminders.isEmpty { card(reminders.count) { ReminderRows(reminders: shown(reminders)) } }
         case .events(let events):
-            card(events.count) { EventRows(events: shown(events)) }
+            card { EventWeekCard(events: events) }
         case .meals(let meals):
             if !meals.isEmpty { card(meals.count) { ForEach(shown(meals)) { MealRow(meal: $0) } } }
         case .departures(let boards):

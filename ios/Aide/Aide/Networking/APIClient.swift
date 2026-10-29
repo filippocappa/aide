@@ -525,6 +525,34 @@ final class APIClient {
         return try await send("GET", "/v1/today", query: query)
     }
 
+    /// Every calendar's events for `days` days from a local day (docs/API.md, "Events and plans").
+    func events(from day: Date, days: Int = 7) async throws -> [CalendarEvent] {
+        let list: EventsResponse = try await send("GET", "/v1/events", query: [
+            URLQueryItem(name: "from", value: Wire.dayString(day)), URLQueryItem(name: "days", value: String(days)),
+        ])
+        return list.events
+    }
+
+    /// The user's own move: date-times, or for an all-day event its first and last day.
+    func moveEvent(_ id: String, start: String, end: String) async throws -> CalendarEvent {
+        try await send("PATCH", "/v1/events/\(id)", body: EventMoveBody(start: start, end: end))
+    }
+
+    func deleteEvent(_ id: String) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/events/\(id)", body: EmptyBody())
+    }
+
+    /// A plan's items into the calendar (the tap is the confirmation); `items` nil: all still proposed.
+    func addPlan(_ plan: String, items: [String]?) async throws -> [CalendarEvent] {
+        let r: EventsResponse = try await send("POST", "/v1/plans/\(plan)/add", body: PlanItemsBody(items: items))
+        return r.events
+    }
+
+    func dropPlan(_ plan: String, items: [String]?) async throws -> [CalendarEvent] {
+        let r: EventsResponse = try await send("POST", "/v1/plans/\(plan)/drop", body: PlanItemsBody(items: items))
+        return r.events
+    }
+
     func syncReminders(cursor: String?, changes: [ReminderChange], lists: [String] = [],
                        defaultList: String? = nil) async throws -> SyncResponse {
         try await send("POST", "/v1/reminders/sync",
@@ -817,6 +845,9 @@ final class APIClient {
     func vault() async throws -> VaultSetup {
         try await send("GET", "/v1/vault")
     }
+
+    private struct EventMoveBody: Encodable { let start: String; let end: String }
+    private struct PlanItemsBody: Encodable { let items: [String]? }
 
     // MARK: Plumbing
 

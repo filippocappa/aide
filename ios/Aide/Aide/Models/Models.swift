@@ -330,11 +330,19 @@ struct CalendarEvent: Decodable, Identifiable, Hashable {
     let id: String
     let title: String
     let calendar: String?
-    let start: String
-    let end: String
+    var start: String
+    var end: String
     let allDay: Bool
     let location: String?
+    let notes: String?
     let recurring: Bool
+    /// On a chat card (docs/API.md, "Chat"): "found" (a search hit), "created" this turn or "proposed" (in a plan).
+    let change: String?
+    /// A proposed item's plan (`ep_…`), its status ("proposed", "added", "dropped") and, once added, its event's id.
+    let plan: String?
+    var status: String?
+    var event: String?
+    var error: String?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -345,12 +353,28 @@ struct CalendarEvent: Decodable, Identifiable, Hashable {
         end = try c.decode(String.self, forKey: .end)
         allDay = try c.decodeIfPresent(Bool.self, forKey: .allDay) ?? false
         location = try c.decodeIfPresent(String.self, forKey: .location)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
         recurring = try c.decodeIfPresent(Bool.self, forKey: .recurring) ?? false
+        change = try c.decodeIfPresent(String.self, forKey: .change)
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        event = try c.decodeIfPresent(String.self, forKey: .event)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
     }
-    private enum CodingKeys: String, CodingKey { case id, title, calendar, start, end, allDay, location, recurring }
+    private enum CodingKeys: String, CodingKey {
+        case id, title, calendar, start, end, allDay, location, notes, recurring, change, plan, status, event, error
+    }
 
     var startDate: Date? { allDay ? Wire.day(start) : Wire.parse(start) }
     var endDate: Date? { allDay ? Wire.day(end) : Wire.parse(end) }
+
+    /// In a plan and not yet answered: Add or Remove.
+    var isProposed: Bool { change == "proposed" && (status ?? "proposed") == "proposed" }
+    var isDropped: Bool { change == "proposed" && status == "dropped" }
+    /// What the reply brought in: made this turn, or proposed (still waiting, or added since).
+    var isNew: Bool { change == "created" || (change == "proposed" && status != "dropped") }
+    /// The calendar event behind it, to move or delete: none while it's only proposed.
+    var calendarID: String? { change == "proposed" ? (status == "added" ? event : nil) : id }
 
     /// "All day" or "15:00 – 16:00".
     var timeText: String {
@@ -393,6 +417,10 @@ struct Reminder: Codable, Identifiable, Hashable {
     }
 
     var dueDate: Date? { dueAt.flatMap(Wire.parse) }
+}
+
+struct EventsResponse: Decodable {
+    let events: [CalendarEvent]
 }
 
 struct TodayResponse: Decodable {

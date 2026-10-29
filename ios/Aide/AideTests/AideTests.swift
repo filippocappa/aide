@@ -1502,3 +1502,65 @@ final class ErrandTests: XCTestCase {
         XCTAssertEqual(state.line(name: "Aide"), "Aide is browsing")
     }
 }
+
+/// The chat's events card (#25): its order, what it leaves out, and the week it opens on.
+final class EventWeekTests: XCTestCase {
+    private let rome: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Europe/Rome")!
+        c.firstWeekday = 2
+        return c
+    }()
+
+    private func events(_ json: String) throws -> [CalendarEvent] {
+        try JSONDecoder.api.decode([CalendarEvent].self, from: Data(json.utf8))
+    }
+
+    private func at(_ s: String) -> Date { Wire.parse(s)! }
+
+    func testPastEventsAreLeftOutAndTheWeekOpensOnTheFirstNewOne() throws {
+        let card = try events("""
+        [{"id": "a", "title": "Lecture", "start": "2026-10-27T10:00:00+01:00", "end": "2026-10-27T12:00:00+01:00"},
+         {"id": "b", "title": "Macro midterm", "start": "2026-11-04T08:00:00+01:00", "end": "2026-11-04T11:00:00+01:00",
+          "change": "found"},
+         {"id": "ep_1-1", "title": "Review: Macroeconomics", "start": "2026-11-03T15:00:00+01:00",
+          "end": "2026-11-03T17:00:00+01:00", "change": "proposed", "plan": "ep_1", "status": "proposed"},
+         {"id": "c", "title": "Gym", "start": "2026-10-30T18:00:00+01:00", "end": "2026-10-30T19:00:00+01:00"}]
+        """)
+        let now = at("2026-10-29T12:00:00+01:00")
+        XCTAssertEqual(EventWeek.shown(card, now: now).map(\.id), ["c", "ep_1-1", "b"])
+        let week = EventWeek.opening(card, now: now, calendar: rome)
+        XCTAssertEqual(Wire.dayString(week), "2026-11-02")  // the proposed session's Monday, not this week
+        let day = EventWeek.selection(in: week, events: EventWeek.shown(card, now: now), now: now, calendar: rome)
+        XCTAssertEqual(rome.component(.day, from: day), 3)
+        XCTAssertTrue(card[2].isProposed && card[2].isNew && card[2].calendarID == nil)
+        XCTAssertEqual(card[1].calendarID, "b")
+    }
+
+    func testAnAllDayTripIsOnEachOfItsDaysBeforeTimedEvents() throws {
+        let card = try events("""
+        [{"id": "t", "title": "Trip", "start": "2026-11-05", "end": "2026-11-08", "all_day": true},
+         {"id": "d", "title": "Dinner", "start": "2026-11-06T20:00:00+01:00", "end": "2026-11-06T22:00:00+01:00"}]
+        """)
+        XCTAssertEqual(EventWeek.on(at("2026-11-06T12:00:00+01:00"), card, calendar: rome).map(\.id), ["t", "d"])
+        XCTAssertEqual(EventWeek.on(at("2026-11-07T12:00:00+01:00"), card, calendar: rome).map(\.id), ["t"])
+        XCTAssertEqual(EventWeek.on(at("2026-11-08T12:00:00+01:00"), card, calendar: rome).map(\.id), [])
+    }
+
+    func testEverythingPastStillShows() throws {
+        let card = try events("""
+        [{"id": "a", "title": "Lecture", "start": "2026-10-20T10:00:00+02:00", "end": "2026-10-20T12:00:00+02:00"}]
+        """)
+        XCTAssertEqual(EventWeek.shown(card, now: at("2026-10-29T12:00:00+01:00")).map(\.id), ["a"])
+    }
+
+    func testAnAddedItemMovesItsEvent() throws {
+        let item = try events("""
+        [{"id": "ep_1-1", "title": "Run", "start": "2026-11-03T15:00:00+01:00", "end": "2026-11-03T16:00:00+01:00",
+          "change": "proposed", "plan": "ep_1", "status": "added", "event": "uid-9"}]
+        """)[0]
+        XCTAssertEqual(item.calendarID, "uid-9")
+        XCTAssertFalse(item.isProposed)
+        XCTAssertTrue(item.isNew)
+    }
+}
