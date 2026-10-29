@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Aide
 
@@ -403,6 +404,51 @@ final class RichTextTests: XCTestCase {
         XCTAssertEqual(title, "Tomorrow")
         XCTAssertEqual(events, [.init(start: "09:00", end: "10:00", title: "Dentist"),
                                 .init(start: "All day", end: nil, title: "Trip")])
+    }
+}
+
+final class NoteTextTests: XCTestCase {
+    func testFormulasInTheNotesAreDrawn() throws {
+        let notes = #"""
+        Nominal GDP:
+        $$Y^{nom}_t=\sum_i P_{i,t}\,Q_{i,t}$$
+        > [!success]- Solution
+        > $$
+        > x=\dfrac{1}{2}
+        > $$.
+        """#
+        let blocks = NoteText.parse(notes)
+        guard blocks.count == 3, case .paragraph("Nominal GDP:") = blocks[0], case .math(let gdp) = blocks[1],
+              case .callout(_, _, _, let solution) = blocks[2], NoteText.parse(solution).count == 1,
+              case .math(let half) = NoteText.parse(solution)[0]
+        else { return XCTFail("\(blocks)") }
+        XCTAssertEqual(gdp, #"Y^{nom}_t=\sum_i P_{i,t}\,Q_{i,t}"#)
+        XCTAssertEqual(half, #"x=\dfrac{1}{2}"#)
+
+        // What the live notes write that SwiftMath doesn't read as it is.
+        for latex in [#"L = \tfrac{1}{2}\left[\beta(\pi - \pi^T)^2 + (y - \bar y)^2\right]"#,
+                      #"a_1 x_1 + \dots + a_n x_n = b"#, half,
+                      #"\begin{cases} -x + 2y = 4 \\ 2x - y = 1 \end{cases}"#,
+                      #"\left\{ \sum_{i=1}^t k_i \underline{w}^i \;\middle|\; k_i \in \mathbb{R} \right\}"#] {
+            XCTAssertNil(MathFormula.mathList(latex), latex)
+            XCTAssertNotNil(MathFormula.mathList(MathFormula.prepare(latex)), latex)
+        }
+        XCTAssertEqual(MathFormula.prepare(#"\begin{cases} a \\ b & c \end{cases}"#), #"\begin{cases} a  &\\ b & c \end{cases}"#)
+    }
+
+    /// A `+` after a comma and a space stopped SwiftMath's typesetter (an assert, so the app crashed in debug builds).
+    @MainActor func testAPlusAfterACommaAndASpaceIsDrawn() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 300)
+        window.rootViewController = UIHostingController(rootView: VStack {
+            MathFormula(latex: #"Y=C(Y-T)+I(Y,\,r+x),\;+G,\qquad r=\bar r"#)
+            MathFormula(latex: #"\left(\;-x,\; -\frac{a}{b}\;\right) = \;- 1"#)
+        })
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        window.isHidden = true
     }
 }
 
@@ -1411,33 +1457,5 @@ final class ErrandTests: XCTestCase {
         XCTAssertEqual(activity.url?.absoluteString, "aide://errand/7")
         let state = AgentActivityAttributes.ContentState(status: "browsing", detail: "", text: "", since: 0, errand: 7)
         XCTAssertEqual(state.line(name: "Aide"), "Aide is browsing")
-    }
-
-    func testFormulasInTheNotesAreDrawn() throws {
-        let notes = #"""
-        Nominal GDP:
-        $$Y^{nom}_t=\sum_i P_{i,t}\,Q_{i,t}$$
-        > [!success]- Solution
-        > $$
-        > x=\dfrac{1}{2}
-        > $$.
-        """#
-        let blocks = NoteText.parse(notes)
-        guard blocks.count == 3, case .paragraph("Nominal GDP:") = blocks[0], case .math(let gdp) = blocks[1],
-              case .callout(_, _, _, let solution) = blocks[2], NoteText.parse(solution).count == 1,
-              case .math(let half) = NoteText.parse(solution)[0]
-        else { return XCTFail("\(blocks)") }
-        XCTAssertEqual(gdp, #"Y^{nom}_t=\sum_i P_{i,t}\,Q_{i,t}"#)
-        XCTAssertEqual(half, #"x=\dfrac{1}{2}"#)
-
-        // What the live notes write that SwiftMath doesn't read as it is.
-        for latex in [#"L = \tfrac{1}{2}\left[\beta(\pi - \pi^T)^2 + (y - \bar y)^2\right]"#,
-                      #"a_1 x_1 + \dots + a_n x_n = b"#, half,
-                      #"\begin{cases} -x + 2y = 4 \\ 2x - y = 1 \end{cases}"#,
-                      #"\left\{ \sum_{i=1}^t k_i \underline{w}^i \;\middle|\; k_i \in \mathbb{R} \right\}"#] {
-            XCTAssertNil(MathFormula.mathList(latex), latex)
-            XCTAssertNotNil(MathFormula.mathList(MathFormula.prepare(latex)), latex)
-        }
-        XCTAssertEqual(MathFormula.prepare(#"\begin{cases} a \\ b & c \end{cases}"#), #"\begin{cases} a  &\\ b & c \end{cases}"#)
     }
 }

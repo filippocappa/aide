@@ -175,8 +175,43 @@ struct MathFormula: View {
     /// The formula parsed, nil when SwiftMath can't.
     static func mathList(_ latex: String) -> MTMathList? {
         var error: NSError?
-        let list = MTMathListBuilder.build(fromString: latex, error: &error)
-        return error == nil ? list : nil
+        guard let list = MTMathListBuilder.build(fromString: latex, error: &error), error == nil else { return nil }
+        unaryAcrossSpaces(list)
+        return list
+    }
+
+    /// SwiftMath makes a `+` unary after a comma, a relation or an opening bracket (and before them), but only when
+    /// they're next to each other: with a space between (`,\;+G`) it stays binary, and the typesetter, which skips
+    /// spaces, stops on the pair (an assert: a crash in debug builds). The same rule, across spaces, in every part.
+    private static func unaryAcrossSpaces(_ list: MTMathList?) {
+        guard let list else { return }
+        var prev: MTMathAtom?
+        for atom in list.atoms {
+            [atom.subScript, atom.superScript].forEach(unaryAcrossSpaces)
+            switch atom {
+            case let a as MTFraction: [a.numerator, a.denominator].forEach(unaryAcrossSpaces)
+            case let a as MTRadical: [a.radicand, a.degree].forEach(unaryAcrossSpaces)
+            case let a as MTInner: unaryAcrossSpaces(a.innerList)
+            case let a as MTOverLine: unaryAcrossSpaces(a.innerList)
+            case let a as MTUnderLine: unaryAcrossSpaces(a.innerList)
+            case let a as MTAccent: unaryAcrossSpaces(a.innerList)
+            case let a as MTMathColor: unaryAcrossSpaces(a.innerList)
+            case let a as MTMathTextColor: unaryAcrossSpaces(a.innerList)
+            case let a as MTMathColorbox: unaryAcrossSpaces(a.innerList)
+            case let a as MTMathTable: a.cells.joined().forEach(unaryAcrossSpaces)
+            default: break
+            }
+            if atom.type == .space || atom.type == .style { continue }
+            if atom.type == .binaryOperator,
+               prev.map({ [.binaryOperator, .relation, .open, .punctuation, .largeOperator].contains($0.type) }) ?? true {
+                atom.type = .unaryOperator
+            }
+            if [.relation, .punctuation, .close].contains(atom.type), let p = prev, p.type == .binaryOperator {
+                p.type = .unaryOperator
+            }
+            prev = atom
+        }
+        if let p = prev, p.type == .binaryOperator { p.type = .unaryOperator }
     }
 
     /// What the notes write that SwiftMath reads differently: `\dfrac` and `\tfrac`, `\dots`, `\middle|`, and
@@ -206,9 +241,18 @@ struct MathFormula: View {
         }
 
         func updateUIView(_ label: MTMathUILabel, context: Context) {
-            label.latex = latex
+            if context.coordinator.latex != latex {
+                label.mathList = MathFormula.mathList(latex)
+                context.coordinator.latex = latex
+            }
             label.fontSize = size
             label.textColor = color
+        }
+
+        func makeCoordinator() -> Drawn { Drawn() }
+
+        final class Drawn {
+            var latex: String?
         }
 
         func sizeThatFits(_ proposal: ProposedViewSize, uiView label: MTMathUILabel, context: Context) -> CGSize? {
