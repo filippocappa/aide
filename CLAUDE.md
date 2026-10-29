@@ -220,6 +220,8 @@ Study tab (both sides): courses with their notebook in brief, a course page with
 writing progress, Ask Professor, Practice exam, the Introduction and topic pages (notes with figures from
 `GET /v1/files/{id}/pages/{n}`, folded answers, flashcards; `plain=true` reads), lectures, PDFs, and adding a PDF or
 a recording from Files.
+Notes in the app (2026-10-29): formulas and the maths in sentences drawn as LaTeX with SwiftMath (`MathFormula`,
+`MathText`; `plain`, `latex` and `inline` on the note endpoints), and Contents (the list button) on long pages to jump to a heading.
 
 **Done, both sides (2026-10-22), live on the server:** objectives (contract in `docs/API.md`, "Objectives";
 covers the Goals idea in #14). Every specialist proposes objectives for the day, the week and the month (before the

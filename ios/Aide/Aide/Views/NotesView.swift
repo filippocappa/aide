@@ -3,31 +3,36 @@ import SwiftMath
 import SwiftUI
 
 /// Study notes as the server writes them for the app (`plain=true`: maths as Unicode, links as text; `latex=true`:
-/// formulas on their own lines stay `$$…$$`, drawn by `MathFormula`): headings, paragraphs, lists, Obsidian callouts
-/// (`> [!success]- Answer`, folded when it says `-`), and figures (`![caption](figure:f_…/12)`, a page of a study file).
+/// formulas on their own lines stay `$$…$$`, drawn by `MathFormula`, and with `inline=true` the maths in sentences
+/// is `\(…\)`, drawn by `MathText`): headings, paragraphs, lists, Obsidian callouts (`> [!success]- Answer`, folded
+/// when it says `-`), and figures (`![caption](figure:f_…/12)`, a page of a study file).
 struct NoteText: View {
     let markdown: String
+    /// The page's own notes (not a callout's): its headings get the ids `Contents` jumps to.
+    var anchored = false
+    @Environment(\.dynamicTypeSize) private var typeSize  // the maths is drawn again at a new text size
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(Self.parse(markdown).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(Self.parse(markdown).enumerated()), id: \.offset) { offset, block in
                 switch block {
                 case .heading(let level, let s):
-                    Text(s.markdown)
+                    MathText.text(s, style: level <= 1 ? .title2 : level == 2 ? .title3 : .headline)
                         .font(level <= 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
                         .padding(.top, level <= 2 ? 10 : 4)
+                        .id(anchored ? Self.anchor(offset) : nil)
                 case .paragraph(let s):
-                    Text(s.markdown).lineSpacing(3)
+                    MathText.text(s).lineSpacing(3)
                 case .bullet(let s, let indent):
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("•").foregroundStyle(.secondary)
-                        Text(s.markdown).lineSpacing(3)
+                        MathText.text(s).lineSpacing(3)
                     }
                     .padding(.leading, CGFloat(indent) * 16)
                 case .numbered(let n, let s):
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(n).").foregroundStyle(.secondary).monospacedDigit()
-                        Text(s.markdown).lineSpacing(3)
+                        MathText.text(s).lineSpacing(3)
                     }
                 case .callout(let kind, let title, let folded, let text):
                     Callout(kind: kind, title: title, folded: folded, text: text)
@@ -53,6 +58,22 @@ struct NoteText: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .textSelection(.enabled)
     }
+
+    struct Heading: Identifiable, Equatable {
+        let id: String
+        let level: Int
+        let title: String
+    }
+
+    /// The headings `Contents` lists (down to `###`), with the ids an `anchored` NoteText gives them.
+    static func headings(_ markdown: String) -> [Heading] {
+        parse(markdown).enumerated().compactMap { offset, block in
+            guard case .heading(let level, let title) = block, level <= 3 else { return nil }
+            return Heading(id: anchor(offset), level: level, title: title)
+        }
+    }
+
+    private static func anchor(_ offset: Int) -> String { "heading-\(offset)" }
 
     enum Block {
         case heading(Int, String)
@@ -214,12 +235,12 @@ struct MathFormula: View {
         if let p = prev, p.type == .binaryOperator { p.type = .unaryOperator }
     }
 
-    /// What the notes write that SwiftMath reads differently: `\dfrac` and `\tfrac`, `\dots`, `\middle|`, and
-    /// `cases` rows without an `&`.
+    /// What the notes write that SwiftMath reads differently: `\dfrac` and `\tfrac`, `\dots`, `\middle|`, `\big(`,
+    /// and `cases` rows without an `&`.
     static func prepare(_ latex: String) -> String {
         var s = latex.replacing(#/\\[dt]frac(?![A-Za-z])/#, with: "\\frac")
             .replacing(#/\\dots(?![A-Za-z])/#, with: "\\ldots")
-            .replacing(#/\\middle(?![A-Za-z])\s*/#, with: "")
+            .replacing(#/\\(?:middle|[Bb]igg?[lrm]?)(?![A-Za-z])\s*/#, with: "")
         s = s.replacing(#/\\begin\{cases\}(?<rows>.*?)\\end\{cases\}/#.dotMatchesNewlines()) { m in
             let rows = m.output.rows.components(separatedBy: "\\\\").map { $0.contains("&") ? $0 : $0 + " &" }
             return "\\begin{cases}" + rows.joined(separator: "\\\\") + "\\end{cases}"
@@ -258,6 +279,82 @@ struct MathFormula: View {
         func sizeThatFits(_ proposal: ProposedViewSize, uiView label: MTMathUILabel, context: Context) -> CGSize? {
             label.intrinsicContentSize
         }
+    }
+}
+
+/// Inline markdown whose maths (`\(…\)`, from `inline=true`) is drawn by SwiftMath: each formula a picture on the
+/// text's baseline, at the size of its text style and in the text's colour (a template image).
+enum MathText {
+    static func text(_ s: String, style: UIFont.TextStyle = .body) -> Text {
+        let found = s.matches(of: #/\\\((.+?)\\\)/#)
+        guard !found.isEmpty else { return Text(s.markdown) }
+        // Each formula becomes one private-use character, so the markdown around it (bold, links) is read whole.
+        var marked = ""
+        var latex: [String] = []
+        var last = s.startIndex
+        for m in found.prefix(0x1000) {
+            marked += s[last..<m.range.lowerBound]
+            marked.unicodeScalars.append(Unicode.Scalar(0xE000 + latex.count)!)
+            latex.append(String(m.output.1))
+            last = m.range.upperBound
+        }
+        marked += s[last...]
+        let attributed = marked.markdown
+        let size = UIFont.preferredFont(forTextStyle: style).pointSize
+        var out = Text(verbatim: "")
+        var start = attributed.startIndex
+        var i = attributed.startIndex
+        while i < attributed.endIndex {
+            let next = attributed.characters.index(after: i)
+            if let v = attributed.characters[i].unicodeScalars.first?.value, v >= 0xE000, Int(v) - 0xE000 < latex.count {
+                if start < i { out = out + Text(AttributedString(attributed[start..<i])) }
+                out = out + formula(latex[Int(v) - 0xE000], size: size)
+                start = next
+            }
+            i = next
+        }
+        if start < attributed.endIndex { out = out + Text(AttributedString(attributed[start...])) }
+        return out
+    }
+
+    private static func formula(_ latex: String, size: CGFloat) -> Text {
+        guard let drawn = image(latex, size: size) else { return Text(verbatim: latex).italic() }
+        return Text(Image(uiImage: drawn.image).renderingMode(.template)).baselineOffset(-drawn.descent)
+    }
+
+    private final class Drawn {
+        let image: UIImage
+        let descent: CGFloat
+        init(image: UIImage, descent: CGFloat) { self.image = image; self.descent = descent }
+    }
+
+    private static let drawn = NSCache<NSString, Drawn>()
+
+    /// The formula drawn in black (tinted where it's shown), Latin Modern a little larger than the text's font so
+    /// the two look the same size. Nil when SwiftMath can't read it.
+    private static func image(_ latex: String, size: CGFloat) -> Drawn? {
+        let key = "\(size)|\(latex)" as NSString
+        if let done = drawn.object(forKey: key) { return done }
+        guard let list = MathFormula.mathList(MathFormula.prepare(latex)) else { return nil }
+        let label = MTMathUILabel()
+        label.labelMode = .text
+        label.fontSize = size * 1.1
+        label.textColor = .black
+        label.mathList = list
+        let fit = label.intrinsicContentSize
+        guard fit.width > 0, fit.height > 0 else { return nil }
+        label.frame = CGRect(origin: .zero, size: fit)
+        label.layoutSubviews()
+        guard let display = label.displayList else { return nil }
+        let image = UIGraphicsImageRenderer(size: fit).image { context in
+            let cg = context.cgContext
+            cg.translateBy(x: 0, y: fit.height)
+            cg.scaleBy(x: 1, y: -1)  // SwiftMath draws with the origin at the bottom
+            display.draw(cg)
+        }
+        let done = Drawn(image: image.withRenderingMode(.alwaysTemplate), descent: display.descent)
+        drawn.setObject(done, forKey: key)
+        return done
     }
 }
 
@@ -393,6 +490,68 @@ private struct ZoomedImage: View {
 
 // MARK: Pages
 
+/// A page of notes that scrolls, with Contents in the toolbar (from three headings up) to jump to one.
+struct NoteScroll<Content: View>: View {
+    let headings: [NoteText.Heading]
+    @ViewBuilder let content: () -> Content
+    @State private var showing = false
+    @State private var jump: String?
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView { content() }
+                .toolbar {
+                    if headings.count >= 3 {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button { showing = true } label: { Image(systemName: "list.bullet") }
+                                .accessibilityLabel("Contents")
+                        }
+                    }
+                }
+                .sheet(isPresented: $showing) {
+                    NoteContents(headings: headings) { id in
+                        jump = id
+                        showing = false
+                    }
+                }
+                .onChange(of: jump) { _, id in
+                    guard let id else { return }
+                    withAnimation { proxy.scrollTo(id, anchor: .top) }
+                    jump = nil
+                }
+        }
+    }
+}
+
+/// The page's headings, the top ones in bold and the ones under them indented; a tap goes there.
+private struct NoteContents: View {
+    let headings: [NoteText.Heading]
+    let pick: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let top = headings.map(\.level).min() ?? 1
+        NavigationStack {
+            List(headings) { heading in
+                Button { pick(heading.id) } label: {
+                    MathText.text(heading.title, style: heading.level == top ? .headline : .body)
+                        .font(heading.level == top ? .headline : .body)
+                        .foregroundStyle(heading.level == top ? .primary : .secondary)
+                        .padding(.leading, CGFloat(heading.level - top) * 16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+            .navigationTitle("Contents")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 /// A topic of a course's notebook: the notes, then its flashcards.
 struct TopicPageView: View {
     let topic: NotebookTopic
@@ -401,15 +560,15 @@ struct TopicPageView: View {
     @State private var error: String?
 
     var body: some View {
-        ScrollView {
+        NoteScroll(headings: headings) {
             VStack(alignment: .leading, spacing: 16) {
                 Text(topic.title).font(.largeTitle.bold())
                 if let summary = page?.summary ?? topic.summary {
                     Text(summary.markdown).font(.title3).foregroundStyle(.secondary)
                 }
                 if let page {
-                    NoteText(markdown: page.body ?? "")
-                    if let cards = page.cardsList, !cards.isEmpty { Flashcards(cards: cards) }
+                    NoteText(markdown: page.body ?? "", anchored: true)
+                    if let cards = page.cardsList, !cards.isEmpty { Flashcards(cards: cards).id("flashcards") }
                     if let sources = page.sources, !sources.isEmpty {
                         Text("From " + sources.joined(separator: "; "))
                             .font(.footnote).foregroundStyle(.secondary).padding(.top, 8)
@@ -427,6 +586,12 @@ struct TopicPageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+    }
+
+    private var headings: [NoteText.Heading] {
+        guard let page else { return [] }
+        let cards = page.cardsList?.isEmpty == false
+        return NoteText.headings(page.body ?? "") + (cards ? [.init(id: "flashcards", level: 2, title: "Flashcards")] : [])
     }
 
     private func load() async {
@@ -478,10 +643,10 @@ struct NotePage: View {
     let markdown: String
 
     var body: some View {
-        ScrollView {
+        NoteScroll(headings: NoteText.headings(markdown)) {
             VStack(alignment: .leading, spacing: 16) {
                 Text(title).font(.largeTitle.bold())
-                NoteText(markdown: markdown)
+                NoteText(markdown: markdown, anchored: true)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
@@ -500,12 +665,12 @@ struct LoadedNotePage: View {
     @State private var error: String?
 
     var body: some View {
-        ScrollView {
+        NoteScroll(headings: markdown.map(NoteText.headings) ?? []) {
             VStack(alignment: .leading, spacing: 16) {
                 Text(title).font(.largeTitle.bold())
                 if let subtitle { Text(subtitle).font(.title3).foregroundStyle(.secondary) }
                 if let markdown {
-                    NoteText(markdown: markdown)
+                    NoteText(markdown: markdown, anchored: true)
                 } else if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
                 } else {
@@ -539,14 +704,14 @@ struct LectureView: View {
     @State private var error: String?
 
     var body: some View {
-        ScrollView {
+        NoteScroll(headings: full?.notes.map(NoteText.headings) ?? []) {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(lecture.title ?? "Lecture").font(.largeTitle.bold())
                     Text(lecture.subtitle).font(.subheadline).foregroundStyle(.secondary)
                 }
                 if let notes = full?.notes, !notes.isEmpty {
-                    NoteText(markdown: notes)
+                    NoteText(markdown: notes, anchored: true)
                 } else if let current = full ?? Optional(lecture), current.isWorking || current.status == "failed" {
                     Label(current.statusText, systemImage: current.status == "failed" ? "exclamationmark.triangle" : "hourglass")
                         .foregroundStyle(current.status == "failed" ? .red : .secondary)

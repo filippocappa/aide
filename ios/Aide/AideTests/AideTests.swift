@@ -450,6 +450,43 @@ final class NoteTextTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))
         window.isHidden = true
     }
+
+    /// Contents lists the headings down to `###`, with the ids the page's headings get.
+    func testContentsListsTheHeadings() {
+        let notes = """
+        # Macroeconomics
+        Intro.
+        ## GDP and \\(Y_t\\)
+        - a point
+        ### Real GDP
+        #### Too deep
+        > [!info] Inside a callout
+        > ## Not listed
+        """
+        let headings = NoteText.headings(notes)
+        XCTAssertEqual(headings.map(\.title), ["Macroeconomics", "GDP and \\(Y_t\\)", "Real GDP"])
+        XCTAssertEqual(headings.map(\.level), [1, 2, 3])
+        XCTAssertEqual(Set(headings.map(\.id)).count, 3)
+        XCTAssertEqual(headings[0].id, "heading-0")
+    }
+
+    /// Maths inside a sentence (`\(…\)` from `inline=true`) is drawn, the markdown around it kept; what SwiftMath
+    /// can't read stays as its LaTeX.
+    @MainActor func testInlineMathsIsDrawn() throws {
+        XCTAssertNotNil(MathFormula.mathList(MathFormula.prepare(#"\big(1+r\big)\Bigl[x\Bigr]"#)))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 400)
+        window.rootViewController = UIHostingController(rootView: NoteText(markdown: #"""
+        ## Prices \(P_{i,t}\)
+        **Nominal** GDP \(Y^{nom}_t=\sum_i P_{i,t}\,Q_{i,t}\) at current prices, \(\frac{a}{b}\), and \(\oops{x}\).
+        - \(\pi_t - \pi_{t-1} = -\alpha(u_t - u_n)\)
+        """#, anchored: true))
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        window.isHidden = true
+    }
 }
 
 final class DigestTests: XCTestCase {

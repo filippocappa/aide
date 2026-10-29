@@ -622,8 +622,8 @@ final class APIClient {
 
     // MARK: Study (docs/API.md, "Study", "Study files", "Notebook")
 
-    /// Notes as the app shows them: maths as Unicode, but formulas on their own lines as LaTeX (`MathFormula`).
-    private static let readable = [URLQueryItem(name: "plain", value: "true"), URLQueryItem(name: "latex", value: "true")]
+    /// Notes as the app shows them: the maths as LaTeX (`MathFormula` on its own lines, `MathText` in sentences).
+    private static let readable = ["plain", "latex", "inline"].map { URLQueryItem(name: $0, value: "true") }
 
     /// The notebook as the Study tab shows it: inline maths as Unicode, formulas on their own lines as LaTeX, links as text.
     func notebookPage(course: Int) async throws -> NotebookStatus {
