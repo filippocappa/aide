@@ -951,6 +951,9 @@ struct SavedFood: Decodable, Identifiable, Hashable {
     let servingG: Double?
     let usualG: Double?
     let source: String
+    /// Nutri-Score, a to e, and NOVA (4 is ultra-processed), when known.
+    var grade: String? = nil
+    var nova: Int? = nil
 
     /// What logging with no grams uses: the usual portion, else one serving; nil when it has neither.
     var defaultGrams: Double? { usualG ?? servingG }
@@ -964,7 +967,7 @@ struct SavedFood: Decodable, Identifiable, Hashable {
 
     // convertFromSnakeCase turns kcal_100g into kcal100G.
     private enum CodingKeys: String, CodingKey {
-        case id, name, brand, barcode, servingG, usualG, source
+        case id, name, brand, barcode, servingG, usualG, source, grade, nova
         case kcal100g = "kcal100G", protein100g = "protein100G", carbs100g = "carbs100G", fat100g = "fat100G"
     }
 
@@ -981,6 +984,8 @@ struct SavedFood: Decodable, Identifiable, Hashable {
         servingG = try c.decodeIfPresent(Double.self, forKey: .servingG)
         usualG = try c.decodeIfPresent(Double.self, forKey: .usualG)
         source = try c.decodeIfPresent(String.self, forKey: .source) ?? ""
+        grade = try c.decodeIfPresent(String.self, forKey: .grade)
+        nova = try c.decodeIfPresent(Int.self, forKey: .nova)
     }
 }
 

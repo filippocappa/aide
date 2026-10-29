@@ -5,17 +5,20 @@ import UIKit
 /// What the meal camera ends with; Health → Food carries it out once the camera has gone.
 enum MealCameraResult {
     case photos([PickedPhoto])
-    /// A packet's barcode seen live, with the photo taken as it was tapped.
-    case barcode(String, PickedPhoto?)
+    /// A packet logged from its barcode, on the page the camera opened.
+    case logged(Meal)
     case library
     case describe
 }
 
-/// Aide's own camera for logging a meal: a few shots of the plate (up to `MealCamera.limit`), or a packet's
-/// barcode, read live and logged without a model call. The library and "Describe" are a tap away. Chat photos keep
-/// the system camera (`CameraPicker`).
+/// Aide's own camera for logging a meal: a few shots of the plate (up to `MealCamera.limit`), or a packet: once a
+/// food barcode holds still in view, its page opens over the camera by itself (`ScanSheet`, no model call), and
+/// Cancel there comes back to the camera. The library and "Describe" are a tap away. Chat photos keep the system
+/// camera (`CameraPicker`).
 struct MealCameraView: View {
     let tint: Color
+    /// The day a packet is logged on; nil is today.
+    var date: String?
     let done: (MealCameraResult) -> Void
 
     @StateObject private var camera = MealCamera()
@@ -23,6 +26,13 @@ struct MealCameraView: View {
     @Environment(\.openURL) private var openURL
     @State private var photos: [PickedPhoto] = []
     @State private var flash = false
+    /// The packet whose page is open, and the photo taken as it opened (for "ask Coach").
+    @State private var scanning: ScannedCode?
+    @State private var scanPhoto: PickedPhoto?
+    @State private var scanLogged: Meal?
+    @State private var scanToCoach = false
+    /// A barcode whose page was cancelled: not opened again by itself until it leaves the picture (the pill opens it).
+    @State private var ignored: String?
 
     var body: some View {
         ZStack {
@@ -42,7 +52,7 @@ struct MealCameraView: View {
             VStack(spacing: 0) {
                 topBar
                 Spacer()
-                if let code = camera.barcode, photos.isEmpty {
+                if let code = camera.barcode, code == ignored, photos.isEmpty, scanning == nil {
                     barcodePill(code)
                         .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
@@ -53,8 +63,41 @@ struct MealCameraView: View {
         .preferredColorScheme(.dark)
         .animation(.easeOut(duration: 0.2), value: camera.barcode)
         .animation(.easeOut(duration: 0.2), value: photos)
+        .sensoryFeedback(.success, trigger: scanning?.code) { _, new in new != nil }
         .task { await camera.start() }
         .onDisappear { camera.stop() }
+        .onChange(of: camera.steady) { _, code in
+            guard let code, code != ignored, photos.isEmpty, scanning == nil else { return }
+            open(code)
+        }
+        .onChange(of: camera.barcode) { _, code in
+            if code == nil { ignored = nil }
+        }
+        .sheet(item: $scanning, onDismiss: afterScan) { code in
+            ScanSheet(barcode: code.code, date: date, tint: tint, logged: { scanLogged = $0 },
+                      askCoach: { scanToCoach = true })
+        }
+    }
+
+    /// The packet's page over the camera, with a photo of it taken on the way (Coach gets it if it's a whole meal).
+    private func open(_ code: String) {
+        scanPhoto = nil
+        scanning = ScannedCode(code: code)
+        Task { scanPhoto = await camera.capture() }
+    }
+
+    private func afterScan() {
+        let code = scanning?.code ?? camera.barcode
+        if let meal = scanLogged {
+            finish(.logged(meal))
+        } else if scanToCoach, let photo = scanPhoto {
+            finish(.photos([photo]))
+        } else {
+            ignored = code
+        }
+        scanLogged = nil
+        scanToCoach = false
+        scanPhoto = nil
     }
 
     private var topBar: some View {
@@ -80,19 +123,17 @@ struct MealCameraView: View {
         .padding(.top, 8)
     }
 
-    /// "Barcode 8001505005707 · Scan": the packet's real numbers, how much you had, no model call.
+    /// "Barcode 8001505005707 · Open": the packet's page again, after it was cancelled with the packet still in view.
     private func barcodePill(_ code: String) -> some View {
         Button {
-            Task {
-                let photo = await camera.capture()
-                finish(.barcode(code, photo))
-            }
+            ignored = nil
+            open(code)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "barcode.viewfinder")
                 Text("Barcode \(code)").monospacedDigit()
                 Text("·").foregroundStyle(Theme.slate.opacity(0.6))
-                Text("Scan").fontWeight(.bold)
+                Text("Open").fontWeight(.bold)
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Theme.slate)
@@ -245,6 +286,10 @@ final class MealCamera: NSObject, ObservableObject {
     @Published private(set) var status = Status.starting
     /// The food barcode in view, gone a moment after it leaves.
     @Published private(set) var barcode: String?
+    /// The barcode once it has been read the same for a moment (`steadyAfter`), so a code glimpsed in passing
+    /// doesn't open a page; nil again when it leaves.
+    @Published private(set) var steady: String?
+    static let steadyAfter: TimeInterval = 0.35
     @Published private(set) var torch = false
     @Published private(set) var busy = false
     private(set) var hasTorch = false
@@ -257,6 +302,7 @@ final class MealCamera: NSObject, ObservableObject {
     private var rotation: AVCaptureDevice.RotationCoordinator?
     private var pending: PhotoTaker?
     private var lastSeen = Date.distantPast
+    private var firstSeen = Date.distantPast
     private var forget: Task<Void, Never>?
 
     /// A barcode's digits when it's one a food packet carries; Code 128 only when it's all digits, EAN length.
@@ -370,14 +416,22 @@ extension MealCamera: AVCaptureMetadataOutputObjectsDelegate {
         }.first
         guard let code else { return }
         MainActor.assumeIsolated {
-            if barcode != code { barcode = code }
-            lastSeen = Date()
+            let now = Date()
+            if barcode != code {
+                barcode = code
+                steady = nil
+                firstSeen = now
+            } else if steady != code, now.timeIntervalSince(firstSeen) >= Self.steadyAfter {
+                steady = code
+            }
+            lastSeen = now
             // Gone 1.5 s after it was last seen, so the pill doesn't flicker as the code slips in and out of focus.
             forget?.cancel()
             forget = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1.5))
                 guard !Task.isCancelled, let self, Date().timeIntervalSince(self.lastSeen) >= 1.4 else { return }
                 self.barcode = nil
+                self.steady = nil
             }
         }
     }

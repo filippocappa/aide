@@ -115,7 +115,7 @@ struct HealthView: View {
                 }
             }
             .fullScreenCover(isPresented: $showCamera, onDismiss: afterCamera) {
-                MealCameraView(tint: coach.tint) { cameraResult = $0 }
+                MealCameraView(tint: coach.tint, date: isToday ? nil : Wire.dayString(day)) { cameraResult = $0 }
             }
             // The meal camera above takes photos here; the library comes from this.
             .photoSources(camera: .constant(false), library: $showLibrary, limit: 4, barcodes: true) { photos in
@@ -145,13 +145,8 @@ struct HealthView: View {
                 if let photo = coachInstead { pickedPhotos = PickedMeal(photos: [photo]) }
                 coachInstead = nil
             }) { code in
-                ScanSheet(barcode: code.code, date: isToday ? nil : Wire.dayString(day), logged: { meal in
-                    withAnimation { logReply = "Logged **\(meal.name)**: \(meal.calories) kcal." }
-                    Task {
-                        await loadFood()
-                        await health.writeMeals()
-                    }
-                }, askCoach: code.photo.map { photo in { coachInstead = photo } })
+                ScanSheet(barcode: code.code, date: isToday ? nil : Wire.dayString(day), tint: coach.tint,
+                          logged: loggedPacket, askCoach: code.photo.map { photo in { coachInstead = photo } })
             }
             .refreshable {
                 async let food: Void = loadFood()
@@ -166,6 +161,9 @@ struct HealthView: View {
                 #if DEBUG
                 if settings.isPreview, let m = UserDefaults.standard.string(forKey: "previewMetric") {
                     page = "body"; metric = HealthMetric(rawValue: m)
+                }
+                if settings.isPreview, let code = UserDefaults.standard.string(forKey: "previewBarcode") {
+                    page = "food"; scanned = ScannedCode(code: code)
                 }
                 #endif
             }
@@ -197,9 +195,18 @@ struct HealthView: View {
         cameraResult = nil
         switch result {
         case .photos(let photos): pickedPhotos = PickedMeal(photos: photos)
-        case .barcode(let code, let photo): scanned = ScannedCode(code: code, photo: photo)
+        case .logged(let meal): loggedPacket(meal)
         case .library: showLibrary = true
         case .describe: describing = true
+        }
+    }
+
+    /// A packet logged from its barcode: say so, and the day again.
+    private func loggedPacket(_ meal: Meal) {
+        withAnimation { logReply = "Logged **\(meal.name)**: \(meal.calories) kcal." }
+        Task {
+            await loadFood()
+            await health.writeMeals()
         }
     }
 

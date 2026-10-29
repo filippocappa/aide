@@ -121,7 +121,7 @@ struct ChatView: View {
             if let photo = coachInstead { photos = [photo] }
             coachInstead = nil
         }) { code in
-            ScanSheet(barcode: code.code, date: nil, conversation: chat.conversationID,
+            ScanSheet(barcode: code.code, date: nil, conversation: chat.conversationID, tint: chat.agent.tint,
                       logged: { _ in Task { await chat.loadHistory() } },
                       askCoach: code.photo.map { photo in { coachInstead = photo } })
         }

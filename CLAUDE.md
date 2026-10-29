@@ -226,8 +226,11 @@ Control Center (iOS 18): "Snap a meal" and "Describe a meal" (`LogMealIntent`, `
 Shortcut) open Health → Food with the camera or the describe box (`aide://meal/photo`). The barcode's grams take sums
 (`Support/Arithmetic.swift`: 400/3, 2×30; + − × ÷ keys over the number pad).
 The meal camera (2026-10-29, `Views/MealCameraView.swift`): Aide's own camera for Health → Food and the Control Center
-button (now a fork and knife, not a camera): up to 4 shots then Next, a live barcode pill ("Barcode … · Scan") that
-opens the scan page, Library and Describe. Chat photos keep the system camera.
+button (now a fork and knife, not a camera): up to 4 shots then Next, Library and Describe. A food barcode held still
+in view (0.35 s) opens the packet's page over the camera by itself (Cancel goes back; that code then waits for a tap on
+its pill until it leaves the picture). The packet page (`ScanSheet`, redesigned 2026-10-29): name, brand, Nutri-Score
+tile, Ultra-processed, a big grams field prefilled with the usual portion or a serving, portion chips, the kcal and
+macros, "Log 240 kcal". Chat photos keep the system camera.
 Weight (2026-10-29, both sides, contract "Apple Health", Weight; `weight.py`, `tools/weight.py`): readings logged in
 chat (`log_weight`) or the app plus Health's, the 7-day average, the change over 3 weeks and the rate a week (28 days)
 against the goal's pace (gain +0.25–0.5% a month), with a verdict. The phone writes Aide's readings to Health as Body

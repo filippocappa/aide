@@ -1836,7 +1836,8 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(old.asks, [])
         XCTAssertEqual(TargetsSummary.workoutLine(old.workouts), "Workout days add what the Watch says you burned, as carbs and fat.")
         let body = try JSONEncoder.api.encode(TargetsAnswers(answers: [.init(question: "Q?", answer: "A")]))
-        XCTAssertEqual(String(decoding: body, as: UTF8.self), #"{"answers":[{"question":"Q?","answer":"A"}]}"#)
+        let sent = try JSONSerialization.jsonObject(with: body) as? [String: [[String: String]]] // keys in any order
+        XCTAssertEqual(sent, ["answers": [["question": "Q?", "answer": "A"]]])
     }
 
     func testAPlannedRunSaysWhatItsFor() throws {
