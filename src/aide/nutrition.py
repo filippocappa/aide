@@ -22,9 +22,10 @@ KINDS = ("general", "fat", "drink", "water", "cheese", "red_meat")
 QUALITY = ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct")
 GRADES = "abcde"
 GRADE_POINTS = {"a": 100, "b": 75, "c": 50, "d": 25, "e": 0}
-GOALS = ("lose", "keep", "gain")
+GOALS = ("lose", "keep", "gain", "perform")
 WORKOUTS = {"on": True, "share": 1.0, "carbs_pct": 80}  # what a workout adds, by default
-PROFILE = ("weight_kg", "height_cm", "age", "sex", "goal")
+PROFILE = ("weight_kg", "height_cm", "age", "sex", "goal", "note")
+MAX_NOTE = 500
 RUN_WORDS = re.compile(r"\b(run|runs|running|jog|jogging|corsa|corsetta|correre)\b", re.I)
 RUN_KCAL_MIN = 11.0  # kcal a minute of running, before the user's own runs say otherwise
 KJ = 4.184
@@ -134,6 +135,7 @@ NUTRIENTS = {
 }
 UPF_FULL, UPF_ZERO = 10, 50  # % of kcal ultra-processed (NOVA 4)
 PARTS = {"nutrients": 0.5, "processing": 0.25, "grades": 0.25}
+DAY_KCAL = 2000  # a meal's nutrients are judged per this many kcal
 
 
 def _covered(items: list[dict], key: str) -> tuple[list[dict], float]:
@@ -143,10 +145,11 @@ def _covered(items: list[dict], key: str) -> tuple[list[dict], float]:
     return have, (sum(i["kcal"] for i in have) / total if total else 0.0)
 
 
-def nutrients(items: list[dict], final: bool) -> dict:
+def nutrients(items: list[dict], final: bool, scale: float | None = None) -> dict:
     """Each of the day's nutrients against its guideline, or None without enough data (items with it under half the
     day's kcal). Limits are scaled up to the whole day by that share; what's needed at least isn't, so missing
-    data never earns marks. Before the day's over (not final), only the limits can cost."""
+    data never earns marks. Before the day's over (not final), only the limits can cost. `scale` multiplies the
+    grams (a meal's, to 2000 kcal); the shares of kcal stay as they are."""
     total = sum(i["kcal"] for i in items)
     out = {}
     for name, (key, way, full, zero) in NUTRIENTS.items():
@@ -156,10 +159,11 @@ def nutrients(items: list[dict], final: bool) -> dict:
             continue
         amount = sum(i[key] for i in have)
         if way == "least":
+            amount *= scale or 1
             out[name] = {"g": round(amount), "target": full,
                          "score": round(100 * _ramp(amount, full, zero)) if final else 100}
         elif name == "salt":
-            day = amount / coverage
+            day = amount / coverage * (scale or 1)
             out[name] = {"g": round(day, 1), "limit": full, "score": round(100 * _ramp(day, full, zero))}
         else:
             pct = 100 * amount / coverage * (9 if name == "sat_fat" else 4) / total
@@ -177,9 +181,33 @@ def processing(items: list[dict]) -> dict | None:
     return {"upf_pct": round(upf), "score": round(100 * _ramp(upf, UPF_FULL, UPF_ZERO))}
 
 
+def _quality(items: list[dict], final: bool, scale: float | None = None) -> dict:
+    """Quality from what was eaten: its parts (nutrients, processing, grades), each 0–100 or None, and their
+    weighted mean (None when none has enough data). `scale` (a meal's): its nutrients per 2000 kcal, all counted."""
+    by_grade = {g: 0.0 for g in GRADES}
+    for i in items:
+        if i.get("grade") in by_grade:
+            by_grade[i["grade"]] += i["kcal"]
+    graded_kcal = sum(by_grade.values())
+    total = sum(i["kcal"] for i in items)
+    coverage = min(1.0, graded_kcal / total) if total else 0.0
+    grades = (sum(GRADE_POINTS[g] * k for g, k in by_grade.items()) / graded_kcal
+              if graded_kcal and coverage >= MIN_GRADED else None)
+    found = nutrients(items, final, scale)
+    scored = [n["score"] for n in found.values() if n]
+    upf = processing(items)
+    parts = {"nutrients": sum(scored) / len(scored) if scored else None,
+             "processing": upf["score"] if upf else None, "grades": grades}
+    weighed = {k: v for k, v in parts.items() if v is not None}
+    quality = (sum(PARTS[k] * v for k, v in weighed.items()) / sum(PARTS[k] for k in weighed)) if weighed else None
+    return {"quality": quality, "parts": parts, "nutrients": found, "processing": upf, "by_grade": by_grade,
+            "graded": coverage}
+
+
 def score(eaten: dict, targets: dict, items: list[dict], final: bool) -> dict | None:
     """The day's score from its totals, its targets and what was eaten (`items`: each with its kcal, and when known
-    its grade, nova and nutrients in grams, as `Nutrition.items` gives them). None before anything's eaten."""
+    its grade, nova and nutrients in grams, as `Nutrition.items` gives them). Without targets it's the quality alone.
+    None before anything's eaten, or when neither has anything to go on."""
     if not eaten["calories"]:
         return None
     set_ = {k: targets[k] for k in MACROS if targets.get(k)}
@@ -187,22 +215,8 @@ def score(eaten: dict, targets: dict, items: list[dict], final: bool) -> dict | 
     if set_:
         weight = sum(WEIGHTS[k] for k in set_)
         numbers = 100 * sum(WEIGHTS[k] * _closeness(eaten[k], t, k, final) for k, t in set_.items()) / weight
-    by_grade = {g: 0.0 for g in GRADES}
-    for i in items:
-        if i.get("grade") in by_grade:
-            by_grade[i["grade"]] += i["kcal"]
-    graded_kcal = sum(by_grade.values())
-    # Against the items' own sum: a meal's total is rounded, its items aren't.
-    coverage = min(1.0, graded_kcal / (sum(i["kcal"] for i in items) or eaten["calories"]))
-    grades = (sum(GRADE_POINTS[g] * k for g, k in by_grade.items()) / graded_kcal
-              if graded_kcal and coverage >= MIN_GRADED else None)
-    day_nutrients = nutrients(items, final)
-    scored = [n["score"] for n in day_nutrients.values() if n]
-    upf = processing(items)
-    parts = {"nutrients": sum(scored) / len(scored) if scored else None,
-             "processing": upf["score"] if upf else None, "grades": grades}
-    weighed = {k: v for k, v in parts.items() if v is not None}
-    quality = (sum(PARTS[k] * v for k, v in weighed.items()) / sum(PARTS[k] for k in weighed)) if weighed else None
+    q = _quality(items, final)
+    quality = q["quality"]
     if numbers is not None and quality is not None:
         total = NUMBERS_SHARE * numbers + (1 - NUMBERS_SHARE) * quality
     else:
@@ -210,10 +224,20 @@ def score(eaten: dict, targets: dict, items: list[dict], final: bool) -> dict | 
     if total is None:
         return None
     return {"score": round(total), "final": final, "numbers": None if numbers is None else round(numbers),
-            "quality": None if quality is None else round(quality), "graded": round(coverage, 2),
-            "grades": {g: round(k) for g, k in by_grade.items()},
-            "parts": {k: None if v is None else round(v) for k, v in parts.items()},
-            "nutrients": day_nutrients, "processing": upf}
+            "quality": None if quality is None else round(quality), "graded": round(q["graded"], 2),
+            "grades": {g: round(k) for g, k in q["by_grade"].items()},
+            "parts": {k: None if v is None else round(v) for k, v in q["parts"].items()},
+            "nutrients": q["nutrients"], "processing": q["processing"]}
+
+
+def meal_quality(items: list[dict]) -> int | None:  # one item works the same: a food's quality
+    """A meal's quality, 0–100, the day's recipe on its items with its nutrients per 2000 kcal (a side of carrots
+    is full of fibre for its calories, a pastry isn't); None without enough data or calories."""
+    total = sum(i["kcal"] for i in items)
+    if total < 1:
+        return None
+    q = _quality(items, final=True, scale=DAY_KCAL / total)["quality"]
+    return None if q is None else round(q)
 
 
 def weakest(s: dict | None) -> str | None:
@@ -272,6 +296,8 @@ class Nutrition:
                 raise ValueError(f"goal is one of {', '.join(GOALS)}")
             if p.get("sex") is not None and p["sex"] not in ("male", "female"):
                 raise ValueError("sex is male or female")
+            if p.get("note") is not None:
+                p["note"] = " ".join(str(p["note"]).split())[:MAX_NOTE] or None
             for key, top in (("weight_kg", 400), ("height_cm", 260), ("age", 120)):
                 if p.get(key) is not None and not 0 < float(p[key]) <= top:
                     raise ValueError(f"{key} must be between 0 and {top}")
@@ -354,8 +380,9 @@ class Nutrition:
             return []
         ids = [m["id"] for m in meals]
         rows = self.conn.execute(
-            f"SELECT mi.meal_id, mi.calories AS item_kcal, mi.grams AS item_grams, f.* FROM meal_items mi "
-            f"LEFT JOIN foods f ON f.id = mi.food_id WHERE mi.meal_id IN ({','.join('?' * len(ids))})", ids).fetchall()
+            f"SELECT mi.meal_id, mi.name AS item_name, mi.calories AS item_kcal, mi.grams AS item_grams, f.* "
+            f"FROM meal_items mi LEFT JOIN foods f ON f.id = mi.food_id "
+            f"WHERE mi.meal_id IN ({','.join('?' * len(ids))}) ORDER BY mi.id", ids).fetchall()
         with_items = {r["meal_id"] for r in rows}
         out = []
         for r in rows:
@@ -365,11 +392,29 @@ class Nutrition:
             def per(key: str) -> float | None:
                 return food[key] * g if food.get(key) is not None and r["item_grams"] else None
             sugars = per("sugars_100g")
-            out.append({"kcal": r["item_kcal"], "grade": grade(food) if food else None, "nova": food.get("nova"),
+            out.append({"meal_id": r["meal_id"], "name": r["item_name"],
+                        "grams": r["item_grams"], "kcal": r["item_kcal"], "grade": grade(food) if food else None,
+                        "nova": food.get("nova"),
                         "fibre_g": per("fibre_100g"), "fvl_g": per("fvl_pct"), "sat_fat_g": per("sat_fat_100g"),
                         "salt_g": per("salt_100g"),
                         "free_sugars_g": None if sugars is None else sugars * (1 - (food.get("fvl_pct") or 0) / 100)})
-        return out + [{"kcal": m["calories"]} for m in meals if m["id"] not in with_items]
+        return out + [{"meal_id": m["id"], "kcal": m["calories"]} for m in meals if m["id"] not in with_items]
+
+    def meals(self, meals: list[dict]) -> dict[int, dict]:
+        """Each meal's items (name, grams, kcal, grade, nova and their own quality) and the meal's quality, by meal
+        id; a meal logged without items has none and no quality."""
+        out = {m["id"]: {"items": [], "quality": None} for m in meals}
+        by_meal: dict[int, list[dict]] = {}
+        for i in self.items(meals):
+            by_meal.setdefault(i["meal_id"], []).append(i)
+        for meal_id, items in by_meal.items():
+            if items[0].get("name") is None:
+                continue
+            out[meal_id] = {"items": [{"name": i["name"], "grams": i["grams"] and round(i["grams"]),
+                                       "kcal": round(i["kcal"]), "grade": i["grade"], "nova": i["nova"],
+                                       "quality": meal_quality([i])} for i in items],
+                            "quality": meal_quality(items)}
+        return out
 
     def day(self, d: date, events: list | None = None) -> dict:
         """The day's targets, what's left of them, its bonus and its score (final once the day is over)."""
@@ -401,7 +446,11 @@ Watch says a workout burned is added on top (share, 0 to 1; Watch numbers often 
 how much of that goes to carbs (carbs_pct; the rest is fat). Work from the profile (weight, height, age, sex, goal), \
 their usual activity on days without a workout (active kcal and steps), their runs and other workouts (how often, \
 how long, pace, VO2 max), their weight trend and what they've actually been eating. Protein for someone who runs \
-and trains: about 1.6–2.2 g per kg. A goal to lose means a modest deficit (300–500 kcal), to gain a modest surplus. \
+and trains: about 1.6–2.2 g per kg. The goal: lose is a modest deficit (300–500 kcal); keep is the weight as it is; \
+gain is a modest surplus (200–300 kcal) for muscle; perform is eating for training and racing at a steady weight: \
+enough carbs for the training load (most of a workout's burn back, as carbs), protein toward the top of the range, \
+nothing cut. The profile's note is what the user told you in their own words (a race, how they train, what they \
+want): follow it. \
 When the Watch measures resting energy (resting kcal), \
 use it: a rest day's burn is the usual resting kcal plus the usual active kcal on days without a workout. Don't \
 estimate it from a formula then. Say why in two or three short sentences, plainly, with the numbers that \

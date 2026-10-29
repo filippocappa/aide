@@ -177,6 +177,14 @@ async def test_new_items_carry_their_quality_and_the_day_gets_a_score(stores, tm
     assert s["nutrients"]["fruit_veg"] == {"g": 160, "target": 400, "score": 100}
     assert s["nutrients"]["sugars"]["pct"] == 0  # the apple's sugars aren't free sugars
     assert day["left"]["calories"] == 2500 - 170  # the meal is rounded
+    # Each meal's foods and quality: its nutrients per 2000 kcal, so a side of oil alone has no fibre to show.
+    meal = f.day(f.today())[0]
+    got = nutrition.meals([meal])[meal["id"]]
+    assert got["quality"] == 97 and "Meal quality 97/100 (Mela 100, Olio extravergine 75)" in said
+    assert [(i["name"], i["grams"], i["kcal"], i["grade"], i["nova"], i["quality"]) for i in got["items"]] == [
+        ("Mela", 150, 78, "a", 1, 100), ("Olio extravergine", 10, 88, "b", 2, 75)]
+    bare = f.add("Pizza", 800, 30, 90, 30)
+    assert nutrition.meals([bare]) == {bare["id"]: {"items": [], "quality": None}}
 
 
 def test_a_meal_gets_coachs_emoji_or_one_from_its_name(stores):
@@ -222,6 +230,11 @@ def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
     targets = api.get("/v1/food/targets", headers=AUTH).json()
     assert targets["profile"]["weight_kg"] == 74 and targets["workouts"] == {"on": True, "share": 1.0, "carbs_pct": 80}
     assert api.put("/v1/food/targets", json={"profile": {"goal": "bulk"}}, headers=AUTH).status_code == 400
+    assert targets["coach"] == {"model": "Claude Smart", "via": "api"}  # who answers Ask Coach
+    note = "  Half marathon in March,\n4 runs a week  "
+    profile = api.put("/v1/food/targets", json={"profile": {"goal": "perform", "note": note}},
+                      headers=AUTH).json()["profile"]
+    assert profile["goal"] == "perform" and profile["note"] == "Half marathon in March, 4 runs a week"
 
     health.save([{"date": today.isoformat(), "active_kcal": 947, "steps": 14000, "workouts": [run(today)]}]
                 + [{"date": (today - timedelta(days=n)).isoformat(), "resting_kcal": 1780 + 10 * n,
@@ -231,6 +244,7 @@ def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
     assert day["goals"]["calories"] == 3160 and day["base"] == BASE  # the ring follows the day's targets
     assert day["bonus"]["kcal"] == 656 and day["left"]["calories"] == 2260
     assert day["score"]["quality"] is None and day["score"]["final"] is False  # a meal without items: ungraded
+    assert day["meals"][0]["items"] == [] and day["meals"][0]["quality"] is None
     days = api.get(f"/v1/food/days?from={today - timedelta(days=1)}&to={today}", headers=AUTH).json()["days"]
     assert [d["score"] for d in days] == [None, 100]
 
@@ -240,6 +254,7 @@ def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
     assert got["questions"] == ["Is 74 kg still right?", "A race coming?"]  # two at most
     asked = model.requests[0]["messages"][0]["content"][0]["text"]
     assert "run 54 min, 9.8 km, 5.51 min/km, 656 kcal" in asked and '"weight_kg": 74' in asked
+    assert '"note": "Half marathon in March, 4 runs a week"' in asked
     # The Watch's resting energy, not a formula: the usual of the days before today.
     assert "usual resting kcal 1800 a day, usual active kcal on days without a workout 450" in asked
     assert "so a rest day burns about 2250" in asked

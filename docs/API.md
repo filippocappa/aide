@@ -629,6 +629,15 @@ A meal logged from items has them as the first line of `notes` (`"Items: Yogurt 
 then whatever the model noted; no new fields.
 `water_ml` and `caffeine_mg` (since 2026-10-27) are 0 when there's none: a drink is logged like a meal ("an espresso
 and 1 L of water" is one, 5 kcal, 1030 ml water, 65 mg caffeine).
+On `GET /v1/food` and in chat's `meals` cards (since 2026-10-29, not on `/v1/food/meals`) a Meal also has its items
+and their quality:
+```json
+"items": [{"name": "Mela", "grams": 150, "kcal": 78, "grade": "a", "nova": 1, "quality": 100}], "quality": 97
+```
+`quality` (0–100, null without enough data) is the day score's quality recipe on the meal alone (and each item's on
+the item alone), with fibre, fruit and veg and salt counted per 2000 kcal of it, so a plate of vegetables is full of
+fibre for its calories and a pastry isn't. `grade` is the item's Nutri-Score, `nova` its processing group, each null
+when its food doesn't say. A meal logged without items has `"items": []` and `"quality": null`.
 
 **Apple Health** (since 2026-10-27): the app writes every meal of the last 14 days as its own food entry (a
 `food` correlation: energy, protein, carbs, fat, and water and caffeine when not 0, named after the meal, with the
@@ -648,7 +657,7 @@ goes. The server sends the silent `sync` push after every meal change, so this h
 | `POST /v1/food/foods/{id}/log` | `{"grams": 30, "date": "2026-10-28", "conversation_id": "…"}` (all optional) | `{"meal": Meal}`: logs a saved food as a meal, the server's own sum (no model call). No `grams`: the usual portion, else one serving, else 400. The meal is named after the food (and its brand), `notes` is its items line, and the grams become the usual portion. Coach also posts "Logged …" with its `meals` card in the Coach chat `conversation_id` names (where it was scanned), else in the Food log chat (since 2026-10-29). |
 | `GET /v1/food/goals` | | Goals (the base) |
 | `PUT /v1/food/goals` | Goals | Goals (sets the base) |
-| `GET /v1/food/targets` | | Targets (since 2026-10-29) |
+| `GET /v1/food/targets` | | Targets (since 2026-10-29), plus `"coach": {"model": "Claude Sonnet 5.5", "via": "plan"}`: who answers a proposal (`via`: `plan`, the Claude plan through Claude Code; `openrouter` or `api`, paid per token) |
 | `PUT /v1/food/targets` | any of `base` (Goals), `workouts` (any of its keys), `profile` (any of its keys; `null` clears one) | Targets; 400 with the reason when a value is out of range |
 | `POST /v1/food/targets/propose` | optional `{"answers": [{"question": "Is 65 kg still right?", "answer": "66 now"}]}` (up to 4; empty answers are left out) | `{"base": Goals, "workouts": {"on": true, "share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week…", "questions": ["Is 65 kg still right?"]}`: Coach's proposal (one model call, 5–30 s) from the profile, 60 days of Apple Health (resting and active energy, workouts with distance and pace, VO2 max, weight; the Watch's resting energy, not a formula) and the last 14 days of food. `questions` (since 2026-10-29, up to 2, often none) are what would change the numbers; the app sends the answers back with the questions for a new proposal. Nothing is saved: the app shows it and PUTs what the user keeps. 502 when the model fails or answers oddly. |
 
@@ -660,7 +669,8 @@ number or null (no goal); all null until set, here or by Coach in chat ("aim for
 ```json
 {"base": {"calories": 2500, "protein_g": 140, "carbs_g": 300, "fat_g": 80},
  "workouts": {"on": true, "share": 1.0, "carbs_pct": 80},
- "profile": {"weight_kg": 74, "height_cm": 180, "age": 22, "sex": "male", "goal": "keep"}}
+ "profile": {"weight_kg": 74, "height_cm": 180, "age": 22, "sex": "male", "goal": "perform",
+             "note": "Half marathon in March"}}
 ```
 - `base` is the rest day (the same as Goals). On a day with workouts, their Watch kcal times `share` (0–1.5) is
   added: `carbs_pct` (0–100) of it as carbs (4 kcal/g), the rest as fat (9 kcal/g); protein stays. Calories round to 10.
@@ -668,8 +678,10 @@ number or null (no goal); all null until set, here or by Coach in chat ("aim for
   a calendar called Run, counts at
   the user's own kcal a minute running (the last 60 days' runs; 11 without), `planned: true`. Once the Watch has a
   workout that day, only the done workouts count.
-- `profile` (each key may be null; `sex` is `male` or `female`, `goal` `lose`, `keep` or `gain`) is what proposals
-  start from; the app fills it from Apple Health once.
+- `profile` (each key may be null; `sex` is `male` or `female`, `goal` `lose`, `keep`, `gain` or, since 2026-10-29,
+  `perform`: eating for training and racing at a steady weight) is what proposals start from; the app fills it from
+  Apple Health. `note` (since 2026-10-29, up to 500 characters) is what the user tells Coach in their own words.
+- Targets are optional: without them the day score is quality alone.
 
 Bonus: `{"kcal": 656, "planned": false, "workouts": [{"type": "run", "kcal": 656, "minutes": 54}]}` (a planned one
 also has the event's `title`); `{"kcal": 0, "planned": false, "workouts": []}` without any.

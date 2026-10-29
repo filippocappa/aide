@@ -116,6 +116,7 @@ class FoodProfile(BaseModel):
     age: int | None = None
     sex: str | None = None
     goal: str | None = None
+    note: str | None = Field(None, max_length=500)
 
 
 class FoodTargetsIn(BaseModel):
@@ -1033,7 +1034,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         meals = food.day(d)
         day = nutrition.day(d, await events_today() if d == food.today() else None)
         # goals are the day's targets (the base plus its workouts), so an older app's ring follows them
-        return {"date": d.isoformat(), "meals": [food.as_json(m) for m in meals], "totals": totals(meals),
+        quality = nutrition.meals(meals)
+        return {"date": d.isoformat(), "meals": [food.as_json(m) | quality[m["id"]] for m in meals],
+                "totals": totals(meals),
                 "goals": day["targets"], "base": food.goals(), "left": day["left"], "bonus": day["bonus"],
                 "score": day["score"]}
 
@@ -1180,9 +1183,16 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def set_food_goals(body: FoodGoals):
         return food.set_goals(body.model_dump())
 
+    def proposer() -> dict:
+        """Who answers Ask Coach: the model, and whether it runs on the Claude plan or is paid per token."""
+        model = re.sub(r"(\d)-(\d)", r"\1.\2", agent.smart_model.split("/")[-1].removeprefix("claude-"))
+        via = "plan" if engine is not None and engine.plan_for_background() else (
+            "openrouter" if agent.smart_model.startswith("anthropic/") else "api")
+        return {"model": "Claude " + model.replace("-", " ").title(), "via": via}
+
     @app.get("/v1/food/targets", dependencies=[Depends(auth)])
     async def food_targets():
-        return nutrition.targets()
+        return nutrition.targets() | {"coach": proposer()}
 
     @app.put("/v1/food/targets", dependencies=[Depends(auth)])
     async def set_food_targets(body: FoodTargetsIn):

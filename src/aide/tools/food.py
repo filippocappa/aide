@@ -37,7 +37,16 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         return line + (f"\n    notes: {m['notes']}" if m["notes"] else "")
 
     def cards(text: str, meals: list[dict]) -> ToolOutput:
-        return ToolOutput(text, {"type": "meals", "meals": [store.as_json(m) for m in meals]})
+        quality = nutrition.meals(meals)
+        return ToolOutput(text, {"type": "meals", "meals": [store.as_json(m) | quality[m["id"]] for m in meals]})
+
+    def quality_line(meal: dict) -> str:
+        """The meal's quality and its foods' grades, for Coach to mention when it's worth it."""
+        q = nutrition.meals([meal])[meal["id"]]
+        if q["quality"] is None:
+            return ""
+        foods = ", ".join(f"{i['name']} {i['quality'] if i['quality'] is not None else '?'}" for i in q["items"])
+        return f"\nMeal quality {q['quality']}/100 ({foods})"
 
     def day_line(d: Date) -> str:
         """The day's totals against its targets (the goals plus what workouts burned), and its score."""
@@ -69,7 +78,7 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         meal = store.add(name, **sums, eaten_at=eaten_at, photo=photo_id, notes=notes, water_ml=water_ml,
                          caffeine_mg=caffeine_mg, emoji=emoji)
         foods.keep_items(meal["id"], rows, count=True)
-        lines = [f"Logged: {fmt(meal)}", day_line(store.local_day(meal))]
+        lines = [f"Logged: {fmt(meal)}{quality_line(meal)}", day_line(store.local_day(meal))]
         new = [f"[food {r['food_id']}] {r['name']}" for r in rows if r["food_id"] > top]
         lines += [f"Saved as new foods: {', '.join(new)}"] if new else []
         return cards("\n".join(lines), [meal])
