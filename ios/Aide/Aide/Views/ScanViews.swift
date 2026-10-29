@@ -130,7 +130,23 @@ struct ScanSheet: View {
                 TextField(food.defaultGrams.map { Self.g($0) } ?? "Grams", text: $grams)
                     .keyboardType(.decimalPad)
                     .focused($gramsFocused)
-                Text("g").foregroundStyle(.secondary)
+                if Arithmetic.isSum(grams) {
+                    Text(amount.map { "= \(Self.g($0))" } ?? "?").foregroundStyle(.secondary).monospacedDigit()
+                } else {
+                    Text("g").foregroundStyle(.secondary)
+                }
+            }
+            .toolbar {
+                // The number pad has no + − × ÷: a 400 g pack split in 3 is "400/3".
+                ToolbarItemGroup(placement: .keyboard) {
+                    if gramsFocused {
+                        ForEach(["+", "−", "×", "÷", "(", ")"], id: \.self) { key in
+                            Button(key) { grams += key }
+                                .font(.title3.weight(.medium))
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
             }
             if let g = amount ?? food.defaultGrams {
                 let p = food.portion(g)
@@ -142,12 +158,13 @@ struct ScanSheet: View {
         } header: {
             Text("How much?")
         } footer: {
+            let sums = "Sums work too: 400/3 for a third of a 400 g pack, 2×30 for two biscuits."
             if let usual = food.usualG {
-                Text("Empty is your usual \(Self.g(usual)).")
+                Text("Empty is your usual \(Self.g(usual)). \(sums)")
             } else if let serving = food.servingG {
-                Text("Empty is one serving, \(Self.g(serving)).")
+                Text("Empty is one serving, \(Self.g(serving)). \(sums)")
             } else {
-                Text("The packet gives no serving size, so say how much.")
+                Text("The packet gives no serving size, so say how much. \(sums)")
             }
         }
         .onAppear { if food.defaultGrams == nil { gramsFocused = true } }
@@ -172,10 +189,9 @@ struct ScanSheet: View {
         }
     }
 
-    /// The grams typed, with a comma or a point; nil when empty or not a number.
+    /// The grams typed, a number or a sum ("400/3"), with a comma or a point; nil when empty or not one.
     private var amount: Double? {
-        let typed = grams.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
-        return Double(typed).flatMap { $0 > 0 ? $0 : nil }
+        Arithmetic.evaluate(grams).flatMap { $0 > 0 ? $0 : nil }
     }
 
     private func lookUp() async {

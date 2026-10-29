@@ -30,6 +30,8 @@ final class AppEnvironment: ObservableObject {
     @Published var showToday = false
     /// The live view of an errand that needs you, from its push or Live Activity, over everything.
     @Published var browser: BrowserTarget?
+    /// Logging a meal from Control Center: the Health tab opens the camera or the describe box and clears this.
+    @Published var mealLog: MealLogWay?
 
     private init() {
         let settings = AppSettings()
@@ -147,7 +149,7 @@ final class AppEnvironment: ObservableObject {
             } else if let conversation = errand.conversationId {
                 await chat.open(id: conversation)
             }
-        case .health, .chats:
+        case .health, .chats, .meal:
             break // tabs, switched by ContentView
         }
     }

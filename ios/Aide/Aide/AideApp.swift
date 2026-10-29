@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         if !env.settings.isPreview { env.location.start() }
         // A Live Activity the server starts wakes the app in the background to hand over its token.
         if !env.settings.isPreview { env.live.start() }
+        // The Control Center's meal buttons open the app and run here.
+        MealLog.open = { [env] way in env.push.route = .meal(way) }
         return true
     }
 
@@ -160,6 +162,7 @@ struct ContentView: View {
             switch route {
             case .today, .digest, .note, .objectives: tab = .chat; onToday = true
             case .health: tab = .health; env.showToday = false; return
+            case .meal(let way): tab = .health; env.showToday = false; env.mealLog = way; return
             case .chats: tab = .chat; env.showToday = false; return
             case .moodle: onToday = false // a sheet over any tab, once Today is out of the way
             default: tab = .chat; onToday = false

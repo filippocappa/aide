@@ -12,6 +12,10 @@ struct AideWidgets: WidgetBundle {
         TramLiveActivity()
         AgentLiveActivity()
         EventLiveActivity()
-        if #available(iOS 18.0, *) { HabitControl() }
+        if #available(iOS 18.0, *) {
+            HabitControl()
+            MealPhotoControl()
+            MealDescribeControl()
+        }
     }
 }

@@ -220,6 +220,11 @@ rows (Fuel my training = `perform`, Stay as I am, Lose weight, Build muscle), "A
 Ask Coach pill, "Edit" folded, "What Coach gets" (the model from `coach` on the targets, and every piece of data sent);
 the profile comes from Apple Health with no page of its own. The 25 meals logged before items were broken into foods
 once by Sonnet (2026-10-29, totals unchanged).
+Third try (2026-10-29): Coach keeps its last proposal and every answer (with the targets) and starts `why` with what the
+answers changed; the app shows "was 2,450" on each number that moved. "What Coach gets" is gone from the page.
+Control Center (iOS 18): "Snap a meal" and "Describe a meal" (`LogMealIntent`, `Shared/MealIntents.swift`, also a
+Shortcut) open Health → Food with the camera or the describe box (`aide://meal/photo`). The barcode's grams take sums
+(`Support/Arithmetic.swift`: 400/3, 2×30; + − × ÷ keys over the number pad).
 
 **Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
 files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and

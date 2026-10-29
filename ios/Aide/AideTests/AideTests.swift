@@ -542,6 +542,8 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(PushRoute(url: URL(string: "aide://conversation/c_91f")!), .conversation("c_91f"))
         XCTAssertEqual(PushRoute(url: URL(string: "aide://agent/coach")!), .agent("coach"))
         XCTAssertEqual(PushRoute(url: URL(string: "aide://team")!), .team)
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://meal/describe")!), .meal(.describe))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://meal")!), .meal(.photo))
         XCTAssertEqual(PushRoute(url: URL(string: "aide://voice")!), .voice)
         XCTAssertEqual(PushRoute(url: URL(string: "aide://today")!), .today)
         XCTAssertEqual(PushRoute(url: URL(string: "aide://objectives")!), .objectives)
@@ -1743,6 +1745,23 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(meals.map(\.emoji), ["🥣", "🍽️", "🥛"])  // an older server: a plate
         XCTAssertEqual(meals[0].items, [])
         XCTAssertNil(meals[0].quality)
+    }
+
+    func testGramsCanBeASum() {
+        XCTAssertEqual(Arithmetic.evaluate("125"), 125)
+        XCTAssertEqual(Arithmetic.evaluate("12,5"), 12.5)
+        XCTAssertEqual(Arithmetic.evaluate("400÷4"), 100)
+        XCTAssertEqual(Arithmetic.evaluate("2×30+15"), 75)
+        XCTAssertEqual(Arithmetic.evaluate("2 * (30 + 15)"), 90)
+        XCTAssertEqual(Arithmetic.evaluate("250−40"), 210)
+        XCTAssertEqual(Arithmetic.evaluate("-5+10"), 5)
+        XCTAssertEqual(Arithmetic.evaluate("1.5x40"), 60)
+        XCTAssertNil(Arithmetic.evaluate(""))
+        XCTAssertNil(Arithmetic.evaluate("400/"))
+        XCTAssertNil(Arithmetic.evaluate("400/0"))
+        XCTAssertNil(Arithmetic.evaluate("(2+3"))
+        XCTAssertTrue(Arithmetic.isSum("400/3"))
+        XCTAssertFalse(Arithmetic.isSum("12,5"))
     }
 
     func testAMealsFoodsCarryTheirQuality() throws {

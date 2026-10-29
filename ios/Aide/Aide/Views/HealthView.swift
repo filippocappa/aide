@@ -148,7 +148,9 @@ struct HealthView: View {
                 await food
                 await body
             }
+            .onChange(of: env.mealLog) { startMealLog() }
             .task {
+                startMealLog() // a Control Center button that launched the app
                 await loadBody()
                 #if DEBUG
                 if settings.isPreview, let m = UserDefaults.standard.string(forKey: "previewMetric") {
@@ -161,6 +163,22 @@ struct HealthView: View {
     }
 
     // MARK: Food
+
+    /// From Control Center: today's food with the camera up (the library without one), or the describe box.
+    private func startMealLog() {
+        guard let way = env.mealLog else { return }
+        env.mealLog = nil
+        page = "food"
+        day = Calendar.current.startOfDay(for: Date())
+        Task {
+            try? await Task.sleep(for: .milliseconds(500)) // after the tab switch and any sheet going away
+            switch way {
+            case .photo where CameraPicker.isAvailable: showCamera = true
+            case .photo: showLibrary = true
+            case .describe: describing = true
+            }
+        }
+    }
 
     private var foodSection: some View {
         Section {

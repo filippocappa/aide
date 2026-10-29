@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		012ACF433600814E41F434CD /* MealControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95CA5950A59DD5065B084678 /* MealControl.swift */; };
 		08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5F1E3C560D08D523718D2F /* DigestView.swift */; };
 		097F7BCA07F7A5285EB983E7 /* AideTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0E327019026782069A1BA0 /* AideTests.swift */; };
 		0A464A123A92E74B5F7E6ACB /* AgentInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105404D7A7140F4B8B3BBAF8 /* AgentInfoView.swift */; };
@@ -15,7 +16,9 @@
 		0E8E4C39F0C5E93AC75C7BBB /* WidgetSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADE4DEA766E09C8CD558DC9B /* WidgetSupport.swift */; };
 		10275D194F779A427E756B09 /* LiveActivities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E832869DBA4E90B67C6D56 /* LiveActivities.swift */; };
 		1275B54C0A7633E05DEE0CE9 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B15B4A9C146D208E461D58 /* ActivityView.swift */; };
+		12CFA31D41B26455213DAC89 /* MealIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D42096136F2F92641EAC10 /* MealIntents.swift */; };
 		134B9B0384FE48DECD7613EE /* VoiceLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67BBAA4A50EA4E94D5CE2C49 /* VoiceLog.swift */; };
+		1893AFF4B1D54A156C62BC0B /* Arithmetic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BB2B4B8577CDF6823F8251 /* Arithmetic.swift */; };
 		1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		22723056AB8C45B0D23646D9 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
 		23CBF643A29FA97BE6CA689B /* LockBook.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938D864748A9931323F00F20 /* LockBook.swift */; };
@@ -104,6 +107,7 @@
 		F4C31F271C54C45FDD7148AD /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = F17C4D12EC034EF14E41E00C /* SwiftMath */; };
 		F4CBC49331862920D6DD3CC7 /* HabitIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FA885056211A769DEA36F2 /* HabitIntents.swift */; };
 		F6B00D2F77B7F975287A6827 /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18F809AD4D845567498CDA11 /* WidgetIntents.swift */; };
+		F78985137F02EFC1F9249F29 /* MealIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D42096136F2F92641EAC10 /* MealIntents.swift */; };
 		F889CC6C37E9D4CC8806D49B /* SleepSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */; };
 		FA49E57FDF31B7507D385EA8 /* DraftViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 772E51ADF548B97CFFD4C44D /* DraftViews.swift */; };
 		FE46F28F62F4190089B56275 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
@@ -169,6 +173,7 @@
 		105404D7A7140F4B8B3BBAF8 /* AgentInfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentInfoView.swift; sourceTree = "<group>"; };
 		1292B0F4A4E45229FB6C10E0 /* LockMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockMonitor.swift; sourceTree = "<group>"; };
 		148A57EF978A9887AF00FE8A /* ReminderSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSyncService.swift; sourceTree = "<group>"; };
+		16BB2B4B8577CDF6823F8251 /* Arithmetic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Arithmetic.swift; sourceTree = "<group>"; };
 		18F809AD4D845567498CDA11 /* WidgetIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetIntents.swift; sourceTree = "<group>"; };
 		1F289CE8321C0A5A80F6B92C /* MoodleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoodleView.swift; sourceTree = "<group>"; };
 		24233F28207417C05A177C18 /* StudyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudyView.swift; sourceTree = "<group>"; };
@@ -216,6 +221,7 @@
 		938D864748A9931323F00F20 /* LockBook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockBook.swift; sourceTree = "<group>"; };
 		93B823567631C9266E89C0C5 /* SpeechDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechDetector.swift; sourceTree = "<group>"; };
 		95BA6200F2ECB7474C9F8E54 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		95CA5950A59DD5065B084678 /* MealControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealControl.swift; sourceTree = "<group>"; };
 		9AEB482052BA9CB53D3B8410 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
 		9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideApp.swift; sourceTree = "<group>"; };
 		9F02CCB66A67DA8AD790FF51 /* ObjectivesWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectivesWidget.swift; sourceTree = "<group>"; };
@@ -242,6 +248,7 @@
 		DDFDB90CA977D76111828E4F /* FoodViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodViews.swift; sourceTree = "<group>"; };
 		DF6CCC9091F2A82B831A7E3A /* EventWeekView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventWeekView.swift; sourceTree = "<group>"; };
 		DFD117E9E143D868B430B441 /* AideWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AideWidgets.entitlements; sourceTree = "<group>"; };
+		E5D42096136F2F92641EAC10 /* MealIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealIntents.swift; sourceTree = "<group>"; };
 		E6A623639391457CF5AA5349 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeExamView.swift; sourceTree = "<group>"; };
 		E8BFC1DAA6E43241677C8730 /* Health.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Health.entitlements; sourceTree = "<group>"; };
@@ -327,6 +334,7 @@
 				55FA885056211A769DEA36F2 /* HabitIntents.swift */,
 				B2712472C5856CDCD16C4FAB /* LineBadge.swift */,
 				48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */,
+				E5D42096136F2F92641EAC10 /* MealIntents.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -350,6 +358,7 @@
 			isa = PBXGroup;
 			children = (
 				0DFEF5446D771554DAAA7229 /* AppSettings.swift */,
+				16BB2B4B8577CDF6823F8251 /* Arithmetic.swift */,
 				77E5D11C27686D088BF88108 /* Figure.swift */,
 				63500D066A75FEEDD7B682E9 /* Keychain.swift */,
 				57E832869DBA4E90B67C6D56 /* LiveActivities.swift */,
@@ -396,6 +405,7 @@
 				2FF2F172DF24BB3119602573 /* HabitControl.swift */,
 				3D2F5F2B76D809AD012067BF /* HealthWidget.swift */,
 				E6A623639391457CF5AA5349 /* Info.plist */,
+				95CA5950A59DD5065B084678 /* MealControl.swift */,
 				9F02CCB66A67DA8AD790FF51 /* ObjectivesWidget.swift */,
 				0183C66CE418FFB138873C0E /* TeamWidget.swift */,
 				B080CFFD5248A57D95546299 /* TodayWidget.swift */,
@@ -695,6 +705,8 @@
 				EC4367366F1C80C9EE522308 /* Keychain.swift in Sources */,
 				604B0E7F4A64D6A407C64C90 /* LineBadge.swift in Sources */,
 				EE7CC3F0646FABF4F63B420B /* LiveActivityAttributes.swift in Sources */,
+				012ACF433600814E41F434CD /* MealControl.swift in Sources */,
+				F78985137F02EFC1F9249F29 /* MealIntents.swift in Sources */,
 				6F50A0BBCD8AE4B87A0300EC /* Models.swift in Sources */,
 				BB366D70036D817C5699C986 /* ObjectivesWidget.swift in Sources */,
 				8FA6CFC70775A213C2F40DFE /* ScreenLock.swift in Sources */,
@@ -728,6 +740,7 @@
 				A839EDCD73AEB1F1DBD6E437 /* AideApp.swift in Sources */,
 				0AC8B5D8AC5743C33B9BCBC3 /* AppEnvironment.swift in Sources */,
 				77F46E3BE8C9B9AF42649FB9 /* AppSettings.swift in Sources */,
+				1893AFF4B1D54A156C62BC0B /* Arithmetic.swift in Sources */,
 				9FB906D2A531CC060C95C877 /* BodyViews.swift in Sources */,
 				7A1944AB03B3DAB2D824A08E /* ChatView.swift in Sources */,
 				DCEC0F33C64ACC4F4D889BCE /* ChatViewModel.swift in Sources */,
@@ -754,6 +767,7 @@
 				DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */,
 				0BEE49E816A3DA0FB4136763 /* LocationService.swift in Sources */,
 				23CBF643A29FA97BE6CA689B /* LockBook.swift in Sources */,
+				12CFA31D41B26455213DAC89 /* MealIntents.swift in Sources */,
 				7F41522F5C768CB044BFBE4B /* MemoryView.swift in Sources */,
 				25FDB4AE99AC133557167989 /* Models.swift in Sources */,
 				44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */,

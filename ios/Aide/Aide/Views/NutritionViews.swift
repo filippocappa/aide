@@ -473,6 +473,8 @@ struct NutritionTargetsView: View {
     @State private var proposing = false
     @State private var proposal: TargetsProposal?
     @State private var answers: [String] = []
+    /// The numbers before Coach's latest proposal (its last one, else your targets), to show what moved.
+    @State private var before: FoodGoals?
     @State private var error: String?
     @State private var saving = false
     @State private var editing = false
@@ -514,11 +516,6 @@ struct NutritionTargetsView: View {
                     }
                 } footer: {
                     if editing { Text("For a rest day. Leave one empty for no target, or all of them for none. Save when you're done.") }
-                }
-                Section {
-                    DisclosureGroup("What Coach gets") {
-                        Text(sentText).font(.footnote).foregroundStyle(.secondary).padding(.vertical, 4)
-                    }
                 }
             }
             if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
@@ -574,7 +571,7 @@ struct NutritionTargetsView: View {
     /// Coach's numbers and why, its questions to answer, Use these and Ask again.
     @ViewBuilder private func proposalSection(_ proposal: TargetsProposal) -> some View {
         Section("Coach suggests") {
-            ProposalView(proposal: proposal)
+            ProposalView(proposal: proposal, before: before)
             ForEach(proposal.asks.indices, id: \.self) { i in
                 VStack(alignment: .leading, spacing: 6) {
                     Label(proposal.asks[i], systemImage: "questionmark.bubble")
@@ -599,7 +596,7 @@ struct NutritionTargetsView: View {
                 .padding(.vertical, 10)
             }
             .disabled(proposing || saving)
-            Button("Not now") { withAnimation { self.proposal = nil; answers = [] } }
+            Button("Not now") { withAnimation { self.proposal = nil; answers = []; before = nil } }
                 .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity)
         }
         .listRowBackground(Color.clear)
@@ -619,19 +616,6 @@ struct NutritionTargetsView: View {
                     while answers.count <= i { answers.append("") }
                     answers[i] = value
                 })
-    }
-
-    /// Which model answers, and everything it's sent.
-    private var sentText: String {
-        let who: String
-        if let coach = loaded?.coach {
-            who = coach.via == "plan"
-                ? "Coach's proposal is written by \(coach.model), on your Claude plan (OpenRouter when the plan's at its limit)."
-                : "Coach's proposal is written by \(coach.model), through \(coach.via == "openrouter" ? "OpenRouter" : "Anthropic's API")."
-        } else {
-            who = "Coach's proposal is written by Claude Sonnet."
-        }
-        return who + " It gets: your weight, height, age and sex (from Apple Health), your goal and what you wrote for it; 60 days of resting and active energy, steps, exercise minutes, weight, VO2 max and workouts (time, distance, pace, kcal); 14 days of what you ate as daily totals; your current targets and your answers to its questions. Nothing else: no meal names or photos, no location, no other chats."
     }
 
     private var currentBase: FoodGoals {
@@ -694,8 +678,10 @@ struct NutritionTargetsView: View {
                 let a = answers.indices.contains(i) ? answers[i].trimmingCharacters(in: .whitespacesAndNewlines) : ""
                 return a.isEmpty ? nil : TargetsAnswers.Answer(question: asked[i], answer: a)
             }
+            let was = proposal?.base ?? loaded?.base
             let got = try await env.api.proposeFoodTargets(answers: given)
             withAnimation {
+                before = was
                 proposal = got
                 answers = []
             }
@@ -781,6 +767,8 @@ struct TargetsSummary: View {
     let base: FoodGoals
     let workouts: WorkoutTargets
     let tint: Color
+    /// The numbers these replace: each one that moved says what it was.
+    var before: FoodGoals? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -788,6 +776,10 @@ struct TargetsSummary: View {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(kcal.formatted()).font(.system(size: 40, weight: .bold, design: .rounded)).monospacedDigit()
                     Text("kcal a day").font(.subheadline).foregroundStyle(.secondary)
+                    if let old = was(kcal, before?.calories) {
+                        Text("was \(old.formatted())").font(.subheadline.weight(.medium)).foregroundStyle(tint)
+                            .padding(.leading, 4)
+                    }
                 }
             } else {
                 Text("No targets").font(.title3.weight(.semibold))
@@ -796,9 +788,9 @@ struct TargetsSummary: View {
             }
             if base.proteinG != nil || base.carbsG != nil || base.fatG != nil {
                 HStack(spacing: 10) {
-                    macro("Protein", base.proteinG)
-                    macro("Carbs", base.carbsG)
-                    macro("Fat", base.fatG)
+                    macro("Protein", base.proteinG, was: was(base.proteinG, before?.proteinG))
+                    macro("Carbs", base.carbsG, was: was(base.carbsG, before?.carbsG))
+                    macro("Fat", base.fatG, was: was(base.fatG, before?.fatG))
                 }
             }
             if base.calories != nil {
@@ -809,15 +801,25 @@ struct TargetsSummary: View {
         .padding(.vertical, 6)
     }
 
-    private func macro(_ name: String, _ grams: Int?) -> some View {
+    private func macro(_ name: String, _ grams: Int?, was old: Int?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(grams.map { "\($0) g" } ?? "–").font(.headline).monospacedDigit()
-            Text(name).font(.caption).foregroundStyle(.secondary)
+            if let old {
+                Text("\(name) · was \(old)").font(.caption).foregroundStyle(tint)
+            } else {
+                Text(name).font(.caption).foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// The old number, when there was one and it moved.
+    private func was(_ now: Int?, _ old: Int?) -> Int? {
+        guard let now, let old, old != now else { return nil }
+        return old
     }
 
     /// "Workout days add what the Watch says you burned, mostly as carbs."
@@ -833,10 +835,14 @@ struct TargetsSummary: View {
 /// Coach's proposal: the numbers, what a workout adds, and why.
 private struct ProposalView: View {
     let proposal: TargetsProposal
+    let before: FoodGoals?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TargetsSummary(base: proposal.base, workouts: proposal.workouts, tint: Theme.accent)
+            TargetsSummary(base: proposal.base, workouts: proposal.workouts, tint: Theme.accent, before: before)
+            if let before, before == proposal.base {
+                Label("Same numbers as before", systemImage: "equal.circle").font(.footnote.weight(.semibold))
+            }
             if !proposal.why.isEmpty {
                 Text(proposal.why).font(.footnote).foregroundStyle(.secondary)
             }

@@ -24,9 +24,11 @@ enum PushRoute: Equatable {
     case health
     /// A browser errand: its live view while it needs you on the page, else its chat.
     case errand(Int)
+    /// Logging a meal (the Control Center buttons): Health → Food with the camera up, or the describe box.
+    case meal(MealLogWay)
 
     /// `aide://conversation/<id>`, `aide://team`, `aide://agent/<id>`, `aide://voice`, `aide://today`,
-    /// `aide://objectives`, `aide://health`, `aide://errand/<id>`.
+    /// `aide://objectives`, `aide://health`, `aide://errand/<id>`, `aide://meal/photo` (or `describe`).
     init?(url: URL) {
         guard url.scheme == "aide" else { return nil }
         let id = url.pathComponents.dropFirst().first
@@ -39,6 +41,7 @@ enum PushRoute: Equatable {
         case "objectives": self = .objectives
         case "health": self = .health
         case "errand": guard let id = id.flatMap(Int.init) else { return nil }; self = .errand(id)
+        case "meal": self = .meal(id.flatMap(MealLogWay.init(rawValue:)) ?? .photo)
         default: return nil
         }
     }
