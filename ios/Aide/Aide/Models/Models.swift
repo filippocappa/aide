@@ -747,7 +747,12 @@ struct FoodLookup: Decodable { let food: SavedFood? }
 /// `POST /v1/food/label`: the photo of the nutrition facts, and a name when the photo doesn't show one.
 struct LabelRequest: Encodable { let barcode: String; let photo: String; var name: String = "" }
 /// `POST /v1/food/foods/{id}/log`: grams nil is the usual portion, else one serving; date nil is today.
-struct FoodPortion: Encodable { var grams: Double?; var date: String? }
+struct FoodPortion: Encodable {
+    var grams: Double?
+    var date: String?
+    /// The Coach chat it was scanned in, where the server posts the meal's card; nil is the Food log.
+    var conversationId: String?
+}
 struct LoggedMeal: Decodable { let meal: Meal }
 
 private extension KeyedDecodingContainer {

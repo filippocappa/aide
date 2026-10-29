@@ -9,6 +9,8 @@ struct TeamChatView: View {
     /// Picked with "Open chat": the home screen opens it once this screen is gone.
     let open: (String) -> Void
     @State private var draft = ""
+    /// Bumped on every send: the message box starts a new text field (`MessageBox.reset`).
+    @State private var sent = 0
     @FocusState private var focused: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -125,10 +127,11 @@ struct TeamChatView: View {
             if !suggestions.isEmpty {
                 mentionSuggestions.transition(.opacity.combined(with: .offset(y: 10)))
             }
-            MessageBox("Message the team, @ to mention", text: $draft, focused: $focused) {
+            MessageBox("Message the team, @ to mention", text: $draft, focused: $focused, reset: sent) {
                 SendButton(enabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.isPostingTeam) {
                     let text = draft
                     $draft.clearMessage()
+                    sent += 1
                     Task { await chat.postTeam(text) }
                 }
             }

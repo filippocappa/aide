@@ -11,7 +11,7 @@ from . import Tool
 
 SEARCH = "https://search.openfoodfacts.org/search"
 PRODUCT = "https://world.openfoodfacts.org/api/v2/product/{}.json"
-FIELDS = "code,product_name,product_name_it,brands,quantity,serving_quantity,nutriments"
+FIELDS = "code,product_name,product_name_it,brands,quantity,serving_quantity,serving_size,nutriments"
 USER_AGENT = "Aide/1.0 (personal assistant)"  # Open Food Facts asks every app to name itself
 ONLINE_LIMIT = 5
 LABEL_TOKENS = 1000
@@ -40,6 +40,14 @@ def _num(value) -> float | None:
         return None
 
 
+def serving(raw: dict) -> float | None:
+    """The packet's serving in grams. "100 g" alone is Open Food Facts' placeholder (a jar of jam has it), not one."""
+    grams = _num(raw.get("serving_quantity")) or None
+    if grams == 100 and "".join(str(raw.get("serving_size") or "").lower().split()) in ("", "100g", "100ml"):
+        return None
+    return grams
+
+
 def product(raw: dict) -> dict | None:
     """An Open Food Facts product as a food, or None without a name or the four numbers per 100 g."""
     nut = raw.get("nutriments") or {}
@@ -54,7 +62,7 @@ def product(raw: dict) -> dict | None:
     brand = (brands[0] if isinstance(brands, list) and brands else str(brands).split(",")[0]).strip()
     return {"name": name, "brand": brand, "barcode": str(raw.get("code") or "") or None,
             **dict(zip(("kcal_100g", "protein_100g", "carbs_100g", "fat_100g"), values)),
-            "serving_g": _num(raw.get("serving_quantity")) or None, "pack": (raw.get("quantity") or "").strip()}
+            "serving_g": serving(raw), "pack": (raw.get("quantity") or "").strip()}
 
 
 class OpenFoodFacts:

@@ -18,6 +18,12 @@ struct ChatView: View {
     @State private var photos: [PickedPhoto] = []
     @State private var showCamera = false
     @State private var showLibrary = false
+    /// A barcode read in a lone photo in Coach's chat: its "How much?" sheet.
+    @State private var scanned: ScannedCode?
+    /// The scanned photo goes into the message instead ("Ask Coach instead").
+    @State private var coachInstead: PickedPhoto?
+    /// Bumped on every send: the message box starts a new text field (`MessageBox.reset`).
+    @State private var sent = 0
     @FocusState private var composerFocused: Bool
 
     /// Pebble's expression follows what's happening (brand/README.md).
@@ -102,8 +108,22 @@ struct ChatView: View {
             chat.isOnScreen = false
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        .photoSources(camera: $showCamera, library: $showLibrary, limit: Self.maxPhotos - photos.count) { picked in
-            photos = Array((photos + picked).prefix(Self.maxPhotos))
+        .photoSources(camera: $showCamera, library: $showLibrary, limit: Self.maxPhotos - photos.count,
+                      barcodes: chat.agent.id == "coach") { picked in
+            // A packet on its own in Coach's chat: say how much and it's logged, no model call.
+            if picked.count == 1, photos.isEmpty, let code = picked[0].barcodes.first {
+                scanned = ScannedCode(code: code, photo: picked[0])
+            } else {
+                photos = Array((photos + picked).prefix(Self.maxPhotos))
+            }
+        }
+        .sheet(item: $scanned, onDismiss: {
+            if let photo = coachInstead { photos = [photo] }
+            coachInstead = nil
+        }) { code in
+            ScanSheet(barcode: code.code, date: nil, conversation: chat.conversationID,
+                      logged: { _ in Task { await chat.loadHistory() } },
+                      askCoach: code.photo.map { photo in { coachInstead = photo } })
         }
     }
 
@@ -301,7 +321,7 @@ struct ChatView: View {
     private var composer: some View {
         VStack(spacing: 0) {
             if !photos.isEmpty { photoStrip }
-            MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused) {
+            MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused, reset: sent) {
                 attachMenu
                 sendOrTalk
             }
@@ -371,6 +391,7 @@ struct ChatView: View {
                 SendButton(enabled: canSend) {
                     let text = draft, sending = photos
                     $draft.clearMessage()
+                    sent += 1
                     photos = []
                     Task { await chat.send(text, photos: sending) }
                 }
@@ -394,13 +415,17 @@ struct MessageBox<Buttons: View>: View {
     let placeholder: String
     @Binding var text: String
     var focused: FocusState<Bool>.Binding
+    /// Changed by the chat on every send: the text field is made anew, so the keyboard has nothing left to write a
+    /// pending prediction or autocorrection back into (it put the sent message back in the box).
+    var reset = 0
     let buttons: Buttons
 
-    init(_ placeholder: String, text: Binding<String>, focused: FocusState<Bool>.Binding,
+    init(_ placeholder: String, text: Binding<String>, focused: FocusState<Bool>.Binding, reset: Int = 0,
          @ViewBuilder buttons: () -> Buttons) {
         self.placeholder = placeholder
         _text = text
         self.focused = focused
+        self.reset = reset
         self.buttons = buttons()
     }
 
@@ -409,6 +434,7 @@ struct MessageBox<Buttons: View>: View {
             TextField(placeholder, text: $text, axis: .vertical)
                 .lineLimit(1...6)
                 .focused(focused)
+                .id(reset)
                 .padding(.leading, 8)
                 .padding(.vertical, 7)
             buttons
@@ -418,6 +444,10 @@ struct MessageBox<Buttons: View>: View {
         .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Theme.line, lineWidth: 0.5))
         .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .onTapGesture { focused.wrappedValue = true } // the whole box, not just the line of text
+        .onChange(of: reset) {
+            guard focused.wrappedValue else { return }
+            Task { @MainActor in focused.wrappedValue = true } // the keyboard stays, on the new field
+        }
         // No background of its own around the box: the page's shows through, and an opaque band here would fade
         // out over the voice panel's End button as a visible stripe.
         .padding(.horizontal, 12)

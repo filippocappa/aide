@@ -1,7 +1,7 @@
 """Foods the user eats, per 100 g, so a meal can be worked out from its items instead of guessed each time.
 
 A food comes from Open Food Facts (by barcode), a nutrition label in a photo, a web page, the user, or the model's
-own estimate for a plain food (pasta, an apple), saved once and reused so the same food always gives the same
+own estimate (saved as it logs a meal with it), saved once and reused so the same food always gives the same
 numbers. Each food keeps its usual portion (the last one eaten) and how often it's eaten, which ranks searches.
 A meal logged from items keeps them in meal_items. Drinks are per 100 ml, the same as grams.
 """
@@ -183,8 +183,9 @@ class FoodDB:
     # -- a meal's items -------------------------------------------------------
 
     def resolve(self, items: list[dict]) -> list[dict]:
-        """Each item with its calories and macros: a saved food's from its grams (or its usual portion, or one
-        serving), an estimated item's as given."""
+        """Each item with its calories and macros from a food and its grams: a saved food (its usual portion, or one
+        serving, without grams), or a new one with its numbers per 100 g, saved as an estimate first (a name and brand
+        already saved is that food, as saved)."""
         out = []
         for item in items:
             if item.get("food_id") is not None:
@@ -192,27 +193,28 @@ class FoodDB:
                 grams = item.get("grams") or food["usual_g"] or food["serving_g"]
                 if not grams:
                     raise ValueError(f"how many grams of {food['name']}? It has no usual portion yet")
-                if not 0 < grams <= MAX_PORTION:
-                    raise ValueError(f"grams must be between 0 and {MAX_PORTION}")
-                scale = grams / 100
-                out.append({"food_id": food["id"], "name": item.get("name") or food["name"], "grams": grams,
-                            "calories": food["kcal_100g"] * scale, "protein_g": food["protein_100g"] * scale,
-                            "carbs_g": food["carbs_100g"] * scale, "fat_g": food["fat_100g"] * scale})
             else:
-                missing = [k for k in ("name", *MACROS) if item.get(k) is None]
+                missing = [k for k in ("name", "grams", *PER_100) if item.get(k) is None]
                 if missing:
-                    raise ValueError(f"an item without food_id needs {', '.join(missing)}")
-                out.append({"food_id": None, "name": item["name"], "grams": item.get("grams"),
-                            **{k: item[k] for k in MACROS}})
-        if not out:
-            raise ValueError("items is empty")
+                    raise ValueError(f"an item without food_id needs {', '.join(missing)} (its numbers per 100 g)")
+                brand = item.get("brand") or ""
+                food = self._by_key(normalize(f"{' '.join(item['name'].split())} | {' '.join(brand.split())}")) \
+                    or self.save(item["name"], *(item[k] for k in PER_100), "estimate", brand=brand)
+                grams = item["grams"]
+            if not 0 < grams <= MAX_PORTION:
+                raise ValueError(f"grams must be between 0 and {MAX_PORTION}")
+            scale = grams / 100
+            out.append({"food_id": food["id"], "name": food["name"], "grams": grams,
+                        "calories": food["kcal_100g"] * scale, "protein_g": food["protein_100g"] * scale,
+                        "carbs_g": food["carbs_100g"] * scale, "fat_g": food["fat_100g"] * scale})
         return out
 
     def from_items(self, items: list[dict], notes: str | None) -> tuple[list[dict], dict, str]:
-        """The resolved items, the meal's totals and its notes (the items line first)."""
+        """The resolved items, the meal's totals and its notes (the items line first). No items is a meal of
+        nothing but water or caffeine."""
         rows = self.resolve(items)
         sums = {k: sum(r[k] for r in rows) for k in MACROS}
-        return rows, sums, "\n".join(filter(None, [items_line(rows), (notes or "").strip()]))
+        return rows, sums, "\n".join(filter(None, [rows and items_line(rows), (notes or "").strip()]))
 
     def keep_items(self, meal_id: int, rows: list[dict], count: bool) -> None:
         """Store a meal's items; each saved food's portion becomes its usual (and, with count, one more use)."""

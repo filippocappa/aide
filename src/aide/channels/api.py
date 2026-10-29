@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field
 
 from .. import activity
-from ..agent import CONVERSATION, PENDING_TTL, Agent, Turn, UnknownConversation
+from ..agent import CONVERSATION, PENDING_TTL, SCANNED, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, ORCHESTRATOR, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
@@ -81,6 +81,7 @@ class LabelIn(BaseModel):
 class FoodLogOne(BaseModel):
     grams: float | None = None  # None: the usual portion, else one serving
     day: date | None = Field(None, alias="date")
+    conversation_id: str | None = None  # the Coach chat it was scanned in; else the Food log
 
 
 class MealPatch(BaseModel):
@@ -1111,6 +1112,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         meal = food.add(name, **sums, eaten_at=when, notes=notes)
         foods.keep_items(meal["id"], rows, count=True)
         activity.record(db.conn, "coach", "action", f"Logged {name}, {rows[0]['grams']:g} g (scanned in the app)")
+        # In Coach's chat too (the one it was scanned in, else the Food log), so it's seen there and Coach knows.
+        row = db.app_conversation(body.conversation_id) if body.conversation_id else None
+        await agent.post(row["public_id"] if row and row["agent"] == "coach" else food_chat(), f"{SCANNED}: {name}, {rows[0]['grams']:g} g, logged by the app as meal "
+                         f"{meal['id']}.]", f"Logged {name}, {rows[0]['grams']:g} g: {meal['calories']} kcal.",
+                         [{"type": "meals", "meals": [food.as_json(meal)]}], record=False)
         return {"meal": food.as_json(meal)}
 
     @app.patch("/v1/food/meals/{meal_id}", dependencies=[Depends(auth)])

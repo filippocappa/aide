@@ -46,6 +46,10 @@ def test_open_food_facts_products_map_to_foods():
         ("Nocciolata", "Rigoni di Asiago", "8001505005707", 544, 15, "700 g")
     assert round(product(FAGE)["kcal_100g"]) == 54 and product(FAGE)["brand"] == "Fage"  # from kJ
     assert product(NO_NUMBERS) is None
+    # "100 g" alone is Open Food Facts' placeholder, not a serving; a real one that happens to be 100 g stays.
+    jam = {**NOCCIOLATA, "serving_quantity": 100, "serving_size": "100 g"}
+    assert product(jam)["serving_g"] is None
+    assert product({**jam, "serving_size": "1 vasetto (100 g)"})["serving_g"] == 100
 
 
 def test_search_needs_every_word_ignores_accents_and_puts_the_most_eaten_first(env):
@@ -114,13 +118,15 @@ async def test_a_meal_from_items_is_added_up_by_the_server_and_remembers_portion
     await tools.call("log_meal", {"name": "Colazione", "items": [
         {"food_id": fage["id"]},  # no grams: one serving
         {"food_id": oats["id"], "grams": 40},
-        {"name": "Miele", "grams": 10, "calories": 30, "protein_g": 0, "carbs_g": 8, "fat_g": 0}],
+        {"name": "Miele", "grams": 10, "kcal_100g": 300, "protein_100g": 0, "carbs_100g": 80, "fat_100g": 0}],
         "notes": "honey a guess"})
     meal = food.get(1)
     # 91.8 + 148.8 + 30 kcal; 17.5 + 5.4 g protein
     assert (meal["calories"], meal["protein_g"], meal["carbs_g"], meal["fat_g"]) == (270, 23, 37, 3)
     assert meal["notes"] == "Items: Yogurt greco 0% 170 g, Fiocchi d'avena 40 g, Miele 10 g\nhoney a guess"
-    assert [i["food_id"] for i in foods.items(1)] == [fage["id"], oats["id"], None]
+    honey = foods.search("miele")[0]  # a new item is saved as it's logged
+    assert (honey["source"], honey["usual_g"], honey["uses"]) == ("estimate", 10, 1)
+    assert [i["food_id"] for i in foods.items(1)] == [fage["id"], oats["id"], honey["id"]]
     assert foods.get(oats["id"])["usual_g"] == 40 and foods.get(oats["id"])["uses"] == 1
 
     await tools.call("log_meal", {"name": "Colazione", "items": [{"food_id": oats["id"]}]})  # the usual 40 g
@@ -135,12 +141,26 @@ async def test_a_meal_from_items_is_added_up_by_the_server_and_remembers_portion
     assert foods.items(1) == []
 
 
-async def test_log_meal_without_items_still_takes_totals(env):
+async def test_a_meal_is_always_items_and_a_new_item_with_a_saved_name_is_that_food(env):
     tools, food, foods, _ = env()
-    await tools.call("log_meal", {"name": "Pizza", "calories": 900, "protein_g": 35, "carbs_g": 110, "fat_g": 30})
-    assert food.get(1)["calories"] == 900 and foods.items(1) == []
-    with pytest.raises(ValueError):
-        await tools.call("log_meal", {"name": "Pizza", "calories": 900})
+    with pytest.raises(TypeError):  # totals guessed in one go aren't taken any more
+        await tools.call("log_meal", {"name": "Pizza", "calories": 900, "protein_g": 35, "carbs_g": 110, "fat_g": 30})
+    with pytest.raises(ValueError, match="items is empty"):
+        await tools.call("log_meal", {"name": "Pizza", "items": []})
+    with pytest.raises(ValueError, match="grams"):
+        await tools.call("log_meal", {"name": "Pizza", "items": [{"name": "Pizza", "kcal_100g": 250,
+                                                                  "protein_100g": 11, "carbs_100g": 30, "fat_100g": 9}]})
+    pizza = {"name": "Pizza margherita", "grams": 350, "kcal_100g": 250, "protein_100g": 11, "carbs_100g": 30,
+             "fat_100g": 9}
+    said = await tools.call("log_meal", {"name": "Pizza", "items": [pizza]})
+    assert food.get(1)["calories"] == 880 and "Saved as new foods: [food 1] Pizza margherita" in said
+    # The same name again is the saved food, as saved: the same numbers every time.
+    said = await tools.call("log_meal", {"name": "Pizza", "items": [{**pizza, "kcal_100g": 300}]})
+    assert food.get(2)["calories"] == 880 and "Saved as new" not in said
+    assert len(foods.search("pizza")) == 1 and foods.get(1)["uses"] == 2
+    # Water alone needs no items.
+    await tools.call("log_meal", {"name": "Water", "items": [], "water_ml": 1000})
+    assert (food.get(3)["calories"], food.get(3)["water_ml"], food.get(3)["notes"]) == (0, 1000, "")
     plain = foods.save("Riso", 360, 7, 80, 0.6, "estimate")
     with pytest.raises(ValueError, match="how many grams"):
         await tools.call("log_meal", {"name": "Riso", "items": [{"food_id": plain["id"]}]})
@@ -183,6 +203,15 @@ def test_a_scanned_barcode_is_found_saved_and_logged_without_the_model(app_env):
     meal = api.post(f"/v1/food/foods/{found['id']}/log", json={"date": yesterday.isoformat()}, headers=AUTH).json()
     assert meal["meal"]["calories"] == 160 and meal["meal"]["eaten_at"].startswith(yesterday.isoformat())
     assert model.requests == []
+    # Each one is in Coach's Food log chat too, with its card, the note before it hidden.
+    chat = food.chat()
+    said = api.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"]
+    assert [m["role"] for m in said] == ["assistant"] * 3
+    assert said[0]["text"] == "Logged Nocciolata (Rigoni di Asiago), 15 g: 80 kcal."
+    assert said[0]["attachments"][0]["meals"][0]["calories"] == 80
+    other = api.post("/v1/conversations", json={"agent": "coach"}, headers=AUTH).json()["id"]
+    api.post(f"/v1/food/foods/{found['id']}/log", json={"conversation_id": other}, headers=AUTH)
+    assert len(api.get(f"/v1/history?conversation_id={other}", headers=AUTH).json()["messages"]) == 1
     assert api.post("/v1/food/foods/999/log", json={}, headers=AUTH).status_code == 404
     assert api.get("/v1/food/barcode/abc", headers=AUTH).status_code == 400
 

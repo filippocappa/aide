@@ -14,6 +14,8 @@ struct ScanSheet: View {
     let barcode: String
     /// The day being looked at; nil is today.
     let date: String?
+    /// The Coach chat it was scanned in; nil is the Food log.
+    var conversation: String?
     /// After logging: the meal, to say so and reload.
     let logged: (Meal) -> Void
     /// The photo goes to Coach instead (there's more in it than the packet); nil when there's no photo.
@@ -205,7 +207,7 @@ struct ScanSheet: View {
         error = nil
         defer { saving = false }
         do {
-            let meal = try await env.api.logFood(food.id, FoodPortion(grams: amount, date: date))
+            let meal = try await env.api.logFood(food.id, FoodPortion(grams: amount, date: date, conversationId: conversation))
             logged(meal)
             dismiss()
         } catch {

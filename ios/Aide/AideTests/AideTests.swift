@@ -1317,6 +1317,8 @@ final class ScannedFoodTests: XCTestCase {
         _ = try await api.logFood(7, FoodPortion(grams: 30, date: "2026-10-28"))
         XCTAssertEqual(seen.last?.1?["grams"] as? Double, 30)
         XCTAssertEqual(seen.last?.1?["date"] as? String, "2026-10-28")
+        _ = try await api.logFood(7, FoodPortion(grams: 30, conversationId: "c_coach")) // scanned in Coach's chat
+        XCTAssertEqual(seen.last?.1?["conversation_id"] as? String, "c_coach")
     }
 }
 

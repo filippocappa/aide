@@ -178,17 +178,20 @@ class Agent:
         return {"id": row["public_id"], "agent": row["agent"], "title": None, "routine": None, "preview": opening,
                 "updated_at": row["last_active_at"]}
 
-    async def post(self, conversation: str, note: str, text: str, attachments: list[dict] | None = None) -> None:
+    async def post(self, conversation: str, note: str, text: str, attachments: list[dict] | None = None,
+                   record: bool = True) -> None:
         """A message from the chat's agent that no user turn asked for (a lecture's notes are ready). `note` goes
-        before it as the user turn the API needs: the model reads it, the app doesn't show it."""
+        before it as the user turn the API needs: the model reads it, the app doesn't show it. Without record it
+        stays out of the activity feed (what it says is there already)."""
         async with self._lock:
             conversation_id = self._resolve(CONVERSATION, conversation)
             self.db.append_turn(conversation_id, "app", [
                 {"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] {note}"},
                 {"role": "assistant", "content": [{"type": "text", "text": text}]}], attachments=attachments)
             row = self.db.app_conversation(conversation)
-            activity.record(self.db.conn, row["agent"] if row else ORCHESTRATOR, "message",
-                            (row["title"] if row else None) or "Wrote to you", text, conversation)
+            if record:
+                activity.record(self.db.conn, row["agent"] if row else ORCHESTRATOR, "message",
+                                (row["title"] if row else None) or "Wrote to you", text, conversation)
 
     def delete_conversation(self, channel: str, conversation: str) -> None:
         if conversation == channel:
@@ -207,7 +210,7 @@ class Agent:
                 if not isinstance(content, str) or content.startswith(("[The user replied", "[The user tapped", _OPENED)):
                     continue  # tool results, confirm/cancel and plan notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
-                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND)):
+                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND, SCANNED)):
                     continue  # a routine's prompt, the note before new lecture notes or a notebook proposal
                 if photos := _PHOTO.findall(text):
                     out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
@@ -735,6 +738,7 @@ _ROUTINE = "[Scheduled routine"
 _LECTURE = "[Lecture notes ready"
 _NOTEBOOK = "[Notebook"
 _ERRAND = "[Errand #"
+SCANNED = "[Scanned in the app"
 
 
 def _nothing(reply: str) -> bool:

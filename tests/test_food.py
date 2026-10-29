@@ -48,6 +48,14 @@ def env(tmp_path):
     db.close()
 
 
+# Items as Coach gives them: a food, its numbers per 100 g and the grams.
+PASTA = {"name": "Pasta al pomodoro", "grams": 400, "kcal_100g": 163, "protein_100g": 5.1, "carbs_100g": 27.5,
+         "fat_100g": 3.75}  # 652 kcal, 20.4 g protein
+PIZZA = {"name": "Pizza", "grams": 360, "kcal_100g": 250, "protein_100g": 9.7, "carbs_100g": 30.5, "fat_100g": 8.9}
+RICE = {"name": "Rice", "grams": 250, "kcal_100g": 130, "protein_100g": 2.4, "carbs_100g": 20, "fat_100g": 0.6}
+ESPRESSO = {"name": "Espresso", "grams": 30, "kcal_100g": 17, "protein_100g": 0.1, "carbs_100g": 3, "fat_100g": 0.2}
+
+
 def log_meal(**input):
     """A log_meal call (call() takes the tool's name as `name`, and so does log_meal)."""
     return ("tool_use", [Block(type="tool_use", id="t1", name="log_meal", input=input)])
@@ -80,8 +88,8 @@ def test_photo_upload_and_fetch(env):
 def test_chat_with_a_photo_logs_the_meal(env):
     api, agent, food, *_ = env()
     photo = upload(api).json()["id"]
-    api2, _, _, _, client = env([log_meal(name="Pasta al pomodoro", calories=652, protein_g=20.4,
-                                      carbs_g=110, fat_g=15, photo_id=photo, notes="about 120 g dry pasta"),
+    api2, _, _, _, client = env([log_meal(name="Pasta al pomodoro", items=[PASTA], photo_id=photo,
+                                      notes="about 120 g dry pasta"),
                                  done("Pasta al pomodoro, about 650 kcal.")])
     body = api2.post("/v1/chat", json={"text": "", "photos": [photo]}, headers=AUTH).json()
     meal = food.day(food.today())[0]
@@ -125,7 +133,7 @@ def test_food_log_goes_to_coachs_food_chat(env):
     api, agent, food, *_ = env()
     photo = upload(api).json()["id"]
     yesterday = food.today() - timedelta(days=1)
-    api, *_ = env([log_meal(name="Pizza", calories=900, protein_g=35, carbs_g=110, fat_g=32, photo_id=photo,
+    api, *_ = env([log_meal(name="Pizza", items=[PIZZA], photo_id=photo,
                         eaten_at=f"{yesterday}T20:00"), done("Pizza, about 900 kcal.")])
     body = api.post("/v1/food/log", json={"photos": [photo], "date": yesterday.isoformat()}, headers=AUTH).json()
     assert body["reply"] == "Pizza, about 900 kcal." and body["meals"][0]["name"] == "Pizza"
@@ -185,7 +193,7 @@ def test_food_endpoints(env):
 
 
 async def test_tools_correct_list_and_queue_a_delete(env):
-    _, agent, food, *_ = env([call("update_meal", meal_id=1, calories=325, carbs_g=50), done("Fixed."),
+    _, agent, food, *_ = env([call("update_meal", meal_id=1, items=[RICE]), done("Fixed."),
                               call("set_food_goals", protein_g=140), done("Set."),
                               call("delete_meal", meal_id=1), done("Queued.")])
     food.add("Rice", 650, 12, 100, 4)
@@ -199,7 +207,7 @@ async def test_tools_correct_list_and_queue_a_delete(env):
 
 
 async def test_drinks_carry_water_and_caffeine_and_every_change_asks_the_phone_to_sync(env):
-    api, agent, food, *_ = env([log_meal(name="Espresso and 1 L water", calories=5, protein_g=0, carbs_g=1, fat_g=0,
+    api, agent, food, *_ = env([log_meal(name="Espresso and 1 L water", items=[ESPRESSO],
                                          water_ml=1030, caffeine_mg=65), done("Logged.")])
     synced = []
     food.on_change.append(lambda: synced.append(1))

@@ -644,7 +644,7 @@ goes. The server sends the silent `sync` push after every meal change, so this h
 | `DELETE /v1/food/meals/{id}` | | `{"ok": true}` (the user deleting from the app: immediate) |
 | `GET /v1/food/barcode/{code}` | | `{"food": Food \| null}` (since 2026-10-29): a scanned barcode's saved food, else Open Food Facts' product (saved on the way); `null` when neither has it. 502 when Open Food Facts can't be reached. No model call. |
 | `POST /v1/food/label` | `{"barcode": "8000000000001", "photo": "p_…", "name": "Avena"}` (`name` optional) | `{"food": Food}`: one model call reads the nutrition facts in the photo (per 100 g, the serving, the name and brand when shown) and saves them for the barcode, so the next scan finds it. 422 with the reason when it can't be read (try another photo). 5–30 s. |
-| `POST /v1/food/foods/{id}/log` | `{"grams": 30, "date": "2026-10-28"}` (both optional) | `{"meal": Meal}`: logs a saved food as a meal, the server's own sum (no model call). No `grams`: the usual portion, else one serving, else 400. The meal is named after the food (and its brand), `notes` is its items line, and the grams become the usual portion. |
+| `POST /v1/food/foods/{id}/log` | `{"grams": 30, "date": "2026-10-28", "conversation_id": "…"}` (all optional) | `{"meal": Meal}`: logs a saved food as a meal, the server's own sum (no model call). No `grams`: the usual portion, else one serving, else 400. The meal is named after the food (and its brand), `notes` is its items line, and the grams become the usual portion. Coach also posts "Logged …" with its `meals` card in the Coach chat `conversation_id` names (where it was scanned), else in the Food log chat (since 2026-10-29). |
 | `GET /v1/food/goals` | | Goals |
 | `PUT /v1/food/goals` | Goals | Goals |
 
@@ -662,8 +662,9 @@ you had) and how often you eat them. Coach looks each item up with `find_food` b
 first, then Open Food Facts (packaged food; by name, or exactly by barcode, which saves it). What isn't there comes
 from `web_search`, a nutrition label in a photo, or Coach's own estimate for a plain food, saved once with
 `save_food` (`update_food` corrects one), so the same food gives the same numbers every time. `log_meal` and
-`update_meal` take `items` (a saved food with its grams, or an item with its own estimate), and the server adds them
-up.
+`update_meal` take only `items` (a saved food with its grams, or a new food with Coach's numbers per 100 g, saved as
+it's logged), and the server adds them up; Coach can't log totals guessed in one go any more. Open Food Facts' "100 g"
+serving with nothing else said is its placeholder, not a serving.
 
 Food object: `{"id": 7, "name": "Nocciolata", "brand": "Rigoni di Asiago", "barcode": "8001505005707", "kcal_100g":
 544, "protein_100g": 8.1, "carbs_100g": 54, "fat_100g": 32, "serving_g": 15, "usual_g": 30, "source": "off"}`; per
@@ -671,7 +672,8 @@ Food object: `{"id": 7, "name": "Nocciolata", "brand": "Rigoni di Asiago", "barc
 `estimate` or `user`. Barcodes in the app (since 2026-10-29): it reads them in a meal's photos on the phone. One
 photo with a barcode is a lone packet: `GET /v1/food/barcode/{code}`, how much (empty is the usual portion or one
 serving), `POST /v1/food/foods/{id}/log`, no model call; a barcode nobody has asks for a photo of its label, `POST
-/v1/food/label`, then the same. More photos go to `POST /v1/food/log` with their `barcodes`.
+/v1/food/label`, then the same. More photos go to `POST /v1/food/log` with their `barcodes`. Coach's chats read them too: one photo with a barcode
+opens the same sheet, logged with that chat's `conversation_id`.
 
 ## Study
 

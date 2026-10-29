@@ -191,7 +191,10 @@ both sides): the app reads them in meal photos (Vision, `BarcodeReader` in `Supp
 photo opens `Views/ScanViews.swift`: the product and how much (empty: the usual portion, else a serving), logged by
 the server with no model call, or "Ask Coach instead"; an unknown barcode asks for a photo of its nutrition facts,
 read once (`POST /v1/food/label`) and saved. More photos go to Coach with their `barcodes`. "Type a barcode" in the
-Log a meal menu. Not yet tried live.
+Log a meal menu. Fixes from the first day (2026-10-29): Coach's chats read barcodes too (the meal's card is posted in
+that chat); `log_meal` takes only items (new foods saved as they're logged), so every meal builds the saved foods;
+OFF's placeholder "100 g" serving is ignored; the message box makes a new text field on send (the keyboard wrote the
+sent text back).
 
 **Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
 files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and
