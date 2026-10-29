@@ -674,19 +674,38 @@ Bonus: `{"kcal": 656, "planned": false, "workouts": [{"type": "run", "kcal": 656
 also has the event's `title`); `{"kcal": 0, "planned": false, "workouts": []}` without any.
 
 Score: `{"score": 82, "final": false, "numbers": 90, "quality": 70, "graded": 0.85, "grades": {"a": 640, "b": 300,
-"c": 400, "d": 0, "e": 120}}`, null before anything's eaten. 0–100, no model call:
+"c": 400, "d": 0, "e": 120}, "parts": {"nutrients": 74, "processing": 60, "grades": 68}, "nutrients": {...},
+"processing": {"upf_pct": 26, "score": 60}}`, null before anything's eaten. 0–100, no model call:
 - `numbers` (60%): calories within 10% of the day's target, carbs and fat within 15%, protein at or above it get full
   marks, falling to 0 at 50% off (weights 40, 30, 15, 15). Today isn't `final`: only going over costs, as there's
   still time to eat. A day without goals is quality alone.
-- `quality` (40%): the day's items' grades weighted by their kcal (A 100, B 75, C 50, D 25, E 0); null (and the score
-  is numbers alone) when graded items are under half the day's kcal (`graded` is that share). `grades` is the kcal
-  eaten per grade. Meals logged without items are ungraded.
+- `quality` (40%), since 2026-10-29 three `parts`, each 0–100 or null without enough data, weighed 50/25/25 (and
+  again over those there are; null, and the score is numbers alone, when none is):
+  - `nutrients` (50%): the mean of the day's nutrients against guidelines, each scored on a straight line:
+
+    | key | value | full marks | 0 |
+    |---|---|---|---|
+    | `fibre` | `{"g": 22, "target": 30, "score": 60}` | ≥ 30 g | ≤ 10 g |
+    | `fruit_veg` | `{"g": 310, "target": 400, "score": 78}` (fruit, veg and legumes) | ≥ 400 g | 0 g |
+    | `sat_fat` | `{"pct": 9.2, "limit": 10, "score": 100}` (% of the day's kcal) | ≤ 10% | ≥ 20% |
+    | `sugars` | `{"pct": 12.1, "limit": 10, "score": 86}` (free sugars: those not from fruit and veg) | ≤ 10% | ≥ 25% |
+    | `salt` | `{"g": 4.1, "limit": 5, "score": 100}` | ≤ 5 g | ≥ 10 g |
+
+    Each is null unless items that carry it are half the day's kcal. Limits are scaled up to the whole day by that
+    share; fibre and fruit and veg aren't (missing data earns nothing), and before the day's over (not `final`)
+    they're 100, as there's still time.
+  - `processing` (25%): `upf_pct`, the share of the kcal (of those with a NOVA group) from ultra-processed foods
+    (NOVA 4); ≤ 10% is 100, 50% or more is 0. Null when foods with a NOVA group are under half the day's kcal.
+  - `grades` (25%): the day's items' grades weighted by their kcal (A 100, B 75, C 50, D 25, E 0); null when graded
+    items are under half the day's kcal (`graded` is that share). `grades` is the kcal eaten per grade.
+
+  Meals logged without items have none of these.
 
 A food's grade is its Nutri-Score (the 2023 rules, with their own for fats, oils and nuts, drinks, cheese and red
 meat; so extra virgin olive oil is B): Open Food Facts' when it has one, else worked out from its numbers per 100 g.
-Food has `grade` (`a`–`e`, null when it can't be worked out) and `nova` (Open Food Facts' processing group 1–4, null
-without). Coach gives a new food's sugars, saturated fat, fibre, salt, fruit and veg share and kind as it logs it, and
-a nutrition label's photo is read for them too.
+Food has `grade` (`a`–`e`, null when it can't be worked out) and `nova` (the processing group 1–4: Open Food Facts',
+or Coach's estimate for a plain food; null without). Coach gives a new food's sugars, saturated fat, fibre, salt, fruit
+and veg share, kind and NOVA group as it logs it, and a nutrition label's photo is read for them too (all but NOVA).
 
 Coach gets `log_meal`, `update_meal`, `list_meals`, `set_food_goals` (immediate) and `delete_meal` (queued).
 It logs a meal when a photo shows food you're eating or ate, or when you say what you had, and says the numbers in

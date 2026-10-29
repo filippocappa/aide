@@ -12,7 +12,7 @@ from aide.food import FoodStore
 from aide.foods import FoodDB
 from aide.health import HealthStore
 from aide.icloud import CalEvent
-from aide.nutrition import Nutrition, nutriscore, score
+from aide.nutrition import Nutrition, nutriscore, score, weakest
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
 from aide.tools.food import food_tools
@@ -41,16 +41,20 @@ def test_nutriscore_follows_the_2023_rules():
     assert nutriscore({"kcal_100g": 52, "protein_100g": 0.3, "carbs_100g": 14, "fat_100g": 0.2}) is None
 
 
+def item(kcal, grade=None, nova=None, **grams):
+    return {"kcal": kcal, "grade": grade, "nova": nova, **grams}
+
+
 def test_the_day_score():
     on = dict(BASE)
     assert score({**on, "calories": 0}, BASE, [], final=True) is None  # nothing eaten
-    full = score(on, BASE, [(2500, "a")], final=True)
+    full = score(on, BASE, [item(2500, "a")], final=True)
     assert (full["score"], full["numbers"], full["quality"]) == (100, 100, 100)
     # A day over is 60% numbers and 40% quality: half the calories graded A, half E is 50.
-    half = score(on, BASE, [(1250, "a"), (1250, "e")], final=True)
+    half = score(on, BASE, [item(1250, "a"), item(1250, "e")], final=True)
     assert (half["score"], half["quality"], half["grades"]["e"]) == (80, 50, 1250)
     # Under half the calories graded: numbers only.
-    few = score(on, BASE, [(1000, "e"), (1500, None)], final=True)
+    few = score(on, BASE, [item(1000, "e"), item(1500)], final=True)
     assert (few["score"], few["quality"], few["graded"]) == (100, None, 0.4)
     # Short of everything at the day's end costs; before it's over only going over does.
     short = {"calories": 1500, "protein_g": 80, "carbs_g": 180, "fat_g": 50}
@@ -58,8 +62,44 @@ def test_the_day_score():
     assert score(short, BASE, [], final=False)["numbers"] == 100
     over = {**on, "calories": 3250}  # 30% over: half way from the 10% band to nothing at 50%
     assert score(over, BASE, [], final=False)["numbers"] == 80
-    assert score(on, {"calories": None, "protein_g": None, "carbs_g": None, "fat_g": None}, [(2500, "c")],
+    assert score(on, {"calories": None, "protein_g": None, "carbs_g": None, "fat_g": None}, [item(2500, "c")],
                  final=True)["score"] == 50  # no targets: quality alone
+
+
+def test_quality_is_the_days_nutrients_and_processing_more_than_each_foods_grade():
+    on = dict(BASE)
+    # Oats, fruit, lentils and veg, olive oil, cheese and bread: whole foods, though a fifth of it is graded C.
+    whole = [item(400, "a", 1, fibre_g=10, fvl_g=0, sat_fat_g=1.5, salt_g=0, free_sugars_g=1),
+             item(160, "a", 1, fibre_g=7, fvl_g=300, sat_fat_g=0, salt_g=0, free_sugars_g=0),
+             item(700, "a", 1, fibre_g=16, fvl_g=200, sat_fat_g=1, salt_g=1, free_sugars_g=0),
+             item(440, "b", 2, fibre_g=0, fvl_g=50, sat_fat_g=7, salt_g=0, free_sugars_g=0),
+             item(800, "c", 3, fibre_g=4, fvl_g=0, sat_fat_g=12, salt_g=3, free_sugars_g=2)]
+    s = score(on, BASE, whole, final=True)
+    assert s["parts"] == {"nutrients": 100, "processing": 100, "grades": 80} and s["quality"] == 95
+    assert s["nutrients"]["fibre"] == {"g": 37, "target": 30, "score": 100}
+    assert s["nutrients"]["sat_fat"] == {"pct": 7.7, "limit": 10, "score": 100}
+    assert weakest(s) is None
+    # Packaged snacks (NOVA 4, graded C) for 60% of it: processing and sugars lose marks, and fibre at the day's end.
+    snacks = [item(1500, "c", 4, fibre_g=6, fvl_g=0, sat_fat_g=15, salt_g=3, free_sugars_g=90),
+              item(1000, "a", 1, fibre_g=6, fvl_g=200, sat_fat_g=3, salt_g=1, free_sugars_g=0)]
+    s = score(on, BASE, snacks, final=True)
+    assert s["processing"] == {"upf_pct": 60, "score": 0}
+    assert s["nutrients"]["sugars"] == {"pct": 14.4, "limit": 10, "score": 71}
+    assert (s["nutrients"]["fibre"]["score"], s["nutrients"]["fruit_veg"]["score"]) == (10, 50)
+    assert s["parts"] == {"nutrients": 66, "processing": 0, "grades": 70} and s["quality"] == 51
+    assert weakest(s) == "60% of kcal ultra-processed"
+    # Before the day's over, fibre and fruit and veg can still come.
+    early = score(on, BASE, snacks, final=False)
+    assert (early["nutrients"]["fibre"]["score"], early["nutrients"]["fruit_veg"]["score"]) == (100, 100)
+    assert early["parts"]["nutrients"] == 94
+    # A part without data on half the day's kcal is left out and the rest weighed again.
+    some = score(on, BASE, [item(1500, "a", 4), item(1000)], final=True)
+    assert some["parts"] == {"nutrients": None, "processing": 0, "grades": 100} and some["quality"] == 50
+    assert all(n is None for n in some["nutrients"].values())
+    assert score(on, BASE, [item(1000, "a", 1, fibre_g=30), item(1500)], final=True)["quality"] is None
+    # Salt is scaled up to the day: 3 g on 60% of it is 5 g.
+    salty = score(on, BASE, [item(1500, salt_g=3), item(1000)], final=True)["nutrients"]["salt"]
+    assert salty == {"g": 5.0, "limit": 5, "score": 100}
 
 
 @pytest.fixture
@@ -122,14 +162,20 @@ async def test_new_items_carry_their_quality_and_the_day_gets_a_score(stores, tm
     f.set_goals(BASE)
     tools = ToolRegistry(food_tools(f, PhotoStore(tmp_path), ROME, foods, OpenFoodFacts(client(Recorder())), health))
     said = await tools.call("log_meal", {"name": "Insalata", "items": [
-        {"name": "Mela", "grams": 150, **food(52, 0.3, 14, 0.2, 10.4, 0, 0, fibre=2.4, fvl=100)},
-        {"name": "Olio extravergine", "grams": 10, **food(884, 0, 0, 100, 0, 14, 0, fvl=100, kind="fat")}]})
+        {"name": "Mela", "grams": 150, **food(52, 0.3, 14, 0.2, 10.4, 0, 0, fibre=2.4, fvl=100), "nova": 1},
+        {"name": "Olio extravergine", "grams": 10, **food(884, 0, 0, 100, 0, 14, 0, fvl=100, kind="fat"),
+         "nova": 2}]})
     assert "Day score" in said
     assert foods.as_json(foods.search("mela")[0])["grade"] == "a"
     assert foods.as_json(foods.search("olio")[0])["grade"] == "b"
+    assert foods.as_json(foods.search("mela")[0])["nova"] == 1
     day = nutrition.day(f.today())
-    # 78 kcal of apple (A) and 88 of oil (B), all graded
-    assert day["score"]["quality"] == 87 and day["score"]["graded"] == 1 and day["score"]["final"] is False
+    # 78 kcal of apple (A) and 88 of oil (B), all graded; nothing ultra-processed, nutrients fine so far
+    s = day["score"]
+    assert s["parts"] == {"nutrients": 100, "processing": 100, "grades": 87} and s["quality"] == 97
+    assert s["graded"] == 1 and s["final"] is False
+    assert s["nutrients"]["fruit_veg"] == {"g": 160, "target": 400, "score": 100}
+    assert s["nutrients"]["sugars"]["pct"] == 0  # the apple's sugars aren't free sugars
     assert day["left"]["calories"] == 2500 - 170  # the meal is rounded
 
 

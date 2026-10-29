@@ -1705,6 +1705,34 @@ final class NutritionTests: XCTestCase {
         XCTAssertNil(DayScoreCard.bonusLine(old.bonus))
     }
 
+    func testTheScoreCarriesItsQualityParts() throws {
+        let score = try JSONDecoder.api.decode(DayScore.self, from: Data(#"""
+        {"score": 71, "final": true, "numbers": 90, "quality": 51, "graded": 1, "grades": {"a": 1000, "c": 1500},
+         "parts": {"nutrients": 66, "processing": 0, "grades": 70},
+         "nutrients": {"fibre": {"g": 12, "target": 30, "score": 10}, "fruit_veg": {"g": 200, "target": 400, "score": 50},
+                       "sat_fat": {"pct": 6.5, "limit": 10, "score": 100}, "sugars": {"pct": 14.4, "limit": 10, "score": 71},
+                       "salt": null},
+         "processing": {"upf_pct": 60, "score": 0}}
+        """#.utf8))
+        XCTAssertEqual(score.parts?.processing, 0)
+        XCTAssertEqual(score.nutrients?.fruitVeg?.g, 200)
+        XCTAssertNil(score.nutrients?.salt)
+        let lines = QualityLine.nutrients(score)
+        XCTAssertEqual(lines.map(\.value), ["12 / 30 g", "200 / 400 g", "6.5% of kcal · under 10%",
+                                            "14.4% of kcal · under 10%", "Not enough data"])
+        XCTAssertEqual(lines[0].fill, 0.4, accuracy: 0.001)
+        XCTAssertEqual(QualityLine.processing(score).value, "60% of kcal · under 10%")
+        XCTAssertEqual(score.hint, "60% of kcal ultra-processed")
+
+        // Before the parts: decodes, no lines' data, no hint.
+        let old = try JSONDecoder.api.decode(DayScore.self, from: Data(#"""
+        {"score": 82, "final": false, "numbers": 90, "quality": 70, "graded": 0.85, "grades": {"a": 640}}
+        """#.utf8))
+        XCTAssertNil(old.parts)
+        XCTAssertNil(old.hint)
+        XCTAssertEqual(QualityLine.processing(old).value, "Not enough data")
+    }
+
     func testAPlannedRunSaysWhatItsFor() throws {
         let bonus = try JSONDecoder.api.decode(FoodBonus.self, from: Data(#"""
         {"kcal": 540, "planned": true, "workouts": [{"type": "run", "kcal": 540, "minutes": 45, "title": "Corsa al Valentino"}]}

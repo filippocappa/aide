@@ -67,6 +67,9 @@ struct DayScoreCard: View {
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(tint)
                 }
+                if let hint = day.score?.hint {
+                    Text(hint).font(.footnote.weight(.medium)).foregroundStyle(.orange)
+                }
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
@@ -161,11 +164,31 @@ struct NutritionDayView: View {
                                                     : ", mostly as carbs."))
                 }
             }
+            if let score = day.score, score.parts != nil {
+                Section {
+                    ForEach(QualityLine.nutrients(score), id: \.name) { QualityLineRow(line: $0, tint: tint) }
+                } header: {
+                    partHeader("Nutrients", score.parts?.nutrients)
+                } footer: {
+                    Text("Half the quality. Fibre and fruit & veg count once the day's over, the limits as soon as they're passed. Each needs data on half the day's calories; meals Coach logs from items have it.")
+                }
+                Section {
+                    QualityLineRow(line: QualityLine.processing(score), tint: tint)
+                } header: {
+                    partHeader("Processing", score.parts?.processing)
+                } footer: {
+                    Text("A quarter of the quality: the share of calories from ultra-processed foods (NOVA 4: packaged snacks, soft drinks, most sweets and ready meals). Full marks at 10% or less, none from 50%.")
+                }
+            }
             Section {
                 QualityBars(grades: day.score?.grades ?? [:])
                     .padding(.vertical, 4)
             } header: {
-                Text("Quality")
+                if day.score?.parts != nil {
+                    partHeader("Food grades", day.score?.parts?.grades)
+                } else {
+                    Text("Quality")
+                }
             } footer: {
                 Text(qualityFooter)
             }
@@ -178,7 +201,7 @@ struct NutritionDayView: View {
             Section {
                 Button("Targets") { editing = true }
             } footer: {
-                Text("The score is 60% how close you came to the targets (calories within 10%, carbs and fat within 15%, protein at least the target) and 40% the quality of what you ate.")
+                Text("The score is 60% how close you came to the targets (calories within 10%, carbs and fat within 15%, protein at least the target) and 40% the quality of what you ate: the day's nutrients (half), how processed it was and each food's Nutri-Score (a quarter each).")
             }
         }
         .scrollContentBackground(.hidden)
@@ -192,12 +215,21 @@ struct NutritionDayView: View {
         }
     }
 
+    private func partHeader(_ name: String, _ score: Int?) -> some View {
+        HStack {
+            Text(name)
+            Spacer()
+            Text(score.map(String.init) ?? "–").monospacedDigit()
+                .foregroundStyle(score.map { Grade.scoreColor($0, tint: tint) } ?? Color.secondary)
+        }
+    }
+
     private var qualityFooter: String {
         guard let score = day.score else { return "Each food's Nutri-Score, weighted by its calories." }
         if score.quality == nil {
             return "Not counted: only \(Int(score.graded * 100))% of the day's calories have a grade (it counts from half). Meals Coach logs from items get one."
         }
-        return "Each food's Nutri-Score (Open Food Facts', or worked out from its numbers), weighted by its calories."
+        return "Each food's Nutri-Score (Open Food Facts', or worked out from its numbers), weighted by its calories\(score.parts != nil ? ". A quarter of the quality: a grade rates a food per 100 g, not how much of it you had" : "")."
     }
 
     private func target(_ name: String, eaten: Int, goal: Int?, base: Int?, unit: String) -> some View {
@@ -223,6 +255,102 @@ struct NutritionDayView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// One of the day's quality points: what it is against its guideline, and a bar (`fill` 0–1, a `mark` at the limit).
+struct QualityLine: Hashable {
+    let name: String
+    let value: String
+    var fill: Double = 0
+    var mark: Double? = nil
+    var score: Int? = nil
+
+    static func nutrients(_ s: DayScore) -> [QualityLine] {
+        let n = s.nutrients
+        return [
+            grams("Fibre", n?.fibre, top: 30),
+            grams("Fruit & veg", n?.fruitVeg, top: 400),
+            percent("Saturated fat", n?.satFat, top: 20),
+            percent("Free sugars", n?.sugars, top: 25),
+            grams("Salt", n?.salt, top: 10),
+        ]
+    }
+
+    static func processing(_ s: DayScore) -> QualityLine {
+        guard let p = s.processing else { return QualityLine(name: "Ultra-processed", value: "Not enough data") }
+        return QualityLine(name: "Ultra-processed", value: "\(p.upfPct)% of kcal · under 10%",
+                           fill: min(Double(p.upfPct) / 50, 1), mark: 0.2, score: p.score)
+    }
+
+    /// "22 / 30 g" for what's needed at least, "4.1 / 5 g" for a limit (with its mark), up to `top` on the bar.
+    private static func grams(_ name: String, _ n: DayScore.Nutrient?, top: Double) -> QualityLine {
+        guard let n, let g = n.g else { return QualityLine(name: name, value: "Not enough data") }
+        let of = n.target ?? n.limit ?? top
+        return QualityLine(name: name, value: "\(number(g)) / \(number(of)) g",
+                           fill: min(g / (n.target ?? top), 1), mark: n.limit.map { $0 / top }, score: n.score)
+    }
+
+    private static func percent(_ name: String, _ n: DayScore.Nutrient?, top: Double) -> QualityLine {
+        guard let n, let pct = n.pct else { return QualityLine(name: name, value: "Not enough data") }
+        let limit = n.limit ?? 10
+        return QualityLine(name: name, value: "\(number(pct))% of kcal · under \(number(limit))%",
+                           fill: min(pct / top, 1), mark: limit / top, score: n.score)
+    }
+
+    static func number(_ x: Double) -> String {
+        x.rounded() == x || x >= 100 ? String(Int(x.rounded())) : String(format: "%.1f", x)
+    }
+}
+
+extension DayScore {
+    /// The day's weakest quality point, when it's under 70: "Low on fibre: 14 / 30 g".
+    var hint: String? {
+        var worst: (Int, String)?
+        func consider(_ score: Int?, _ text: @autoclosure () -> String) {
+            if let score, score < 70, score < worst?.0 ?? 101 { worst = (score, text()) }
+        }
+        let n = nutrients
+        let num = QualityLine.number
+        consider(n?.fibre?.score, "Low on fibre: \(num(n?.fibre?.g ?? 0)) / 30 g")
+        consider(n?.fruitVeg?.score, "Low on fruit & veg: \(num(n?.fruitVeg?.g ?? 0)) / 400 g")
+        consider(n?.satFat?.score, "Saturated fat at \(num(n?.satFat?.pct ?? 0))% of kcal")
+        consider(n?.sugars?.score, "Free sugars at \(num(n?.sugars?.pct ?? 0))% of kcal")
+        consider(n?.salt?.score, "Salt at \(num(n?.salt?.g ?? 0)) g")
+        consider(processing?.score, "\(processing?.upfPct ?? 0)% of kcal ultra-processed")
+        return worst?.1
+    }
+}
+
+/// A quality line: the name and value, and a bar coloured by its score.
+struct QualityLineRow: View {
+    let line: QualityLine
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(line.name).font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(line.value).font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+            }
+            if let score = line.score {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(tint.opacity(0.15))
+                        Capsule().fill(Grade.scoreColor(score, tint: tint))
+                            .frame(width: max(6, geo.size.width * line.fill))
+                        if let mark = line.mark {
+                            Rectangle().fill(.secondary).frame(width: 2, height: 10)
+                                .offset(x: geo.size.width * mark - 1)
+                        }
+                    }
+                }
+                .frame(height: 6)
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
     }
 }
 

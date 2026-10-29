@@ -205,6 +205,11 @@ from the profile, 60 days of Health and 14 of food. App (`Views/NutritionViews.s
 → Food and the day's page (targets, A–E bars, 4 weeks of scores), Settings → Nutrition targets (also Targets on the
 Food page; profile from Apple Health once, "Ask Coach to propose"); HealthKit now also reads weight, height, age,
 sex, VO2 max and workout distance (`weight_kg`, `vo2max`, `workouts[].km`). Not yet tried on the phone.
+Quality beyond Nutri-Score (2026-10-29, contract "Targets and the day score"): the 40% is three `parts`, the day's
+nutrients 50% (fibre, fruit and veg, saturated fat and free sugars as % of kcal, salt, against WHO-style lines; fibre
+and fruit/veg only on a finished day), processing 25% (the NOVA 4 share of kcal; Coach gives `nova` for new foods)
+and the kcal-weighted grades 25%. Coach's day line names the weakest. App: Nutrients, Processing and Food grades
+sections on the day's page, the weakest as a hint on the card.
 
 **Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
 files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and

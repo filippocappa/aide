@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from ..food import DRINKS, MACROS, FoodStore, totals
 from ..foods import FoodDB, free_notes
 from ..health import HealthStore
-from ..nutrition import Nutrition
+from ..nutrition import Nutrition, weakest
 from ..photos import PhotoStore
 from . import Tool, ToolOutput
 from .nutrition import OpenFoodFacts, nutrition_tools, quality_schema
@@ -53,6 +53,8 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         if s := day["score"]:
             line += f". Day score {s['score']}/100" + (f", food quality {s['quality']}" if s["quality"] is not None
                                                         else "")
+            if low := weakest(s):
+                line += f"; weakest: {low}"
         return line
 
     async def log_meal(name: str, items: list[dict], eaten_at: str | None = None, photo_id: str | None = None,

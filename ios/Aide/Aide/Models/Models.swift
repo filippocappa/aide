@@ -672,6 +672,41 @@ struct DayScore: Decodable, Hashable {
     let graded: Double
     /// Calories eaten per grade, a to e.
     let grades: [String: Int]
+    /// The quality's three parts, 0–100 each or nil without enough data (absent from servers before them).
+    var parts: ScoreParts? = nil
+    var nutrients: DayNutrients? = nil
+    var processing: Processing? = nil
+
+    struct ScoreParts: Decodable, Hashable {
+        let nutrients: Int?
+        let processing: Int?
+        let grades: Int?
+    }
+
+    /// The day's nutrients against guidelines; each nil without enough data.
+    struct DayNutrients: Decodable, Hashable {
+        let fibre: Nutrient?
+        let fruitVeg: Nutrient?
+        let satFat: Nutrient?
+        let sugars: Nutrient?
+        let salt: Nutrient?
+    }
+
+    /// Grams against a `target` (fibre, fruit and veg) or a `limit` (salt), or `pct` of the day's kcal against a
+    /// `limit` (saturated fat, free sugars).
+    struct Nutrient: Decodable, Hashable {
+        var g: Double? = nil
+        var pct: Double? = nil
+        var target: Double? = nil
+        var limit: Double? = nil
+        let score: Int
+    }
+
+    /// The share of the day's kcal from ultra-processed (NOVA 4) foods.
+    struct Processing: Decodable, Hashable {
+        let upfPct: Int
+        let score: Int
+    }
 }
 
 /// `GET/PUT /v1/food/targets`.

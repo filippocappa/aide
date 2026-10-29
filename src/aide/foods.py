@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS foods (
     fvl_pct      REAL,  -- % fruit, vegetables, legumes (and olive, rapeseed, walnut oil)
     kind         TEXT NOT NULL DEFAULT 'general',  -- general | fat | drink | water | cheese | red_meat
     nutriscore   TEXT,  -- Open Food Facts' grade, a–e; else worked out from the numbers
-    nova         INTEGER,  -- Open Food Facts' processing group, 1–4
+    nova         INTEGER,  -- the processing group, 1–4: Open Food Facts', or Coach's estimate
     serving_g    REAL,  -- one serving as the packet says, NULL when unknown
     usual_g      REAL,  -- the portion the user had last time
     source       TEXT NOT NULL,  -- off | label | web | estimate | user
@@ -234,7 +234,7 @@ class FoodDB:
                 brand = item.get("brand") or ""
                 food = self._by_key(normalize(f"{' '.join(item['name'].split())} | {' '.join(brand.split())}")) \
                     or self.save(item["name"], *(item[k] for k in PER_100), "estimate", brand=brand,
-                                 **{k: item.get(k) for k in QUALITY if k not in ("nutriscore", "nova")})
+                                 **{k: item.get(k) for k in QUALITY if k != "nutriscore"})
                 grams = item["grams"]
             if not 0 < grams <= MAX_PORTION:
                 raise ValueError(f"grams must be between 0 and {MAX_PORTION}")

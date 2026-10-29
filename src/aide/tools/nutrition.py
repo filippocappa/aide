@@ -142,13 +142,18 @@ def describe(food: dict) -> str:
 
 
 def quality_schema() -> dict:
-    """What a food's Nutri-Score needs besides kcal and macros, per 100 g; the model's estimate when not on a label."""
+    """What a food's quality needs besides kcal and macros (its Nutri-Score, per 100 g, and how processed it is);
+    the model's estimate when not on a label."""
     return {"sugars_100g": {"type": "number"}, "sat_fat_100g": {"type": "number"},
             "fibre_100g": {"type": "number"}, "salt_100g": {"type": "number"},
             "fvl_pct": {"type": "number", "description": "% of it that is fruit, vegetables, legumes, nuts, or "
                         "olive, rapeseed or walnut oil (an apple 100, pasta al pomodoro about 30, bread 0)"},
             "kind": {"type": "string", "enum": list(KINDS), "description": "fat: oils, butter, nuts and seeds; "
-                     "drink: any drink but water; red_meat: beef, pork, lamb and what's made of them"}}
+                     "drink: any drink but water; red_meat: beef, pork, lamb and what's made of them"},
+            "nova": {"type": "integer", "enum": [1, 2, 3, 4], "description": "how processed (NOVA): 1 unprocessed or "
+                     "minimally (fruit, veg, eggs, plain yogurt, meat, fish, rice, pasta, oats), 2 a culinary ingredient "
+                     "(oil, butter, sugar, salt), 3 processed (cheese, bakery bread, tinned fish, cured ham), 4 "
+                     "ultra-processed (industrial snacks, soft drinks, packaged sweets, most ready meals)"}}
 
 
 def nutrition_tools(foods: FoodDB, off: OpenFoodFacts) -> list[Tool]:

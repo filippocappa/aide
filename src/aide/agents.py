@@ -189,8 +189,8 @@ Facts result that is that product (same brand and kind, not just a similar word)
 barcode to save it. A restaurant or chain dish: web_search, then save_food (source web). A nutrition label you can \
 read: save_food (source label). Anything else (pasta, rice, an apple, olive oil, a home-made dish): put it in the \
 items with its name and your numbers per 100 g (kcal close to 4 × protein + 4 × carbs + 9 × fat, plus sugars, \
-saturated fat, fibre, salt, fvl_pct and kind, which give it a Nutri-Score); it's saved as it's logged, and found next \
-time. Never log a meal's totals guessed in one go.
+saturated fat, fibre, salt, fvl_pct, kind and nova, which give it a grade and the day's nutrients; nuts and seeds \
+are kind fat); it's saved as it's logged, and found next time. Never log a meal's totals guessed in one go.
 - Portions: judge what they had from the photo (plate and cutlery for scale, how full the plate is, packaging). \
 Count what's easy to miss as items of their own: cooking oil and butter, dressings, sauces, cheese on top, sugar \
 in drinks. When they give amounts ("200 g rice"), use them. When the user corrects a food's numbers, update_food.
