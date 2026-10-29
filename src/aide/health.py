@@ -32,9 +32,10 @@ WORKOUT_TYPES = ("strength", "run", "walk", "hike", "cycle", "swim", "hiit", "yo
 
 
 def _clean(value):
-    """Drop null fields, recursively: missing and null both mean no data."""
+    """Drop null fields, recursively: missing and null both mean no data. `hr_hourly` keeps its nulls: the position
+    is the hour."""
     if isinstance(value, dict):
-        return {k: _clean(v) for k, v in value.items() if v is not None}
+        return {k: v if k == "hr_hourly" else _clean(v) for k, v in value.items() if v is not None}
     if isinstance(value, list):
         return [_clean(v) for v in value if v is not None]
     return value
@@ -50,6 +51,10 @@ def check_day(raw: dict) -> dict:
         raise ValueError(f"date must be YYYY-MM-DD, not {raw.get('date')!r}") from None
     if "sleep" in day and not isinstance(day["sleep"], dict):
         raise ValueError(f"{day['date']}: sleep must be an object")
+    hourly = day.get("hr_hourly")
+    if hourly is not None and (not isinstance(hourly, list) or len(hourly) != 24
+                               or not all(h is None or isinstance(h, (int, float)) for h in hourly)):
+        raise ValueError(f"{day['date']}: hr_hourly must be 24 numbers or nulls")
     workouts = day.get("workouts", [])
     if not isinstance(workouts, list) or not all(isinstance(w, dict) and w.get("id") for w in workouts):
         raise ValueError(f"{day['date']}: workouts must be a list of objects with an id")

@@ -160,3 +160,12 @@ def test_scores_endpoints(world):  # noqa: F811
     hist = w.http.get("/v1/health/scores/history?days=3", headers=AUTH).json()["days"]
     assert [h["date"] for h in hist] == [(TODAY - timedelta(days=i)).isoformat() for i in range(3)]
     assert set(hist[0]) == {"date", "sleep", "recovery", "strain"}
+
+
+def test_hr_hourly_keeps_its_nulls_in_place(world):  # noqa: F811
+    w = world()
+    hourly = [None] * 7 + [70] + [None] * 16
+    w.health.save([{"date": TODAY.isoformat(), "hr_hourly": hourly, "hr_minutes": [[95, 2.5]]}])
+    assert w.health.get(TODAY)["hr_hourly"] == hourly
+    with pytest.raises(ValueError):
+        w.health.save([{"date": TODAY.isoformat(), "hr_hourly": [70] * 23}])
