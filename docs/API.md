@@ -855,17 +855,20 @@ least text. The scan runs before notes are written, and with `POST /v1/notebook/
 
 ### Exercises
 
-Since 2026-10-29: a set of solved exercises per topic, for practice beyond the topic's questions. Writing them, in
-the background (a few minutes for a whole notebook):
-- the course's files of exercises (by name or Moodle section: problem sets, exercise sessions, past exams, mock
-  exams) are matched to the topics by the cheap model, once per run;
+Since 2026-10-29: a set of solved exercises per topic, for practice beyond the topic's questions. Only the course's
+own exercises (since 2026-10-29, later the same day: no new ones of Aide's). Writing them, in the background (a few
+minutes for a whole notebook):
+- the course's files of exercises (by name or Moodle section: problem sets and their solutions, exercise sessions,
+  review or example questions, past exams, mock exams) are matched to the topics by the cheap model, once per run,
+  a solution's pages with its exercise's topic;
 - each topic's set is written by the smart model from its notes, how the exam works (the Introduction's "The exam"
-  and "How to prepare") and its exercise pages: the course's own exercises first, copied and solved (at most 6, past
-  exams first), then new ones in the exam's style, about 8 in all;
-- the final answers are worked out again by a second, blind solver; where they differ, the smart model fixes the
-  solution or says it stands (`checked`).
+  and "How to prepare") and its exercise pages: every exercise on them, past exams first, copied as it is and solved,
+  following the course's own solution where it has one (`solution:` in its heading);
+- the other final answers are worked out again by a second, blind solver; where they differ, the smart model fixes
+  the solution or says it stands (`checked`).
 
-Writing a topic's set again replaces it. The result comes in the course's chat, with a push (`message`). Professor
+Writing a topic's set again replaces it; a topic none of the sheets practises has no set (an old one is removed).
+`POST` answers `409` when the course has no exercise files at all. The result comes in the course's chat, with a push (`message`). Professor
 writes them on request (`write_exercises`) and goes through one in chat (`read_exercises`: the statement first,
 the solution once the user has tried).
 
@@ -876,13 +879,13 @@ the solution once the user has tried).
 | `GET /v1/exercises/{id}?plain=true` | | Exercise set with `body` and `sources`. `404`. |
 
 Exercise set: `{"id": "e_…", "course": 2, "topic": {"id": "t_…", "title": "The IS-LM model"}, "count": 8,
-"from_material": 3, "new": 5, "checked": true, "updated_at": "…"}`; in full also `"body": "markdown"` and
+"from_material": 8, "new": 0, "checked": true, "updated_at": "…"}` (`new` is 0 on sets written since the change); in full also `"body": "markdown"` and
 `"sources": ["Problem set 2, p. 1–3"]` (the exercise pages it drew on). `checked`: the final answers went through the
 second solver (false: none has a final result, or the check failed).
 
 Body: one block per exercise, nothing else:
 ```
-**Exercise 1.** (from: Problem set 2, p. 3)     or (new)
+**Exercise 1.** (from: Problem set 2, p. 3; solution: Solution problem set 2, p. 4)     or (new), on old sets
 The statement, with its data.
 > [!success]- Solution
 > Step by step…
@@ -903,20 +906,29 @@ known: 20 multiple-choice and 2 open questions, 60 minutes). The multiple-choice
 topic's. The result comes in the course's chat, with a push. Professor writes one on request (`write_mock_exam`) and
 sees how they went (`study_progress`).
 
+Past exams (since 2026-10-29): with `past=true` the course's own papers (its past exams and the mock exams it gave
+out: exercise files named like *mock*, *esame 2025*, *Example questions*) are copied instead, as they are, one smart
+model call each: every question, its words, data, options and points, answered from the paper's own key when it has
+one, else worked out; those keys are checked blind and only a key and its explanation can change. Each becomes a Mock
+exam with `source` and the paper's own `title` ("Mock exam 2026"), taken like any other. A paper already copied is
+left alone. Professor: `write_mock_exam` with `past: true`.
+
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/notebook/mocks?course=2` | | `{"course": 2, "mocks": [Mock exam]}`, oldest first. `404` no such course. |
+| `GET /v1/notebook/mocks?course=2` | | `{"course": 2, "mocks": [Mock exam]}`: the course's own papers first, then the written ones, each oldest first. `404` no such course. |
 | `POST /v1/notebook/mocks?course=2` | | `202`, Notebook (`busy`, `step` "Writing a mock exam"). `409` no topic written yet. `404`. |
+| `POST /v1/notebook/mocks?course=2&past=true` | | `202`, Notebook (`step` "Copying past exams 1/2"). `409` no topic written yet, or no papers among its files. `404`. |
 | `GET /v1/mocks/{id}?plain=true` | | Mock exam with `questions` (no keys) and `body` (the paper, no answers). `404`. |
 
-Mock exam: `{"id": "m_…", "course": 2, "number": 1, "title": "Mock exam 1", "minutes": 90 or null, "scoring":
+Mock exam: `{"id": "m_…", "course": 2, "number": 1, "title": "Mock exam 1", "source": null or {"id": "f_…", "name":
+"Example Questions Midterm.pdf"} (the course's own paper, copied; numbered apart from the written ones), "minutes": 90 or null, "scoring":
 {"right": 1, "wrong": 0, "blank": 0}, "count": 16, "mcq": 15, "open": 1, "points": 30, "created_at": "…", "taken": 2,
 "best": 24.5 or null, "last": Quiz without questions or null}` (`scoring`: a multiple-choice answer's points;
 `points`: the most the paper scores). On `GET /v1/mocks/{id}` also `"questions": [{"n": 16, "type": "mcq" or "open",
 "points": 15 or null (multiple choice: `scoring.right`), "text": "markdown", "options": [{"letter": "A", "text": "…"}]
 (empty for open ones)}]` and `"body"`. Taking it: `POST /v1/quizzes` with `mock` (Practice exams, below).
 
-In the vault: `Mock exams/Mock exam 1.md` in the course's folder, linked from the Introduction's Practice list: the
+In the vault: `Mock exams/Mock exam 1.md` (a copied paper: `Past exams/Mock exam 2026.md`) in the course's folder, linked from the Introduction's Practice list: the
 time, points and scoring, the paper as it would be printed, then `## Answers` (each question's key or model answer,
 and an open question's marking, as folded callouts).
 

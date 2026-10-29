@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .material import page_image
-from .notebook import FIGURE, date_line, figures, max_points, mock_paper
+from .notebook import FIGURE, date_line, figures, max_points, mock_paper, mock_title
 from .study import StudyStore
 
 log = logging.getLogger(__name__)
@@ -282,12 +282,16 @@ class Vault:
                 practice.setdefault(cid, []).append("Exercises: " + ", ".join(
                     _link(exercise_paths[e["topic_id"]], e["topic_title"]) for e in sets.values()))
             if mocks := self.notebook.mocks(cid):
-                mock_paths = {m["id"]: f"{folders[cid]}/Mock exams/Mock exam {m['number']}.md" for m in mocks}
+                # The course's own papers apart from the ones Aide wrote.
+                mock_paths = {m["id"]: f"{folders[cid]}/Past exams/{_file_name(mock_title(m))}.md" if m["source"]
+                              else f"{folders[cid]}/Mock exams/Mock exam {m['number']}.md" for m in mocks}
                 for m in mocks:
                     items.append(Item(mock_paths[m["id"]], f"mock:{m['public_id']}",
                                       self._mock(m, course, _links_out(m["body"], by_title))))
-                practice.setdefault(cid, []).append("Mock exams: " + ", ".join(
-                    _link(mock_paths[m["id"]], f"Mock exam {m['number']}") for m in mocks))
+                for label, kind in (("Past exams", True), ("Mock exams", False)):
+                    if some := [m for m in mocks if bool(m["source"]) == kind]:
+                        practice.setdefault(cid, []).append(f"{label}: " + ", ".join(
+                            _link(mock_paths[m["id"]], mock_title(m)) for m in some))
         lecture_paths: dict[int, str] = {}
         for lec in sorted(rows, key=lambda r: (r["recorded_at"], r["id"])):
             folder = folders.get(lec["course_id"], f"{ROOT}/Unfiled")
@@ -374,8 +378,9 @@ class Vault:
         return (f'---\ncourse: "{_link(f"{folder}/00 Introduction.md", course["name"])}"\n'
                 f'topic: "{_link(page, e["topic_title"])}"\ntags:\n  - exercises\n  - {_tag(course["name"])}\n---\n\n'
                 f"# Exercises: {e['topic_title']}\n\nFor {_link(page, e['topic_title'])}. Try each before opening its "
-                f"solution.\n\n{body}\n\n*Written by Aide from the course's exercise sheets and past exams, with new "
-                "ones in the exam's style. Edit this page and Aide leaves it as you made it.*\n")
+                f"solution.\n\n{body}\n\n*The course's own exercises, from its exercise sheets and past exams, solved "
+                "by Aide (following the course's solutions where it has them). Edit this page and Aide leaves it as "
+                "you made it.*\n")
 
     def _mock(self, m: dict, course: dict, body: str) -> str:
         """The paper as it would be printed, then its answers: a mock taken on paper, the answers looked at after."""
@@ -386,11 +391,15 @@ class Vault:
         rules = [f"{m['minutes']} minutes" if m["minutes"] else None,
                  f"{max_points(m['questions'], s):g} points",
                  (f"multiple choice: right {s['right']:g}, wrong {s['wrong']:g}, blank {s['blank']:g}" if mcq else None)]
-        return (f'---\ncourse: "{_link(f"{folder}/00 Introduction.md", course["name"])}"\ntags:\n  - mock-exam\n'
-                f"  - {_tag(course['name'])}\n---\n\n# Mock exam {m['number']}: {course['name']}\n\n"
+        source = self.notebook.files.get(m["source"]) if m["source"] else None
+        made = (f"*The course's own paper, copied from {source['name'] if source else 'its files'}; the answers are "
+                "Aide's where the paper had none." if m["source"] else "*Written by Aide like the real exam.")
+        return (f'---\ncourse: "{_link(f"{folder}/00 Introduction.md", course["name"])}"\ntags:\n'
+                f"  - {'past-exam' if m['source'] else 'mock-exam'}\n"
+                f"  - {_tag(course['name'])}\n---\n\n# {mock_title(m)}: {course['name']}\n\n"
                 f"{' · '.join(r for r in rules if r)}\n\n{paper}\n\n---\n\n## Answers\n\n{answers}\n\n"
-                "*Written by Aide like the real exam. Take it in the app, timed and marked, or here on paper. Edit this "
-                "page and Aide leaves it as you made it.*\n")
+                f"{made} Take it in the app, timed and marked, or here on paper. Edit this page and Aide leaves it as "
+                "you made it.*\n")
 
     def _introduction(self, c: dict, topic_paths: dict, lectures: list[dict], lecture_paths: dict,
                       files: list[dict], file_paths: dict, practice: list[str] = ()) -> str:

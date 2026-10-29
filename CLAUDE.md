@@ -193,14 +193,17 @@ and checks the answer keys. App: Moodle and Obsidian setup in Settings, a progre
 are written. Live on macroeconomics (11 topics, 25 figures).
 Formula sheet and exercises (2026-10-29, contract "Notebook" and "Exercises"): `Formulas.md` gathers every topic's
 Formulas (no model call, never behind the topics). A set of solved exercises per topic (`exercise_sets`, the `exercises`
-job): the course's exercise sheets and past exams matched to the topics by Haiku, copied and solved, plus new ones in the
-exam's style, the final answers checked by a blind solver; `Exercises/` in the vault, Professor's `write_exercises` and
+job): only the course's own (exercise sheets and their solutions, review questions, past exams), matched to the topics
+by Haiku, copied and solved (following the course's solution where there is one), nothing invented; the other final
+answers checked by a blind solver; topics no sheet practises get none; `Exercises/` in the vault, Professor's `write_exercises` and
 `read_exercises`. App: a Practice section on the course page (Formulas, Exercises, Quiz me, Practice exam).
 Mock exams (2026-10-29, contract "Mock exams"): a paper like the real exam (`mock_exams`, the `mock` job, Sonnet in one
 go from the Introduction, every topic's notes and the past exams; MCQ keys checked blind), open questions included,
 taken in the app as a `kind: "mock"` quiz with its own time and scoring; open answers typed or photographed, marked by
 the `grade` job against the model answer and marking, then posted in the course chat. `Mock exams/` in the vault (the
-paper, then the answers), Professor's `write_mock_exam`, objectives count them. App: Mock exams in Practice.
+paper, then the answers), Professor's `write_mock_exam`, objectives count them. Past exams (`past=true`, the `papers`
+job): the course's own papers (past exams, the mocks it gave out) copied as they are, one Sonnet call each, keys checked
+blind with only the key changeable; a mock with `source` and the paper's `title`, in `Past exams/` in the vault. App: Mock exams in Practice.
 Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's checked MCQs, no model call, missed
 questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
 result in the chat.

@@ -31,7 +31,7 @@ import unicodedata
 from datetime import datetime
 
 from .db import utcnow
-from .notebook import NotebookStore, max_points, mcqs, parse_question
+from .notebook import NotebookStore, max_points, mcqs, mock_title, parse_question
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quizzes (
@@ -357,7 +357,7 @@ class QuizStore:
         minutes = round((datetime.fromisoformat(quiz["finished_at"]) -
                          datetime.fromisoformat(quiz["started_at"])).total_seconds() / 60)
         m = self.notebook.mock(quiz["mock"]) if quiz.get("mock") else None
-        name = f"Mock exam {m['number']}" if m else "Practice exam"
+        name = mock_title(m) if m else "Practice exam"
         text = (f"{name}: **{_points(s['points'])} / {_points(s['max'])}** ({s['right']} right, "
                 f"{s['wrong']} wrong, {s['blank']} blank) in {minutes} min.")
         marked = [(n, q, a) for n, q in enumerate(quiz["questions"], 1)

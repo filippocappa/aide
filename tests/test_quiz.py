@@ -343,6 +343,77 @@ async def test_a_mock_exam_like_the_real_one_taken_and_its_open_answer_marked(nb
     assert nb.api.post("/v1/notebook/mocks?course=999", headers=AUTH).status_code == 404
 
 
+PAPER = """{"title": "Mock exam 2026", "minutes": 60, "right": 1, "wrong": -0.25, "blank": 0}
+**1.** What shifts IS right?
+- A) More spending
+- B) More money
+
+> [!success]- Answer
+> **B**. Money shifts it.
+> Topic: [[The IS-LM model]]
+
+**2.** Who drew the curve?
+- A) Phillips
+- B) Keynes
+
+> [!success]- Answer
+> **A**. He did, in 1958.
+> Topic: [[Phillips curve]]"""
+
+
+async def test_the_courses_own_papers_copied_apart_from_the_written_mocks(nb):
+    from test_notebook import drain, sent
+    from test_study import add_pdf, make_pdf
+
+    notebook_with_questions(nb)
+    cid = nb.macro["id"]
+    r = nb.api.post(f"/v1/notebook/mocks?course={cid}&past=true", headers=AUTH)
+    assert r.status_code == 409 and "no past exams" in r.json()["error"]
+    paper = add_pdf(nb.api, data=make_pdf(None, ["Mock exam 2026: what shifts IS right"]),
+                    name="Example Questions Midterm", course=cid).json()
+    before = len(nb.client.requests)
+    nb.client.responses += [done(PAPER), done('{"1": "A", "2": "A"}'),
+                            done('[{"n": 1, "key": "A", "why": "G is part of demand."}]')]
+    r = nb.api.post(f"/v1/notebook/mocks?course={cid}&past=true", headers=AUTH)
+    assert r.status_code == 202
+    await drain(nb)
+    copy, check, fix = nb.client.requests[before:]
+    assert [q["model"] for q in (copy, check, fix)] == ["smart", "m", "smart"]
+    assert "The paper:\n" in sent(copy) and "Mock exam 2026: what shifts IS right" in sent(copy)
+    assert "(The second reader chose: A)" in sent(fix) and "**2.**" not in sent(fix)
+
+    # Only the key and its why changed; the question is the paper's.
+    [m] = nb.notebook.mocks(cid)
+    assert m["source"] == paper["id"] and m["title"] == "Mock exam 2026" and m["number"] == 1
+    assert "> **A**. G is part of demand.\n> Topic: [[The IS-LM model]]" in m["body"]
+    assert "- B) More money" in m["body"] and "Money shifts it" not in m["body"]
+    assert [q["key"] for q in m["questions"]] == ["A", "A"]
+    assert chat_messages(nb)[-1]["text"].startswith("I've copied the course's own paper for macroeconomics: "
+                                                    "**Mock exam 2026** (2 questions), as they are")
+    r = nb.api.post(f"/v1/notebook/mocks?course={cid}&past=true", headers=AUTH)
+    assert r.status_code == 409 and "copied already" in r.json()["error"]
+
+    # A written one is numbered on its own and listed after the course's papers.
+    nb.client.responses += [done(MOCK), done('{"1": "A", "2": "A"}')]
+    nb.api.post(f"/v1/notebook/mocks?course={cid}", headers=AUTH)
+    await drain(nb)
+    listed = nb.api.get(f"/v1/notebook/mocks?course={cid}", headers=AUTH).json()["mocks"]
+    assert [(x["title"], x["number"], x["source"]) for x in listed] == [
+        ("Mock exam 2026", 1, {"id": paper["id"], "name": "Example Questions Midterm.pdf"}), ("Mock exam 1", 1, None)]
+    assert (listed[0]["minutes"], listed[0]["scoring"]["wrong"]) == (60, -0.25)
+
+    # Obsidian: the papers in a folder of their own.
+    await nb.vault.sync()
+    root = nb.vault.folder / "Aide/macroeconomics"
+    page = (root / "Past exams/Mock exam 2026.md").read_text()
+    assert "  - past-exam\n" in page and "\n# Mock exam 2026: macroeconomics\n" in page
+    assert "copied from Example Questions Midterm.pdf" in page
+    assert (root / "Mock exams/Mock exam 1.md").exists()
+    intro = (root / "00 Introduction.md").read_text()
+    assert "- Past exams: [[Aide/macroeconomics/Past exams/Mock exam 2026|Mock exam 2026]]" in intro
+    assert "- Mock exams: [[Aide/macroeconomics/Mock exams/Mock exam 1|Mock exam 1]]" in intro
+
+
 def test_a_mock_exams_questions_read_from_its_paper():
     from aide.notebook import mock_questions
 

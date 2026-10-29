@@ -115,10 +115,18 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
                                                      else "none."))
         return "\n".join(out)
 
-    async def write_mock_exam(course: str) -> str:
+    async def write_mock_exam(course: str, past: bool = False) -> str:
         c = await course_row(course)
         if not notebook.started(c["id"]):
             return f"{c['name']} has no notebook yet: a mock exam is written from its topics."
+        if past:
+            if not (files := notebook.past_exam_files(c["id"])):
+                return (f"{c['name']} has no past exams or mock papers among its files; a mock exam can be written "
+                        "like the real one instead (past: false), if the user wants one.")
+            notebook.write_mock(c["id"], past=True)
+            return (f"Under way, in the background: copying {c['name']}'s own papers ("
+                    + ", ".join(f["name"] for f in files) + ") as they are, each answered. A few minutes; it's "
+                    "posted in the course chat, and the user takes them in the app (Practice). Tell the user.")
         notebook.write_mock(c["id"])
         return (f"Under way, in the background: a mock exam for {c['name']} in the real exam's format, from every "
                 "topic's notes" + (" and its past exams" if notebook.past_exam_files(c["id"]) else "")
@@ -163,8 +171,11 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
              "planning reviews.", _obj(one_course, ["course"]), study_progress),
         Tool("write_mock_exam", "Write a mock exam for a course: a paper like the real exam (its kinds of questions, "
              "open ones included, its points, time and scoring), over every topic, in the style of its past exams. "
-             "The user takes it in the app, under Practice; open answers are marked after, and the result comes in "
-             "the course chat. Runs in the background.", _obj(one_course, ["course"]), write_mock_exam),
+             "With past: true, copy the course's own past exams and mock papers instead, as they are, each answered "
+             "(the ones not copied yet). The user takes it in the app, under Practice; open answers are marked "
+             "after, and the result comes in the course chat. Runs in the background.",
+             _obj(one_course | {"past": {"type": "boolean", "description": "The course's own papers, copied"}},
+                  ["course"]), write_mock_exam),
     ]
     if reviews is not None and reviews.cal is not None:
         tools += [

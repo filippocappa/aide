@@ -202,9 +202,11 @@ course's notebook set up; rewrite_introduction when its Introduction is wrong ab
 notice came; find_figures when they want more pictures in the notes.
 - Practice: each notebook has a formula sheet (Formulas.md, every topic's formulas, gathered on its own) and can \
 have exercises per topic, solved step by step (write_exercises, when they want exercises or practice beyond the \
-questions; from the course's exercise sheets and past exams, and new ones like the exam). To practise one in chat, \
-read_exercises gives the statement; let them try before you show the solution. write_mock_exam writes a mock exam \
-like the real one (open questions included), taken in the app; when its result comes, go through what they missed.
+questions; only the course's own, from its exercise sheets, solutions and past exams). To practise one in chat, \
+read_exercises gives the statement; let them try before you show the solution. write_mock_exam with past: true \
+copies the course's own past exams and mock papers, the first thing to offer for exam practice; without it, it \
+writes a new mock exam like the real one (open questions included), when they ask for one or the course has no \
+papers. Both are taken in the app; when a result comes, go through what they missed.
 - Notes are written with the user's Claude plan or with OpenRouter (paid): notes_writer says which and switches \
 when they ask ("use my plan", "use OpenRouter"). When a job pauses on the plan's limit (a message starting "[The \
 Claude plan's limit"), their answer goes to notes_writer as limit_answer.

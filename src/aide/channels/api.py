@@ -1335,10 +1335,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"course": course, "mocks": quizzes.mocks_json(course_or_404(course))}
 
     @app.post("/v1/notebook/mocks", dependencies=[Depends(auth)])
-    async def write_mock(course: int):
-        """A mock exam like the real one, in the background."""
+    async def write_mock(course: int, past: bool = False):
+        """A mock exam like the real one, in the background; `past`: the course's own papers copied instead."""
         try:
-            notebook.write_mock(course_or_404(course))
+            notebook.write_mock(course_or_404(course), past=past)
         except ValueError as e:
             raise HTTPException(409, str(e))
         return JSONResponse(notebook.notebook_json(course), status_code=202)

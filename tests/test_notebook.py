@@ -338,28 +338,35 @@ In a liquidity trap the government raises $G$ by 100. With a multiplier of 2, ho
 > LM is flat, so the interest rate doesn't move and nothing is crowded out: $\\Delta Y = 2 \\times 100$.
 > **Answer:** $\\Delta Y = 200$
 
-**Exercise 2.** (new)
-Explain why the IS curve slopes down.
+**Exercise 2.** (from: Problem set 2, p. 1; solution: Solution problem set 2, p. 1)
+Explain why the IS curve slopes down, and give the multiplier with $c = 0.5$.
 > [!success]- Solution
 > A lower interest rate raises investment, and so output; see [[Crowding out]].
+> **Answer:** 2
 
-**Exercise 3.** (new)
+**Exercise 3.** (from: Problem set 2, p. 1)
 With $c = 0.75$, what is the multiplier?
 > [!success]- Solution
 > $1/(1 - 0.75)$.
 > **Answer:** 3"""
-FIXED = """**Exercise 3.** (new)
+FIXED = """**Exercise 3.** (from: Problem set 2, p. 1)
 With $c = 0.75$, what is the multiplier?
 > [!success]- Solution
 > $1/(1 - 0.75) = 1/0.25$.
 > **Answer:** 4"""
 
 
-async def test_exercises_come_from_the_sheets_and_new_ones_each_solved_and_checked(nb):
+async def test_exercises_are_the_courses_own_copied_solved_and_checked(nb):
     is_lm, crowding = await built(nb)
     cid = nb.macro["id"]
     sheet = add_pdf(nb.api, data=PROBLEMS, name="Problem set 2", course=cid).json()
     assert [f["public_id"] for f in nb.notebook.exercise_files(cid)] == [sheet["id"]]  # not the slides
+    # Solutions, review questions and a midterm's example questions are exercises too; only papers are past exams.
+    names = {"solution_problem_set_1": (True, False), "Macro_AdditionalQU_withSol_ENG": (True, False),
+             "Example Questions Midterm": (True, True), "Additional Questions": (True, False),
+             "Resource 6 Exercises": (True, False), "Week 4 slides": (False, False)}
+    from aide.notebook import _EXERCISE_NAME, _PAST_EXAM
+    assert {n: (bool(_EXERCISE_NAME.search(n)), bool(_PAST_EXAM.search(n))) for n in names} == names
     before = len(nb.client.requests)
     exercise_map = {is_lm["public_id"]: [{"file": sheet["id"], "pages": "1"}, {"file": nb.file["id"], "pages": "1"}],
                     "t_000000000000": [{"file": sheet["id"], "pages": "2"}]}
@@ -381,6 +388,7 @@ async def test_exercises_come_from_the_sheets_and_new_ones_each_solved_and_check
     assert "[Problem set 2.pdf, p. 1]" in sent(write) and "[Problem set 2.pdf, p. 2]" not in sent(write)
     assert "[Week 3 slides.pdf" not in sent(write)  # a sheet's pages only
     # The check: the statements with a final answer, solved blind, then compared; only the disputed one is fixed.
+    # One the course solved itself isn't checked.
     assert "> [!success]" not in sent(solve) and "**Exercise 3.**" in sent(solve)
     assert "Explain why the IS curve" not in sent(solve)
     assert "Exercise 3.\nFirst: 3\nSecond: 4" in sent(same)
@@ -391,19 +399,20 @@ async def test_exercises_come_from_the_sheets_and_new_ones_each_solved_and_check
 
     listed = nb.api.get(f"/v1/notebook/exercises?course={cid}", headers=AUTH).json()["sets"]
     assert [(x["id"], x["topic"]["title"], x["count"], x["from_material"], x["new"], x["checked"]) for x in listed] \
-        == [(e["public_id"], "The IS-LM model", 3, 1, 2, True)]
+        == [(e["public_id"], "The IS-LM model", 3, 3, 0, True)]
     full = nb.api.get(f"/v1/exercises/{e['public_id']}?plain=true", headers=AUTH).json()
     assert full["body"].startswith("**Exercise 1.** (from: Problem set 2, p. 1)") and "$" not in full["body"]
     assert full["sources"] == ["Problem set 2, p. 1"]
     assert nb.api.get("/v1/exercises/e_000000000000", headers=AUTH).status_code == 404
     assert nb.api.get(f"/v1/notebook?course={cid}", headers=AUTH).json()["exercises"] == 1
     message = chat_messages(nb)[-1]["text"]
-    assert message.startswith("I've written exercises for **The IS-LM model**: 3 in all, 1 from the course's "
-                              "exercise sheets and past exams, 2 new in the exam's style") and nb.push.messages
+    assert message.startswith("I've copied the course's exercises for **The IS-LM model**: 3 in all, from its "
+                              "exercise sheets and past exams, each solved step by step with the solution folded (1 "
+                              "following the course's own solutions).") and nb.push.messages
 
     # Professor reads one without its solution first.
     tools = {t.name: t for t in study_tools(nb.study, ROME, None, nb.notebook)}
-    assert "3. (new) With $c = 0.75$" in await tools["read_exercises"].handler(topic="The IS-LM model")
+    assert "3. (Problem set 2, p. 1) With $c = 0.75$" in await tools["read_exercises"].handler(topic="The IS-LM model")
     statement = await tools["read_exercises"].handler(topic=is_lm["public_id"], n=3)
     assert statement.startswith("**Exercise 3.**") and "[!success]" not in statement
     assert "**Answer:** 4" in await tools["read_exercises"].handler(topic=is_lm["public_id"], n=3, solution=True)
@@ -429,23 +438,36 @@ async def test_exercises_come_from_the_sheets_and_new_ones_each_solved_and_check
     assert nb.api.post(f"/v1/notebook/exercises?course={law}", headers=AUTH).status_code == 409
 
 
-async def test_exercises_without_sheets_are_all_new_and_a_topic_that_fails_is_said(nb):
-    await built(nb)
+async def test_exercises_only_where_the_course_has_some_and_never_invented(nb):
+    is_lm, crowding = await built(nb)
     cid = nb.macro["id"]
-    before = len(nb.client.requests)
-    new = "**Exercise 1.** (new)\nExplain crowding out.\n> [!success]- Solution\n> Rates rise, investment falls."
-    nb.client.responses.append({"The IS-LM model": done(new), "Crowding out": done("Sorry, I can't.")})
+    tools = {t.name: t for t in study_tools(nb.study, ROME, None, nb.notebook)}
+    # No exercise files at all: nothing to copy.
+    r = nb.api.post(f"/v1/notebook/exercises?course={cid}", headers=AUTH)
+    assert r.status_code == 409 and "no exercise sheets" in r.json()["error"]
+    assert "no exercises to copy" in await tools["write_exercises"].handler(course="macroeconomics")
+
+    # A sheet on one topic only: the other gets no set, and its old one (with exercises of Aide's own) goes.
+    nb.notebook.set_exercises(crowding, "**Exercise 1.** (new)\nExplain crowding out.\n> [!success]- Solution\n> "
+                              "Rates rise.", [], False)
+    sheet = add_pdf(nb.api, data=PROBLEMS, name="Problem set 2", course=cid).json()
+    own = "**Exercise 1.** (from: Problem set 2, p. 1)\nThe trap.\n> [!success]- Solution\n> LM is flat."
+    nb.client.responses += [done(json.dumps({is_lm["public_id"]: [{"file": sheet["id"], "pages": "1"}]})), done(own)]
     assert nb.api.post(f"/v1/notebook/exercises?course={cid}", headers=AUTH).status_code == 202
     await drain(nb)
-    asked = nb.client.requests[before:]
-    assert len(asked) == 2  # no map (no exercise files) and no check (no final answers)
-    assert all("No exercise pages on this topic: write new ones only." in sent(q) for q in asked)
+    write = nb.client.requests[-1]
+    assert "[Problem set 2.pdf, p. 1]" in sent(write) and "Topic: The IS-LM model" in sent(write)
     assert [x["topic"]["title"] for x in nb.api.get(f"/v1/notebook/exercises?course={cid}", headers=AUTH).json()["sets"]] \
         == ["The IS-LM model"]
-    assert not nb.notebook.exercise_set(nb.notebook.topics(cid)[0]["id"])["checked"]
+    assert nb.notebook.exercise_set(crowding["id"]) is None
     message = chat_messages(nb)[-1]["text"]
-    assert "1 in all, new, in the exam's style (no exercise sheets on these topics)" in message
-    assert "I couldn't write Crowding out; ask me to try again." in message
+    assert "1 in all" in message and "No sheet has exercises on Crowding out." in message
+    # Asking for that topic alone: nothing on it.
+    nb.client.responses.append(done("{}"))
+    assert nb.api.post(f"/v1/notebook/exercises?course={cid}", json={"topics": [crowding["public_id"]]},
+                       headers=AUTH).status_code == 202
+    await drain(nb)
+    assert nb.notebook.exercise_set(crowding["id"]) is None
 
 
 async def test_new_material_is_proposed_from_the_outline_and_merged_into_the_users_version(nb):

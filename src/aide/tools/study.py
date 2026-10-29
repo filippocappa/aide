@@ -224,12 +224,13 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         c = await course_row(course)
         if not notebook.started(c["id"]):
             return f"{c['name']} has no notebook yet: exercises are written for its topics."
+        if not (sheets := notebook.exercise_files(c["id"])):
+            return (f"{c['name']} has no exercise sheets, solutions or past exams among its files, so there are no "
+                    "exercises to copy; the topics' own questions and Quiz me are the practice for now.")
         picked = notebook.write_exercises(c["id"], topics)
-        sheets = notebook.exercise_files(c["id"])
-        return (f"Under way, in the background: exercises for {len(picked)} topic(s) of the {c['name']} notebook, "
-                + (f"from its {len(sheets)} exercise file(s) and new ones in the exam's style" if sheets else
-                   "new ones in the exam's style (it has no exercise sheets or past exams)")
-                + ", each solved. A few minutes; the result is posted in the course chat. Tell the user.")
+        return (f"Under way, in the background: the course's own exercises for {len(picked)} topic(s) of the "
+                f"{c['name']} notebook, from its {len(sheets)} exercise file(s), each solved (topics no sheet "
+                "practises get none). A few minutes; the result is posted in the course chat. Tell the user.")
 
     async def read_exercises(topic: str, n: int | None = None, solution: bool = False) -> str:
         t = notebook.find_topic(topic)
@@ -307,8 +308,9 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
              "topics that miss good ones, when the user wants more pictures in the notes. Runs in the background; "
              "nothing is rewritten.", _obj(one_course, ["course"]), find_figures),
         Tool("write_exercises", "Write a set of solved exercises for each written topic of a course's notebook (or "
-             "the topics named): its exercise sheets and past exams, matched to the topics and solved step by step, "
-             "and new ones in the exam's style. Writing a topic's set again replaces it. Runs in the background.",
+             "the topics named): the course's own exercises from its exercise sheets, solutions and past exams, "
+             "matched to the topics and solved step by step; nothing invented. Writing a topic's set again replaces "
+             "it. Runs in the background.",
              _obj({**one_course, "topics": {"type": "array", "items": {"type": "string"},
                                             "description": "Topic ids or titles; omit for all"}}, ["course"]),
              write_exercises),
