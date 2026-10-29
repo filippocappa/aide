@@ -333,7 +333,7 @@ final class MealCamera: NSObject, ObservableObject {
     private var forget: Task<Void, Never>?
     private var watchers: [NSObjectProtocol] = []
     /// `Library/Caches/camera.log`, pulled like the voice one (`Support/VoiceLog.swift`).
-    static let log = Diary(name: "camera")
+    nonisolated static let log = Diary(name: "camera")
 
     override init() {
         super.init()
