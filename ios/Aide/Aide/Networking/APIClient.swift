@@ -641,6 +641,25 @@ final class APIClient {
         return sheet.body
     }
 
+    func exerciseSets(course: Int) async throws -> [ExerciseSet] {
+        let list: ExerciseSetList = try await send("GET", "/v1/notebook/exercises",
+                                                   query: [URLQueryItem(name: "course", value: String(course))])
+        return list.sets
+    }
+
+    /// A topic's exercises, as markdown with the solutions folded.
+    func exercises(_ id: String) async throws -> String {
+        let set: ExerciseSet = try await send("GET", "/v1/exercises/\(id)",
+                                              query: [URLQueryItem(name: "plain", value: "true")])
+        return set.body ?? ""
+    }
+
+    /// Exercises for the topics given, or every written one; Professor writes them in the background.
+    func writeExercises(course: Int, topics: [String]? = nil) async throws -> NotebookStatus {
+        try await send("POST", "/v1/notebook/exercises", query: [URLQueryItem(name: "course", value: String(course))],
+                       body: ExercisesBody(topics: topics))
+    }
+
     func topic(_ id: String) async throws -> TopicPage {
         try await send("GET", "/v1/topics/\(id)", query: [URLQueryItem(name: "plain", value: "true")])
     }

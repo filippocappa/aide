@@ -154,6 +154,25 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(drafts.first?.detail, "Re: Dinner")
     }
 
+    func testNotebookPracticeDecodes() throws {
+        let nb = try JSONDecoder.api.decode(NotebookStatus.self, from: Data(
+            #"{"course": 2, "started": true, "busy": false, "topics": [], "proposals": [], "formulas": 3, "exercises": 2}"#.utf8))
+        XCTAssertEqual(nb.formulas, 3)
+        XCTAssertEqual(nb.exercises, 2)
+        let old = try JSONDecoder.api.decode(NotebookStatus.self, from: Data(#"{"course": 2, "started": true}"#.utf8))
+        XCTAssertNil(old.exercises)
+        let json = #"""
+        {"course": 2, "sets": [{"id": "e_1", "course": 2, "topic": {"id": "t_1", "title": "The IS-LM model"},
+          "count": 8, "from_material": 3, "new": 5, "checked": true, "updated_at": "2026-10-29T10:00:00+01:00"}]}
+        """#
+        let set = try XCTUnwrap(JSONDecoder.api.decode(ExerciseSetList.self, from: Data(json.utf8)).sets.first)
+        XCTAssertEqual(set.topic.title, "The IS-LM model")
+        XCTAssertEqual(set.fromMaterial, 3)
+        XCTAssertNil(set.body)
+        let body = try JSONEncoder.api.encode(ExercisesBody(topics: nil))
+        XCTAssertEqual(String(decoding: body, as: UTF8.self), "{}")
+    }
+
     func testActivityPagesAndGroupsByDay() throws {
         let json = #"""
         {"items": [

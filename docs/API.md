@@ -766,7 +766,8 @@ The server keeps an Obsidian vault of the notes and files (since 2026-10-21), se
 Remotely Save plugin syncs to the phone and the Mac (README, "Obsidian"). Everything Aide writes is under `Aide/` in
 the vault, a folder per course:
 - with a notebook (below): `00 Introduction.md` (the exam, how to prepare, the topics, practice, lectures and files),
-  a page per topic (`01 The IS-LM model.md`), `Formulas.md` (every topic's formulas), `Cards/` with each topic's flashcards for the Spaced Repetition plugin and
+  a page per topic (`01 The IS-LM model.md`), `Formulas.md` (every topic's formulas), `Exercises/` (a topic's
+  solved exercises, `01 The IS-LM model.md`), `Cards/` with each topic's flashcards for the Spaced Repetition plugin and
   `Images/` with the slides the topics show as figures;
   otherwise an index page named after the course (lectures, files, the next exam);
 - `Sources/` with a page per lecture (`2026-10-21 The IS-LM model.md`: properties, the notes, "Expanded:" the
@@ -809,10 +810,11 @@ and posts the result in the same chat.
 
 Notebook: `{"course": 2, "started": true, "busy": false, "step": "Writing The IS-LM model, Crowding out" or null,
 "exam": "20–35 multiple-choice questions, −0.25 for a wrong answer…" or null, "introduction": "markdown" or null,
-"topics": [Topic], "proposals": [Proposal], "writing": Proposal or null, "formulas": 3}` (`busy`: being written;
+"topics": [Topic], "proposals": [Proposal], "writing": Proposal or null, "formulas": 3, "exercises": 2}` (`busy`: being written;
 `step`: what Professor is doing now, a line to show while `busy` (null otherwise, or right after a restart); pending
 proposals only; `writing`: the proposal being applied, with its `progress`; `formulas`, since 2026-10-29: how many
-topics have formulas, 0 when there's no formula sheet to show).
+topics have formulas, 0 when there's no formula sheet to show; `exercises`, since 2026-10-29: how many topics have
+exercises, below).
 
 **Formula sheet** (since 2026-10-29): the Formulas section of every written topic, in the notebook's order, each
 under a `## [[Topic title]]` heading (with `plain`, just the title). No model writes it: it's put together on every
@@ -845,6 +847,45 @@ IS-LM model." or null, "progress": {"done": 4, "total": 11} or null, "conversati
 ones with a graph, diagram or chart worth showing, whatever their text. A topic's figures are picked from its marked
 pages (up to 6 shown to the writer, at most 4 on a page). Files not scanned yet fall back to their pages with the
 least text. The scan runs before notes are written, and with `POST /v1/notebook/figures`.
+
+### Exercises
+
+Since 2026-10-29: a set of solved exercises per topic, for practice beyond the topic's questions. Writing them, in
+the background (a few minutes for a whole notebook):
+- the course's files of exercises (by name or Moodle section: problem sets, exercise sessions, past exams, mock
+  exams) are matched to the topics by the cheap model, once per run;
+- each topic's set is written by the smart model from its notes, how the exam works (the Introduction's "The exam"
+  and "How to prepare") and its exercise pages: the course's own exercises first, copied and solved (at most 6, past
+  exams first), then new ones in the exam's style, about 8 in all;
+- the final answers are worked out again by a second, blind solver; where they differ, the smart model fixes the
+  solution or says it stands (`checked`).
+
+Writing a topic's set again replaces it. The result comes in the course's chat, with a push (`message`). Professor
+writes them on request (`write_exercises`) and goes through one in chat (`read_exercises`: the statement first,
+the solution once the user has tried).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/notebook/exercises?course=2` | | `{"course": 2, "sets": [Exercise set without body]}`, in the notebook's order. `404` no such course. |
+| `POST /v1/notebook/exercises?course=2` | `{"topics": ["t_…"]}`, optional (every written topic) | `202`, Notebook (`busy`, `step` "Writing exercises 3/11"). `400` a topic not in the course; `409` no topic written yet, or a named one isn't. `404`. |
+| `GET /v1/exercises/{id}?plain=true` | | Exercise set with `body` and `sources`. `404`. |
+
+Exercise set: `{"id": "e_…", "course": 2, "topic": {"id": "t_…", "title": "The IS-LM model"}, "count": 8,
+"from_material": 3, "new": 5, "checked": true, "updated_at": "…"}`; in full also `"body": "markdown"` and
+`"sources": ["Problem set 2, p. 1–3"]` (the exercise pages it drew on). `checked`: the final answers went through the
+second solver (false: none has a final result, or the check failed).
+
+Body: one block per exercise, nothing else:
+```
+**Exercise 1.** (from: Problem set 2, p. 3)     or (new)
+The statement, with its data.
+> [!success]- Solution
+> Step by step…
+> **Answer:** ΔY = 200
+```
+The solution is a folded callout, like a question's answer: closed until tapped. `**Answer:**` is there when the
+exercise has a final result. In the vault: `Exercises/01 The IS-LM model.md` in the course's folder (the topic page's
+number and name), linked from the topic page's `exercises:` property and the Introduction's Practice list.
 
 ### Who writes the notes
 

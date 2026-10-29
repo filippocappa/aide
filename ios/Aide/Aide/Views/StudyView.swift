@@ -89,7 +89,8 @@ struct CourseView: View {
     @EnvironmentObject private var push: PushService
     @State private var notebook: NotebookStatus?
     @State private var writer: NotesWriter?
-    @State private var note: String?
+    /// What was just set going, with its symbol: figures being looked for, exercises being written.
+    @State private var note: (text: String, symbol: String)?
     @State private var lectures: [Lecture] = []
     @State private var files: [StudyFile] = []
     @State private var reviews: [ReviewSession] = []
@@ -114,7 +115,7 @@ struct CourseView: View {
                 HStack(spacing: 10) { ProgressView(); Text(busy).foregroundStyle(.secondary) }
             }
             if let note {
-                Label(note, systemImage: "photo.on.rectangle").font(.footnote).foregroundStyle(.secondary)
+                Label(note.text, systemImage: note.symbol).font(.footnote).foregroundStyle(.secondary)
             }
             ForEach(notebook?.proposals ?? []) { proposal in
                 Section { ProposalCard(proposal: proposal, act: act) }
@@ -133,13 +134,10 @@ struct CourseView: View {
                 }
             }
             notebookSection
+            practiceSection
             Section {
                 Button { Task { await openChat() } } label: {
                     Label("Ask Professor", systemImage: "bubble.left.and.text.bubble.right")
-                }
-                if (notebook?.topics ?? []).contains(where: { ($0.questions ?? 0) > 0 }) {
-                    Button { Task { await openChat(quiz: true) } } label: { Label("Quiz me", systemImage: "waveform") }
-                    Button { showPractice = true } label: { Label("Practice exam", systemImage: "checklist") }
                 }
             }
             if !reviews.isEmpty {
@@ -248,15 +246,6 @@ struct CourseView: View {
                         Label("Introduction", systemImage: "graduationcap")
                     }
                 }
-                if (notebook.formulas ?? 0) > 0 {
-                    NavigationLink {
-                        LoadedNotePage(title: "Formulas", subtitle: "Every topic's formulas, in the notebook's order") {
-                            try await env.api.formulas(course: course.id)
-                        }
-                    } label: {
-                        Label("Formulas", systemImage: "function")
-                    }
-                }
                 ForEach(notebook.topics ?? []) { topic in
                     if topic.written == true {
                         NavigationLink { TopicPageView(topic: topic) } label: { TopicRow(topic: topic) }
@@ -275,6 +264,48 @@ struct CourseView: View {
                     .disabled(files.isEmpty && lectures.isEmpty)
             } footer: {
                 Text("Notes by topic, built from this course's files and lectures, with exam-style questions and flashcards.")
+            }
+        }
+    }
+
+    /// The formula sheet, the exercises, quizzes and practice exams: once some topic is written.
+    @ViewBuilder private var practiceSection: some View {
+        if let notebook, notebook.started == true, (notebook.topics ?? []).contains(where: { $0.written == true }) {
+            let exercises = notebook.exercises ?? 0
+            Section {
+                if (notebook.formulas ?? 0) > 0 {
+                    NavigationLink {
+                        LoadedNotePage(title: "Formulas", subtitle: "Every topic's formulas, in the notebook's order") {
+                            try await env.api.formulas(course: course.id)
+                        }
+                    } label: {
+                        Label("Formulas", systemImage: "function")
+                    }
+                }
+                if exercises > 0 {
+                    NavigationLink {
+                        ExercisesView(course: course, topics: notebook.topics ?? [])
+                    } label: {
+                        Label("Exercises", systemImage: "pencil.and.ruler")
+                    }
+                    .badge(exercises)
+                } else {
+                    Button { Task { await writeExercises() } } label: {
+                        Label("Write exercises", systemImage: "pencil.and.ruler")
+                    }
+                    .disabled(notebook.busy == true)
+                }
+                if (notebook.topics ?? []).contains(where: { ($0.questions ?? 0) > 0 }) {
+                    Button { Task { await openChat(quiz: true) } } label: { Label("Quiz me", systemImage: "waveform") }
+                    Button { showPractice = true } label: { Label("Practice exam", systemImage: "checklist") }
+                }
+            } header: {
+                Text("Practice")
+            } footer: {
+                if exercises == 0 {
+                    Text("Professor solves the course's exercise sheets and past exams step by step, and adds new "
+                         + "exercises like the exam's.")
+                }
             }
         }
     }
@@ -314,7 +345,18 @@ struct CourseView: View {
     private func findFigures() async {
         do {
             notebook = try await env.api.findFigures(course: course.id)
-            note = "Professor is looking at every slide. New figures go into the topics, and a note comes in the course chat."
+            note = ("Professor is looking at every slide. New figures go into the topics, and a note comes in the "
+                    + "course chat.", "photo.on.rectangle")
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func writeExercises() async {
+        do {
+            notebook = try await env.api.writeExercises(course: course.id)
+            note = ("Professor is writing exercises for every topic. The result comes in the course chat.", "pencil.and.ruler")
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -382,6 +424,95 @@ struct CourseView: View {
         case "aac": "audio/aac"
         case "mp4": "audio/mp4"
         default: "audio/m4a"
+        }
+    }
+}
+
+/// A course's exercises, a set per topic, each opening with its solutions folded.
+struct ExercisesView: View {
+    let course: StudyCourse
+    /// The notebook's topics: the written ones without a set can have one written.
+    let topics: [NotebookTopic]
+    @EnvironmentObject private var env: AppEnvironment
+    @State private var sets: [ExerciseSet]?
+    @State private var error: String?
+    @State private var note: String?
+
+    var body: some View {
+        List {
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+            }
+            if let note {
+                Label(note, systemImage: "pencil.and.ruler").font(.footnote).foregroundStyle(.secondary)
+            }
+            if let sets {
+                Section {
+                    ForEach(sets) { set in
+                        NavigationLink {
+                            LoadedNotePage(title: set.topic.title, subtitle: detail(set)) {
+                                try await env.api.exercises(set.id)
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(set.topic.title)
+                                Text(detail(set)).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .swipeActions {
+                            Button("Write again") { Task { await write([set.topic.id]) } }.tint(Theme.toggle)
+                        }
+                    }
+                } footer: {
+                    Text("Try each before opening its solution. Swipe a topic to have its exercises written again.")
+                }
+                if !missing.isEmpty {
+                    Section {
+                        Button { Task { await write(missing.map(\.id)) } } label: {
+                            Label("Write exercises for \(missing.count) more topic\(missing.count == 1 ? "" : "s")",
+                                  systemImage: "plus")
+                        }
+                    } footer: {
+                        Text(missing.map(\.title).joined(separator: " · "))
+                    }
+                }
+            } else if error == nil {
+                SkeletonSections(sections: 1, rows: 4, mark: false)
+            }
+        }
+        .navigationTitle("Exercises")
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private var missing: [NotebookTopic] {
+        let have = Set((sets ?? []).map(\.topic.id))
+        return topics.filter { $0.written == true && !have.contains($0.id) }
+    }
+
+    private func detail(_ set: ExerciseSet) -> String {
+        let count = set.count ?? 0
+        var parts = ["\(count) exercise\(count == 1 ? "" : "s")"]
+        if let own = set.fromMaterial, own > 0 { parts.append("\(own) from the course's sheets") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func load() async {
+        do {
+            sets = try await env.api.exerciseSets(course: course.id)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func write(_ topics: [String]) async {
+        do {
+            _ = try await env.api.writeExercises(course: course.id, topics: topics)
+            note = "Professor is writing them. The result comes in the course chat."
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

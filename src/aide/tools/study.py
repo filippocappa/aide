@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from ..engine import Engine
-from ..notebook import NotebookStore, date_line, sections
+from ..notebook import NotebookStore, date_line, exercises, sections
 from ..study import StudyStore
 from . import Tool
 
@@ -220,6 +220,32 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         return (f"Under way: each {c['name']} topic's slides get one look (once; new ones later), then figures go into "
                 "the topics that miss good ones. Nothing is rewritten. The result comes in the course chat.")
 
+    async def write_exercises(course: str, topics: list[str] | None = None) -> str:
+        c = await course_row(course)
+        if not notebook.started(c["id"]):
+            return f"{c['name']} has no notebook yet: exercises are written for its topics."
+        picked = notebook.write_exercises(c["id"], topics)
+        sheets = notebook.exercise_files(c["id"])
+        return (f"Under way, in the background: exercises for {len(picked)} topic(s) of the {c['name']} notebook, "
+                + (f"from its {len(sheets)} exercise file(s) and new ones in the exam's style" if sheets else
+                   "new ones in the exam's style (it has no exercise sheets or past exams)")
+                + ", each solved. A few minutes; the result is posted in the course chat. Tell the user.")
+
+    async def read_exercises(topic: str, n: int | None = None, solution: bool = False) -> str:
+        t = notebook.find_topic(topic)
+        e = notebook.exercise_set(t["id"])
+        if e is None:
+            return f"{t['title']} has no exercises yet. write_exercises writes them."
+        found = exercises(e["body"])
+        if n is None:
+            return f"[{e['public_id']}] Exercises for {t['title']}:\n" + "\n".join(
+                f"{x['n']}. ({x['source'] or 'new'}) {' '.join(x['text'].split())[:160]}" for x in found)
+        x = next((x for x in found if x["n"] == n), None)
+        if x is None:
+            return f"{t['title']} has exercises 1 to {len(found)}."
+        return x["block"] if solution else (f"{x['statement']}\n\n(The solution is folded: ask with solution true "
+                                            "once the user has tried, or to check their working.)")
+
     async def notes_writer(engine_choice: str | None = None, limit_answer: str | None = None) -> str:
         if engine is None:
             return "Notes are written through OpenRouter; there's no other choice on this server."
@@ -280,6 +306,16 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         Tool("find_figures", "Look at the slides of a course's topics once and add figures (graphs, diagrams) to the "
              "topics that miss good ones, when the user wants more pictures in the notes. Runs in the background; "
              "nothing is rewritten.", _obj(one_course, ["course"]), find_figures),
+        Tool("write_exercises", "Write a set of solved exercises for each written topic of a course's notebook (or "
+             "the topics named): its exercise sheets and past exams, matched to the topics and solved step by step, "
+             "and new ones in the exam's style. Writing a topic's set again replaces it. Runs in the background.",
+             _obj({**one_course, "topics": {"type": "array", "items": {"type": "string"},
+                                            "description": "Topic ids or titles; omit for all"}}, ["course"]),
+             write_exercises),
+        Tool("read_exercises", "A topic's exercises: without n, the list (each exercise's start and where it's from); "
+             "with n, that exercise's statement, and its worked solution only with solution true. To work through "
+             "one with the user, give the statement, let them try, then check against the solution.",
+             _obj({**tid, "n": {"type": "integer"}, "solution": {"type": "boolean"}}, ["topic"]), read_exercises),
         Tool("notes_writer", "Who writes the study notes: the user's Claude plan (Claude Code on the server, no extra "
              "cost) or OpenRouter (paid). Without arguments it says which, and how much of the plan is used. "
              "engine_choice switches it when the user asks; limit_answer is their answer when a job is paused on "

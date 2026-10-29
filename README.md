@@ -195,6 +195,7 @@ Aide/Macroeconomics/
 ├── 02 The IS-LM model.md       · figures · exam-style questions (folded answers)
 ├── …
 ├── Formulas.md                 every topic's formulas, gathered (the formulario)
+├── Exercises/                  per topic: the sheets' and past exams' exercises, and new ones, solved
 ├── Cards/                      question :: answer, tagged #flashcards/macroeconomics
 ├── Images/                     slide figures the topic pages show
 ├── Sources/                    one page per lecture: its notes

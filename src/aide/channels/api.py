@@ -115,6 +115,10 @@ class ProposalApply(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class Exercises(BaseModel):
+    topics: list[str] | None = Field(default=None, max_length=60)  # t_… ids; null: every written topic
+
+
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]")
 
 
@@ -1291,6 +1295,31 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(409, "the notebook has no topics yet")
         notebook.enqueue(course, "figures", again=True)
         return JSONResponse(notebook.notebook_json(course), status_code=202)
+
+    @app.get("/v1/notebook/exercises", dependencies=[Depends(auth)])
+    async def list_exercises(course: int):
+        return {"course": course, "sets": [notebook.exercise_json(e) for e in
+                                           notebook.exercise_sets(course_or_404(course))]}
+
+    @app.post("/v1/notebook/exercises", dependencies=[Depends(auth)])
+    async def write_exercises(course: int, body: Exercises | None = None):
+        """Solved exercises for the written topics (or those named), in the background."""
+        try:
+            notebook.write_exercises(course_or_404(course), body.topics if body else None)
+        except KeyError as e:
+            raise HTTPException(400, str(e).strip("'\""))
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        return JSONResponse(notebook.notebook_json(course), status_code=202)
+
+    @app.get("/v1/exercises/{set_id}", dependencies=[Depends(auth)])
+    async def get_exercises(set_id: str, plain: bool = False):
+        if (e := notebook.exercise_set(set_id)) is None:
+            raise HTTPException(404, f"no exercises {set_id}")
+        out = notebook.exercise_json(e, full=True)
+        if plain:
+            out["body"] = readable(out["body"])
+        return out
 
     @app.get("/v1/topics/{topic_id}", dependencies=[Depends(auth)])
     async def get_topic(topic_id: str, plain: bool = False):

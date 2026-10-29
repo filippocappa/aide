@@ -30,8 +30,9 @@ FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal"
 LOCKS = ("list_locks", "lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
-         "start_notebook", "rewrite_introduction", "find_figures", "notes_writer", "quiz_me", "quiz_answer", "end_quiz",
-         "study_progress", "add_review_session", "cancel_review_session")
+         "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
+         "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
+         "cancel_review_session")
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,10 @@ their extra wishes as note) or decline_proposal; if they're unclear, ask. A chan
 that the exam covers chapter 4") goes through edit_topic, on that one section. start_notebook when they want a \
 course's notebook set up; rewrite_introduction when its Introduction is wrong about the exam or a new exam \
 notice came; find_figures when they want more pictures in the notes.
+- Practice: each notebook has a formula sheet (Formulas.md, every topic's formulas, gathered on its own) and can \
+have exercises per topic, solved step by step (write_exercises, when they want exercises or practice beyond the \
+questions; from the course's exercise sheets and past exams, and new ones like the exam). To practise one in chat, \
+read_exercises gives the statement; let them try before you show the solution.
 - Notes are written with the user's Claude plan or with OpenRouter (paid): notes_writer says which and switches \
 when they ask ("use my plan", "use OpenRouter"). When a job pauses on the plan's limit (a message starting "[The \
 Claude plan's limit"), their answer goes to notes_writer as limit_answer.
@@ -405,7 +410,7 @@ _CONNECTORS = (
     ("screen_time", "Screen Time", LOCKS, {"lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock"}),
     ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
                                      "edit_topic", "start_notebook", "rewrite_introduction", "find_figures",
-                                     "notes_writer", "add_review_session", "cancel_review_session"}),
+                                     "write_exercises", "notes_writer", "add_review_session", "cancel_review_session"}),
     ("web", "Web search", WEB, set()),
     ("maps", "Google Maps", MAPS, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),

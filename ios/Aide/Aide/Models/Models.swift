@@ -1161,11 +1161,37 @@ struct NotebookStatus: Decodable {
     var proposals: [NotebookProposal]?
     /// Topics with formulas: the formula sheet shows when there's at least one.
     var formulas: Int?
+    /// Topics with a set of exercises.
+    var exercises: Int?
 }
 
 struct FormulaSheet: Decodable {
     let course: Int
     let body: String
+}
+
+/// A topic's solved exercises; `body` only when read one at a time.
+struct ExerciseSet: Decodable, Identifiable, Hashable {
+    struct Topic: Decodable, Hashable {
+        let id: String
+        let title: String
+    }
+    let id: String
+    let topic: Topic
+    var count: Int?
+    /// From the course's exercise sheets and past exams; the rest are new.
+    var fromMaterial: Int?
+    var new: Int?
+    var checked: Bool?
+    var body: String?
+}
+
+struct ExerciseSetList: Decodable {
+    let sets: [ExerciseSet]
+}
+
+struct ExercisesBody: Encodable {
+    let topics: [String]?
 }
 
 struct NotebookProposal: Decodable, Hashable, Identifiable {

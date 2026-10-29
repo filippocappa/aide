@@ -330,6 +330,124 @@ async def test_the_formula_sheet_gathers_every_topics_formulas(nb):
     assert (root / "Formulas.md").read_text() == "my own sheet"
 
 
+EXERCISES = """Here they are.
+
+**Exercise 1.** (from: Problem set 2, p. 1)
+In a liquidity trap the government raises $G$ by 100. With a multiplier of 2, how much does $Y$ rise?
+> [!success]- Solution
+> LM is flat, so the interest rate doesn't move and nothing is crowded out: $\\Delta Y = 2 \\times 100$.
+> **Answer:** $\\Delta Y = 200$
+
+**Exercise 2.** (new)
+Explain why the IS curve slopes down.
+> [!success]- Solution
+> A lower interest rate raises investment, and so output; see [[Crowding out]].
+
+**Exercise 3.** (new)
+With $c = 0.75$, what is the multiplier?
+> [!success]- Solution
+> $1/(1 - 0.75)$.
+> **Answer:** 3"""
+FIXED = """**Exercise 3.** (new)
+With $c = 0.75$, what is the multiplier?
+> [!success]- Solution
+> $1/(1 - 0.75) = 1/0.25$.
+> **Answer:** 4"""
+
+
+async def test_exercises_come_from_the_sheets_and_new_ones_each_solved_and_checked(nb):
+    is_lm, crowding = await built(nb)
+    cid = nb.macro["id"]
+    sheet = add_pdf(nb.api, data=PROBLEMS, name="Problem set 2", course=cid).json()
+    assert [f["public_id"] for f in nb.notebook.exercise_files(cid)] == [sheet["id"]]  # not the slides
+    before = len(nb.client.requests)
+    exercise_map = {is_lm["public_id"]: [{"file": sheet["id"], "pages": "1"}, {"file": nb.file["id"], "pages": "1"}],
+                    "t_000000000000": [{"file": sheet["id"], "pages": "2"}]}
+    nb.client.responses += [done(json.dumps(exercise_map)), done(EXERCISES),
+                            done("The trap: 2 x 100.\nRESULTS\n1: 200\n3: 4"), done("1: same\n3: different"),
+                            done(FIXED)]
+    r = nb.api.post(f"/v1/notebook/exercises?course={cid}", json={"topics": [is_lm["public_id"]]}, headers=AUTH)
+    assert r.status_code == 202 and r.json()["busy"]
+    await drain(nb)
+    mapping, write, solve, same, fix = nb.client.requests[before:]
+    assert [q["model"] for q in (mapping, write, solve, same, fix)] == ["m", "smart", "m", "m", "smart"]
+    # The map sees the outline and the exercise files' pages, not the slides.
+    assert f"[{is_lm['public_id']}] The IS-LM model" in sent(mapping)
+    assert "p.1: Problem 1: a liquidity trap" in sent(mapping) and "Week 3 slides" not in sent(mapping)
+    # The writer: how the exam works, the notes without their questions, and the topic's sheet pages only.
+    assert "How the exam works, from the Introduction:\nExam: 20 to 35" in sent(write)
+    assert "## The exam\nMultiple choice." in sent(write)
+    assert "Investment equals saving" in sent(write) and "What shifts IS to the right?" not in sent(write)
+    assert "[Problem set 2.pdf, p. 1]" in sent(write) and "[Problem set 2.pdf, p. 2]" not in sent(write)
+    assert "[Week 3 slides.pdf" not in sent(write)  # a sheet's pages only
+    # The check: the statements with a final answer, solved blind, then compared; only the disputed one is fixed.
+    assert "> [!success]" not in sent(solve) and "**Exercise 3.**" in sent(solve)
+    assert "Explain why the IS curve" not in sent(solve)
+    assert "Exercise 3.\nFirst: 3\nSecond: 4" in sent(same)
+    assert "(The second solver got: 4)" in sent(fix) and "**Exercise 1.**" not in sent(fix)
+    e = nb.notebook.exercise_set(is_lm["id"])
+    assert e["body"].startswith("**Exercise 1.**") and e["body"].endswith("> **Answer:** 4") and e["checked"]
+    assert json.loads(e["sources"]) == [{"file": sheet["id"], "pages": [1]}]
+
+    listed = nb.api.get(f"/v1/notebook/exercises?course={cid}", headers=AUTH).json()["sets"]
+    assert [(x["id"], x["topic"]["title"], x["count"], x["from_material"], x["new"], x["checked"]) for x in listed] \
+        == [(e["public_id"], "The IS-LM model", 3, 1, 2, True)]
+    full = nb.api.get(f"/v1/exercises/{e['public_id']}?plain=true", headers=AUTH).json()
+    assert full["body"].startswith("**Exercise 1.** (from: Problem set 2, p. 1)") and "$" not in full["body"]
+    assert full["sources"] == ["Problem set 2, p. 1"]
+    assert nb.api.get("/v1/exercises/e_000000000000", headers=AUTH).status_code == 404
+    assert nb.api.get(f"/v1/notebook?course={cid}", headers=AUTH).json()["exercises"] == 1
+    message = chat_messages(nb)[-1]["text"]
+    assert message.startswith("I've written exercises for **The IS-LM model**: 3 in all, 1 from the course's "
+                              "exercise sheets and past exams, 2 new in the exam's style") and nb.push.messages
+
+    # Professor reads one without its solution first.
+    tools = {t.name: t for t in study_tools(nb.study, ROME, None, nb.notebook)}
+    assert "3. (new) With $c = 0.75$" in await tools["read_exercises"].handler(topic="The IS-LM model")
+    statement = await tools["read_exercises"].handler(topic=is_lm["public_id"], n=3)
+    assert statement.startswith("**Exercise 3.**") and "[!success]" not in statement
+    assert "**Answer:** 4" in await tools["read_exercises"].handler(topic=is_lm["public_id"], n=3, solution=True)
+    assert "no exercises yet" in await tools["read_exercises"].handler(topic="Crowding out")
+
+    # The vault: a page per topic, linked from the topic page and the Introduction.
+    await nb.vault.sync()
+    root = nb.vault.folder / "Aide/macroeconomics"
+    page = (root / "Exercises/01 The IS-LM model.md").read_text()
+    assert page.startswith('---\ncourse: "[[Aide/macroeconomics/00 Introduction|macroeconomics]]"\n'
+                           'topic: "[[Aide/macroeconomics/01 The IS-LM model|The IS-LM model]]"\ntags:\n  - exercises')
+    assert "\n# Exercises: The IS-LM model\n" in page and "see [[Aide/macroeconomics/02 Crowding out|Crowding out]]" in page
+    assert 'exercises: "[[Aide/macroeconomics/Exercises/01 The IS-LM model|Exercises]]"' in \
+        (root / "01 The IS-LM model.md").read_text()
+    assert "- Exercises: [[Aide/macroeconomics/Exercises/01 The IS-LM model|The IS-LM model]]" in \
+        (root / "00 Introduction.md").read_text()
+
+    # Asking for what can't be done.
+    assert nb.api.post(f"/v1/notebook/exercises?course={cid}", json={"topics": ["t_000000000000"]},
+                       headers=AUTH).status_code == 400
+    assert nb.api.post("/v1/notebook/exercises?course=999", headers=AUTH).status_code == 404
+    law = nb.study.course_by_name("business law")["id"]
+    assert nb.api.post(f"/v1/notebook/exercises?course={law}", headers=AUTH).status_code == 409
+
+
+async def test_exercises_without_sheets_are_all_new_and_a_topic_that_fails_is_said(nb):
+    await built(nb)
+    cid = nb.macro["id"]
+    before = len(nb.client.requests)
+    new = "**Exercise 1.** (new)\nExplain crowding out.\n> [!success]- Solution\n> Rates rise, investment falls."
+    nb.client.responses.append({"The IS-LM model": done(new), "Crowding out": done("Sorry, I can't.")})
+    assert nb.api.post(f"/v1/notebook/exercises?course={cid}", headers=AUTH).status_code == 202
+    await drain(nb)
+    asked = nb.client.requests[before:]
+    assert len(asked) == 2  # no map (no exercise files) and no check (no final answers)
+    assert all("No exercise pages on this topic: write new ones only." in sent(q) for q in asked)
+    assert [x["topic"]["title"] for x in nb.api.get(f"/v1/notebook/exercises?course={cid}", headers=AUTH).json()["sets"]] \
+        == ["The IS-LM model"]
+    assert not nb.notebook.exercise_set(nb.notebook.topics(cid)[0]["id"])["checked"]
+    message = chat_messages(nb)[-1]["text"]
+    assert "1 in all, new, in the exam's style (no exercise sheets on these topics)" in message
+    assert "I couldn't write Crowding out; ask me to try again." in message
+
+
 async def test_new_material_is_proposed_from_the_outline_and_merged_into_the_users_version(nb):
     is_lm, crowding = await built(nb)
     nb.worker.vault = nb.vault

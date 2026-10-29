@@ -191,6 +191,11 @@ Repetition cards. Every write is proposed in the course's Professor chat first; 
 the outline and merged into the user's latest version, edits in Obsidian included. Sonnet writes, Haiku triages
 and checks the answer keys. App: Moodle and Obsidian setup in Settings, a progress card in the chat while notes
 are written. Live on macroeconomics (11 topics, 25 figures).
+Formula sheet and exercises (2026-10-29, contract "Notebook" and "Exercises"): `Formulas.md` gathers every topic's
+Formulas (no model call, never behind the topics). A set of solved exercises per topic (`exercise_sets`, the `exercises`
+job): the course's exercise sheets and past exams matched to the topics by Haiku, copied and solved, plus new ones in the
+exam's style, the final answers checked by a blind solver; `Exercises/` in the vault, Professor's `write_exercises` and
+`read_exercises`. App: a Practice section on the course page (Formulas, Exercises, Quiz me, Practice exam).
 Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's checked MCQs, no model call, missed
 questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
 result in the chat.

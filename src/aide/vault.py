@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS vault_files (
     path TEXT PRIMARY KEY,  -- relative to the vault
-    ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id, intro:, topic:, cards: or figure:
+    ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id; intro:, topic:, cards:, figure:, formulas:, exercises:
     sha  TEXT NOT NULL  -- of what Aide wrote (a PDF: its version, size and time; an image: its size and version)
 );
 """
@@ -243,7 +243,7 @@ class Vault:
         # The notebook: topic pages and their cards, and which lectures each topic was built from.
         topic_paths: dict[int, str] = {}
         expanded: dict[str, list[str]] = {}  # lecture public id → links to the topics it went into
-        practice: dict[int, list[str]] = {}  # course id → links to its formula sheet, for the Introduction
+        practice: dict[int, list[str]] = {}  # course id → its formula sheet and exercises, for the Introduction
         for cid in noted & courses.keys():
             course = courses[cid]
             paths = self._topic_paths(course)
@@ -259,8 +259,11 @@ class Vault:
                     images[(fid, n)] = f"{folders[cid]}/Images/{_file_name(f['name'].removesuffix('.pdf'))} p{n}.jpg"
                     items.append(Item(images[(fid, n)], f"figure:{fid}/{n}", page=(study.files.path(f), n),
                                       version=f"{f['size']}:{f['updated_at']}"))
+            sets = {e["topic_id"]: e for e in self.notebook.exercise_sets(cid) if e["topic_id"] in paths}
+            exercise_paths = {tid: f"{folders[cid]}/Exercises/{paths[tid].rsplit('/', 1)[1]}" for tid in sets}
             for t in topics:
-                items.append(Item(paths[t["id"]], f"topic:{t['public_id']}", self._topic(t, course, by_title, images)))
+                items.append(Item(paths[t["id"]], f"topic:{t['public_id']}",
+                                  self._topic(t, course, by_title, images, exercise_paths.get(t["id"]))))
                 if cards := json.loads(t["cards"]):
                     items.append(Item(f"{folders[cid]}/Cards/{_file_name(t['title'])}.md", f"cards:{t['public_id']}",
                                       self._cards_head(t, course, paths[t["id"]]),
@@ -272,6 +275,12 @@ class Vault:
                 practice.setdefault(cid, []).append(_link(f"{folders[cid]}/Formulas.md", "Formulas"))
                 items.append(Item(f"{folders[cid]}/Formulas.md", f"formulas:{cid}",
                                   self._formulas(course, _figures_out(_links_out(sheet, by_title), images))))
+            for tid, e in sets.items():
+                items.append(Item(exercise_paths[tid], f"exercises:{e['public_id']}",
+                                  self._exercises(e, course, paths[tid], _links_out(e["body"], by_title))))
+            if sets:
+                practice.setdefault(cid, []).append("Exercises: " + ", ".join(
+                    _link(exercise_paths[e["topic_id"]], e["topic_title"]) for e in sets.values()))
         lecture_paths: dict[int, str] = {}
         for lec in sorted(rows, key=lambda r: (r["recorded_at"], r["id"])):
             folder = folders.get(lec["course_id"], f"{ROOT}/Unfiled")
@@ -333,11 +342,13 @@ class Vault:
             out.append("> [!quote]- Transcript\n" + _quote(lec["transcript"]))
         return "\n\n".join(out) + "\n"
 
-    def _topic(self, t: dict, course: dict, by_title: dict[str, str], images: dict) -> str:
+    def _topic(self, t: dict, course: dict, by_title: dict[str, str], images: dict,
+               exercises: str | None = None) -> str:
         folder = self._folder(course)
         meta = ["---", f'course: "{_link(f"{folder}/00 Introduction.md", course["name"])}"',
                 f'cards: "{_link(f"{folder}/Cards/{_file_name(t["title"])}.md", "Cards")}"' if json.loads(t["cards"])
-                else None, f"topic: {t['public_id']}", "tags:", "  - topic", f"  - {_tag(course['name'])}", "---"]
+                else None, f'exercises: "{_link(exercises, "Exercises")}"' if exercises else None,
+                f"topic: {t['public_id']}", "tags:", "  - topic", f"  - {_tag(course['name'])}", "---"]
         body = _figures_out(_links_out(t["body"], by_title), images)
         return "\n".join(m for m in meta if m) + f"\n\n# {t['title']}\n\n{body}\n"
 
@@ -350,6 +361,14 @@ class Vault:
                 f"  - {_tag(course['name'])}\n---\n\n# Formulas: {course['name']}\n\n{sheet}\n\n"
                 "*Gathered by Aide from the topics' Formulas, and kept in step with them. Edit a topic's to change "
                 "it here; edit this page and Aide leaves it as you made it.*\n")
+
+    def _exercises(self, e: dict, course: dict, page: str, body: str) -> str:
+        folder = self._folder(course)
+        return (f'---\ncourse: "{_link(f"{folder}/00 Introduction.md", course["name"])}"\n'
+                f'topic: "{_link(page, e["topic_title"])}"\ntags:\n  - exercises\n  - {_tag(course["name"])}\n---\n\n'
+                f"# Exercises: {e['topic_title']}\n\nFor {_link(page, e['topic_title'])}. Try each before opening its "
+                f"solution.\n\n{body}\n\n*Written by Aide from the course's exercise sheets and past exams, with new "
+                "ones in the exam's style. Edit this page and Aide leaves it as you made it.*\n")
 
     def _introduction(self, c: dict, topic_paths: dict, lectures: list[dict], lecture_paths: dict,
                       files: list[dict], file_paths: dict, practice: list[str] = ()) -> str:
