@@ -548,6 +548,19 @@ final class APIClient {
         return list.days
     }
 
+    /// The weight readings for `days` days back, the trend, and what was logged through Aide (docs/API.md, Weight).
+    func weight(days: Int = 90) async throws -> WeightList {
+        try await send("GET", "/v1/health/weight", query: [URLQueryItem(name: "days", value: String(days))])
+    }
+
+    func logWeight(_ kg: Double) async throws -> WeightLogged {
+        try await send("POST", "/v1/health/weight", body: WeightIn(kg: kg))
+    }
+
+    func deleteWeight(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/health/weight/\(id)", body: EmptyBody())
+    }
+
     func wake(_ request: WakeRequest) async throws -> WakeResult {
         try await send("POST", "/v1/wake", body: request)
     }

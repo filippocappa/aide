@@ -2,8 +2,8 @@ import HealthKit
 
 /// Reads Apple Health and sends the server one summary per day (docs/API.md, "Apple Health"). Raw samples
 /// stay on the phone. Also sends the wake-up signal for the "I'm up" shortcut, and writes the habit counts logged
-/// through Aide to Health's Inhaler Usage (`health_logged`, docs/API.md "Habits") and the meals as food entries
-/// (docs/API.md "Food").
+/// through Aide to Health's Inhaler Usage (`health_logged`, docs/API.md "Habits"), the meals as food entries
+/// (docs/API.md "Food") and the weights logged through Aide as Body Mass (docs/API.md "Apple Health", Weight).
 @MainActor
 final class HealthService: ObservableObject {
     let isAvailable = HKHealthStore.isHealthDataAvailable()
@@ -33,6 +33,8 @@ final class HealthService: ObservableObject {
     private var writeAgain = false
     private var isWritingMeals = false
     private var writeMealsAgain = false
+    private var isWritingWeights = false
+    private var writeWeightsAgain = false
 
     init(api: APIClient) {
         self.api = api
@@ -74,8 +76,8 @@ final class HealthService: ObservableObject {
         HKCharacteristicType(.dateOfBirth), HKCharacteristicType(.biologicalSex),
     ] + food.map(\.0) + distances)
     /// Inhaler Usage: a limit habit's counts logged through Aide are written there (the user logs coffees in it).
-    /// The food kinds: every meal logged through Aide.
-    private static let shareTypes: Set<HKSampleType> = Set([inhaler] + food.map(\.0))
+    /// The food kinds: every meal logged through Aide. Body Mass: the weights logged through Aide.
+    private static let shareTypes: Set<HKSampleType> = Set([inhaler, bodyMass] + food.map(\.0))
 
     // MARK: Permission and background delivery
 
@@ -94,6 +96,7 @@ final class HealthService: ObservableObject {
             await startObserving()
             _ = await upload()
             await writeMeals()
+            await writeWeights()
         } catch {
             lastError = error.localizedDescription
         }
@@ -343,6 +346,74 @@ final class HealthService: ObservableObject {
         let query = HKSampleQueryDescriptor(predicates: [.correlation(type: HKCorrelationType(.food), predicate: predicate)],
                                             sortDescriptors: [SortDescriptor(\.startDate)])
         return try await query.result(for: store)
+    }
+
+    // MARK: Writing weights
+
+    private static let weightKey = "AideWeight" // the reading's id on the server
+
+    /// Makes the app's Body Mass samples match the weights logged through Aide (the server's `logged`, 90 days): a new
+    /// one is added, a deleted one removed. Only the app's own samples are touched. After a log here, a `sync` push (a
+    /// weight Coach logged in chat) and on foreground. The days that changed are uploaded again, so the server's
+    /// Health readings follow.
+    func writeWeights() async {
+        guard isAvailable, hasAsked, store.authorizationStatus(for: Self.bodyMass) == .sharingAuthorized else { return }
+        if isWritingWeights {
+            writeWeightsAgain = true
+            return
+        }
+        isWritingWeights = true
+        defer { isWritingWeights = false }
+        repeat {
+            writeWeightsAgain = false
+            do {
+                if let days = try await write(weights: api.weight(days: 1).logged) { _ = await upload(days: days) }
+            } catch APIError.server(let status, _) where status == 404 {
+                return // an older server without weights
+            } catch APIError.notConfigured {
+                return
+            } catch {
+                lastError = error.localizedDescription
+                return
+            }
+        } while writeWeightsAgain
+    }
+
+    /// How many days back Health changed, or nil if it didn't.
+    private func write(weights: [LoggedWeight]) async throws -> Int? {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        // Inside the server's 90 days, so a reading that has aged out of `logged` stays in Health.
+        guard let first = calendar.date(byAdding: .day, value: -88, to: today) else { return nil }
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            HKQuery.predicateForSamples(withStart: first, end: nil, options: .strictStartDate),
+            HKQuery.predicateForObjects(from: .default()),
+        ])
+        let own = try await HKSampleQueryDescriptor(predicates: [.quantitySample(type: Self.bodyMass, predicate: predicate)],
+                                                    sortDescriptors: [SortDescriptor(\.startDate)]).result(for: store)
+        let wanted = Dictionary(weights.map { ($0.id, $0) }) { _, last in last }
+        var have: Set<Int> = []
+        var stale: [HKQuantitySample] = []
+        var oldest: Date?
+        for sample in own {
+            if let id = (sample.metadata?[Self.weightKey] as? NSNumber)?.intValue, wanted[id] != nil, !have.contains(id) {
+                have.insert(id)
+            } else if sample.metadata?[Self.weightKey] != nil { // deleted on the server, or a second copy
+                stale.append(sample)
+                oldest = min(oldest ?? sample.startDate, sample.startDate)
+            }
+        }
+        if !stale.isEmpty { try await store.delete(stale) }
+        let new = weights.filter { !have.contains($0.id) }.compactMap { w -> HKQuantitySample? in
+            guard let at = Wire.parse(w.at), at >= first else { return nil }
+            oldest = min(oldest ?? at, at)
+            return HKQuantitySample(type: Self.bodyMass, quantity: HKQuantity(unit: .gramUnit(with: .kilo), doubleValue: w.kg),
+                                    start: at, end: at, metadata: [Self.weightKey: w.id])
+        }
+        if !new.isEmpty { try await store.save(new) }
+        guard let oldest else { return nil }
+        let back = (calendar.dateComponents([.day], from: calendar.startOfDay(for: oldest), to: today).day ?? 0) + 1
+        return min(max(back, 2), 90)
     }
 
     // MARK: Wake-up

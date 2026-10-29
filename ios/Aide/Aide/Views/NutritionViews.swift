@@ -487,6 +487,15 @@ struct NutritionTargetsView: View {
                 Section {
                     TargetsSummary(base: currentBase, workouts: workouts, tint: Theme.accent)
                 }
+                if let weight = loaded?.weight {
+                    Section {
+                        NavigationLink { WeightView() } label: { WeightTargetsRow(summary: weight) }
+                    } header: {
+                        Text("Your weight")
+                    } footer: {
+                        if weight.isOff { Text("The trend is off your goal: Ask Coach, and it adjusts the targets from it.") }
+                    }
+                }
                 if let proposal {
                     proposalSection(proposal)
                 } else {

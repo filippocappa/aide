@@ -757,7 +757,63 @@ struct FoodTargets: Codable, Hashable {
     var profile = FoodProfile()
     /// Who answers Ask Coach (GET only; nil from servers before it).
     var coach: CoachModel? = nil
+    /// The weight trend (GET only; nil from servers before it).
+    var weight: WeightSummary? = nil
 }
+
+/// The weight trend (docs/API.md, "Apple Health", Weight). Each part is nil without the readings for it. `verdict`:
+/// below, on_track or above the pace the food goal wants.
+struct WeightSummary: Codable, Hashable {
+    struct Latest: Codable, Hashable {
+        let date: String
+        let kg: Double
+    }
+
+    struct Pace: Codable, Hashable {
+        let lowKg: Double
+        let highKg: Double
+    }
+
+    var latest: Latest?
+    var daysSince: Int?
+    var averageKg: Double?
+    /// The 7-day average against the one 3 weeks before.
+    var changeKg: Double?
+    /// From a straight line through the last 28 days.
+    var rateKgWeek: Double?
+    var goal: String?
+    var paceKgWeek: Pace?
+    var verdict: String?
+}
+
+/// One a day: the last one logged through Aide (`source` aide, with its `id`), else Apple Health's.
+struct WeightReading: Codable, Hashable {
+    let date: String
+    let kg: Double
+    let source: String
+    var id: Int?
+}
+
+/// A weight logged through Aide, which the app keeps in Apple Health.
+struct LoggedWeight: Codable, Hashable, Identifiable {
+    let id: Int
+    let at: String
+    let kg: Double
+}
+
+struct WeightList: Decodable {
+    /// Oldest first.
+    let readings: [WeightReading]
+    let summary: WeightSummary
+    let logged: [LoggedWeight]
+}
+
+struct WeightLogged: Decodable {
+    let weight: LoggedWeight
+    let summary: WeightSummary
+}
+
+struct WeightIn: Encodable { let kg: Double }
 
 /// The model behind a proposal, and `via`: plan (the Claude plan), openrouter or api (paid per token).
 struct CoachModel: Codable, Hashable {

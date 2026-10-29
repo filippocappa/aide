@@ -28,6 +28,6 @@ struct AideShortcuts: AppShortcutsProvider {
         AppShortcut(intent: LogMealIntent(),
                     phrases: ["Log a meal in \(.applicationName)", "Snap a meal in \(.applicationName)"],
                     shortTitle: "Log a meal",
-                    systemImageName: "camera.fill")
+                    systemImageName: "fork.knife.circle.fill")
     }
 }

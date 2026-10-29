@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		012ACF433600814E41F434CD /* MealControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95CA5950A59DD5065B084678 /* MealControl.swift */; };
+		058C1D6DDCF73028E25DB202 /* WeightViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7DDCAD5B02A385C9E492CEB /* WeightViews.swift */; };
 		08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5F1E3C560D08D523718D2F /* DigestView.swift */; };
 		097F7BCA07F7A5285EB983E7 /* AideTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0E327019026782069A1BA0 /* AideTests.swift */; };
 		0A464A123A92E74B5F7E6ACB /* AgentInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105404D7A7140F4B8B3BBAF8 /* AgentInfoView.swift */; };
@@ -101,6 +102,7 @@
 		DFBDF3B9BAA93D0DEB902233 /* HabitControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FF2F172DF24BB3119602573 /* HabitControl.swift */; };
 		E0244E5AF24BFFC84C55D2A4 /* VoicePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */; };
 		E4BACF93150EA9F47597B833 /* DeparturesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F534E81CB6CBAEDF422485 /* DeparturesWidget.swift */; };
+		E9AD83EC0DE21B2EC59BFC73 /* MealCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3FB4B94DD1D7FF3EEAFB454 /* MealCameraView.swift */; };
 		EA7898D2B9F95FC9F72530FD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */; };
 		EC4367366F1C80C9EE522308 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		EE7CC3F0646FABF4F63B420B /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */; };
@@ -237,12 +239,14 @@
 		BC045FC4847C746FA98D8C55 /* ScanViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanViews.swift; sourceTree = "<group>"; };
 		BDD7CC531B6DFD14673ABD6C /* LocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationService.swift; sourceTree = "<group>"; };
 		BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitsView.swift; sourceTree = "<group>"; };
+		C3FB4B94DD1D7FF3EEAFB454 /* MealCameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealCameraView.swift; sourceTree = "<group>"; };
 		C667A9215ADB1783C8AC6E2C /* NutritionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionViews.swift; sourceTree = "<group>"; };
 		C7366C17F353CC40F20968CF /* LockShield.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LockShield.entitlements; sourceTree = "<group>"; };
 		CAD7E67230FC828BB66C66EC /* BodyViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyViews.swift; sourceTree = "<group>"; };
 		CAE455930B7B7F343EF3E0F7 /* HealthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthService.swift; sourceTree = "<group>"; };
 		CEA0AF3C34ADA2A7F1F3492E /* TramLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TramLiveActivity.swift; sourceTree = "<group>"; };
 		CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D7DDCAD5B02A385C9E492CEB /* WeightViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeightViews.swift; sourceTree = "<group>"; };
 		DA08F1D7D45CEF403CEF6E48 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
 		DBB893CFE71A535E6990CADF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		DDFDB90CA977D76111828E4F /* FoodViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodViews.swift; sourceTree = "<group>"; };
@@ -298,6 +302,7 @@
 				BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */,
 				591D1D0440D0AE931595EE83 /* HealthView.swift */,
 				91B4431689B0F772EB8EDA27 /* LivePebble.swift */,
+				C3FB4B94DD1D7FF3EEAFB454 /* MealCameraView.swift */,
 				3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */,
 				1F289CE8321C0A5A80F6B92C /* MoodleView.swift */,
 				75A4AEC9022A036D36BF776D /* NotesView.swift */,
@@ -316,6 +321,7 @@
 				DA08F1D7D45CEF403CEF6E48 /* TodayView.swift */,
 				AE34FAE9A713F5C8D1AE1DA5 /* TransitAlertsView.swift */,
 				7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */,
+				D7DDCAD5B02A385C9E492CEB /* WeightViews.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -767,6 +773,7 @@
 				DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */,
 				0BEE49E816A3DA0FB4136763 /* LocationService.swift in Sources */,
 				23CBF643A29FA97BE6CA689B /* LockBook.swift in Sources */,
+				E9AD83EC0DE21B2EC59BFC73 /* MealCameraView.swift in Sources */,
 				12CFA31D41B26455213DAC89 /* MealIntents.swift in Sources */,
 				7F41522F5C768CB044BFBE4B /* MemoryView.swift in Sources */,
 				25FDB4AE99AC133557167989 /* Models.swift in Sources */,
@@ -800,6 +807,7 @@
 				134B9B0384FE48DECD7613EE /* VoiceLog.swift in Sources */,
 				E0244E5AF24BFFC84C55D2A4 /* VoicePanel.swift in Sources */,
 				313DDC3B1BB41035C1030689 /* WakeUpIntent.swift in Sources */,
+				058C1D6DDCF73028E25DB202 /* WeightViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

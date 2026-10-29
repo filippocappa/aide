@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             await env.screenTime.sync()
             await env.health.writeLogged()
             await env.health.writeMeals()
+            await env.health.writeWeights()
             WidgetCenter.shared.reloadTimelines(ofKind: "Today")
             completionHandler(env.sync.lastError == nil ? .newData : .failed)
         }

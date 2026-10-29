@@ -159,18 +159,24 @@ enum HealthDayName {
     }
 }
 
-/// The Body page of the Health tab: last night, recovery, today's activity and recent workouts, each opening its chart.
+/// The Body page of the Health tab: last night, recovery, today's activity, weight and recent workouts, each opening its
+/// chart.
 struct BodySections: View {
     /// Newest first; nil while loading.
     let days: [HealthDayReading]?
     let error: String?
+    /// The weight readings and trend; nil while loading, or from a server without them.
+    var weight: WeightList? = nil
     let open: (HealthMetric) -> Void
+    var openWeight: () -> Void = {}
+    var logWeight: () -> Void = {}
 
     var body: some View {
         if let days, !days.isEmpty {
             sleep(days)
             recovery(days)
             activity(days)
+            weightSection
             workouts(days)
         } else if let error {
             Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
@@ -243,6 +249,17 @@ struct BodySections: View {
             }
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
+        }
+    }
+
+    @ViewBuilder private var weightSection: some View {
+        if let weight {
+            Section {
+                WeightCard(weight: weight, open: openWeight, log: logWeight)
+            } header: {
+                header("Weight", icon: "scalemass.fill", color: WeightSummary.color)
+            }
+            .listRowBackground(Theme.row)
         }
     }
 

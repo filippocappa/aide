@@ -9,11 +9,11 @@ struct MealPhotoControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "MealPhoto") {
             ControlWidgetButton(action: LogMealIntent(way: .photo)) {
-                Label("Snap a meal", systemImage: "camera.fill")
+                Label("Snap a meal", systemImage: "fork.knife.circle.fill")
             }
         }
         .displayName("Snap a meal")
-        .description("Opens the camera to log what you're eating.")
+        .description("Opens Aide's meal camera: your plate, or a packet's barcode.")
     }
 }
 
@@ -22,7 +22,7 @@ struct MealDescribeControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "MealDescribe") {
             ControlWidgetButton(action: LogMealIntent(way: .describe)) {
-                Label("Describe a meal", systemImage: "fork.knife")
+                Label("Describe a meal", systemImage: "text.bubble.fill")
             }
         }
         .displayName("Describe a meal")

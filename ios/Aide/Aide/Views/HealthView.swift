@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The Health tab, in two pages. Body: what Apple Health says (sleep, recovery, activity, workouts), each opening
-/// its chart. Food: what you ate, day by day; meals come from photos with a few words, or the words alone, that
+/// The Health tab, in two pages. Body: what Apple Health says (sleep, recovery, activity, weight, workouts), each
+/// opening its chart. Food: what you ate, day by day; meals come from photos with a few words, or the words alone, that
 /// Coach names and estimates (a packet's barcode in a photo brings its real numbers); tap one to fix the numbers, swipe to
 /// delete. Every meal also goes to Apple Health
 /// (`HealthService.writeMeals`). (Habits are on Today.)
@@ -17,6 +17,9 @@ struct HealthView: View {
     @State private var bodyDays: [HealthDayReading]?
     @State private var bodyError: String?
     @State private var metric: HealthMetric?
+    @State private var weight: WeightList?
+    @State private var showWeight = false
+    @State private var loggingWeight = false
 
     @State private var day = Calendar.current.startOfDay(for: Date())
     @State private var food: FoodDay?
@@ -29,6 +32,7 @@ struct HealthView: View {
     /// Coach's Food log chat, once a log has told us which it is.
     @State private var logChat: String?
     @State private var showCamera = false
+    @State private var cameraResult: MealCameraResult?
     @State private var showLibrary = false
     @State private var describing = false
     @State private var mealText = ""
@@ -85,13 +89,16 @@ struct HealthView: View {
                     Section { logButton }
                     mealsSection
                 default:
-                    BodySections(days: bodyDays, error: bodyError) { metric = $0 }
+                    BodySections(days: bodyDays, error: bodyError, weight: weight, open: { metric = $0 },
+                                 openWeight: { showWeight = true }, logWeight: { loggingWeight = true })
                 }
             }
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
             .navigationTitle("Health")
             .navigationDestination(item: $metric) { m in HealthMetricView(metric: m, days: bodyDays ?? []) }
+            .navigationDestination(isPresented: $showWeight) { WeightView { await loadWeight() } }
+            .weightEntry(isPresented: $loggingWeight) { await loadWeight() }
             .sheet(isPresented: $showGoals, onDismiss: { Task { await loadFood() } }) {
                 NavigationStack { NutritionTargetsView(inSheet: true) }
             }
@@ -107,7 +114,11 @@ struct HealthView: View {
                     if !text.isEmpty { Task { await log(text: text) } }
                 }
             }
-            .photoSources(camera: $showCamera, library: $showLibrary, limit: 4, barcodes: true) { photos in
+            .fullScreenCover(isPresented: $showCamera, onDismiss: afterCamera) {
+                MealCameraView(tint: coach.tint) { cameraResult = $0 }
+            }
+            // The meal camera above takes photos here; the library comes from this.
+            .photoSources(camera: .constant(false), library: $showLibrary, limit: 4, barcodes: true) { photos in
                 // A lone packet with its barcode: the real numbers and how much, no model call. Anything more
                 // (other photos) goes to Coach, with the barcodes.
                 if photos.count == 1, let code = photos[0].barcodes.first {
@@ -173,10 +184,22 @@ struct HealthView: View {
         Task {
             try? await Task.sleep(for: .milliseconds(500)) // after the tab switch and any sheet going away
             switch way {
-            case .photo where CameraPicker.isAvailable: showCamera = true
+            case .photo where MealCamera.isAvailable: showCamera = true
             case .photo: showLibrary = true
             case .describe: describing = true
             }
+        }
+    }
+
+    /// What the meal camera ended with, once it has gone (a sheet can't open while it's still on screen).
+    private func afterCamera() {
+        guard let result = cameraResult else { return }
+        cameraResult = nil
+        switch result {
+        case .photos(let photos): pickedPhotos = PickedMeal(photos: photos)
+        case .barcode(let code, let photo): scanned = ScannedCode(code: code, photo: photo)
+        case .library: showLibrary = true
+        case .describe: describing = true
         }
     }
 
@@ -228,7 +251,7 @@ struct HealthView: View {
     /// Camera, library or a few words; Coach (or, for a photo of one packet, the server) does the rest.
     private var logButton: some View {
         Menu {
-            if CameraPicker.isAvailable {
+            if MealCamera.isAvailable {
                 Button("Take photo", systemImage: "camera") { showCamera = true }
             }
             Button("Choose photos", systemImage: "photo.on.rectangle") { showLibrary = true }
@@ -307,6 +330,7 @@ struct HealthView: View {
     private func loadBody(upload: Bool = false) async {
         guard settings.isConfigured else { return }
         if upload { _ = await health.upload(days: 2) }
+        async let weightLoad: Void = loadWeight()
         do {
             bodyDays = try await env.api.healthDays()
             bodyError = nil
@@ -315,6 +339,11 @@ struct HealthView: View {
         } catch {
             if !Task.isCancelled { bodyError = error.localizedDescription }
         }
+        await weightLoad
+    }
+
+    private func loadWeight() async {
+        weight = try? await env.api.weight(days: 30) // nil from a server without weights: no card
     }
 
     /// Uploads the photos, then Coach logs the meal on the chosen day and says what it made of it.

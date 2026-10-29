@@ -112,6 +112,7 @@ final class AppEnvironment: ObservableObject {
         _ = await healthUpload
         await health.writeLogged()
         await health.writeMeals()
+        await health.writeWeights()
     }
 
     /// A tapped notification (docs/API.md, Push).

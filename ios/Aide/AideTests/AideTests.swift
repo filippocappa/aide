@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import XCTest
 @testable import Aide
@@ -1762,6 +1763,44 @@ final class NutritionTests: XCTestCase {
         XCTAssertNil(Arithmetic.evaluate("(2+3"))
         XCTAssertTrue(Arithmetic.isSum("400/3"))
         XCTAssertFalse(Arithmetic.isSum("12,5"))
+    }
+
+    func testTheWeightTrendDecodesAndReads() throws {
+        let list = try JSONDecoder.api.decode(WeightList.self, from: Data(#"""
+        {"readings": [{"date": "2026-10-20", "kg": 66.2, "source": "health"},
+                      {"date": "2026-10-27", "kg": 66.0, "source": "aide", "id": 3}],
+         "summary": {"latest": {"date": "2026-10-27", "kg": 66.0}, "days_since": 2, "average_kg": 66.04,
+                     "change_kg": -0.3, "rate_kg_week": -0.1, "goal": "gain",
+                     "pace_kg_week": {"low_kg": 0.04, "high_kg": 0.08}, "verdict": "below"},
+         "logged": [{"id": 3, "at": "2026-10-27T06:40:00+00:00", "kg": 66.0}]}
+        """#.utf8))
+        XCTAssertEqual(list.readings.map(\.id), [nil, 3])
+        XCTAssertEqual(list.logged.first?.kg, 66)
+        let s = list.summary
+        XCTAssertEqual(s.shown, 66.04)
+        XCTAssertEqual(s.shownLabel, "7-day average")
+        let point = { (text: String?) in text?.replacingOccurrences(of: ",", with: ".") } // the locale's decimal mark
+        XCTAssertEqual(point(s.trendLine), "−0.10 kg a week · Below the pace to gain")
+        XCTAssertEqual(point(s.paceText), "+0.04 kg to +0.08 kg a week")
+        XCTAssertTrue(s.isOff)
+        let averages = WeightChart.averages(list.readings)
+        XCTAssertEqual(averages.map { ($0.average * 100).rounded() }, [6620, 6600]) // a week apart: each alone
+
+        let none = WeightSummary(daysSince: 59, goal: "gain")
+        XCTAssertNil(none.verdictText)
+        XCTAssertEqual(none.trendLine, "Last weighed 59 days ago")
+    }
+
+    func testTheMealCameraKeepsOnlyFoodBarcodes() {
+        XCTAssertEqual(MealCamera.foodCode("8001505005707", type: .ean13), "8001505005707")
+        XCTAssertEqual(MealCamera.foodCode("80052760", type: .ean8), "80052760")
+        XCTAssertEqual(MealCamera.foodCode("01234565", type: .upce), "01234565")
+        XCTAssertEqual(MealCamera.foodCode("8001505005707", type: .code128), "8001505005707")
+        XCTAssertNil(MealCamera.foodCode("ABC-12345678", type: .code128)) // a parcel label, not a packet
+        XCTAssertNil(MealCamera.foodCode("123456789", type: .code128))
+        XCTAssertNil(MealCamera.foodCode("8001505005707", type: .qr))
+        XCTAssertNil(MealCamera.foodCode(nil, type: .ean13))
+        XCTAssertEqual(MealCamera.limit, 4)
     }
 
     func testAMealsFoodsCarryTheirQuality() throws {

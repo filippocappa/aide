@@ -225,6 +225,15 @@ answers changed; the app shows "was 2,450" on each number that moved. "What Coac
 Control Center (iOS 18): "Snap a meal" and "Describe a meal" (`LogMealIntent`, `Shared/MealIntents.swift`, also a
 Shortcut) open Health → Food with the camera or the describe box (`aide://meal/photo`). The barcode's grams take sums
 (`Support/Arithmetic.swift`: 400/3, 2×30; + − × ÷ keys over the number pad).
+The meal camera (2026-10-29, `Views/MealCameraView.swift`): Aide's own camera for Health → Food and the Control Center
+button (now a fork and knife, not a camera): up to 4 shots then Next, a live barcode pill ("Barcode … · Scan") that
+opens the scan page, Library and Describe. Chat photos keep the system camera.
+Weight (2026-10-29, both sides, contract "Apple Health", Weight; `weight.py`, `tools/weight.py`): readings logged in
+chat (`log_weight`) or the app plus Health's, the 7-day average, the change over 3 weeks and the rate a week (28 days)
+against the goal's pace (gain +0.25–0.5% a month), with a verdict. The phone writes Aide's readings to Health as Body
+Mass (`HealthService.writeWeights`). Coach's proposal corrects the base from a trend off for ~3 weeks. A Weigh-in watch
+(Mondays 08:30). App: a Weight card on Health → Body, `Views/WeightViews.swift` (chart, trend, days, Log weight), a row
+on the targets page. Not yet tried on the phone.
 
 **Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
 files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and
