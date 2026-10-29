@@ -47,7 +47,8 @@ EDITABLE = ("name", "eaten_at", *MACROS, *DRINKS, "notes", "emoji")
 # A meal without Coach's emoji gets the first of these its name mentions (Italian and English), else a plate. Each
 # word matches from the start of a word in the name (regex).
 EMOJI = [
-    ("🍝", r"pasta spaghetti penne fusilli rigatoni lasagn gnocchi tortellini ravioli carbonara"),
+    ("🍝", r"pasta spaghetti penne fusilli rigatoni lasagn gnocchi tortellini ravioli agnolotti tagliatell "
+           r"orecchiette cappelletti carbonara"),
     ("🍕", r"pizza focaccia"), ("🍣", r"sushi"), ("🍔", r"burger hamburger"), ("🍟", r"fries patatine"),
     ("🥪", r"sandwich panino piadina tramezzino wrap toast"), ("🥐", r"croissant cornetto brioche"),
     ("🍞", r"bread pane\b fette crackers grissini"), ("🥣", r"oat avena porridge cereal muesli granola"),
@@ -56,12 +57,14 @@ EMOJI = [
     ("🐟", r"fish pesce salmon salmone tuna tonno merluzzo"), ("🥚", r"egg uova uovo omelette frittata"),
     ("🧀", r"cheese formaggio mozzarella parmigiano ricotta"), ("🥛", r"milk latte yogurt yoghurt kefir skyr"),
     ("🫘", r"lentil lenticchie beans fagioli chickpea ceci\b legum"), ("🥔", r"potato patat"),
-    ("🍫", r"chocolate cioccolat nutella nocciolata"), ("🍪", r"biscuit biscott cookie"),
+    ("🥕", r"carot carrot verdur vegetabl zucchin broccol spinac"),
+    ("🍫", r"chocolate cioccolat nutella nocciolata bar\b barrett"), ("🍪", r"biscuit biscott cookie"),
     ("🍰", r"cake torta tiramis"), ("🍦", r"ice\s?cream gelato"),
     ("🥜", r"nuts?\b noci mandorle almond peanut arachidi"), ("🍌", r"banana"), ("🍎", r"apple mela\b mele\b"),
     ("🍊", r"orange arancia mandarin"), ("🍓", r"fruit frutta berries fragol"),
     ("🥤", r"shake protein whey frullato smoothie coke cola\b soda"), ("🧃", r"juice succo"),
-    ("☕", r"coffee caff espresso cappuccino tea\b tè\b"), ("🍺", r"beer birra"), ("🍷", r"wine vino spritz"),
+    ("☕", r"coffee caff espresso cappuccino tea\b tè\b"), ("🍺", r"beer birra"),
+    ("🍷", r"wine vino spritz barbera nebbiolo barolo prosecco"),
     ("💧", r"water acqua"),
 ]
 MAX_RANGE = 92  # days of meals in one read
