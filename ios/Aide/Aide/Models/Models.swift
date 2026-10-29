@@ -546,6 +546,11 @@ struct Meal: Decodable, Identifiable, Hashable {
     var notes: String
     /// Coach's, or one the server guessed from the name (since 2026-10-29); the list shows it, not the photo.
     var emoji: String
+    /// What's in it, each food with its grade and quality; empty for a meal logged without items, or from
+    /// `/v1/food/meals`, which doesn't send them.
+    var items: [MealItem] = []
+    /// 0–100, nil without enough data (docs/API.md, "Food").
+    var quality: Int?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -561,9 +566,11 @@ struct Meal: Decodable, Identifiable, Hashable {
         photo = try c.decodeIfPresent(String.self, forKey: .photo)
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
         emoji = try c.decodeIfPresent(String.self, forKey: .emoji) ?? "🍽️"
+        items = try c.decodeIfPresent([MealItem].self, forKey: .items) ?? []
+        quality = try c.number(.quality)
     }
     private enum CodingKeys: String, CodingKey {
-        case id, name, eatenAt, calories, proteinG, carbsG, fatG, waterMl, caffeineMg, photo, notes, emoji
+        case id, name, eatenAt, calories, proteinG, carbsG, fatG, waterMl, caffeineMg, photo, notes, emoji, items, quality
     }
 
     var eatenDate: Date? { Wire.parse(eatenAt) }
@@ -572,6 +579,32 @@ struct Meal: Decodable, Identifiable, Hashable {
     static func newestFirst(_ meals: [Meal]) -> [Meal] {
         meals.sorted { ($0.eatenDate ?? .distantPast, $0.id) > ($1.eatenDate ?? .distantPast, $1.id) }
     }
+}
+
+/// One food in a meal: how much, its Nutri-Score (`grade`, a–e), NOVA group (4 is ultra-processed) and quality
+/// (0–100), each nil when its food doesn't say.
+struct MealItem: Decodable, Hashable {
+    var name: String
+    var grams: Int?
+    var kcal: Int
+    var grade: String?
+    var nova: Int?
+    var quality: Int?
+
+    init(name: String, grams: Int? = nil, kcal: Int, grade: String? = nil, nova: Int? = nil, quality: Int? = nil) {
+        (self.name, self.grams, self.kcal, self.grade, self.nova, self.quality) = (name, grams, kcal, grade, nova, quality)
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Food"
+        grams = try c.number(.grams)
+        kcal = try c.number(.kcal) ?? 0
+        grade = try c.decodeIfPresent(String.self, forKey: .grade)
+        nova = try c.number(.nova)
+        quality = try c.number(.quality)
+    }
+    private enum CodingKeys: String, CodingKey { case name, grams, kcal, grade, nova, quality }
 }
 
 /// What was eaten in a day.
@@ -670,8 +703,8 @@ struct FoodBonus: Decodable, Hashable {
     var workouts: [Workout] = []
 }
 
-/// The day's 0–100: `numbers` (60%, how close to the targets) and `quality` (40%, the Nutri-Scores weighted by
-/// calories; nil when under half the day's calories are graded). Not `final` while the day is on.
+/// The day's 0–100: `numbers` (60%, how close to the targets; nil without targets, and the score is the quality
+/// alone) and `quality` (40%: nutrients, processing and grades). Not `final` while the day is on.
 struct DayScore: Decodable, Hashable {
     let score: Int
     let final: Bool
@@ -722,6 +755,14 @@ struct FoodTargets: Codable, Hashable {
     var base = FoodGoals()
     var workouts = WorkoutTargets()
     var profile = FoodProfile()
+    /// Who answers Ask Coach (GET only; nil from servers before it).
+    var coach: CoachModel? = nil
+}
+
+/// The model behind a proposal, and `via`: plan (the Claude plan), openrouter or api (paid per token).
+struct CoachModel: Codable, Hashable {
+    let model: String
+    let via: String
 }
 
 /// How much of a workout's kcal is added (`share`), and how much of that as carbs (the rest as fat).
@@ -731,7 +772,8 @@ struct WorkoutTargets: Codable, Hashable {
     var carbsPct = 80
 }
 
-/// What Coach proposes from; every field may be nil. `sex`: male, female; `goal`: lose, keep, gain.
+/// What Coach proposes from; every field may be nil. `sex`: male, female; `goal`: lose, keep, gain, perform; `note`:
+/// what the user tells Coach in their own words.
 /// Encoded with every key, so clearing one sends null.
 struct FoodProfile: Codable, Hashable {
     var weightKg: Double?
@@ -739,6 +781,7 @@ struct FoodProfile: Codable, Hashable {
     var age: Int?
     var sex: String?
     var goal: String?
+    var note: String?
 
     init() {}
 
@@ -749,6 +792,7 @@ struct FoodProfile: Codable, Hashable {
         age = try c.number(.age)
         sex = try c.decodeIfPresent(String.self, forKey: .sex)
         goal = try c.decodeIfPresent(String.self, forKey: .goal)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -758,8 +802,9 @@ struct FoodProfile: Codable, Hashable {
         try c.encode(age, forKey: .age)
         try c.encode(sex, forKey: .sex)
         try c.encode(goal, forKey: .goal)
+        try c.encode(note, forKey: .note)
     }
-    private enum CodingKeys: String, CodingKey { case weightKg, heightCm, age, sex, goal }
+    private enum CodingKeys: String, CodingKey { case weightKg, heightCm, age, sex, goal, note }
 }
 
 /// `POST /v1/food/targets/propose`: Coach's numbers and why; nothing saved until a PUT.

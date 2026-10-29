@@ -1741,6 +1741,27 @@ final class NutritionTests: XCTestCase {
         """#.utf8))
         XCTAssertEqual(Meal.newestFirst(meals).map(\.id), [3, 2, 1])
         XCTAssertEqual(meals.map(\.emoji), ["🥣", "🍽️", "🥛"])  // an older server: a plate
+        XCTAssertEqual(meals[0].items, [])
+        XCTAssertNil(meals[0].quality)
+    }
+
+    func testAMealsFoodsCarryTheirQuality() throws {
+        let meal = try JSONDecoder.api.decode(Meal.self, from: Data(#"""
+        {"id": 1, "name": "Insalata", "quality": 97,
+         "items": [{"name": "Mela", "grams": 150, "kcal": 78, "grade": "a", "nova": 1, "quality": 100},
+                   {"name": "Biscotti", "grams": null, "kcal": 200, "grade": null, "nova": 4, "quality": null}]}
+        """#.utf8))
+        XCTAssertEqual(meal.quality, 97)
+        XCTAssertEqual(meal.items, [MealItem(name: "Mela", grams: 150, kcal: 78, grade: "a", nova: 1, quality: 100),
+                                    MealItem(name: "Biscotti", kcal: 200, nova: 4)])
+        let targets = try JSONDecoder.api.decode(FoodTargets.self, from: Data(#"""
+        {"base": {}, "workouts": {"on": true, "share": 1, "carbs_pct": 80},
+         "profile": {"goal": "perform", "note": "Half marathon in March"},
+         "coach": {"model": "Claude Sonnet 5.5", "via": "plan"}}
+        """#.utf8))
+        XCTAssertEqual(targets.coach, CoachModel(model: "Claude Sonnet 5.5", via: "plan"))
+        XCTAssertEqual(targets.profile.note, "Half marathon in March")
+        XCTAssertTrue(TargetGoal.all.contains { $0.id == targets.profile.goal })
     }
 
     func testCoachsQuestionsAndTheWorkoutLine() throws {

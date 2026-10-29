@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A meal on one line: its emoji, name and macros (a camera when it has a photo, which shows only on its page), then
-/// calories and time. In the Health tab and in chat cards.
+/// its quality, calories and time. In the Health tab and in chat cards.
 struct MealRow: View {
     let meal: Meal
 
@@ -19,6 +19,9 @@ struct MealRow: View {
                 .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            if let quality = meal.quality {
+                QualityBadge(score: quality)
+            }
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(meal.calories) kcal").font(.subheadline.weight(.semibold)).monospacedDigit()
                 if let time = meal.eatenDate {
@@ -32,6 +35,38 @@ struct MealRow: View {
 
     /// "P 20 g · C 110 g · F 15 g"
     static func macros(_ meal: Meal) -> String { "P \(meal.proteinG) g · C \(meal.carbsG) g · F \(meal.fatG) g" }
+}
+
+/// One food in a meal: name, grams and calories, its Nutri-Score letter and "Ultra-processed" when it's NOVA 4, and
+/// its quality.
+struct MealItemRow: View {
+    let item: MealItem
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.name).lineLimit(2)
+                HStack(spacing: 6) {
+                    Text([item.grams.map { "\($0) g" }, "\(item.kcal) kcal"].compactMap { $0 }.joined(separator: " · "))
+                        .monospacedDigit()
+                    if let grade = item.grade {
+                        Text(grade.uppercased())
+                            .font(.caption2.weight(.heavy)).foregroundStyle(.white)
+                            .frame(width: 16, height: 16)
+                            .background(Grade.color(grade), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            .accessibilityLabel("Nutri-Score \(grade.uppercased())")
+                    }
+                    if item.nova == 4 {
+                        Text("Ultra-processed").font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            if let quality = item.quality { QualityBadge(score: quality) }
+        }
+        .accessibilityElement(children: .combine)
+    }
 }
 
 /// The meal's emoji on a soft tile.
@@ -214,7 +249,8 @@ struct WeekStrip: View {
     }
 }
 
-/// Fixing what Coach estimated: name, time, numbers and notes, or deleting the meal.
+/// The meal's page: its foods with their quality, then fixing what Coach estimated (name, time, numbers and notes),
+/// or deleting the meal.
 struct MealSheet: View {
     let meal: Meal
     /// Each returns an error message, or nil when done.
@@ -261,6 +297,7 @@ struct MealSheet: View {
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets())
                 }
+                foodsSection
                 Section {
                     TextField("Name", text: $name)
                     DatePicker("Time", selection: $time, displayedComponents: [.date, .hourAndMinute])
@@ -308,6 +345,26 @@ struct MealSheet: View {
             .disabled(working)
         }
         .presentationDetents([.large])
+    }
+
+    /// Each food with its grams, calories, Nutri-Score and processing, and its quality; the meal's quality on top.
+    @ViewBuilder private var foodsSection: some View {
+        if !meal.items.isEmpty {
+            Section {
+                ForEach(Array(meal.items.enumerated()), id: \.offset) { _, item in MealItemRow(item: item) }
+            } header: {
+                HStack {
+                    Text("What's in it")
+                    Spacer()
+                    if let quality = meal.quality {
+                        Text("Quality \(quality)").monospacedDigit()
+                            .foregroundStyle(Grade.scoreColor(quality, tint: Theme.accent))
+                    }
+                }
+            } footer: {
+                Text("Quality is 0–100: the meal's fibre, fruit and veg, saturated fat, sugars and salt for its calories (half), how little of it is ultra-processed (a quarter) and its foods' Nutri-Scores (a quarter).")
+            }
+        }
     }
 
     private func run(_ action: @escaping () async -> String?) {
