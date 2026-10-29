@@ -1385,6 +1385,8 @@ struct MockExam: Decodable, Identifiable, Hashable {
     let course: Int
     let number: Int
     let title: String
+    /// The course's own paper it was copied from; nil for one Aide wrote.
+    var source: MockSource?
     var minutes: Int?
     var scoring: QuizScoring?
     var count = 0
@@ -1398,6 +1400,8 @@ struct MockExam: Decodable, Identifiable, Hashable {
     static func == (a: MockExam, b: MockExam) -> Bool { a.id == b.id && a.taken == b.taken && a.best == b.best }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
+
+struct MockSource: Decodable { let id: String; let name: String }
 
 struct MockExamList: Decodable { let mocks: [MockExam] }
 

@@ -316,8 +316,8 @@ struct CourseView: View {
                 Text("Practice")
             } footer: {
                 if exercises == 0 {
-                    Text("Professor solves the course's exercise sheets and past exams step by step, and adds new "
-                         + "exercises like the exam's.")
+                    Text("Professor copies the course's own exercise sheets and past exams and solves them step by "
+                         + "step, following the course's solutions where it has them.")
                 } else if (notebook.mocks ?? 0) == 0 {
                     Text("A mock exam is a paper like the real one, open questions included, timed and marked.")
                 }
@@ -561,25 +561,26 @@ struct MockExamsView: View {
                 Label(note, systemImage: "doc.text.magnifyingglass").font(.footnote).foregroundStyle(.secondary)
             }
             if let mocks {
-                Section {
-                    ForEach(mocks) { mock in
-                        Button { taking = mock } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(mock.title).foregroundStyle(.primary)
-                                    Text(detail(mock)).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if let best = mock.best {
-                                    Text("\(best.points) / \(mock.points.points)").font(.subheadline).monospacedDigit()
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
+                let papers = mocks.filter { $0.source != nil }, written = mocks.filter { $0.source == nil }
+                if !papers.isEmpty {
+                    Section {
+                        ForEach(papers) { row($0) }
+                    } header: {
+                        Text("From the course")
+                    } footer: {
+                        Text("The course's own papers, copied as they are, with the answers worked out. Also in "
+                             + "Obsidian, under Past exams.")
                     }
-                } footer: {
-                    Text("Like the real exam: its questions, time and scoring. Also in Obsidian, with the answers at "
-                         + "the end, to do on paper.")
+                }
+                if !written.isEmpty {
+                    Section {
+                        ForEach(written) { row($0) }
+                    } header: {
+                        if !papers.isEmpty { Text("Written by Aide") }
+                    } footer: {
+                        Text("Like the real exam: its questions, time and scoring. Also in Obsidian, with the answers "
+                             + "at the end, to do on paper.")
+                    }
                 }
                 Section {
                     Button { Task { await write() } } label: {
@@ -597,6 +598,22 @@ struct MockExamsView: View {
         .refreshable { await load() }
         .fullScreenCover(item: $taking, onDismiss: { Task { await load() } }) { mock in
             PracticeExamView(course: course.id, courseName: course.name, mock: mock)
+        }
+    }
+
+    private func row(_ mock: MockExam) -> some View {
+        Button { taking = mock } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mock.title).foregroundStyle(.primary)
+                    Text(detail(mock)).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let best = mock.best {
+                    Text("\(best.points) / \(mock.points.points)").font(.subheadline).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 

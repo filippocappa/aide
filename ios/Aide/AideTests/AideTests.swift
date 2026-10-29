@@ -178,9 +178,15 @@ final class ModelTests: XCTestCase {
         let list = #"""
         {"course": 2, "mocks": [{"id": "m_1", "course": 2, "number": 1, "title": "Mock exam 1", "minutes": 90,
           "scoring": {"right": 1, "wrong": 0, "blank": 0}, "count": 16, "mcq": 15, "open": 1, "points": 30,
-          "created_at": "2026-10-29T10:00:00+01:00", "taken": 1, "best": 24.5, "last": null}]}
+          "created_at": "2026-10-29T10:00:00+01:00", "taken": 1, "best": 24.5, "last": null},
+         {"id": "m_2", "course": 2, "number": 1, "title": "Mock exam 2026", "source": {"id": "f_1",
+          "name": "Example Questions Midterm.pdf"}, "minutes": null, "scoring": {"right": 1, "wrong": -0.25,
+          "blank": 0}, "count": 30, "mcq": 30, "open": 0, "points": 30, "taken": 0, "best": null}]}
         """#
-        let mock = try XCTUnwrap(JSONDecoder.api.decode(MockExamList.self, from: Data(list.utf8)).mocks.first)
+        let mocks = try JSONDecoder.api.decode(MockExamList.self, from: Data(list.utf8)).mocks
+        let mock = try XCTUnwrap(mocks.first)
+        XCTAssertNil(mock.source)
+        XCTAssertEqual(mocks.last?.source?.name, "Example Questions Midterm.pdf")
         XCTAssertEqual(mock.open, 1)
         XCTAssertEqual(mock.best, 24.5)
         XCTAssertTrue(PracticeExamView.rules(mock).contains("no penalty"))
