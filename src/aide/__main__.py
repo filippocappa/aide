@@ -10,7 +10,7 @@ from pathlib import Path
 import anthropic
 import uvicorn
 
-from .agent import CONVERSATION, TEAM, Agent
+from .agent import CONVERSATION, TEAM, Agent, calling_agent
 from .browser import Browser
 from .channels.api import create_app
 from .transcribe import Transcriber
@@ -32,6 +32,7 @@ from .locks import LockStore
 from .push import Push
 from .quiz import QuizStore
 from .reminders import ReminderStore
+from .plans import PlanStore
 from .reviews import ReviewStore, ReviewWatcher
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
@@ -53,6 +54,7 @@ from .tools.mail import draft_tools, mail_tools
 from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
+from .tools.plans import plan_tools
 from .tools.quiz import quiz_tools
 from .tools.study import study_tools
 from .tools.transit import leave_tools, transit_tools
@@ -120,6 +122,9 @@ def main() -> None:
     quizzes = QuizStore(notebook)
     reviews = ReviewStore(db.conn, settings.timezone, cal, study)
     tools += quiz_tools(quizzes, reviews, study, notebook, settings.timezone)
+    plans = PlanStore(db.conn, settings.timezone, cal, reviews)
+    if cal is not None:
+        tools += plan_tools(plans, study, notebook, lambda: (agent._conversation, calling_agent.get()))
     gmail = None
     drafts = Drafts(db.conn, settings.timezone)
     if settings.gmail_client_id and settings.gmail_client_secret and settings.gmail_refresh_token:
@@ -271,7 +276,7 @@ def main() -> None:
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
-                             quizzes, reviews, locks, errands, errand_store)
+                             quizzes, reviews, locks, errands, errand_store, plans)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

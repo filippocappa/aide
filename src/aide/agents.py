@@ -15,6 +15,7 @@ OBJECTIVES = ("list_objectives", "add_objective", "update_objective", "accept_ob
 COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", *ROUTINES, *OBJECTIVES)
 CALENDAR_READ = ("list_calendars", "list_events", "search_events", "free_time")
 CALENDAR = (*CALENDAR_READ, "create_event", "edit_event", "delete_event")
+PLANS = ("propose_events",)
 REMINDERS = ("create_reminder", "list_reminders", "update_reminder", "complete_reminder", "delete_reminder")
 MAIL = ("search_mail", "list_unread", "read_mail", "read_thread", "send_mail", "reply_mail", "list_drafts",
         "draft_reply", "discard_draft")
@@ -93,7 +94,11 @@ asked you (you can't ask back), take the one that fits best (study sessions with
 - Reminders are for things to remember at a time ("remind me to call mum at 5"); calendar events are for \
 time blocks. Reminders go to Apple Reminders on the user's iPhone, which alerts them.
 - To fix or rearrange a schedule, look at the days involved, explain the conflicts and your plan in a few \
-lines, then queue the moves."""
+lines, then queue the moves.
+- A plan of several new events (a study plan, a week of sessions, a trip) goes in with one propose_events call, \
+not create_event one by one: the card under your reply shows them on a week view, marked Proposed, and the user \
+adds them, all or some, with a tap. Say in a line what you proposed; never that they're in the calendar. \
+create_event is for one event the user asked for."""
 
 _MAIL = """- Mail: search_mail takes Gmail search syntax. Message and thread ids in brackets are for your tools only; \
 never show them. Summarise mail briefly unless asked for the full text. Sending and replying are queued like \
@@ -234,9 +239,11 @@ whether it was right and why (the explanation it returns), and ask the next ques
 end_quiz. Answers count for what comes back next time, so record every one.
 - Review sessions: when the user wants study time planned ("plan my reviews before the exam"), look at the exam \
 date (list_courses), study_progress (weak and never-practised topics first) and free_time, then propose the \
-sessions: day, time, length and topics, spaced out and closer together near the exam. Only once they agree, \
-add_review_session for each. They go in the timetable calendar as "Review: <course>", and when one starts you \
-offer a quiz on its topics in this chat. Cancelling one is queued; to move one, the user drags it in their \
+sessions with one propose_events call (each with its course and topics), spaced out and closer together near \
+the exam: the card under your reply shows them on a week view, and the user adds them with a tap (say so in a \
+line; they aren't in the calendar until then). add_review_session is for one session they asked for outright. \
+They go in the timetable calendar as "Review: <course>", and when one starts you offer a quiz on its topics in \
+this chat. Cancelling one is queued; to move one, the user drags it in their \
 calendar (it's followed)."""
 
 _FOOD_ELSEWHERE = """- Food: you don't keep the food log; Coach does. If the user sends a meal, say so in a line \
@@ -378,14 +385,14 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
     AgentDef("secretary", "Secretary", "Calendar, reminders and mail", "#3B6FD8",
              ("What's on my calendar today?", "Any mail I need to answer?", "Remind me to "),
-             SECRETARY_PROMPT, (*CALENDAR, *REMINDERS, *MAIL, *MAPS, *TRANSIT, *WEB),
+             SECRETARY_PROMPT, (*CALENDAR, *PLANS, *REMINDERS, *MAIL, *MAPS, *TRANSIT, *WEB),
              routine_ideas=(_idea("Mail sweep", "Go through my unread mail: what needs an answer from me today, what "
                                   "can wait, and anything with a date to put in the calendar.", "09:00",
                                   (1, 2, 3, 4, 5)),
                             *(i for a, i in _STARTING_WATCHES if a == "secretary"))),
     AgentDef("professor", "Professor", "Study and lectures", "#7A4FD0",
              ("What did we cover in ", "Explain ", "Make me a study plan for "), PROFESSOR_PROMPT,
-             (*STUDY, *CALENDAR_READ, *WEB),
+             (*STUDY, *CALENDAR_READ, *PLANS, *WEB),
              routine_ideas=(_idea("Review what I studied", "Ask me what I studied this week, then quiz me on it with "
                                   "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training, food and habits", "#23A26D",
@@ -404,7 +411,8 @@ SPECIALISTS = tuple(a for a in AGENTS if not AGENTS[a].orchestrator)
 
 # What the app shows as an agent's connectors: (id, name, its tools, the ones that change something).
 _CONNECTORS = (
-    ("calendar", "iCloud Calendar", CALENDAR, {"create_event", "edit_event", "delete_event"}),
+    ("calendar", "iCloud Calendar", (*CALENDAR, *PLANS),
+     {"create_event", "edit_event", "delete_event", "propose_events"}),
     ("reminders", "Reminders", REMINDERS, {"create_reminder", "update_reminder", "complete_reminder", "delete_reminder"}),
     ("mail", "Gmail", MAIL, {"send_mail", "reply_mail", "draft_reply", "discard_draft"}),
     ("health", "Apple Health", HEALTH, set()),

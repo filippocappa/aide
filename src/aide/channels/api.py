@@ -29,8 +29,9 @@ from ..errands import ErrandRunner, ErrandStore
 from ..food import MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
-from ..icloud import CalendarBackend
+from ..icloud import CalendarBackend, CalEvent
 from ..live import KINDS as LIVE_KINDS, LiveActivities, hooks
+from ..plans import PlanStore
 from ..photos import MAX_BYTES as MAX_PHOTO, TYPES as PHOTO_TYPES, PhotoStore
 from ..push import Push
 from ..reminders import ReminderStore
@@ -381,6 +382,15 @@ class CompleteIn(BaseModel):
     completed: bool = True
 
 
+class PlanItemsIn(BaseModel):
+    items: list[str] | None = None  # the plan's item ids; None for every one still proposed
+
+
+class EventMoveIn(BaseModel):
+    start: str  # local YYYY-MM-DDTHH:MM (or with an offset), or YYYY-MM-DD for an all-day event
+    end: str    # likewise; an all-day event's end is its last day
+
+
 class SyncIn(BaseModel):
     cursor: str | None = None
     changes: list[ReminderChange] = []
@@ -390,6 +400,7 @@ class SyncIn(BaseModel):
 
 UNAVAILABLE = "The assistant is unavailable right now. Try again."
 PING = 15.0  # seconds of quiet on a stream before a keep-alive comment
+MAX_EVENT_DAYS = 42  # GET /v1/events
 
 
 def sse(event: str, data: dict) -> str:
@@ -411,7 +422,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                live: LiveActivities | None = None, leave: LeaveWatcher | None = None,
                quizzes: QuizStore | None = None, reviews: ReviewStore | None = None,
                locks: LockStore | None = None, errands: ErrandRunner | None = None,
-               errand_store: ErrandStore | None = None) -> FastAPI:
+               errand_store: ErrandStore | None = None, plans: PlanStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -429,6 +440,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
     quizzes = quizzes or QuizStore(notebook)
     reviews = reviews or ReviewStore(db.conn, tz, calendar, study)
+    plans = plans or PlanStore(db.conn, tz, calendar, reviews)
     objectives = objectives or ObjectiveStore(db.conn, tz, habits, food, health, store)
     location = location or Location(db.conn, push)
     live = live or LiveActivities(db.conn, push)
@@ -696,6 +708,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 if a["type"] == "reminders":
                     a["reminders"] = [reminder_json(r, tz) if (r := store.get(old["id"])) else old
                                       for old in a["reminders"]]
+                elif a["type"] == "events":  # a plan's items as they are now: added or dropped since
+                    a["events"] = [plan_item(e) for e in a["events"]]
                 elif a["type"] == "proposal" and notebook and (p := notebook.proposal(a["proposal"]["id"])):
                     a["proposal"] = notebook.proposal_json(p)  # applied or declined since
                 elif a["type"] == "files":
@@ -1544,6 +1558,111 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.put("/v1/digest/settings", dependencies=[Depends(auth)])
     async def save_digest_settings(body: dict = Body(...)):
         return digest.save_settings(body)
+
+    # -- plans and events (the week card) ---------------------------------------------
+
+    def plan_item(e: dict) -> dict:
+        if not e.get("plan") or (plan := plans.get(e["plan"])) is None:
+            return e
+        item = next((i for i in plan["items"] if i["id"] == e["id"]), None)
+        return plans.item_json(plan, item) if item else e
+
+    def find_plan(plan_id: str) -> dict:
+        try:
+            return plans.find(plan_id)
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'\""))
+
+    def plan_note(plan: dict, verb: str, items: list[dict]) -> None:
+        if items:
+            lines = "\n".join(f"- {plans.line(i)}" for i in items)
+            agent.note(plan["conversation"], f"[The user tapped {verb} on plan {plan['public_id']}:\n{lines}]")
+
+    @app.post("/v1/plans/{plan_id}/add", dependencies=[Depends(auth)])
+    async def add_plan(plan_id: str, body: PlanItemsIn | None = None):
+        """The user's tap on Add (one item) or Add all: this is the confirmation, so they go in the calendar now."""
+        find_plan(plan_id)
+        if calendar is None:
+            raise HTTPException(503, "there's no calendar on this server")
+        try:
+            plan, added = await plans.add(plan_id, body.items if body else None)
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'\""))
+        plan_note(plan, "Add", added)
+        if added:
+            activity.record(db.conn, plan["agent"], "confirmed", f"Added {len(added)} proposed event(s)",
+                            "; ".join(plans.line(i) for i in added), plan["conversation"] or CONVERSATION)
+        return {"events": plans.card_items(plan)}
+
+    @app.post("/v1/plans/{plan_id}/drop", dependencies=[Depends(auth)])
+    async def drop_plan(plan_id: str, body: PlanItemsIn | None = None):
+        find_plan(plan_id)
+        try:
+            plan, dropped = plans.drop(plan_id, body.items if body else None)
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'\""))
+        plan_note(plan, "Remove", dropped)
+        return {"events": plans.card_items(plan)}
+
+    def need_calendar() -> CalendarBackend:
+        if calendar is None:
+            raise HTTPException(503, "there's no calendar on this server")
+        return calendar
+
+    async def own_event(uid: str) -> CalEvent:
+        """An event the user may move or delete from the app: not a recurring one (as with the agents' tools)."""
+        cal = need_calendar()
+        ev = await asyncio.to_thread(cal.get, uid)
+        if ev is None:
+            raise HTTPException(404, f"no event {uid}")
+        if ev.recurring:
+            raise HTTPException(409, "recurring events can't be changed here yet; use the Calendar app")
+        return ev
+
+    @app.get("/v1/events", dependencies=[Depends(auth)])
+    async def events_between(start: date | None = Query(None, alias="from"), days: int = 7):
+        """Every calendar's events from a local day, for `days` days (at most 42): the week card's other events."""
+        start = start or datetime.now(tz).date()
+        days = max(1, min(days, MAX_EVENT_DAYS))
+        begin = datetime.combine(start, time.min, tz)
+        try:
+            found = await asyncio.to_thread(need_calendar().events, begin, begin + timedelta(days=days))
+        except HTTPException:
+            raise
+        except Exception:
+            log.exception("calendar lookup failed")
+            raise HTTPException(502, "iCloud Calendar is unavailable right now")
+        return {"from": start.isoformat(), "days": days,
+                "events": [event_json(e, tz) for e in sorted(found, key=lambda e: event_start(e, tz))]}
+
+    def when(value: str) -> date | datetime:
+        if len(value) == 10:
+            return date.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
+        return dt.replace(tzinfo=tz) if dt.tzinfo is None else dt.astimezone(tz)
+
+    @app.patch("/v1/events/{uid}", dependencies=[Depends(auth)])
+    async def move_event(uid: str, body: EventMoveIn):
+        """The user's own move, from the event's sheet in the app."""
+        ev = await own_event(uid)
+        start, end = when(body.start), when(body.end)
+        if isinstance(start, datetime) != isinstance(end, datetime):
+            raise HTTPException(400, "start and end must both be dates or both be date-times")
+        if isinstance(start, datetime) and end <= start or not isinstance(start, datetime) and end < start:
+            raise HTTPException(400, "end must be after start")
+        if not isinstance(start, datetime):
+            end += timedelta(days=1)  # iCalendar's end is exclusive
+        moved = await asyncio.to_thread(lambda: need_calendar().update(uid, start=start, end=end))
+        activity.record(db.conn, "secretary", "confirmed", f"Moved {ev.title} (in the app)",
+                        f"To {moved.start.astimezone(tz):%a %d %b %H:%M}" if isinstance(moved.start, datetime) else None)
+        return event_json(moved, tz)
+
+    @app.delete("/v1/events/{uid}", dependencies=[Depends(auth)])
+    async def delete_event(uid: str):
+        ev = await own_event(uid)
+        await asyncio.to_thread(need_calendar().delete, uid)
+        activity.record(db.conn, "secretary", "confirmed", f"Deleted {ev.title} (in the app)")
+        return {"ok": True}
 
     @app.get("/v1/today", dependencies=[Depends(auth)])
     async def today(date: date | None = None):  # noqa: A002 - matches the query parameter

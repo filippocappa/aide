@@ -109,7 +109,7 @@ def test_today_lists_events_and_due_reminders(env):
     body = client.get("/v1/today?date=2026-10-20", headers=AUTH).json()
     assert body["events"][0] == {"id": "e1", "title": "Dentist", "calendar": "Home",
                                  "start": "2026-10-20T15:00:00+02:00", "end": "2026-10-20T16:00:00+02:00",
-                                 "all_day": False, "location": "", "recurring": False}
+                                 "all_day": False, "location": "", "notes": "", "recurring": False}
     assert [r["title"] for r in body["reminders"]] == ["Overdue", "Today"]
     assert body["reminders"][1]["due_at"] == "2026-10-20T17:00:00+02:00"
 
@@ -472,7 +472,7 @@ def test_listing_events_attaches_event_objects():
     body = TestClient(app).post("/v1/chat", json={"text": "tuesday?"}, headers=AUTH).json()
     assert body["attachments"] == [{"type": "events", "events": [{
         "id": "e1", "title": "Dentist", "calendar": "Home", "start": "2026-10-20T15:00:00+02:00",
-        "end": "2026-10-20T16:00:00+02:00", "all_day": False, "location": "", "recurring": False}]}]
+        "end": "2026-10-20T16:00:00+02:00", "all_day": False, "location": "", "notes": "", "recurring": False}]}]
 
 
 def test_system_prompt_says_the_app_shows_cards(env):

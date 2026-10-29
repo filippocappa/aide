@@ -7,6 +7,7 @@ import asyncio
 import base64
 import logging
 import re
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable, NamedTuple
 from zoneinfo import ZoneInfo
@@ -41,6 +42,7 @@ OLD_RESULT_KEPT = 300  # characters of it kept
 PLAN_CONTEXT = 20  # earlier messages a routine on the Claude plan reads, as text
 SEEN_PHOTOS = 3  # the model sees a chat's latest photos as images; older ones only as their [Photo id] line
 TEAM = "team"  # the Team chat: recipient of what's said there, and the queue's tag for actions queued from it
+calling_agent: ContextVar[str] = ContextVar("calling_agent", default=ORCHESTRATOR)  # whose tool is running
 TEAM_CONTEXT = 30  # team messages an agent answering in the Team chat sees
 FOLLOW_UP = timedelta(minutes=30)  # a Team chat message without a mention goes to who answered the last one, this soon
 SYSTEM_PROMPT = AGENTS[ORCHESTRATOR].prompt  # byte-stable per agent (agents.py), so each caches
@@ -256,6 +258,10 @@ class Agent:
             for conversation in dict.fromkeys(a["conversation"] for a in actions):
                 self._note(channel, conversation, "[The user replied !no. The queued actions were cancelled.]")
             return "Cancelled. Nothing was changed."
+
+    def note(self, conversation: str | None, text: str) -> None:
+        """Tell an app chat's model what the user did outside it (tapped Add on a plan)."""
+        self._note(CONVERSATION, conversation, text)
 
     def _note(self, channel: str, conversation: str | None, text: str) -> None:
         """Record a confirm/cancel in history so the model knows what happened."""
@@ -661,6 +667,7 @@ class Agent:
         ]
 
     async def _run_tool(self, agent: str, channel: str, name: str, args: dict) -> tuple[str, bool]:
+        calling_agent.set(agent)  # this call's own task (gather), so parallel calls don't mix
         try:
             tool = self.registries[agent].get(name)  # an agent can only call its own tools
             if self._watching and (tool.confirm or name in WRITES):
@@ -707,8 +714,17 @@ def _merge(attachments: list[dict]) -> list[dict]:
             continue
         items = merged.setdefault(a["type"], {})
         for item in a[key]:
+            if a["type"] == "events" and (seen := items.get(item["id"])):  # listed, then created: still created
+                item = {**item, "change": max(seen.get("change"), item.get("change"), key=_CHANGES.index)}
             items[item["id"]] = item
-    return [{"type": t, t: list(items.values())} for t, items in merged.items()]
+    out = [{"type": t, t: list(items.values())} for t, items in merged.items()]
+    for a in out:
+        if a["type"] == "events":  # two calls (this week, then a search) make one card in time order
+            a["events"].sort(key=lambda e: e["start"] if "T" in e["start"] else e["start"] + "T00:00")
+    return out
+
+
+_CHANGES = (None, "found", "created", "proposed")  # an event card item's change, weakest first
 
 
 _STAMP = re.compile(r"^\[[^\]]*\] ")

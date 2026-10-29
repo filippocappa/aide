@@ -68,9 +68,11 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
         s = ev.start if isinstance(ev.start, datetime) else datetime.combine(ev.start, time.min, tz)
         return s.astimezone(tz)
 
-    def cards(events: list[CalEvent]) -> ToolOutput:
-        return ToolOutput("\n".join(fmt(ev) for ev in events),
-                          {"type": "events", "events": [event_json(ev, tz) for ev in events]})
+    def cards(events: list[CalEvent], change: str | None = None, text: str | None = None) -> ToolOutput:
+        """`change` marks them on the card: "found" by a search, "created" this turn."""
+        mark = {"change": change} if change else {}
+        return ToolOutput(text or "\n".join(fmt(ev) for ev in events),
+                          {"type": "events", "events": [{**event_json(ev, tz), **mark} for ev in events]})
 
     def day_start(d: date) -> datetime:
         return datetime.combine(d, time.min, tz)
@@ -106,7 +108,7 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
         hits = [ev for ev in events if q in f"{ev.title} {ev.location} {ev.notes}".casefold()]
         if not hits:
             return f"No events matching {query!r} between {SEARCH_BACK.days} days ago and a year ahead."
-        return cards(sorted(hits, key=sort_key)[:30])
+        return cards(sorted(hits, key=sort_key)[:30], "found")
 
     async def free_time(start_date: str, end_date: str, minutes: int = 60) -> str:
         s, e = date.fromisoformat(start_date), date.fromisoformat(end_date)
@@ -138,7 +140,7 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
                            location: str | None = None, notes: str | None = None) -> str:
         s, e = parse_range(start, end)
         ev = await asyncio.to_thread(cal.create, calendar, title, s, e, location or "", notes or "")
-        return "Created: " + fmt(ev)
+        return cards([ev], "created", "Created: " + fmt(ev))
 
     def edits(new_start, new_end, calendar, title, location, notes) -> dict:
         changes = {k: v for k, v in (("calendar", calendar), ("title", title), ("location", location),

@@ -55,7 +55,9 @@ from the tools the assistant used in that turn, not parsed from its text:
 ]
 ```
 - `reminders`: when the assistant listed reminders, or created, changed or completed one, in that turn.
-- `events`: when it listed or searched calendar events.
+- `events`: when it listed, searched, created or proposed calendar events. All of a turn's go in one card, in time
+  order (since 2026-10-29). An item may carry `change` (since 2026-10-29; absent on a plain listing): `"found"` (a
+  search hit), `"created"` (made this turn) or `"proposed"` (in a plan, not yet in the calendar; see Events and plans).
 - `meals`: when it logged, changed or listed meals (see Food), `{"type": "meals", "meals": [Meal]}`.
 - `departures`: when it looked up GTT arrivals, a card per stop (see Transit), `{"type": "departures",
   "departures": [Board]}`.
@@ -1214,12 +1216,40 @@ Its answers are plain text; there are no health attachments yet.
   "events": [
     {"id": "df2c…@aide", "title": "Drive to Malpensa", "calendar": "Transport",
      "start": "2026-10-18T14:00:00+02:00", "end": "2026-10-18T19:00:00+02:00",
-     "all_day": false, "location": "Malpensa Airport", "recurring": false}
+     "all_day": false, "location": "Malpensa Airport", "notes": "", "recurring": false}
   ],
   "reminders": [ /* Reminder objects due that day or overdue and not completed */ ]
 }
 ```
-All-day events have `"all_day": true`, and `start`/`end` are dates, with `end` **exclusive**.
+All-day events have `"all_day": true`, and `start`/`end` are dates, with `end` **exclusive**. `notes` (since
+2026-10-29) is the event's notes, `""` when it has none.
+
+### Events and plans
+
+Since 2026-10-29 (#25): the chat's events card is a week view, and its events can be opened, moved and deleted.
+
+`GET /v1/events?from=YYYY-MM-DD&days=7` (`from` defaults to today, `days` 1 to 42) → `{"from", "days", "events":
+[event]}`, every calendar's events in those days, in time order: what the week card shows around its own.
+`502` when iCloud doesn't answer, `503` with no calendar.
+
+`PATCH /v1/events/{id}` with `{"start", "end"}` (local `YYYY-MM-DDTHH:MM`, or dates for an all-day event, `end` then
+its last day) → the event, moved. `DELETE /v1/events/{id}` → `{"ok": true}`. These are the user's own taps on the
+event's sheet, so they run at once (logged in Activity as `confirmed`). `409` for a recurring event (the Calendar app
+does those), `404` for an unknown one, `400` for an end before the start.
+
+**Plans.** An agent (Secretary, or Professor for review sessions) proposes several events at once with
+`propose_events`. They come as `events` card items with `"change": "proposed"` and:
+- `plan`: the plan's id, `ep_…`; the item's own `id` is `ep_…-1`, `ep_…-2` …;
+- `status`: `"proposed"`, `"added"` or `"dropped"`; `/v1/history` gives it as it is now;
+- `event`: the calendar event's id once added, else `null`;
+- `error`: why the last Add of it failed, when it did (it stays `proposed`).
+
+Nothing is in the calendar until the user taps Add, which is the confirmation (as with a mail draft's Send):
+- `POST /v1/plans/{plan}/add` with `{"items": ["ep_…-1"]}` (or no body: every item still proposed) → `{"events":
+  [the plan's items]}`. A review session's item (`Review: <course>`) goes in as a review session (see Quizzes and
+  review sessions).
+- `POST /v1/plans/{plan}/drop` with the same body → `{"events": [...]}`: those won't be added.
+- The chat's agent is told what was added or removed. `404` for an unknown plan or item.
 
 **The app's Today page** (since 2026-10-26, #21) is built from these, each part loading on its own, so one slow
 source (the calendar, mail) doesn't hold up the rest. There is no endpoint just for it.

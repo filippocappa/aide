@@ -48,6 +48,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `transit.py`: GTT (Turin's buses and trams): the GTFS timetable (rebuilt nightly into `data/gtt.db`), the live
   feed, the phone's location, and tram alerts with their watcher. `tools/transit.py`: the agents' transit tools.
   `leave.py`: leave-now for calendar events (the event's GTT ride from Maps becomes a one-off tram alert).
+- `plans.py`: events an agent proposes together (`propose_events`), added when the user taps Add on the week card.
 - `upcoming.py`: the next calendar event's Live Activity (a countdown from 30 min before; `live.py` sends it).
 - `locks.py`: Screen Time locks (one-offs and weekly schedules, unlocking early with a reason); `tools/locks.py`: Coach's.
 - `browser.py`: Aide's own Chromium (Playwright, headless, a phone-sized page, a profile per site in `data/browser/`),
