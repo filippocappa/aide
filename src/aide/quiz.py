@@ -534,19 +534,25 @@ def _math(s: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", s).strip()
 
 
-def plain_math(text: str, blocks: bool = False) -> str:
+def plain_math(text: str, blocks: bool = False, inline: bool = False) -> str:
     """$…$ and $$…$$ in the notes as readable Unicode: $\\pi_t - \\pi_{t-1} = -\\alpha(u_t - u_n)$ as
     πₜ − πₜ₋₁ = −α(uₜ − uₙ). Markdown outside the maths stays. `blocks`: a $$…$$ on its own line(s) (in a
-    callout too, a full stop after it allowed) stays LaTeX, for the app to draw."""
+    callout too, a full stop after it allowed) stays LaTeX, for the app to draw. `inline`: the rest of the maths
+    stays LaTeX too, as \\(…\\) (a $ left in the text is money)."""
     kept: list[str] = []
+
+    def keep(latex: str) -> str:
+        kept.append(latex)
+        return f"\0{len(kept) - 1}\0"
 
     def sub(m: re.Match) -> str:
         if blocks and m.group(1) is not None:
             start = text.rfind("\n", 0, m.start()) + 1
             end = text.find("\n", m.end())
             if re.fullmatch(r"[\s>]*", text[start:m.start()]) and re.fullmatch(r"[\s.,;:]*", text[m.end():end if end >= 0 else None]):
-                kept.append(m.group(0))
-                return f"\0{len(kept) - 1}\0"
+                return keep(m.group(0))
+        if inline:
+            return keep("\\(" + " ".join((m.group(1) or m.group(2)).split()) + "\\)")
         return _math(m.group(1) or m.group(2)).replace("-", "−")
 
     out = unicodedata.normalize("NFC", _MATH.sub(sub, text).replace("\\$", "$"))  # i and a combining bar as ī

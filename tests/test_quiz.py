@@ -105,6 +105,9 @@ def test_formulas_on_their_own_lines_stay_latex_for_the_app():
         "Real GDP, Yₜ in $:", r"$$P_t=\frac{\$Y_t}{Y_t}$$", "", r"> $$", r"> u=\frac{U}{L}", r"> $$", "",
         "so g=π+g_Y inline", r"$$a_{t-1}$$."]
     assert "$$" not in plain_math(text)
+    assert plain_math(text, blocks=True, inline=True).split("\n")[:2] == [r"Real GDP, \(Y_t\) in $:",
+                                                                           r"$$P_t=\frac{\$Y_t}{Y_t}$$"]
+    assert plain_math("so $$g=\\pi\n+g_Y$$ inline", blocks=True, inline=True) == r"so \(g=\pi +g_Y\) inline"
 
 
 def test_the_study_tab_reads_notes_as_plain_text(nb):
