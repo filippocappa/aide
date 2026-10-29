@@ -42,6 +42,7 @@ from .moodle import MoodleSync
 from .notebook import NotebookStore, NotebookWorker
 from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
+from .weight import WeightStore
 from .webdav import USER as WEBDAV_USER
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
@@ -52,6 +53,7 @@ from .tools.objectives import objective_tools
 from .tools.habits import habit_tools
 from .tools.locks import lock_tools
 from .tools.health import health_tools
+from .tools.weight import weight_tools
 from .tools.mail import draft_tools, mail_tools
 from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
@@ -93,11 +95,13 @@ def main() -> None:
     photos = PhotoStore(settings.db_path.parent / "photos")
     push = Push(db.conn, settings.apns_key_path, settings.apns_key_id, settings.apns_team_id, settings.apns_bundle_id)
     locks = LockStore(db.conn, settings.timezone)
+    weights = WeightStore(db.conn, settings.timezone, health)
     if push.enabled:
         reminders.on_change.append(push.request_sync)
         locks.on_change.append(push.request_sync)  # the phone sets the locks itself
         habits.on_health_count.append(push.request_sync)  # the phone writes the count to Apple Health
         food.on_change.append(push.request_sync)  # and the meals
+        weights.on_change.append(push.request_sync)  # and the weights logged through Aide
     elif not (settings.apns_key_path and settings.apns_key_id and settings.apns_team_id):
         log.warning("APNS_KEY_PATH / APNS_KEY_ID / APNS_TEAM_ID not set: push notifications off")
 
@@ -105,7 +109,7 @@ def main() -> None:
 
     tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits),
              *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone, foods, off, health),
-             *lock_tools(locks, settings.timezone)]
+             *weight_tools(weights), *lock_tools(locks, settings.timezone)]
     cal = None
     if settings.icloud_email and settings.icloud_app_password:
         cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
@@ -279,7 +283,8 @@ def main() -> None:
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
-                             quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off)
+                             quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off,
+                             weights=weights)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

@@ -657,7 +657,7 @@ goes. The server sends the silent `sync` push after every meal change, so this h
 | `POST /v1/food/foods/{id}/log` | `{"grams": 30, "date": "2026-10-28", "conversation_id": "…"}` (all optional) | `{"meal": Meal}`: logs a saved food as a meal, the server's own sum (no model call). No `grams`: the usual portion, else one serving, else 400. The meal is named after the food (and its brand), `notes` is its items line, and the grams become the usual portion. Coach also posts "Logged …" with its `meals` card in the Coach chat `conversation_id` names (where it was scanned), else in the Food log chat (since 2026-10-29). |
 | `GET /v1/food/goals` | | Goals (the base) |
 | `PUT /v1/food/goals` | Goals | Goals (sets the base) |
-| `GET /v1/food/targets` | | Targets (since 2026-10-29), plus `"coach": {"model": "Claude Sonnet 5.5", "via": "plan"}`: who answers a proposal (`via`: `plan`, the Claude plan through Claude Code; `openrouter` or `api`, paid per token) |
+| `GET /v1/food/targets` | | Targets (since 2026-10-29), plus `"coach": {"model": "Claude Sonnet 5.5", "via": "plan"}`: who answers a proposal (`via`: `plan`, the Claude plan through Claude Code; `openrouter` or `api`, paid per token), and `"weight"`: the weight summary ("Apple Health", Weight) |
 | `PUT /v1/food/targets` | any of `base` (Goals), `workouts` (any of its keys), `profile` (any of its keys; `null` clears one) | Targets; 400 with the reason when a value is out of range |
 | `POST /v1/food/targets/propose` | optional `{"answers": [{"question": "Is 65 kg still right?", "answer": "66 now"}]}` (up to 4; empty answers are left out) | `{"base": Goals, "workouts": {"on": true, "share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week…", "questions": ["Is 65 kg still right?"]}`: Coach's proposal (one model call, 5–30 s) from the profile, 60 days of Apple Health (resting and active energy, workouts with distance and pace, VO2 max, weight; the Watch's resting energy, not a formula) and the last 14 days of food. `questions` (since 2026-10-29, up to 2, often none) are what would change the numbers; the app sends the answers back with the questions for a new proposal. Nothing is saved: the app shows it and PUTs what the user keeps. 502 when the model fails or answers oddly. |
 
@@ -1271,6 +1271,47 @@ added; treat an unknown one like `other`.
     numbers work from the first morning;
   - when HealthKit wakes the app in the background with new sleep or a new workout (right away) or new steps
     (at most hourly): the last 2 days.
+
+### Weight
+
+Since 2026-10-29. The user's weight from two places: Apple Health (each day's `weight_kg`, as uploaded) and readings
+logged through Aide (in chat, "72.4 this morning", or the app's Log weight). A day's reading is the last one logged
+through Aide that day, else Health's. The phone writes Aide's readings to Health itself, like a limit habit's counts.
+
+| Endpoint | Body / query | Response |
+|---|---|---|
+| `GET /v1/health/weight` | `?days=90` (1–366) | `{"readings": [Reading], "summary": Summary, "logged": [Logged]}` |
+| `POST /v1/health/weight` | `{"kg": 72.4, "at": "2026-10-29T07:40:00+01:00"}` (`at` optional, now; needs a UTC offset) | `{"weight": Logged, "summary": Summary}`; 400 outside 25–300 kg or in the future |
+| `DELETE /v1/health/weight/{id}` | | `{"ok": true, "summary": Summary}`; 404 when it's gone |
+
+- **Reading:** `{"date": "2026-10-29", "kg": 72.4, "source": "aide", "id": 3}`, one a day, oldest first; `source`
+  is `aide` (with its `id`) or `health`.
+- **Logged:** `{"id": 3, "at": "2026-10-29T06:40:00+00:00", "kg": 72.4}`, every reading logged through Aide in the
+  last 90 days, oldest first. **The app mirrors these to Health** as Body Mass samples carrying the id in their
+  metadata (`AideWeight`): it adds the missing ones and deletes its own samples whose id isn't listed any more. It
+  never touches other samples. It does this on launch, on foreground and on a silent `sync` push (each change here
+  sends one).
+- **Summary:**
+  ```json
+  {"latest": {"date": "2026-10-29", "kg": 72.4}, "days_since": 0, "average_kg": 72.25, "change_kg": -0.3,
+   "rate_kg_week": -0.1, "goal": "gain", "pace_kg_week": {"low_kg": 0.04, "high_kg": 0.09}, "verdict": "below"}
+  ```
+  - `average_kg` is the mean of the last 7 days' readings.
+  - `change_kg` is that average against the one 3 weeks before.
+  - `rate_kg_week` is the slope of a straight line through the last 28 days' readings. It needs 3 readings at least
+    14 days apart.
+  - `pace_kg_week` is what the food goal (`profile.goal` on the targets) wants:
+    - gain: +0.06–0.12% of the weight a week, which is 0.25–0.5% a month;
+    - lose: −0.75 to −0.25%;
+    - keep and perform: ±0.06%.
+  - `verdict` is `below`, `on_track` or `above`, with 0.06% a week of slack either side for the scale's noise.
+  - Any of these is `null` without the data. `latest` and `days_since` are null when there's no reading in the last
+    year.
+- **The targets.** `GET /v1/food/targets` carries the same `summary` as `weight`. Coach's proposal gets the
+  trend and corrects the base from it when it has been off for about 3 weeks (for gain with the average falling,
+  about +150–200 kcal).
+- **Coach** has `log_weight`, `weight_trend` and `delete_weight` (queued). A starting watch, "Weigh-in" (Mondays at
+  08:30), speaks up only when there's no reading in the last 7 days or the trend is off the goal.
 
 ### Wake-up briefing
 

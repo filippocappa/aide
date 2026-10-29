@@ -52,6 +52,7 @@ from ..locks import LockStore
 from ..tools.nutrition import OpenFoodFacts, read_label, save_product
 from ..transit import AlertStore, Boards, Location
 from ..wake import WakeService
+from ..weight import WeightStore
 
 log = logging.getLogger(__name__)
 
@@ -321,6 +322,11 @@ class HealthDaysIn(BaseModel):
     days: list[dict]
 
 
+class WeightIn(BaseModel):
+    kg: float
+    at: datetime | None = None  # UTC offset required; omit for now
+
+
 class WakeIn(BaseModel):
     at: datetime | None = None
     source: str = "app"
@@ -469,7 +475,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                quizzes: QuizStore | None = None, reviews: ReviewStore | None = None,
                locks: LockStore | None = None, errands: ErrandRunner | None = None,
                errand_store: ErrandStore | None = None, plans: PlanStore | None = None,
-               foods: FoodDB | None = None, off: OpenFoodFacts | None = None) -> FastAPI:
+               foods: FoodDB | None = None, off: OpenFoodFacts | None = None,
+               weights: WeightStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -481,6 +488,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         habits.food = food
     health = health or HealthStore(db.conn, tz)
     nutrition = Nutrition(food, health)
+    weights = weights or WeightStore(db.conn, tz, health)
     today_events: dict = {}  # today's calendar events for a planned run: {"at": loop time, "day", "events"}
     if habits.health_days is None:  # limit habits count from Apple Health
         habits.health_days = health
@@ -1192,7 +1200,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/food/targets", dependencies=[Depends(auth)])
     async def food_targets():
-        return nutrition.targets() | {"coach": proposer()}
+        return nutrition.targets() | {"coach": proposer(), "weight": weights.summary()}
 
     @app.put("/v1/food/targets", dependencies=[Depends(auth)])
     async def set_food_targets(body: FoodTargetsIn):
@@ -1211,7 +1219,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         from ..notebook import parse_json  # notebook imports a lot; only here
         today = food.today()
         answers = [a.model_dump() for a in body.answers if a.answer.strip()] if body else []
-        text = proposal_input(nutrition, food.days(today - timedelta(days=14), today - timedelta(days=1)), answers)
+        text = proposal_input(nutrition, food.days(today - timedelta(days=14), today - timedelta(days=1)), answers,
+                              weights)
         try:
             answer = await ask_once(PROPOSE_PROMPT, [{"type": "text", "text": text}], PROPOSE_TOKENS)
             proposal = parse_proposal(parse_json(answer))
@@ -1901,6 +1910,28 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         end = end or datetime.now(tz).date()
         start = start or end - timedelta(days=29)
         return {"days": health.between(start, end)}
+
+    @app.get("/v1/health/weight", dependencies=[Depends(auth)])
+    async def weight(days: int = Query(90, ge=1, le=366)):
+        today = weights.today()
+        return {"readings": weights.readings(today - timedelta(days=days - 1), today), "summary": weights.summary(),
+                "logged": weights.logged()}
+
+    @app.post("/v1/health/weight", dependencies=[Depends(auth)])
+    async def log_weight(body: WeightIn):
+        if body.at is not None and body.at.tzinfo is None:
+            raise HTTPException(400, "at needs a UTC offset")
+        try:
+            logged = weights.log(body.kg, body.at)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"weight": logged, "summary": weights.summary()}
+
+    @app.delete("/v1/health/weight/{weight_id}", dependencies=[Depends(auth)])
+    async def delete_weight(weight_id: int):
+        if not weights.delete(weight_id):
+            raise HTTPException(404, "no such weight")
+        return {"ok": True, "summary": weights.summary()}
 
     @app.post("/v1/wake", dependencies=[Depends(auth)])
     async def wake_up(body: WakeIn | None = None):

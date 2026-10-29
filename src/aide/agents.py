@@ -27,6 +27,7 @@ BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
 PURCHASES = ("list_purchases",)
 HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
 HEALTH = ("health",)
+WEIGHT = ("log_weight", "weight_trend", "delete_weight")
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal", "find_food", "save_food", "update_food")
 LOCKS = ("list_locks", "lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
@@ -173,7 +174,10 @@ sets the alert, so the countdown comes by itself; answer with the line, the stop
 
 _HEALTH = """- Health: the health tool reads the user's Apple Health summaries (sleep, resting heart rate, HRV, steps, \
 workouts). Compare with the user's own usual numbers, never with population norms, and never make medical claims \
-or diagnoses; if something looks worrying, suggest they talk to a doctor."""
+or diagnoses; if something looks worrying, suggest they talk to a doctor.
+- Weight: when the user tells you their weight, log_weight (the phone writes it to Apple Health). weight_trend \
+gives the 7-day average and the trend a week against the pace their food goal wants; one reading says little, so \
+talk about the average and the trend, not a day's number."""
 
 _PHOTOS = """- Photos: the user can send photos. Their message then has a [Photo p_…] line for each, and you see the \
 latest photos as images; an older one is only that line. Look at what the photo shows and answer what they ask, \
@@ -386,6 +390,18 @@ _STARTING_WATCHES = (
                     "break, with a small way to still do it tonight.", "20:30", (), watch=True)),
 )
 STARTING_WATCHES = tuple((a, dict(i, days=list(i["days"]))) for a, i in _STARTING_WATCHES)
+# Watches added after the first ones, each set up once under its own name: (name, agent, idea).
+_LATER_WATCHES = (
+    ("watch:weigh-in", "coach", _idea(
+        "Weigh-in", "Look at my weight with weight_trend. Speak up only in two cases. If I haven't been weighed in the "
+        "last 7 days, remind me in one line to step on the scale this morning, before breakfast, and tell you the number. If the trend is off the "
+        "pace my food goal wants (the verdict says below or above) and the 7-day average has been moving the wrong "
+        "way for about 3 weeks, say so with the numbers and what you'd change in my targets: for gain, if the "
+        "average is falling, about +150–200 kcal a day, mostly carbs; for lose, if it isn't going down, about "
+        "−150–200 kcal; and that I can tap Ask Coach on the targets page.", "08:30", (1,),
+        watch=True)),
+)
+LATER_WATCHES = tuple((n, a, dict(i, days=list(i["days"]))) for n, a, i in _LATER_WATCHES)
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
@@ -407,10 +423,11 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training, food and habits", "#23A26D",
              ("How did I sleep this week?", "Should I train hard today?", "What have I eaten today?"),
-             COACH_PROMPT, (*HEALTH, *HABITS, *FOOD, *LOCKS, *CALENDAR_READ, *WEB),
+             COACH_PROMPT, (*HEALTH, *WEIGHT, *HABITS, *FOOD, *LOCKS, *CALENDAR_READ, *WEB),
              routine_ideas=(_idea("Weekly recap", "Recap my sleep, training and habits for the week, and suggest one "
                                   "thing for next week.", "18:00", (7,)),
-                            *(i for a, i in _STARTING_WATCHES if a == "coach"))),
+                            *(i for a, i in _STARTING_WATCHES if a == "coach"),
+                            *(i for _, a, i in _LATER_WATCHES if a == "coach"))),
     AgentDef("finance", "Finance", "Money and budgets", "#B8921C",
              ("Help me set a monthly budget", "I spent "), FINANCE_PROMPT, (*PURCHASES, *WEB),
              routine_ideas=(_idea("Week's spending", "Ask me what I spent this week, then compare it with my budget "
@@ -425,7 +442,7 @@ _CONNECTORS = (
      {"create_event", "edit_event", "delete_event", "propose_events"}),
     ("reminders", "Reminders", REMINDERS, {"create_reminder", "update_reminder", "complete_reminder", "delete_reminder"}),
     ("mail", "Gmail", MAIL, {"send_mail", "reply_mail", "draft_reply", "discard_draft"}),
-    ("health", "Apple Health", HEALTH, set()),
+    ("health", "Apple Health", (*HEALTH, *WEIGHT), {"log_weight", "delete_weight"}),
     ("habits", "Habits", HABITS, {"add_habit", "check_habit", "count_habit", "fill_habit_days", "delete_habit"}),
     ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "delete_meal"}),
     ("screen_time", "Screen Time", LOCKS, {"lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock"}),

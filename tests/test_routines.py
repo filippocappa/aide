@@ -422,10 +422,10 @@ def test_the_starting_watches_are_set_up_once(env):
     added = agent.routines.add_starting_watches()
     assert [(r["agent"], r["title"], r["watch"]) for r in added] == [
         ("secretary", "Mail that needs you", True), ("secretary", "Tomorrow", True),
-        ("coach", "Recovery check", True), ("coach", "Habits tonight", True)]
+        ("coach", "Recovery check", True), ("coach", "Habits tonight", True), ("coach", "Weigh-in", True)]
     client.delete(f"/v1/routines/{added[0]['id']}", headers=AUTH)
     assert agent.routines.add_starting_watches() == []
-    assert len(client.get("/v1/routines", headers=AUTH).json()["routines"]) == 3
+    assert len(client.get("/v1/routines", headers=AUTH).json()["routines"]) == 4
     ideas = {a["id"]: a["routine_ideas"] for a in client.get("/v1/agents", headers=AUTH).json()["agents"]}
     assert [i["title"] for i in ideas["secretary"] if i["watch"]] == ["Mail that needs you", "Tomorrow"]
     assert not any(i["watch"] for i in ideas["finance"])

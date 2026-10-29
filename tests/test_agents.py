@@ -122,7 +122,7 @@ def test_agents_endpoint_matches_the_contract(env):
         ("Plan my week", "20:00", [7], False), ("Mail sweep", "09:00", [1, 2, 3, 4, 5], False),
         ("Mail that needs you", "11:00", [1, 2, 3, 4, 5], True), ("Tomorrow", "18:30", [1, 2, 3, 4, 7], True),
         ("Review what I studied", "17:00", [7], False), ("Weekly recap", "18:00", [7], False),
-        ("Recovery check", "09:00", [], True), ("Habits tonight", "20:30", [], True),
+        ("Recovery check", "09:00", [], True), ("Habits tonight", "20:30", [], True), ("Weigh-in", "08:30", [1], True),
         ("Week's spending", "19:00", [7], False)]
     assert all(a["color"].startswith("#") and len(a["color"]) == 7 for a in agents)
     assert client.get("/v1/agents").status_code == 401

@@ -12,7 +12,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from .agents import AGENTS, STARTING_WATCHES, check_agent
+from .agents import AGENTS, LATER_WATCHES, STARTING_WATCHES, check_agent
 from .db import Database, utcnow
 from .push import Push
 
@@ -141,10 +141,11 @@ class RoutineStore:
         return self.get(cur.lastrowid)
 
     def add_starting_watches(self) -> list[dict]:
-        """Secretary's and Coach's first watches, once per database: deleting one doesn't bring it back."""
-        if not self.db.once("starting-watches"):
-            return []
-        return [self.create(agent, **idea) for agent, idea in STARTING_WATCHES]
+        """Secretary's and Coach's first watches, and each one added later, once per database: deleting one doesn't
+        bring it back."""
+        added = [self.create(agent, **idea) for agent, idea in STARTING_WATCHES] if self.db.once("starting-watches") \
+            else []
+        return added + [self.create(agent, **idea) for name, agent, idea in LATER_WATCHES if self.db.once(name)]
 
     def watch_notes_today(self, now: datetime | None = None) -> int:
         """Notes posted by watches since local midnight."""

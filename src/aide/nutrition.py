@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from .food import MACROS, FoodStore, totals
 from .health import HealthStore, workout_date, workout_minutes
+from .weight import describe as describe_weight
 
 KINDS = ("general", "fat", "drink", "water", "cheese", "red_meat")
 QUALITY = ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct")
@@ -473,6 +474,11 @@ gain is a modest surplus (200–300 kcal) for muscle; perform is eating for trai
 enough carbs for the training load (most of a workout's burn back, as carbs), protein toward the top of the range, \
 nothing cut. The profile's note is what the user told you in their own words (a race, how they train, what they \
 want): follow it. \
+The weight trend (the 7-day average and its rate a week) is how you know the targets work: gain should go up about \
+0.25–0.5% of body weight a month, lose 0.25–0.75% a week, keep and perform stay steady. When the trend has been off \
+that for about 3 weeks, correct the base from it (for gain with the average falling, about +150–200 kcal, mostly \
+carbs) rather than from a formula; with only a reading or two, say the trend isn't known yet. Use the 7-day average \
+as the weight when there is one. \
 When the Watch measures resting energy (resting kcal), \
 use it: a rest day's burn is the usual resting kcal plus the usual active kcal on days without a workout. Don't \
 estimate it from a formula then. Say why in two or three short sentences, plainly, with the numbers that \
@@ -498,9 +504,10 @@ def _median(values: list[float]) -> float | None:
     return values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
 
 
-def proposal_input(nutrition: "Nutrition", foods_days: list[dict], answers: list[dict] | None = None) -> str:
-    """What Coach proposes from: the profile, 60 days of Health, the last 14 days of food, the current targets, and
-    the user's answers to its questions (each {question, answer})."""
+def proposal_input(nutrition: "Nutrition", foods_days: list[dict], answers: list[dict] | None = None,
+                   weights=None) -> str:
+    """What Coach proposes from: the profile, 60 days of Health, the weight trend, the last 14 days of food, the
+    current targets, and the user's answers to its questions (each {question, answer})."""
     today = nutrition.food.today()
     t = nutrition.targets()
     lines = [f"Today: {today:%A %d %B %Y}.", f"Profile: {json.dumps(t['profile'])}",
@@ -532,6 +539,8 @@ def proposal_input(nutrition: "Nutrition", foods_days: list[dict], answers: list
                          + (f"; {'; '.join(workouts)}" if workouts else ""))
     else:
         lines.append("No Apple Health days.")
+    if weights is not None:
+        lines.append(f"Weight: {describe_weight(weights.summary(today))}")
     logged = [d for d in foods_days if d["meals"]]
     if logged:
         lines.append("Food logged (kcal, protein, carbs, fat):")
