@@ -1043,6 +1043,8 @@ struct HealthWorkout: Encodable, Equatable {
     var minutes: Int
     var kcal: Int?
     var km: Double?
+    var avgHr: Int? = nil
+    var maxHr: Int? = nil
 }
 
 /// One local day's summary. Nil fields are left out: no data.
@@ -1062,6 +1064,10 @@ struct HealthDay: Encodable, Equatable {
     var workouts: [HealthWorkout] = []
     var weightKg: Double?  // the day's latest weight; for the food targets
     var vo2max: Double?
+    /// Heart rate for Strain (docs/API.md, "Health day"): the day's top, minutes per 5-bpm bucket, hourly averages.
+    var maxHr: Int?
+    var hrMinutes: [[Double]]?
+    var hrHourly: [Int?]?
 }
 
 struct HealthUpload: Encodable { let days: [HealthDay] }

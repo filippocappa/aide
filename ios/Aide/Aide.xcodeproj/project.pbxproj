@@ -87,6 +87,7 @@
 		B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */; };
 		B498B793AEFA7987A267B6D0 /* Figure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E5D11C27686D088BF88108 /* Figure.swift */; };
 		B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
+		B80EB1D82215C188A6E90082 /* HeartSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9B460E43DC41726DAA0D2B8 /* HeartSummary.swift */; };
 		BB366D70036D817C5699C986 /* ObjectivesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F02CCB66A67DA8AD790FF51 /* ObjectivesWidget.swift */; };
 		BD46F83D3EF35D141EA7239C /* ReminderSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148A57EF978A9887AF00FE8A /* ReminderSyncService.swift */; };
 		C09D1B1769A15612EC00F4D0 /* HabitsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */; };
@@ -227,6 +228,7 @@
 		9AEB482052BA9CB53D3B8410 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
 		9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideApp.swift; sourceTree = "<group>"; };
 		9F02CCB66A67DA8AD790FF51 /* ObjectivesWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectivesWidget.swift; sourceTree = "<group>"; };
+		A9B460E43DC41726DAA0D2B8 /* HeartSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartSummary.swift; sourceTree = "<group>"; };
 		ACCD638FA0D9F230CF15238B /* LockShield.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LockShield.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		ADE4DEA766E09C8CD558DC9B /* WidgetSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSupport.swift; sourceTree = "<group>"; };
 		AE34FAE9A713F5C8D1AE1DA5 /* TransitAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransitAlertsView.swift; sourceTree = "<group>"; };
@@ -427,6 +429,7 @@
 			isa = PBXGroup;
 			children = (
 				CAE455930B7B7F343EF3E0F7 /* HealthService.swift */,
+				A9B460E43DC41726DAA0D2B8 /* HeartSummary.swift */,
 				6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */,
 				B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */,
 			);
@@ -766,6 +769,7 @@
 				C09D1B1769A15612EC00F4D0 /* HabitsView.swift in Sources */,
 				583CA03CCC0F99FEB9CC3EB6 /* HealthService.swift in Sources */,
 				CDA6BD42FE40FA43362C4856 /* HealthView.swift in Sources */,
+				B80EB1D82215C188A6E90082 /* HeartSummary.swift in Sources */,
 				1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */,
 				9458E33FE7340C8EDED1D46F /* LineBadge.swift in Sources */,
 				10275D194F779A427E756B09 /* LiveActivities.swift in Sources */,

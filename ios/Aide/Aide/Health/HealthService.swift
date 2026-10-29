@@ -44,6 +44,7 @@ final class HealthService: ObservableObject {
     private static let sleep = HKCategoryType(.sleepAnalysis)
     private static let restingHR = HKQuantityType(.restingHeartRate)
     private static let hrv = HKQuantityType(.heartRateVariabilitySDNN)
+    private static let heartRate = HKQuantityType(.heartRate)
     private static let respiratory = HKQuantityType(.respiratoryRate)
     private static let wristTemp = HKQuantityType(.appleSleepingWristTemperature)
     private static let steps = HKQuantityType(.stepCount)
@@ -69,9 +70,10 @@ final class HealthService: ObservableObject {
     ]
 
     /// The food kinds are read too, so the app finds its own entries again. Weight, height, age, sex and VO2 max
-    /// are for the food targets (the profile Coach proposes from).
+    /// are for the food targets (the profile Coach proposes from). Heart rate is for Strain (sent as a summary);
+    /// adding it asks again, and that re-sends the 60 days.
     private static let readTypes: Set<HKObjectType> = Set([
-        sleep, restingHR, hrv, respiratory, wristTemp, steps, activeEnergy, restingEnergy, exercise, inhaler,
+        sleep, restingHR, hrv, heartRate, respiratory, wristTemp, steps, activeEnergy, restingEnergy, exercise, inhaler,
         HKObjectType.workoutType(), bodyMass, height, vo2Max,
         HKCharacteristicType(.dateOfBirth), HKCharacteristicType(.biologicalSex),
     ] + food.map(\.0) + distances)
@@ -466,6 +468,7 @@ final class HealthService: ObservableObject {
         async let inhalerByDay = daily(Self.inhaler, .cumulativeSum, from: first, to: end)
         async let weightSamples = quantitySamples(Self.bodyMass, from: first, to: end)
         async let vo2Samples = quantitySamples(Self.vo2Max, from: first, to: end)
+        async let heartByDay = heart(from: first, count: count, calendar: calendar)
 
         let segments = try await sleepSamples.compactMap(Self.segment)
         let (hrv, respiratory, temp) = try await (hrvSamples, respiratorySamples, tempSamples)
@@ -474,6 +477,7 @@ final class HealthService: ObservableObject {
         let inhaler = try await inhalerByDay
         let restingEnergy = try await restingEnergyByDay
         let (weights, vo2) = try await (weightSamples, vo2Samples)
+        let heart = await heartByDay
         let vo2Unit = HKUnit.literUnit(with: .milli).unitDivided(by: .gramUnit(with: .kilo).unitMultiplied(by: .minute()))
 
         let bpm = HKUnit.count().unitDivided(by: .minute())
@@ -485,6 +489,7 @@ final class HealthService: ObservableObject {
 
             var hrvMs = nightSpan.flatMap { Self.average(hrv, .secondUnit(with: .milli), $0.0, $0.1) }
             if hrvMs == nil { hrvMs = Self.average(hrv, .secondUnit(with: .milli), day, nextDay) }
+            let pulse = heart[offset] ?? HeartSummary()
 
             return HealthDay(
                 date: Wire.dayString(day),
@@ -502,9 +507,32 @@ final class HealthService: ObservableObject {
                 naps: Optional(SleepSummary.naps(on: day, from: segments, calendar: calendar)).flatMap { $0.isEmpty ? nil : $0 },
                 workouts: allWorkouts.filter { $0.startDate >= day && $0.startDate < nextDay }.map(Self.workout),
                 weightKg: Self.latest(weights, .gramUnit(with: .kilo), day, nextDay).map(Self.oneDecimal),
-                vo2max: Self.latest(vo2, vo2Unit, day, nextDay).map(Self.oneDecimal)
+                vo2max: Self.latest(vo2, vo2Unit, day, nextDay).map(Self.oneDecimal),
+                maxHr: pulse.max,
+                hrMinutes: pulse.minutes.isEmpty ? nil : pulse.minutes,
+                hrHourly: pulse.hourly.isEmpty ? nil : pulse.hourly
             )
         }
+    }
+
+    /// Each day's heart-rate summary, by offset from `first`: a day at a time, so 60 days of samples are never held
+    /// at once. A day that can't be read is left out.
+    private func heart(from first: Date, count: Int, calendar: Calendar) async -> [Int: HeartSummary] {
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        var out: [Int: HeartSummary] = [:]
+        for offset in 0..<count {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: first),
+                  let next = calendar.date(byAdding: .day, value: 1, to: day),
+                  let samples = try? await quantitySamples(Self.heartRate, from: day, to: next) else { continue }
+            let readings = samples.filter { $0.startDate >= day }.map { s in
+                let series = s as? HKDiscreteQuantitySample
+                return HeartReading(start: s.startDate, end: s.endDate,
+                                    bpm: (series?.averageQuantity ?? s.quantity).doubleValue(for: bpm),
+                                    top: (series?.maximumQuantity ?? s.quantity).doubleValue(for: bpm))
+            }
+            out[offset] = HeartSummary(readings, day: day, next: next, calendar: calendar)
+        }
+        return out
     }
 
     private func categorySamples(_ type: HKCategoryType, from: Date, to: Date) async throws -> [HKCategorySample] {
@@ -590,10 +618,14 @@ final class HealthService: ObservableObject {
     private static func workout(_ w: HKWorkout) -> HealthWorkout {
         let kcal = w.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
         let meters = distances.lazy.compactMap { w.statistics(for: $0)?.sumQuantity()?.doubleValue(for: .meter()) }.first
+        let pulse = w.statistics(for: heartRate)
+        let bpm = HKUnit.count().unitDivided(by: .minute())
         return HealthWorkout(id: w.uuid.uuidString, type: workoutType(w.workoutActivityType),
                              start: Wire.local(w.startDate), end: Wire.local(w.endDate),
                              minutes: Int((w.duration / 60).rounded()), kcal: kcal.map { Int($0.rounded()) },
-                             km: meters.flatMap { $0 > 0 ? ($0 / 10).rounded() / 100 : nil })
+                             km: meters.flatMap { $0 > 0 ? ($0 / 10).rounded() / 100 : nil },
+                             avgHr: pulse?.averageQuantity().map { Int($0.doubleValue(for: bpm).rounded()) },
+                             maxHr: pulse?.maximumQuantity().map { Int($0.doubleValue(for: bpm).rounded()) })
     }
 
     /// HealthKit's activity types folded into the contract's list (docs/API.md, "Workout types").

@@ -1899,4 +1899,37 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(obj["vo2max"] as? Double, 51.3)
         XCTAssertEqual((obj["workouts"] as? [[String: Any]])?.first?["km"] as? Double, 9.8)
     }
+
+    func testHeartSummaryHoldsEachReadingUntilTheNextAtMostTenMinutes() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Rome")!
+        let day = calendar.date(from: DateComponents(year: 2026, month: 10, day: 29))!
+        let next = calendar.date(byAdding: .day, value: 1, to: day)!
+        func r(_ h: Int, _ m: Int, _ bpm: Double, seconds: Double = 0) -> HeartReading {
+            let start = day.addingTimeInterval(Double(h * 3600 + m * 60))
+            return HeartReading(start: start, end: start.addingTimeInterval(seconds), bpm: bpm, top: bpm)
+        }
+        let s = HeartSummary([
+            r(3, 0, 50),                       // asleep: no bucket, in the 03:00 hour
+            r(8, 0, 96), r(8, 2, 152),         // 96 held 2 min (until the next)
+            r(8, 3, 154, seconds: 90),         // a series sample: its own span
+            r(23, 55, 120),                    // held until midnight, 5 min
+        ], day: day, next: next, calendar: calendar)
+        XCTAssertEqual(s.minutes, [[95, 2], [120, 5], [150, 2.5]]) // 152 until 08:03, then 154 for its 90 s
+        XCTAssertEqual(s.hourly[3], 50)
+        XCTAssertEqual(s.hourly[8], 134)
+        XCTAssertNil(s.hourly[12])
+        XCTAssertEqual(s.max, 154)
+        XCTAssertEqual(HeartSummary([], day: day, next: next, calendar: calendar), HeartSummary())
+
+        var today = HealthDay(date: "2026-10-29")
+        today.maxHr = s.max
+        today.hrMinutes = s.minutes
+        today.hrHourly = s.hourly
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(today)) as? [String: Any])
+        XCTAssertEqual(obj["max_hr"] as? Int, 154)
+        XCTAssertEqual((obj["hr_minutes"] as? [[Double]])?.first, [95, 2])
+        XCTAssertEqual((obj["hr_hourly"] as? [Any])?.count, 24)
+        XCTAssertTrue((obj["hr_hourly"] as? [Any])?[0] is NSNull)
+    }
 }
