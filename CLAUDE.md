@@ -31,6 +31,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (a push for reminders not yet on the phone).
 - `push.py`: APNs sender and the devices table (off without `APNS_*` in `.env`; then nothing is pushed).
 - `photos.py`: photos for chat and food, files in `data/photos/` (backed up once each). `food.py`: meals and food goals.
+  `foods.py`: saved foods per 100 g with the usual portion, which meals are added up from (`tools/nutrition.py`: Open Food Facts).
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
 - `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU.
@@ -183,6 +184,9 @@ for the day (ring, macros, meals, "Log a meal" through `POST /v1/food/log` into 
 the habits. Aide now sees every specialist's memory, marked with its name, and always delegates: it has
 only web, maps, memory and routines of its own, and hands the rest to the specialist whose work it is (the
 user's photos go along). Queued actions still run from a registry with every tool (`Agent.tools`).
+Saved foods (2026-10-29, server only, contract "Food"): Coach looks each item up (`find_food`: saved foods, then Open
+Food Facts by name or barcode; else `web_search`, a label, or its estimate, saved with `save_food`) and logs the meal
+from `items` with grams; the server adds them up and remembers the usual portion. Not yet tried live.
 
 **Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
 files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and

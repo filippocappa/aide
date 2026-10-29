@@ -614,7 +614,7 @@ one is only a mention, `[Photo p_…]`.
 ## Food
 
 Meals, mostly from photos: the agent names the dish, estimates the portion and works out calories and macros. Coach
-owns food (it sees it next to sleep, training and habits); Aide has the same tools.
+owns food (it sees it next to sleep, training and habits); Aide hands meals to Coach.
 
 Meal object:
 ```json
@@ -622,7 +622,10 @@ Meal object:
  "protein_g": 20, "carbs_g": 110, "fat_g": 15, "water_ml": 0, "caffeine_mg": 0, "photo": "p_3f9a…",
  "notes": "about 120 g dry pasta"}
 ```
-`photo` is null without one. Numbers are the model's estimates, rounded (calories to 10, grams to 1).
+`photo` is null without one. Numbers are rounded (calories to 10, grams to 1): the model's estimates, or (since
+2026-10-29) added up by the server from the meal's items, each a saved food's values per 100 g times the grams eaten.
+A meal logged from items has them as the first line of `notes` (`"Items: Yogurt greco 0% 170 g, Fiocchi d'avena 40 g"`),
+then whatever the model noted; no new fields.
 `water_ml` and `caffeine_mg` (since 2026-10-27) are 0 when there's none: a drink is logged like a meal ("an espresso
 and 1 L of water" is one, 5 kcal, 1030 ml water, 65 mg caffeine).
 
@@ -646,10 +649,18 @@ Totals: `{"calories": 1840, "protein_g": 96, "carbs_g": 210, "fat_g": 61, "water
 (the last two since 2026-10-27). Goals has the first four keys, each a
 number or null (no goal); all null until set, here or by Coach in chat ("aim for 140 g protein").
 
-The agents get `log_meal`, `update_meal`, `list_meals`, `set_food_goals` (immediate) and `delete_meal` (queued).
-They log a meal when a photo shows food you're eating or ate, or when you say what you had, and say the estimate in
+Coach gets `log_meal`, `update_meal`, `list_meals`, `set_food_goals` (immediate) and `delete_meal` (queued).
+It logs a meal when a photo shows food you're eating or ate, or when you say what you had, and says the numbers in
 a line so you can correct it. A photo that isn't food is just a photo. Coach's role is now "Sleep, training, food and
-habits" (since 2026-10-21), and the `food` connector ("Food log") shows on Coach and Aide.
+habits" (since 2026-10-21), and the `food` connector ("Food log") shows on Coach.
+
+**Saved foods** (since 2026-10-29, server only): the foods you eat, per 100 g, with your usual portion (the last one
+you had) and how often you eat them. Coach looks each item up with `find_food` before guessing: the saved foods
+first, then Open Food Facts (packaged food; by name, or exactly by barcode, which saves it). What isn't there comes
+from `web_search`, a nutrition label in a photo, or Coach's own estimate for a plain food, saved once with
+`save_food` (`update_food` corrects one), so the same food gives the same numbers every time. `log_meal` and
+`update_meal` take `items` (a saved food with its grams, or an item with its own estimate), and the server adds them
+up. No endpoint for them yet.
 
 ## Study
 
