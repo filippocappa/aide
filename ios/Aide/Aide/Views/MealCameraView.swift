@@ -24,6 +24,7 @@ struct MealCameraView: View {
     @StateObject private var camera = MealCamera()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
     @State private var photos: [PickedPhoto] = []
     @State private var flash = false
     /// The packet whose page is open, and the photo taken as it opened (for "ask Coach").
@@ -42,12 +43,19 @@ struct MealCameraView: View {
                 denied
             case .unavailable:
                 message("No camera here.", detail: "Choose a photo instead.")
+            case .failed:
+                retry("The camera didn't start.")
+            case .starting where camera.slow:
+                retry("The camera is taking a while.")
             case .starting:
-                EmptyView()
+                ProgressView().tint(.white)
             case .running: // only now: the preview keeps itself upright from the camera's device
                 MealCameraPreview(camera: camera)
                     .ignoresSafeArea()
                     .overlay(Color.white.opacity(flash ? 0.7 : 0).ignoresSafeArea())
+                    .overlay {
+                        if let paused = camera.paused { message("Camera paused", detail: paused) }
+                    }
             }
             VStack(spacing: 0) {
                 topBar
@@ -66,6 +74,9 @@ struct MealCameraView: View {
         .sensoryFeedback(.success, trigger: scanning?.code) { _, new in new != nil }
         .task { await camera.start() }
         .onDisappear { camera.stop() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { camera.resume() } // back from Control Center or another app
+        }
         .onChange(of: camera.steady) { _, code in
             guard let code, code != ignored, photos.isEmpty, scanning == nil else { return }
             open(code)
@@ -223,6 +234,18 @@ struct MealCameraView: View {
         }
     }
 
+    private func retry(_ title: String) -> some View {
+        VStack(spacing: 14) {
+            message(title, detail: "Try again, or choose a photo instead.")
+            Button("Try again") { Task { await camera.start() } }
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Theme.slate)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Theme.sand, in: Capsule())
+        }
+    }
+
     private func message(_ title: String, detail: String) -> some View {
         VStack(spacing: 6) {
             Text(title).font(.headline).foregroundStyle(.white)
@@ -274,7 +297,7 @@ struct MealCameraView: View {
 /// it sees (`AVCaptureMetadataOutput`, live, no Vision pass).
 @MainActor
 final class MealCamera: NSObject, ObservableObject {
-    enum Status { case starting, running, denied, unavailable }
+    enum Status { case starting, running, denied, unavailable, failed }
 
     /// Photos of one meal, as for the library.
     static let limit = 4
@@ -292,6 +315,10 @@ final class MealCamera: NSObject, ObservableObject {
     static let steadyAfter: TimeInterval = 0.35
     @Published private(set) var torch = false
     @Published private(set) var busy = false
+    /// Still starting after a few seconds: the view offers Try again.
+    @Published private(set) var slow = false
+    /// Why iOS has paused the camera (another app has it, the app is in the background…); nil while it runs.
+    @Published private(set) var paused: String?
     private(set) var hasTorch = false
 
     let session = AVCaptureSession()
@@ -304,6 +331,48 @@ final class MealCamera: NSObject, ObservableObject {
     private var lastSeen = Date.distantPast
     private var firstSeen = Date.distantPast
     private var forget: Task<Void, Never>?
+    private var watchers: [NSObjectProtocol] = []
+    /// `Library/Caches/camera.log`, pulled like the voice one (`Support/VoiceLog.swift`).
+    static let log = Diary(name: "camera")
+
+    override init() {
+        super.init()
+        let center = NotificationCenter.default
+        watchers = [
+            center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: .main) { note in
+                let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int)
+                    .flatMap(AVCaptureSession.InterruptionReason.init(rawValue:))
+                MainActor.assumeIsolated { self.interrupted(reason) }
+            },
+            center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    Self.log.note("interruption ended")
+                    self.paused = nil
+                }
+            },
+            center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: .main) { note in
+                let error = note.userInfo?[AVCaptureSessionErrorKey] as? Error
+                MainActor.assumeIsolated {
+                    Self.log.note("runtime error: \(error.map { String(describing: $0) } ?? "?")")
+                    self.resume()
+                }
+            },
+        ]
+    }
+
+    deinit {
+        watchers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    private func interrupted(_ reason: AVCaptureSession.InterruptionReason?) {
+        Self.log.note("interrupted: \(reason.map { String($0.rawValue) } ?? "?")")
+        paused = switch reason {
+        case .videoDeviceInUseByAnotherClient: "Another app is using the camera."
+        case .videoDeviceNotAvailableWithMultipleForegroundApps: "The camera is off while another app is on screen too."
+        case .videoDeviceNotAvailableDueToSystemPressure: "The phone is too warm for the camera right now."
+        default: "It comes back when Aide is in front again."
+        }
+    }
 
     /// A barcode's digits when it's one a food packet carries; Code 128 only when it's all digits, EAN length.
     nonisolated static func foodCode(_ value: String?, type: AVMetadataObject.ObjectType) -> String? {
@@ -315,9 +384,15 @@ final class MealCamera: NSObject, ObservableObject {
         return digits.count >= 6 ? digits : nil
     }
 
+    /// Asks for the camera, sets the session up and starts it, all of it on the session's own queue (Apple's way;
+    /// `startRunning` blocks). Again from Try again, when the first go failed.
     func start() async {
-        guard status == .starting else { return }
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        guard status == .starting || status == .failed else { return }
+        status = .starting
+        slow = false
+        let auth = AVCaptureDevice.authorizationStatus(for: .video)
+        Self.log.note("start: access \(auth.rawValue), \(session.inputs.count) inputs")
+        switch auth {
         case .authorized: break
         case .notDetermined:
             guard await AVCaptureDevice.requestAccess(for: .video) else { status = .denied; return }
@@ -325,36 +400,69 @@ final class MealCamera: NSObject, ObservableObject {
             status = .denied
             return
         }
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-              let input = try? AVCaptureDeviceInput(device: device) else {
+        guard let device = device ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
             status = .unavailable
+            return
+        }
+        let input: AVCaptureDeviceInput?
+        do {
+            input = session.inputs.isEmpty ? try AVCaptureDeviceInput(device: device) : nil
+        } catch {
+            Self.log.note("no input: \(error)")
+            status = .failed
             return
         }
         self.device = device
         hasTorch = device.hasTorch
-        session.beginConfiguration()
-        session.sessionPreset = .photo
-        if session.canAddInput(input) { session.addInput(input) }
-        if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
-        if session.canAddOutput(metadataOutput) {
-            session.addOutput(metadataOutput)
-            metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
-            metadataOutput.metadataObjectTypes = Self.barcodeTypes.filter(metadataOutput.availableMetadataObjectTypes.contains)
+        metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, let self, self.status == .starting else { return }
+            Self.log.note("still starting after 4 s")
+            self.slow = true
         }
-        session.commitConfiguration()
+        defer { watchdog.cancel() }
+        let (session, photoOutput, metadataOutput, types) = (session, photoOutput, metadataOutput, Self.barcodeTypes)
+        let running: Bool = await withCheckedContinuation { done in
+            queue.async {
+                if let input {
+                    session.beginConfiguration()
+                    session.sessionPreset = .photo
+                    if session.canAddInput(input) { session.addInput(input) }
+                    if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
+                    if session.canAddOutput(metadataOutput) {
+                        session.addOutput(metadataOutput)
+                        metadataOutput.metadataObjectTypes = types.filter(metadataOutput.availableMetadataObjectTypes.contains)
+                    }
+                    session.commitConfiguration()
+                }
+                if !session.isRunning { session.startRunning() }
+                done.resume(returning: session.isRunning)
+            }
+        }
+        Self.log.note("running: \(running), \(session.inputs.count) inputs, \(session.outputs.count) outputs")
+        guard running else {
+            status = .failed
+            return
+        }
         if device.isFocusModeSupported(.continuousAutoFocus), (try? device.lockForConfiguration()) != nil {
             device.focusMode = .continuousAutoFocus
             if device.isAutoFocusRangeRestrictionSupported { device.autoFocusRangeRestriction = .near } // plates, packets
             device.unlockForConfiguration()
         }
-        let session = session
-        await withCheckedContinuation { done in
-            queue.async {
-                session.startRunning()
-                done.resume()
-            }
-        }
         status = .running
+    }
+
+    /// Starts the session again when it stopped under us (a runtime error, back from the background).
+    func resume() {
+        guard status == .running else { return }
+        let session = session
+        queue.async {
+            guard !session.isRunning else { return }
+            session.startRunning()
+            let running = session.isRunning
+            Task { @MainActor in Self.log.note("resumed: \(running)") }
+        }
     }
 
     func stop() {
@@ -396,7 +504,10 @@ final class MealCamera: NSObject, ObservableObject {
             pending = taker
             photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: taker)
         }
-        guard let image else { return nil }
+        guard let image else {
+            Self.log.note("no photo (session running: \(session.isRunning))")
+            return nil
+        }
         let (jpeg, codes) = await Task.detached {
             (PhotoPrep.jpeg(image), BarcodeReader.codes(in: image))
         }.value
@@ -444,6 +555,7 @@ private final class PhotoTaker: NSObject, AVCapturePhotoCaptureDelegate {
     init(done: @escaping (UIImage?) -> Void) { self.done = done }
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        if let error { MealCamera.log.note("photo failed: \(error)") }
         let image = error == nil ? photo.fileDataRepresentation().flatMap(UIImage.init(data:)) : nil
         DispatchQueue.main.async { self.done(image) }
     }
