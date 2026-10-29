@@ -26,6 +26,7 @@ GOALS = ("lose", "keep", "gain", "perform")
 WORKOUTS = {"on": True, "share": 1.0, "carbs_pct": 80}  # what a workout adds, by default
 PROFILE = ("weight_kg", "height_cm", "age", "sex", "goal", "note")
 MAX_NOTE = 500
+MAX_ANSWERS = 8  # answers to Coach's questions kept for the next proposals
 RUN_WORDS = re.compile(r"\b(run|runs|running|jog|jogging|corsa|corsetta|correre)\b", re.I)
 RUN_KCAL_MIN = 11.0  # kcal a minute of running, before the user's own runs say otherwise
 KJ = 4.184
@@ -304,9 +305,30 @@ class Nutrition:
             saved["profile"] = {k: p.get(k) for k in PROFILE}
         if base is not None:
             self.food.set_goals(base)
+        self._save(saved)
+        return self.targets()
+
+    def _save(self, saved: dict) -> None:
         self.conn.execute("INSERT INTO settings (key, value) VALUES ('food_targets', ?) "
                           "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(saved),))
-        return self.targets()
+
+    def coach_notes(self) -> tuple[list[dict], dict | None]:
+        """What Coach was told before (each {question, answer, date}) and its last proposal ({date, base, workouts})."""
+        saved = self._saved()
+        return saved.get("answers", []), saved.get("proposal")
+
+    def coach_said(self, proposal: dict, answers: list[dict]) -> None:
+        """Keeps Coach's proposal and the answers it came from (a question answered again replaces its old answer),
+        so the next proposal knows what it suggested last and doesn't ask again."""
+        saved = self._saved()
+        today = self.food.today().isoformat()
+        new = {a["question"] for a in answers}
+        kept = [a for a in saved.get("answers", []) if a["question"] not in new]
+        saved["answers"] = (kept + [{"question": a["question"], "answer": a["answer"], "date": today}
+                                    for a in answers])[-MAX_ANSWERS:]
+        saved["proposal"] = {"date": today, "base": proposal["base"],
+                             "workouts": {k: v for k, v in proposal["workouts"].items() if k != "on"}}
+        self._save(saved)
 
     # -- workouts --
 
@@ -458,8 +480,10 @@ mattered.
 
 You may ask the user up to two short questions in `questions`, only when an answer would change the numbers \
 (the latest weight is old, the goal's pace isn't clear, a race or a change in training is coming), never what the \
-data already says or what they've answered. Always propose anyway, from what you have; the user's answers come \
-back to you for another proposal.
+data already says or what they've answered (their earlier answers are given too; ask again only when one has \
+gone stale, like a weight from over a month ago). Always propose anyway, from what you have; the user's answers \
+come back to you for another proposal. When they've just answered, start `why` with what the answers changed \
+against your last proposal, number by number, or say plainly that they changed nothing and why.
 
 Answer with JSON only, nothing before or after it:
 {"base": {"calories": 2500, "protein_g": 140, "carbs_g": 300, "fat_g": 80}, "workouts": {"share": 0.8, \
@@ -515,8 +539,16 @@ def proposal_input(nutrition: "Nutrition", foods_days: list[dict], answers: list
                   f"{d['totals']['carbs_g']} g, {d['totals']['fat_g']} g ({d['meals']} meals)" for d in logged]
     else:
         lines.append("No food logged in the last 14 days.")
+    before, last = nutrition.coach_notes()
+    now = {a["question"] for a in answers or []}
+    if earlier := [a for a in before if a["question"] not in now]:
+        lines.append("What the user answered before:")
+        lines += [f"- ({a['date']}) {a['question']} {a['answer']}" for a in earlier]
+    if last:
+        lines.append(f"Your last proposal ({last['date']}): base {json.dumps(last['base'])}, "
+                     f"workouts {json.dumps(last['workouts'])}")
     if answers:
-        lines.append("The user answered your questions:")
+        lines.append("The user just answered your questions:")
         lines += [f"- {a['question']} {a['answer']}" for a in answers]
     return "\n".join(lines)
 

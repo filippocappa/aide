@@ -223,7 +223,7 @@ def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
     proposal = {"base": {"calories": 2520, "protein_g": 135.4, "carbs_g": 310, "fat_g": 78},
                 "workouts": {"share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week at 74 kg.",
                 "questions": ["Is 74 kg still right?", "A race coming?", "A third?"]}
-    api, f, health, model = api_env(model=[done(json.dumps(proposal)), done(json.dumps(proposal))])
+    api, f, health, model = api_env(model=[done(json.dumps(proposal))] * 3)
     today = f.today()
     assert api.put("/v1/food/targets", json={"base": BASE, "profile": {"weight_kg": 74, "goal": "keep"}},
                    headers=AUTH).json()["base"] == BASE
@@ -264,6 +264,13 @@ def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
              headers=AUTH)
     asked = model.requests[1]["messages"][0]["content"][0]["text"]
     assert "- Is 74 kg still right? 72 now" in asked and "A race coming?" not in asked
+    # Coach sees what it proposed last, and the answers stay for the proposals after.
+    assert ('Your last proposal (%s): base {"calories": 2520, "protein_g": 135, "carbs_g": 310, "fat_g": 78}, '
+            'workouts {"share": 0.8, "carbs_pct": 75}' % today) in asked
+    api.post("/v1/food/targets/propose", headers=AUTH)
+    asked = model.requests[2]["messages"][0]["content"][0]["text"]
+    assert f"What the user answered before:\n- ({today}) Is 74 kg still right? 72 now" in asked
+    assert "just answered" not in asked
     assert api.get("/v1/food/targets", headers=AUTH).json()["base"] == BASE  # nothing saved until a PUT
 
 

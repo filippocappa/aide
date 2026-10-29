@@ -1214,7 +1214,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         text = proposal_input(nutrition, food.days(today - timedelta(days=14), today - timedelta(days=1)), answers)
         try:
             answer = await ask_once(PROPOSE_PROMPT, [{"type": "text", "text": text}], PROPOSE_TOKENS)
-            return parse_proposal(parse_json(answer))
+            proposal = parse_proposal(parse_json(answer))
+            nutrition.coach_said(proposal, answers)  # remembered for the next one
+            return proposal
         except (httpx.HTTPError, anthropic.APIError, RuntimeError) as e:
             log.warning("proposing food targets failed: %s", e)
             raise HTTPException(502, f"Coach couldn't answer: {e}") from None
