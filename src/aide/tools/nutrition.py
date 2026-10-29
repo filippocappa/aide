@@ -1,4 +1,8 @@
-"""Finding a food's real numbers: the saved foods first, then Open Food Facts (free, no key). All run immediately."""
+"""Finding a food's real numbers: the saved foods first, then Open Food Facts (free, no key). All run immediately.
+Also reading a nutrition label from a photo (one model call), for a barcode Open Food Facts doesn't have."""
+
+import base64
+from typing import Awaitable, Callable
 
 import httpx
 
@@ -10,6 +14,19 @@ PRODUCT = "https://world.openfoodfacts.org/api/v2/product/{}.json"
 FIELDS = "code,product_name,product_name_it,brands,quantity,serving_quantity,nutriments"
 USER_AGENT = "Aide/1.0 (personal assistant)"  # Open Food Facts asks every app to name itself
 ONLINE_LIMIT = 5
+LABEL_TOKENS = 1000
+
+LABEL_PROMPT = """You read the nutrition facts table (valori nutrizionali) on a photo of a food or drink packet, so the \
+numbers can be saved for that product. Read the column per 100 g (or per 100 ml). When there's only a column per \
+serving, work out per 100 g from the serving's size. Energy in kcal; with only kJ, divide by 4.184. Read the \
+numbers exactly as printed; don't estimate. Fat, carbohydrates and protein in grams; ignore the rest (sugars, \
+fibre, salt). serving_g is one serving or one piece as printed on the packet (e.g. "per porzione (30 g)"), else null. \
+name and brand only when the photo shows them, else null.
+
+Answer with JSON only, nothing before or after it:
+{"kcal_100g": 389, "protein_100g": 13.5, "carbs_100g": 58.7, "fat_100g": 7, "serving_g": 40, "name": "Fiocchi \
+d'avena", "brand": "Quaker"}
+or, when the photo has no nutrition table you can read: {"error": "what's wrong, in a few words"}"""
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -60,6 +77,27 @@ class OpenFoodFacts:
     async def barcode(self, code: str) -> dict | None:
         found = await self._get(PRODUCT.format(code), {"fields": FIELDS})
         return product(found["product"]) if found.get("status") == 1 and found.get("product") else None
+
+
+async def read_label(ask: Callable[[str, list[dict], int], Awaitable[str]], image: bytes,
+                     media_type: str) -> dict:
+    """The label's numbers per 100 g, with serving_g, name and brand when it shows them. Raises ValueError when
+    the photo can't be read."""
+    from ..notebook import parse_json  # notebook imports a lot; only here
+    content = [{"type": "image", "source": {"type": "base64", "media_type": media_type,
+                                            "data": base64.b64encode(image).decode()}},
+               {"type": "text", "text": "The nutrition label."}]
+    try:
+        answer = parse_json(await ask(LABEL_PROMPT, content, LABEL_TOKENS))
+    except RuntimeError as e:
+        raise ValueError(f"couldn't read the label ({e})") from e
+    if not isinstance(answer, dict) or answer.get("error"):
+        raise ValueError(f"couldn't read the label: {answer.get('error') if isinstance(answer, dict) else answer}")
+    values = {k: _num(answer.get(k)) for k in ("kcal_100g", "protein_100g", "carbs_100g", "fat_100g")}
+    if any(v is None for v in values.values()):
+        raise ValueError("couldn't read every number on the label (energy, protein, carbs and fat)")
+    text = {k: str(answer.get(k) or "").strip() for k in ("name", "brand")}
+    return {**values, "serving_g": _num(answer.get("serving_g")) or None, **text}
 
 
 def _g(value: float | None) -> str:

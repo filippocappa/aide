@@ -8,7 +8,7 @@ from datetime import date as Date, datetime
 from zoneinfo import ZoneInfo
 
 from ..food import DRINKS, MACROS, FoodStore, totals
-from ..foods import FoodDB
+from ..foods import FoodDB, free_notes
 from ..photos import PhotoStore
 from . import Tool, ToolOutput
 from .nutrition import OpenFoodFacts, nutrition_tools
@@ -21,54 +21,9 @@ def _obj(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-def _items_line(items: list[dict]) -> str:
-    return "Items: " + ", ".join(i["name"] + (f" {i['grams']:g} g" if i["grams"] else "") for i in items)
-
-
-def _free_notes(notes: str) -> str:
-    """A meal's notes without the items line logging put first."""
-    return notes.partition("\n")[2] if notes.startswith("Items: ") else notes
-
-
 def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB | None = None,
                off: OpenFoodFacts | None = None) -> list[Tool]:
     foods = foods or FoodDB(store.conn)
-
-    def resolve(items: list[dict]) -> list[dict]:
-        """Each item with its calories and macros: a saved food's from its grams (or its usual portion, or one
-        serving), an estimated item's as given."""
-        out = []
-        for item in items:
-            if item.get("food_id") is not None:
-                food = foods.find(item["food_id"])
-                grams = item.get("grams") or food["usual_g"] or food["serving_g"]
-                if not grams:
-                    raise ValueError(f"how many grams of {food['name']}? It has no usual portion yet")
-                scale = grams / 100
-                out.append({"food_id": food["id"], "name": item.get("name") or food["name"], "grams": grams,
-                            "calories": food["kcal_100g"] * scale, "protein_g": food["protein_100g"] * scale,
-                            "carbs_g": food["carbs_100g"] * scale, "fat_g": food["fat_100g"] * scale})
-            else:
-                missing = [k for k in ("name", *MACROS) if item.get(k) is None]
-                if missing:
-                    raise ValueError(f"an item without food_id needs {', '.join(missing)}")
-                out.append({"food_id": None, "name": item["name"], "grams": item.get("grams"),
-                            **{k: item[k] for k in MACROS}})
-        if not out:
-            raise ValueError("items is empty")
-        return out
-
-    def from_items(items: list[dict], notes: str | None) -> tuple[list[dict], dict, str]:
-        """The resolved items, the meal's totals and its notes (the items line first)."""
-        rows = resolve(items)
-        sums = {k: sum(r[k] for r in rows) for k in MACROS}
-        return rows, sums, "\n".join(filter(None, [_items_line(rows), (notes or "").strip()]))
-
-    def keep_items(meal_id: int, rows: list[dict], count: bool) -> None:
-        foods.set_items(meal_id, rows)
-        for r in rows:
-            if r["food_id"] is not None:
-                foods.touch(r["food_id"], r["grams"], count)
 
     def fmt(m: dict) -> str:
         at = datetime.fromisoformat(m["eaten_at"]).astimezone(tz)
@@ -98,7 +53,7 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
             raise ValueError(f"no photo {photo_id}")
         rows = None
         if items:
-            rows, sums, notes = from_items(items, notes)
+            rows, sums, notes = foods.from_items(items, notes)
         elif None in (calories, protein_g, carbs_g, fat_g):
             raise ValueError("give items, or calories, protein_g, carbs_g and fat_g")
         else:
@@ -106,7 +61,7 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         meal = store.add(name, **sums, eaten_at=eaten_at, photo=photo_id, notes=notes or "", water_ml=water_ml,
                          caffeine_mg=caffeine_mg)
         if rows:
-            keep_items(meal["id"], rows, count=True)
+            foods.keep_items(meal["id"], rows, count=True)
         return cards(f"Logged: {fmt(meal)}\n{day_line(store.local_day(meal))}", [meal])
 
     async def update_meal(meal_id: int, name: str | None = None, calories: int | None = None,
@@ -116,12 +71,12 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         rows = None
         sums = {"calories": calories, "protein_g": protein_g, "carbs_g": carbs_g, "fat_g": fat_g}
         if items:
-            kept = notes if notes is not None else _free_notes(store.find(meal_id)["notes"])
-            rows, sums, notes = from_items(items, kept)
+            kept = notes if notes is not None else free_notes(store.find(meal_id)["notes"])
+            rows, sums, notes = foods.from_items(items, kept)
         meal = store.update(meal_id, name=name, **sums, eaten_at=eaten_at, notes=notes, water_ml=water_ml,
                             caffeine_mg=caffeine_mg)
         if rows:
-            keep_items(meal_id, rows, count=False)
+            foods.keep_items(meal_id, rows, count=False)
         return cards(f"Updated: {fmt(meal)}\n{day_line(store.local_day(meal))}", [meal])
 
     async def list_meals(date: str | None = None) -> str:  # noqa: A002

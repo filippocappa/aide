@@ -2,7 +2,8 @@ import SwiftUI
 
 /// The Health tab, in two pages. Body: what Apple Health says (sleep, recovery, activity, workouts), each opening
 /// its chart. Food: what you ate, day by day; meals come from photos with a few words, or the words alone, that
-/// Coach names and estimates; tap one to fix the numbers, swipe to delete. Every meal also goes to Apple Health
+/// Coach names and estimates, or from a scanned barcode with its real numbers; tap one to fix the numbers, swipe to
+/// delete. Every meal also goes to Apple Health
 /// (`HealthService.writeMeals`). (Habits are on Today.)
 struct HealthView: View {
     @EnvironmentObject private var env: AppEnvironment
@@ -33,6 +34,12 @@ struct HealthView: View {
     @State private var mealText = ""
     /// Photos just picked or taken, waiting for their description.
     @State private var pickedPhotos: PickedMeal?
+    @State private var showScanner = false
+    /// What the scanner read, or that the digits are to be typed, acted on once its cover is gone.
+    @State private var afterScanner: ScannerOutcome?
+    @State private var scanned: ScannedCode?
+    @State private var typingBarcode = false
+    @State private var barcodeText = ""
     @State private var showGoals = false
     @State private var editingMeal: Meal?
 
@@ -99,6 +106,36 @@ struct HealthView: View {
             .sheet(item: $pickedPhotos) { picked in
                 MealPhotosSheet(photos: picked.photos) { text in Task { await log(photos: picked.photos, text: text) } }
             }
+            .fullScreenCover(isPresented: $showScanner, onDismiss: {
+                switch afterScanner {
+                case .code(let code): scanned = ScannedCode(code: code)
+                case .type: typingBarcode = true
+                case nil: break
+                }
+                afterScanner = nil
+            }) {
+                BarcodeScannerScreen(onScan: { afterScanner = .code($0) }, typeInstead: { afterScanner = .type })
+            }
+            .alert("Barcode", isPresented: $typingBarcode) {
+                TextField("8001505005707", text: $barcodeText).keyboardType(.numberPad)
+                Button("Cancel", role: .cancel) { barcodeText = "" }
+                Button("Look up") {
+                    let code = barcodeText.filter(\.isNumber)
+                    barcodeText = ""
+                    if !code.isEmpty { scanned = ScannedCode(code: code) }
+                }
+            } message: {
+                Text("The digits under the barcode.")
+            }
+            .sheet(item: $scanned) { code in
+                ScanSheet(barcode: code.code, date: isToday ? nil : Wire.dayString(day)) { meal in
+                    withAnimation { logReply = "Logged **\(meal.name)**: \(meal.calories) kcal." }
+                    Task {
+                        await loadFood()
+                        await health.writeMeals()
+                    }
+                }
+            }
             .refreshable {
                 async let food: Void = loadFood()
                 async let body: Void = loadBody(upload: true)
@@ -164,7 +201,7 @@ struct HealthView: View {
         .listRowBackground(Theme.row)
     }
 
-    /// Camera, library or a few words; Coach does the rest.
+    /// Camera, library, a few words or a barcode; Coach (or, for a barcode, the server) does the rest.
     private var logButton: some View {
         Menu {
             if CameraPicker.isAvailable {
@@ -172,6 +209,11 @@ struct HealthView: View {
             }
             Button("Choose photos", systemImage: "photo.on.rectangle") { showLibrary = true }
             Button("Describe it", systemImage: "text.cursor") { describing = true }
+            if BarcodeScanner.isSupported {
+                Button("Scan barcode", systemImage: "barcode.viewfinder") { showScanner = true }
+            } else {
+                Button("Type a barcode", systemImage: "barcode") { typingBarcode = true }
+            }
         } label: {
             Label(isToday ? "Log a meal" : "Log a meal on \(day.formatted(.dateTime.weekday(.wide)))",
                   systemImage: "camera.fill")
@@ -299,4 +341,9 @@ struct HealthView: View {
             return nil
         } catch { return error.localizedDescription }
     }
+}
+
+private enum ScannerOutcome {
+    case code(String)
+    case type
 }

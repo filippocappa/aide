@@ -488,6 +488,25 @@ final class APIClient {
         return list.meals
     }
 
+    /// A scanned barcode: the saved food, else Open Food Facts' product (saved on the way); nil when neither has it.
+    func food(barcode: String) async throws -> SavedFood? {
+        let found: FoodLookup = try await send("GET", "/v1/food/barcode/\(barcode)", timeout: 30)
+        return found.food
+    }
+
+    /// Reads the nutrition label in an uploaded photo (one model call, up to ~30 s) and saves it for the barcode.
+    func readLabel(_ request: LabelRequest) async throws -> SavedFood {
+        let found: FoodLookup = try await send("POST", "/v1/food/label", body: request, timeout: 120)
+        guard let food = found.food else { throw APIError.badResponse }
+        return food
+    }
+
+    /// Logs a saved food as a meal; the server adds it up, no model call.
+    func logFood(_ id: Int, _ portion: FoodPortion) async throws -> Meal {
+        let logged: LoggedMeal = try await send("POST", "/v1/food/foods/\(id)/log", body: portion)
+        return logged.meal
+    }
+
     func updateMeal(_ id: Int, _ changes: MealChanges) async throws -> Meal {
         try await send("PATCH", "/v1/food/meals/\(id)", body: changes)
     }

@@ -689,6 +689,61 @@ struct MealList: Decodable {
     let meals: [Meal]
 }
 
+/// A saved food (`GET /v1/food/barcode/{code}`): its numbers per 100 g (100 ml for a drink), one serving as the
+/// packet says, and the portion the user had last time. `source`: off (Open Food Facts), label, web, estimate, user.
+struct SavedFood: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let brand: String
+    let barcode: String?
+    let kcal100g: Double
+    let protein100g: Double
+    let carbs100g: Double
+    let fat100g: Double
+    let servingG: Double?
+    let usualG: Double?
+    let source: String
+
+    /// What logging with no grams uses: the usual portion, else one serving; nil when it has neither.
+    var defaultGrams: Double? { usualG ?? servingG }
+
+    /// Calories and macros for `grams`, rounded like the server's (calories to 10, grams to 1).
+    func portion(_ grams: Double) -> (calories: Int, protein: Int, carbs: Int, fat: Int) {
+        let k = grams / 100
+        return (Int((kcal100g * k / 10).rounded()) * 10, Int((protein100g * k).rounded()),
+                Int((carbs100g * k).rounded()), Int((fat100g * k).rounded()))
+    }
+
+    // convertFromSnakeCase turns kcal_100g into kcal100G.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, brand, barcode, servingG, usualG, source
+        case kcal100g = "kcal100G", protein100g = "protein100G", carbs100g = "carbs100G", fat100g = "fat100G"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        brand = try c.decodeIfPresent(String.self, forKey: .brand) ?? ""
+        barcode = try c.decodeIfPresent(String.self, forKey: .barcode)
+        kcal100g = try c.decode(Double.self, forKey: .kcal100g)
+        protein100g = try c.decode(Double.self, forKey: .protein100g)
+        carbs100g = try c.decode(Double.self, forKey: .carbs100g)
+        fat100g = try c.decode(Double.self, forKey: .fat100g)
+        servingG = try c.decodeIfPresent(Double.self, forKey: .servingG)
+        usualG = try c.decodeIfPresent(Double.self, forKey: .usualG)
+        source = try c.decodeIfPresent(String.self, forKey: .source) ?? ""
+    }
+}
+
+/// `GET /v1/food/barcode/{code}` and `POST /v1/food/label`: `food` is nil when nobody has the barcode yet.
+struct FoodLookup: Decodable { let food: SavedFood? }
+/// `POST /v1/food/label`: the photo of the nutrition facts, and a name when the photo doesn't show one.
+struct LabelRequest: Encodable { let barcode: String; let photo: String; var name: String = "" }
+/// `POST /v1/food/foods/{id}/log`: grams nil is the usual portion, else one serving; date nil is today.
+struct FoodPortion: Encodable { var grams: Double?; var date: String? }
+struct LoggedMeal: Decodable { let meal: Meal }
+
 private extension KeyedDecodingContainer {
     /// A whole number the server might send as 650 or 650.0; nil when missing or null.
     func number(_ key: Key) throws -> Int? {

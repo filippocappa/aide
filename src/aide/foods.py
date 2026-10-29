@@ -10,6 +10,7 @@ import sqlite3
 import unicodedata
 
 from .db import utcnow
+from .food import MACROS
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS foods (
@@ -58,6 +59,15 @@ def normalize(text: str) -> str:
     """Lowercase, accents off, one space between words: 'Müller  Fitline' → 'muller fitline'."""
     plain = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
     return " ".join(plain.lower().split())
+
+
+def items_line(items: list[dict]) -> str:
+    return "Items: " + ", ".join(i["name"] + (f" {i['grams']:g} g" if i["grams"] else "") for i in items)
+
+
+def free_notes(notes: str) -> str:
+    """A meal's notes without the items line logging put first."""
+    return notes.partition("\n")[2] if notes.startswith("Items: ") else notes
 
 
 class FoodDB:
@@ -167,7 +177,49 @@ class FoodDB:
         self.conn.execute("UPDATE foods SET usual_g = ?, uses = uses + ?, last_used = ? WHERE id = ?",
                           (grams, 1 if count else 0, utcnow().isoformat(), food_id))
 
+    def as_json(self, food: dict) -> dict:
+        return {k: food[k] for k in ("id", "name", "brand", "barcode", *PER_100, "serving_g", "usual_g", "source")}
+
     # -- a meal's items -------------------------------------------------------
+
+    def resolve(self, items: list[dict]) -> list[dict]:
+        """Each item with its calories and macros: a saved food's from its grams (or its usual portion, or one
+        serving), an estimated item's as given."""
+        out = []
+        for item in items:
+            if item.get("food_id") is not None:
+                food = self.find(item["food_id"])
+                grams = item.get("grams") or food["usual_g"] or food["serving_g"]
+                if not grams:
+                    raise ValueError(f"how many grams of {food['name']}? It has no usual portion yet")
+                if not 0 < grams <= MAX_PORTION:
+                    raise ValueError(f"grams must be between 0 and {MAX_PORTION}")
+                scale = grams / 100
+                out.append({"food_id": food["id"], "name": item.get("name") or food["name"], "grams": grams,
+                            "calories": food["kcal_100g"] * scale, "protein_g": food["protein_100g"] * scale,
+                            "carbs_g": food["carbs_100g"] * scale, "fat_g": food["fat_100g"] * scale})
+            else:
+                missing = [k for k in ("name", *MACROS) if item.get(k) is None]
+                if missing:
+                    raise ValueError(f"an item without food_id needs {', '.join(missing)}")
+                out.append({"food_id": None, "name": item["name"], "grams": item.get("grams"),
+                            **{k: item[k] for k in MACROS}})
+        if not out:
+            raise ValueError("items is empty")
+        return out
+
+    def from_items(self, items: list[dict], notes: str | None) -> tuple[list[dict], dict, str]:
+        """The resolved items, the meal's totals and its notes (the items line first)."""
+        rows = self.resolve(items)
+        sums = {k: sum(r[k] for r in rows) for k in MACROS}
+        return rows, sums, "\n".join(filter(None, [items_line(rows), (notes or "").strip()]))
+
+    def keep_items(self, meal_id: int, rows: list[dict], count: bool) -> None:
+        """Store a meal's items; each saved food's portion becomes its usual (and, with count, one more use)."""
+        self.set_items(meal_id, rows)
+        for r in rows:
+            if r["food_id"] is not None:
+                self.touch(r["food_id"], r["grams"], count)
 
     def items(self, meal_id: int) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM meal_items WHERE meal_id = ? ORDER BY id",

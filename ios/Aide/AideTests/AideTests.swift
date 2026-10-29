@@ -1224,6 +1224,66 @@ final class PhotoAPITests: XCTestCase {
     }
 }
 
+@MainActor
+final class ScannedFoodTests: XCTestCase {
+    private let nocciolata = #"""
+    {"id":7,"name":"Nocciolata","brand":"Rigoni di Asiago","barcode":"8001505005707","kcal_100g":544.0,
+     "protein_100g":8.1,"carbs_100g":54,"fat_100g":32,"serving_g":15.0,"usual_g":null,"source":"off"}
+    """#
+
+    private func makeClient() -> APIClient {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [StubURLProtocol.self]
+        return APIClient(session: URLSession(configuration: cfg),
+                         config: { APIConfig(baseURL: URL(string: "https://aide.test")!, token: "secret") })
+    }
+
+    private func json(_ req: URLRequest) -> [String: Any]? {
+        req.httpBodyStream.flatMap { stream in
+            stream.open(); defer { stream.close() }
+            var data = Data(), buffer = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable { let n = stream.read(&buffer, maxLength: 1024); if n <= 0 { break }; data.append(buffer, count: n) }
+            return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }
+    }
+
+    func testSavedFoodDecodesAndWorksOutAPortion() throws {
+        let food = try JSONDecoder.api.decode(SavedFood.self, from: Data(nocciolata.utf8))
+        XCTAssertEqual(food.kcal100g, 544)
+        XCTAssertEqual(food.servingG, 15)
+        XCTAssertNil(food.usualG)
+        XCTAssertEqual(food.defaultGrams, 15) // no usual portion yet: one serving
+        let p = food.portion(15)
+        XCTAssertEqual([p.calories, p.protein, p.carbs, p.fat], [80, 1, 8, 5])
+        XCTAssertEqual(ScanSheet.g(15), "15 g")
+        XCTAssertEqual(ScanSheet.g(12.5), "\(12.5.formatted(.number.precision(.fractionLength(1)))) g") // 12,5 in Italian
+    }
+
+    func testABarcodeIsLookedUpAndLoggedWithOptionalGrams() async throws {
+        let api = makeClient()
+        var seen: [(URLRequest, [String: Any]?)] = []
+        StubURLProtocol.handler = { req in
+            seen.append((req, self.json(req)))
+            switch req.url?.path {
+            case "/v1/food/barcode/8001505005707": return (200, "{\"food\":\(self.nocciolata)}")
+            case "/v1/food/barcode/123456": return (200, #"{"food":null}"#)
+            default: return (200, #"{"meal":{"id":3,"name":"Nocciolata (Rigoni di Asiago)","eaten_at":"2026-10-29T08:00:00+01:00","calories":80,"protein_g":1,"carbs_g":8,"fat_g":5,"notes":"Items: Nocciolata 15 g"}}"#)
+            }
+        }
+        let food = try await api.food(barcode: "8001505005707")
+        XCTAssertEqual(food?.name, "Nocciolata")
+        let none = try await api.food(barcode: "123456")
+        XCTAssertNil(none)
+        let meal = try await api.logFood(7, FoodPortion(grams: nil, date: nil))
+        XCTAssertEqual(meal.calories, 80)
+        XCTAssertEqual(seen.last?.0.url?.path, "/v1/food/foods/7/log")
+        XCTAssertEqual(seen.last?.1?.isEmpty, true) // no grams: the server's usual or one serving
+        _ = try await api.logFood(7, FoodPortion(grams: 30, date: "2026-10-28"))
+        XCTAssertEqual(seen.last?.1?["grams"] as? Double, 30)
+        XCTAssertEqual(seen.last?.1?["date"] as? String, "2026-10-28")
+    }
+}
+
 final class ScreenTimeTests: XCTestCase {
     /// A local wall-clock time on 2026-10-27, a Tuesday, plus `days`.
     private func local(_ hhmm: String, days: Int = 0) -> Date {

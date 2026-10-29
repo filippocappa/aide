@@ -1,14 +1,21 @@
+from datetime import timedelta
+
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from aide.agent import Agent
+from aide.channels.api import create_app
 from aide.db import Database
 from aide.food import FoodStore
 from aide.foods import FoodDB, normalize
 from aide.photos import PhotoStore
+from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
 from aide.tools.food import food_tools
 from aide.tools.nutrition import OpenFoodFacts, product
-from test_food import ROME
+from test_api import AUTH, TOKEN, FakeCalendar, done
+from test_food import ROME, RecordingClient, upload
 from test_search_maps import Recorder, client
 
 NOCCIOLATA = {"code": "8001505005707", "product_name": "Nocciolata", "brands": "Rigoni di Asiago, Nocciolata",
@@ -137,3 +144,72 @@ async def test_log_meal_without_items_still_takes_totals(env):
     plain = foods.save("Riso", 360, 7, 80, 0.6, "estimate")
     with pytest.raises(ValueError, match="how many grams"):
         await tools.call("log_meal", {"name": "Riso", "items": [{"food_id": plain["id"]}]})
+
+
+# -- scanning in the app ----------------------------------------------------------------
+
+
+@pytest.fixture
+def app_env(tmp_path):
+    db = Database(":memory:")
+    food, foods = FoodStore(db.conn, ROME), FoodDB(db.conn)
+    photos = PhotoStore(tmp_path / "photos")
+
+    def make(*off_responses: httpx.Response, model=()):
+        rec, client_ = Recorder(*off_responses), RecordingClient(model)
+        agent = Agent(client_, db, ToolRegistry([]), model="m", smart_model="smart", tz=ROME, photos=photos,
+                      delegate=False)
+        app = create_app(agent, ReminderStore(db.conn), FakeCalendar([]), ROME, TOKEN, food=food, foods=foods,
+                         off=OpenFoodFacts(client(rec)))
+        return TestClient(app), food, foods, rec, client_
+    yield make
+    db.close()
+
+
+def test_a_scanned_barcode_is_found_saved_and_logged_without_the_model(app_env):
+    api, food, foods, rec, model = app_env(httpx.Response(200, json={"status": 1, "product": NOCCIOLATA}))
+    found = api.get("/v1/food/barcode/8001505005707", headers=AUTH).json()["food"]
+    assert (found["name"], found["brand"], found["kcal_100g"], found["serving_g"], found["usual_g"], found["source"]) \
+        == ("Nocciolata", "Rigoni di Asiago", 544, 15, None, "off")
+    assert api.get("/v1/food/barcode/8001505005707", headers=AUTH).json()["food"]["id"] == found["id"]
+    assert len(rec.requests) == 1  # the second scan is the saved food
+
+    meal = api.post(f"/v1/food/foods/{found['id']}/log", json={}, headers=AUTH).json()["meal"]  # one serving
+    assert (meal["name"], meal["calories"], meal["fat_g"]) == ("Nocciolata (Rigoni di Asiago)", 80, 5)
+    assert meal["notes"] == "Items: Nocciolata 15 g"
+    meal = api.post(f"/v1/food/foods/{found['id']}/log", json={"grams": 30}, headers=AUTH).json()["meal"]
+    assert meal["calories"] == 160 and foods.get(found["id"])["usual_g"] == 30
+    yesterday = food.today() - timedelta(days=1)
+    meal = api.post(f"/v1/food/foods/{found['id']}/log", json={"date": yesterday.isoformat()}, headers=AUTH).json()
+    assert meal["meal"]["calories"] == 160 and meal["meal"]["eaten_at"].startswith(yesterday.isoformat())
+    assert model.requests == []
+    assert api.post("/v1/food/foods/999/log", json={}, headers=AUTH).status_code == 404
+    assert api.get("/v1/food/barcode/abc", headers=AUTH).status_code == 400
+
+
+def test_an_unknown_barcode_is_read_off_its_label_once(app_env):
+    label = ('{"kcal_100g": 389, "protein_100g": 13.5, "carbs_100g": 58.7, "fat_100g": 7, "serving_g": 40, '
+             '"name": null, "brand": "Quaker"}')
+    api, food, foods, rec, model = app_env(httpx.Response(200, json={"status": 0}), model=[done(label)])
+    assert api.get("/v1/food/barcode/8000000000001", headers=AUTH).json() == {"food": None}
+    photo = upload(api).json()["id"]
+    r = api.post("/v1/food/label", json={"barcode": "8000000000001", "photo": photo, "name": "Avena"}, headers=AUTH)
+    saved = r.json()["food"]
+    assert (saved["name"], saved["brand"], saved["kcal_100g"], saved["serving_g"], saved["source"]) == \
+        ("Avena", "Quaker", 389, 40, "label")
+    [request] = model.requests
+    assert request["model"] == "smart" and request["messages"][0]["content"][0]["type"] == "image"
+    assert api.get("/v1/food/barcode/8000000000001", headers=AUTH).json()["food"]["id"] == saved["id"]
+    assert len(rec.requests) == 1
+
+
+def test_a_label_that_cant_be_read_says_why(app_env):
+    api, *_ = app_env(model=[done('{"error": "the photo is blurry"}'),
+                             done('{"kcal_100g": 300, "protein_100g": 80, "carbs_100g": 80, "fat_100g": 0}')])
+    photo = upload(api).json()["id"]
+    r = api.post("/v1/food/label", json={"barcode": "8000000000001", "photo": photo}, headers=AUTH)
+    assert r.status_code == 422 and "blurry" in r.json()["error"]
+    r = api.post("/v1/food/label", json={"barcode": "8000000000001", "photo": photo}, headers=AUTH)
+    assert r.status_code == 422 and "another photo" in r.json()["error"]
+    assert api.post("/v1/food/label", json={"barcode": "8000000000001", "photo": "p_nope"},
+                    headers=AUTH).status_code == 400

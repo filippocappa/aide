@@ -186,7 +186,10 @@ only web, maps, memory and routines of its own, and hands the rest to the specia
 user's photos go along). Queued actions still run from a registry with every tool (`Agent.tools`).
 Saved foods (2026-10-29, server only, contract "Food"): Coach looks each item up (`find_food`: saved foods, then Open
 Food Facts by name or barcode; else `web_search`, a label, or its estimate, saved with `save_food`) and logs the meal
-from `items` with grams; the server adds them up and remembers the usual portion. Not yet tried live.
+from `items` with grams; the server adds them up and remembers the usual portion. Barcode scanner (2026-10-29,
+both sides): "Scan barcode" in Log a meal (VisionKit, `Views/ScanViews.swift`; "Type a barcode" on the Simulator),
+the product and how much (empty: the usual portion, else a serving), logged by the server with no model call; an
+unknown barcode asks for a photo of its nutrition facts, read once (`POST /v1/food/label`) and saved. Not yet tried live.
 
 **Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
 files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and

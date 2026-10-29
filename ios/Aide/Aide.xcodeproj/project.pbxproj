@@ -26,6 +26,7 @@
 		32929000119CE3BE2D9FD69A /* TramLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA0AF3C34ADA2A7F1F3492E /* TramLiveActivity.swift */; };
 		3B94BC79A60AEAD6626F4EEA /* LockShield.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ACCD638FA0D9F230CF15238B /* LockShield.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3CA6E37A3296746227026CF7 /* ShieldConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21264FA61ED8665DC82B517 /* ShieldConfig.swift */; };
+		3D0111BD8AD5B12BEFAD16CF /* ScanViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC045FC4847C746FA98D8C55 /* ScanViews.swift */; };
 		3DDC6EFD08DE031E76848EBC /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */; };
 		3E1727F77882BD2842BC741B /* ErrandViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4B434BFB9F5B347D240B333 /* ErrandViews.swift */; };
 		3ED4F27F4BDF47BC7C5CCE36 /* HealthWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2F5F2B76D809AD012067BF /* HealthWidget.swift */; };
@@ -226,6 +227,7 @@
 		B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeUpIntent.swift; sourceTree = "<group>"; };
 		B767930966E7CE68008A6BC6 /* WidgetSamples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSamples.swift; sourceTree = "<group>"; };
 		B9FC43C842297C98B8EC0DAE /* AideTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AideTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BC045FC4847C746FA98D8C55 /* ScanViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanViews.swift; sourceTree = "<group>"; };
 		BDD7CC531B6DFD14673ABD6C /* LocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationService.swift; sourceTree = "<group>"; };
 		BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitsView.swift; sourceTree = "<group>"; };
 		C7366C17F353CC40F20968CF /* LockShield.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LockShield.entitlements; sourceTree = "<group>"; };
@@ -295,6 +297,7 @@
 				31E717ACC950E43DC53B945E /* RichText.swift */,
 				390203A3696FD54CC8786945 /* RouteCard.swift */,
 				53C02A40AE154F5373B2E531 /* RoutinesView.swift */,
+				BC045FC4847C746FA98D8C55 /* ScanViews.swift */,
 				415C01E53630052EF49DC680 /* ScreenTimeView.swift */,
 				DBB893CFE71A535E6990CADF /* SettingsView.swift */,
 				031232FED72D4C9A787D8843 /* StudyCards.swift */,
@@ -760,6 +763,7 @@
 				AA3A37D30E4DCE329F1D78A5 /* RichText.swift in Sources */,
 				9A5EC9E4AB9A77C8A2AF2FF6 /* RouteCard.swift in Sources */,
 				77A8815630784AAAA723B773 /* RoutinesView.swift in Sources */,
+				3D0111BD8AD5B12BEFAD16CF /* ScanViews.swift in Sources */,
 				56104DC93C630DB4D289AF44 /* ScreenLock.swift in Sources */,
 				9E964C66BAD175385D222CD3 /* ScreenTimeService.swift in Sources */,
 				8D99AB3FE92EDB74DCBA6C04 /* ScreenTimeView.swift in Sources */,

@@ -642,6 +642,9 @@ goes. The server sends the silent `sync` push after every meal change, so this h
 | `POST /v1/food/log` | `{"photos": ["p_…"], "text": "half of it", "date": "2026-10-20"}` (`photos` or `text` needed; `text` and `date` optional) | `{"reply": "Pasta al pomodoro, about 650 kcal…", "meals": [Meal], "conversation_id": "c_…"}`: Coach logs it in its "Food log" chat (made once, then reused), so a correction can follow there. `meals` is the meals its tools showed: logged, changed or listed (can be empty when it only asked something). 5–30 s. |
 | `PATCH /v1/food/meals/{id}` | any of `name`, `eaten_at`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `water_ml`, `caffeine_mg`, `notes` | the Meal |
 | `DELETE /v1/food/meals/{id}` | | `{"ok": true}` (the user deleting from the app: immediate) |
+| `GET /v1/food/barcode/{code}` | | `{"food": Food \| null}` (since 2026-10-29): a scanned barcode's saved food, else Open Food Facts' product (saved on the way); `null` when neither has it. 502 when Open Food Facts can't be reached. No model call. |
+| `POST /v1/food/label` | `{"barcode": "8000000000001", "photo": "p_…", "name": "Avena"}` (`name` optional) | `{"food": Food}`: one model call reads the nutrition facts in the photo (per 100 g, the serving, the name and brand when shown) and saves them for the barcode, so the next scan finds it. 422 with the reason when it can't be read (try another photo). 5–30 s. |
+| `POST /v1/food/foods/{id}/log` | `{"grams": 30, "date": "2026-10-28"}` (both optional) | `{"meal": Meal}`: logs a saved food as a meal, the server's own sum (no model call). No `grams`: the usual portion, else one serving, else 400. The meal is named after the food (and its brand), `notes` is its items line, and the grams become the usual portion. |
 | `GET /v1/food/goals` | | Goals |
 | `PUT /v1/food/goals` | Goals | Goals |
 
@@ -660,7 +663,14 @@ first, then Open Food Facts (packaged food; by name, or exactly by barcode, whic
 from `web_search`, a nutrition label in a photo, or Coach's own estimate for a plain food, saved once with
 `save_food` (`update_food` corrects one), so the same food gives the same numbers every time. `log_meal` and
 `update_meal` take `items` (a saved food with its grams, or an item with its own estimate), and the server adds them
-up. No endpoint for them yet.
+up.
+
+Food object: `{"id": 7, "name": "Nocciolata", "brand": "Rigoni di Asiago", "barcode": "8001505005707", "kcal_100g":
+544, "protein_100g": 8.1, "carbs_100g": 54, "fat_100g": 32, "serving_g": 15, "usual_g": 30, "source": "off"}`; per
+100 ml for a drink; `serving_g` and `usual_g` can be null; `source` is `off` (Open Food Facts), `label`, `web`,
+`estimate` or `user`. The app's barcode scanner (since 2026-10-29): scan, `GET /v1/food/barcode/{code}`, how much
+(empty is the usual portion or one serving), `POST /v1/food/foods/{id}/log`; a barcode nobody has asks for a photo
+of its label, `POST /v1/food/label`, then the same.
 
 ## Study
 

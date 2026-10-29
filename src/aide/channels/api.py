@@ -27,6 +27,7 @@ from ..browser import BrowserError, check_site, full_url, site_of
 from ..engine import Engine
 from ..errands import ErrandRunner, ErrandStore
 from ..food import MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
+from ..foods import MAX_NAME as MAX_FOOD_NAME, FoodDB
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
 from ..icloud import CalendarBackend, CalEvent
@@ -47,6 +48,7 @@ from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWork
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..leave import LeaveWatcher
 from ..locks import LockStore
+from ..tools.nutrition import OpenFoodFacts, read_label
 from ..transit import AlertStore, Boards, Location
 from ..wake import WakeService
 
@@ -67,6 +69,17 @@ class FoodLogIn(BaseModel):
     photos: list[str] = []
     text: str = ""
     day: date | None = Field(None, alias="date")  # the day it was eaten, default today
+
+
+class LabelIn(BaseModel):
+    barcode: str
+    photo: str  # id from POST /v1/photos: the nutrition facts on the packet
+    name: str = ""  # what the user calls it, when the photo doesn't say
+
+
+class FoodLogOne(BaseModel):
+    grams: float | None = None  # None: the usual portion, else one serving
+    day: date | None = Field(None, alias="date")
 
 
 class MealPatch(BaseModel):
@@ -422,10 +435,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                live: LiveActivities | None = None, leave: LeaveWatcher | None = None,
                quizzes: QuizStore | None = None, reviews: ReviewStore | None = None,
                locks: LockStore | None = None, errands: ErrandRunner | None = None,
-               errand_store: ErrandStore | None = None, plans: PlanStore | None = None) -> FastAPI:
+               errand_store: ErrandStore | None = None, plans: PlanStore | None = None,
+               foods: FoodDB | None = None, off: OpenFoodFacts | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
+    foods = foods or FoodDB(db.conn)
+    off = off or OpenFoodFacts()
     habits = habits or HabitStore(db.conn, tz, food)
     locks = locks or LockStore(db.conn, tz)
     if habits.food is None:  # food habits tick from the food log
@@ -1019,6 +1035,78 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         turn = await agent.respond(CONVERSATION, text or "Log this.", conversation, photos=body.photos)
         meals = next((a["meals"] for a in turn.attachments if a["type"] == "meals"), [])
         return {"reply": turn.reply, "meals": meals, "conversation_id": conversation}
+
+    # A scanned barcode: the saved food, else Open Food Facts' product (saved), else a photo of its label read once.
+    # Logging one is the server's own sum, no model call.
+
+    @app.get("/v1/food/barcode/{code}", dependencies=[Depends(auth)])
+    async def food_by_barcode(code: str):
+        code = code.strip()
+        if not code.isdigit() or not 6 <= len(code) <= 14:
+            raise HTTPException(400, "a barcode is 6–14 digits")
+        if saved := foods.by_barcode(code):
+            return {"food": foods.as_json(saved)}
+        try:
+            p = await off.barcode(code)
+        except (RuntimeError, httpx.HTTPError) as e:
+            log.warning("Open Food Facts: %s", e)
+            raise HTTPException(502, f"couldn't reach Open Food Facts: {e}") from None
+        if p is None:
+            return {"food": None}
+        saved = foods.save(p["name"], p["kcal_100g"], p["protein_100g"], p["carbs_100g"], p["fat_100g"], "off",
+                           brand=p["brand"], barcode=code, serving_g=p["serving_g"], source_ref=code)
+        return {"food": foods.as_json(saved)}
+
+    async def ask_once(system: str, content: list[dict], max_tokens: int) -> str:
+        if engine is not None:
+            return await engine.ask(system, content, max_tokens, background=True)
+        response = await agent.client.beta.messages.create(
+            model=agent.smart_model, max_tokens=max_tokens, system=system,
+            messages=[{"role": "user", "content": content}])
+        return "".join(b.text for b in response.content if b.type == "text").strip()
+
+    @app.post("/v1/food/label", dependencies=[Depends(auth)])
+    async def food_label(body: LabelIn):
+        code = body.barcode.strip()
+        if not code.isdigit():
+            raise HTTPException(400, "a barcode is digits only")
+        if photos is None or (loaded := photos.load(body.photo)) is None:
+            raise HTTPException(400, f"no photo {body.photo}")
+        try:
+            label = await read_label(ask_once, *loaded)
+        except (httpx.HTTPError, anthropic.APIError) as e:
+            log.warning("reading a label failed: %s", e)
+            raise HTTPException(502, f"couldn't read the label: {e}") from None
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        name = (" ".join(body.name.split()) or label["name"] or f"Product {code}")[:MAX_FOOD_NAME]
+        try:
+            saved = foods.save(name, label["kcal_100g"], label["protein_100g"], label["carbs_100g"],
+                               label["fat_100g"], "label", brand=label["brand"][:MAX_FOOD_NAME], barcode=code,
+                               serving_g=label["serving_g"], source_ref=body.photo)
+        except ValueError as e:
+            raise HTTPException(422, f"the label didn't read right ({e}); try another photo") from None
+        return {"food": foods.as_json(saved)}
+
+    @app.post("/v1/food/foods/{food_id}/log", dependencies=[Depends(auth)])
+    async def log_one_food(food_id: int, body: FoodLogOne):
+        if foods.get(food_id) is None:
+            raise HTTPException(404, f"no food {food_id}")
+        today = food.today()
+        if body.day and body.day > today:
+            raise HTTPException(400, "a meal can't be in the future")
+        when = datetime.now(tz)
+        if body.day and body.day != today:
+            when = datetime.combine(body.day, when.time(), tz)
+        rows, sums, notes = foods.from_items([{"food_id": food_id, "grams": body.grams}], "")
+        name = rows[0]["name"]
+        brand = foods.get(food_id)["brand"]
+        if brand and brand.lower() not in name.lower():
+            name = f"{name} ({brand})"[:MAX_FOOD_NAME]
+        meal = food.add(name, **sums, eaten_at=when, notes=notes)
+        foods.keep_items(meal["id"], rows, count=True)
+        activity.record(db.conn, "coach", "action", f"Logged {name}, {rows[0]['grams']:g} g (scanned in the app)")
+        return {"meal": food.as_json(meal)}
 
     @app.patch("/v1/food/meals/{meal_id}", dependencies=[Depends(auth)])
     async def edit_meal(meal_id: int, body: MealPatch):

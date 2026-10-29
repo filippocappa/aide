@@ -22,6 +22,7 @@ from .engine import Engine
 from .errands import ErrandRunner, ErrandStore, errand_tools, purchase_tools
 from .gmail import Gmail
 from .food import FoodStore
+from .foods import FoodDB
 from .objectives import ObjectivePlanner, ObjectiveStore, StudyReplanner
 from .habits import HabitStore
 from .health import HealthStore
@@ -46,6 +47,7 @@ from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
 from .tools.food import food_tools
+from .tools.nutrition import OpenFoodFacts
 from .tools.objectives import objective_tools
 from .tools.habits import habit_tools
 from .tools.locks import lock_tools
@@ -86,6 +88,7 @@ def main() -> None:
     reminders = ReminderStore(db.conn)
     health = HealthStore(db.conn, settings.timezone)
     food = FoodStore(db.conn, settings.timezone)
+    foods, off = FoodDB(db.conn), OpenFoodFacts()  # saved foods; Open Food Facts needs no key
     habits = HabitStore(db.conn, settings.timezone, food, health)
     photos = PhotoStore(settings.db_path.parent / "photos")
     push = Push(db.conn, settings.apns_key_path, settings.apns_key_id, settings.apns_team_id, settings.apns_bundle_id)
@@ -101,7 +104,7 @@ def main() -> None:
     live = LiveActivities(db.conn, push)
 
     tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits),
-             *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone),
+             *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone, foods, off),
              *lock_tools(locks, settings.timezone)]
     cal = None
     if settings.icloud_email and settings.icloud_app_password:
@@ -276,7 +279,7 @@ def main() -> None:
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
-                             quizzes, reviews, locks, errands, errand_store, plans)
+                             quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
