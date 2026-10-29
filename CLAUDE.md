@@ -355,6 +355,12 @@ coffees as Inhaler Usage; the day's count is the larger of Health's and the app'
 that way. Counts logged through Aide (an agent, the app, a widget) go back to Health (2026-10-27): the server keeps each
 day's `health_logged` and the app makes its own Inhaler Usage samples match, never touching the user's.
 
+**Done, both sides (2026-10-29), not yet tried on the phone:** the events card as a week (#25, contract "Events and
+plans"): a turn's events in one card in time order, marked found, created or proposed; `propose_events` (Secretary,
+Professor) puts a plan on it that goes in the calendar only on Add; the app's `Views/EventWeekView.swift` (week strip,
+the chosen day, the event's sheet with Move, Delete, Open in Calendar). Also a reply survives the app going to the
+background (pings, `working` on history, a `message` push when no Live Activity is left).
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
