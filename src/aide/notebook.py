@@ -279,6 +279,15 @@ class NotebookStore:
             new = [*lines, "", f"## {_line(name, 80)}", text.strip()]
         return self.set_body(topic["id"], "\n".join(new))
 
+    def formulas(self, course_id: int) -> str:
+        """The course's formula sheet: every written topic's Formulas section, in the notebook's order, under the
+        topic's title as a link. Gathered on every read, so it's never behind the topics; '' when none has one."""
+        out = []
+        for t in self.topics(course_id):
+            if text := _formulas(t["body"]):
+                out.append(f"## [[{t['title']}]]\n\n{text}")
+        return "\n\n".join(out)
+
     def outline(self, course_id: int, headings: bool = True) -> str:
         """The notebook as a list: each topic's id, title, summary and "### " headings. No bodies."""
         out = []
@@ -699,10 +708,12 @@ class NotebookStore:
     def notebook_json(self, course_id: int) -> dict:
         intro = self.intro(course_id)
         busy = self.busy(course_id)
+        topics = self.topics(course_id)
         return {"course": course_id, "started": self.started(course_id), "busy": busy,
                 "step": self.steps.get(course_id) if busy else None,
                 "exam": intro["exam"] if intro else None, "introduction": intro["body"] if intro else None,
-                "topics": [self.topic_json(t) for t in self.topics(course_id)],
+                "topics": [self.topic_json(t) for t in topics],
+                "formulas": sum(1 for t in topics if _formulas(t["body"])),
                 "writing": next((self.proposal_json(p) for p in self.proposals(course_id, "applying")), None),
                 "proposals": [self.proposal_json(p) for p in self.proposals(course_id)]}
 
@@ -774,6 +785,12 @@ def _span(body: str, name: str) -> tuple[int, int] | None:
                         if (n := _HEADING.match(lines[j])) and len(n.group(1)) <= level), len(lines))
             return i, end
     return None
+
+
+def _formulas(body: str) -> str:
+    """A topic page's Formulas section without its heading, '' when it has none."""
+    span = _span(body, "Formulas") if body else None
+    return "\n".join(body.splitlines()[span[0] + 1:span[1]]).strip() if span else ""
 
 
 def _questions(body: str) -> int:

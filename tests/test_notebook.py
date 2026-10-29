@@ -303,6 +303,33 @@ async def test_applying_the_outline_writes_each_topic_from_its_own_pages(nb):
         "What does IS stand for?::Investment equals saving\nWhat shifts LM?::The money supply\n")
 
 
+async def test_the_formula_sheet_gathers_every_topics_formulas(nb):
+    is_lm, crowding = await built(nb)
+    cid = nb.macro["id"]
+    assert nb.notebook.formulas(cid) == "## [[The IS-LM model]]\n\n$Y = C + I + G$"  # crowding out has none
+    assert nb.api.get(f"/v1/notebook?course={cid}", headers=AUTH).json()["formulas"] == 1
+    nb.notebook.set_body(crowding["id"], CROWDING.partition("===")[0] + "\n## Formulas\n### Crowding\n$\\Delta I = -b \\Delta i$")
+    assert nb.api.get(f"/v1/notebook?course={cid}", headers=AUTH).json()["formulas"] == 2
+    sheet = nb.api.get(f"/v1/notebook/formulas?course={cid}&plain=true", headers=AUTH).json()
+    assert sheet["body"].startswith("## The IS-LM model\n\nY = C + I + G\n\n## Crowding out\n\n### Crowding\n")
+    assert nb.api.get("/v1/notebook/formulas?course=999", headers=AUTH).status_code == 404
+
+    # In the vault: a page of its own, linked from the Introduction, kept in step until the user edits it.
+    await nb.vault.sync()
+    root = nb.vault.folder / "Aide/macroeconomics"
+    page = (root / "Formulas.md").read_text()
+    assert page.startswith('---\ncourse: "[[Aide/macroeconomics/00 Introduction|macroeconomics]]"\ntags:\n  - formulas')
+    assert "## [[Aide/macroeconomics/01 The IS-LM model|The IS-LM model]]\n\n$Y = C + I + G$" in page
+    assert "## Practice\n- [[Aide/macroeconomics/Formulas|Formulas]]" in (root / "00 Introduction.md").read_text()
+    nb.notebook.replace_section(is_lm, "Formulas", "$Y = C + I + G + NX$")
+    await nb.vault.sync()
+    assert "$Y = C + I + G + NX$" in (root / "Formulas.md").read_text()
+    (root / "Formulas.md").write_text("my own sheet")
+    nb.notebook.replace_section(nb.notebook.topic(is_lm["public_id"]), "Formulas", "$Y = C + I$")
+    await nb.vault.sync()
+    assert (root / "Formulas.md").read_text() == "my own sheet"
+
+
 async def test_new_material_is_proposed_from_the_outline_and_merged_into_the_users_version(nb):
     is_lm, crowding = await built(nb)
     nb.worker.vault = nb.vault

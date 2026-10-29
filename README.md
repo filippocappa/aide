@@ -194,6 +194,7 @@ Aide/Macroeconomics/
 ├── 01 The goods market.md      explanation · key terms · formulas · worked examples
 ├── 02 The IS-LM model.md       · figures · exam-style questions (folded answers)
 ├── …
+├── Formulas.md                 every topic's formulas, gathered (the formulario)
 ├── Cards/                      question :: answer, tagged #flashcards/macroeconomics
 ├── Images/                     slide figures the topic pages show
 ├── Sources/                    one page per lecture: its notes

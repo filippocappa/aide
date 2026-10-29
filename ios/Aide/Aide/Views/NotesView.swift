@@ -363,6 +363,46 @@ struct NotePage: View {
     }
 }
 
+/// A page whose markdown is fetched when it opens: the formula sheet, a topic's exercises.
+struct LoadedNotePage: View {
+    let title: String
+    var subtitle: String? = nil
+    let load: () async throws -> String
+    @State private var markdown: String?
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(title).font(.largeTitle.bold())
+                if let subtitle { Text(subtitle).font(.title3).foregroundStyle(.secondary) }
+                if let markdown {
+                    NoteText(markdown: markdown)
+                } else if let error {
+                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+                } else {
+                    SkeletonText()
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
+        }
+        .background(Theme.background)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await fetch() }
+        .refreshable { await fetch() }
+    }
+
+    private func fetch() async {
+        do {
+            markdown = try await load()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
 /// A lecture's notes, or where they are while they're being written.
 struct LectureView: View {
     let lecture: Lecture

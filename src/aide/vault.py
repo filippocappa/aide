@@ -243,6 +243,7 @@ class Vault:
         # The notebook: topic pages and their cards, and which lectures each topic was built from.
         topic_paths: dict[int, str] = {}
         expanded: dict[str, list[str]] = {}  # lecture public id → links to the topics it went into
+        practice: dict[int, list[str]] = {}  # course id → links to its formula sheet, for the Introduction
         for cid in noted & courses.keys():
             course = courses[cid]
             paths = self._topic_paths(course)
@@ -267,6 +268,10 @@ class Vault:
                 for s in json.loads(t["sources"]):
                     if "lecture" in s:
                         expanded.setdefault(s["lecture"], []).append(_link(paths[t["id"]], t["title"]))
+            if sheet := self.notebook.formulas(cid):
+                practice.setdefault(cid, []).append(_link(f"{folders[cid]}/Formulas.md", "Formulas"))
+                items.append(Item(f"{folders[cid]}/Formulas.md", f"formulas:{cid}",
+                                  self._formulas(course, _figures_out(_links_out(sheet, by_title), images))))
         lecture_paths: dict[int, str] = {}
         for lec in sorted(rows, key=lambda r: (r["recorded_at"], r["id"])):
             folder = folders.get(lec["course_id"], f"{ROOT}/Unfiled")
@@ -287,7 +292,8 @@ class Vault:
             files = [f for f in all_files if f["course_id"] == cid]
             if cid in noted:
                 items.append(Item(f"{folders[cid]}/00 Introduction.md", f"intro:{cid}",
-                                  self._introduction(c, topic_paths, lectures, lecture_paths, files, file_paths)))
+                                  self._introduction(c, topic_paths, lectures, lecture_paths, files, file_paths,
+                                                     practice.get(cid, []))))
             elif lectures or files:
                 items.append(Item(f"{folders[cid]}/{_file_name(c['name'])}.md", f"course:{cid}",
                                   self._course(c, lectures, lecture_paths, files, file_paths)))
@@ -338,8 +344,15 @@ class Vault:
     def _cards_head(self, t: dict, course: dict, page: str) -> str:
         return f"#flashcards/{_tag(course['name'])}\n\nCards for {_link(page, t['title'])}. Aide adds new ones at the end.\n\n"
 
+    def _formulas(self, course: dict, sheet: str) -> str:
+        folder = self._folder(course)
+        return (f'---\ncourse: "{_link(f"{folder}/00 Introduction.md", course["name"])}"\ntags:\n  - formulas\n'
+                f"  - {_tag(course['name'])}\n---\n\n# Formulas: {course['name']}\n\n{sheet}\n\n"
+                "*Gathered by Aide from the topics' Formulas, and kept in step with them. Edit a topic's to change "
+                "it here; edit this page and Aide leaves it as you made it.*\n")
+
     def _introduction(self, c: dict, topic_paths: dict, lectures: list[dict], lecture_paths: dict,
-                      files: list[dict], file_paths: dict) -> str:
+                      files: list[dict], file_paths: dict, practice: list[str] = ()) -> str:
         tz = self.study.tz
         intro = self.notebook.intro(c["id"])
         out = [f"---\ntags:\n  - course\n  - {_tag(c['name'])}\n---", f"# {c['name']}"]
@@ -356,6 +369,8 @@ class Vault:
                 name = _link(topic_paths[t["id"]], t["title"]) if t["id"] in topic_paths else f"{t['title']} (not written yet)"
                 lines.append(f"{n}. {name}" + (f": {t['summary']}" if t["summary"] else ""))
             out.append("## Topics\n" + "\n".join(lines))
+        if practice:
+            out.append("## Practice\n" + "\n".join(f"- {link}" for link in practice))
         if lectures:
             lines = []
             for lec in sorted(lectures, key=lambda r: r["recorded_at"]):

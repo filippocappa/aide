@@ -633,6 +633,14 @@ final class APIClient {
                        body: EmptyBody())
     }
 
+    /// The formula sheet, as markdown.
+    func formulas(course: Int) async throws -> String {
+        let sheet: FormulaSheet = try await send("GET", "/v1/notebook/formulas",
+                                                 query: [URLQueryItem(name: "course", value: String(course)),
+                                                         URLQueryItem(name: "plain", value: "true")])
+        return sheet.body
+    }
+
     func topic(_ id: String) async throws -> TopicPage {
         try await send("GET", "/v1/topics/\(id)", query: [URLQueryItem(name: "plain", value: "true")])
     }

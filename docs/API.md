@@ -765,8 +765,8 @@ as `error`: log in again.
 The server keeps an Obsidian vault of the notes and files (since 2026-10-21), served over WebDAV, which Obsidian's
 Remotely Save plugin syncs to the phone and the Mac (README, "Obsidian"). Everything Aide writes is under `Aide/` in
 the vault, a folder per course:
-- with a notebook (below): `00 Introduction.md` (the exam, how to prepare, the topics, lectures and files), a page
-  per topic (`01 The IS-LM model.md`), `Cards/` with each topic's flashcards for the Spaced Repetition plugin and
+- with a notebook (below): `00 Introduction.md` (the exam, how to prepare, the topics, practice, lectures and files),
+  a page per topic (`01 The IS-LM model.md`), `Formulas.md` (every topic's formulas), `Cards/` with each topic's flashcards for the Spaced Repetition plugin and
   `Images/` with the slides the topics show as figures;
   otherwise an index page named after the course (lectures, files, the next exam);
 - `Sources/` with a page per lecture (`2026-10-21 The IS-LM model.md`: properties, the notes, "Expanded:" the
@@ -801,6 +801,7 @@ and posts the result in the same chat.
 | `GET /v1/notebook?course=2&plain=true` | | Notebook. `404` no such course. |
 | `POST /v1/notebook?course=2` | | `202`, Notebook: the Introduction and the outline proposal are on their way. `409` it already has topics. |
 | `POST /v1/notebook/figures?course=2` | | `202`, Notebook: every slide of the course gets one look (once; new files later), then figures go into the topics that miss good ones, from the pages they don't show yet. Nothing is rewritten; the result comes in the course chat. `409` no topics yet. |
+| `GET /v1/notebook/formulas?course=2&plain=true` | | `{"course": 2, "body": "markdown"}`: the formula sheet (below). `body` is `""` when no topic has formulas. `404` no such course. |
 | `GET /v1/topics/{id}?plain=true` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]` and `sources` (`["Week 3 slides, p. 1–2"]`). `404`. In `body`, a figure is `![The IS curve shifting right](figure:f_…/12)`: page 12 of that study file, with its caption. |
 | `GET /v1/proposals?course=2&status=pending` | | `{"proposals": [Proposal]}`; both optional; `status` `pending` (default) or `all`. |
 | `POST /v1/proposals/{id}/apply` | `{"items": [1, 3], "note": "keep it short"}`, both optional (all items) | `202`, the Proposal, `status` `applying`. `400` an item out of range; `409` not pending. |
@@ -808,9 +809,16 @@ and posts the result in the same chat.
 
 Notebook: `{"course": 2, "started": true, "busy": false, "step": "Writing The IS-LM model, Crowding out" or null,
 "exam": "20–35 multiple-choice questions, −0.25 for a wrong answer…" or null, "introduction": "markdown" or null,
-"topics": [Topic], "proposals": [Proposal], "writing": Proposal or null}` (`busy`: being written; `step`: what
-Professor is doing now, a line to show while `busy` (null otherwise, or right after a restart); pending proposals
-only; `writing`: the proposal being applied, with its `progress`).
+"topics": [Topic], "proposals": [Proposal], "writing": Proposal or null, "formulas": 3}` (`busy`: being written;
+`step`: what Professor is doing now, a line to show while `busy` (null otherwise, or right after a restart); pending
+proposals only; `writing`: the proposal being applied, with its `progress`; `formulas`, since 2026-10-29: how many
+topics have formulas, 0 when there's no formula sheet to show).
+
+**Formula sheet** (since 2026-10-29): the Formulas section of every written topic, in the notebook's order, each
+under a `## [[Topic title]]` heading (with `plain`, just the title). No model writes it: it's put together on every
+read, so it always matches the topics. In the vault it's `Formulas.md` in the course's folder, linked from the
+Introduction's Practice list, and like any page Aide writes, it's left alone once the user edits it. To change a
+formula, edit the topic.
 
 **`plain=true`** (on the notebook, a topic and a lecture): the notes as the app shows them. LaTeX becomes plain
 Unicode ($\pi_{t-1}$ as πₜ₋₁) and `[[links]]` their text. Without it, the markdown is as in the vault.

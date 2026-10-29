@@ -1270,6 +1270,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             out["introduction"] = readable(out["introduction"])
         return out
 
+    @app.get("/v1/notebook/formulas", dependencies=[Depends(auth)])
+    async def get_formulas(course: int, plain: bool = False):
+        """The formula sheet: every topic's Formulas, gathered as it's read."""
+        body = notebook.formulas(course_or_404(course))
+        return {"course": course, "body": readable(body) if plain else body}
+
     @app.post("/v1/notebook", dependencies=[Depends(auth)])
     async def start_notebook(course: int):
         try:

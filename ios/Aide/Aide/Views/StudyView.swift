@@ -248,6 +248,15 @@ struct CourseView: View {
                         Label("Introduction", systemImage: "graduationcap")
                     }
                 }
+                if (notebook.formulas ?? 0) > 0 {
+                    NavigationLink {
+                        LoadedNotePage(title: "Formulas", subtitle: "Every topic's formulas, in the notebook's order") {
+                            try await env.api.formulas(course: course.id)
+                        }
+                    } label: {
+                        Label("Formulas", systemImage: "function")
+                    }
+                }
                 ForEach(notebook.topics ?? []) { topic in
                     if topic.written == true {
                         NavigationLink { TopicPageView(topic: topic) } label: { TopicRow(topic: topic) }

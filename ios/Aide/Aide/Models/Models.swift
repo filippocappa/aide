@@ -1159,6 +1159,13 @@ struct NotebookStatus: Decodable {
     var introduction: String?
     var topics: [NotebookTopic]?
     var proposals: [NotebookProposal]?
+    /// Topics with formulas: the formula sheet shows when there's at least one.
+    var formulas: Int?
+}
+
+struct FormulaSheet: Decodable {
+    let course: Int
+    let body: String
 }
 
 struct NotebookProposal: Decodable, Hashable, Identifiable {
