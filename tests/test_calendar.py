@@ -8,7 +8,7 @@ import pytest
 
 from aide.agent import Agent
 from aide.db import Database
-from aide.icloud import CalEvent, RecurringEventError, _event_from_component
+from aide.icloud import CalEvent, RecurringEventError, _event_from_component, _hex
 from aide.tools import ToolRegistry
 from aide.tools.calendar import calendar_tools
 
@@ -203,6 +203,11 @@ def test_parse_component_with_duration_and_rrule():
     ev.add("rrule", {"freq": "weekly"})
     parsed = _event_from_component(ev, "Home")
     assert parsed.end == at(19, 7, 45) and parsed.recurring and parsed.title == "Yoga"
+
+
+def test_calendar_colours_from_icloud():
+    assert _hex("#1badf8ff") == "#1BADF8" and _hex("#CC73E1") == "#CC73E1"
+    assert _hex(None) == _hex("") == _hex("blue") == ""
 
 
 async def test_new_move_replaces_earlier_queued_move(tools, cal):

@@ -20,7 +20,8 @@ def event_json(e: CalEvent, tz: ZoneInfo) -> dict:
     def t(d):
         return d.astimezone(tz).isoformat() if isinstance(d, datetime) else d.isoformat()
     return {"id": e.uid, "title": e.title, "calendar": e.calendar, "start": t(e.start), "end": t(e.end),
-            "all_day": e.all_day, "location": e.location, "notes": e.notes, "recurring": e.recurring}
+            "all_day": e.all_day, "location": e.location, "notes": e.notes, "recurring": e.recurring,
+            "color": e.color or None}
 
 
 def event_start(e: CalEvent, tz: ZoneInfo) -> datetime:

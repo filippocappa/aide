@@ -1216,13 +1216,15 @@ Its answers are plain text; there are no health attachments yet.
   "events": [
     {"id": "df2c…@aide", "title": "Drive to Malpensa", "calendar": "Transport",
      "start": "2026-10-18T14:00:00+02:00", "end": "2026-10-18T19:00:00+02:00",
-     "all_day": false, "location": "Malpensa Airport", "notes": "", "recurring": false}
+     "all_day": false, "location": "Malpensa Airport", "notes": "", "recurring": false, "color": "#1BADF8"}
   ],
   "reminders": [ /* Reminder objects due that day or overdue and not completed */ ]
 }
 ```
 All-day events have `"all_day": true`, and `start`/`end` are dates, with `end` **exclusive**. `notes` (since
-2026-10-29) is the event's notes, `""` when it has none.
+2026-10-29) is the event's notes, `""` when it has none. `color` (since 2026-10-29) is its calendar's colour in
+iCloud as `#RRGGBB`, `null` when iCloud gives none; the same on every event object (cards, `/v1/events`, a plan's
+items).
 
 ### Events and plans
 

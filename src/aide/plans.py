@@ -122,8 +122,17 @@ class PlanStore:
         return {"id": item["id"], "title": item["title"], "calendar": item["calendar"], "start": start.isoformat(),
                 "end": (end + timedelta(days=1)).isoformat() if all_day else end.isoformat(), "all_day": all_day,
                 "location": item.get("location") or "", "notes": item.get("notes") or "", "recurring": False,
+                "color": self._color(item["calendar"]),
                 "change": "proposed", "plan": plan["public_id"], "status": item["status"], "event": item["event"],
                 **({"error": item["error"]} if item.get("error") else {})}
+
+    def _color(self, calendar: str) -> str | None:
+        """The calendar's colour, from the backends that know it (iCloud's)."""
+        color = getattr(self.cal, "color", None)
+        try:
+            return (color(calendar) if color else "") or None
+        except Exception:
+            return None
 
     def line(self, item: dict) -> str:
         start, end = self._when(item["start"]), self._when(item["end"])

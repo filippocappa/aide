@@ -34,6 +34,7 @@ def app():
     db = Database(":memory:")
     cal = FakeCalendar([CalEvent("r1", "Work", "Standup", tomorrow(9), tomorrow(9) + timedelta(minutes=15),
                                  recurring=True)])
+    cal.color = lambda name: "#1BADF8" if name == "Work" else ""  # as iCloud's backend knows it
     plans = PlanStore(db.conn, ROME, cal)
 
     def make(responses=()):
@@ -59,6 +60,7 @@ def test_a_plan_is_proposed_and_added_with_a_tap(app):
     assert (first["title"], first["change"], first["status"], first["event"]) == ("Macro: IS-LM", "proposed",
                                                                                   "proposed", None)
     assert first["start"] == start.isoformat() and second["location"] == "Library"
+    assert (first["color"], second["color"]) == ("#1BADF8", None)
     plan_id = first["plan"]
 
     r = client.post(f"/v1/plans/{plan_id}/add", json={"items": [first["id"]]}, headers=AUTH)
@@ -72,7 +74,9 @@ def test_a_plan_is_proposed_and_added_with_a_tap(app):
     assert len(cal.store) == 2
 
     # The card in the history shows what happened since, and the model was told.
-    (m,) = [m for m in client.get("/v1/history", headers=AUTH).json()["messages"] if m["role"] == "assistant"]
+    messages = client.get("/v1/history", headers=AUTH).json()["messages"]
+    (m,) = [m for m in messages if m["role"] == "assistant"]
+    assert [m["text"] for m in messages if m["role"] == "user"] == ["plan my study"]  # the taps' notes aren't shown
     assert [e["status"] for e in m["attachments"][0]["events"]] == ["added", "dropped"]
     notes = [msg["content"] for msg in agent.db.history(agent._resolve(CONVERSATION, None))
              if msg["role"] == "user" and isinstance(msg["content"], str)]

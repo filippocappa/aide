@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Protocol
 
 import caldav
+from caldav.elements.ical import CalendarColor
 import niquests
 import icalendar
 
@@ -28,6 +29,7 @@ class CalEvent:
     location: str = ""
     notes: str = ""
     recurring: bool = False
+    color: str = ""  # the calendar's colour as #RRGGBB, when iCloud gives one
 
     @property
     def all_day(self) -> bool:
@@ -50,7 +52,7 @@ class CalendarBackend(Protocol):
     def delete(self, uid: str) -> None: ...
 
 
-def _event_from_component(comp, calendar: str) -> CalEvent:
+def _event_from_component(comp, calendar: str, color: str = "") -> CalEvent:
     start = comp.decoded("DTSTART")
     if "DTEND" in comp:
         end = comp.decoded("DTEND")
@@ -67,7 +69,14 @@ def _event_from_component(comp, calendar: str) -> CalEvent:
         location=str(comp.get("LOCATION", "")),
         notes=str(comp.get("DESCRIPTION", "")),
         recurring="RRULE" in comp or "RECURRENCE-ID" in comp,
+        color=color,
     )
+
+
+def _hex(color) -> str:
+    """iCloud's calendar-color (#RRGGBBAA) as #RRGGBB; "" when it isn't one."""
+    s = str(color or "").strip()
+    return s[:7].upper() if len(s) in (7, 9) and s.startswith("#") else ""
 
 
 class ICloudCalendar:
@@ -77,6 +86,7 @@ class ICloudCalendar:
         # "OSError: [Errno 90] Message too long". Plain HTTPS over TCP works everywhere.
         self.client.session = niquests.Session(multiplexed=self.client.session.multiplexed, disable_http3=True)
         self._calendars: dict[str, caldav.Calendar] | None = None
+        self._colors: dict[str, str] = {}
         # The first request logs in: iCloud answers 401 and caldav retries with the password. Two threads doing that
         # at once fail the second one (the password is set by then, so it doesn't retry), as at every startup.
         self._first = threading.Lock()
@@ -94,22 +104,34 @@ class ICloudCalendar:
     def _discover(self) -> dict[str, caldav.Calendar]:
         def describe(cal):
             # Reminders lists are calendars too; keep only those that hold events.
-            return cal.get_display_name(), "VEVENT" in cal.get_supported_components()
+            try:
+                color = _hex(cal.get_property(CalendarColor()))
+            except Exception:  # the colour is only for the app's cards
+                color = ""
+            return cal.get_display_name(), "VEVENT" in cal.get_supported_components(), color
 
         cals = self.client.principal().calendars()
         with ThreadPoolExecutor(max_workers=8) as pool:
             info = list(pool.map(describe, cals))
-        found = {name: cal for (name, events), cal in zip(info, cals) if events}
+        found = {name: cal for (name, events, _), cal in zip(info, cals) if events}
+        self._colors = {name: color for name, events, color in info if events and color}
         log.info("iCloud calendars: %s", ", ".join(found))
         return found
 
     def calendars(self) -> list[str]:
         return list(self._cals())
 
+    def color(self, calendar: str) -> str:
+        self._cals()
+        return self._colors.get(calendar, "")
+
+    def _ev(self, comp, calendar: str) -> CalEvent:
+        return _event_from_component(comp, calendar, self._colors.get(calendar, ""))
+
     def events(self, start: datetime, end: datetime) -> list[CalEvent]:
         def one(name: str, cal: caldav.Calendar) -> list[CalEvent]:
             found = cal.search(event=True, start=start, end=end, expand=True)
-            events = [_event_from_component(obj.icalendar_component, name) for obj in found]
+            events = [self._ev(obj.icalendar_component, name) for obj in found]
             for ev, obj in zip(events, found):
                 self._where[ev.uid] = (name, str(obj.url))
             return events
@@ -154,7 +176,7 @@ class ICloudCalendar:
 
     def get(self, uid: str) -> CalEvent | None:
         found = self._find(uid)
-        return _event_from_component(found[1].icalendar_component, found[0]) if found else None
+        return self._ev(found[1].icalendar_component, found[0]) if found else None
 
     def create(self, calendar, title, start, end, location="", notes="") -> CalEvent:
         cals = self._cals()
@@ -176,7 +198,7 @@ class ICloudCalendar:
         cal.add_component(ev)
         cal.add_missing_timezones()
         obj = cals[calendar].add_event(cal.to_ical().decode())
-        created = _event_from_component(ev, calendar)
+        created = self._ev(ev, calendar)
         self._where[created.uid] = (calendar, str(obj.url))
         return created
 
@@ -186,7 +208,7 @@ class ICloudCalendar:
         if not found:
             raise KeyError(f"no event with id {uid}")
         name, obj = found
-        if _event_from_component(obj.icalendar_component, name).recurring:
+        if self._ev(obj.icalendar_component, name).recurring:
             raise RecurringEventError("recurring events can't be changed by Aide yet")
         cals = self._cals()
         if calendar is not None and calendar not in cals:
@@ -208,7 +230,7 @@ class ICloudCalendar:
             cal.add_missing_timezones()
         if calendar is None or calendar == name:
             obj.save()
-            return _event_from_component(obj.icalendar_component, name)
+            return self._ev(obj.icalendar_component, name)
         # CalDAV has no "change calendar": the event is written into the new one under the same UID. The old copy
         # goes first, so the UID is never in two calendars at once, and comes back if the new one can't be written.
         data = obj.icalendar_instance.to_ical().decode()
@@ -219,13 +241,13 @@ class ICloudCalendar:
             cals[name].add_event(original)
             raise
         self._where[uid] = (calendar, str(new.url))
-        return _event_from_component(obj.icalendar_component, calendar)
+        return self._ev(obj.icalendar_component, calendar)
 
     def delete(self, uid) -> None:
         found = self._find(uid)
         if not found:
             raise KeyError(f"no event with id {uid}")
         name, obj = found
-        if _event_from_component(obj.icalendar_component, name).recurring:
+        if self._ev(obj.icalendar_component, name).recurring:
             raise RecurringEventError("recurring events can't be deleted by Aide yet")
         obj.delete()

@@ -204,8 +204,8 @@ class Agent:
         out = []
         for role, content, ts, attachments, consulted, team, routine in self.db.history_with_ts(conversation_id):
             if role == "user":
-                if not isinstance(content, str) or content.startswith(("[The user replied", _OPENED)):
-                    continue  # tool results, confirm/cancel notes, the note before a digest greeting
+                if not isinstance(content, str) or content.startswith(("[The user replied", "[The user tapped", _OPENED)):
+                    continue  # tool results, confirm/cancel and plan notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
                 if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND)):
                     continue  # a routine's prompt, the note before new lecture notes or a notebook proposal
