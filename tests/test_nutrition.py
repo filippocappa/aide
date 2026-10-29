@@ -108,6 +108,8 @@ def test_a_run_in_the_calendar_counts_before_it_happens_at_the_usual_rate(stores
               CalEvent("e3", "Work", "Lezione", at, at + timedelta(hours=2))]
     bonus = nutrition.bonus(today, events)
     assert (bonus["kcal"], bonus["planned"], bonus["workouts"][0]["title"]) == (540, True, "Corsa al Valentino")
+    # The Run calendar's events are runs whatever they're called.
+    assert nutrition.bonus(today, [CalEvent("e4", "Run", "Valentino 10k", at, at + timedelta(minutes=30))])["kcal"] == 360
     # Once the Watch has the run, that's what counts.
     health.save([{"date": today.isoformat(), "workouts": [run(today, kcal=500)]}])
     assert nutrition.bonus(today, events) == {"kcal": 500, "planned": False,

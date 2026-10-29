@@ -220,7 +220,7 @@ class Nutrition:
 
     def bonus(self, d: date, events: list | None = None) -> dict:
         """What the day's workouts add: their kcal (times the share), or, before any, a run in the calendar
-        (`events`, today's) at the usual rate, `planned`."""
+        (`events`, today's: a title that says run, or a calendar called Run) at the usual rate, `planned`."""
         settings = self.targets()["workouts"]
         done = [w for w in self._workouts(d) if w.get("kcal")]
         if not settings["on"]:
@@ -230,7 +230,7 @@ class Nutrition:
             return {"kcal": round(burned * settings["share"]), "planned": False,
                     "workouts": [{"type": w.get("type", "other"), "kcal": round(w["kcal"]),
                                   "minutes": round(workout_minutes(w))} for w in done]}
-        runs = [e for e in events or [] if not e.all_day and RUN_WORDS.search(e.title)
+        runs = [e for e in events or [] if not e.all_day and (RUN_WORDS.search(e.title) or RUN_WORDS.search(e.calendar))
                 and e.start.astimezone(self.tz).date() == d]
         if not runs:
             return {"kcal": 0, "planned": False, "workouts": []}

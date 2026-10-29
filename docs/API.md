@@ -663,7 +663,8 @@ number or null (no goal); all null until set, here or by Coach in chat ("aim for
 ```
 - `base` is the rest day (the same as Goals). On a day with workouts, their Watch kcal times `share` (0–1.5) is
   added: `carbs_pct` (0–100) of it as carbs (4 kcal/g), the rest as fat (9 kcal/g); protein stays. Calories round to 10.
-- Before any workout today, a timed calendar event today whose title says run (run, jog, corsa, correre…) counts at
+- Before any workout today, a timed calendar event today whose title says run (run, jog, corsa, correre…), or any in
+  a calendar called Run, counts at
   the user's own kcal a minute running (the last 60 days' runs; 11 without), `planned: true`. Once the Watch has a
   workout that day, only the done workouts count.
 - `profile` (each key may be null; `sex` is `male` or `female`, `goal` `lose`, `keep` or `gain`) is what proposals
