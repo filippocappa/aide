@@ -1,9 +1,10 @@
 import PDFKit
+import SwiftMath
 import SwiftUI
 
-/// Study notes as the server writes them for the app (`plain=true`: maths as Unicode, links as text): headings,
-/// paragraphs, lists, Obsidian callouts (`> [!success]- Answer`, folded when it says `-`), and figures
-/// (`![caption](figure:f_…/12)`, a page of a study file).
+/// Study notes as the server writes them for the app (`plain=true`: maths as Unicode, links as text; `latex=true`:
+/// formulas on their own lines stay `$$…$$`, drawn by `MathFormula`): headings, paragraphs, lists, Obsidian callouts
+/// (`> [!success]- Answer`, folded when it says `-`), and figures (`![caption](figure:f_…/12)`, a page of a study file).
 struct NoteText: View {
     let markdown: String
 
@@ -37,6 +38,8 @@ struct NoteText: View {
                         .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 3) }
                 case .figure(let caption, let file, let page):
                     NoteFigure(caption: caption, file: file, page: page)
+                case .math(let latex):
+                    MathFormula(latex: latex)
                 case .code(let s):
                     Text(s).font(.callout.monospaced())
                         .padding(10)
@@ -59,6 +62,7 @@ struct NoteText: View {
         case callout(kind: String, title: String, folded: Bool, text: String)
         case quote(String)
         case figure(caption: String, file: String, page: Int)
+        case math(String)
         case code(String)
         case rule
     }
@@ -103,6 +107,20 @@ struct NoteText: View {
                 }
                 continue
             }
+            if trimmed.hasPrefix("$$") {
+                // $$…$$ on one line or several; a full stop after it is dropped, other text after it is a paragraph.
+                flush()
+                var latex = String(trimmed.dropFirst(2))
+                while !latex.contains("$$"), i < lines.count {
+                    latex += "\n" + lines[i]
+                    i += 1
+                }
+                let parts = latex.components(separatedBy: "$$")
+                blocks.append(.math(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)))
+                let rest = parts.dropFirst().joined(separator: "$$").trimmingCharacters(in: .whitespaces)
+                if !rest.allSatisfy({ ".,;:".contains($0) }) { paragraph.append(rest) }
+                continue
+            }
             if let m = trimmed.wholeMatch(of: #/(#{1,6})\s+(.+)/#) {
                 flush()
                 blocks.append(.heading(m.1.count, String(m.2)))
@@ -130,6 +148,72 @@ struct NoteText: View {
         var s = line.dropFirst()
         if s.hasPrefix(" ") { s = s.dropFirst() }
         return String(s)
+    }
+}
+
+/// A formula in LaTeX, drawn like Obsidian does (SwiftMath, its Latin Modern font), scrolling sideways when it's wider
+/// than the page. What SwiftMath can't read is shown as the LaTeX itself.
+struct MathFormula: View {
+    let latex: String
+    @Environment(\.colorScheme) private var scheme
+    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 19
+
+    var body: some View {
+        let latex = Self.prepare(latex)
+        if Self.mathList(latex) != nil {
+            ScrollView(.horizontal, showsIndicators: false) {
+                MathLabel(latex: latex, size: size, color: UIColor.label.resolvedColor(
+                    with: UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)))
+                    .padding(.vertical, 4)
+            }
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        } else {
+            Text(self.latex).font(.callout.monospaced()).foregroundStyle(.secondary)
+        }
+    }
+
+    /// The formula parsed, nil when SwiftMath can't.
+    static func mathList(_ latex: String) -> MTMathList? {
+        var error: NSError?
+        let list = MTMathListBuilder.build(fromString: latex, error: &error)
+        return error == nil ? list : nil
+    }
+
+    /// What the notes write that SwiftMath reads differently: `\dfrac` and `\tfrac`, `\dots`, `\middle|`, and
+    /// `cases` rows without an `&`.
+    static func prepare(_ latex: String) -> String {
+        var s = latex.replacing(#/\\[dt]frac(?![A-Za-z])/#, with: "\\frac")
+            .replacing(#/\\dots(?![A-Za-z])/#, with: "\\ldots")
+            .replacing(#/\\middle(?![A-Za-z])\s*/#, with: "")
+        s = s.replacing(#/\\begin\{cases\}(?<rows>.*?)\\end\{cases\}/#.dotMatchesNewlines()) { m in
+            let rows = m.output.rows.components(separatedBy: "\\\\").map { $0.contains("&") ? $0 : $0 + " &" }
+            return "\\begin{cases}" + rows.joined(separator: "\\\\") + "\\end{cases}"
+        }
+        return s
+    }
+
+    private struct MathLabel: UIViewRepresentable {
+        let latex: String
+        let size: CGFloat
+        let color: UIColor
+
+        func makeUIView(context: Context) -> MTMathUILabel {
+            let label = MTMathUILabel()
+            label.labelMode = .display
+            label.textAlignment = .left
+            label.backgroundColor = .clear
+            return label
+        }
+
+        func updateUIView(_ label: MTMathUILabel, context: Context) {
+            label.latex = latex
+            label.fontSize = size
+            label.textColor = color
+        }
+
+        func sizeThatFits(_ proposal: ProposedViewSize, uiView label: MTMathUILabel, context: Context) -> CGSize? {
+            label.intrinsicContentSize
+        }
     }
 }
 

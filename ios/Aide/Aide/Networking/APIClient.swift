@@ -622,10 +622,12 @@ final class APIClient {
 
     // MARK: Study (docs/API.md, "Study", "Study files", "Notebook")
 
-    /// The notebook as the Study tab shows it: maths as Unicode, links as text.
+    /// Notes as the app shows them: maths as Unicode, but formulas on their own lines as LaTeX (`MathFormula`).
+    private static let readable = [URLQueryItem(name: "plain", value: "true"), URLQueryItem(name: "latex", value: "true")]
+
+    /// The notebook as the Study tab shows it: inline maths as Unicode, formulas on their own lines as LaTeX, links as text.
     func notebookPage(course: Int) async throws -> NotebookStatus {
-        try await send("GET", "/v1/notebook", query: [URLQueryItem(name: "course", value: String(course)),
-                                                      URLQueryItem(name: "plain", value: "true")])
+        try await send("GET", "/v1/notebook", query: [URLQueryItem(name: "course", value: String(course))] + Self.readable)
     }
 
     func startNotebook(course: Int) async throws -> NotebookStatus {
@@ -636,8 +638,7 @@ final class APIClient {
     /// The formula sheet, as markdown.
     func formulas(course: Int) async throws -> String {
         let sheet: FormulaSheet = try await send("GET", "/v1/notebook/formulas",
-                                                 query: [URLQueryItem(name: "course", value: String(course)),
-                                                         URLQueryItem(name: "plain", value: "true")])
+                                                 query: [URLQueryItem(name: "course", value: String(course))] + Self.readable)
         return sheet.body
     }
 
@@ -650,7 +651,7 @@ final class APIClient {
     /// A topic's exercises, as markdown with the solutions folded.
     func exercises(_ id: String) async throws -> String {
         let set: ExerciseSet = try await send("GET", "/v1/exercises/\(id)",
-                                              query: [URLQueryItem(name: "plain", value: "true")])
+                                              query: Self.readable)
         return set.body ?? ""
     }
 
@@ -661,7 +662,7 @@ final class APIClient {
     }
 
     func topic(_ id: String) async throws -> TopicPage {
-        try await send("GET", "/v1/topics/\(id)", query: [URLQueryItem(name: "plain", value: "true")])
+        try await send("GET", "/v1/topics/\(id)", query: Self.readable)
     }
 
     /// `items` nil: all of them.
@@ -704,7 +705,7 @@ final class APIClient {
     }
 
     func lecture(_ id: String) async throws -> Lecture {
-        try await send("GET", "/v1/lectures/\(id)", query: [URLQueryItem(name: "plain", value: "true")])
+        try await send("GET", "/v1/lectures/\(id)", query: Self.readable)
     }
 
     func file(_ id: String) async throws -> StudyFile {

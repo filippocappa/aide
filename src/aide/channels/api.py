@@ -122,9 +122,10 @@ class Exercises(BaseModel):
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]")
 
 
-def readable(markdown: str) -> str:
-    """Notes for the app (`plain=true`): maths as Unicode, [[links]] as their text."""
-    return plain_math(_WIKILINK.sub(lambda m: (m.group(2) or m.group(1)).strip(), markdown))
+def readable(markdown: str, latex: bool = False) -> str:
+    """Notes for the app (`plain=true`): maths as Unicode, [[links]] as their text. `latex`: formulas on their own
+    lines stay $$…$$ LaTeX, for the app to draw."""
+    return plain_math(_WIKILINK.sub(lambda m: (m.group(2) or m.group(1)).strip(), markdown), blocks=latex)
 
 
 class QuizStart(BaseModel):
@@ -1083,10 +1084,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return JSONResponse(study.as_json(lecture, full=True), status_code=202)
 
     @app.get("/v1/lectures/{lecture_id}", dependencies=[Depends(auth)])
-    async def get_lecture(lecture_id: str, transcript: bool = False, plain: bool = False):
+    async def get_lecture(lecture_id: str, transcript: bool = False, plain: bool = False, latex: bool = False):
         out = study.as_json(lecture_or_404(lecture_id), full=True, transcript=transcript)
         if plain and out.get("notes"):
-            out["notes"] = readable(out["notes"])
+            out["notes"] = readable(out["notes"], latex)
         return out
 
     @app.patch("/v1/lectures/{lecture_id}", dependencies=[Depends(auth)])
@@ -1274,17 +1275,17 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return p
 
     @app.get("/v1/notebook", dependencies=[Depends(auth)])
-    async def get_notebook(course: int, plain: bool = False):
+    async def get_notebook(course: int, plain: bool = False, latex: bool = False):
         out = notebook.notebook_json(course_or_404(course))
         if plain and out["introduction"]:
-            out["introduction"] = readable(out["introduction"])
+            out["introduction"] = readable(out["introduction"], latex)
         return out
 
     @app.get("/v1/notebook/formulas", dependencies=[Depends(auth)])
-    async def get_formulas(course: int, plain: bool = False):
+    async def get_formulas(course: int, plain: bool = False, latex: bool = False):
         """The formula sheet: every topic's Formulas, gathered as it's read."""
         body = notebook.formulas(course_or_404(course))
-        return {"course": course, "body": readable(body) if plain else body}
+        return {"course": course, "body": readable(body, latex) if plain else body}
 
     @app.post("/v1/notebook", dependencies=[Depends(auth)])
     async def start_notebook(course: int):
@@ -1319,12 +1320,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return JSONResponse(notebook.notebook_json(course), status_code=202)
 
     @app.get("/v1/exercises/{set_id}", dependencies=[Depends(auth)])
-    async def get_exercises(set_id: str, plain: bool = False):
+    async def get_exercises(set_id: str, plain: bool = False, latex: bool = False):
         if (e := notebook.exercise_set(set_id)) is None:
             raise HTTPException(404, f"no exercises {set_id}")
         out = notebook.exercise_json(e, full=True)
         if plain:
-            out["body"] = readable(out["body"])
+            out["body"] = readable(out["body"], latex)
         return out
 
     @app.get("/v1/notebook/mocks", dependencies=[Depends(auth)])
@@ -1354,12 +1355,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return out
 
     @app.get("/v1/topics/{topic_id}", dependencies=[Depends(auth)])
-    async def get_topic(topic_id: str, plain: bool = False):
+    async def get_topic(topic_id: str, plain: bool = False, latex: bool = False):
         if (t := notebook.topic(topic_id)) is None:
             raise HTTPException(404, f"no topic {topic_id}")
         out = notebook.topic_json(t, full=True)
         if plain:
-            out["body"] = readable(out["body"])
+            out["body"] = readable(out["body"], latex)
             out["cards_list"] = [{"q": readable(c["q"]), "a": readable(c["a"])} for c in out["cards_list"]]
         return out
 

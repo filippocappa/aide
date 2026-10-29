@@ -824,6 +824,10 @@ formula, edit the topic.
 
 **`plain=true`** (on the notebook, a topic and a lecture): the notes as the app shows them. LaTeX becomes plain
 Unicode ($\pi_{t-1}$ as πₜ₋₁) and `[[links]]` their text. Without it, the markdown is as in the vault.
+**`latex=true`** with it (on the notebook's `introduction`, the formula sheet, a topic's `body`, an exercise set and a
+lecture's `notes`): a `$$…$$` formula on its own line or lines (in a callout too, a full stop after it allowed) stays
+LaTeX, `$$` included, for the app to draw; maths inside a sentence is still Unicode. Flashcards and questions stay
+Unicode.
 
 **Progress.** A course's chat has `"course": 2` in the conversation list (`null` on other chats). While a proposal
 is applied, `GET /v1/notebook?course=` has it as `writing`, with `"progress": {"done": 4, "total": 11}` (topics

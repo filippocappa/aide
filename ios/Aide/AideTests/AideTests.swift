@@ -1412,4 +1412,32 @@ final class ErrandTests: XCTestCase {
         let state = AgentActivityAttributes.ContentState(status: "browsing", detail: "", text: "", since: 0, errand: 7)
         XCTAssertEqual(state.line(name: "Aide"), "Aide is browsing")
     }
+
+    func testFormulasInTheNotesAreDrawn() throws {
+        let notes = #"""
+        Nominal GDP:
+        $$Y^{nom}_t=\sum_i P_{i,t}\,Q_{i,t}$$
+        > [!success]- Solution
+        > $$
+        > x=\dfrac{1}{2}
+        > $$.
+        """#
+        let blocks = NoteText.parse(notes)
+        guard blocks.count == 3, case .paragraph("Nominal GDP:") = blocks[0], case .math(let gdp) = blocks[1],
+              case .callout(_, _, _, let solution) = blocks[2], NoteText.parse(solution).count == 1,
+              case .math(let half) = NoteText.parse(solution)[0]
+        else { return XCTFail("\(blocks)") }
+        XCTAssertEqual(gdp, #"Y^{nom}_t=\sum_i P_{i,t}\,Q_{i,t}"#)
+        XCTAssertEqual(half, #"x=\dfrac{1}{2}"#)
+
+        // What the live notes write that SwiftMath doesn't read as it is.
+        for latex in [#"L = \tfrac{1}{2}\left[\beta(\pi - \pi^T)^2 + (y - \bar y)^2\right]"#,
+                      #"a_1 x_1 + \dots + a_n x_n = b"#, half,
+                      #"\begin{cases} -x + 2y = 4 \\ 2x - y = 1 \end{cases}"#,
+                      #"\left\{ \sum_{i=1}^t k_i \underline{w}^i \;\middle|\; k_i \in \mathbb{R} \right\}"#] {
+            XCTAssertNil(MathFormula.mathList(latex), latex)
+            XCTAssertNotNil(MathFormula.mathList(MathFormula.prepare(latex)), latex)
+        }
+        XCTAssertEqual(MathFormula.prepare(#"\begin{cases} a \\ b & c \end{cases}"#), #"\begin{cases} a  &\\ b & c \end{cases}"#)
+    }
 }

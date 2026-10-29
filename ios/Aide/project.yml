@@ -11,6 +11,11 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     # The team ID comes from Config/Signing.local.xcconfig (see the .example file), not from here.
     CODE_SIGN_STYLE: Automatic
+packages:
+  # LaTeX formulas in the notes (Views/NotesView.swift, MathFormula).
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath
+    exactVersion: 1.7.3
 configFiles:
   Debug: Config/Base.xcconfig
   Release: Config/Base.xcconfig
@@ -26,6 +31,7 @@ targets:
       - target: AideWidgets
       - target: LockMonitor
       - target: LockShield
+      - package: SwiftMath
     info:
       path: Aide/Info.plist
       properties:

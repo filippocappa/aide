@@ -98,6 +98,15 @@ def test_questions_and_their_maths_as_plain_text():
     assert plain_math(r"$Y_D$ and $\pi^e_t$ and **bold**") == "Y_D and πᵉₜ and **bold**"
 
 
+def test_formulas_on_their_own_lines_stay_latex_for_the_app():
+    text = "\n".join([r"Real GDP, $Y_t$ in \$:", r"$$P_t=\frac{\$Y_t}{Y_t}$$", "",
+                      r"> $$", r"> u=\frac{U}{L}", r"> $$", "", r"so $$g=\pi+g_Y$$ inline", r"$$a_{t-1}$$."])
+    assert plain_math(text, blocks=True).split("\n") == [
+        "Real GDP, Yₜ in $:", r"$$P_t=\frac{\$Y_t}{Y_t}$$", "", r"> $$", r"> u=\frac{U}{L}", r"> $$", "",
+        "so g=π+g_Y inline", r"$$a_{t-1}$$."]
+    assert "$$" not in plain_math(text)
+
+
 def test_the_study_tab_reads_notes_as_plain_text(nb):
     t = notebook_with_questions(nb)
     cid = nb.macro["id"]
