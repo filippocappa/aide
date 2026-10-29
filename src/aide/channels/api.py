@@ -28,6 +28,7 @@ from ..engine import Engine
 from ..errands import ErrandRunner, ErrandStore
 from ..food import MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
 from ..foods import MAX_NAME as MAX_FOOD_NAME, FoodDB
+from ..nutrition import PROPOSE_PROMPT, PROPOSE_TOKENS, Nutrition, now_events, parse_proposal, proposal_input
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
 from ..icloud import CalendarBackend, CalEvent
@@ -48,7 +49,7 @@ from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWork
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..leave import LeaveWatcher
 from ..locks import LockStore
-from ..tools.nutrition import OpenFoodFacts, read_label
+from ..tools.nutrition import OpenFoodFacts, read_label, save_product
 from ..transit import AlertStore, Boards, Location
 from ..wake import WakeService
 
@@ -101,6 +102,26 @@ class FoodGoals(BaseModel):
     protein_g: float | None = None
     carbs_g: float | None = None
     fat_g: float | None = None
+
+
+class WorkoutTargets(BaseModel):
+    on: bool | None = None
+    share: float | None = None
+    carbs_pct: float | None = None
+
+
+class FoodProfile(BaseModel):
+    weight_kg: float | None = None
+    height_cm: float | None = None
+    age: int | None = None
+    sex: str | None = None
+    goal: str | None = None
+
+
+class FoodTargetsIn(BaseModel):
+    base: FoodGoals | None = None
+    workouts: WorkoutTargets | None = None
+    profile: FoodProfile | None = None
 
 
 class LectureIn(BaseModel):
@@ -449,6 +470,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     if habits.food is None:  # food habits tick from the food log
         habits.food = food
     health = health or HealthStore(db.conn, tz)
+    nutrition = Nutrition(food, health)
+    today_events: dict = {}  # today's calendar events for a planned run: {"at": loop time, "day", "events"}
     if habits.health_days is None:  # limit habits count from Apple Health
         habits.health_days = health
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
@@ -989,14 +1012,25 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(404, f"no meal {meal_id}")
         return meal
 
-    def food_day(d: date) -> dict:
+    async def events_today() -> list:
+        """Today's calendar events, read at most every 10 minutes (a run in them adds to today's targets)."""
+        now = asyncio.get_running_loop().time()
+        if today_events.get("day") != food.today() or now - today_events.get("at", 0) > 600:
+            events = await asyncio.to_thread(now_events, calendar, tz)
+            today_events.update(at=now, day=food.today(), events=events)
+        return today_events["events"]
+
+    async def food_day(d: date) -> dict:
         meals = food.day(d)
+        day = nutrition.day(d, await events_today() if d == food.today() else None)
+        # goals are the day's targets (the base plus its workouts), so an older app's ring follows them
         return {"date": d.isoformat(), "meals": [food.as_json(m) for m in meals], "totals": totals(meals),
-                "goals": food.goals()}
+                "goals": day["targets"], "base": food.goals(), "left": day["left"], "bonus": day["bonus"],
+                "score": day["score"]}
 
     @app.get("/v1/food", dependencies=[Depends(auth)])
     async def food_today(day: date | None = Query(None, alias="date")):
-        return food_day(day or food.today())
+        return await food_day(day or food.today())
 
     @app.get("/v1/food/days", dependencies=[Depends(auth)])
     async def food_days(start: date | None = Query(None, alias="from"), end: date | None = Query(None, alias="to")):
@@ -1004,7 +1038,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         start = start or end - timedelta(days=6)
         if start > end or (end - start).days > 366:
             raise HTTPException(400, "from must be before to, at most a year apart")
-        return {"days": food.days(start, end)}
+        scores = nutrition.scores(start, end)
+        return {"days": [{**d, "score": scores[d["date"]]} for d in food.days(start, end)]}
 
     @app.get("/v1/food/meals", dependencies=[Depends(auth)])
     async def food_meals(start: date | None = Query(None, alias="from"), end: date | None = Query(None, alias="to")):
@@ -1059,9 +1094,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(502, f"couldn't reach Open Food Facts: {e}") from None
         if p is None:
             return {"food": None}
-        saved = foods.save(p["name"], p["kcal_100g"], p["protein_100g"], p["carbs_100g"], p["fat_100g"], "off",
-                           brand=p["brand"], barcode=code, serving_g=p["serving_g"], source_ref=code)
-        return {"food": foods.as_json(saved)}
+        return {"food": foods.as_json(save_product(foods, p, code))}
 
     async def ask_once(system: str, content: list[dict], max_tokens: int) -> str:
         if engine is not None:
@@ -1089,7 +1122,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         try:
             saved = foods.save(name, label["kcal_100g"], label["protein_100g"], label["carbs_100g"],
                                label["fat_100g"], "label", brand=label["brand"][:MAX_FOOD_NAME], barcode=code,
-                               serving_g=label["serving_g"], source_ref=body.photo)
+                               serving_g=label["serving_g"], source_ref=body.photo, **label["quality"])
         except ValueError as e:
             raise HTTPException(422, f"the label didn't read right ({e}); try another photo") from None
         return {"food": foods.as_json(saved)}
@@ -1137,6 +1170,35 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.put("/v1/food/goals", dependencies=[Depends(auth)])
     async def set_food_goals(body: FoodGoals):
         return food.set_goals(body.model_dump())
+
+    @app.get("/v1/food/targets", dependencies=[Depends(auth)])
+    async def food_targets():
+        return nutrition.targets()
+
+    @app.put("/v1/food/targets", dependencies=[Depends(auth)])
+    async def set_food_targets(body: FoodTargetsIn):
+        try:
+            return nutrition.set_targets(
+                base=body.base.model_dump() if body.base else None,
+                workouts=body.workouts.model_dump(exclude_none=True) if body.workouts else None,
+                profile=body.profile.model_dump(exclude_unset=True) if body.profile else None)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.post("/v1/food/targets/propose", dependencies=[Depends(auth)])
+    async def propose_food_targets():
+        """Coach's proposal from the profile, Apple Health and the food log; nothing is saved until a PUT."""
+        from ..notebook import parse_json  # notebook imports a lot; only here
+        today = food.today()
+        text = proposal_input(nutrition, food.days(today - timedelta(days=14), today - timedelta(days=1)))
+        try:
+            answer = await ask_once(PROPOSE_PROMPT, [{"type": "text", "text": text}], PROPOSE_TOKENS)
+            return parse_proposal(parse_json(answer))
+        except (httpx.HTTPError, anthropic.APIError, RuntimeError) as e:
+            log.warning("proposing food targets failed: %s", e)
+            raise HTTPException(502, f"Coach couldn't answer: {e}") from None
+        except ValueError as e:
+            raise HTTPException(502, str(e)) from None
 
     # -- study -------------------------------------------------------------------
 

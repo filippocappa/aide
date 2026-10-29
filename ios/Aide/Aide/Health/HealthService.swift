@@ -49,6 +49,12 @@ final class HealthService: ObservableObject {
     private static let exercise = HKQuantityType(.appleExerciseTime)
     private static let inhaler = HKQuantityType(.inhalerUsage)
     private static let energy = HKQuantityType(.dietaryEnergyConsumed)
+    private static let bodyMass = HKQuantityType(.bodyMass)
+    private static let height = HKQuantityType(.height)
+    private static let vo2Max = HKQuantityType(.vo2Max)
+    /// A workout's distance is the first of these it has.
+    private static let distances = [HKQuantityType(.distanceWalkingRunning), HKQuantityType(.distanceCycling),
+                                     HKQuantityType(.distanceSwimming)]
     /// What a meal is written as, each with the meal's number for it and its unit.
     private static let food: [(HKQuantityType, KeyPath<Meal, Int>, HKUnit)] = [
         (energy, \.calories, .kilocalorie()),
@@ -59,11 +65,13 @@ final class HealthService: ObservableObject {
         (HKQuantityType(.dietaryCaffeine), \.caffeineMg, .gramUnit(with: .milli)),
     ]
 
-    /// The food kinds are read too, so the app finds its own entries again.
+    /// The food kinds are read too, so the app finds its own entries again. Weight, height, age, sex and VO2 max
+    /// are for the food targets (the profile Coach proposes from).
     private static let readTypes: Set<HKObjectType> = Set([
         sleep, restingHR, hrv, respiratory, wristTemp, steps, activeEnergy, exercise, inhaler,
-        HKObjectType.workoutType(),
-    ] + food.map(\.0))
+        HKObjectType.workoutType(), bodyMass, height, vo2Max,
+        HKCharacteristicType(.dateOfBirth), HKCharacteristicType(.biologicalSex),
+    ] + food.map(\.0) + distances)
     /// Inhaler Usage: a limit habit's counts logged through Aide are written there (the user logs coffees in it).
     /// The food kinds: every meal logged through Aide.
     private static let shareTypes: Set<HKSampleType> = Set([inhaler] + food.map(\.0))
@@ -383,12 +391,16 @@ final class HealthService: ObservableObject {
         async let exerciseByDay = daily(Self.exercise, .cumulativeSum, from: first, to: end)
         async let restingByDay = daily(Self.restingHR, .discreteAverage, from: first, to: end)
         async let inhalerByDay = daily(Self.inhaler, .cumulativeSum, from: first, to: end)
+        async let weightSamples = quantitySamples(Self.bodyMass, from: first, to: end)
+        async let vo2Samples = quantitySamples(Self.vo2Max, from: first, to: end)
 
         let segments = try await sleepSamples.compactMap(Self.segment)
         let (hrv, respiratory, temp) = try await (hrvSamples, respiratorySamples, tempSamples)
         let (allWorkouts, steps, energy, exercise, resting) =
             try await (workouts, stepsByDay, energyByDay, exerciseByDay, restingByDay)
         let inhaler = try await inhalerByDay
+        let (weights, vo2) = try await (weightSamples, vo2Samples)
+        let vo2Unit = HKUnit.literUnit(with: .milli).unitDivided(by: .gramUnit(with: .kilo).unitMultiplied(by: .minute()))
 
         let bpm = HKUnit.count().unitDivided(by: .minute())
         return (0..<count).compactMap { offset -> HealthDay? in
@@ -413,7 +425,9 @@ final class HealthService: ObservableObject {
                 exerciseMin: exercise.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .minute())) },
                 inhalerUsage: inhaler.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .count())) },
                 naps: Optional(SleepSummary.naps(on: day, from: segments, calendar: calendar)).flatMap { $0.isEmpty ? nil : $0 },
-                workouts: allWorkouts.filter { $0.startDate >= day && $0.startDate < nextDay }.map(Self.workout)
+                workouts: allWorkouts.filter { $0.startDate >= day && $0.startDate < nextDay }.map(Self.workout),
+                weightKg: Self.latest(weights, .gramUnit(with: .kilo), day, nextDay).map(Self.oneDecimal),
+                vo2max: Self.latest(vo2, vo2Unit, day, nextDay).map(Self.oneDecimal)
             )
         }
     }
@@ -468,13 +482,43 @@ final class HealthService: ObservableObject {
         return values.isEmpty ? nil : values.reduce(0, +) / Double(values.count)
     }
 
+    /// The last sample that starts in `from`–`to`, or nil.
+    private static func latest(_ samples: [HKQuantitySample], _ unit: HKUnit, _ from: Date, _ to: Date) -> Double? {
+        samples.last { $0.startDate >= from && $0.startDate < to }?.quantity.doubleValue(for: unit)
+    }
+
     private static func oneDecimal(_ x: Double) -> Double { (x * 10).rounded() / 10 }
+
+    /// What Health knows for the food targets' profile: the latest weight and height, age and sex; nil fields
+    /// when it doesn't (or reading isn't allowed).
+    func profile() async -> FoodProfile {
+        var profile = FoodProfile()
+        guard isAvailable else { return profile }
+        let far = Date(timeIntervalSinceNow: -5 * 365 * 86400)
+        if let w = try? await quantitySamples(Self.bodyMass, from: far, to: Date()).last {
+            profile.weightKg = Self.oneDecimal(w.quantity.doubleValue(for: .gramUnit(with: .kilo)))
+        }
+        if let h = try? await quantitySamples(Self.height, from: far, to: Date()).last {
+            profile.heightCm = Int(h.quantity.doubleValue(for: .meterUnit(with: .centi)).rounded())
+        }
+        if let born = try? store.dateOfBirthComponents().date {
+            profile.age = Calendar.current.dateComponents([.year], from: born, to: Date()).year
+        }
+        switch try? store.biologicalSex().biologicalSex {
+        case .male: profile.sex = "male"
+        case .female: profile.sex = "female"
+        default: break
+        }
+        return profile
+    }
 
     private static func workout(_ w: HKWorkout) -> HealthWorkout {
         let kcal = w.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
+        let meters = distances.lazy.compactMap { w.statistics(for: $0)?.sumQuantity()?.doubleValue(for: .meter()) }.first
         return HealthWorkout(id: w.uuid.uuidString, type: workoutType(w.workoutActivityType),
                              start: Wire.local(w.startDate), end: Wire.local(w.endDate),
-                             minutes: Int((w.duration / 60).rounded()), kcal: kcal.map { Int($0.rounded()) })
+                             minutes: Int((w.duration / 60).rounded()), kcal: kcal.map { Int($0.rounded()) },
+                             km: meters.flatMap { $0 > 0 ? ($0 / 10).rounded() / 100 : nil })
     }
 
     /// HealthKit's activity types folded into the contract's list (docs/API.md, "Workout types").

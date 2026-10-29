@@ -1,0 +1,373 @@
+"""What to eat and how the day went. Contract in docs/API.md, "Food".
+
+Targets: the rest-day base (the food goals) plus what the day's workouts burned, as the Watch says, mostly as carbs;
+before a run, a run in the calendar counts at the user's usual kcal a minute. A food's quality is its Nutri-Score
+(the 2023 rules), Open Food Facts' grade when it has one, else worked out from its numbers per 100 g. The day score
+(0–100) is 60% how close the day came to its targets and 40% the calorie-weighted grade of what was eaten. None of
+it needs a model call; only proposing targets does (`PROPOSE_PROMPT`, run by the API through the engine).
+"""
+
+import json
+import re
+import sqlite3
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from .food import MACROS, FoodStore, totals
+from .health import HealthStore, workout_date, workout_minutes
+
+KINDS = ("general", "fat", "drink", "water", "cheese", "red_meat")
+QUALITY = ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct")
+GRADES = "abcde"
+GRADE_POINTS = {"a": 100, "b": 75, "c": 50, "d": 25, "e": 0}
+GOALS = ("lose", "keep", "gain")
+WORKOUTS = {"on": True, "share": 1.0, "carbs_pct": 80}  # what a workout adds, by default
+PROFILE = ("weight_kg", "height_cm", "age", "sex", "goal")
+RUN_WORDS = re.compile(r"\b(run|runs|running|jog|jogging|corsa|corsetta|correre)\b", re.I)
+RUN_KCAL_MIN = 11.0  # kcal a minute of running, before the user's own runs say otherwise
+KJ = 4.184
+
+# -- Nutri-Score (2023) ---------------------------------------------------------------------------------------------
+
+ENERGY = [335 * i for i in range(1, 11)]  # kJ per 100 g
+SUGARS = [3.4, 6.8, 10, 14, 17, 20, 24, 27, 31, 34, 37, 41, 44, 48, 51]
+SAT_FAT = list(range(1, 11))
+SALT = [round(0.2 * i, 1) for i in range(1, 21)]
+PROTEIN = [2.4, 4.8, 7.2, 9.6, 12, 14, 16]
+FIBRE = [3.0, 4.1, 5.2, 6.3, 7.4]
+SAT_ENERGY = [120 * i for i in range(1, 11)]  # fats: kJ from saturates
+SAT_RATIO = [10, 16, 22, 28, 34, 40, 46, 52, 58, 64]  # fats: saturates as % of fat, at or above
+DRINK_ENERGY = [30, 90, 150, 210, 240, 270, 300, 330, 360, 390]
+DRINK_SUGARS = [0.5, 2, 3.5, 5, 6, 7, 8, 9, 10, 11]
+DRINK_PROTEIN = [1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0]
+
+
+def _over(value: float, steps: list[float]) -> int:
+    return sum(value > s for s in steps)
+
+
+def _fvl(pct: float, drink: bool = False) -> int:
+    """Fruit, vegetables, legumes (and olive, rapeseed and walnut oil) as % of the food."""
+    if pct > 80:
+        return 6 if drink else 5
+    if pct > 60:
+        return 4 if drink else 2
+    if pct > 40:
+        return 2 if drink else 1
+    return 0
+
+
+def nutriscore(food: dict) -> str | None:
+    """The 2023 Nutri-Score grade, a to e, from a food's numbers per 100 g (100 ml for a drink) and its kind; None
+    without sugars, saturated fat and salt. Fibre and the fruit, vegetable and legume share are 0 when missing."""
+    kind = food.get("kind") or "general"
+    if kind == "water":
+        return "a"
+    if any(food.get(k) is None for k in ("sugars_100g", "sat_fat_100g", "salt_100g")):
+        return None
+    kj = food["kcal_100g"] * KJ
+    sugars, sat, salt = food["sugars_100g"], food["sat_fat_100g"], food["salt_100g"]
+    fibre, fvl, protein = food.get("fibre_100g") or 0, food.get("fvl_pct") or 0, food["protein_100g"]
+    if kind == "drink":
+        bad = _over(kj, DRINK_ENERGY) + _over(sugars, DRINK_SUGARS) + _over(sat, SAT_FAT) + _over(salt, SALT)
+        score = bad - (_fvl(fvl, drink=True) + _over(fibre, FIBRE) + _over(protein, DRINK_PROTEIN))
+        return "b" if score <= 2 else "c" if score <= 6 else "d" if score <= 9 else "e"
+    if kind == "fat":
+        ratio = 100 * sat / food["fat_100g"] if food["fat_100g"] else 0
+        bad = (_over(sat * 37, SAT_ENERGY) + _over(sugars, SUGARS) + sum(ratio >= s for s in SAT_RATIO)
+               + _over(salt, SALT))
+        good = _fvl(fvl) + _over(fibre, FIBRE) + (0 if bad >= 7 else _over(protein, PROTEIN))
+        score = bad - good
+        return "a" if score <= -6 else "b" if score <= 2 else "c" if score <= 10 else "d" if score <= 18 else "e"
+    bad = _over(kj, ENERGY) + _over(sugars, SUGARS) + _over(sat, SAT_FAT) + _over(salt, SALT)
+    protein_points = _over(protein, PROTEIN)
+    if kind == "red_meat":
+        protein_points = min(protein_points, 2)
+    if bad >= 11 and kind != "cheese":
+        protein_points = 0
+    score = bad - (_fvl(fvl) + _over(fibre, FIBRE) + protein_points)
+    return "a" if score <= 0 else "b" if score <= 2 else "c" if score <= 10 else "d" if score <= 18 else "e"
+
+
+def grade(food: dict | None) -> str | None:
+    """A saved food's grade: Open Food Facts' when it has one, else worked out from its numbers."""
+    if not food:
+        return None
+    return food.get("nutriscore") or nutriscore(food)
+
+
+# -- the day score ---------------------------------------------------------------------------------------------------
+
+WEIGHTS = {"calories": 0.4, "protein_g": 0.3, "carbs_g": 0.15, "fat_g": 0.15}
+BANDS = {"calories": 0.10, "carbs_g": 0.15, "fat_g": 0.15}  # full marks within this far of the target
+ZERO_AT = 0.5  # nothing left at 50% off
+NUMBERS_SHARE = 0.6
+MIN_GRADED = 0.5  # the quality counts once graded foods are half the day's calories
+
+
+def _closeness(eaten: float, target: float, key: str, final: bool) -> float:
+    """1 on target, falling to 0 at ZERO_AT off. Protein only counts when short of its target; before the day is
+    over (not final) only going over counts, since there's still time to eat."""
+    r = eaten / target
+    if key == "protein_g":
+        return 1.0 if r >= 1 or not final else max(0.0, (r - ZERO_AT) / (1 - ZERO_AT))
+    off = abs(r - 1) if final else max(0.0, r - 1)
+    band = BANDS[key]
+    return 1.0 if off <= band else max(0.0, 1 - (off - band) / (ZERO_AT - band))
+
+
+def score(eaten: dict, targets: dict, graded: list[tuple[float, str | None]], final: bool) -> dict | None:
+    """The day's score from its totals, its targets and its items as (kcal, grade). None before anything's eaten."""
+    if not eaten["calories"]:
+        return None
+    set_ = {k: targets[k] for k in MACROS if targets.get(k)}
+    numbers = None
+    if set_:
+        weight = sum(WEIGHTS[k] for k in set_)
+        numbers = 100 * sum(WEIGHTS[k] * _closeness(eaten[k], t, k, final) for k, t in set_.items()) / weight
+    by_grade = {g: 0.0 for g in GRADES}
+    for kcal, g in graded:
+        if g in by_grade:
+            by_grade[g] += kcal
+    graded_kcal = sum(by_grade.values())
+    # Against the items' own sum: a meal's total is rounded, its items aren't.
+    coverage = min(1.0, graded_kcal / (sum(k for k, _ in graded) or eaten["calories"]))
+    quality = (sum(GRADE_POINTS[g] * k for g, k in by_grade.items()) / graded_kcal
+               if graded_kcal and coverage >= MIN_GRADED else None)
+    if numbers is not None and quality is not None:
+        total = NUMBERS_SHARE * numbers + (1 - NUMBERS_SHARE) * quality
+    else:
+        total = numbers if numbers is not None else quality
+    if total is None:
+        return None
+    return {"score": round(total), "final": final, "numbers": None if numbers is None else round(numbers),
+            "quality": None if quality is None else round(quality), "graded": round(coverage, 2),
+            "grades": {g: round(k) for g, k in by_grade.items()}}
+
+
+# -- targets ---------------------------------------------------------------------------------------------------------
+
+
+class Nutrition:
+    def __init__(self, food: FoodStore, health: HealthStore | None = None):
+        self.food = food
+        self.conn: sqlite3.Connection = food.conn
+        self.health = health
+        self.tz: ZoneInfo = food.tz
+
+    def _saved(self) -> dict:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = 'food_targets'").fetchone()
+        return json.loads(row["value"]) if row else {}
+
+    def targets(self) -> dict:
+        """The rest-day base (the food goals), what workouts add, and the profile proposals start from."""
+        saved = self._saved()
+        return {"base": self.food.goals(), "workouts": {**WORKOUTS, **saved.get("workouts", {})},
+                "profile": {k: saved.get("profile", {}).get(k) for k in PROFILE}}
+
+    def set_targets(self, base: dict | None = None, workouts: dict | None = None, profile: dict | None = None) -> dict:
+        """Change what's given; the base replaces the goals (a missing or 0 macro is no goal)."""
+        saved = self._saved()
+        if workouts is not None:
+            w = {**WORKOUTS, **saved.get("workouts", {}), **workouts}
+            if set(w) - set(WORKOUTS):
+                raise ValueError(f"workouts takes {', '.join(WORKOUTS)}")
+            if not 0 <= float(w["share"]) <= 1.5 or not 0 <= float(w["carbs_pct"]) <= 100:
+                raise ValueError("share is 0–1.5 and carbs_pct 0–100")
+            saved["workouts"] = {"on": bool(w["on"]), "share": round(float(w["share"]), 2),
+                                 "carbs_pct": round(float(w["carbs_pct"]))}
+        if profile is not None:
+            p = {**saved.get("profile", {}), **profile}
+            if set(p) - set(PROFILE):
+                raise ValueError(f"profile takes {', '.join(PROFILE)}")
+            if p.get("goal") is not None and p["goal"] not in GOALS:
+                raise ValueError(f"goal is one of {', '.join(GOALS)}")
+            if p.get("sex") is not None and p["sex"] not in ("male", "female"):
+                raise ValueError("sex is male or female")
+            for key, top in (("weight_kg", 400), ("height_cm", 260), ("age", 120)):
+                if p.get(key) is not None and not 0 < float(p[key]) <= top:
+                    raise ValueError(f"{key} must be between 0 and {top}")
+            saved["profile"] = {k: p.get(k) for k in PROFILE}
+        if base is not None:
+            self.food.set_goals(base)
+        self.conn.execute("INSERT INTO settings (key, value) VALUES ('food_targets', ?) "
+                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(saved),))
+        return self.targets()
+
+    # -- workouts --
+
+    def _workouts(self, d: date) -> list[dict]:
+        if self.health is None:
+            return []
+        out = {}
+        for stored in (d, d + timedelta(days=1)):  # a late workout can land in the next day's upload
+            day = self.health.get(stored) or {}
+            for w in day.get("workouts", []):
+                if workout_date(w, day.get("date", stored.isoformat()), self.tz) == d:
+                    out[w["id"]] = w
+        return list(out.values())
+
+    def run_rate(self, before: date) -> float:
+        """The user's kcal a minute running, from the last 60 days' runs; RUN_KCAL_MIN without any."""
+        if self.health is None:
+            return RUN_KCAL_MIN
+        kcal = minutes = 0.0
+        for day in self.health.between(before - timedelta(days=60), before):
+            for w in day.get("workouts", []):
+                if w.get("type") == "run" and w.get("kcal") and workout_minutes(w):
+                    kcal, minutes = kcal + w["kcal"], minutes + workout_minutes(w)
+        return kcal / minutes if minutes >= 20 else RUN_KCAL_MIN
+
+    def bonus(self, d: date, events: list | None = None) -> dict:
+        """What the day's workouts add: their kcal (times the share), or, before any, a run in the calendar
+        (`events`, today's) at the usual rate, `planned`."""
+        settings = self.targets()["workouts"]
+        done = [w for w in self._workouts(d) if w.get("kcal")]
+        if not settings["on"]:
+            return {"kcal": 0, "planned": False, "workouts": []}
+        if done:
+            burned = sum(w["kcal"] for w in done)
+            return {"kcal": round(burned * settings["share"]), "planned": False,
+                    "workouts": [{"type": w.get("type", "other"), "kcal": round(w["kcal"]),
+                                  "minutes": round(workout_minutes(w))} for w in done]}
+        runs = [e for e in events or [] if not e.all_day and RUN_WORDS.search(e.title)
+                and e.start.astimezone(self.tz).date() == d]
+        if not runs:
+            return {"kcal": 0, "planned": False, "workouts": []}
+        rate = self.run_rate(d)
+        planned = []
+        for e in runs:
+            minutes = (e.end - e.start).total_seconds() / 60
+            planned.append({"type": "run", "kcal": round(minutes * rate), "minutes": round(minutes),
+                            "title": e.title})
+        return {"kcal": round(sum(p["kcal"] for p in planned) * settings["share"]), "planned": True,
+                "workouts": planned}
+
+    def day_targets(self, d: date, bonus: dict | None = None) -> dict:
+        """The base plus the day's bonus: its kcal, carbs_pct of them as carbs and the rest as fat."""
+        base = self.food.goals()
+        bonus = bonus or self.bonus(d)
+        kcal = bonus["kcal"]
+        if not kcal:
+            return dict(base)
+        carbs = kcal * self.targets()["workouts"]["carbs_pct"] / 100
+        return {"calories": base["calories"] and round((base["calories"] + kcal) / 10) * 10,
+                "protein_g": base["protein_g"],
+                "carbs_g": base["carbs_g"] and round(base["carbs_g"] + carbs / 4),
+                "fat_g": base["fat_g"] and round(base["fat_g"] + (kcal - carbs) / 9)}
+
+    # -- the day --
+
+    def graded(self, meals: list[dict]) -> list[tuple[float, str | None]]:
+        """Each item eaten as (kcal, grade); a meal logged without items is its kcal, ungraded."""
+        if not meals:
+            return []
+        ids = [m["id"] for m in meals]
+        rows = self.conn.execute(
+            f"SELECT mi.meal_id, mi.calories AS item_kcal, f.* FROM meal_items mi LEFT JOIN foods f "
+            f"ON f.id = mi.food_id WHERE mi.meal_id IN ({','.join('?' * len(ids))})", ids).fetchall()
+        with_items = {r["meal_id"] for r in rows}
+        out = [(r["item_kcal"], grade(dict(r)) if r["id"] is not None else None) for r in rows]
+        return out + [(m["calories"], None) for m in meals if m["id"] not in with_items]
+
+    def day(self, d: date, events: list | None = None) -> dict:
+        """The day's targets, what's left of them, its bonus and its score (final once the day is over)."""
+        meals = self.food.day(d)
+        eaten = totals(meals)
+        bonus = self.bonus(d, events if d == self.food.today() else None)
+        targets = self.day_targets(d, bonus)
+        left = {k: targets[k] - eaten[k] if targets.get(k) else None for k in MACROS}
+        return {"targets": targets, "left": left, "bonus": bonus,
+                "score": score(eaten, targets, self.graded(meals), final=d < self.food.today())}
+
+    def scores(self, start: date, end: date) -> dict[str, int | None]:
+        """Each day's score, start..end, by date."""
+        out = {}
+        d = start
+        while d <= end:
+            day = self.day(d)
+            out[d.isoformat()] = day["score"]["score"] if day["score"] else None
+            d += timedelta(days=1)
+        return out
+
+
+# -- proposing targets ---------------------------------------------------------------------------------------------
+
+PROPOSE_TOKENS = 1500
+PROPOSE_PROMPT = """You are Coach, a personal nutrition and training coach. Propose the user's daily nutrition \
+targets from their own data: a rest-day base (calories, protein, carbs, fat in grams) and how much of what their \
+Watch says a workout burned is added on top (share, 0 to 1; Watch numbers often run high, so 0.7–1 is usual) and \
+how much of that goes to carbs (carbs_pct; the rest is fat). Work from the profile (weight, height, age, sex, goal), \
+their usual activity on days without a workout (active kcal and steps), their runs and other workouts (how often, \
+how long, pace, VO2 max), their weight trend and what they've actually been eating. Protein for someone who runs \
+and trains: about 1.6–2.2 g per kg. A goal to lose means a modest deficit (300–500 kcal), to gain a modest surplus. \
+Say why in two or three short sentences, plainly, with the numbers that mattered. When something important is \
+missing (no weight), still propose, and say what would make it better.
+
+Answer with JSON only, nothing before or after it:
+{"base": {"calories": 2500, "protein_g": 140, "carbs_g": 300, "fat_g": 80}, "workouts": {"share": 0.8, \
+"carbs_pct": 80}, "why": "…"}"""
+
+
+def proposal_input(nutrition: "Nutrition", foods_days: list[dict]) -> str:
+    """What Coach proposes from: the profile, 60 days of Health, the last 14 days of food, the current targets."""
+    today = nutrition.food.today()
+    t = nutrition.targets()
+    lines = [f"Today: {today:%A %d %B %Y}.", f"Profile: {json.dumps(t['profile'])}",
+             f"Current targets: base {json.dumps(t['base'])}, workouts {json.dumps(t['workouts'])}"]
+    days = nutrition.health.between(today - timedelta(days=60), today) if nutrition.health else []
+    if days:
+        lines.append("Apple Health, newest first (active kcal, steps, exercise min, weight kg, VO2 max, workouts):")
+        for day in days:
+            workouts = []
+            for w in day.get("workouts", []):
+                minutes = workout_minutes(w)
+                pace = (f", {minutes / w['km']:.2f} min/km" if w.get("km") and w.get("type") in ("run", "walk", "hike")
+                        else "")
+                km = f", {w['km']:.1f} km" if w.get("km") else ""
+                workouts.append(f"{w.get('type', 'other')} {minutes:.0f} min{km}{pace}, "
+                                f"{w.get('kcal', 0):.0f} kcal")
+            lines.append(f"- {day['date']}: {day.get('active_kcal', '?')} kcal, {day.get('steps', '?')} steps, "
+                         f"{day.get('exercise_min', '?')} min" + (f", {day['weight_kg']} kg" if day.get("weight_kg") else "")
+                         + (f", VO2 max {day['vo2max']}" if day.get("vo2max") else "")
+                         + (f"; {'; '.join(workouts)}" if workouts else ""))
+    else:
+        lines.append("No Apple Health days.")
+    logged = [d for d in foods_days if d["meals"]]
+    if logged:
+        lines.append("Food logged (kcal, protein, carbs, fat):")
+        lines += [f"- {d['date']}: {d['totals']['calories']}, {d['totals']['protein_g']} g, "
+                  f"{d['totals']['carbs_g']} g, {d['totals']['fat_g']} g ({d['meals']} meals)" for d in logged]
+    else:
+        lines.append("No food logged in the last 14 days.")
+    return "\n".join(lines)
+
+
+def parse_proposal(answer) -> dict:
+    """Coach's answer as {base, workouts, why}; raises ValueError when it isn't one."""
+    if not isinstance(answer, dict) or not isinstance(answer.get("base"), dict):
+        raise ValueError("Coach's proposal didn't come back right; try again")
+    base = {}
+    for k in MACROS:
+        v = answer["base"].get(k)
+        top = 10_000 if k == "calories" else 1_000
+        if not isinstance(v, (int, float)) or not 0 < v <= top:
+            raise ValueError(f"Coach's proposal has no {k}; try again")
+        base[k] = round(v / 10) * 10 if k == "calories" else round(v)
+    w = answer.get("workouts") or {}
+    share = w.get("share", WORKOUTS["share"])
+    carbs = w.get("carbs_pct", WORKOUTS["carbs_pct"])
+    workouts = {"on": True, "share": round(min(1.5, max(0.0, float(share))), 2),
+                "carbs_pct": round(min(100, max(0, float(carbs))))}
+    return {"base": base, "workouts": workouts, "why": str(answer.get("why") or "").strip()}
+
+
+def now_events(calendar, tz: ZoneInfo) -> list:
+    """Today's calendar events, for a run planned later today; [] when the calendar can't be read."""
+    if calendar is None:
+        return []
+    start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        return calendar.events(start, start + timedelta(days=1))
+    except Exception:  # noqa: BLE001 - the calendar is a nicety here
+        return []

@@ -377,66 +377,8 @@ struct MealPhotosSheet: View {
     }
 }
 
-/// Daily calories and macros to aim for; an empty field is no goal.
-struct FoodGoalsSheet: View {
-    /// Returns an error message, or nil when saved.
-    let save: (FoodGoals) async -> String?
-    @Environment(\.dismiss) private var dismiss
-    @State private var calories: String
-    @State private var protein: String
-    @State private var carbs: String
-    @State private var fat: String
-    @State private var error: String?
-
-    init(goals: FoodGoals, save: @escaping (FoodGoals) async -> String?) {
-        self.save = save
-        _calories = State(initialValue: goals.calories.map(String.init) ?? "")
-        _protein = State(initialValue: goals.proteinG.map(String.init) ?? "")
-        _carbs = State(initialValue: goals.carbsG.map(String.init) ?? "")
-        _fat = State(initialValue: goals.fatG.map(String.init) ?? "")
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    NumberField(label: "Calories", unit: "kcal", text: $calories, placeholder: "None")
-                    NumberField(label: "Protein", unit: "g", text: $protein, placeholder: "None")
-                    NumberField(label: "Carbs", unit: "g", text: $carbs, placeholder: "None")
-                    NumberField(label: "Fat", unit: "g", text: $fat, placeholder: "None")
-                } footer: {
-                    Text("Leave one empty for no goal. Coach can set them too: \"aim for 140 g protein\".")
-                }
-                if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
-            }
-            .scrollContentBackground(.hidden)
-            .background(Theme.grouped)
-            .navigationTitle("Food goals")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        Task {
-                            let goals = FoodGoals(calories: Self.number(calories), proteinG: Self.number(protein),
-                                                  carbsG: Self.number(carbs), fatG: Self.number(fat))
-                            if let message = await save(goals) { error = message } else { dismiss() }
-                        }
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    /// Empty, zero or not a number: no goal.
-    private static func number(_ text: String) -> Int? {
-        Int(text.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil }
-    }
-}
-
 /// A form row with a whole number on the right and its unit after it.
-private struct NumberField: View {
+struct NumberField: View {
     let label: String
     let unit: String
     @Binding var text: String

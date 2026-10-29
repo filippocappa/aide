@@ -47,6 +47,7 @@
 		6050EEA9BDAD57AB18630D2E /* DigestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */; };
 		61A1F84D398D52BD6F25287F /* AideWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7399AF7109C6333CB3244BC /* AideWidgets.swift */; };
 		675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48D3B662149E81DAF5A28319 /* TouchTracker.swift */; };
+		6A8A6B60D44134404B6B202A /* NutritionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C667A9215ADB1783C8AC6E2C /* NutritionViews.swift */; };
 		6B4364FB23EAD3E5E23039BE /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87678035748931339F27CC91 /* Photos.swift */; };
 		6DA7ACDE971323C214D45600 /* TeamWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0183C66CE418FFB138873C0E /* TeamWidget.swift */; };
 		6F50A0BBCD8AE4B87A0300EC /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32DFE4D7AD03B872AE8A96C /* Models.swift */; };
@@ -230,6 +231,7 @@
 		BC045FC4847C746FA98D8C55 /* ScanViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanViews.swift; sourceTree = "<group>"; };
 		BDD7CC531B6DFD14673ABD6C /* LocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationService.swift; sourceTree = "<group>"; };
 		BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitsView.swift; sourceTree = "<group>"; };
+		C667A9215ADB1783C8AC6E2C /* NutritionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionViews.swift; sourceTree = "<group>"; };
 		C7366C17F353CC40F20968CF /* LockShield.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LockShield.entitlements; sourceTree = "<group>"; };
 		CAD7E67230FC828BB66C66EC /* BodyViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyViews.swift; sourceTree = "<group>"; };
 		CAE455930B7B7F343EF3E0F7 /* HealthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthService.swift; sourceTree = "<group>"; };
@@ -292,6 +294,7 @@
 				3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */,
 				1F289CE8321C0A5A80F6B92C /* MoodleView.swift */,
 				75A4AEC9022A036D36BF776D /* NotesView.swift */,
+				C667A9215ADB1783C8AC6E2C /* NutritionViews.swift */,
 				054584741E8F0145B3456003 /* ObjectivesView.swift */,
 				E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */,
 				31E717ACC950E43DC53B945E /* RichText.swift */,
@@ -755,6 +758,7 @@
 				25FDB4AE99AC133557167989 /* Models.swift in Sources */,
 				44F765A0B09F8C4CFDCBB1FE /* MoodleView.swift in Sources */,
 				879BFFF09ECF6F6D4A039B00 /* NotesView.swift in Sources */,
+				6A8A6B60D44134404B6B202A /* NutritionViews.swift in Sources */,
 				27063010372E886231ED3DD3 /* ObjectivesView.swift in Sources */,
 				6B4364FB23EAD3E5E23039BE /* Photos.swift in Sources */,
 				AEEA7D4B2EB40173AC263CF1 /* PracticeExamView.swift in Sources */,

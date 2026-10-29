@@ -1677,3 +1677,73 @@ final class EventWeekTests: XCTestCase {
         XCTAssertTrue(item.isNew)
     }
 }
+
+final class NutritionTests: XCTestCase {
+    func testAFoodDayCarriesItsTargetsBonusAndScore() throws {
+        let json = #"""
+        {"date": "2026-10-29", "meals": [], "totals": {"calories": 900, "protein_g": 30, "carbs_g": 150, "fat_g": 20},
+         "goals": {"calories": 3160, "protein_g": 140, "carbs_g": 431, "fat_g": 95},
+         "base": {"calories": 2500, "protein_g": 140, "carbs_g": 300, "fat_g": 80},
+         "left": {"calories": 2260, "protein_g": 110, "carbs_g": 281, "fat_g": 75},
+         "bonus": {"kcal": 656, "planned": false, "workouts": [{"type": "run", "kcal": 656, "minutes": 54}]},
+         "score": {"score": 82, "final": false, "numbers": 90, "quality": null, "graded": 0.4,
+                   "grades": {"a": 300, "b": 0, "c": 60, "d": 0, "e": 0}}}
+        """#
+        let day = try JSONDecoder.api.decode(FoodDay.self, from: Data(json.utf8))
+        XCTAssertEqual(day.goals.calories, 3160)
+        XCTAssertEqual(day.base.calories, 2500)
+        XCTAssertEqual(day.left.carbsG, 281)
+        XCTAssertEqual(day.score?.score, 82)
+        XCTAssertNil(day.score?.quality)
+        XCTAssertEqual(day.score?.grades["a"], 300)
+        XCTAssertEqual(DayScoreCard.bonusLine(day.bonus), "+656 kcal from your run")
+
+        // An older server: the base is the goals, no score.
+        let old = try JSONDecoder.api.decode(FoodDay.self, from: Data(#"{"date": "2026-10-29", "goals": {"calories": 2500}}"#.utf8))
+        XCTAssertEqual(old.base.calories, 2500)
+        XCTAssertNil(old.score)
+        XCTAssertNil(DayScoreCard.bonusLine(old.bonus))
+    }
+
+    func testAPlannedRunSaysWhatItsFor() throws {
+        let bonus = try JSONDecoder.api.decode(FoodBonus.self, from: Data(#"""
+        {"kcal": 540, "planned": true, "workouts": [{"type": "run", "kcal": 540, "minutes": 45, "title": "Corsa al Valentino"}]}
+        """#.utf8))
+        XCTAssertEqual(DayScoreCard.bonusLine(bonus), "+540 kcal for Corsa al Valentino")
+    }
+
+    func testTargetsEncodeSnakeCaseWithClearedProfileFields() throws {
+        var targets = FoodTargets()
+        targets.base = FoodGoals(calories: 2500, proteinG: 140)
+        targets.workouts.carbsPct = 75
+        targets.profile.weightKg = 74.5
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(targets)) as? [String: Any])
+        let workouts = try XCTUnwrap(obj["workouts"] as? [String: Any])
+        let profile = try XCTUnwrap(obj["profile"] as? [String: Any])
+        XCTAssertEqual(workouts["carbs_pct"] as? Int, 75)
+        XCTAssertEqual(profile["weight_kg"] as? Double, 74.5)
+        XCTAssertTrue(profile["age"] is NSNull) // sent as null, so the server clears it
+        XCTAssertEqual(try XCTUnwrap(JSONDecoder.api.decode(FoodTargets.self, from: JSONEncoder.api.encode(targets))), targets)
+    }
+
+    func testAProposalDecodes() throws {
+        let p = try JSONDecoder.api.decode(TargetsProposal.self, from: Data(#"""
+        {"base": {"calories": 2520, "protein_g": 135, "carbs_g": 310, "fat_g": 78},
+         "workouts": {"on": true, "share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week."}
+        """#.utf8))
+        XCTAssertEqual(p.base.calories, 2520)
+        XCTAssertEqual(p.workouts.share, 0.8)
+        XCTAssertEqual(p.workouts.carbsPct, 75)
+    }
+
+    func testAHealthDaySendsWeightVO2MaxAndAWorkoutsDistance() throws {
+        var day = HealthDay(date: "2026-10-29")
+        day.weightKg = 74.2
+        day.vo2max = 51.3
+        day.workouts = [HealthWorkout(id: "w", type: "run", start: "a", end: "b", minutes: 54, kcal: 656, km: 9.8)]
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(day)) as? [String: Any])
+        XCTAssertEqual(obj["weight_kg"] as? Double, 74.2)
+        XCTAssertEqual(obj["vo2max"] as? Double, 51.3)
+        XCTAssertEqual((obj["workouts"] as? [[String: Any]])?.first?["km"] as? Double, 9.8)
+    }
+}

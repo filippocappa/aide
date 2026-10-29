@@ -636,21 +636,56 @@ goes. The server sends the silent `sync` push after every meal change, so this h
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/food?date=2026-10-21` | (default today) | `{"date": "2026-10-21", "meals": [Meal] (by time), "totals": Totals, "goals": Goals}` |
+| `GET /v1/food?date=2026-10-21` | (default today) | `{"date": "2026-10-21", "meals": [Meal] (by time), "totals": Totals, "goals": Goals, "base": Goals, "left": Goals, "bonus": Bonus, "score": Score \| null}`: since 2026-10-29 `goals` is the **day's** targets (the base plus its workouts), `base` the rest-day ones, `left` the goals minus the totals (null without a goal; negative when over) |
 | `GET /v1/food/meals?from=2026-10-15&to=2026-10-21` | (default the last 7 days; at most 92) | `{"meals": [Meal]}`, oldest first (since 2026-10-27, for Apple Health) |
-| `GET /v1/food/days?from=2026-10-15&to=2026-10-21` | (default the last 7 days) | `{"days": [{"date": "2026-10-21", "totals": Totals, "meals": 3}]}`, oldest first, every day included (zeros when empty) |
+| `GET /v1/food/days?from=2026-10-15&to=2026-10-21` | (default the last 7 days) | `{"days": [{"date": "2026-10-21", "totals": Totals, "meals": 3, "score": 82}]}`, oldest first, every day included (zeros when empty; `score` null when nothing was eaten, since 2026-10-29) |
 | `POST /v1/food/log` | `{"photos": ["p_…"], "text": "half of it", "date": "2026-10-20", "barcodes": ["8001505005707"]}` (`photos` or `text` needed; `text`, `date` and `barcodes` optional; `barcodes`, at most 4, are the ones the app read in the photos, and Coach looks each up) | `{"reply": "Pasta al pomodoro, about 650 kcal…", "meals": [Meal], "conversation_id": "c_…"}`: Coach logs it in its "Food log" chat (made once, then reused), so a correction can follow there. `meals` is the meals its tools showed: logged, changed or listed (can be empty when it only asked something). 5–30 s. |
 | `PATCH /v1/food/meals/{id}` | any of `name`, `eaten_at`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `water_ml`, `caffeine_mg`, `notes` | the Meal |
 | `DELETE /v1/food/meals/{id}` | | `{"ok": true}` (the user deleting from the app: immediate) |
 | `GET /v1/food/barcode/{code}` | | `{"food": Food \| null}` (since 2026-10-29): a scanned barcode's saved food, else Open Food Facts' product (saved on the way); `null` when neither has it. 502 when Open Food Facts can't be reached. No model call. |
 | `POST /v1/food/label` | `{"barcode": "8000000000001", "photo": "p_…", "name": "Avena"}` (`name` optional) | `{"food": Food}`: one model call reads the nutrition facts in the photo (per 100 g, the serving, the name and brand when shown) and saves them for the barcode, so the next scan finds it. 422 with the reason when it can't be read (try another photo). 5–30 s. |
 | `POST /v1/food/foods/{id}/log` | `{"grams": 30, "date": "2026-10-28", "conversation_id": "…"}` (all optional) | `{"meal": Meal}`: logs a saved food as a meal, the server's own sum (no model call). No `grams`: the usual portion, else one serving, else 400. The meal is named after the food (and its brand), `notes` is its items line, and the grams become the usual portion. Coach also posts "Logged …" with its `meals` card in the Coach chat `conversation_id` names (where it was scanned), else in the Food log chat (since 2026-10-29). |
-| `GET /v1/food/goals` | | Goals |
-| `PUT /v1/food/goals` | Goals | Goals |
+| `GET /v1/food/goals` | | Goals (the base) |
+| `PUT /v1/food/goals` | Goals | Goals (sets the base) |
+| `GET /v1/food/targets` | | Targets (since 2026-10-29) |
+| `PUT /v1/food/targets` | any of `base` (Goals), `workouts` (any of its keys), `profile` (any of its keys; `null` clears one) | Targets; 400 with the reason when a value is out of range |
+| `POST /v1/food/targets/propose` | | `{"base": Goals, "workouts": {"on": true, "share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week…"}`: Coach's proposal (one model call, 5–30 s) from the profile, 60 days of Apple Health (activity, workouts with distance and pace, VO2 max, weight) and the last 14 days of food. Nothing is saved: the app shows it and PUTs what the user keeps. 502 when the model fails or answers oddly. |
 
 Totals: `{"calories": 1840, "protein_g": 96, "carbs_g": 210, "fat_g": 61, "water_ml": 1500, "caffeine_mg": 130}`
 (the last two since 2026-10-27). Goals has the first four keys, each a
 number or null (no goal); all null until set, here or by Coach in chat ("aim for 140 g protein").
+
+**Targets and the day score** (since 2026-10-29). Targets:
+```json
+{"base": {"calories": 2500, "protein_g": 140, "carbs_g": 300, "fat_g": 80},
+ "workouts": {"on": true, "share": 1.0, "carbs_pct": 80},
+ "profile": {"weight_kg": 74, "height_cm": 180, "age": 22, "sex": "male", "goal": "keep"}}
+```
+- `base` is the rest day (the same as Goals). On a day with workouts, their Watch kcal times `share` (0–1.5) is
+  added: `carbs_pct` (0–100) of it as carbs (4 kcal/g), the rest as fat (9 kcal/g); protein stays. Calories round to 10.
+- Before any workout today, a timed calendar event today whose title says run (run, jog, corsa, correre…) counts at
+  the user's own kcal a minute running (the last 60 days' runs; 11 without), `planned: true`. Once the Watch has a
+  workout that day, only the done workouts count.
+- `profile` (each key may be null; `sex` is `male` or `female`, `goal` `lose`, `keep` or `gain`) is what proposals
+  start from; the app fills it from Apple Health once.
+
+Bonus: `{"kcal": 656, "planned": false, "workouts": [{"type": "run", "kcal": 656, "minutes": 54}]}` (a planned one
+also has the event's `title`); `{"kcal": 0, "planned": false, "workouts": []}` without any.
+
+Score: `{"score": 82, "final": false, "numbers": 90, "quality": 70, "graded": 0.85, "grades": {"a": 640, "b": 300,
+"c": 400, "d": 0, "e": 120}}`, null before anything's eaten. 0–100, no model call:
+- `numbers` (60%): calories within 10% of the day's target, carbs and fat within 15%, protein at or above it get full
+  marks, falling to 0 at 50% off (weights 40, 30, 15, 15). Today isn't `final`: only going over costs, as there's
+  still time to eat. A day without goals is quality alone.
+- `quality` (40%): the day's items' grades weighted by their kcal (A 100, B 75, C 50, D 25, E 0); null (and the score
+  is numbers alone) when graded items are under half the day's kcal (`graded` is that share). `grades` is the kcal
+  eaten per grade. Meals logged without items are ungraded.
+
+A food's grade is its Nutri-Score (the 2023 rules, with their own for fats, oils and nuts, drinks, cheese and red
+meat; so extra virgin olive oil is B): Open Food Facts' when it has one, else worked out from its numbers per 100 g.
+Food has `grade` (`a`–`e`, null when it can't be worked out) and `nova` (Open Food Facts' processing group 1–4, null
+without). Coach gives a new food's sugars, saturated fat, fibre, salt, fruit and veg share and kind as it logs it, and
+a nutrition label's photo is read for them too.
 
 Coach gets `log_meal`, `update_meal`, `list_meals`, `set_food_goals` (immediate) and `delete_meal` (queued).
 It logs a meal when a photo shows food you're eating or ate, or when you say what you had, and says the numbers in
@@ -667,7 +702,8 @@ it's logged), and the server adds them up; Coach can't log totals guessed in one
 serving with nothing else said is its placeholder, not a serving.
 
 Food object: `{"id": 7, "name": "Nocciolata", "brand": "Rigoni di Asiago", "barcode": "8001505005707", "kcal_100g":
-544, "protein_100g": 8.1, "carbs_100g": 54, "fat_100g": 32, "serving_g": 15, "usual_g": 30, "source": "off"}`; per
+544, "protein_100g": 8.1, "carbs_100g": 54, "fat_100g": 32, "serving_g": 15, "usual_g": 30, "source": "off", "grade": "e",
+"nova": 4}` (`grade` and `nova` since 2026-10-29); per
 100 ml for a drink; `serving_g` and `usual_g` can be null; `source` is `off` (Open Food Facts), `label`, `web`,
 `estimate` or `user`. Barcodes in the app (since 2026-10-29): it reads them in a meal's photos on the phone. One
 photo with a barcode is a lone packet: `GET /v1/food/barcode/{code}`, how much (empty is the usual portion or one
@@ -1151,8 +1187,12 @@ the server's liveness check; these routes sit under it and need the token like e
   "naps": [{"start": "2026-10-19T14:05:00+02:00", "end": "2026-10-19T14:50:00+02:00", "asleep_min": 42}],
   "workouts": [
     {"id": "6B1F0C2E-…", "type": "strength", "start": "2026-10-19T18:30:00+02:00",
-     "end": "2026-10-19T19:22:00+02:00", "minutes": 52, "kcal": 310}
-  ]
+     "end": "2026-10-19T19:22:00+02:00", "minutes": 52, "kcal": 310},
+    {"id": "A04C…", "type": "run", "start": "2026-10-19T07:30:00+02:00",
+     "end": "2026-10-19T08:24:00+02:00", "minutes": 54, "kcal": 656, "km": 9.8}
+  ],
+  "weight_kg": 74.2,
+  "vo2max": 51.3
 }
 ```
 - **Missing or `null` means no data** for that field. Every number may be missing.
@@ -1169,6 +1209,9 @@ the server's liveness check; these routes sit under it and need the token like e
   measure) during that night's sleep, or over the day if there's none from the night. `respiratory_rate`
   (breaths/min) and `wrist_temp_c` (absolute °C, Series 8 and later) are averages over the night. The server
   compares them with the user's own past numbers; Apple's "baseline" isn't available to apps.
+- `workouts[].km` (since 2026-10-29) is the workout's distance, when it has one. `weight_kg` is the day's latest
+  body mass, `vo2max` Apple's latest VO2 max estimate that day (mL/kg/min); both only on days with a sample. The food
+  targets' proposal reads them.
 - `workouts[].id` is the HealthKit workout UUID: stable, so re-sending the same workout is harmless.
 
 ### Workout types

@@ -72,6 +72,14 @@ struct HealthView: View {
                     }
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets())
+                    if let food {
+                        Section {
+                            NavigationLink { NutritionDayView(day: food, tint: coach.tint) } label: {
+                                DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
+                            }
+                        }
+                        .listRowBackground(Theme.row)
+                    }
                     foodSection
                     // Its own section: a clear row inside the card's section cut off the card's rounded bottom.
                     Section { logButton }
@@ -84,8 +92,8 @@ struct HealthView: View {
             .background(Theme.grouped)
             .navigationTitle("Health")
             .navigationDestination(item: $metric) { m in HealthMetricView(metric: m, days: bodyDays ?? []) }
-            .sheet(isPresented: $showGoals) {
-                FoodGoalsSheet(goals: food?.goals ?? FoodGoals()) { await saveGoals($0) }
+            .sheet(isPresented: $showGoals, onDismiss: { Task { await loadFood() } }) {
+                NavigationStack { NutritionTargetsView(inSheet: true) }
             }
             .sheet(item: $editingMeal) { meal in
                 MealSheet(meal: meal, save: { await update(meal, $0) }, delete: { await remove(meal) })
@@ -190,7 +198,7 @@ struct HealthView: View {
             HStack {
                 Text(dayTitle)
                 Spacer()
-                Button("Goals") { showGoals = true }
+                Button("Targets") { showGoals = true }
                     .font(.subheadline.weight(.semibold))
                     .textCase(nil)
                     .disabled(!settings.isConfigured)
@@ -330,13 +338,6 @@ struct HealthView: View {
             food?.meals.removeAll { $0.id == meal.id }
             await loadFood()
             Task { await health.writeMeals() }
-            return nil
-        } catch { return error.localizedDescription }
-    }
-
-    private func saveGoals(_ goals: FoodGoals) async -> String? {
-        do {
-            food?.goals = try await env.api.saveFoodGoals(goals)
             return nil
         } catch { return error.localizedDescription }
     }

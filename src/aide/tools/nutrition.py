@@ -6,12 +6,16 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from ..foods import SOURCES, FoodDB
+from ..foods import KINDS, SOURCES, FoodDB
+from ..nutrition import grade
 from . import Tool
 
 SEARCH = "https://search.openfoodfacts.org/search"
 PRODUCT = "https://world.openfoodfacts.org/api/v2/product/{}.json"
-FIELDS = "code,product_name,product_name_it,brands,quantity,serving_quantity,serving_size,nutriments"
+FIELDS = ("code,product_name,product_name_it,brands,quantity,serving_quantity,serving_size,nutriments,"
+          "nutriscore_grade,nova_group")
+OFF_NUTRIENTS = {"sugars_100g": "sugars_100g", "sat_fat_100g": "saturated-fat_100g", "fibre_100g": "fiber_100g",
+                 "salt_100g": "salt_100g"}
 USER_AGENT = "Aide/1.0 (personal assistant)"  # Open Food Facts asks every app to name itself
 ONLINE_LIMIT = 5
 LABEL_TOKENS = 1000
@@ -19,13 +23,14 @@ LABEL_TOKENS = 1000
 LABEL_PROMPT = """You read the nutrition facts table (valori nutrizionali) on a photo of a food or drink packet, so the \
 numbers can be saved for that product. Read the column per 100 g (or per 100 ml). When there's only a column per \
 serving, work out per 100 g from the serving's size. Energy in kcal; with only kJ, divide by 4.184. Read the \
-numbers exactly as printed; don't estimate. Fat, carbohydrates and protein in grams; ignore the rest (sugars, \
-fibre, salt). serving_g is one serving or one piece as printed on the packet (e.g. "per porzione (30 g)"), else null. \
-name and brand only when the photo shows them, else null.
+numbers exactly as printed; don't estimate. Fat, carbohydrates, protein, sugars (di cui zuccheri), saturated fat \
+(di cui acidi grassi saturi), fibre and salt in grams; one the label doesn't show is null. serving_g is one serving \
+or one piece as printed on the packet (e.g. "per porzione (30 g)"), else null. name and brand only when the photo \
+shows them, else null.
 
 Answer with JSON only, nothing before or after it:
-{"kcal_100g": 389, "protein_100g": 13.5, "carbs_100g": 58.7, "fat_100g": 7, "serving_g": 40, "name": "Fiocchi \
-d'avena", "brand": "Quaker"}
+{"kcal_100g": 389, "protein_100g": 13.5, "carbs_100g": 58.7, "fat_100g": 7, "sugars_100g": 1.2, "sat_fat_100g": \
+1.3, "fibre_100g": 10, "salt_100g": 0.02, "serving_g": 40, "name": "Fiocchi d'avena", "brand": "Quaker"}
 or, when the photo has no nutrition table you can read: {"error": "what's wrong, in a few words"}"""
 
 
@@ -60,9 +65,20 @@ def product(raw: dict) -> dict | None:
         return None
     brands = raw.get("brands") or ""
     brand = (brands[0] if isinstance(brands, list) and brands else str(brands).split(",")[0]).strip()
+    grade = str(raw.get("nutriscore_grade") or "").lower()
+    nova = raw.get("nova_group")
     return {"name": name, "brand": brand, "barcode": str(raw.get("code") or "") or None,
             **dict(zip(("kcal_100g", "protein_100g", "carbs_100g", "fat_100g"), values)),
-            "serving_g": serving(raw), "pack": (raw.get("quantity") or "").strip()}
+            "serving_g": serving(raw), "pack": (raw.get("quantity") or "").strip(),
+            "quality": {**{k: _num(nut.get(off)) for k, off in OFF_NUTRIENTS.items()},
+                        "nutriscore": grade if grade in ("a", "b", "c", "d", "e") else None,
+                        "nova": nova if nova in (1, 2, 3, 4) else None}}
+
+
+def save_product(foods: FoodDB, p: dict, code: str) -> dict:
+    """An Open Food Facts product saved under its barcode."""
+    return foods.save(p["name"], p["kcal_100g"], p["protein_100g"], p["carbs_100g"], p["fat_100g"], "off",
+                      brand=p["brand"], barcode=code, serving_g=p["serving_g"], source_ref=code, **p["quality"])
 
 
 class OpenFoodFacts:
@@ -105,7 +121,8 @@ async def read_label(ask: Callable[[str, list[dict], int], Awaitable[str]], imag
     if any(v is None for v in values.values()):
         raise ValueError("couldn't read every number on the label (energy, protein, carbs and fat)")
     text = {k: str(answer.get(k) or "").strip() for k in ("name", "brand")}
-    return {**values, "serving_g": _num(answer.get("serving_g")) or None, **text}
+    quality = {k: _num(answer.get(k)) for k in OFF_NUTRIENTS}
+    return {**values, "serving_g": _num(answer.get("serving_g")) or None, **text, "quality": quality}
 
 
 def _g(value: float | None) -> str:
@@ -120,7 +137,18 @@ def describe(food: dict) -> str:
     line += f" · serving {_g(food['serving_g'])}" if food["serving_g"] else ""
     line += f" · usual {_g(food['usual_g'])}" if food["usual_g"] else ""
     line += f" · eaten {food['uses']}×" if food["uses"] else ""
+    line += f" · Nutri-Score {g.upper()}" if (g := grade(food)) else ""
     return line + f" · from {food['source']}"
+
+
+def quality_schema() -> dict:
+    """What a food's Nutri-Score needs besides kcal and macros, per 100 g; the model's estimate when not on a label."""
+    return {"sugars_100g": {"type": "number"}, "sat_fat_100g": {"type": "number"},
+            "fibre_100g": {"type": "number"}, "salt_100g": {"type": "number"},
+            "fvl_pct": {"type": "number", "description": "% of it that is fruit, vegetables, legumes, nuts, or "
+                        "olive, rapeseed or walnut oil (an apple 100, pasta al pomodoro about 30, bread 0)"},
+            "kind": {"type": "string", "enum": list(KINDS), "description": "fat: oils, butter, nuts and seeds; "
+                     "drink: any drink but water; red_meat: beef, pork, lamb and what's made of them"}}
 
 
 def nutrition_tools(foods: FoodDB, off: OpenFoodFacts) -> list[Tool]:
@@ -138,8 +166,7 @@ def nutrition_tools(foods: FoodDB, off: OpenFoodFacts) -> list[Tool]:
         p = await off.barcode(code)
         if p is None:
             return f"Open Food Facts doesn't have barcode {code} (or not its nutrition values)."
-        saved = foods.save(p["name"], p["kcal_100g"], p["protein_100g"], p["carbs_100g"], p["fat_100g"], "off",
-                           brand=p["brand"], barcode=code, serving_g=p["serving_g"], source_ref=code)
+        saved = save_product(foods, p, code)
         return f"From Open Food Facts, now saved:\n{describe(saved)}" + (f" · pack {p['pack']}" if p["pack"] else "")
 
     async def find_food(query: str | None = None, barcode: str | None = None, online: bool = False) -> str:
@@ -162,23 +189,24 @@ def nutrition_tools(foods: FoodDB, off: OpenFoodFacts) -> list[Tool]:
     async def save_food(name: str, kcal_100g: float, protein_100g: float, carbs_100g: float, fat_100g: float,
                         source: str, brand: str | None = None, barcode: str | None = None,
                         serving_g: float | None = None, source_ref: str | None = None,
-                        aliases: str | None = None) -> str:
+                        aliases: str | None = None, **quality) -> str:
         food = foods.save(name, kcal_100g, protein_100g, carbs_100g, fat_100g, source, brand or "", barcode,
-                          serving_g, source_ref or "", aliases or "")
+                          serving_g, source_ref or "", aliases or "", **quality)
         return f"Saved:\n{describe(food)}"
 
     async def update_food(food_id: int, name: str | None = None, brand: str | None = None,
                           barcode: str | None = None, kcal_100g: float | None = None,
                           protein_100g: float | None = None, carbs_100g: float | None = None,
                           fat_100g: float | None = None, serving_g: float | None = None, usual_g: float | None = None,
-                          source: str | None = None, aliases: str | None = None) -> str:
+                          source: str | None = None, aliases: str | None = None, **quality) -> str:
         food = foods.update(food_id, name=name, brand=brand, barcode=barcode, kcal_100g=kcal_100g,
                             protein_100g=protein_100g, carbs_100g=carbs_100g, fat_100g=fat_100g,
-                            serving_g=serving_g, usual_g=usual_g, source=source, aliases=aliases)
+                            serving_g=serving_g, usual_g=usual_g, source=source, aliases=aliases, **quality)
         return f"Updated:\n{describe(food)}"
 
     per_100 = {"kcal_100g": {"type": "number", "description": "kcal per 100 g (per 100 ml for a drink)"},
-               "protein_100g": {"type": "number"}, "carbs_100g": {"type": "number"}, "fat_100g": {"type": "number"}}
+               "protein_100g": {"type": "number"}, "carbs_100g": {"type": "number"}, "fat_100g": {"type": "number"},
+               **quality_schema()}
     details = {"brand": {"type": "string"},
                "barcode": {"type": "string", "description": "The EAN digits, when you can read them"},
                "serving_g": {"type": "number", "description": "One serving or one piece in grams, as the packet "

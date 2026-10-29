@@ -9,9 +9,11 @@ from zoneinfo import ZoneInfo
 
 from ..food import DRINKS, MACROS, FoodStore, totals
 from ..foods import FoodDB, free_notes
+from ..health import HealthStore
+from ..nutrition import Nutrition
 from ..photos import PhotoStore
 from . import Tool, ToolOutput
-from .nutrition import OpenFoodFacts, nutrition_tools
+from .nutrition import OpenFoodFacts, nutrition_tools, quality_schema
 
 WHEN_HELP = "Local time as YYYY-MM-DDTHH:MM. Omit for now."
 NAMES = {"calories": "kcal", "protein_g": "protein", "carbs_g": "carbs", "fat_g": "fat"}
@@ -22,8 +24,9 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 
 def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB | None = None,
-               off: OpenFoodFacts | None = None) -> list[Tool]:
+               off: OpenFoodFacts | None = None, health: HealthStore | None = None) -> list[Tool]:
     foods = foods or FoodDB(store.conn)
+    nutrition = Nutrition(store, health)
 
     def fmt(m: dict) -> str:
         at = datetime.fromisoformat(m["eaten_at"]).astimezone(tz)
@@ -37,13 +40,20 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         return ToolOutput(text, {"type": "meals", "meals": [store.as_json(m) for m in meals]})
 
     def day_line(d: Date) -> str:
-        """The day's totals against the goals that are set."""
-        sums, goals = totals(store.day(d)), store.goals()
+        """The day's totals against its targets (the goals plus what workouts burned), and its score."""
+        sums, day = totals(store.day(d)), nutrition.day(d)
+        goals = day["targets"]
         parts = [f"{sums[k]}" + (f"/{goals[k]}" if goals[k] else "") + (" kcal" if k == "calories" else f" g {NAMES[k]}")
                  for k in MACROS]
         parts += [f"{sums['water_ml']} ml water"] if sums["water_ml"] else []
         parts += [f"{sums['caffeine_mg']} mg caffeine"] if sums["caffeine_mg"] else []
-        return f"{d:%a %d %b} so far: " + ", ".join(parts)
+        line = f"{d:%a %d %b} so far: " + ", ".join(parts)
+        if day["bonus"]["kcal"]:
+            line += f" (targets include +{day['bonus']['kcal']} kcal from workouts)"
+        if s := day["score"]:
+            line += f". Day score {s['score']}/100" + (f", food quality {s['quality']}" if s["quality"] is not None
+                                                        else "")
+        return line
 
     async def log_meal(name: str, items: list[dict], eaten_at: str | None = None, photo_id: str | None = None,
                        notes: str | None = None, water_ml: int = 0, caffeine_mg: int = 0) -> str:
@@ -110,7 +120,7 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
                           "(dry)', 'Pizza margherita', 'Olio extravergine')"},
                  "brand": {"type": "string"},
                  "grams": {"type": "number", "description": "How much they had (ml for a drink). With food_id, "
-                           "omit for the food's usual portion"}, **per_100}, [])
+                           "omit for the food's usual portion"}, **per_100, **quality_schema()}, [])
     items = {"items": {"type": "array", "items": item,
                        "description": "The meal item by item, each a food and its grams: a saved food by food_id, "
                        "or a new one with name and your numbers per 100 g (saved as it's logged, for next time; a "

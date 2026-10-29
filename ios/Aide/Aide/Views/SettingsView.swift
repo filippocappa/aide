@@ -28,6 +28,7 @@ struct SettingsView: View {
                     }
                     row("Claude plan", "sparkles", Color(red: 0.85, green: 0.47, blue: 0.34)) { NotesWriterView() }
                     row("Browser", "safari.fill", .blue) { BrowserSettingsView() }
+                    row("Nutrition targets", "fork.knife", .green) { NutritionTargetsView() }
                 }
                 Section("This iPhone") {
                     row("Notifications", "bell.badge.fill", .red, value: notificationsValue, off: push.authorization != .authorized && push.authorization != .provisional) {
@@ -77,6 +78,7 @@ struct SettingsView: View {
                 case "health": HealthSettingsView()
                 case "location": LocationSettingsView()
                 case "screentime": ScreenTimeView()
+                case "nutrition": NutritionTargetsView()
                 default: ConnectionSettingsView(connection: connection)
                 }
             }

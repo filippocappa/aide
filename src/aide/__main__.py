@@ -104,7 +104,7 @@ def main() -> None:
     live = LiveActivities(db.conn, push)
 
     tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits),
-             *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone, foods, off),
+             *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone, foods, off, health),
              *lock_tools(locks, settings.timezone)]
     cal = None
     if settings.icloud_email and settings.icloud_app_password:

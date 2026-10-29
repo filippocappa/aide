@@ -195,6 +195,16 @@ Log a meal menu. Fixes from the first day (2026-10-29): Coach's chats read barco
 that chat); `log_meal` takes only items (new foods saved as they're logged), so every meal builds the saved foods;
 OFF's placeholder "100 g" serving is ignored; the message box makes a new text field on send (the keyboard wrote the
 sent text back).
+Targets and the day score (2026-10-29, both sides, contract "Food", "Targets and the day score"; `nutrition.py`): a
+rest-day base plus the day's Watch workout kcal (× `share`, `carbs_pct` as carbs, the rest fat), or before it a run in
+the calendar at the user's usual kcal a minute; `goals` on `GET /v1/food` is now the day's targets. Each food's
+Nutri-Score (2023 rules; Open Food Facts' grade when it has one, else from sugars, saturated fat, fibre, salt, fruit
+and veg share and kind, which Coach gives as it logs a new food) and NOVA. A 0–100 day score: 60% numbers, 40% the
+calorie-weighted grades (counted from half the day's kcal graded). `POST /v1/food/targets/propose`: Coach's proposal
+from the profile, 60 days of Health and 14 of food. App (`Views/NutritionViews.swift`): the score card on top of Health
+→ Food and the day's page (targets, A–E bars, 4 weeks of scores), Settings → Nutrition targets (also Targets on the
+Food page; profile from Apple Health once, "Ask Coach to propose"); HealthKit now also reads weight, height, age,
+sex, VO2 max and workout distance (`weight_kg`, `vo2max`, `workouts[].km`). Not yet tried on the phone.
 
 **Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
 files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and

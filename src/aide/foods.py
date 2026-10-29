@@ -11,6 +11,7 @@ import unicodedata
 
 from .db import utcnow
 from .food import MACROS
+from .nutrition import grade
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS foods (
@@ -23,6 +24,14 @@ CREATE TABLE IF NOT EXISTS foods (
     protein_100g REAL NOT NULL,
     carbs_100g   REAL NOT NULL,
     fat_100g     REAL NOT NULL,
+    sugars_100g  REAL,  -- what the Nutri-Score needs besides the four above (nutrition.py), NULL when unknown
+    sat_fat_100g REAL,
+    fibre_100g   REAL,
+    salt_100g    REAL,
+    fvl_pct      REAL,  -- % fruit, vegetables, legumes (and olive, rapeseed, walnut oil)
+    kind         TEXT NOT NULL DEFAULT 'general',  -- general | fat | drink | water | cheese | red_meat
+    nutriscore   TEXT,  -- Open Food Facts' grade, a–e; else worked out from the numbers
+    nova         INTEGER,  -- Open Food Facts' processing group, 1–4
     serving_g    REAL,  -- one serving as the packet says, NULL when unknown
     usual_g      REAL,  -- the portion the user had last time
     source       TEXT NOT NULL,  -- off | label | web | estimate | user
@@ -49,7 +58,12 @@ CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id);
 
 SOURCES = ("off", "label", "web", "estimate", "user")
 PER_100 = ("kcal_100g", "protein_100g", "carbs_100g", "fat_100g")
-EDITABLE = ("name", "brand", "barcode", *PER_100, "serving_g", "usual_g", "source", "source_ref", "aliases")
+QUALITY = ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct", "kind", "nutriscore", "nova")
+EDITABLE = ("name", "brand", "barcode", *PER_100, *QUALITY, "serving_g", "usual_g", "source", "source_ref", "aliases")
+KINDS = ("general", "fat", "drink", "water", "cheese", "red_meat")
+QUALITY_COLUMNS = {"sugars_100g": "REAL", "sat_fat_100g": "REAL", "fibre_100g": "REAL", "salt_100g": "REAL",
+                   "fvl_pct": "REAL", "kind": "TEXT NOT NULL DEFAULT 'general'", "nutriscore": "TEXT",
+                   "nova": "INTEGER"}
 MAX_NAME = 100
 MAX_PORTION = 5000  # g in one serving or one item
 SEARCH_LIMIT = 5
@@ -73,6 +87,11 @@ def free_notes(notes: str) -> str:
 class FoodDB:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
+        if self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'foods'").fetchone():
+            have = {c["name"] for c in self.conn.execute("PRAGMA table_info(foods)")}
+            for column, kind in QUALITY_COLUMNS.items():
+                if column not in have:
+                    self.conn.execute(f"ALTER TABLE foods ADD COLUMN {column} {kind}")
         self.conn.executescript(SCHEMA)
 
     def get(self, food_id: int) -> dict | None:
@@ -118,6 +137,20 @@ class FoodDB:
                 if not 0 <= float(value) <= top:
                     raise ValueError(f"{key} must be between 0 and {top}")
                 value = float(value)
+            elif key in ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct"):
+                if value is not None and not 0 <= float(value) <= 100:
+                    raise ValueError(f"{key} must be between 0 and 100")
+                value = None if value is None else float(value)
+            elif key == "kind" and value not in KINDS:
+                raise ValueError(f"kind must be one of {', '.join(KINDS)}")
+            elif key == "nutriscore":
+                value = str(value or "").lower() or None
+                if value and value not in "abcde":
+                    raise ValueError("nutriscore is a to e")
+            elif key == "nova":
+                if value is not None and int(value) not in (1, 2, 3, 4):
+                    raise ValueError("nova is 1 to 4")
+                value = None if value is None else int(value)
             elif key in ("serving_g", "usual_g"):
                 if value is not None and not 0 < float(value) <= MAX_PORTION:
                     raise ValueError(f"{key} must be between 0 and {MAX_PORTION}")
@@ -134,23 +167,23 @@ class FoodDB:
 
     def save(self, name: str, kcal_100g: float, protein_100g: float, carbs_100g: float, fat_100g: float,
              source: str, brand: str = "", barcode: str | None = None, serving_g: float | None = None,
-             source_ref: str = "", aliases: str = "") -> dict:
-        """Add a food, or update the one with the same barcode, or the same name and brand."""
+             source_ref: str = "", aliases: str = "", **quality) -> dict:
+        """Add a food, or update the one with the same barcode, or the same name and brand. `quality`: any of
+        QUALITY, for its Nutri-Score."""
+        if unknown := set(quality) - set(QUALITY):
+            raise ValueError(f"can't save {', '.join(sorted(unknown))}")
         clean = self._clean({"name": name, "brand": brand, "barcode": barcode, "kcal_100g": kcal_100g,
                              "protein_100g": protein_100g, "carbs_100g": carbs_100g, "fat_100g": fat_100g,
                              "serving_g": serving_g, "source": source, "source_ref": source_ref,
-                             "aliases": aliases})
+                             "aliases": aliases, **{k: v for k, v in quality.items() if v is not None}})
         self._check(clean)
         key = normalize(f"{clean['name']} | {clean['brand']}")
         old = (clean["barcode"] and self.by_barcode(clean["barcode"])) or self._by_key(key)
         if old:
             return self.update(old["id"], **clean)  # None (no barcode, no serving) keeps what it has
         now = utcnow().isoformat()
-        cur = self.conn.execute(
-            "INSERT INTO foods (name, brand, key, barcode, kcal_100g, protein_100g, carbs_100g, fat_100g, "
-            "serving_g, source, source_ref, aliases, created_at, updated_at) VALUES (:name, :brand, :key, :barcode, "
-            ":kcal_100g, :protein_100g, :carbs_100g, :fat_100g, :serving_g, :source, :source_ref, :aliases, "
-            ":now, :now)", {**clean, "key": key, "now": now})
+        row = {**clean, "key": key, "created_at": now, "updated_at": now}
+        cur = self.conn.execute(f"INSERT INTO foods ({', '.join(row)}) VALUES ({', '.join(':' + k for k in row)})", row)
         return self.find(cur.lastrowid)
 
     def update(self, food_id: int, **changes) -> dict:
@@ -178,7 +211,8 @@ class FoodDB:
                           (grams, 1 if count else 0, utcnow().isoformat(), food_id))
 
     def as_json(self, food: dict) -> dict:
-        return {k: food[k] for k in ("id", "name", "brand", "barcode", *PER_100, "serving_g", "usual_g", "source")}
+        return {**{k: food[k] for k in ("id", "name", "brand", "barcode", *PER_100, "serving_g", "usual_g", "source",
+                                        "nova")}, "grade": grade(food)}
 
     # -- a meal's items -------------------------------------------------------
 
@@ -199,7 +233,8 @@ class FoodDB:
                     raise ValueError(f"an item without food_id needs {', '.join(missing)} (its numbers per 100 g)")
                 brand = item.get("brand") or ""
                 food = self._by_key(normalize(f"{' '.join(item['name'].split())} | {' '.join(brand.split())}")) \
-                    or self.save(item["name"], *(item[k] for k in PER_100), "estimate", brand=brand)
+                    or self.save(item["name"], *(item[k] for k in PER_100), "estimate", brand=brand,
+                                 **{k: item.get(k) for k in QUALITY if k not in ("nutriscore", "nova")})
                 grams = item["grams"]
             if not 0 < grams <= MAX_PORTION:
                 raise ValueError(f"grams must be between 0 and {MAX_PORTION}")

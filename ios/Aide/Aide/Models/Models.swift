@@ -618,15 +618,21 @@ struct FoodGoals: Codable, Hashable {
     private enum CodingKeys: String, CodingKey { case calories, proteinG, carbsG, fatG }
 }
 
-/// `GET /v1/food`: one day's meals, by time.
+/// `GET /v1/food`: one day's meals, by time. `goals` are the day's targets (the base plus its workouts), `base` the
+/// rest-day ones, `left` the goals minus what was eaten (negative when over).
 struct FoodDay: Decodable {
     let date: String
     var meals: [Meal]
     var totals: FoodTotals
     var goals: FoodGoals
+    var base: FoodGoals
+    var left: FoodGoals
+    var bonus: FoodBonus
+    var score: DayScore?
 
     init(date: String) {
-        (self.date, meals, totals, goals) = (date, [], FoodTotals(), FoodGoals())
+        (self.date, meals, totals, goals, base, left, bonus) = (date, [], FoodTotals(), FoodGoals(), FoodGoals(),
+                                                               FoodGoals(), FoodBonus())
     }
 
     init(from decoder: Decoder) throws {
@@ -635,23 +641,106 @@ struct FoodDay: Decodable {
         meals = try c.decodeIfPresent([Meal].self, forKey: .meals) ?? []
         totals = try c.decodeIfPresent(FoodTotals.self, forKey: .totals) ?? FoodTotals()
         goals = try c.decodeIfPresent(FoodGoals.self, forKey: .goals) ?? FoodGoals()
+        base = try c.decodeIfPresent(FoodGoals.self, forKey: .base) ?? goals
+        left = try c.decodeIfPresent(FoodGoals.self, forKey: .left) ?? FoodGoals()
+        bonus = try c.decodeIfPresent(FoodBonus.self, forKey: .bonus) ?? FoodBonus()
+        score = try c.decodeIfPresent(DayScore.self, forKey: .score)
     }
-    private enum CodingKeys: String, CodingKey { case date, meals, totals, goals }
+    private enum CodingKeys: String, CodingKey { case date, meals, totals, goals, base, left, bonus, score }
 }
 
-/// A day in `GET /v1/food/days`: its totals and how many meals.
+/// What the day's workouts add to its targets: done ones from the Watch, or (`planned`) a run in the calendar.
+struct FoodBonus: Decodable, Hashable {
+    struct Workout: Decodable, Hashable {
+        let type: String
+        let kcal: Int
+        let minutes: Int
+        let title: String?
+    }
+    var kcal = 0
+    var planned = false
+    var workouts: [Workout] = []
+}
+
+/// The day's 0–100: `numbers` (60%, how close to the targets) and `quality` (40%, the Nutri-Scores weighted by
+/// calories; nil when under half the day's calories are graded). Not `final` while the day is on.
+struct DayScore: Decodable, Hashable {
+    let score: Int
+    let final: Bool
+    let numbers: Int?
+    let quality: Int?
+    let graded: Double
+    /// Calories eaten per grade, a to e.
+    let grades: [String: Int]
+}
+
+/// `GET/PUT /v1/food/targets`.
+struct FoodTargets: Codable, Hashable {
+    var base = FoodGoals()
+    var workouts = WorkoutTargets()
+    var profile = FoodProfile()
+}
+
+/// How much of a workout's kcal is added (`share`), and how much of that as carbs (the rest as fat).
+struct WorkoutTargets: Codable, Hashable {
+    var on = true
+    var share = 1.0
+    var carbsPct = 80
+}
+
+/// What Coach proposes from; every field may be nil. `sex`: male, female; `goal`: lose, keep, gain.
+/// Encoded with every key, so clearing one sends null.
+struct FoodProfile: Codable, Hashable {
+    var weightKg: Double?
+    var heightCm: Int?
+    var age: Int?
+    var sex: String?
+    var goal: String?
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        weightKg = try c.decodeIfPresent(Double.self, forKey: .weightKg)
+        heightCm = try c.number(.heightCm)
+        age = try c.number(.age)
+        sex = try c.decodeIfPresent(String.self, forKey: .sex)
+        goal = try c.decodeIfPresent(String.self, forKey: .goal)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(weightKg, forKey: .weightKg)
+        try c.encode(heightCm, forKey: .heightCm)
+        try c.encode(age, forKey: .age)
+        try c.encode(sex, forKey: .sex)
+        try c.encode(goal, forKey: .goal)
+    }
+    private enum CodingKeys: String, CodingKey { case weightKg, heightCm, age, sex, goal }
+}
+
+/// `POST /v1/food/targets/propose`: Coach's numbers and why; nothing saved until a PUT.
+struct TargetsProposal: Decodable, Hashable {
+    let base: FoodGoals
+    let workouts: WorkoutTargets
+    let why: String
+}
+
+/// A day in `GET /v1/food/days`: its totals, how many meals and its score (nil when nothing was eaten).
 struct FoodDaySummary: Decodable, Hashable {
     let date: String
     let totals: FoodTotals
     let meals: Int
+    let score: Int?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         date = try c.decode(String.self, forKey: .date)
         totals = try c.decodeIfPresent(FoodTotals.self, forKey: .totals) ?? FoodTotals()
         meals = try c.number(.meals) ?? 0
+        score = try c.number(.score)
     }
-    private enum CodingKeys: String, CodingKey { case date, totals, meals }
+    private enum CodingKeys: String, CodingKey { case date, totals, meals, score }
 }
 struct FoodDayList: Decodable { let days: [FoodDaySummary] }
 
@@ -795,6 +884,7 @@ struct HealthWorkout: Encodable, Equatable {
     var end: String
     var minutes: Int
     var kcal: Int?
+    var km: Double?
 }
 
 /// One local day's summary. Nil fields are left out: no data.
@@ -811,6 +901,8 @@ struct HealthDay: Encodable, Equatable {
     var inhalerUsage: Int?  // Health's Inhaler Usage: a limit habit may count from it (coffees)
     var naps: [SleepNap]?  // nil when there were none
     var workouts: [HealthWorkout] = []
+    var weightKg: Double?  // the day's latest weight; for the food targets
+    var vo2max: Double?
 }
 
 struct HealthUpload: Encodable { let days: [HealthDay] }
