@@ -810,11 +810,11 @@ and posts the result in the same chat.
 
 Notebook: `{"course": 2, "started": true, "busy": false, "step": "Writing The IS-LM model, Crowding out" or null,
 "exam": "20–35 multiple-choice questions, −0.25 for a wrong answer…" or null, "introduction": "markdown" or null,
-"topics": [Topic], "proposals": [Proposal], "writing": Proposal or null, "formulas": 3, "exercises": 2}` (`busy`: being written;
+"topics": [Topic], "proposals": [Proposal], "writing": Proposal or null, "formulas": 3, "exercises": 2, "mocks": 1}` (`busy`: being written;
 `step`: what Professor is doing now, a line to show while `busy` (null otherwise, or right after a restart); pending
 proposals only; `writing`: the proposal being applied, with its `progress`; `formulas`, since 2026-10-29: how many
 topics have formulas, 0 when there's no formula sheet to show; `exercises`, since 2026-10-29: how many topics have
-exercises, below).
+exercises, below; `mocks`, since 2026-10-29: how many mock exams it has, below).
 
 **Formula sheet** (since 2026-10-29): the Formulas section of every written topic, in the notebook's order, each
 under a `## [[Topic title]]` heading (with `plain`, just the title). No model writes it: it's put together on every
@@ -887,6 +887,34 @@ The solution is a folded callout, like a question's answer: closed until tapped.
 exercise has a final result. In the vault: `Exercises/01 The IS-LM model.md` in the course's folder (the topic page's
 number and name), linked from the topic page's `exercises:` property and the Introduction's Practice list.
 
+### Mock exams
+
+Since 2026-10-29: a paper like the real exam, to take under exam conditions in the app (as a Quiz, below) or on paper
+from the vault. Written in the background by the smart model in one go (a few minutes), from how the exam works (the
+Introduction), every topic's notes and, when the course has them, its past exams (exercise files named like past
+exams, mocks or *esame 2025*), for the style; earlier mocks' questions aren't asked again. It follows the real exam:
+its kinds of questions (multiple choice, open questions, exercises), points, time and scoring (when the format isn't
+known: 20 multiple-choice and 2 open questions, 60 minutes). The multiple-choice keys are checked blind like a
+topic's. The result comes in the course's chat, with a push. Professor writes one on request (`write_mock_exam`) and
+sees how they went (`study_progress`).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/notebook/mocks?course=2` | | `{"course": 2, "mocks": [Mock exam]}`, oldest first. `404` no such course. |
+| `POST /v1/notebook/mocks?course=2` | | `202`, Notebook (`busy`, `step` "Writing a mock exam"). `409` no topic written yet. `404`. |
+| `GET /v1/mocks/{id}?plain=true` | | Mock exam with `questions` (no keys) and `body` (the paper, no answers). `404`. |
+
+Mock exam: `{"id": "m_…", "course": 2, "number": 1, "title": "Mock exam 1", "minutes": 90 or null, "scoring":
+{"right": 1, "wrong": 0, "blank": 0}, "count": 16, "mcq": 15, "open": 1, "points": 30, "created_at": "…", "taken": 2,
+"best": 24.5 or null, "last": Quiz without questions or null}` (`scoring`: a multiple-choice answer's points;
+`points`: the most the paper scores). On `GET /v1/mocks/{id}` also `"questions": [{"n": 16, "type": "mcq" or "open",
+"points": 15 or null (multiple choice: `scoring.right`), "text": "markdown", "options": [{"letter": "A", "text": "…"}]
+(empty for open ones)}]` and `"body"`. Taking it: `POST /v1/quizzes` with `mock` (Practice exams, below).
+
+In the vault: `Mock exams/Mock exam 1.md` in the course's folder, linked from the Introduction's Practice list: the
+time, points and scoring, the paper as it would be printed, then `## Answers` (each question's key or model answer,
+and an open question's marking, as folded callouts).
+
 ### Who writes the notes
 
 Since 2026-10-22 (`engine.py`): the heavy study jobs (lecture notes, the notebook, the answer checks and the slide
@@ -929,9 +957,9 @@ topics in the course's chat (and knows which questions were missed, to go throug
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/quizzes?course=2` | | Bank. `404` no such course. |
-| `POST /v1/quizzes` | `{"course": 2, "count": 30, "minutes": 45, "topics": ["t_…"]}`; `count` 1–60 (default 30, fewer when the bank is smaller), `minutes` null (default) for untimed, `topics` null for all | `201`, Quiz without keys. `409` the notebook has no questions. |
+| `POST /v1/quizzes` | `{"course": 2, "count": 30, "minutes": 45, "topics": ["t_…"]}`; `count` 1–60 (default 30, fewer when the bank is smaller), `minutes` null (default) for untimed, `topics` null for all. Or `{"course": 2, "mock": "m_…"}` (since 2026-10-29): that mock exam, its time and scoring | `201`, Quiz without keys. `409` the notebook has no questions. `404` the mock isn't the course's. |
 | `GET /v1/quizzes/{id}` | | Quiz (with keys once finished). `404`. |
-| `POST /v1/quizzes/{id}/finish` | `{"answers": {"1": "B", "2": null}}`, by question number; left out or null is blank | Quiz, finished. `409` already finished. |
+| `POST /v1/quizzes/{id}/finish` | `{"answers": {"1": "B", "2": null, "16": {"text": "…", "photos": ["p_…"]}}}`, by question number; left out or null is blank. An open question's answer: typed `text`, photos of the work on paper (`POST /v1/photos`, up to 4), or both | Quiz, finished. `409` already finished. |
 
 Bank: `{"course": 2, "exam": "20 to 35 multiple-choice questions…" or null, "questions": 65, "unseen": 40,
 "to_review": 6, "topics": [{"id": "t_…", "title": "…", "questions": 6}], "scoring": {"right": 1, "wrong": -0.25,
@@ -943,6 +971,16 @@ Quiz: `{"id": "x_…", "kind": "exam" or "chat" (since 2026-10-27), "course": 2,
 "…"}, "text": "markdown", "options": [{"letter": "A", "text": "…"}]}]}`. Once finished, each question also has
 `"answer": "B" or null, "key": "C", "correct": false, "explanation": "markdown"`. The notes' LaTeX comes as plain
 Unicode in `text`, `options` and `explanation` ($\pi_{t-1}$ as πₜ₋₁).
+
+Mock exams (since 2026-10-29): `kind` is `"mock"`, with `"mock": "m_…"` (null otherwise) and its `"scoring"` (on
+every quiz: the practice exam's is right 1, wrong −0.25, blank 0); `score.points` and `max` count by it. A question can
+be `"type": "open"` with its `"points"`, and no `options`. Open answers are marked after the finish by the smart
+model, against the question's model answer and marking (photos read as images): until then `score` has `"grading":
+true` (a mock's score always has `grading`), the open ones count 0, and the app polls `GET /v1/quizzes/{id}` every few
+seconds. Professor posts the result in the course's chat once they're marked. Once finished, an open question has
+`"answer": null, "response": {"text": "…", "photos": ["p_…"]} or null (blank), "awarded": 9.5 or null (not marked:
+the marking failed; it counts 0), "feedback": "…" or null, "correct": true (awarded at least half its points),
+"model_answer": "…", "rubric": "…"` (no `key` or `explanation`). Objectives count mock exams as practice exams.
 
 ### Quizzes and review sessions
 

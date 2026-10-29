@@ -212,6 +212,7 @@ def main() -> None:
     worker = StudyWorker(study, agent, push, audio_dir, whisper_transcribe if whisper_available() else None)
     worker.notebook = notebook
     notes = NotebookWorker(notebook, agent, push)
+    notes.quizzes = quizzes
     review_watcher = ReviewWatcher(reviews, agent, push)
     reader = PageReader(study.files, agent)  # scans, read once with the model
     worker.engine = notes.engine = reader.engine = engine

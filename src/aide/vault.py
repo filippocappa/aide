@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .material import page_image
-from .notebook import FIGURE, date_line, figures
+from .notebook import FIGURE, date_line, figures, max_points, mock_paper
 from .study import StudyStore
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS vault_files (
     path TEXT PRIMARY KEY,  -- relative to the vault
-    ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id; intro:, topic:, cards:, figure:, formulas:, exercises:
+    ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id; intro:, topic:, cards:, figure:, formulas:, exercises:, mock:
     sha  TEXT NOT NULL  -- of what Aide wrote (a PDF: its version, size and time; an image: its size and version)
 );
 """
@@ -281,6 +281,13 @@ class Vault:
             if sets:
                 practice.setdefault(cid, []).append("Exercises: " + ", ".join(
                     _link(exercise_paths[e["topic_id"]], e["topic_title"]) for e in sets.values()))
+            if mocks := self.notebook.mocks(cid):
+                mock_paths = {m["id"]: f"{folders[cid]}/Mock exams/Mock exam {m['number']}.md" for m in mocks}
+                for m in mocks:
+                    items.append(Item(mock_paths[m["id"]], f"mock:{m['public_id']}",
+                                      self._mock(m, course, _links_out(m["body"], by_title))))
+                practice.setdefault(cid, []).append("Mock exams: " + ", ".join(
+                    _link(mock_paths[m["id"]], f"Mock exam {m['number']}") for m in mocks))
         lecture_paths: dict[int, str] = {}
         for lec in sorted(rows, key=lambda r: (r["recorded_at"], r["id"])):
             folder = folders.get(lec["course_id"], f"{ROOT}/Unfiled")
@@ -369,6 +376,21 @@ class Vault:
                 f"# Exercises: {e['topic_title']}\n\nFor {_link(page, e['topic_title'])}. Try each before opening its "
                 f"solution.\n\n{body}\n\n*Written by Aide from the course's exercise sheets and past exams, with new "
                 "ones in the exam's style. Edit this page and Aide leaves it as you made it.*\n")
+
+    def _mock(self, m: dict, course: dict, body: str) -> str:
+        """The paper as it would be printed, then its answers: a mock taken on paper, the answers looked at after."""
+        folder = self._folder(course)
+        paper, answers = mock_paper(body)
+        s = m["scoring"]
+        mcq = any(q["type"] == "mcq" for q in m["questions"])
+        rules = [f"{m['minutes']} minutes" if m["minutes"] else None,
+                 f"{max_points(m['questions'], s):g} points",
+                 (f"multiple choice: right {s['right']:g}, wrong {s['wrong']:g}, blank {s['blank']:g}" if mcq else None)]
+        return (f'---\ncourse: "{_link(f"{folder}/00 Introduction.md", course["name"])}"\ntags:\n  - mock-exam\n'
+                f"  - {_tag(course['name'])}\n---\n\n# Mock exam {m['number']}: {course['name']}\n\n"
+                f"{' · '.join(r for r in rules if r)}\n\n{paper}\n\n---\n\n## Answers\n\n{answers}\n\n"
+                "*Written by Aide like the real exam. Take it in the app, timed and marked, or here on paper. Edit this "
+                "page and Aide leaves it as you made it.*\n")
 
     def _introduction(self, c: dict, topic_paths: dict, lectures: list[dict], lecture_paths: dict,
                       files: list[dict], file_paths: dict, practice: list[str] = ()) -> str:

@@ -786,8 +786,29 @@ final class APIClient {
         try await send("POST", "/v1/quizzes", body: QuizStartBody(course: course, count: count, minutes: minutes))
     }
 
+    /// A mock exam, with its own time and scoring.
+    func startMock(course: Int, mock: String) async throws -> Quiz {
+        try await send("POST", "/v1/quizzes", body: QuizStartBody(course: course, mock: mock))
+    }
+
+    func quiz(_ id: String) async throws -> Quiz {
+        try await send("GET", "/v1/quizzes/\(id)")
+    }
+
+    func mocks(course: Int) async throws -> [MockExam] {
+        let list: MockExamList = try await send("GET", "/v1/notebook/mocks",
+                                                query: [URLQueryItem(name: "course", value: String(course))])
+        return list.mocks
+    }
+
+    /// Professor writes one like the real exam, in the background.
+    func writeMock(course: Int) async throws -> NotebookStatus {
+        try await send("POST", "/v1/notebook/mocks", query: [URLQueryItem(name: "course", value: String(course))],
+                       body: EmptyBody())
+    }
+
     /// Answers by question number; a question left out is blank.
-    func finishQuiz(_ id: String, answers: [Int: String]) async throws -> Quiz {
+    func finishQuiz(_ id: String, answers: [Int: QuizAnswer]) async throws -> Quiz {
         let body = QuizFinishBody(answers: Dictionary(uniqueKeysWithValues: answers.map { (String($0.key), $0.value) }))
         return try await send("POST", "/v1/quizzes/\(id)/finish", body: body)
     }

@@ -13,6 +13,11 @@ topics in the course chat, so the user can go through them there.
 A quiz (`kind` "chat") is Professor asking in a chat, by text or by voice, one question at a time: the user's answer
 is recorded as it comes (a flashcard's as right or wrong, judged by Professor), so stopping halfway loses nothing.
 Its answers count for the next pick like a practice exam's, but it isn't one (objectives count practice exams only).
+
+A mock exam (`kind` "mock") is a paper notebook.py wrote like the real exam (mock_exams), taken in the app: its time
+and its scoring are the exam's, and it can have open questions, answered in text or with photos of the work on paper.
+The multiple choice is scored at once; the open answers are marked by the notebook's `grade` job, and until then the
+score says `grading`. Objectives count mocks as practice exams.
 """
 
 import hashlib
@@ -26,7 +31,7 @@ import unicodedata
 from datetime import datetime
 
 from .db import utcnow
-from .notebook import NotebookStore, mcqs
+from .notebook import NotebookStore, max_points, mcqs, parse_question
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quizzes (
@@ -39,7 +44,9 @@ CREATE TABLE IF NOT EXISTS quizzes (
     score       REAL,
     started_at  TEXT NOT NULL,
     finished_at TEXT,
-    kind        TEXT NOT NULL DEFAULT 'exam'  -- exam: the app's practice exam; chat: Professor asking in a chat
+    kind        TEXT NOT NULL DEFAULT 'exam',  -- exam: the app's practice exam; chat: Professor asking; mock
+    mock        TEXT,                  -- a mock exam's id (m_…)
+    scoring     TEXT                   -- JSON: a mock's {"right", "wrong", "blank"}; NULL: RIGHT and WRONG
 );
 CREATE TABLE IF NOT EXISTS quiz_answers (
     id          INTEGER PRIMARY KEY,
@@ -54,10 +61,12 @@ CREATE INDEX IF NOT EXISTS quiz_answers_key ON quiz_answers (course_id, qkey, an
 
 RIGHT, WRONG = 1.0, -0.25  # points, as in the exam
 MOST = 60  # questions in one practice exam
+ANSWER_CHARS = 20_000  # an open answer's text, at most
+ANSWER_PHOTOS = 4  # photos of the work on paper, at most, for an open answer
 QUIZ_MOST = 30  # in a quiz
 STYLES = ("mixed", "questions", "cards")  # what a quiz asks: both, multiple choice only, flashcards only
 _ID = re.compile(r"^x_[0-9a-f]{12}$")
-_OPTION = re.compile(r"^\s*[-*]?\s*([A-E])\)\s*(.*)$")
+_PHOTO = re.compile(r"^p_[0-9a-f]{16}$")
 
 
 class QuizStore:
@@ -66,8 +75,11 @@ class QuizStore:
         self.study = notebook.study
         self.conn: sqlite3.Connection = notebook.conn
         self.conn.executescript(SCHEMA)
-        if "kind" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(quizzes)")}:
-            self.conn.execute("ALTER TABLE quizzes ADD COLUMN kind TEXT NOT NULL DEFAULT 'exam'")  # from before quizzes
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(quizzes)")}
+        for column, sql in (("kind", "kind TEXT NOT NULL DEFAULT 'exam'"),  # from before quizzes
+                            ("mock", "mock TEXT"), ("scoring", "scoring TEXT")):  # from before mock exams
+            if column not in have:
+                self.conn.execute(f"ALTER TABLE quizzes ADD COLUMN {sql}")
         self.rng = rng or random.Random()
 
     # -- the questions -----------------------------------------------------------------
@@ -148,16 +160,31 @@ class QuizStore:
         if row is None:
             return None
         return {**dict(row), "questions": json.loads(row["questions"]),
-                "answers": json.loads(row["answers"]) if row["answers"] else None}
+                "answers": json.loads(row["answers"]) if row["answers"] else None,
+                "scoring": json.loads(row["scoring"]) if row["scoring"] else None}
 
     def quizzes(self, course_id: int, limit: int = 20, kind: str = "exam") -> list[dict]:
         return [self.quiz(r[0]) for r in self.conn.execute(
             "SELECT public_id FROM quizzes WHERE course_id = ? AND finished_at IS NOT NULL AND kind = ? "
             "ORDER BY finished_at DESC LIMIT ?", (course_id, kind, limit))]
 
-    def finish(self, public_id: str, answers: dict[str, str | None]) -> dict:
+    def start_mock(self, mock_id: str) -> dict:
+        """A mock exam taken in the app: its questions as written, timed and scored as the exam is."""
+        m = self.notebook.mock(mock_id)
+        if m is None:
+            raise LookupError(f"no mock exam {mock_id}")
+        questions = [q | {"qkey": qkey(q["text"]), "topic": q["topic"] or "", "topic_title": q["topic_title"] or
+                          "The course"} for q in m["questions"]]
+        public_id = "x_" + secrets.token_hex(6)
+        self.conn.execute(
+            "INSERT INTO quizzes (public_id, course_id, minutes, questions, started_at, kind, mock, scoring) "
+            "VALUES (?, ?, ?, ?, ?, 'mock', ?, ?)", (public_id, m["course_id"], m["minutes"], json.dumps(questions),
+                                                    utcnow().isoformat(), m["public_id"], json.dumps(m["scoring"])))
+        return self.quiz(public_id)
+
+    def finish(self, public_id: str, answers: dict[str, str | dict | None]) -> dict:
         """Scores it and records each answer for the next pick. Answers are by question number, "1" on; a number
-        left out is blank."""
+        left out is blank. An open question's answer is {"text", "photos"}: recorded once it's marked."""
         quiz = self.quiz(public_id)
         if quiz["finished_at"]:
             raise ValueError("This practice exam is already finished.")
@@ -165,6 +192,9 @@ class QuizStore:
         given = {}
         for n, q in enumerate(quiz["questions"], 1):
             a = answers.get(str(n))
+            if q.get("type") == "open":
+                given[str(n)] = _open_answer(a)
+                continue
             a = a.strip().upper()[:1] if isinstance(a, str) and a.strip() else None
             given[str(n)] = a if a in {o["letter"] for o in q["options"]} else None
             self._record(quiz["course_id"], q, given[str(n)], now)
@@ -174,10 +204,42 @@ class QuizStore:
                           (json.dumps(given), score, now, quiz["id"]))
         return self.quiz(public_id)
 
-    def _record(self, course_id: int, q: dict, answer: str | None, at: str) -> None:
+    def _record(self, course_id: int, q: dict, answer: str | dict | None, at: str) -> None:
         self.conn.execute(
             "INSERT INTO quiz_answers (course_id, qkey, answer, correct, answered_at) VALUES (?, ?, ?, ?, ?)",
-            (course_id, q["qkey"], answer, int(correct(q, answer)), at))
+            (course_id, q["qkey"], "open" if isinstance(answer, dict) else answer, int(correct(q, answer)), at))
+
+    # -- marking a mock exam's open answers ----------------------------------------------
+
+    @staticmethod
+    def grading(quiz: dict) -> list[int]:
+        """The open questions answered and not marked yet, by number."""
+        given = quiz["answers"] or {}
+        return [n for n, q in enumerate(quiz["questions"], 1)
+                if q.get("type") == "open" and isinstance(a := given.get(str(n)), dict) and "awarded" not in a]
+
+    def set_grades(self, public_id: str, grades: dict[int, tuple[float, str]]) -> dict:
+        """The marks for open answers, by number: (points, feedback). Each is recorded for the next pick."""
+        quiz = self.quiz(public_id)
+        now = utcnow().isoformat()
+        for n, (awarded, feedback) in grades.items():
+            if n in self.grading(quiz):
+                a = quiz["answers"][str(n)]
+                a |= {"awarded": awarded, "feedback": feedback}
+                self._record(quiz["course_id"], quiz["questions"][n - 1], a, now)
+        return self._save_marks(quiz)
+
+    def ungraded(self, public_id: str) -> dict:
+        """The open answers still waiting, left unmarked (the marking failed): the score stands without them."""
+        quiz = self.quiz(public_id)
+        for n in self.grading(quiz):
+            quiz["answers"][str(n)] |= {"awarded": None, "feedback": "Couldn't be marked."}
+        return self._save_marks(quiz)
+
+    def _save_marks(self, quiz: dict) -> dict:
+        self.conn.execute("UPDATE quizzes SET answers = ?, score = ? WHERE id = ?",
+                          (json.dumps(quiz["answers"]), self.score(quiz)["points"], quiz["id"]))
+        return self.quiz(quiz["public_id"])
 
     # -- quizzes in a chat ---------------------------------------------------------------
 
@@ -262,7 +324,12 @@ class QuizStore:
 
     @staticmethod
     def score(quiz: dict) -> dict:
+        """Points as the exam gives them: a multiple-choice answer by the scoring (a mock's own, else RIGHT and
+        WRONG), an open one what it was marked (right when that's at least half). A mock's says `grading` while
+        open answers wait to be marked."""
+        scoring = quiz.get("scoring") or {"right": RIGHT, "wrong": WRONG, "blank": 0}
         right = wrong = blank = 0
+        points = most = 0.0
         topics: dict[str, dict] = {}
         for n, q in enumerate(quiz["questions"], 1):
             a = (quiz["answers"] or {}).get(str(n))
@@ -271,18 +338,35 @@ class QuizStore:
             kind = "blank" if a is None else "right" if correct(q, a) else "wrong"
             t[kind] += 1
             right, wrong, blank = right + (kind == "right"), wrong + (kind == "wrong"), blank + (kind == "blank")
-        return {"points": right * RIGHT + wrong * WRONG, "max": len(quiz["questions"]) * RIGHT,
-                "right": right, "wrong": wrong, "blank": blank,
-                "topics": sorted(topics.values(), key=lambda t: (t["right"] / (t["right"] + t["wrong"] + t["blank"]),
-                                                                  t["title"]))}
+            if q.get("type") == "open":
+                most += q["points"]
+                points += (a or {}).get("awarded") or 0
+            else:
+                most += scoring["right"]
+                points += scoring.get(kind, 0)
+        out = {"points": points, "max": most, "right": right, "wrong": wrong, "blank": blank,
+               "topics": sorted(topics.values(), key=lambda t: (t["right"] / (t["right"] + t["wrong"] + t["blank"]),
+                                                                 t["title"]))}
+        if quiz.get("kind") == "mock":
+            out["grading"] = bool(QuizStore.grading(quiz))
+        return out
 
     def summary(self, quiz: dict) -> str:
-        """Professor's note in the course chat after a practice exam."""
+        """Professor's note in the course chat after a practice or mock exam."""
         s = self.score(quiz)
         minutes = round((datetime.fromisoformat(quiz["finished_at"]) -
                          datetime.fromisoformat(quiz["started_at"])).total_seconds() / 60)
-        text = (f"Practice exam: **{_points(s['points'])} / {_points(s['max'])}** ({s['right']} right, "
+        m = self.notebook.mock(quiz["mock"]) if quiz.get("mock") else None
+        name = f"Mock exam {m['number']}" if m else "Practice exam"
+        text = (f"{name}: **{_points(s['points'])} / {_points(s['max'])}** ({s['right']} right, "
                 f"{s['wrong']} wrong, {s['blank']} blank) in {minutes} min.")
+        marked = [(n, q, a) for n, q in enumerate(quiz["questions"], 1)
+                  if q.get("type") == "open" and isinstance(a := quiz["answers"].get(str(n)), dict)]
+        if marked:
+            text += "\n\n" + "\n".join(
+                f"- Question {n}: " + (f"{_points(a['awarded'])} / {_points(q['points'])}. {a.get('feedback') or ''}"
+                                       if a.get("awarded") is not None else f"not marked ({_points(q['points'])} points).")
+                for n, q, a in marked).rstrip()
         weak = [t for t in s["topics"] if t["wrong"] + t["blank"]][:3]
         if weak:
             text += "\n\nTo go over: " + ", ".join(
@@ -291,6 +375,34 @@ class QuizStore:
         else:
             text += "\n\nAll right. Nothing to go over."
         return text
+
+    def note(self, quiz: dict) -> str:
+        """What Professor reads with the result in the course chat: the questions missed, for "go through them"."""
+        missed = []
+        for n, q in enumerate(quiz["questions"], 1):
+            a = quiz["answers"].get(str(n))
+            if q.get("type") == "open":
+                if not correct(q, a):
+                    got = (a or {}).get("awarded") or 0
+                    feedback = f": {a['feedback'][:200]}" if a and a.get("feedback") else ""
+                    missed.append(f"{n}. {q['text'][:160]} (open, {_points(got)}/{_points(q['points'])}{feedback}; "
+                                  f"{q['topic_title']})")
+            elif a != q["key"]:
+                missed.append(f"{n}. {q['text'][:160]} (answered {a or 'blank'}, key {q['key']}; {q['topic_title']})")
+        what = f"Mock exam {quiz['mock']} taken" if quiz.get("mock") else "Practice exam finished"
+        return f"[{what} in the app." + (" Missed: " + " | ".join(missed) if missed else "") + "]"
+
+    def mocks_json(self, course_id: int) -> list[dict]:
+        """The course's mock exams, each with how it went: times taken, the best score and the last time."""
+        out = []
+        for m in self.notebook.mocks(course_id):
+            taken = [self.quiz(r[0]) for r in self.conn.execute(
+                "SELECT public_id FROM quizzes WHERE mock = ? AND finished_at IS NOT NULL ORDER BY finished_at DESC",
+                (m["public_id"],))]
+            out.append(self.notebook.mock_json(m) | {
+                "taken": len(taken), "best": max((self.score(q)["points"] for q in taken), default=None),
+                "last": self.quiz_json(taken[0], brief=True) if taken else None})
+        return out
 
     # -- JSON for the API --------------------------------------------------------------
 
@@ -311,6 +423,7 @@ class QuizStore:
     def quiz_json(self, quiz: dict, brief: bool = False) -> dict:
         done = quiz["finished_at"] is not None
         out = {"id": quiz["public_id"], "kind": quiz["kind"], "course": quiz["course_id"], "minutes": quiz["minutes"],
+               "mock": quiz["mock"], "scoring": quiz["scoring"] or {"right": RIGHT, "wrong": WRONG, "blank": 0},
                "count": len(quiz["questions"]), "started_at": self.study.local(quiz["started_at"]),
                "finished_at": self.study.local(quiz["finished_at"]) if done else None,
                "score": {k: v for k, v in self.score(quiz).items() if k != "topics" or not brief} if done else None}
@@ -322,7 +435,15 @@ class QuizStore:
                     "options": [{"letter": o["letter"], "text": plain_math(o["text"])} for o in q.get("options", [])]}
             if q.get("type") == "card":
                 item["type"] = "card"
-            if done:
+            if q.get("type") == "open":
+                item |= {"type": "open", "points": q["points"]}
+                if done:
+                    a = quiz["answers"].get(str(n))
+                    item |= {"answer": None, "response": {"text": a["text"], "photos": a["photos"]} if a else None,
+                             "awarded": a.get("awarded") if a else 0, "feedback": a.get("feedback") if a else None,
+                             "correct": correct(q, a), "model_answer": plain_math(q["model_answer"]),
+                             "rubric": plain_math(q["rubric"])}
+            elif done:
                 answer = quiz["answers"].get(str(n))
                 item |= {"answer": answer, "key": plain_math(q["key"]), "correct": correct(q, answer),
                          "explanation": plain_math(q["explanation"])}
@@ -334,32 +455,27 @@ def _points(x: float) -> str:
     return f"{x:g}"
 
 
-def correct(q: dict, answer: str | None) -> bool:
-    """A multiple-choice answer is right when it's the key; a flashcard's, when it was judged right."""
-    return answer == "right" if q.get("type") == "card" else answer == q["key"]
+def correct(q: dict, answer: str | dict | None) -> bool:
+    """A multiple-choice answer is right when it's the key; a flashcard's, when it was judged right; an open one's,
+    when it was marked at least half its points."""
+    if q.get("type") == "open":
+        return isinstance(answer, dict) and (answer.get("awarded") or 0) >= q["points"] / 2
+    return answer == "right" if q.get("type") == "card" else answer == q.get("key")
+
+
+def _open_answer(a) -> dict | None:
+    """An open question's answer as kept: {"text", "photos"}; None when it says nothing."""
+    if isinstance(a, str):
+        a = {"text": a}
+    if not isinstance(a, dict):
+        return None
+    text = str(a.get("text") or "").strip()[:ANSWER_CHARS]
+    photos = [p for p in a.get("photos") or [] if isinstance(p, str) and _PHOTO.match(p)][:ANSWER_PHOTOS]
+    return {"text": text, "photos": photos} if text or photos else None
 
 
 def qkey(text: str) -> str:
     return hashlib.sha1(" ".join(text.split()).casefold().encode()).hexdigest()[:16]
-
-
-def parse_question(q: dict) -> dict | None:
-    """A question block from notebook.mcqs as its text, options [{letter, text}], key and explanation."""
-    stem, options = [], []
-    for line in q["question"].splitlines():
-        if m := _OPTION.match(line):
-            options.append({"letter": m.group(1), "text": m.group(2).strip()})
-        elif options and line.strip():
-            options[-1]["text"] += " " + line.strip()  # an option over two lines
-        elif not options:
-            stem.append(line)
-    text = re.sub(r"^\*\*\d+\.\*\*\s*", "", "\n".join(stem).strip())
-    answer = q["block"].partition("> [!success]")[2].partition("\n")[2]
-    explanation = "\n".join(re.sub(r"^>\s?", "", line) for line in answer.splitlines()).strip()
-    explanation = re.sub(r"^\*\*[A-E]\*\*\.?\s*", "", explanation)
-    if not text or len(options) < 2 or q["key"] not in {o["letter"] for o in options}:
-        return None
-    return {"text": text, "options": options, "key": q["key"], "explanation": explanation}
 
 
 # -- the notes' LaTeX as plain text, for the app ------------------------------------------

@@ -299,12 +299,27 @@ struct CourseView: View {
                     Button { Task { await openChat(quiz: true) } } label: { Label("Quiz me", systemImage: "waveform") }
                     Button { showPractice = true } label: { Label("Practice exam", systemImage: "checklist") }
                 }
+                if (notebook.mocks ?? 0) > 0 {
+                    NavigationLink {
+                        MockExamsView(course: course)
+                    } label: {
+                        Label("Mock exams", systemImage: "doc.text.magnifyingglass")
+                    }
+                    .badge(notebook.mocks ?? 0)
+                } else {
+                    Button { Task { await writeMock() } } label: {
+                        Label("Write a mock exam", systemImage: "doc.text.magnifyingglass")
+                    }
+                    .disabled(notebook.busy == true)
+                }
             } header: {
                 Text("Practice")
             } footer: {
                 if exercises == 0 {
                     Text("Professor solves the course's exercise sheets and past exams step by step, and adds new "
                          + "exercises like the exam's.")
+                } else if (notebook.mocks ?? 0) == 0 {
+                    Text("A mock exam is a paper like the real one, open questions included, timed and marked.")
                 }
             }
         }
@@ -357,6 +372,17 @@ struct CourseView: View {
         do {
             notebook = try await env.api.writeExercises(course: course.id)
             note = ("Professor is writing exercises for every topic. The result comes in the course chat.", "pencil.and.ruler")
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func writeMock() async {
+        do {
+            notebook = try await env.api.writeMock(course: course.id)
+            note = ("Professor is writing a mock exam like the real one. It comes in the course chat.",
+                    "doc.text.magnifyingglass")
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -510,6 +536,90 @@ struct ExercisesView: View {
         do {
             _ = try await env.api.writeExercises(course: course.id, topics: topics)
             note = "Professor is writing them. The result comes in the course chat."
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+/// A course's mock exams (docs/API.md, "Mock exams"): each opens to be taken like the real exam.
+struct MockExamsView: View {
+    let course: StudyCourse
+    @EnvironmentObject private var env: AppEnvironment
+    @State private var mocks: [MockExam]?
+    @State private var taking: MockExam?
+    @State private var error: String?
+    @State private var note: String?
+
+    var body: some View {
+        List {
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+            }
+            if let note {
+                Label(note, systemImage: "doc.text.magnifyingglass").font(.footnote).foregroundStyle(.secondary)
+            }
+            if let mocks {
+                Section {
+                    ForEach(mocks) { mock in
+                        Button { taking = mock } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(mock.title).foregroundStyle(.primary)
+                                    Text(detail(mock)).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if let best = mock.best {
+                                    Text("\(best.points) / \(mock.points.points)").font(.subheadline).monospacedDigit()
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                } footer: {
+                    Text("Like the real exam: its questions, time and scoring. Also in Obsidian, with the answers at "
+                         + "the end, to do on paper.")
+                }
+                Section {
+                    Button { Task { await write() } } label: {
+                        Label(mocks.isEmpty ? "Write a mock exam" : "Write another", systemImage: "plus")
+                    }
+                } footer: {
+                    Text("A new one asks other questions, over every topic.")
+                }
+            } else if error == nil {
+                SkeletonSections(sections: 1, rows: 2, mark: false)
+            }
+        }
+        .navigationTitle("Mock exams")
+        .task { await load() }
+        .refreshable { await load() }
+        .fullScreenCover(item: $taking, onDismiss: { Task { await load() } }) { mock in
+            PracticeExamView(course: course.id, courseName: course.name, mock: mock)
+        }
+    }
+
+    private func detail(_ mock: MockExam) -> String {
+        var parts = [mock.open > 0 ? "\(mock.mcq) multiple choice, \(mock.open) open" : "\(mock.count) questions"]
+        if let minutes = mock.minutes { parts.append("\(minutes) min") }
+        if let taken = mock.taken, taken > 0 { parts.append(taken == 1 ? "taken once" : "taken \(taken) times") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func load() async {
+        do {
+            mocks = try await env.api.mocks(course: course.id)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func write() async {
+        do {
+            _ = try await env.api.writeMock(course: course.id)
+            note = "Professor is writing it. It comes in the course chat, and here."
             error = nil
         } catch {
             self.error = error.localizedDescription

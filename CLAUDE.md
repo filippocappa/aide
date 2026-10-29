@@ -196,6 +196,11 @@ Formulas (no model call, never behind the topics). A set of solved exercises per
 job): the course's exercise sheets and past exams matched to the topics by Haiku, copied and solved, plus new ones in the
 exam's style, the final answers checked by a blind solver; `Exercises/` in the vault, Professor's `write_exercises` and
 `read_exercises`. App: a Practice section on the course page (Formulas, Exercises, Quiz me, Practice exam).
+Mock exams (2026-10-29, contract "Mock exams"): a paper like the real exam (`mock_exams`, the `mock` job, Sonnet in one
+go from the Introduction, every topic's notes and the past exams; MCQ keys checked blind), open questions included,
+taken in the app as a `kind: "mock"` quiz with its own time and scoring; open answers typed or photographed, marked by
+the `grade` job against the model answer and marking, then posted in the course chat. `Mock exams/` in the vault (the
+paper, then the answers), Professor's `write_mock_exam`, objectives count them. App: Mock exams in Practice.
 Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's checked MCQs, no model call, missed
 questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
 result in the chat.

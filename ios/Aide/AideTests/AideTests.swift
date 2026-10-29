@@ -173,6 +173,39 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(String(decoding: body, as: UTF8.self), "{}")
     }
 
+    func testMockExamsDecodeAndOpenAnswersEncode() throws {
+        let list = #"""
+        {"course": 2, "mocks": [{"id": "m_1", "course": 2, "number": 1, "title": "Mock exam 1", "minutes": 90,
+          "scoring": {"right": 1, "wrong": 0, "blank": 0}, "count": 16, "mcq": 15, "open": 1, "points": 30,
+          "created_at": "2026-10-29T10:00:00+01:00", "taken": 1, "best": 24.5, "last": null}]}
+        """#
+        let mock = try XCTUnwrap(JSONDecoder.api.decode(MockExamList.self, from: Data(list.utf8)).mocks.first)
+        XCTAssertEqual(mock.open, 1)
+        XCTAssertEqual(mock.best, 24.5)
+        XCTAssertTrue(PracticeExamView.rules(mock).contains("no penalty"))
+        let quiz = #"""
+        {"id": "x_1", "kind": "mock", "mock": "m_1", "scoring": {"right": 1, "wrong": 0, "blank": 0}, "course": 2,
+         "minutes": 90, "count": 1, "finished_at": "2026-10-29T11:00:00+01:00",
+         "score": {"points": 1, "max": 16, "right": 1, "wrong": 0, "blank": 0, "grading": true},
+         "questions": [{"n": 16, "topic": {"id": "", "title": "The course"}, "text": "Explain.", "options": [],
+           "type": "open", "points": 15, "answer": null, "response": {"text": "I would", "photos": ["p_1"]},
+           "awarded": null, "feedback": null, "correct": false, "model_answer": "All of it", "rubric": "- 15: all"}]}
+        """#
+        let taken = try JSONDecoder.api.decode(Quiz.self, from: Data(quiz.utf8))
+        XCTAssertEqual(taken.score?.grading, true)
+        let open = try XCTUnwrap(taken.questions.first)
+        XCTAssertTrue(open.isOpen)
+        XCTAssertEqual(open.response?.photos, ["p_1"])
+        XCTAssertEqual(open.modelAnswer, "All of it")
+        let body = try JSONEncoder.api.encode(QuizFinishBody(answers: ["1": .letter("B"),
+                                                                        "16": .open(text: "I would", photos: ["p_1"])]))
+        let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: [String: Any]])
+        XCTAssertEqual(decoded["answers"]?["1"] as? String, "B")
+        XCTAssertEqual((decoded["answers"]?["16"] as? [String: Any])?["photos"] as? [String], ["p_1"])
+        let start = try JSONEncoder.api.encode(QuizStartBody(course: 2, mock: "m_1"))
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: start) as? [String: AnyHashable], ["course": 2, "mock": "m_1"])
+    }
+
     func testActivityPagesAndGroupsByDay() throws {
         let json = #"""
         {"items": [

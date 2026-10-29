@@ -1,6 +1,6 @@
 """Quiz and review tools, for Professor (#4): quizzes in a chat, by text or voice, from a notebook's questions and
-flashcards (quiz.py), and review sessions in the calendar (reviews.py). Answers are recorded as they come; adding a
-session runs at once, cancelling one waits for the user's !yes."""
+flashcards (quiz.py), mock exams written for the app, and review sessions in the calendar (reviews.py). Answers are
+recorded as they come; adding a session runs at once, cancelling one waits for the user's !yes."""
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -100,11 +100,30 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
             if t["last"]:
                 line += f"; last practised {datetime.fromisoformat(t['last']).astimezone(tz):%a %d %b}"
             out.append(line)
+        for m in quizzes.mocks_json(c["id"]):
+            line = f"{m['title']} ({m['count']} questions, {m['points']:g} points): "
+            if m["taken"]:
+                last = m["last"]["score"]
+                line += (f"taken {m['taken']} time(s), best {m['best']:g}, last {last['points']:g}"
+                         + (" (open answers still being marked)" if last.get("grading") else ""))
+            else:
+                line += "not taken yet"
+            out.append(line)
         if reviews is not None:
             coming = reviews.upcoming(c["id"])
             out.append("Review sessions coming: " + ("\n" + "\n".join(reviews.line(s) for s in coming) if coming
                                                      else "none."))
         return "\n".join(out)
+
+    async def write_mock_exam(course: str) -> str:
+        c = await course_row(course)
+        if not notebook.started(c["id"]):
+            return f"{c['name']} has no notebook yet: a mock exam is written from its topics."
+        notebook.write_mock(c["id"])
+        return (f"Under way, in the background: a mock exam for {c['name']} in the real exam's format, from every "
+                "topic's notes" + (" and its past exams" if notebook.past_exam_files(c["id"]) else "")
+                + ". A few minutes; it's posted in the course chat, and the user takes it in the app (Practice), timed "
+                "and scored like the exam, open questions marked after. Tell the user.")
 
     async def add_review_session(course: str, start: str, minutes: int, topics: list[str]) -> str:
         c = await course_row(course)
@@ -140,8 +159,12 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
         Tool("end_quiz", "End a quiz early, when the user wants to stop: what they answered stays recorded.",
              _obj(qid, ["quiz"]), end_quiz),
         Tool("study_progress", "How the user is doing on a course, topic by topic (right, wrong, never asked, when "
-             "last practised), the next exam, and the review sessions coming. For planning reviews.",
-             _obj(one_course, ["course"]), study_progress),
+             "last practised), its mock exams and their scores, the next exam, and the review sessions coming. For "
+             "planning reviews.", _obj(one_course, ["course"]), study_progress),
+        Tool("write_mock_exam", "Write a mock exam for a course: a paper like the real exam (its kinds of questions, "
+             "open ones included, its points, time and scoring), over every topic, in the style of its past exams. "
+             "The user takes it in the app, under Practice; open answers are marked after, and the result comes in "
+             "the course chat. Runs in the background.", _obj(one_course, ["course"]), write_mock_exam),
     ]
     if reviews is not None and reviews.cal is not None:
         tools += [

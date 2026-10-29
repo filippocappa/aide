@@ -1163,6 +1163,8 @@ struct NotebookStatus: Decodable {
     var formulas: Int?
     /// Topics with a set of exercises.
     var exercises: Int?
+    /// Mock exams written for the course.
+    var mocks: Int?
 }
 
 struct FormulaSheet: Decodable {
@@ -1301,12 +1303,15 @@ struct QuizBank: Decodable {
 }
 
 struct QuizBankTopic: Decodable, Identifiable, Hashable { let id: String; let title: String; let questions: Int }
-struct QuizScoring: Decodable { let right: Double; let wrong: Double }
+struct QuizScoring: Decodable, Hashable { let right: Double; let wrong: Double; var blank: Double? }
 
 struct Quiz: Decodable, Identifiable {
     let id: String
-    /// "exam" (a practice exam) or "chat" (Professor quizzing in the course chat).
+    /// "exam" (a practice exam), "chat" (Professor quizzing in the course chat) or "mock" (a mock exam).
     var kind: String?
+    /// The mock exam taken, when it's one.
+    var mock: String?
+    var scoring: QuizScoring?
     let course: Int
     var minutes: Int?
     var count = 0
@@ -1320,14 +1325,26 @@ struct QuizQuestion: Decodable, Identifiable {
     let n: Int
     let topic: QuizTopicRef
     let text: String
-    let options: [QuizOption]
+    var options: [QuizOption] = []
+    /// "open" for a mock exam's open question (answered in words or photos, marked after); nil for multiple choice.
+    var type: String?
+    var points: Double?
     // Once finished:
     var answer: String?
     var key: String?
     var correct: Bool?
     var explanation: String?
+    // An open question's, once finished: `awarded` nil while it's marked, or if it couldn't be.
+    var response: QuizResponse?
+    var awarded: Double?
+    var feedback: String?
+    var modelAnswer: String?
+    var rubric: String?
     var id: Int { n }
+    var isOpen: Bool { type == "open" }
 }
+
+struct QuizResponse: Decodable, Hashable { var text: String?; var photos: [String]? }
 
 struct QuizTopicRef: Decodable, Hashable { let id: String; let title: String }
 struct QuizOption: Decodable, Hashable { let letter: String; let text: String }
@@ -1339,6 +1356,8 @@ struct QuizScore: Decodable {
     let wrong: Int
     let blank: Int
     var topics: [QuizTopicScore]?
+    /// A mock exam's open answers are still being marked.
+    var grading: Bool?
 }
 
 struct QuizTopicScore: Decodable, Identifiable {
@@ -1360,8 +1379,49 @@ struct ReviewSession: Decodable, Identifiable, Hashable {
 }
 struct ReviewSessionList: Decodable { let sessions: [ReviewSession] }
 
-struct QuizStartBody: Encodable { let course: Int; let count: Int; let minutes: Int? }
-struct QuizFinishBody: Encodable { let answers: [String: String] }
+/// A mock exam: a paper like the real exam (docs/API.md, "Mock exams").
+struct MockExam: Decodable, Identifiable, Hashable {
+    let id: String
+    let course: Int
+    let number: Int
+    let title: String
+    var minutes: Int?
+    var scoring: QuizScoring?
+    var count = 0
+    var mcq = 0
+    var open = 0
+    var points: Double = 0
+    var createdAt: String?
+    var taken: Int?
+    var best: Double?
+
+    static func == (a: MockExam, b: MockExam) -> Bool { a.id == b.id && a.taken == b.taken && a.best == b.best }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+struct MockExamList: Decodable { let mocks: [MockExam] }
+
+struct QuizStartBody: Encodable { let course: Int; var count: Int?; var minutes: Int?; var mock: String? }
+
+/// An answer as handed in: a letter, or an open question's words and photos (`p_…` ids).
+enum QuizAnswer: Encodable, Equatable {
+    case letter(String)
+    case open(text: String, photos: [String])
+
+    private struct Open: Encodable { let text: String; let photos: [String] }
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .letter(let letter):
+            var container = encoder.singleValueContainer()
+            try container.encode(letter)
+        case .open(let text, let photos):
+            try Open(text: text, photos: photos).encode(to: encoder)
+        }
+    }
+}
+
+struct QuizFinishBody: Encodable { let answers: [String: QuizAnswer] }
 
 // MARK: Moodle and the Obsidian vault (docs/API.md, "Moodle", "Obsidian vault")
 

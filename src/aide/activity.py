@@ -31,7 +31,7 @@ LABELS = {
     "apply_proposal": "Applied notebook changes", "decline_proposal": "Declined notebook changes",
     "edit_topic": "Edited a notebook topic", "start_notebook": "Started a notebook",
     "rewrite_introduction": "Rewrote a notebook introduction", "find_figures": "Looked for figures",
-    "write_exercises": "Wrote exercises",
+    "write_exercises": "Wrote exercises", "write_mock_exam": "Wrote a mock exam",
     "notes_writer": "Changed who writes the notes",
     "remember": "Remembered something", "forget": "Forgot something",
     "create_routine": "Made a routine", "update_routine": "Changed a routine", "delete_routine": "Deleted a routine",

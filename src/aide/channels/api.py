@@ -132,6 +132,7 @@ class QuizStart(BaseModel):
     count: int = Field(default=30, ge=1, le=MOST_QUESTIONS)
     minutes: int | None = Field(default=None, ge=1, le=600)  # null: untimed
     topics: list[str] | None = None  # topic ids; null: all
+    mock: str | None = None  # a mock exam's id (m_…): that paper, its time and scoring; count, minutes, topics unused
 
 
 class WriterIn(BaseModel):
@@ -143,8 +144,13 @@ class WriterDecide(BaseModel):
     use: Literal["wait", "openrouter"]
 
 
+class OpenAnswer(BaseModel):  # a mock exam's open question: typed, or photos of the work on paper, or both
+    text: str = ""
+    photos: list[str] = Field(default=[], max_length=4)
+
+
 class QuizFinish(BaseModel):
-    answers: dict[str, str | None] = {}  # {"1": "B"}; a number left out or null is blank
+    answers: dict[str, str | OpenAnswer | None] = {}  # {"1": "B", "21": {"text": …}}; left out or null: blank
 
 
 class LecturePatch(BaseModel):
@@ -1321,6 +1327,32 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             out["body"] = readable(out["body"])
         return out
 
+    @app.get("/v1/notebook/mocks", dependencies=[Depends(auth)])
+    async def list_mocks(course: int):
+        return {"course": course, "mocks": quizzes.mocks_json(course_or_404(course))}
+
+    @app.post("/v1/notebook/mocks", dependencies=[Depends(auth)])
+    async def write_mock(course: int):
+        """A mock exam like the real one, in the background."""
+        try:
+            notebook.write_mock(course_or_404(course))
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        return JSONResponse(notebook.notebook_json(course), status_code=202)
+
+    @app.get("/v1/mocks/{mock_id}", dependencies=[Depends(auth)])
+    async def get_mock(mock_id: str, plain: bool = False):
+        """The paper, without its answers."""
+        if (m := notebook.mock(mock_id)) is None:
+            raise HTTPException(404, f"no mock exam {mock_id}")
+        out = notebook.mock_json(m, paper=True)
+        if plain:
+            out["body"] = readable(out["body"])
+            for q in out["questions"]:
+                q["text"] = readable(q["text"])
+                q["options"] = [o | {"text": readable(o["text"])} for o in q["options"]]
+        return out
+
     @app.get("/v1/topics/{topic_id}", dependencies=[Depends(auth)])
     async def get_topic(topic_id: str, plain: bool = False):
         if (t := notebook.topic(topic_id)) is None:
@@ -1400,8 +1432,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.post("/v1/quizzes", dependencies=[Depends(auth)])
     async def start_quiz(body: QuizStart):
+        cid = course_or_404(body.course)
         try:
-            quiz = quizzes.start(course_or_404(body.course), body.count, body.minutes, body.topics)
+            if body.mock:
+                if (m := notebook.mock(body.mock)) is None or m["course_id"] != cid:
+                    raise HTTPException(404, f"no mock exam {body.mock} in this course")
+                quiz = quizzes.start_mock(body.mock)
+            else:
+                quiz = quizzes.start(cid, body.count, body.minutes, body.topics)
         except ValueError as e:
             raise HTTPException(409, str(e))
         return JSONResponse(quizzes.quiz_json(quiz), status_code=201)
@@ -1413,17 +1451,21 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/quizzes/{quiz_id}/finish", dependencies=[Depends(auth)])
     async def finish_quiz(quiz_id: str, body: QuizFinish):
         quiz_or_404(quiz_id)
+        answers = {}
+        for n, a in body.answers.items():
+            if isinstance(a, OpenAnswer):
+                a = {"text": a.text, "photos": [p for p in a.photos if photos is not None and photos.exists(p)]}
+            answers[n] = a
         try:
-            quiz = quizzes.finish(quiz_id, body.answers)
+            quiz = quizzes.finish(quiz_id, answers)
         except ValueError as e:
             raise HTTPException(409, str(e))
+        if quizzes.grading(quiz):  # the open answers are marked in the background, and the result posted then
+            notebook.enqueue(quiz["course_id"], "grade", quiz=quiz_id)
+            return quizzes.quiz_json(quiz)
         # Professor's note in the course chat; the missed questions go in the note it reads, for "go through them".
-        missed = [f"{n}. {q['text'][:160]} (answered {quiz['answers'][str(n)] or 'blank'}, key {q['key']}; "
-                  f"{q['topic_title']})" for n, q in enumerate(quiz["questions"], 1)
-                  if quiz["answers"][str(n)] != q["key"]]
-        note = "[Practice exam finished in the app." + (" Missed: " + " | ".join(missed) if missed else "") + "]"
         try:
-            await agent.post(study.chat(quiz["course_id"]), note, quizzes.summary(quiz))
+            await agent.post(study.chat(quiz["course_id"]), quizzes.note(quiz), quizzes.summary(quiz))
         except Exception:
             log.exception("couldn't post a practice exam's result")
         return quizzes.quiz_json(quiz)

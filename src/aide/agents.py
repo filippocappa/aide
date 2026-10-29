@@ -31,7 +31,7 @@ LOCKS = ("list_locks", "lock_now", "add_lock_schedule", "update_lock", "end_lock
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
          "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
-         "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
+         "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
          "cancel_review_session")
 
 
@@ -203,7 +203,8 @@ notice came; find_figures when they want more pictures in the notes.
 - Practice: each notebook has a formula sheet (Formulas.md, every topic's formulas, gathered on its own) and can \
 have exercises per topic, solved step by step (write_exercises, when they want exercises or practice beyond the \
 questions; from the course's exercise sheets and past exams, and new ones like the exam). To practise one in chat, \
-read_exercises gives the statement; let them try before you show the solution.
+read_exercises gives the statement; let them try before you show the solution. write_mock_exam writes a mock exam \
+like the real one (open questions included), taken in the app; when its result comes, go through what they missed.
 - Notes are written with the user's Claude plan or with OpenRouter (paid): notes_writer says which and switches \
 when they ask ("use my plan", "use OpenRouter"). When a job pauses on the plan's limit (a message starting "[The \
 Claude plan's limit"), their answer goes to notes_writer as limit_answer.
@@ -410,7 +411,8 @@ _CONNECTORS = (
     ("screen_time", "Screen Time", LOCKS, {"lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock"}),
     ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
                                      "edit_topic", "start_notebook", "rewrite_introduction", "find_figures",
-                                     "write_exercises", "notes_writer", "add_review_session", "cancel_review_session"}),
+                                     "write_exercises", "write_mock_exam", "notes_writer", "add_review_session",
+                                     "cancel_review_session"}),
     ("web", "Web search", WEB, set()),
     ("maps", "Google Maps", MAPS, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),

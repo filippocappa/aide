@@ -4,7 +4,7 @@ import pytest
 
 from aide.notebook import mcqs
 from aide.quiz import QuizStore, parse_question, plain_math
-from test_api import AUTH
+from test_api import AUTH, done
 from test_notebook import chat_messages, nb  # noqa: F401 (the fixture)
 from test_study import ROME
 
@@ -203,3 +203,139 @@ async def test_a_quiz_needs_something_to_ask(nb):
     notebook_with_questions(nb)  # questions, no cards
     with pytest.raises(ValueError, match="no flashcards"):
         await quiz_tools_for(nb)["quiz_me"](course="macroeconomics", style="cards")
+
+
+MOCK = """{"minutes": 90, "right": 1, "wrong": 0, "blank": 0}
+**1.** What shifts IS right?
+- A) More spending
+- B) More money
+
+> [!success]- Answer
+> **A**. G is part of demand.
+> Topic: [[The IS-LM model]]
+
+**2.** Who drew the curve?
+- A) Phillips
+- B) Keynes
+
+> [!success]- Answer
+> **A**. He did, in 1958.
+> Topic: [[Phillips curve]]
+
+**3.** (15 points) Explain crowding out with the IS-LM model.
+
+> [!success]- Model answer
+> Spending shifts IS right, the rate rises, investment falls.
+> Topic: [[The IS-LM model]]
+
+> [!info]- Marking
+> - 5 points: IS shifts right
+> - 10 points: the rate rises and investment falls"""
+
+
+async def test_a_mock_exam_like_the_real_one_taken_and_its_open_answer_marked(nb):
+    from test_food import upload
+    from test_notebook import drain, sent
+    from test_study import add_pdf, make_pdf
+
+    notebook_with_questions(nb)
+    cid = nb.macro["id"]
+    nb.notebook.set_intro(cid, "15 multiple-choice questions, no penalty, and one open question of 15 points",
+                          "## The exam\nMultiple choice and one open question.")
+    add_pdf(nb.api, data=make_pdf(None, ["Esame 2025: explain the multiplier"]), name="Esame 2025-01", course=cid)
+    before = len(nb.client.requests)
+    nb.client.responses += [done(MOCK), done('{"1": "A", "2": "A"}')]
+    r = nb.api.post(f"/v1/notebook/mocks?course={cid}", headers=AUTH)
+    assert r.status_code == 202 and r.json()["busy"]
+    await drain(nb)
+    write, check = nb.client.requests[before:]
+    assert (write["model"], check["model"]) == ("smart", "m")
+    assert "How the exam works, from the Introduction:\nExam: 15 multiple-choice" in sent(write)
+    assert "## The IS-LM model\nIS-LM in one line." in sent(write) and "What shifts LM up?" not in sent(write)
+    assert "Past exams, for the style:" in sent(write) and "Esame 2025: explain the multiplier" in sent(write)
+    assert "**3.**" not in sent(check) and "IS-LM in one line." in sent(check)  # the MCQs, from every topic's notes
+
+    [m] = nb.api.get(f"/v1/notebook/mocks?course={cid}", headers=AUTH).json()["mocks"]
+    assert {k: m[k] for k in ("title", "minutes", "scoring", "count", "mcq", "open", "points", "taken", "best")} == {
+        "title": "Mock exam 1", "minutes": 90, "scoring": {"right": 1.0, "wrong": 0.0, "blank": 0.0}, "count": 3,
+        "mcq": 2, "open": 1, "points": 17.0, "taken": 0, "best": None}
+    assert nb.api.get(f"/v1/notebook?course={cid}", headers=AUTH).json()["mocks"] == 1
+    paper = nb.api.get(f"/v1/mocks/{m['id']}", headers=AUTH).json()
+    assert [(q["type"], q["points"]) for q in paper["questions"]] == [("mcq", None), ("mcq", None), ("open", 15.0)]
+    assert paper["questions"][2]["text"] == "Explain crowding out with the IS-LM model."
+    assert "[!success]" not in paper["body"] and "key" not in paper["questions"][0]
+    assert nb.api.get("/v1/mocks/m_000000000000", headers=AUTH).status_code == 404
+    assert chat_messages(nb)[-1]["text"].startswith("I've written **Mock exam 1** for macroeconomics: 2 "
+                                                    "multiple-choice questions and 1 open question in 90 min, 17 "
+                                                    "points, multiple choice scored like the exam (right 1, no penalty")
+
+    # Taken in the app: the open answer typed, with a photo of the working.
+    quiz = nb.api.post("/v1/quizzes", json={"course": cid, "mock": m["id"]}, headers=AUTH).json()
+    assert (quiz["kind"], quiz["mock"], quiz["minutes"], quiz["count"]) == ("mock", m["id"], 90, 3)
+    assert quiz["questions"][2]["type"] == "open" and quiz["questions"][2]["points"] == 15
+    law = nb.study.course_by_name("business law")["id"]
+    assert nb.api.post("/v1/quizzes", json={"course": law, "mock": m["id"]}, headers=AUTH).status_code == 404
+    photo = upload(nb.api).json()["id"]
+    posted = len(chat_messages(nb))
+    answers = {"1": "A", "2": "B", "3": {"text": "IS shifts right and the rate rises.", "photos": [photo, "p_0"]}}
+    finished = nb.api.post(f"/v1/quizzes/{quiz['id']}/finish", json={"answers": answers}, headers=AUTH).json()
+    assert {k: finished["score"][k] for k in ("points", "max", "right", "wrong", "grading")} == \
+        {"points": 1.0, "max": 17.0, "right": 1, "wrong": 2, "grading": True}  # the open one waits, unmarked
+    assert len(chat_messages(nb)) == posted  # the result comes once it's marked
+
+    before = len(nb.client.requests)
+    nb.client.responses.append(done('[{"n": 3, "points": 9.7, "feedback": "You left out investment."}]'))
+    await drain(nb)
+    [grade] = nb.client.requests[before:]
+    assert grade["model"] == "smart" and "Question 3 (15 points):" in sent(grade)
+    assert "Marking:\n- 5 points: IS shifts right" in sent(grade) and "IS shifts right and the rate rises." in sent(grade)
+    assert [b["type"] for b in grade["messages"][-1]["content"]].count("image") == 1
+    marked = nb.api.get(f"/v1/quizzes/{quiz['id']}", headers=AUTH).json()
+    assert {k: marked["score"][k] for k in ("points", "right", "wrong", "grading")} == \
+        {"points": 10.5, "right": 2, "wrong": 1, "grading": False}
+    q3 = marked["questions"][2]
+    assert (q3["awarded"], q3["feedback"], q3["correct"], q3["answer"]) == (9.5, "You left out investment.", True, None)
+    assert q3["response"] == {"text": "IS shifts right and the rate rises.", "photos": [photo]}
+    assert q3["model_answer"].startswith("Spending shifts IS right") and "10 points" in q3["rubric"]
+    result = chat_messages(nb)[-1]["text"]
+    assert result.startswith("Mock exam 1: **10.5 / 17** (2 right, 1 wrong, 0 blank)")
+    assert "- Question 3: 9.5 / 15. You left out investment." in result
+    [m] = nb.api.get(f"/v1/notebook/mocks?course={cid}", headers=AUTH).json()["mocks"]
+    assert (m["taken"], m["best"], m["last"]["id"]) == (1, 10.5, quiz["id"])
+
+    # Marking that fails leaves the open answer at 0, and the result still comes.
+    again = nb.api.post("/v1/quizzes", json={"course": cid, "mock": m["id"]}, headers=AUTH).json()
+    nb.api.post(f"/v1/quizzes/{again['id']}/finish", json={"answers": {"1": "A", "3": {"text": "No idea"}}},
+                headers=AUTH)
+    nb.client.responses.append(done("I can't read this."))
+    await drain(nb)
+    score = nb.api.get(f"/v1/quizzes/{again['id']}", headers=AUTH).json()["score"]
+    assert (score["points"], score["grading"]) == (1.0, False)
+    text = chat_messages(nb)[-1]["text"]
+    assert text.startswith("I couldn't mark the open answers") and "- Question 3: not marked (15 points)." in text
+
+    # Obsidian: the paper first, the answers after, linked from the Introduction.
+    await nb.vault.sync()
+    root = nb.vault.folder / "Aide/macroeconomics"
+    page = (root / "Mock exams/Mock exam 1.md").read_text()
+    assert "\n# Mock exam 1: macroeconomics\n\n90 minutes · 17 points · multiple choice: right 1, wrong 0, blank 0\n" \
+        in page
+    printed, _, answers = page.partition("## Answers")
+    assert "**3.** (15 points) Explain crowding out" in printed and "[!success]" not in printed
+    assert "> **A**. G is part of demand." in answers and "> [!info]- Marking" in answers
+    assert "- Mock exams: [[Aide/macroeconomics/Mock exams/Mock exam 1|Mock exam 1]]" in \
+        (root / "00 Introduction.md").read_text()
+
+    # Nothing to write it from.
+    assert nb.api.post(f"/v1/notebook/mocks?course={law}", headers=AUTH).status_code == 409
+    assert nb.api.post("/v1/notebook/mocks?course=999", headers=AUTH).status_code == 404
+
+
+def test_a_mock_exams_questions_read_from_its_paper():
+    from aide.notebook import mock_questions
+
+    titles = {"the is-lm model": {"public_id": "t_1", "title": "The IS-LM model"}}
+    [mcq, open_] = [q for q in mock_questions(MOCK.partition("\n")[2], titles) if q["topic"]][:2]
+    assert (mcq["type"], mcq["key"], mcq["explanation"], mcq["topic_title"]) == \
+        ("mcq", "A", "G is part of demand.", "The IS-LM model")
+    assert (open_["type"], open_["points"], open_["rubric"].splitlines()[0]) == ("open", 15.0, "- 5 points: IS shifts right")

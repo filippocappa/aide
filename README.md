@@ -196,6 +196,7 @@ Aide/Macroeconomics/
 ├── …
 ├── Formulas.md                 every topic's formulas, gathered (the formulario)
 ├── Exercises/                  per topic: the sheets' and past exams' exercises, and new ones, solved
+├── Mock exams/                 papers like the real exam: the questions, then the answers and marking
 ├── Cards/                      question :: answer, tagged #flashcards/macroeconomics
 ├── Images/                     slide figures the topic pages show
 ├── Sources/                    one page per lecture: its notes

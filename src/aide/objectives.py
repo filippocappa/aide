@@ -26,7 +26,7 @@ from . import activity
 from .agents import AGENTS, SPECIALISTS, check_agent
 from .db import utcnow
 from .food import FOOD_METRICS
-from .notebook import date_line
+from .notebook import date_line, max_points
 from .quiz import correct
 
 log = logging.getLogger(__name__)
@@ -337,13 +337,14 @@ class ObjectiveStore:
         if m["type"] == "practice":
             try:
                 rows = self.conn.execute(
-                    "SELECT score, questions FROM quizzes WHERE course_id = ? AND kind = 'exam' AND finished_at >= ? "
-                    "AND finished_at < ?",
+                    "SELECT score, questions, scoring FROM quizzes WHERE course_id = ? AND kind IN ('exam', 'mock') "
+                    "AND finished_at >= ? AND finished_at < ?",
                     (m["course"], self._utc(first), self._utc(last + timedelta(days=1)))).fetchall()
             except Exception:  # no practice exams yet: the table isn't there
                 return 0
             need = m.get("score", 0) / 100
-            return sum(1 for r in rows if (r[0] or 0) >= need * len(json.loads(r[1])))
+            return sum(1 for r in rows if (r[0] or 0) >= need * max_points(json.loads(r[1]),
+                                                                           r[2] and json.loads(r[2])))
         if m["type"] == "notes":
             try:
                 return self.conn.execute(
@@ -689,14 +690,16 @@ class ObjectivePlanner:
                 line += f"; the exam: {intro['exam']}"
             try:
                 rows = self.store.conn.execute(
-                    "SELECT finished_at, score, questions FROM quizzes WHERE course_id = ? AND kind = 'exam' "
-                    "AND finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 5", (c["id"],)).fetchall()
+                    "SELECT finished_at, score, questions, scoring, kind FROM quizzes WHERE course_id = ? "
+                    "AND kind IN ('exam', 'mock') AND finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 5",
+                    (c["id"],)).fetchall()
             except Exception:
                 rows = []
             if rows:
                 line += "; recent practice exams: " + ", ".join(
                     f"{datetime.fromisoformat(r[0]).astimezone(self.tz):%d %b} "
-                    f"{round(100 * (r[1] or 0) / max(1, len(json.loads(r[2]))))}%" for r in rows)
+                    f"{round(100 * (r[1] or 0) / max(1, max_points(json.loads(r[2]), r[3] and json.loads(r[3]))))}%"
+                    + (" (mock)" if r[4] == "mock" else "") for r in rows)
             out.append(line)
             if self.notebook:  # from the course's page and files: mid-terms, sign-up deadlines the calendar may lack
                 coming = [d for d in self.notebook.dates(c["id"], since=today)
