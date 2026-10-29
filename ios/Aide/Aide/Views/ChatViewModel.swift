@@ -353,9 +353,15 @@ final class ChatViewModel: ObservableObject {
         do {
             let history = try await api.history(limit: 200, conversationID: id)
             guard !isSending, !isActing, id == conversationID else { return }
-            let loaded = history.messages.map {
-                Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, attachments: $0.attachments,
-                        consulted: $0.consulted, team: $0.team, routine: $0.routine, photos: $0.photos)
+            var loaded = Self.messages(history)
+            if let running = history.working { // a turn this app lost track of (it was closed): wait for it
+                let asked = Message(role: .user, text: running.text, photos: running.photos ?? [])
+                loaded.append(asked)
+                messages = loaded
+                isSending = true
+                working[id] = Working(agent: running.agent, status: "Still working…")
+                Task { await recover(turn: id, asked: asked, reason: "The reply didn't come.") }
+                return
             }
             // Keep the existing rows when nothing changed, so a refresh doesn't replay the pop-in animation.
             // Attachments count: a reminder ticked elsewhere should show as ticked.
@@ -372,6 +378,56 @@ final class ChatViewModel: ObservableObject {
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    private static func messages(_ history: HistoryResponse) -> [Message] {
+        history.messages.map {
+            Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, attachments: $0.attachments,
+                    consulted: $0.consulted, team: $0.team, routine: $0.routine, photos: $0.photos)
+        }
+    }
+
+    /// The stream was lost after the message went out (the app in the background, the network gone), but the server
+    /// carries on with the turn and saves it; its history says `working` meanwhile. Asks every few seconds until the
+    /// reply is in. The agent's Live Activity is left to the server, which ends it with the reply (docs/API.md, "Chat").
+    private func recover(turn: String, asked: Message, reason: String) async {
+        working[turn]?.status = "Still working…"
+        var misses = 0
+        var history: HistoryResponse?
+        while history == nil || history?.working != nil {
+            if history != nil || misses > 0 { try? await Task.sleep(for: .seconds(3)) }
+            do {
+                history = try await api.history(limit: 200, conversationID: turn)
+                misses = 0
+            } catch {
+                misses += 1
+                if misses >= 20 { break } // a minute without the server: give up
+            }
+        }
+        working[turn] = nil
+        let here = (conversationID ?? "main") == turn
+        let list = history?.messages ?? []
+        let answered = list.last?.role == "assistant"
+            && list.dropLast().last.map { $0.role == "user" && $0.text == asked.text } == true
+        guard let history, answered else {
+            live?.agentFinished(conversation: turn, reply: reason, failed: true)
+            guard here else { return }
+            messages.append(Message(role: .assistant, text: reason, isError: true, team: liveTeam))
+            liveTeam = []
+            liveReply = ""
+            isSending = false
+            return
+        }
+        live?.agentFinished(conversation: turn, reply: list.last?.text ?? "")
+        if here {
+            liveTeam = []
+            liveReply = ""
+            isSending = false
+            messages = Self.messages(history)
+        } else {
+            await loadConversations()
+        }
+        await onServerChange?()
     }
 
     // MARK: Messages
@@ -435,6 +491,8 @@ final class ChatViewModel: ObservableObject {
                 await loadConversations() // the card's last line
             }
             await onServerChange?()
+        } catch APIError.transport(let reason) where started != nil {
+            await recover(turn: started ?? "main", asked: asked, reason: reason)
         } catch {
             let turn = started ?? conversationID ?? "main"
             working[turn] = nil

@@ -329,6 +329,29 @@ async def test_the_app_ended_it_so_nothing_more_goes(env, quick):
     assert apns.requests == []
 
 
+async def test_a_reply_after_the_app_hung_up_comes_as_a_push(env, quick):
+    _, push, live, apns = env
+    push.register("e5" * 32, "sandbox")
+    turn = live.turn("c1", "professor")
+    turn.finished("Still connected: the stream had it.")
+    await settle()
+    assert apns.requests == []
+    turn = live.turn("c1", "professor")
+    turn.listening = False  # hung up, and no activity left to update
+    turn.finished("Here's the plan.\n\nMon: …")
+    await settle()
+    [p] = apns.payloads()
+    assert p["aps"]["alert"] == {"title": "Professor", "body": "Here's the plan."}
+    assert p["aide"] == {"kind": "message", "conversation_id": "c1"}
+    # With the activity still there, its alert says it: no second push.
+    live.register("agent:c1", ACTIVITY, "sandbox")
+    turn = live.turn("c1", "professor")
+    turn.listening = False
+    turn.finished("Done.")
+    await settle()
+    assert [r.url.path for r in apns.requests[1:]] == [f"/3/device/{ACTIVITY}"] * 2
+
+
 async def test_a_failed_turn_ends_without_an_alert(env, quick):
     _, _, live, apns = env
     live.register("agent:team", ACTIVITY, "sandbox")

@@ -129,6 +129,12 @@ data: { the usual /v1/chat body, including the whole "team" }
 - A failure after the stream has started is `event: error` with `data: {"error": "…"}`, then the stream ends.
   Failures before it starts (401, 400…) are plain HTTP errors as usual.
 - A server that doesn't know `stream` answers plain JSON; the app checks `Content-Type` and handles both.
+- A quiet turn (an agent asked, a long tool) gets a comment line `: ping` every 15 s (since 2026-10-29), so the
+  connection stays open; skip lines that start with `:`.
+- **The turn goes on if the app hangs up** (the app in the background, the network gone): the server finishes it
+  and saves it as usual. Meanwhile `GET /v1/history` for that chat has `working` (below); once it's gone, the reply
+  is in the history. If the app hung up and the agent's Live Activity is gone too, the reply comes as a `message`
+  push (see Push).
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -151,13 +157,18 @@ on with `/v1/chat` as usual. 400 for an empty body, 413 over 10 MB, 415 for anot
 sent with photos also has `"photos": ["p_…"]`, absent otherwise; reminders in them are reloaded as they are now,
 so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said before. Tool calls and internal notes are left out.
 
+While a turn runs in that chat (since 2026-10-29), the history also has `"working": {"agent": "aide", "text":
+"plan my week", "photos": [], "since": "2026-10-29T15:03:12+01:00"}`: the message being answered, which isn't in
+`messages` yet (a turn is saved when it ends), and who answers. Absent otherwise. An app that lost the stream shows
+the message with the agent working, and asks again every few seconds until `working` is gone.
+
 ## Conversations
 
 The app keeps many chats. Every chat endpoint takes an optional `conversation_id`. **Omitted means the shared conversation, exactly as before**, so old clients keep working. Reminders, the confirmation queue and `POST /v1/confirm` / `/v1/cancel` stay global.
 
 | Endpoint | Body / query | Response |
 |---|---|---|
-| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the first chat (`id` `main`), titled "First chat". |
+| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the first chat (`id` `main`), titled "First chat". A chat with a turn running has `"working": true` (since 2026-10-29). |
 | `POST /v1/conversations` | `{}`, `{"agent": "coach"}`, or `{"digest": "daily" \| "evening"}` | The new conversation (same shape as a list row, `title: null`). `agent` defaults to `aide`; an unknown one is `400`. With `digest`, the chat is Aide's (`agent` is ignored) and starts with that digest's greeting as Aide's first message: it's in `/v1/history` and `preview`, and the model knows it said it. See Digest. |
 | `DELETE /v1/conversations/{id}` | | `{"ok": true}`. The shared conversation can't be deleted (400). |
 | `POST /v1/chat` | `{"text": "…", "conversation_id": "c_91f…"}` | Same as before, plus `"conversation_id"`. The server sets `title` from the first exchange. |
@@ -1662,7 +1673,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server, a habit with `health` was counted, a meal or a Screen Time lock changed | | (not shown) the app runs a reminders sync, writes `health_logged` and meals to Health, and sets the locks |
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
 | `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens Today on the digest (since 2026-10-26; before: a new chat with it) |
-| `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |
+| `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal; or a chat reply finished after the app hung up on the stream, with no Live Activity left to say it (since 2026-10-29; title the agent's name, body the reply's first line) | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |
 | `lecture` | alert | a lecture's notes are ready, or it failed (title "Professor · macroeconomics") | `lecture_id` | opens that lecture |
 | `moodle` | alert | a Moodle sync brought new files (title "Moodle · 3 new files", a line per course naming them: "Macroeconomics: Lecture Notes: Monetary Policy, Lect: Monetary Policy"), or the login expired | `files` (the new files' ids, up to 20; since 2026-10-26), `login` (true: log in again) | lists the new files (`GET /v1/files/{id}`), each opening its PDF; the Moodle login with `login` |
 | `transit` | alert, `interruption-level: time-sensitive` | a tram alert fires ("Tram 4 in 7 min: leave now") | `alert_id` | nothing special (opens the app) |
@@ -1800,6 +1811,8 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
   the turn goes (each ask; `writing` once, when the reply starts), at most one per 2 seconds, priority 5. About 3 s
   after the turn ends, if the key is still there, it sends an `update` with `done` and an `alert` (the agent's name,
   the first line), then an `end` dismissed after 30 minutes. A failed turn ends with `failed`, no alert.
+  An app that lost the stream leaves the activity to the server (no `failed` of its own, no delete) while the
+  chat's history says `working`, so the `done` alert still comes.
 - A scheduled routine (not a watch): the server push-to-starts it (key `agent:<routine conversation id>`,
   `title` the routine's), with a quiet alert (title "Coach · Weekly plan", body "Working on it", no sound; a start needs one).
   When the run ends it sends `end` with `done`, dismissed at once: the `message` push that follows is the

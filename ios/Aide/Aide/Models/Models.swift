@@ -314,7 +314,17 @@ enum Schedule {
     }
 }
 
-struct HistoryResponse: Decodable { let messages: [HistoryMessage] }
+struct HistoryResponse: Decodable {
+    let messages: [HistoryMessage]
+    /// A turn still running in the chat: the message being answered (not in `messages` until it's done).
+    let working: Working?
+
+    struct Working: Decodable, Equatable {
+        let agent: String
+        let text: String
+        let photos: [String]?
+    }
+}
 
 struct CalendarEvent: Decodable, Identifiable, Hashable {
     let id: String

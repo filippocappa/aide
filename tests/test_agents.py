@@ -446,6 +446,9 @@ def events(response):
     assert blocks[-1] == ""
     out = []
     for block in blocks[:-1]:
+        if block.startswith(":"):
+            continue  # a keep-alive comment
+
         event, data = block.split("\n")
         assert event.startswith("event: ") and data.startswith("data: ")
         out.append((event.removeprefix("event: "), json.loads(data.removeprefix("data: "))))
@@ -489,6 +492,28 @@ def test_streamed_text_starts_over_after_tools(env):
     assert [d["restart"] for d in texts] == [False, False, False, True, False, False, False]
     assert "".join(d["delta"] for d in texts[3:]) == "Free\n\nall day."
     assert got[-1][1]["reply"] == "Free\n\nall day."
+
+
+async def test_a_running_turn_shows_in_history_and_quiet_streams_get_pings(env, monkeypatch):
+    import asyncio
+    import httpx
+    import aide.channels.api as api_mod
+    monkeypatch.setattr(api_mod, "PING", 0.05)
+    client, agent, _ = env([done("Plan ready.")])
+    app = httpx.AsyncClient(transport=httpx.ASGITransport(client.app), base_url="http://aide")
+    create, seen = agent.client._create, {}
+
+    async def slow(**kwargs):
+        await asyncio.sleep(0.2)  # quiet: a ping goes; meanwhile the app asks for the history, as after a hang-up
+        seen.update((await app.get("/v1/history", headers=AUTH)).json())
+        return await create(**kwargs)
+    agent.client._create = slow
+    r = await app.post("/v1/chat", json={"text": "plan my week", "stream": True}, headers=AUTH)
+    assert ": ping\n\n" in r.text and events(r)[-1][1]["reply"] == "Plan ready."
+    assert seen["messages"] == [] and seen["working"]["agent"] == "aide"
+    assert seen["working"]["text"] == "plan my week" and seen["working"]["since"]
+    after = (await app.get("/v1/history", headers=AUTH)).json()
+    assert "working" not in after and len(after["messages"]) == 2
 
 
 def test_streamed_chat_errors(env):

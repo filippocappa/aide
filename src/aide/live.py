@@ -192,7 +192,7 @@ class LiveActivities:
     # -- agents ----------------------------------------------------------------
 
     def turn(self, conversation: str, agent: str | None = None) -> "AgentTurn":
-        return AgentTurn(self, f"agent:{conversation}", agent)
+        return AgentTurn(self, f"agent:{conversation}", agent, conversation)
 
     async def routine_started(self, routine: dict) -> str | None:
         """A scheduled routine's activity, push-started. Returns its key, or None if it didn't start."""
@@ -229,8 +229,9 @@ class AgentTurn:
     reply starts (at most one per THROTTLE), then the reply's first line with an alert, and the end. Callbacks are
     plain functions (the turn's emit hooks); the pushes go out in background tasks, so the turn never waits."""
 
-    def __init__(self, live: LiveActivities, key: str, agent: str | None):
-        self.live, self.key, self.agent = live, key, agent
+    def __init__(self, live: LiveActivities, key: str, agent: str | None, conversation: str | None = None):
+        self.live, self.key, self.agent, self.conversation = live, key, agent, conversation
+        self.listening = True  # False once the app hung up on the stream: the reply then comes as a push
         self.since = int(time.time())
         self._state: dict | None = None  # the latest wanted, not yet sent
         self._last = 0.0
@@ -283,8 +284,11 @@ class AgentTurn:
             self._want(self._state_of("writing"))
 
     def finished(self, reply: str, agent: str | None = None) -> None:
-        if self.live.enabled:
+        if self.live.enabled or self._pushable():
             self._spawn(self._finish(reply, agent or self.agent))
+
+    def _pushable(self) -> bool:
+        return self.conversation is not None and bool(getattr(self.live.push, "enabled", False))
 
     def failed(self) -> None:
         if self.live.enabled:
@@ -298,10 +302,13 @@ class AgentTurn:
 
     async def _finish(self, reply: str, agent: str | None) -> None:
         try:
-            if not await self._settle():
-                return  # the app ended it itself, or never had one
             done = self._state_of("done", text=clip(reply))
             name = AGENTS.get(agent or ORCHESTRATOR, AGENTS[ORCHESTRATOR]).name
+            if not await self._settle() or not self.live.enabled:
+                # The app ended it itself, or never had one. If it hung up before the reply, say so with a push.
+                if not self.listening and self._pushable():
+                    await self.live.push.send_message(self.conversation, name, done["text"])
+                return
             await self.live.update(self.key, done, alert={"title": name, "body": done["text"], "sound": "default"})
             await self.live.end(self.key, done, datetime.now(timezone.utc) + DONE_FOR)
         except Exception:

@@ -389,6 +389,7 @@ class SyncIn(BaseModel):
 
 
 UNAVAILABLE = "The assistant is unavailable right now. Try again."
+PING = 15.0  # seconds of quiet on a stream before a keep-alive comment
 
 
 def sse(event: str, data: dict) -> str:
@@ -473,7 +474,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     def conversation_json(c: dict) -> dict:
         return {"id": c["id"], "agent": c["agent"], "title": c["title"], "routine": c["routine"],
-                "course": study.chat_course(c["id"]), "preview": c["preview"], "updated_at": local(c["updated_at"])}
+                "course": study.chat_course(c["id"]), "preview": c["preview"], "updated_at": local(c["updated_at"]),
+                **({"working": True} if c["id"] in working else {})}
 
     def team_json(t: dict) -> dict:
         return {**t, "ts": local(t["ts"])}
@@ -484,9 +486,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 "team": [team_json(t) for t in turn.team]}
 
     turns: set[asyncio.Task] = set()  # streamed turns, held so they finish even if the app hangs up
+    # conversation -> the chat turn running in it: the app that hung up on the stream asks for it in /v1/history
+    working: dict[str, dict] = {}
 
-    def streamed(run: Callable[[Callable[[str, dict], None]], Awaitable], done: Callable[[object], str]):
-        """Run a turn as server-sent events: `run(emit)` emits events as they happen, `done(result)` is the last one."""
+    def streamed(run: Callable[[Callable[[str, dict], None]], Awaitable], done: Callable[[object], str],
+                 hung_up: Callable[[], None] | None = None):
+        """Run a turn as server-sent events: `run(emit)` emits events as they happen, `done(result)` is the last one.
+        A comment every PING seconds keeps a quiet turn's connection open; `hung_up` is told if the app leaves first."""
         events: asyncio.Queue = asyncio.Queue()
         task = asyncio.create_task(run(lambda event, data: events.put_nowait(sse(event, data))))
         turns.add(task)
@@ -499,14 +505,27 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         task.add_done_callback(finished)
 
         async def stream():
-            while (event := await events.get()) is not None:
-                yield event
-            if task.cancelled() or task.exception():
-                error = task.cancelled() or task.exception()
-                yield sse("error", {"error": UNAVAILABLE if isinstance(error, anthropic.APIError)
-                                    else "Something went wrong on the server. It's in the logs."})
-            else:
-                yield done(task.result())
+            delivered = False
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(events.get(), PING)
+                    except asyncio.TimeoutError:
+                        yield ": ping\n\n"
+                        continue
+                    if event is None:
+                        break
+                    yield event
+                if task.cancelled() or task.exception():
+                    error = task.cancelled() or task.exception()
+                    yield sse("error", {"error": UNAVAILABLE if isinstance(error, anthropic.APIError)
+                                        else "Something went wrong on the server. It's in the logs."})
+                else:
+                    yield done(task.result())
+                delivered = True
+            finally:
+                if not delivered and hung_up:
+                    hung_up()
 
         # No caching or proxy buffering, so each event reaches the app as it's sent.
         return StreamingResponse(stream(), media_type="text/event-stream",
@@ -529,9 +548,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         row = db.app_conversation(conversation) if conversation != CONVERSATION else None
         if conversation != CONVERSATION and row is None and body.stream:
             raise UnknownConversation(f"no conversation {conversation}")  # a plain 404, before the stream starts
-        activity_turn = live.turn(conversation, (row["agent"] if row else None) or ORCHESTRATOR)
+        speaker = (row["agent"] if row else None) or ORCHESTRATOR
+        activity_turn = live.turn(conversation, speaker)
 
         async def respond(on_team=None, on_text=None) -> Turn:
+            mine = working[conversation] = {"agent": speaker, "text": text, "photos": body.photos,
+                                            "since": datetime.now(tz).replace(microsecond=0).isoformat()}
             try:
                 turn = await agent.respond(CONVERSATION, text, conversation, hooks(on_team, activity_turn.team),
                                            hooks(on_text, activity_turn.text) if on_text else None, body.photos,
@@ -539,15 +561,21 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             except BaseException:
                 activity_turn.failed()
                 raise
+            finally:
+                if working.get(conversation) is mine:  # a second message, waiting its turn, may have taken the slot
+                    working.pop(conversation)
             activity_turn.finished(turn.reply)
             return turn
+
+        def hung_up() -> None:
+            activity_turn.listening = False
 
         if not body.stream:
             return chat_json(conversation, await respond())
         return streamed(
             lambda emit: respond(lambda t: emit("team", team_json(t)),
                                  lambda delta, restart: emit("text", {"delta": delta, "restart": restart})),
-            lambda turn: sse("reply", chat_json(conversation, turn)))
+            lambda turn: sse("reply", chat_json(conversation, turn)), hung_up)
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
     async def confirm(body: ActionsIn | None = None):
@@ -673,7 +701,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 elif a["type"] == "files":
                     a["files"] = [file_json(f) for old in a["files"] if (f := study.files.get(old["id"]))]
             m["attachments"] = [a for a in m["attachments"] if a["type"] != "files" or a["files"]]
-        return {"messages": messages}
+        # A turn still running here isn't in the history yet (it's saved when it ends): what was asked, and by whom.
+        running = working.get(conversation_id or CONVERSATION)
+        return {"messages": messages, **({"working": running} if running else {})}
 
     @app.get("/v1/team", dependencies=[Depends(auth)])
     async def team(limit: int = 100):
