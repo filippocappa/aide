@@ -143,6 +143,17 @@ def test_food_log_goes_to_coachs_food_chat(env):
     assert api.post("/v1/food/log", json={}, headers=AUTH).status_code == 400
 
 
+def test_barcodes_the_app_read_go_to_coach(env):
+    api, agent, *_ = env()
+    photo = upload(api).json()["id"]
+    api, *_ = env([done("Logged.")])
+    body = api.post("/v1/food/log", json={"photos": [photo], "barcodes": ["8001505005707", "8001505005707", "x1"]},
+                    headers=AUTH).json()
+    said = api.get(f"/v1/history?conversation_id={body['conversation_id']}", headers=AUTH).json()["messages"][0]
+    assert "Barcodes the app read in the photos: 8001505005707. find_food" in said["text"]
+    assert api.post("/v1/food/log", json={"photos": [photo], "barcodes": ["1"] * 5}, headers=AUTH).status_code == 400
+
+
 def test_food_endpoints(env):
     api, _, food, *_ = env()
     today = food.today()

@@ -69,6 +69,7 @@ class FoodLogIn(BaseModel):
     photos: list[str] = []
     text: str = ""
     day: date | None = Field(None, alias="date")  # the day it was eaten, default today
+    barcodes: list[str] = Field([], max_length=4)  # read in the photos by the phone
 
 
 class LabelIn(BaseModel):
@@ -1031,6 +1032,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(400, "a meal can't be in the future")
         if body.day and body.day != food.today():
             text = "\n".join(filter(None, [text, f"(I ate this on {body.day:%A %d %B}.)"]))
+        if codes := list(dict.fromkeys(c for c in ("".join(b.split()) for b in body.barcodes) if c.isdigit())):
+            text = "\n".join(filter(None, [text, f"(Barcodes the app read in the photos: {', '.join(codes)}. find_food "
+                                                  "each one; one it doesn't have, save from its label in the photos "
+                                                  "with that barcode.)"]))
         conversation = food_chat()
         turn = await agent.respond(CONVERSATION, text or "Log this.", conversation, photos=body.photos)
         meals = next((a["meals"] for a in turn.attachments if a["type"] == "meals"), [])

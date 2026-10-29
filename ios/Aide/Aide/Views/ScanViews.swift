@@ -1,107 +1,13 @@
 import SwiftUI
-import VisionKit
 
-/// A scanned barcode, to open its sheet with.
-struct ScannedCode: Identifiable, Hashable {
+/// A barcode read in a meal photo (or typed), to open its sheet with; `photo` is the one it was read in.
+struct ScannedCode: Identifiable {
     let code: String
+    var photo: PickedPhoto?
     var id: String { code }
 }
 
-/// The camera looking for a food barcode (EAN-13, EAN-8, UPC). The first one it reads ends it.
-struct BarcodeScanner: UIViewControllerRepresentable {
-    let onScan: (String) -> Void
-
-    /// Not on the Simulator, nor on phones without the Neural Engine.
-    static var isSupported: Bool { DataScannerViewController.isSupported }
-
-    func makeUIViewController(context: Context) -> DataScannerViewController {
-        let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.ean13, .ean8, .upce])],
-                                                qualityLevel: .balanced, recognizesMultipleItems: false,
-                                                isHighFrameRateTrackingEnabled: false, isHighlightingEnabled: true)
-        scanner.delegate = context.coordinator
-        return scanner
-    }
-
-    func updateUIViewController(_ scanner: DataScannerViewController, context: Context) {
-        // Started once it's on screen; before that it doesn't start.
-        if !scanner.isScanning, !context.coordinator.done { try? scanner.startScanning() }
-    }
-
-    static func dismantleUIViewController(_ scanner: DataScannerViewController, coordinator: Coordinator) {
-        scanner.stopScanning()
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
-        private let parent: BarcodeScanner
-        var done = false
-        init(_ parent: BarcodeScanner) { self.parent = parent }
-
-        func dataScanner(_ scanner: DataScannerViewController, didAdd added: [RecognizedItem],
-                         allItems: [RecognizedItem]) {
-            for item in added {
-                guard !done, case .barcode(let barcode) = item,
-                      let code = barcode.payloadStringValue?.filter(\.isNumber), !code.isEmpty else { continue }
-                done = true
-                scanner.stopScanning()
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                parent.onScan(code)
-            }
-        }
-    }
-}
-
-/// Full screen: the scanner, a hint, and a way out (or to type the digits when the code won't read).
-struct BarcodeScannerScreen: View {
-    let onScan: (String) -> Void
-    let typeInstead: () -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        ZStack {
-            if DataScannerViewController.isAvailable {
-                BarcodeScanner { code in
-                    dismiss()
-                    onScan(code)
-                }
-                .ignoresSafeArea()
-            } else {
-                ContentUnavailableView("No camera", systemImage: "camera.slash",
-                                       description: Text("Allow Aide to use the camera in Settings to scan barcodes."))
-            }
-            VStack {
-                HStack {
-                    Spacer()
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark").font(.body.weight(.semibold)).padding(12)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    .background(.black.opacity(0.45), in: Circle())
-                    .accessibilityLabel("Close")
-                }
-                Spacer()
-                VStack(spacing: 12) {
-                    Text("Point at the barcode on the packet").font(.callout.weight(.medium))
-                    Button("Type the number instead") {
-                        dismiss()
-                        typeInstead()
-                    }
-                    .font(.footnote.weight(.semibold))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 12)
-                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            }
-            .padding()
-        }
-        .background(.black)
-    }
-}
-
-/// After a scan: the product and how much you had (empty is your usual portion, else one serving), then Log adds
+/// A photo with a barcode in it: the product and how much you had (empty is your usual portion, else one serving), then Log adds
 /// it up on the server. A barcode nobody has yet asks for a photo of its nutrition facts, read once and saved, so
 /// the next scan finds it.
 struct ScanSheet: View {
@@ -110,6 +16,8 @@ struct ScanSheet: View {
     let date: String?
     /// After logging: the meal, to say so and reload.
     let logged: (Meal) -> Void
+    /// The photo goes to Coach instead (there's more in it than the packet); nil when there's no photo.
+    var askCoach: (() -> Void)?
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
 
@@ -142,6 +50,16 @@ struct ScanSheet: View {
                 case .missing:
                     missing
                 }
+                if let askCoach, phase != .reading {
+                    Section {
+                        Button("Ask Coach instead", systemImage: "bubble.left") {
+                            askCoach()
+                            dismiss()
+                        }
+                    } footer: {
+                        Text("When the photo is a whole meal, not just this packet.")
+                    }
+                }
                 if let error {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
@@ -151,7 +69,7 @@ struct ScanSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
-            .navigationTitle("Scanned")
+            .navigationTitle("Barcode")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

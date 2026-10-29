@@ -2,6 +2,7 @@ import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
+import Vision
 
 /// A photo picked to send, already shrunk to the JPEG the server gets.
 /// Photos of one meal, between picking them and logging them with their description.
@@ -14,6 +15,8 @@ struct PickedPhoto: Identifiable, Equatable {
     let id = UUID()
     let jpeg: Data
     let preview: UIImage
+    /// Food barcodes in the photo, read on the phone when the screen asks for them (`photoSources(barcodes:)`).
+    var barcodes: [String] = []
 
     init?(jpeg: Data) {
         guard let preview = UIImage(data: jpeg) else { return nil }
@@ -62,9 +65,10 @@ enum PhotoPrep {
 extension View {
     /// The camera and the photo library for a screen that sends photos: set `camera` or `library` to open one.
     /// Photos arrive shrunk, at most `limit` of them from the library.
-    func photoSources(camera: Binding<Bool>, library: Binding<Bool>, limit: Int,
+    /// With `barcodes`, each photo's food barcodes are read from the full-size picture first.
+    func photoSources(camera: Binding<Bool>, library: Binding<Bool>, limit: Int, barcodes: Bool = false,
                       onPick: @escaping ([PickedPhoto]) -> Void) -> some View {
-        modifier(PhotoSources(camera: camera, library: library, limit: limit, onPick: onPick))
+        modifier(PhotoSources(camera: camera, library: library, limit: limit, barcodes: barcodes, onPick: onPick))
     }
 }
 
@@ -72,6 +76,7 @@ private struct PhotoSources: ViewModifier {
     @Binding var camera: Bool
     @Binding var library: Bool
     let limit: Int
+    let barcodes: Bool
     let onPick: ([PickedPhoto]) -> Void
     @State private var items: [PhotosPickerItem] = []
 
@@ -85,8 +90,13 @@ private struct PhotoSources: ViewModifier {
                     var photos: [PickedPhoto] = []
                     for item in picked.prefix(max(limit, 1)) {
                         guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-                        let jpeg = await Task.detached { PhotoPrep.jpeg(data) }.value
-                        if let photo = jpeg.flatMap(PickedPhoto.init(jpeg:)) { photos.append(photo) }
+                        let (jpeg, codes) = await Task.detached { [barcodes] in
+                            (PhotoPrep.jpeg(data), barcodes ? BarcodeReader.codes(in: data) : [])
+                        }.value
+                        if var photo = jpeg.flatMap(PickedPhoto.init(jpeg:)) {
+                            photo.barcodes = codes
+                            photos.append(photo)
+                        }
                     }
                     if !photos.isEmpty { onPick(photos) }
                 }
@@ -94,12 +104,82 @@ private struct PhotoSources: ViewModifier {
             .fullScreenCover(isPresented: $camera) {
                 CameraPicker { image in
                     Task {
-                        let jpeg = await Task.detached { PhotoPrep.jpeg(image) }.value
-                        if let photo = jpeg.flatMap(PickedPhoto.init(jpeg:)) { onPick([photo]) }
+                        let (jpeg, codes) = await Task.detached { [barcodes] in
+                            (PhotoPrep.jpeg(image), barcodes ? BarcodeReader.codes(in: image) : [])
+                        }.value
+                        if var photo = jpeg.flatMap(PickedPhoto.init(jpeg:)) {
+                            photo.barcodes = codes
+                            onPick([photo])
+                        }
                     }
                 }
                 .ignoresSafeArea()
             }
+    }
+}
+
+/// Food barcodes (EAN-13, EAN-8, UPC) in a photo, read on the phone with Vision: no request, about 0.1 s.
+enum BarcodeReader {
+    /// Big enough for a barcode across the room's packet, small enough not to hold a 48 MP photo in memory.
+    static let longest: CGFloat = 3072
+
+    /// A library photo, decoded upright at up to `longest`.
+    static func codes(in data: Data) -> [String] {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return [] }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: longest,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return [] }
+        return codes(in: image)
+    }
+
+    /// A camera photo, as it was taken.
+    static func codes(in image: UIImage) -> [String] {
+        guard let cg = image.cgImage else { return [] }
+        return codes(in: cg, orientation: CGImagePropertyOrientation(image.imageOrientation))
+    }
+
+    static let symbologies: [VNBarcodeSymbology] = [.ean13, .ean8, .upce]
+
+    /// Digits only, each once, in the order Vision found them.
+    static func codes(in image: CGImage, orientation: CGImagePropertyOrientation = .up) -> [String] {
+        let handler = VNImageRequestHandler(cgImage: image, orientation: orientation)
+        let request = VNDetectBarcodesRequest()
+        request.symbologies = symbologies
+        do {
+            try handler.perform([request])
+        } catch {
+            // The newer revisions need the Neural Engine (none on the Simulator: "Could not create inference
+            // context"); the first still reads EAN.
+            guard let first = VNDetectBarcodesRequest.supportedRevisions.min() else { return [] }
+            request.revision = first
+            try? handler.perform([request])
+        }
+        var found: [String] = []
+        for barcode in request.results ?? [] where symbologies.contains(barcode.symbology) {
+            guard let code = barcode.payloadStringValue?.filter(\.isNumber), code.count >= 6,
+                  !found.contains(code) else { continue }
+            found.append(code)
+        }
+        return found
+    }
+}
+
+private extension CGImagePropertyOrientation {
+    init(_ orientation: UIImage.Orientation) {
+        switch orientation {
+        case .up: self = .up
+        case .down: self = .down
+        case .left: self = .left
+        case .right: self = .right
+        case .upMirrored: self = .upMirrored
+        case .downMirrored: self = .downMirrored
+        case .leftMirrored: self = .leftMirrored
+        case .rightMirrored: self = .rightMirrored
+        @unknown default: self = .up
+        }
     }
 }
 

@@ -185,7 +185,7 @@ log_meal (photo_id from the photo's line) unless they say otherwise. One meal is
 find_food first: the user eats the same things often, and a saved food comes with its usual portion (use it unless \
 the photo or the user says otherwise). A brand or a packet: pick the Open Food Facts result that is that product \
 (same brand and kind, not just a similar word) and call find_food with its barcode to save it; a barcode you can \
-read in the photo goes straight to find_food. Not there, or a restaurant or chain dish: web_search, then save_food \
+read in the photo (or the app read for you) goes straight to find_food. Not there, or a restaurant or chain dish: web_search, then save_food \
 (source web). A nutrition label you can read: save_food (source label). A plain food (pasta, rice, an apple, olive \
 oil, a home-made dish the user has often): your estimate per 100 g (kcal close to 4 × protein + 4 × carbs + 9 × \
 fat), saved once with save_food (source estimate). Then log_meal with items: each saved food with the grams they \

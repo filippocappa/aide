@@ -639,7 +639,7 @@ goes. The server sends the silent `sync` push after every meal change, so this h
 | `GET /v1/food?date=2026-10-21` | (default today) | `{"date": "2026-10-21", "meals": [Meal] (by time), "totals": Totals, "goals": Goals}` |
 | `GET /v1/food/meals?from=2026-10-15&to=2026-10-21` | (default the last 7 days; at most 92) | `{"meals": [Meal]}`, oldest first (since 2026-10-27, for Apple Health) |
 | `GET /v1/food/days?from=2026-10-15&to=2026-10-21` | (default the last 7 days) | `{"days": [{"date": "2026-10-21", "totals": Totals, "meals": 3}]}`, oldest first, every day included (zeros when empty) |
-| `POST /v1/food/log` | `{"photos": ["p_…"], "text": "half of it", "date": "2026-10-20"}` (`photos` or `text` needed; `text` and `date` optional) | `{"reply": "Pasta al pomodoro, about 650 kcal…", "meals": [Meal], "conversation_id": "c_…"}`: Coach logs it in its "Food log" chat (made once, then reused), so a correction can follow there. `meals` is the meals its tools showed: logged, changed or listed (can be empty when it only asked something). 5–30 s. |
+| `POST /v1/food/log` | `{"photos": ["p_…"], "text": "half of it", "date": "2026-10-20", "barcodes": ["8001505005707"]}` (`photos` or `text` needed; `text`, `date` and `barcodes` optional; `barcodes`, at most 4, are the ones the app read in the photos, and Coach looks each up) | `{"reply": "Pasta al pomodoro, about 650 kcal…", "meals": [Meal], "conversation_id": "c_…"}`: Coach logs it in its "Food log" chat (made once, then reused), so a correction can follow there. `meals` is the meals its tools showed: logged, changed or listed (can be empty when it only asked something). 5–30 s. |
 | `PATCH /v1/food/meals/{id}` | any of `name`, `eaten_at`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `water_ml`, `caffeine_mg`, `notes` | the Meal |
 | `DELETE /v1/food/meals/{id}` | | `{"ok": true}` (the user deleting from the app: immediate) |
 | `GET /v1/food/barcode/{code}` | | `{"food": Food \| null}` (since 2026-10-29): a scanned barcode's saved food, else Open Food Facts' product (saved on the way); `null` when neither has it. 502 when Open Food Facts can't be reached. No model call. |
@@ -668,9 +668,10 @@ up.
 Food object: `{"id": 7, "name": "Nocciolata", "brand": "Rigoni di Asiago", "barcode": "8001505005707", "kcal_100g":
 544, "protein_100g": 8.1, "carbs_100g": 54, "fat_100g": 32, "serving_g": 15, "usual_g": 30, "source": "off"}`; per
 100 ml for a drink; `serving_g` and `usual_g` can be null; `source` is `off` (Open Food Facts), `label`, `web`,
-`estimate` or `user`. The app's barcode scanner (since 2026-10-29): scan, `GET /v1/food/barcode/{code}`, how much
-(empty is the usual portion or one serving), `POST /v1/food/foods/{id}/log`; a barcode nobody has asks for a photo
-of its label, `POST /v1/food/label`, then the same.
+`estimate` or `user`. Barcodes in the app (since 2026-10-29): it reads them in a meal's photos on the phone. One
+photo with a barcode is a lone packet: `GET /v1/food/barcode/{code}`, how much (empty is the usual portion or one
+serving), `POST /v1/food/foods/{id}/log`, no model call; a barcode nobody has asks for a photo of its label, `POST
+/v1/food/label`, then the same. More photos go to `POST /v1/food/log` with their `barcodes`.
 
 ## Study
 

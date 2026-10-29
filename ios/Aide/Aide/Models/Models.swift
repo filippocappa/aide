@@ -656,7 +656,13 @@ struct FoodDaySummary: Decodable, Hashable {
 struct FoodDayList: Decodable { let days: [FoodDaySummary] }
 
 /// `POST /v1/food/log`: photos, words or both. `date` nil is today.
-struct FoodLogRequest: Encodable { var photos: [String] = []; var text: String?; var date: String? }
+/// `barcodes`: read in the photos by the phone, for Coach to look up.
+struct FoodLogRequest: Encodable {
+    var photos: [String] = []
+    var text: String?
+    var date: String?
+    var barcodes: [String] = []
+}
 struct FoodLogReply: Decodable {
     let reply: String
     /// What Coach logged or changed; empty when it only asked something.

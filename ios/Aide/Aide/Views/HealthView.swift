@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The Health tab, in two pages. Body: what Apple Health says (sleep, recovery, activity, workouts), each opening
 /// its chart. Food: what you ate, day by day; meals come from photos with a few words, or the words alone, that
-/// Coach names and estimates, or from a scanned barcode with its real numbers; tap one to fix the numbers, swipe to
+/// Coach names and estimates (a packet's barcode in a photo brings its real numbers); tap one to fix the numbers, swipe to
 /// delete. Every meal also goes to Apple Health
 /// (`HealthService.writeMeals`). (Habits are on Today.)
 struct HealthView: View {
@@ -34,10 +34,9 @@ struct HealthView: View {
     @State private var mealText = ""
     /// Photos just picked or taken, waiting for their description.
     @State private var pickedPhotos: PickedMeal?
-    @State private var showScanner = false
-    /// What the scanner read, or that the digits are to be typed, acted on once its cover is gone.
-    @State private var afterScanner: ScannerOutcome?
     @State private var scanned: ScannedCode?
+    /// "Ask Coach instead" on a barcode's sheet: the photo, sent the usual way once the sheet is gone.
+    @State private var coachInstead: PickedPhoto?
     @State private var typingBarcode = false
     @State private var barcodeText = ""
     @State private var showGoals = false
@@ -100,21 +99,17 @@ struct HealthView: View {
                     if !text.isEmpty { Task { await log(text: text) } }
                 }
             }
-            .photoSources(camera: $showCamera, library: $showLibrary, limit: 4) { photos in
-                pickedPhotos = PickedMeal(photos: photos)
+            .photoSources(camera: $showCamera, library: $showLibrary, limit: 4, barcodes: true) { photos in
+                // A lone packet with its barcode: the real numbers and how much, no model call. Anything more
+                // (other photos) goes to Coach, with the barcodes.
+                if photos.count == 1, let code = photos[0].barcodes.first {
+                    scanned = ScannedCode(code: code, photo: photos[0])
+                } else {
+                    pickedPhotos = PickedMeal(photos: photos)
+                }
             }
             .sheet(item: $pickedPhotos) { picked in
                 MealPhotosSheet(photos: picked.photos) { text in Task { await log(photos: picked.photos, text: text) } }
-            }
-            .fullScreenCover(isPresented: $showScanner, onDismiss: {
-                switch afterScanner {
-                case .code(let code): scanned = ScannedCode(code: code)
-                case .type: typingBarcode = true
-                case nil: break
-                }
-                afterScanner = nil
-            }) {
-                BarcodeScannerScreen(onScan: { afterScanner = .code($0) }, typeInstead: { afterScanner = .type })
             }
             .alert("Barcode", isPresented: $typingBarcode) {
                 TextField("8001505005707", text: $barcodeText).keyboardType(.numberPad)
@@ -127,14 +122,17 @@ struct HealthView: View {
             } message: {
                 Text("The digits under the barcode.")
             }
-            .sheet(item: $scanned) { code in
-                ScanSheet(barcode: code.code, date: isToday ? nil : Wire.dayString(day)) { meal in
+            .sheet(item: $scanned, onDismiss: {
+                if let photo = coachInstead { pickedPhotos = PickedMeal(photos: [photo]) }
+                coachInstead = nil
+            }) { code in
+                ScanSheet(barcode: code.code, date: isToday ? nil : Wire.dayString(day), logged: { meal in
                     withAnimation { logReply = "Logged **\(meal.name)**: \(meal.calories) kcal." }
                     Task {
                         await loadFood()
                         await health.writeMeals()
                     }
-                }
+                }, askCoach: code.photo.map { photo in { coachInstead = photo } })
             }
             .refreshable {
                 async let food: Void = loadFood()
@@ -201,7 +199,7 @@ struct HealthView: View {
         .listRowBackground(Theme.row)
     }
 
-    /// Camera, library, a few words or a barcode; Coach (or, for a barcode, the server) does the rest.
+    /// Camera, library or a few words; Coach (or, for a photo of one packet, the server) does the rest.
     private var logButton: some View {
         Menu {
             if CameraPicker.isAvailable {
@@ -209,9 +207,7 @@ struct HealthView: View {
             }
             Button("Choose photos", systemImage: "photo.on.rectangle") { showLibrary = true }
             Button("Describe it", systemImage: "text.cursor") { describing = true }
-            if BarcodeScanner.isSupported {
-                Button("Scan barcode", systemImage: "barcode.viewfinder") { showScanner = true }
-            } else {
+            Section {
                 Button("Type a barcode", systemImage: "barcode") { typingBarcode = true }
             }
         } label: {
@@ -304,8 +300,11 @@ struct HealthView: View {
         do {
             var ids: [String] = []
             for photo in photos { ids.append(try await env.api.uploadPhoto(photo.jpeg)) }
+            var codes: [String] = []
+            for code in photos.flatMap(\.barcodes) where !codes.contains(code) { codes.append(code) }
             let reply = try await env.api.logFood(FoodLogRequest(photos: ids, text: text,
-                                                                 date: isToday ? nil : Wire.dayString(day)))
+                                                                 date: isToday ? nil : Wire.dayString(day),
+                                                                 barcodes: Array(codes.prefix(4))))
             withAnimation { logReply = reply.reply }
             if let id = reply.conversationId { logChat = id }
             await loadFood()
@@ -341,9 +340,4 @@ struct HealthView: View {
             return nil
         } catch { return error.localizedDescription }
     }
-}
-
-private enum ScannerOutcome {
-    case code(String)
-    case type
 }

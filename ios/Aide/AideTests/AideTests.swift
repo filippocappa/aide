@@ -1247,6 +1247,42 @@ final class ScannedFoodTests: XCTestCase {
         }
     }
 
+    /// An EAN-13 drawn by hand: its bars as 0s and 1s, `module` points each, with a quiet zone, on white.
+    private func ean13(_ code: String, module: CGFloat = 3) -> UIImage {
+        let l = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011", "0110111", "0001011"]
+        let r = l.map { String($0.map { $0 == "0" ? "1" : "0" }) }
+        let g = r.map { String($0.reversed()) }
+        let parity = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"]
+        let d = code.compactMap(\.wholeNumberValue)
+        var bars = "101"
+        for (i, p) in parity[d[0]].enumerated() { bars += (p == "L" ? l : g)[d[i + 1]] }
+        bars += "01010"
+        for digit in d[7...] { bars += r[digit] }
+        bars += "101"
+        let size = CGSize(width: CGFloat(bars.count + 20) * module, height: 60 * module)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            UIColor.white.setFill(); ctx.fill(CGRect(origin: .zero, size: size))
+            UIColor.black.setFill()
+            for (i, bar) in bars.enumerated() where bar == "1" {
+                ctx.fill(CGRect(x: CGFloat(i + 10) * module, y: 5 * module, width: module, height: 50 * module))
+            }
+        }
+    }
+
+    func testABarcodeIsReadInAPhotoOnThePhone() throws {
+        let photo = ean13("8001505005707")
+        XCTAssertEqual(BarcodeReader.codes(in: photo), ["8001505005707"])
+        XCTAssertEqual(BarcodeReader.codes(in: try XCTUnwrap(photo.jpegData(compressionQuality: 0.75))), ["8001505005707"])
+        let blank = UIGraphicsImageRenderer(size: CGSize(width: 200, height: 200)).image { _ in }
+        XCTAssertEqual(BarcodeReader.codes(in: blank), [])
+        // Read barcodes go along to Coach when the photo isn't a lone packet.
+        let body = try JSONSerialization.jsonObject(with: JSONEncoder.api.encode(
+            FoodLogRequest(photos: ["p_1"], barcodes: ["8001505005707"]))) as? [String: Any]
+        XCTAssertEqual(body?["barcodes"] as? [String], ["8001505005707"])
+    }
+
     func testSavedFoodDecodesAndWorksOutAPortion() throws {
         let food = try JSONDecoder.api.decode(SavedFood.self, from: Data(nocciolata.utf8))
         XCTAssertEqual(food.kcal100g, 544)

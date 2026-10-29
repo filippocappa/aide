@@ -350,7 +350,11 @@ struct MealPhotosSheet: View {
                 } header: {
                     Text("What is it?")
                 } footer: {
-                    Text("Optional. Amounts, brands, what's hidden (oil, sugar in the coffee) make the numbers better.")
+                    if photos.contains(where: { !$0.barcodes.isEmpty }) {
+                        Text("Barcode read: Coach uses the packet's real numbers. Say how much you had.")
+                    } else {
+                        Text("Optional. Amounts, brands, what's hidden (oil, sugar in the coffee) make the numbers better.")
+                    }
                 }
             }
             .scrollContentBackground(.hidden)
