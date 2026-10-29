@@ -72,7 +72,6 @@ struct DayScoreCard: View {
                 }
             }
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -80,7 +79,10 @@ struct DayScoreCard: View {
     }
 
     private var title: String {
-        guard let score = day.score else { return isToday ? "Log a meal for today's score" : "Nothing logged" }
+        guard let score = day.score else {
+            if !day.meals.isEmpty { return "Set your targets for a score" } // eaten, but nothing to score it against
+            return isToday ? "Log a meal for today's score" : "Nothing logged"
+        }
         let word = score.score >= 80 ? "Good day" : score.score >= 60 ? "Not bad" : "Off target"
         return score.final ? word : "\(word) so far"
     }
@@ -414,8 +416,8 @@ struct ScoreStrip: View {
     }
 }
 
-/// Settings → Nutrition targets: the rest-day base, what a workout adds, the profile (from Apple Health the first
-/// time), and Coach's proposal from all of it.
+/// Settings → Nutrition targets: the day's targets in big numbers, Coach working them out (it may ask a question or
+/// two first), and below, folded away, editing them by hand and the profile (from Apple Health).
 struct NutritionTargetsView: View {
     var inSheet = false
     @EnvironmentObject private var env: AppEnvironment
@@ -436,9 +438,11 @@ struct NutritionTargetsView: View {
     @State private var goal = "keep"
     @State private var proposing = false
     @State private var proposal: TargetsProposal?
+    @State private var answers: [String] = []
     @State private var error: String?
     @State private var saving = false
-    @State private var filledFromHealth = false
+    @State private var byHand = false
+    @State private var aboutYou = false
 
     var body: some View {
         Form {
@@ -446,72 +450,37 @@ struct NutritionTargetsView: View {
                 Section { ProgressView().frame(maxWidth: .infinity) }
             } else {
                 Section {
-                    NumberField(label: "Calories", unit: "kcal", text: $calories, placeholder: "None")
-                    NumberField(label: "Protein", unit: "g", text: $protein, placeholder: "None")
-                    NumberField(label: "Carbs", unit: "g", text: $carbs, placeholder: "None")
-                    NumberField(label: "Fat", unit: "g", text: $fat, placeholder: "None")
-                } header: {
-                    Text("A rest day")
+                    TargetsSummary(base: currentBase, workouts: workouts, tint: Theme.accent)
+                }
+                coachSection
+                Section {
+                    DisclosureGroup("Edit by hand", isExpanded: $byHand) {
+                        NumberField(label: "Calories", unit: "kcal", text: $calories, placeholder: "None")
+                        NumberField(label: "Protein", unit: "g", text: $protein, placeholder: "None")
+                        NumberField(label: "Carbs", unit: "g", text: $carbs, placeholder: "None")
+                        NumberField(label: "Fat", unit: "g", text: $fat, placeholder: "None")
+                        Toggle("Add what workouts burn", isOn: $workouts.on)
+                    }
                 } footer: {
-                    Text("Leave one empty for no target. Coach can change them in chat too: \"aim for 140 g protein\".")
+                    if byHand { Text("For a rest day; leave one empty for no target. Save when you're done.") }
                 }
                 Section {
-                    Toggle("Add what workouts burn", isOn: $workouts.on)
-                    if workouts.on {
-                        LabeledContent("Of the Watch's kcal") {
-                            Stepper("\(Int((workouts.share * 100).rounded()))%", value: $workouts.share, in: 0...1.5, step: 0.05)
-                                .monospacedDigit()
+                    DisclosureGroup(isExpanded: $aboutYou) {
+                        DecimalField(label: "Weight", unit: "kg", text: $weight)
+                        NumberField(label: "Height", unit: "cm", text: $height, placeholder: "–")
+                        NumberField(label: "Age", unit: "", text: $age, placeholder: "–")
+                        Picker("Sex", selection: $sex) {
+                            Text("–").tag("")
+                            Text("Male").tag("male")
+                            Text("Female").tag("female")
                         }
-                        LabeledContent("As carbs") {
-                            Stepper("\(workouts.carbsPct)%", value: $workouts.carbsPct, in: 0...100, step: 5)
-                                .monospacedDigit()
-                        }
-                    }
-                } header: {
-                    Text("Workout days")
-                } footer: {
-                    Text(workouts.on ? "A 650 kcal run adds \(Int(650 * workouts.share)) kcal: \(workouts.carbsPct)% as carbs, the rest as fat. A run in your calendar counts before it happens, at your usual pace."
-                                     : "Every day has the rest-day targets.")
-                }
-                Section {
-                    DecimalField(label: "Weight", unit: "kg", text: $weight)
-                    NumberField(label: "Height", unit: "cm", text: $height, placeholder: "–")
-                    NumberField(label: "Age", unit: "", text: $age, placeholder: "–")
-                    Picker("Sex", selection: $sex) {
-                        Text("–").tag("")
-                        Text("Male").tag("male")
-                        Text("Female").tag("female")
-                    }
-                    Picker("Goal", selection: $goal) {
-                        Text("Lose weight").tag("lose")
-                        Text("Keep it").tag("keep")
-                        Text("Gain").tag("gain")
-                    }
-                } header: {
-                    Text("You")
-                } footer: {
-                    if filledFromHealth { Text("Filled in from Apple Health. Save to keep it.") }
-                }
-                Section {
-                    if let proposal {
-                        ProposalView(proposal: proposal, current: currentBase)
-                        Button("Use these") { use(proposal) }
-                            .font(.body.weight(.semibold))
-                    }
-                    Button {
-                        Task { await propose() }
                     } label: {
-                        HStack {
-                            Label(proposal == nil ? "Ask Coach to propose" : "Ask again", systemImage: "wand.and.stars")
-                            if proposing {
-                                Spacer()
-                                ProgressView()
-                            }
+                        LabeledContent("About you") {
+                            Text(profileLine).lineLimit(1)
                         }
                     }
-                    .disabled(proposing)
                 } footer: {
-                    Text("Coach looks at you, 60 days of Apple Health (runs, pace, VO2 max, weight) and what you've eaten. Nothing changes until you save.")
+                    Text("From Apple Health, with your resting and active energy, workouts and what you've eaten: what Coach works from.")
                 }
             }
             if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
@@ -524,11 +493,98 @@ struct NutritionTargetsView: View {
             if inSheet {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { Task { await save() } }.disabled(loaded == nil || saving)
+            if byHand || aboutYou {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }.disabled(loaded == nil || saving)
+                }
             }
         }
         .task { await load() }
+    }
+
+    /// The goal, Ask Coach, and its proposal with its questions.
+    @ViewBuilder private var coachSection: some View {
+        Section {
+            Picker("Goal", selection: $goal) {
+                Text("Lose").tag("lose")
+                Text("Keep").tag("keep")
+                Text("Gain").tag("gain")
+            }
+            .pickerStyle(.segmented)
+            .listRowSeparator(.hidden)
+            if let proposal {
+                ProposalView(proposal: proposal)
+                ForEach(proposal.asks.indices, id: \.self) { i in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(proposal.asks[i]).font(.subheadline.weight(.semibold))
+                        TextField("Your answer", text: answerBinding(i), axis: .vertical)
+                    }
+                    .padding(.vertical, 2)
+                }
+                Button {
+                    Task { await use(proposal) }
+                } label: {
+                    Text("Use these").font(.body.weight(.semibold)).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(saving || proposing)
+            }
+            if proposal == nil {
+                Button {
+                    Task { await propose() }
+                } label: {
+                    HStack(spacing: 8) {
+                        if proposing { ProgressView() } else { Image(systemName: "wand.and.stars") }
+                        Text(proposing ? "Coach is working it out…" : "Ask Coach")
+                    }
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(proposing)
+            } else {
+                Button {
+                    Task { await propose() }
+                } label: {
+                    HStack {
+                        Label(askTitle, systemImage: "arrow.clockwise")
+                        if proposing {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(proposing)
+            }
+        } header: {
+            Text("Ask Coach")
+        } footer: {
+            if proposal == nil {
+                Text("Pick your goal and Coach works out your targets from your data. Nothing changes until you tap Use these.")
+            }
+        }
+    }
+
+    private var askTitle: String {
+        guard let proposal else { return "Ask Coach" }
+        return answers.contains { !$0.trimmingCharacters(in: .whitespaces).isEmpty } && !proposal.asks.isEmpty
+            ? "Answer and ask again" : "Ask again"
+    }
+
+    private func answerBinding(_ i: Int) -> Binding<String> {
+        Binding(get: { answers.indices.contains(i) ? answers[i] : "" },
+                set: { value in
+                    while answers.count <= i { answers.append("") }
+                    answers[i] = value
+                })
+    }
+
+    /// "65.4 kg · 183 cm · 22 · male"
+    private var profileLine: String {
+        let parts = [weight.isEmpty ? nil : "\(weight) kg", height.isEmpty ? nil : "\(height) cm",
+                     age.isEmpty ? nil : age, sex.isEmpty ? nil : sex.capitalized]
+        let line = parts.compactMap { $0 }.joined(separator: " · ")
+        return line.isEmpty ? "Not set" : line
     }
 
     private var currentBase: FoodGoals {
@@ -541,17 +597,14 @@ struct NutritionTargetsView: View {
         do {
             let t = try await env.api.foodTargets()
             loaded = t
-            calories = t.base.calories.map(String.init) ?? ""
-            protein = t.base.proteinG.map(String.init) ?? ""
-            carbs = t.base.carbsG.map(String.init) ?? ""
-            fat = t.base.fatG.map(String.init) ?? ""
+            show(t.base)
             workouts = t.workouts
             var p = t.profile
-            if p.weightKg == nil, p.heightCm == nil, p.age == nil, p.sex == nil { // the first time: from Apple Health
-                let h = await health.profile()
-                (p.weightKg, p.heightCm, p.age, p.sex) = (h.weightKg, h.heightCm, h.age, h.sex)
-                filledFromHealth = h != FoodProfile()
-            }
+            let h = await health.profile() // Apple Health's latest wins: weight changes
+            p.weightKg = h.weightKg ?? p.weightKg
+            p.heightCm = h.heightCm ?? p.heightCm
+            p.age = h.age ?? p.age
+            p.sex = h.sex ?? p.sex
             weight = p.weightKg.map { $0.formatted(.number.precision(.fractionLength(0...1))) } ?? ""
             height = p.heightCm.map(String.init) ?? ""
             age = p.age.map(String.init) ?? ""
@@ -561,6 +614,13 @@ struct NutritionTargetsView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func show(_ base: FoodGoals) {
+        calories = base.calories.map(String.init) ?? ""
+        protein = base.proteinG.map(String.init) ?? ""
+        carbs = base.carbsG.map(String.init) ?? ""
+        fat = base.fatG.map(String.init) ?? ""
     }
 
     private var targets: FoodTargets {
@@ -573,7 +633,7 @@ struct NutritionTargetsView: View {
         return FoodTargets(base: currentBase, workouts: workouts, profile: p)
     }
 
-    /// Saves the profile first, so Coach proposes from what's on screen.
+    /// Saves the profile first, so Coach proposes from what's on screen; sends the answers to its last questions.
     private func propose() async {
         proposing = true
         error = nil
@@ -582,22 +642,27 @@ struct NutritionTargetsView: View {
             var current = targets
             if let loaded { current.base = loaded.base; current.workouts = loaded.workouts } // only the profile
             loaded = try await env.api.saveFoodTargets(current)
-            filledFromHealth = false
-            withAnimation { proposal = nil }
-            let got = try await env.api.proposeFoodTargets()
-            withAnimation { proposal = got }
+            let asked = proposal?.asks ?? []
+            let given = asked.indices.compactMap { i -> TargetsAnswers.Answer? in
+                let a = answers.indices.contains(i) ? answers[i].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+                return a.isEmpty ? nil : TargetsAnswers.Answer(question: asked[i], answer: a)
+            }
+            let got = try await env.api.proposeFoodTargets(answers: given)
+            withAnimation {
+                proposal = got
+                answers = []
+            }
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func use(_ p: TargetsProposal) {
-        calories = p.base.calories.map(String.init) ?? ""
-        protein = p.base.proteinG.map(String.init) ?? ""
-        carbs = p.base.carbsG.map(String.init) ?? ""
-        fat = p.base.fatG.map(String.init) ?? ""
+    /// Takes Coach's numbers and saves them.
+    private func use(_ p: TargetsProposal) async {
+        show(p.base)
         workouts = WorkoutTargets(on: true, share: p.workouts.share, carbsPct: p.workouts.carbsPct)
-        withAnimation { proposal = nil }
+        await save()
+        if error == nil { withAnimation { proposal = nil } }
     }
 
     private func save() async {
@@ -605,8 +670,8 @@ struct NutritionTargetsView: View {
         defer { saving = false }
         do {
             loaded = try await env.api.saveFoodTargets(targets)
-            filledFromHealth = false
             error = nil
+            withAnimation { byHand = false; aboutYou = false }
             if inSheet { dismiss() }
         } catch {
             self.error = error.localizedDescription
@@ -619,43 +684,71 @@ struct NutritionTargetsView: View {
     }
 }
 
-/// Coach's proposal next to the numbers now, and why.
+/// The day's targets in big numbers: calories, then protein, carbs and fat; what a workout day adds under them.
+struct TargetsSummary: View {
+    let base: FoodGoals
+    let workouts: WorkoutTargets
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let kcal = base.calories {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(kcal.formatted()).font(.system(size: 40, weight: .bold, design: .rounded)).monospacedDigit()
+                    Text("kcal a day").font(.subheadline).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("No targets yet").font(.title3.weight(.semibold))
+                Text("Ask Coach to work them out from your Apple Health, or set them by hand.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if base.proteinG != nil || base.carbsG != nil || base.fatG != nil {
+                HStack(spacing: 10) {
+                    macro("Protein", base.proteinG)
+                    macro("Carbs", base.carbsG)
+                    macro("Fat", base.fatG)
+                }
+            }
+            if base.calories != nil {
+                Label(Self.workoutLine(workouts), systemImage: "figure.run")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func macro(_ name: String, _ grams: Int?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(grams.map { "\($0) g" } ?? "–").font(.headline).monospacedDigit()
+            Text(name).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// "Workout days add what the Watch says you burned, mostly as carbs."
+    static func workoutLine(_ w: WorkoutTargets) -> String {
+        guard w.on, w.share > 0 else { return "Workout days are the same as rest days." }
+        let pct = Int((w.share * 100).rounded())
+        let how = w.carbsPct >= 60 ? "mostly as carbs" : "as carbs and fat"
+        return pct == 100 ? "Workout days add what the Watch says you burned, \(how)."
+                          : "Workout days add \(pct)% of what the Watch says you burned, \(how)."
+    }
+}
+
+/// Coach's proposal: the numbers, what a workout adds, and why.
 private struct ProposalView: View {
     let proposal: TargetsProposal
-    let current: FoodGoals
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
-                GridRow {
-                    Text("")
-                    Text("Now").font(.caption).foregroundStyle(.secondary)
-                    Text("Coach").font(.caption.weight(.semibold))
-                }
-                row("Calories", current.calories, proposal.base.calories, "kcal")
-                row("Protein", current.proteinG, proposal.base.proteinG, "g")
-                row("Carbs", current.carbsG, proposal.base.carbsG, "g")
-                row("Fat", current.fatG, proposal.base.fatG, "g")
-                GridRow {
-                    Text("Workouts").font(.subheadline)
-                    Text("")
-                    Text("\(Int((proposal.workouts.share * 100).rounded()))%, \(proposal.workouts.carbsPct)% carbs")
-                        .font(.subheadline.weight(.semibold))
-                }
-            }
-            .monospacedDigit()
+            Text("Coach suggests").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            TargetsSummary(base: proposal.base, workouts: proposal.workouts, tint: Theme.accent)
             if !proposal.why.isEmpty {
                 Text(proposal.why).font(.footnote).foregroundStyle(.secondary)
             }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func row(_ name: String, _ now: Int?, _ new: Int?, _ unit: String) -> some View {
-        GridRow {
-            Text(name).font(.subheadline)
-            Text(now.map { "\($0) \(unit)" } ?? "–").font(.subheadline).foregroundStyle(.secondary)
-            Text(new.map { "\($0) \(unit)" } ?? "–").font(.subheadline.weight(.semibold))
         }
     }
 }

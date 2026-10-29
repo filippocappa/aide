@@ -1733,6 +1733,33 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(QualityLine.processing(old).value, "Not enough data")
     }
 
+    func testMealsShowNewestFirstWithTheirEmoji() throws {
+        let meals = try JSONDecoder.api.decode([Meal].self, from: Data(#"""
+        [{"id": 1, "name": "Oats", "eaten_at": "2026-10-29T08:00:00+01:00", "emoji": "🥣"},
+         {"id": 2, "name": "Pasta", "eaten_at": "2026-10-29T13:00:00+01:00"},
+         {"id": 3, "name": "Yogurt", "eaten_at": "2026-10-29T13:00:00+01:00", "emoji": "🥛"}]
+        """#.utf8))
+        XCTAssertEqual(Meal.newestFirst(meals).map(\.id), [3, 2, 1])
+        XCTAssertEqual(meals.map(\.emoji), ["🥣", "🍽️", "🥛"])  // an older server: a plate
+    }
+
+    func testCoachsQuestionsAndTheWorkoutLine() throws {
+        let p = try JSONDecoder.api.decode(TargetsProposal.self, from: Data(#"""
+        {"base": {"calories": 2300}, "workouts": {"on": true, "share": 0.9, "carbs_pct": 80}, "why": "",
+         "questions": ["Is 65 kg still right?"]}
+        """#.utf8))
+        XCTAssertEqual(p.asks, ["Is 65 kg still right?"])
+        XCTAssertEqual(TargetsSummary.workoutLine(p.workouts),
+                       "Workout days add 90% of what the Watch says you burned, mostly as carbs.")
+        let old = try JSONDecoder.api.decode(TargetsProposal.self, from: Data(#"""
+        {"base": {}, "workouts": {"on": true, "share": 1, "carbs_pct": 50}, "why": ""}
+        """#.utf8))
+        XCTAssertEqual(old.asks, [])
+        XCTAssertEqual(TargetsSummary.workoutLine(old.workouts), "Workout days add what the Watch says you burned, as carbs and fat.")
+        let body = try JSONEncoder.api.encode(TargetsAnswers(answers: [.init(question: "Q?", answer: "A")]))
+        XCTAssertEqual(String(decoding: body, as: UTF8.self), #"{"answers":[{"question":"Q?","answer":"A"}]}"#)
+    }
+
     func testAPlannedRunSaysWhatItsFor() throws {
         let bonus = try JSONDecoder.api.decode(FoodBonus.self, from: Data(#"""
         {"kcal": 540, "planned": true, "workouts": [{"type": "run", "kcal": 540, "minutes": 45, "title": "Corsa al Valentino"}]}

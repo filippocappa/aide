@@ -46,6 +46,7 @@ final class HealthService: ObservableObject {
     private static let wristTemp = HKQuantityType(.appleSleepingWristTemperature)
     private static let steps = HKQuantityType(.stepCount)
     private static let activeEnergy = HKQuantityType(.activeEnergyBurned)
+    private static let restingEnergy = HKQuantityType(.basalEnergyBurned)
     private static let exercise = HKQuantityType(.appleExerciseTime)
     private static let inhaler = HKQuantityType(.inhalerUsage)
     private static let energy = HKQuantityType(.dietaryEnergyConsumed)
@@ -68,7 +69,7 @@ final class HealthService: ObservableObject {
     /// The food kinds are read too, so the app finds its own entries again. Weight, height, age, sex and VO2 max
     /// are for the food targets (the profile Coach proposes from).
     private static let readTypes: Set<HKObjectType> = Set([
-        sleep, restingHR, hrv, respiratory, wristTemp, steps, activeEnergy, exercise, inhaler,
+        sleep, restingHR, hrv, respiratory, wristTemp, steps, activeEnergy, restingEnergy, exercise, inhaler,
         HKObjectType.workoutType(), bodyMass, height, vo2Max,
         HKCharacteristicType(.dateOfBirth), HKCharacteristicType(.biologicalSex),
     ] + food.map(\.0) + distances)
@@ -388,6 +389,7 @@ final class HealthService: ObservableObject {
         async let workouts = workoutSamples(from: first, to: end)
         async let stepsByDay = daily(Self.steps, .cumulativeSum, from: first, to: end)
         async let energyByDay = daily(Self.activeEnergy, .cumulativeSum, from: first, to: end)
+        async let restingEnergyByDay = daily(Self.restingEnergy, .cumulativeSum, from: first, to: end)
         async let exerciseByDay = daily(Self.exercise, .cumulativeSum, from: first, to: end)
         async let restingByDay = daily(Self.restingHR, .discreteAverage, from: first, to: end)
         async let inhalerByDay = daily(Self.inhaler, .cumulativeSum, from: first, to: end)
@@ -399,6 +401,7 @@ final class HealthService: ObservableObject {
         let (allWorkouts, steps, energy, exercise, resting) =
             try await (workouts, stepsByDay, energyByDay, exerciseByDay, restingByDay)
         let inhaler = try await inhalerByDay
+        let restingEnergy = try await restingEnergyByDay
         let (weights, vo2) = try await (weightSamples, vo2Samples)
         let vo2Unit = HKUnit.literUnit(with: .milli).unitDivided(by: .gramUnit(with: .kilo).unitMultiplied(by: .minute()))
 
@@ -422,6 +425,7 @@ final class HealthService: ObservableObject {
                     .map { ($0 * 100).rounded() / 100 },
                 steps: steps.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .count())) },
                 activeKcal: energy.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .kilocalorie())) },
+                restingKcal: restingEnergy.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .kilocalorie())) },
                 exerciseMin: exercise.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .minute())) },
                 inhalerUsage: inhaler.statistics(for: day)?.sumQuantity().map { Int($0.doubleValue(for: .count())) },
                 naps: Optional(SleepSummary.naps(on: day, from: segments, calendar: calendar)).flatMap { $0.isEmpty ? nil : $0 },

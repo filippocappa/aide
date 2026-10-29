@@ -402,23 +402,47 @@ how much of that goes to carbs (carbs_pct; the rest is fat). Work from the profi
 their usual activity on days without a workout (active kcal and steps), their runs and other workouts (how often, \
 how long, pace, VO2 max), their weight trend and what they've actually been eating. Protein for someone who runs \
 and trains: about 1.6–2.2 g per kg. A goal to lose means a modest deficit (300–500 kcal), to gain a modest surplus. \
-Say why in two or three short sentences, plainly, with the numbers that mattered. When something important is \
-missing (no weight), still propose, and say what would make it better.
+When the Watch measures resting energy (resting kcal), \
+use it: a rest day's burn is the usual resting kcal plus the usual active kcal on days without a workout. Don't \
+estimate it from a formula then. Say why in two or three short sentences, plainly, with the numbers that \
+mattered.
+
+You may ask the user up to two short questions in `questions`, only when an answer would change the numbers \
+(the latest weight is old, the goal's pace isn't clear, a race or a change in training is coming), never what the \
+data already says or what they've answered. Always propose anyway, from what you have; the user's answers come \
+back to you for another proposal.
 
 Answer with JSON only, nothing before or after it:
 {"base": {"calories": 2500, "protein_g": 140, "carbs_g": 300, "fat_g": 80}, "workouts": {"share": 0.8, \
-"carbs_pct": 80}, "why": "…"}"""
+"carbs_pct": 80}, "why": "…", "questions": ["…"]}"""
 
 
-def proposal_input(nutrition: "Nutrition", foods_days: list[dict]) -> str:
-    """What Coach proposes from: the profile, 60 days of Health, the last 14 days of food, the current targets."""
+def _median(values: list[float]) -> float | None:
+    values = sorted(values)
+    if not values:
+        return None
+    mid = len(values) // 2
+    return values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+
+
+def proposal_input(nutrition: "Nutrition", foods_days: list[dict], answers: list[dict] | None = None) -> str:
+    """What Coach proposes from: the profile, 60 days of Health, the last 14 days of food, the current targets, and
+    the user's answers to its questions (each {question, answer})."""
     today = nutrition.food.today()
     t = nutrition.targets()
     lines = [f"Today: {today:%A %d %B %Y}.", f"Profile: {json.dumps(t['profile'])}",
              f"Current targets: base {json.dumps(t['base'])}, workouts {json.dumps(t['workouts'])}"]
     days = nutrition.health.between(today - timedelta(days=60), today) if nutrition.health else []
     if days:
-        lines.append("Apple Health, newest first (active kcal, steps, exercise min, weight kg, VO2 max, workouts):")
+        past = [d for d in days if d["date"] < today.isoformat()]  # today's numbers are only so far
+        resting = _median([d["resting_kcal"] for d in past if d.get("resting_kcal")])
+        active = _median([d["active_kcal"] for d in past if d.get("active_kcal") and not d.get("workouts")])
+        if resting:
+            lines.append(f"Measured by the Watch: usual resting kcal {resting:.0f} a day"
+                         + (f", usual active kcal on days without a workout {active:.0f}, so a rest day burns about "
+                            f"{resting + active:.0f}" if active else "") + ".")
+        lines.append("Apple Health, newest first (resting kcal, active kcal, steps, exercise min, weight kg, VO2 max, "
+                     "workouts):")
         for day in days:
             workouts = []
             for w in day.get("workouts", []):
@@ -428,7 +452,8 @@ def proposal_input(nutrition: "Nutrition", foods_days: list[dict]) -> str:
                 km = f", {w['km']:.1f} km" if w.get("km") else ""
                 workouts.append(f"{w.get('type', 'other')} {minutes:.0f} min{km}{pace}, "
                                 f"{w.get('kcal', 0):.0f} kcal")
-            lines.append(f"- {day['date']}: {day.get('active_kcal', '?')} kcal, {day.get('steps', '?')} steps, "
+            lines.append(f"- {day['date']}: {day.get('resting_kcal', '?')} + {day.get('active_kcal', '?')} kcal, "
+                         f"{day.get('steps', '?')} steps, "
                          f"{day.get('exercise_min', '?')} min" + (f", {day['weight_kg']} kg" if day.get("weight_kg") else "")
                          + (f", VO2 max {day['vo2max']}" if day.get("vo2max") else "")
                          + (f"; {'; '.join(workouts)}" if workouts else ""))
@@ -441,11 +466,14 @@ def proposal_input(nutrition: "Nutrition", foods_days: list[dict]) -> str:
                   f"{d['totals']['carbs_g']} g, {d['totals']['fat_g']} g ({d['meals']} meals)" for d in logged]
     else:
         lines.append("No food logged in the last 14 days.")
+    if answers:
+        lines.append("The user answered your questions:")
+        lines += [f"- {a['question']} {a['answer']}" for a in answers]
     return "\n".join(lines)
 
 
 def parse_proposal(answer) -> dict:
-    """Coach's answer as {base, workouts, why}; raises ValueError when it isn't one."""
+    """Coach's answer as {base, workouts, why, questions}; raises ValueError when it isn't one."""
     if not isinstance(answer, dict) or not isinstance(answer.get("base"), dict):
         raise ValueError("Coach's proposal didn't come back right; try again")
     base = {}
@@ -460,7 +488,8 @@ def parse_proposal(answer) -> dict:
     carbs = w.get("carbs_pct", WORKOUTS["carbs_pct"])
     workouts = {"on": True, "share": round(min(1.5, max(0.0, float(share))), 2),
                 "carbs_pct": round(min(100, max(0, float(carbs))))}
-    return {"base": base, "workouts": workouts, "why": str(answer.get("why") or "").strip()}
+    questions = [str(q).strip() for q in answer.get("questions") or [] if str(q).strip()][:2]
+    return {"base": base, "workouts": workouts, "why": str(answer.get("why") or "").strip(), "questions": questions}
 
 
 def now_events(calendar, tz: ZoneInfo) -> list:

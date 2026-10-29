@@ -620,9 +620,10 @@ Meal object:
 ```json
 {"id": 12, "name": "Pasta al pomodoro", "eaten_at": "2026-10-21T13:10:00+02:00", "calories": 650,
  "protein_g": 20, "carbs_g": 110, "fat_g": 15, "water_ml": 0, "caffeine_mg": 0, "photo": "p_3f9a…",
- "notes": "about 120 g dry pasta"}
+ "notes": "about 120 g dry pasta", "emoji": "🍝"}
 ```
-`photo` is null without one. Numbers are rounded (calories to 10, grams to 1): the model's estimates, or (since
+`photo` is null without one. `emoji` (since 2026-10-29, always there) is Coach's for the meal, else one guessed from
+the name (`🍽️` when nothing fits); the app's list shows it and the photo only on the meal's page. Numbers are rounded (calories to 10, grams to 1): the model's estimates, or (since
 2026-10-29) added up by the server from the meal's items, each a saved food's values per 100 g times the grams eaten.
 A meal logged from items has them as the first line of `notes` (`"Items: Yogurt greco 0% 170 g, Fiocchi d'avena 40 g"`),
 then whatever the model noted; no new fields.
@@ -649,7 +650,7 @@ goes. The server sends the silent `sync` push after every meal change, so this h
 | `PUT /v1/food/goals` | Goals | Goals (sets the base) |
 | `GET /v1/food/targets` | | Targets (since 2026-10-29) |
 | `PUT /v1/food/targets` | any of `base` (Goals), `workouts` (any of its keys), `profile` (any of its keys; `null` clears one) | Targets; 400 with the reason when a value is out of range |
-| `POST /v1/food/targets/propose` | | `{"base": Goals, "workouts": {"on": true, "share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week…"}`: Coach's proposal (one model call, 5–30 s) from the profile, 60 days of Apple Health (activity, workouts with distance and pace, VO2 max, weight) and the last 14 days of food. Nothing is saved: the app shows it and PUTs what the user keeps. 502 when the model fails or answers oddly. |
+| `POST /v1/food/targets/propose` | optional `{"answers": [{"question": "Is 65 kg still right?", "answer": "66 now"}]}` (up to 4; empty answers are left out) | `{"base": Goals, "workouts": {"on": true, "share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week…", "questions": ["Is 65 kg still right?"]}`: Coach's proposal (one model call, 5–30 s) from the profile, 60 days of Apple Health (resting and active energy, workouts with distance and pace, VO2 max, weight; the Watch's resting energy, not a formula) and the last 14 days of food. `questions` (since 2026-10-29, up to 2, often none) are what would change the numbers; the app sends the answers back with the questions for a new proposal. Nothing is saved: the app shows it and PUTs what the user keeps. 502 when the model fails or answers oddly. |
 
 Totals: `{"calories": 1840, "protein_g": 96, "carbs_g": 210, "fat_g": 61, "water_ml": 1500, "caffeine_mg": 130}`
 (the last two since 2026-10-27). Goals has the first four keys, each a
@@ -1202,6 +1203,7 @@ the server's liveness check; these routes sit under it and need the token like e
   "wrist_temp_c": 35.91,
   "steps": 8432,
   "active_kcal": 512,
+  "resting_kcal": 1790,
   "exercise_min": 41,
   "inhaler_usage": 3,
   "naps": [{"start": "2026-10-19T14:05:00+02:00", "end": "2026-10-19T14:50:00+02:00", "asleep_min": 42}],
@@ -1218,6 +1220,8 @@ the server's liveness check; these routes sit under it and need the token like e
 - **Missing or `null` means no data** for that field. Every number may be missing.
 - `date` is the local calendar day. `steps`, `active_kcal`, `exercise_min`, `inhaler_usage` and `workouts` cover
   00:00–24:00. `inhaler_usage` (since 2026-10-26) is Health's Inhaler Usage count, for a limit habit's `health`.
+  `resting_kcal` (since 2026-10-29) is Health's Resting Energy for the day (the Watch's basal burn), for the food
+  targets' proposal.
 - `sleep` is the night that **ended** that morning: the longest stretch of sleep that ends between 18:00 the
   evening before and 18:00 on `date`, with gaps under an hour counted as part of it. Naps are left out of it. `bedtime`
   is when sleep started, `wake` when it ended, `in_bed_min` = `wake` − `bedtime`, `asleep_min` = the sleep stages

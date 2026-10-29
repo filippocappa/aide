@@ -1,15 +1,22 @@
 import SwiftUI
 
-/// A meal on one line: its photo, name and macros, then calories and time. In the Health tab and in chat cards.
+/// A meal on one line: its emoji, name and macros (a camera when it has a photo, which shows only on its page), then
+/// calories and time. In the Health tab and in chat cards.
 struct MealRow: View {
     let meal: Meal
 
     var body: some View {
         HStack(spacing: 12) {
-            MealThumb(photo: meal.photo)
+            MealEmoji(emoji: meal.emoji)
             VStack(alignment: .leading, spacing: 2) {
                 Text(meal.name).lineLimit(2)
-                Text(Self.macros(meal)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                HStack(spacing: 4) {
+                    Text(Self.macros(meal)).monospacedDigit()
+                    if meal.photo != nil {
+                        Image(systemName: "camera.fill").accessibilityLabel("Has a photo")
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 2) {
@@ -27,22 +34,17 @@ struct MealRow: View {
     static func macros(_ meal: Meal) -> String { "P \(meal.proteinG) g · C \(meal.carbsG) g · F \(meal.fatG) g" }
 }
 
-/// The meal's photo, or a fork and knife without one.
-struct MealThumb: View {
-    let photo: String?
+/// The meal's emoji on a soft tile.
+struct MealEmoji: View {
+    let emoji: String
     var size: CGFloat = 44
 
     var body: some View {
-        Group {
-            if let photo {
-                ServerPhoto(id: photo)
-            } else {
-                Color.secondary.opacity(0.12)
-                    .overlay { Image(systemName: "fork.knife").font(.system(size: size * 0.38)).foregroundStyle(.secondary) }
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
+        Text(emoji)
+            .font(.system(size: size * 0.5))
+            .frame(width: size, height: size)
+            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
+            .accessibilityHidden(true)
     }
 }
 

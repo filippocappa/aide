@@ -532,8 +532,8 @@ final class APIClient {
     }
 
     /// Coach's proposal from the profile, Apple Health and the food log: one model call, up to ~30 s.
-    func proposeFoodTargets() async throws -> TargetsProposal {
-        try await send("POST", "/v1/food/targets/propose", body: EmptyBody(), timeout: 120)
+    func proposeFoodTargets(answers: [TargetsAnswers.Answer] = []) async throws -> TargetsProposal {
+        try await send("POST", "/v1/food/targets/propose", body: TargetsAnswers(answers: answers), timeout: 120)
     }
 
     func uploadHealthDays(_ days: [HealthDay]) async throws -> HealthUploadResult {

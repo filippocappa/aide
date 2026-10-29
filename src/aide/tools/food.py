@@ -58,7 +58,8 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         return line
 
     async def log_meal(name: str, items: list[dict], eaten_at: str | None = None, photo_id: str | None = None,
-                       notes: str | None = None, water_ml: int = 0, caffeine_mg: int = 0) -> str:
+                       notes: str | None = None, water_ml: int = 0, caffeine_mg: int = 0,
+                       emoji: str | None = None) -> str:
         if photo_id and not photos.exists(photo_id):
             raise ValueError(f"no photo {photo_id}")
         if not items and not (water_ml or caffeine_mg):
@@ -66,7 +67,7 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         top = store.conn.execute("SELECT COALESCE(MAX(id), 0) FROM foods").fetchone()[0]
         rows, sums, notes = foods.from_items(items, notes)
         meal = store.add(name, **sums, eaten_at=eaten_at, photo=photo_id, notes=notes, water_ml=water_ml,
-                         caffeine_mg=caffeine_mg)
+                         caffeine_mg=caffeine_mg, emoji=emoji)
         foods.keep_items(meal["id"], rows, count=True)
         lines = [f"Logged: {fmt(meal)}", day_line(store.local_day(meal))]
         new = [f"[food {r['food_id']}] {r['name']}" for r in rows if r["food_id"] > top]
@@ -75,14 +76,14 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
 
     async def update_meal(meal_id: int, name: str | None = None, items: list[dict] | None = None,
                           eaten_at: str | None = None, notes: str | None = None, water_ml: int | None = None,
-                          caffeine_mg: int | None = None) -> str:
+                          caffeine_mg: int | None = None, emoji: str | None = None) -> str:
         rows = None
         sums = {k: None for k in MACROS}
         if items:
             kept = notes if notes is not None else free_notes(store.find(meal_id)["notes"])
             rows, sums, notes = foods.from_items(items, kept)
         meal = store.update(meal_id, name=name, **sums, eaten_at=eaten_at, notes=notes, water_ml=water_ml,
-                            caffeine_mg=caffeine_mg)
+                            caffeine_mg=caffeine_mg, emoji=emoji)
         if rows:
             foods.keep_items(meal_id, rows, count=False)
         return cards(f"Updated: {fmt(meal)}\n{day_line(store.local_day(meal))}", [meal])
@@ -130,7 +131,9 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
     drinks = {"water_ml": {"type": "integer", "description": "ml of water drunk: plain or sparkling water, and the "
                            "volume of drinks that are mostly water (coffee, tea, juice). 0 or omit for none"},
               "caffeine_mg": {"type": "integer", "description": "mg of caffeine (an espresso about 65, a moka cup "
-                              "about 100, a cola can about 35). 0 or omit for none"}}
+                              "about 100, a cola can about 35). 0 or omit for none"},
+              "emoji": {"type": "string", "description": "One emoji for the meal, shown in the app's list instead "
+                        "of the photo (🍝, 🥗, 🥣, ☕)"}}
     return [
         Tool("log_meal", "Log a meal (or a drink: water, coffee) the user had from its items, each a food with "
              "the grams they had; plus water and caffeine when there are any (water alone: items empty). Pass "

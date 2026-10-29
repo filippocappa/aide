@@ -6,6 +6,7 @@ grams to 1. Days are local days (AIDE_TIMEZONE); eaten_at is stored in UTC. Wate
 """
 
 import json
+import re
 import sqlite3
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS meals (
     water_ml   INTEGER NOT NULL DEFAULT 0,
     caffeine_mg INTEGER NOT NULL DEFAULT 0,
     photo      TEXT,  -- photo id (photos.py), NULL without one
+    emoji      TEXT,  -- Coach's, NULL for a guess from the name (meal_emoji)
     notes      TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -41,7 +43,27 @@ LIMITS = {"calories": 10_000, "protein_g": 1_000, "carbs_g": 1_000, "fat_g": 1_0
           "water_ml": 10_000, "caffeine_mg": 2_000}
 MAX_NAME = 100
 MAX_NOTES = 500
-EDITABLE = ("name", "eaten_at", *MACROS, *DRINKS, "notes")
+EDITABLE = ("name", "eaten_at", *MACROS, *DRINKS, "notes", "emoji")
+# A meal without Coach's emoji gets the first of these its name mentions (Italian and English), else a plate. Each
+# word matches from the start of a word in the name (regex).
+EMOJI = [
+    ("🍝", r"pasta spaghetti penne fusilli rigatoni lasagn gnocchi tortellini ravioli carbonara"),
+    ("🍕", r"pizza focaccia"), ("🍣", r"sushi"), ("🍔", r"burger hamburger"), ("🍟", r"fries patatine"),
+    ("🥪", r"sandwich panino piadina tramezzino wrap toast"), ("🥐", r"croissant cornetto brioche"),
+    ("🍞", r"bread pane\b fette crackers grissini"), ("🥣", r"oat avena porridge cereal muesli granola"),
+    ("🥗", r"salad insalata"), ("🍲", r"soup zuppa minestr vellutata stew"), ("🍚", r"rice riso risotto"),
+    ("🍗", r"chicken pollo turkey tacchino"), ("🥩", r"steak bistecca beef manzo meat carne pork maiale"),
+    ("🐟", r"fish pesce salmon salmone tuna tonno merluzzo"), ("🥚", r"egg uova uovo omelette frittata"),
+    ("🧀", r"cheese formaggio mozzarella parmigiano ricotta"), ("🥛", r"milk latte yogurt yoghurt kefir skyr"),
+    ("🫘", r"lentil lenticchie beans fagioli chickpea ceci\b legum"), ("🥔", r"potato patat"),
+    ("🍫", r"chocolate cioccolat nutella nocciolata"), ("🍪", r"biscuit biscott cookie"),
+    ("🍰", r"cake torta tiramis"), ("🍦", r"ice\s?cream gelato"),
+    ("🥜", r"nuts?\b noci mandorle almond peanut arachidi"), ("🍌", r"banana"), ("🍎", r"apple mela\b mele\b"),
+    ("🍊", r"orange arancia mandarin"), ("🍓", r"fruit frutta berries fragol"),
+    ("🥤", r"shake protein whey frullato smoothie coke cola\b soda"), ("🧃", r"juice succo"),
+    ("☕", r"coffee caff espresso cappuccino tea\b tè\b"), ("🍺", r"beer birra"), ("🍷", r"wine vino spritz"),
+    ("💧", r"water acqua"),
+]
 MAX_RANGE = 92  # days of meals in one read
 FOOD_METRICS = ("logged", "protein_g", "calories")  # what a food objective or habit counts days by
 CALORIE_BAND = 0.1  # a calorie goal is met within 10% either way
@@ -53,6 +75,13 @@ def _round(key: str, value: float) -> int:
     return int(value / 10 + 0.5) * 10 if key == "calories" else int(value + 0.5)  # halves up, unlike round()
 
 
+def meal_emoji(name: str) -> str:
+    """The emoji for the first food the name mentions ("Pasta with mushroom sauce": 🍝), else 🍽️."""
+    found = [(m.start(), n, emoji) for n, (emoji, words) in enumerate(EMOJI) for word in words.split()
+             if (m := re.search(r"\b" + word, name, re.I))]
+    return min(found)[2] if found else "🍽️"
+
+
 class FoodStore:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo):
         self.conn = conn
@@ -62,6 +91,8 @@ class FoodStore:
             for column in DRINKS:
                 if column not in have:
                     self.conn.execute(f"ALTER TABLE meals ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
+            if "emoji" not in have:
+                self.conn.execute("ALTER TABLE meals ADD COLUMN emoji TEXT")
         self.conn.executescript(SCHEMA)
         self.on_change: list = []  # called when a meal is added, changed or deleted (the phone writes it to Health)
 
@@ -92,6 +123,8 @@ class FoodStore:
                     raise ValueError(f"name must be 1–{MAX_NAME} characters")
             elif key == "notes":
                 value = str(value or "").strip()[:MAX_NOTES]
+            elif key == "emoji":
+                value = str(value or "").strip()[:8] or None
             elif key == "eaten_at":
                 value = self._eaten_at(value)
             elif key in MACROS or key in DRINKS:
@@ -108,15 +141,15 @@ class FoodStore:
 
     def add(self, name: str, calories: float, protein_g: float, carbs_g: float, fat_g: float,
             eaten_at: datetime | str | None = None, photo: str | None = None, notes: str = "",
-            water_ml: float = 0, caffeine_mg: float = 0) -> dict:
+            water_ml: float = 0, caffeine_mg: float = 0, emoji: str | None = None) -> dict:
         clean = self._clean({"name": name, "calories": calories, "protein_g": protein_g, "carbs_g": carbs_g,
                              "fat_g": fat_g, "water_ml": water_ml, "caffeine_mg": caffeine_mg, "notes": notes,
-                             "eaten_at": eaten_at or utcnow()})
+                             "eaten_at": eaten_at or utcnow(), "emoji": emoji})
         now = utcnow().isoformat()
         cur = self.conn.execute(
             "INSERT INTO meals (eaten_at, name, calories, protein_g, carbs_g, fat_g, water_ml, caffeine_mg, photo, "
-            "notes, created_at, updated_at) VALUES (:eaten_at, :name, :calories, :protein_g, :carbs_g, :fat_g, "
-            ":water_ml, :caffeine_mg, :photo, :notes, :now, :now)",
+            "notes, emoji, created_at, updated_at) VALUES (:eaten_at, :name, :calories, :protein_g, :carbs_g, "
+            ":fat_g, :water_ml, :caffeine_mg, :photo, :notes, :emoji, :now, :now)",
             {**clean, "photo": photo, "now": now})
         self._changed()
         return self.find(cur.lastrowid)
@@ -192,7 +225,8 @@ class FoodStore:
     def as_json(self, meal: dict) -> dict:
         return {"id": meal["id"], "name": meal["name"],
                 "eaten_at": datetime.fromisoformat(meal["eaten_at"]).astimezone(self.tz).replace(microsecond=0).isoformat(),
-                **{k: meal[k] for k in (*MACROS, *DRINKS)}, "photo": meal["photo"], "notes": meal["notes"]}
+                **{k: meal[k] for k in (*MACROS, *DRINKS)}, "photo": meal["photo"], "notes": meal["notes"],
+                "emoji": meal.get("emoji") or meal_emoji(meal["name"])}
 
     # -- goals ----------------------------------------------------------------
 

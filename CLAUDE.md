@@ -210,6 +210,11 @@ nutrients 50% (fibre, fruit and veg, saturated fat and free sugars as % of kcal,
 and fruit/veg only on a finished day), processing 25% (the NOVA 4 share of kcal; Coach gives `nova` for new foods)
 and the kcal-weighted grades 25%. Coach's day line names the weakest. App: Nutrients, Processing and Food grades
 sections on the day's page, the weakest as a hint on the card.
+From the first try (2026-10-29): Health's Resting Energy is uploaded (`resting_kcal`) and Coach's proposal works from the
+measured burn, not a formula; it may ask up to two `questions`, answered on the page and sent back for a new proposal.
+The targets page is simpler: the numbers big, the goal and Ask Coach, "Use these" saves; editing by hand and the profile
+are folded away. Meals list newest first, each with an `emoji` (Coach's, else guessed from the name); the photo only on
+the meal's page. The card says "Set your targets for a score" when meals are logged without targets.
 
 **Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
 files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and

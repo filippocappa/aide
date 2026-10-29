@@ -234,7 +234,7 @@ struct HealthView: View {
 
     private var mealsSection: some View {
         Section("Meals") {
-            let meals = food?.meals ?? []
+            let meals = Meal.newestFirst(food?.meals ?? [])
             if meals.isEmpty {
                 Text(isToday ? "Nothing logged yet today. Take a photo of what you eat, or tell Coach in chat."
                      : "Nothing logged that day.")

@@ -179,6 +179,16 @@ async def test_new_items_carry_their_quality_and_the_day_gets_a_score(stores, tm
     assert day["left"]["calories"] == 2500 - 170  # the meal is rounded
 
 
+def test_a_meal_gets_coachs_emoji_or_one_from_its_name(stores):
+    from aide.food import meal_emoji
+    f, *_ = stores
+    assert [meal_emoji(n) for n in ("Pasta 120 g with mushroom sauce", "Hi-pro yogurt", "Melanzane grigliate",
+                                     "Colazione: latte e biscotti", "Tè verde")] == ["🍝", "🥛", "🍽️", "🥛", "☕"]
+    meal = f.add("Bowl", 500, 20, 60, 15, emoji="🥗")
+    assert f.as_json(meal)["emoji"] == "🥗"
+    assert f.as_json(f.update(meal["id"], emoji=""))["emoji"] == "🍽️"  # cleared: the guess
+
+
 def test_open_food_facts_brings_its_grade_and_nova():
     p = product({**NOCCIOLATA, "nutriscore_grade": "e", "nova_group": 4,
                  "nutriments": {**NOCCIOLATA["nutriments"], "sugars_100g": 50, "saturated-fat_100g": 4.6}})
@@ -203,8 +213,9 @@ def api_env(tmp_path):
 
 def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
     proposal = {"base": {"calories": 2520, "protein_g": 135.4, "carbs_g": 310, "fat_g": 78},
-                "workouts": {"share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week at 74 kg."}
-    api, f, health, model = api_env(model=[done(json.dumps(proposal))])
+                "workouts": {"share": 0.8, "carbs_pct": 75}, "why": "You run 4 times a week at 74 kg.",
+                "questions": ["Is 74 kg still right?", "A race coming?", "A third?"]}
+    api, f, health, model = api_env(model=[done(json.dumps(proposal)), done(json.dumps(proposal))])
     today = f.today()
     assert api.put("/v1/food/targets", json={"base": BASE, "profile": {"weight_kg": 74, "goal": "keep"}},
                    headers=AUTH).json()["base"] == BASE
@@ -212,7 +223,9 @@ def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
     assert targets["profile"]["weight_kg"] == 74 and targets["workouts"] == {"on": True, "share": 1.0, "carbs_pct": 80}
     assert api.put("/v1/food/targets", json={"profile": {"goal": "bulk"}}, headers=AUTH).status_code == 400
 
-    health.save([{"date": today.isoformat(), "active_kcal": 947, "steps": 14000, "workouts": [run(today)]}])
+    health.save([{"date": today.isoformat(), "active_kcal": 947, "steps": 14000, "workouts": [run(today)]}]
+                + [{"date": (today - timedelta(days=n)).isoformat(), "resting_kcal": 1780 + 10 * n,
+                    "active_kcal": 450} for n in (1, 2, 3)])
     f.add("Pasta", 900, 30, 150, 20)
     day = api.get("/v1/food", headers=AUTH).json()
     assert day["goals"]["calories"] == 3160 and day["base"] == BASE  # the ring follows the day's targets
@@ -224,8 +237,18 @@ def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
     got = api.post("/v1/food/targets/propose", headers=AUTH).json()
     assert got["base"] == {"calories": 2520, "protein_g": 135, "carbs_g": 310, "fat_g": 78}
     assert got["workouts"] == {"on": True, "share": 0.8, "carbs_pct": 75} and got["why"].startswith("You run")
+    assert got["questions"] == ["Is 74 kg still right?", "A race coming?"]  # two at most
     asked = model.requests[0]["messages"][0]["content"][0]["text"]
     assert "run 54 min, 9.8 km, 5.51 min/km, 656 kcal" in asked and '"weight_kg": 74' in asked
+    # The Watch's resting energy, not a formula: the usual of the days before today.
+    assert "usual resting kcal 1800 a day, usual active kcal on days without a workout 450" in asked
+    assert "so a rest day burns about 2250" in asked
+    # The answers go back for another proposal; empty ones are left out.
+    api.post("/v1/food/targets/propose", json={"answers": [{"question": "Is 74 kg still right?", "answer": "72 now"},
+                                                           {"question": "A race coming?", "answer": " "}]},
+             headers=AUTH)
+    asked = model.requests[1]["messages"][0]["content"][0]["text"]
+    assert "- Is 74 kg still right? 72 now" in asked and "A race coming?" not in asked
     assert api.get("/v1/food/targets", headers=AUTH).json()["base"] == BASE  # nothing saved until a PUT
 
 

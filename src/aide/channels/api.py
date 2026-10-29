@@ -124,6 +124,15 @@ class FoodTargetsIn(BaseModel):
     profile: FoodProfile | None = None
 
 
+class TargetsAnswer(BaseModel):
+    question: str = Field(max_length=500)
+    answer: str = Field(max_length=1000)
+
+
+class ProposeIn(BaseModel):
+    answers: list[TargetsAnswer] = Field(default=[], max_length=4)
+
+
 class LectureIn(BaseModel):
     photos: list[str] = []
     files: list[str] = []  # PDFs from POST /v1/files: the lecture's slides
@@ -1186,11 +1195,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(400, str(e)) from None
 
     @app.post("/v1/food/targets/propose", dependencies=[Depends(auth)])
-    async def propose_food_targets():
-        """Coach's proposal from the profile, Apple Health and the food log; nothing is saved until a PUT."""
+    async def propose_food_targets(body: ProposeIn | None = None):
+        """Coach's proposal from the profile, Apple Health and the food log (and the user's answers to its last
+        questions); nothing is saved until a PUT."""
         from ..notebook import parse_json  # notebook imports a lot; only here
         today = food.today()
-        text = proposal_input(nutrition, food.days(today - timedelta(days=14), today - timedelta(days=1)))
+        answers = [a.model_dump() for a in body.answers if a.answer.strip()] if body else []
+        text = proposal_input(nutrition, food.days(today - timedelta(days=14), today - timedelta(days=1)), answers)
         try:
             answer = await ask_once(PROPOSE_PROMPT, [{"type": "text", "text": text}], PROPOSE_TOKENS)
             return parse_proposal(parse_json(answer))

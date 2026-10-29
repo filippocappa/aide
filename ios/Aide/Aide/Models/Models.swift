@@ -544,6 +544,8 @@ struct Meal: Decodable, Identifiable, Hashable {
     /// Photo id, nil without one.
     var photo: String?
     var notes: String
+    /// Coach's, or one the server guessed from the name (since 2026-10-29); the list shows it, not the photo.
+    var emoji: String
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -558,12 +560,18 @@ struct Meal: Decodable, Identifiable, Hashable {
         caffeineMg = try c.number(.caffeineMg) ?? 0
         photo = try c.decodeIfPresent(String.self, forKey: .photo)
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        emoji = try c.decodeIfPresent(String.self, forKey: .emoji) ?? "🍽️"
     }
     private enum CodingKeys: String, CodingKey {
-        case id, name, eatenAt, calories, proteinG, carbsG, fatG, waterMl, caffeineMg, photo, notes
+        case id, name, eatenAt, calories, proteinG, carbsG, fatG, waterMl, caffeineMg, photo, notes, emoji
     }
 
     var eatenDate: Date? { Wire.parse(eatenAt) }
+
+    /// The last eaten first; of two at the same time, the last logged.
+    static func newestFirst(_ meals: [Meal]) -> [Meal] {
+        meals.sorted { ($0.eatenDate ?? .distantPast, $0.id) > ($1.eatenDate ?? .distantPast, $1.id) }
+    }
 }
 
 /// What was eaten in a day.
@@ -759,6 +767,15 @@ struct TargetsProposal: Decodable, Hashable {
     let base: FoodGoals
     let workouts: WorkoutTargets
     let why: String
+    /// What Coach would like to know; the answers go back for a new proposal. Nil from servers before them.
+    var questions: [String]? = nil
+    var asks: [String] { questions ?? [] }
+}
+
+/// `POST /v1/food/targets/propose`'s body: answers to Coach's last questions.
+struct TargetsAnswers: Encodable {
+    struct Answer: Encodable { let question: String; let answer: String }
+    let answers: [Answer]
 }
 
 /// A day in `GET /v1/food/days`: its totals, how many meals and its score (nil when nothing was eaten).
@@ -932,6 +949,7 @@ struct HealthDay: Encodable, Equatable {
     var wristTempC: Double?
     var steps: Int?
     var activeKcal: Int?
+    var restingKcal: Int?  // Health's Resting Energy: what the food targets' proposal starts from
     var exerciseMin: Int?
     var inhalerUsage: Int?  // Health's Inhaler Usage: a limit habit may count from it (coffees)
     var naps: [SleepNap]?  // nil when there were none
