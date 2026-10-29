@@ -1962,8 +1962,9 @@ class NotebookWorker:
             raise ValueError("the notebook has no topics written yet")
         self.store.set_step(cid, "Matching the exercise sheets to the topics")
         pages = await self._exercise_pages(cid)
-        for t in todo:
-            if not pages.get(t["public_id"]):  # an old set with exercises of Aide's own
+        for t in todo:  # an old set with exercises of Aide's own goes, even if the new one fails
+            old = self.store.exercise_set(t["id"])
+            if old and (not pages.get(t["public_id"]) or any(not x["source"] for x in exercises(old["body"]))):
                 self.store.conn.execute("DELETE FROM exercise_sets WHERE topic_id = ?", (t["id"],))
         none = [t["title"] for t in todo if not pages.get(t["public_id"])]
         todo = [t for t in todo if pages.get(t["public_id"])]
@@ -2015,7 +2016,7 @@ class NotebookWorker:
         content = (f"The notebook:\n{self.store.outline(cid, headings=False)}\n\nThe exercise files:\n"
                    + self.store.material_map(cid, [{"file": f["public_id"]} for f in files]))
         try:
-            answer = parse_json(await self._ask(EXERCISE_MAP_PROMPT, [{"type": "text", "text": content}], 4000,
+            answer = parse_json(await self._ask(EXERCISE_MAP_PROMPT, [{"type": "text", "text": content}], 16000,
                                                 model=self.agent.model))
         except Exception as e:  # the topics' own sources still count
             log.warning("exercise map for course %d skipped: %s", cid, e)
@@ -2036,7 +2037,7 @@ class NotebookWorker:
         body = (await self._ask(EXERCISES_PROMPT, content, 32000)).strip()
         body = body[body.find("**Exercise"):] if "**Exercise" in body else body
         if not exercises(body):
-            raise RuntimeError("the exercises came back in a shape that couldn't be read")
+            raise RuntimeError(f"the exercises came back in a shape that couldn't be read: {_line(body, 300)!r}")
         body, checked = await self.check_exercises(topic, body)
         return self.store.set_exercises(topic, body, sources, checked)
 
