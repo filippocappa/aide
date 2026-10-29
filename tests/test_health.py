@@ -197,7 +197,7 @@ def test_sleep_and_recovery_sections(world):
                    "summary": "HRV above your usual, resting heart rate below your usual.",
                    "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54}
     rec["score"] = health.recovery_section(TODAY)["score"]
-    assert 70 <= health.sleep_section(TODAY)["score"] <= 90  # 6h40 of a 8h06 need, a bedtime 38 min late
+    assert 70 <= health.sleep_section(TODAY)["score"] <= 90  # 6h40 of a 7h48 need, a bedtime 38 min late
     health.save([{"date": (TODAY - timedelta(days=61)).isoformat(), "hrv_ms": 1, "resting_hr": 200}])  # outside
     assert health.recovery_section(TODAY) == rec
 

@@ -14,7 +14,8 @@ from statistics import median
 # Sleep
 SLEEP_NEED = 450  # min asleep a night, before debt
 DEBT_NIGHTS = 3  # nights whose shortfall adds to the need
-DEBT_CAP = 90  # min the need can grow by
+DEBT_SHARE = 0.5  # of that shortfall carried into the need
+DEBT_CAP = 60  # min the need can grow by
 RESTORATIVE_FULL = 0.40  # deep + REM share of the night for full marks
 EFFICIENCY_FULL, EFFICIENCY_ZERO = 0.92, 0.75  # asleep / in bed
 CONSISTENCY_FULL, CONSISTENCY_ZERO = 30, 120  # min from the usual bedtime
@@ -90,10 +91,10 @@ def _bedtime_minutes(sleep: dict) -> float | None:
 
 
 def sleep_need(days: dict[str, dict], day: date) -> tuple[int, int]:
-    """(Need for the night that ended on `day`, the debt behind it): the base plus the last nights' shortfall."""
+    """(Need for the night that ended on `day`, the debt behind it): the base plus half the last nights' shortfall."""
     nights = [d["sleep"]["asleep_min"] for d in _before(days, day, DEBT_NIGHTS) if "asleep_min" in d.get("sleep", {})]
     debt = sum(max(0, SLEEP_NEED - n) for n in nights)
-    return SLEEP_NEED + min(DEBT_CAP, debt), debt
+    return SLEEP_NEED + min(DEBT_CAP, round(DEBT_SHARE * debt)), debt
 
 
 def sleep_score(days: dict[str, dict], day: date) -> dict | None:

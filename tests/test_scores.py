@@ -48,10 +48,10 @@ def test_a_short_late_night_scores_lower_and_debt_raises_the_need():
         d = D - timedelta(days=i)
         days[d.isoformat()] = day(d, asleep=390)
     s = scores.sleep_score(with_today(days, asleep=300, bedtime="01:30", in_bed=360), D)
-    assert s["need_min"] == 450 + 90  # 3 × 60 short, capped at 90
+    assert s["need_min"] == 450 + 60  # half of 3 × 60 short, capped at 60
     assert s["debt_min"] == 60 + 60 + 150
     parts = {p["key"]: p for p in s["contributors"]}
-    assert parts["duration"]["value"] == "5h00 of 9h00" and parts["duration"]["score"] == 56
+    assert parts["duration"]["value"] == "5h00 of 8h30" and parts["duration"]["score"] == 59
     assert parts["consistency"]["value"] == "2h00 later" and parts["consistency"]["score"] == 0
     assert s["score"] < 65
 

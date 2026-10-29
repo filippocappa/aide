@@ -1298,9 +1298,9 @@ medical advice.
 {
   "date": "2026-10-30",
   "sleep": {
-    "score": 84, "asleep_min": 400, "need_min": 486, "debt_min": 36,
+    "score": 86, "asleep_min": 400, "need_min": 468, "debt_min": 36,
     "contributors": [
-      {"key": "duration", "label": "Hours vs need", "value": "6h40 of 8h06", "score": 82, "weight": 50},
+      {"key": "duration", "label": "Hours vs need", "value": "6h40 of 7h48", "score": 85, "weight": 50},
       {"key": "restorative", "label": "Deep and REM", "value": "2h31 · 38%", "score": 94, "weight": 20},
       {"key": "efficiency", "label": "Time asleep in bed", "value": "91%", "score": 94, "weight": 15},
       {"key": "consistency", "label": "Bedtime vs usual", "value": "0h38 later", "score": 91, "weight": 15}
@@ -1333,8 +1333,8 @@ medical advice.
 - **`sleep`** (`null` without a night): duration against the night's need 50%, deep plus REM share of the night
   20% (full marks at 40%), asleep / in bed 15% (full at 92%, none at 75%), bedtime against the median of the 14
   nights before 15% (full within 30 min, none at 2 h; needs 5 nights). A part without data (no stages, no history)
-  is left out (`score` and `value` `null`) and the rest re-weighted. `need_min` is 7h30 plus the shortfall of the 3
-  nights before, at most 1h30 more. `debt_min` is the shortfall against 7h30 over the last 3 nights, this one
+  is left out (`score` and `value` `null`) and the rest re-weighted. `need_min` is 7h30 plus half the shortfall of the
+  3 nights before, at most 1 h more. `debt_min` is the shortfall against 7h30 over the last 3 nights, this one
   included.
 - **`recovery`** (`null` without last night's `hrv_ms`): ln HRV (50%), resting HR (30%, lower is better; left out
   when missing) and the sleep score (20%), each as how far it is from the user's usual (median and spread of the 60
