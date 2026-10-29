@@ -13,8 +13,9 @@ enum MealCameraResult {
 
 /// Aide's own camera for logging a meal: a few shots of the plate (up to `MealCamera.limit`), or a packet: once a
 /// food barcode holds still in view, its page opens over the camera by itself (`ScanSheet`, no model call), and
-/// Cancel there comes back to the camera. The library and "Describe" are a tap away. Chat photos keep the system
-/// camera (`CameraPicker`).
+/// Cancel there comes back to the camera. The lenses as in the Camera app (0.5×, 1×, 2×, the telephoto), pinch to
+/// zoom, tap to focus, and macro on its own up close (the phone's virtual camera switches lens like the Camera app).
+/// The library and "Describe" are a tap away. Chat photos keep the system camera (`CameraPicker`).
 struct MealCameraView: View {
     let tint: Color
     /// The day a packet is logged on; nil is today.
@@ -27,8 +28,11 @@ struct MealCameraView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var photos: [PickedPhoto] = []
     @State private var flash = false
+    /// Where a tap focused, for the ring drawn there a moment.
+    @State private var focusAt: CGPoint?
     /// The packet whose page is open, and the photo taken as it opened (for "ask Coach").
     @State private var scanning: ScannedCode?
+    @State private var scanCode: String?
     @State private var scanPhoto: PickedPhoto?
     @State private var scanLogged: Meal?
     @State private var scanToCoach = false
@@ -48,14 +52,29 @@ struct MealCameraView: View {
             case .starting where camera.slow:
                 retry("The camera is taking a while.")
             case .starting:
-                ProgressView().tint(.white)
+                EmptyView()
             case .running: // only now: the preview keeps itself upright from the camera's device
-                MealCameraPreview(camera: camera)
-                    .ignoresSafeArea()
-                    .overlay(Color.white.opacity(flash ? 0.7 : 0).ignoresSafeArea())
-                    .overlay {
-                        if let paused = camera.paused { message("Camera paused", detail: paused) }
+                MealCameraPreview(camera: camera) { point in
+                    focusAt = point
+                    Task {
+                        try? await Task.sleep(for: .seconds(0.9))
+                        if focusAt == point { focusAt = nil }
                     }
+                }
+                .ignoresSafeArea()
+                .overlay(Color.white.opacity(flash ? 0.7 : 0).ignoresSafeArea().allowsHitTesting(false))
+                .overlay { focusRing }
+                .overlay {
+                    if let paused = camera.paused {
+                        message("Camera paused", detail: paused)
+                            .padding(.vertical, 16)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }
+                }
+                .transition(.opacity)
+            }
+            if camera.status == .running || camera.status == .starting {
+                viewfinder.allowsHitTesting(false)
             }
             VStack(spacing: 0) {
                 topBar
@@ -63,15 +82,19 @@ struct MealCameraView: View {
                 if let code = camera.barcode, code == ignored, photos.isEmpty, scanning == nil {
                     barcodePill(code)
                         .transition(.scale(scale: 0.9).combined(with: .opacity))
+                        .padding(.bottom, 16)
                 }
-                Spacer()
                 bottom
             }
         }
         .preferredColorScheme(.dark)
-        .animation(.easeOut(duration: 0.2), value: camera.barcode)
+        .statusBarHidden()
+        .animation(.easeOut(duration: 0.25), value: camera.status)
+        .animation(.spring(duration: 0.3), value: camera.barcode)
         .animation(.easeOut(duration: 0.2), value: photos)
+        .animation(.easeOut(duration: 0.2), value: camera.macro)
         .sensoryFeedback(.success, trigger: scanning?.code) { _, new in new != nil }
+        .sensoryFeedback(.selection, trigger: camera.lens)
         .task { await camera.start() }
         .onDisappear { camera.stop() }
         .onChange(of: scenePhase) { _, phase in
@@ -93,42 +116,96 @@ struct MealCameraView: View {
     /// The packet's page over the camera, with a photo of it taken on the way (Coach gets it if it's a whole meal).
     private func open(_ code: String) {
         scanPhoto = nil
+        scanCode = code
         scanning = ScannedCode(code: code)
         Task { scanPhoto = await camera.capture() }
     }
 
     private func afterScan() {
-        let code = scanning?.code ?? camera.barcode
         if let meal = scanLogged {
             finish(.logged(meal))
         } else if scanToCoach, let photo = scanPhoto {
             finish(.photos([photo]))
         } else {
-            ignored = code
+            ignored = scanCode
         }
+        scanCode = nil
         scanLogged = nil
         scanToCoach = false
         scanPhoto = nil
     }
 
-    private var topBar: some View {
-        HStack {
-            roundButton("xmark", label: "Close") { dismiss() }
-            Spacer()
-            Text(photos.isEmpty ? "Your plate, or a packet's barcode" : "Another angle, or Next")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(.black.opacity(0.35), in: Capsule())
-            Spacer()
-            if camera.hasTorch {
-                roundButton(camera.torch ? "bolt.fill" : "bolt.slash", label: camera.torch ? "Light off" : "Light on") {
-                    camera.toggleTorch()
-                }
-            } else {
-                Color.clear.frame(width: 44, height: 44)
+    // MARK: Over the picture
+
+    /// Four corners in the middle: a square for the plate, a wide box in the sand colour once a barcode is in view.
+    private var viewfinder: some View {
+        GeometryReader { geo in
+            let side = min(geo.size.width * 0.74, 320)
+            let seen = camera.barcode != nil && photos.isEmpty
+            VStack(spacing: 12) {
+                Corners()
+                    .stroke(seen ? Theme.sand : .white.opacity(0.85),
+                            style: StrokeStyle(lineWidth: seen ? 4 : 3, lineCap: .round))
+                    .frame(width: side, height: seen ? side * 0.55 : side)
+                    .shadow(color: .black.opacity(0.25), radius: 6)
+                Text(seen ? "Barcode" : " ")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.slate)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Theme.sand, in: Capsule())
+                    .opacity(seen ? 1 : 0)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .offset(y: -24)
+        }
+    }
+
+    @ViewBuilder
+    private var focusRing: some View {
+        if let focusAt {
+            GeometryReader { _ in
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Theme.sand, lineWidth: 1.5)
+                    .frame(width: 72, height: 72)
+                    .position(focusAt)
+                    .transition(.scale(scale: 1.4).combined(with: .opacity))
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var topBar: some View {
+        VStack(spacing: 10) {
+            HStack {
+                glassButton("xmark", label: "Close") { dismiss() }
+                Spacer()
+                if camera.macro {
+                    Label("Macro", systemImage: "camera.macro")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.sand)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .transition(.opacity)
+                }
+                Spacer()
+                if camera.hasTorch {
+                    glassButton(camera.torch ? "bolt.fill" : "bolt.slash.fill", label: camera.torch ? "Light off" : "Light on",
+                                on: camera.torch) {
+                        camera.toggleTorch()
+                    }
+                } else {
+                    Color.clear.frame(width: 42, height: 42)
+                }
+            }
+            Text(photos.isEmpty ? "Your plate, or a packet's barcode"
+                 : "\(photos.count) of \(MealCamera.limit) · another angle, or Next")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .shadow(color: .black.opacity(0.5), radius: 4)
+                .contentTransition(.numericText())
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -142,7 +219,7 @@ struct MealCameraView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "barcode.viewfinder")
-                Text("Barcode \(code)").monospacedDigit()
+                Text(code).monospacedDigit()
                 Text("·").foregroundStyle(Theme.slate.opacity(0.6))
                 Text("Open").fontWeight(.bold)
             }
@@ -157,51 +234,89 @@ struct MealCameraView: View {
         .accessibilityHint("Logs this packet")
     }
 
+    // MARK: The bottom
+
     private var bottom: some View {
-        VStack(spacing: 14) {
-            if !photos.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(photos) { photo in
-                        Button { photos.removeAll { $0.id == photo.id } } label: {
-                            Image(uiImage: photo.preview)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 56, height: 56)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .overlay(alignment: .topTrailing) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.footnote)
-                                        .foregroundStyle(.white, .black.opacity(0.6))
-                                        .padding(3)
-                                }
-                        }
-                        .accessibilityLabel("Remove this photo")
-                    }
-                }
-            }
-            HStack {
-                sideButton("photo.on.rectangle", title: "Library") { finish(.library) }
+        VStack(spacing: 18) {
+            if !photos.isEmpty { strip }
+            if camera.lenses.count > 1 { lensPicker }
+            HStack(alignment: .center) {
+                sideButton("photo.on.rectangle.angled", title: "Library") { finish(.library) }
                 Spacer()
                 shutter
                 Spacer()
                 if photos.isEmpty {
-                    sideButton("text.cursor", title: "Describe") { finish(.describe) }
+                    sideButton("text.bubble", title: "Describe") { finish(.describe) }
                 } else {
                     Button { finish(.photos(photos)) } label: {
-                        Text("Next")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Theme.slate)
-                            .frame(width: 72, height: 44)
-                            .background(Theme.sand, in: Capsule())
+                        VStack(spacing: 6) {
+                            Image(systemName: "arrow.right")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(Theme.slate)
+                                .frame(width: 54, height: 54)
+                                .background(Theme.sand, in: Circle())
+                            Text("Next").font(.caption.weight(.semibold)).foregroundStyle(.white)
+                        }
+                        .frame(width: 76)
                     }
+                    .accessibilityLabel("Next: \(photos.count) photos")
+                    .transition(.scale.combined(with: .opacity))
                 }
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 24)
         }
-        .padding(.bottom, 12)
-        .padding(.top, 14)
-        .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
-            .ignoresSafeArea())
+        .padding(.top, 16)
+        .padding(.bottom, 8)
+        .background(alignment: .bottom) {
+            LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// The shots so far; a tap takes one out.
+    private var strip: some View {
+        HStack(spacing: 8) {
+            ForEach(photos) { photo in
+                Button { photos.removeAll { $0.id == photo.id } } label: {
+                    Image(uiImage: photo.preview)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 50, height: 50)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.white.opacity(0.8), lineWidth: 1.5))
+                        .overlay(alignment: .topTrailing) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.white, .black.opacity(0.7))
+                                .offset(x: 5, y: -5)
+                        }
+                }
+                .accessibilityLabel("Remove this photo")
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+    }
+
+    /// 0.5 · 1× · 2 · 5, as in the Camera app: the chosen one larger with its ×, or the pinch's zoom on the nearest.
+    private var lensPicker: some View {
+        HStack(spacing: 6) {
+            ForEach(camera.lenses) { lens in
+                let on = camera.lens == lens.id
+                Button { camera.zoom(to: lens.factor, ramp: true) } label: {
+                    Text(on ? camera.zoomLabel : lens.label)
+                        .font(.system(size: on ? 13 : 11, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(on ? Theme.sand : .white)
+                        .frame(width: on ? 40 : 32, height: on ? 40 : 32)
+                        .background(.black.opacity(on ? 0.55 : 0.4), in: Circle())
+                }
+                .accessibilityLabel("\(lens.label) times")
+            }
+        }
+        .padding(5)
+        .background(.ultraThinMaterial.opacity(0.6), in: Capsule())
+        .animation(.snappy(duration: 0.2), value: camera.lens)
     }
 
     private var shutter: some View {
@@ -210,12 +325,12 @@ struct MealCameraView: View {
             Task { await shoot() }
         } label: {
             ZStack {
-                Circle().stroke(.white, lineWidth: 4).frame(width: 78, height: 78)
-                Circle().fill(tint).frame(width: 64, height: 64)
-                Image(systemName: "fork.knife").font(.title2.weight(.semibold)).foregroundStyle(.white)
+                Circle().stroke(.white, lineWidth: 5).frame(width: 80, height: 80)
+                Circle().fill(.white).frame(width: 66, height: 66)
             }
-            .opacity(full ? 0.4 : 1)
+            .opacity(full ? 0.35 : 1)
         }
+        .buttonStyle(ShutterStyle())
         .disabled(full || camera.busy || camera.status != .running)
         .accessibilityLabel(full ? "\(MealCamera.limit) photos, the most" : "Take photo")
     }
@@ -223,27 +338,26 @@ struct MealCameraView: View {
     private var denied: some View {
         VStack(spacing: 14) {
             message("Aide can't use the camera.", detail: "Allow it in Settings, or choose a photo instead.")
-            Button("Open Settings") {
+            sandButton("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
             }
-            .font(.body.weight(.semibold))
-            .foregroundStyle(Theme.slate)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(Theme.sand, in: Capsule())
         }
     }
 
     private func retry(_ title: String) -> some View {
         VStack(spacing: 14) {
             message(title, detail: "Try again, or choose a photo instead.")
-            Button("Try again") { Task { await camera.start() } }
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Theme.slate)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(Theme.sand, in: Capsule())
+            sandButton("Try again") { Task { await camera.start() } }
         }
+    }
+
+    private func sandButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(Theme.slate)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(Theme.sand, in: Capsule())
     }
 
     private func message(_ title: String, detail: String) -> some View {
@@ -255,28 +369,30 @@ struct MealCameraView: View {
         .padding(.horizontal, 32)
     }
 
-    private func roundButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+    private func glassButton(_ symbol: String, label: String, on: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .background(.black.opacity(0.35), in: Circle())
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(on ? Theme.slate : .white)
+                .frame(width: 42, height: 42)
+                .background {
+                    if on { Circle().fill(Theme.sand) } else { Circle().fill(.ultraThinMaterial) }
+                }
         }
         .accessibilityLabel(label)
     }
 
     private func sideButton(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
                 Image(systemName: symbol)
-                    .font(.title3)
-                    .frame(width: 48, height: 48)
-                    .background(.white.opacity(0.16), in: Circle())
-                Text(title).font(.caption2.weight(.medium))
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(width: 54, height: 54)
+                    .background(.ultraThinMaterial, in: Circle())
+                Text(title).font(.caption.weight(.semibold))
             }
             .foregroundStyle(.white)
-            .frame(width: 72)
+            .frame(width: 76)
         }
     }
 
@@ -293,18 +409,68 @@ struct MealCameraView: View {
     }
 }
 
-/// The capture session behind the meal camera: the back camera's preview, photos, the light, and the food barcodes
-/// it sees (`AVCaptureMetadataOutput`, live, no Vision pass).
+/// The shutter shrinks a little under the finger.
+private struct ShutterStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// A viewfinder's four corners.
+private struct Corners: Shape {
+    func path(in rect: CGRect) -> Path {
+        let arm = min(rect.width, rect.height) * 0.16
+        let r: CGFloat = 14
+        var p = Path()
+        // Top left, top right, bottom right, bottom left: an arm along each edge from a rounded corner.
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY + arm))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        p.addQuadCurve(to: CGPoint(x: rect.minX + r, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.minX + arm, y: rect.minY))
+        p.move(to: CGPoint(x: rect.maxX - arm, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + r), control: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + arm))
+        p.move(to: CGPoint(x: rect.maxX, y: rect.maxY - arm))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX - arm, y: rect.maxY))
+        p.move(to: CGPoint(x: rect.minX + arm, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r), control: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - arm))
+        return p
+    }
+}
+
+/// The capture session behind the meal camera: the back camera's preview, photos, the light, the lenses, and the
+/// food barcodes it sees (`AVCaptureMetadataOutput`, live, no Vision pass).
 @MainActor
 final class MealCamera: NSObject, ObservableObject {
     enum Status { case starting, running, denied, unavailable, failed }
 
+    /// A lens button: its label ("0.5", "1", "2", "5") and the device's zoom factor for it.
+    struct Lens: Identifiable, Equatable {
+        let label: String
+        let factor: CGFloat
+        var id: String { label }
+    }
+
     /// Photos of one meal, as for the library.
     static let limit = 4
     static let barcodeTypes: [AVMetadataObject.ObjectType] = [.ean13, .ean8, .upce, .code128]
+    /// The back camera, best first: the virtual ones switch lens on their own (macro up close), like the Camera app.
+    static let deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInTripleCamera, .builtInDualWideCamera,
+                                                            .builtInDualCamera, .builtInWideAngleCamera]
 
     /// A back camera to use: none on the Simulator.
-    static var isAvailable: Bool { AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil }
+    static var isAvailable: Bool { backCamera() != nil }
+
+    static func backCamera() -> AVCaptureDevice? {
+        deviceTypes.lazy.compactMap { AVCaptureDevice.default($0, for: .video, position: .back) }.first
+    }
 
     @Published private(set) var status = Status.starting
     /// The food barcode in view, gone a moment after it leaves.
@@ -319,6 +485,12 @@ final class MealCamera: NSObject, ObservableObject {
     @Published private(set) var slow = false
     /// Why iOS has paused the camera (another app has it, the app is in the background…); nil while it runs.
     @Published private(set) var paused: String?
+    /// The lens buttons this phone has, the one nearest the zoom, and the zoom as the Camera app says it ("1.4×").
+    @Published private(set) var lenses: [Lens] = []
+    @Published private(set) var lens: String?
+    @Published private(set) var zoomLabel = "1×"
+    /// The ultra wide is on at 1× or more: the phone switched to it for a close-up.
+    @Published private(set) var macro = false
     private(set) var hasTorch = false
 
     let session = AVCaptureSession()
@@ -326,7 +498,10 @@ final class MealCamera: NSObject, ObservableObject {
     private let metadataOutput = AVCaptureMetadataOutput()
     private let queue = DispatchQueue(label: "aide.mealcamera")
     private var device: AVCaptureDevice?
+    /// The zoom factor that is "1×": the wide lens, past the ultra wide's range on a virtual camera.
+    private var base: CGFloat = 1
     private var rotation: AVCaptureDevice.RotationCoordinator?
+    private var observations: [NSKeyValueObservation] = []
     private var pending: PhotoTaker?
     private var lastSeen = Date.distantPast
     private var firstSeen = Date.distantPast
@@ -384,6 +559,24 @@ final class MealCamera: NSObject, ObservableObject {
         return digits.count >= 6 ? digits : nil
     }
 
+    /// The lens buttons for a camera: the ultra wide (0.5), the wide (1), 2× (the wide's middle) and the telephoto,
+    /// as zoom factors of the device. `switchOvers` are where a virtual camera changes lens; `kinds` what it has.
+    nonisolated static func lenses(kinds: Set<AVCaptureDevice.DeviceType>, switchOvers: [CGFloat], maxZoom: CGFloat)
+        -> (base: CGFloat, lenses: [Lens]) {
+        let ultraWide = kinds.contains(.builtInUltraWideCamera)
+        let tele = kinds.contains(.builtInTelephotoCamera)
+        let base = ultraWide ? (switchOvers.first ?? 2) : 1
+        var out: [Lens] = []
+        if ultraWide { out.append(Lens(label: "0.5", factor: 1)) }
+        out.append(Lens(label: "1", factor: base))
+        let teleFactor = tele ? switchOvers.last : nil
+        if base * 2 <= maxZoom, teleFactor.map({ $0 > base * 2.5 }) ?? true { out.append(Lens(label: "2", factor: base * 2)) }
+        if let teleFactor, teleFactor <= maxZoom {
+            out.append(Lens(label: Double(teleFactor / base).formatted(.number.precision(.fractionLength(0...1))), factor: teleFactor))
+        }
+        return (base, out)
+    }
+
     /// Asks for the camera, sets the session up and starts it, all of it on the session's own queue (Apple's way;
     /// `startRunning` blocks). Again from Try again, when the first go failed.
     func start() async {
@@ -400,7 +593,7 @@ final class MealCamera: NSObject, ObservableObject {
             status = .denied
             return
         }
-        guard let device = device ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+        guard let device = device ?? Self.backCamera() else {
             status = .unavailable
             return
         }
@@ -440,17 +633,78 @@ final class MealCamera: NSObject, ObservableObject {
                 done.resume(returning: session.isRunning)
             }
         }
-        Self.log.note("running: \(running), \(session.inputs.count) inputs, \(session.outputs.count) outputs")
+        Self.log.note("running: \(running), \(device.deviceType.rawValue), \(session.outputs.count) outputs")
         guard running else {
             status = .failed
             return
         }
-        if device.isFocusModeSupported(.continuousAutoFocus), (try? device.lockForConfiguration()) != nil {
-            device.focusMode = .continuousAutoFocus
-            if device.isAutoFocusRangeRestrictionSupported { device.autoFocusRangeRestriction = .near } // plates, packets
-            device.unlockForConfiguration()
-        }
+        setUpLenses(device)
         status = .running
+    }
+
+    /// The lens buttons, 1× to start with, macro left to the phone, focus on what's near.
+    private func setUpLenses(_ device: AVCaptureDevice) {
+        let kinds = Set(device.constituentDevices.map(\.deviceType) + [device.deviceType])
+        let switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) }
+        (base, lenses) = Self.lenses(kinds: kinds, switchOvers: switchOvers, maxZoom: device.maxAvailableVideoZoomFactor)
+        guard (try? device.lockForConfiguration()) != nil else { return }
+        if device.isVirtualDevice, device.activePrimaryConstituentDeviceSwitchingBehavior != .unsupported {
+            device.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
+        }
+        if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+        device.videoZoomFactor = min(max(base, device.minAvailableVideoZoomFactor), device.maxAvailableVideoZoomFactor)
+        device.unlockForConfiguration()
+        observations.append(device.observe(\.videoZoomFactor, options: [.initial, .new]) { [weak self] device, _ in
+            let factor = device.videoZoomFactor
+            DispatchQueue.main.async { self?.zoomed(factor) }
+        })
+        observations.append(device.observe(\.activePrimaryConstituent, options: [.initial, .new]) { [weak self] device, _ in
+            let ultraWide = device.activePrimaryConstituent?.deviceType == .builtInUltraWideCamera
+            let factor = device.videoZoomFactor
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.macro = ultraWide && factor >= self.base * 0.99
+            }
+        })
+        Self.log.note("lenses: \(lenses.map(\.label)), base \(base), switch-overs \(switchOvers)")
+    }
+
+    private func zoomed(_ factor: CGFloat) {
+        let shown = factor / base
+        zoomLabel = (shown < 1 ? Double(shown).formatted(.number.precision(.fractionLength(1)))
+                     : Double(shown).formatted(.number.precision(.fractionLength(0...1)))) + "×"
+        lens = lenses.last(where: { $0.factor <= factor * 1.001 })?.id ?? lenses.first?.id
+        macro = device?.activePrimaryConstituent?.deviceType == .builtInUltraWideCamera && factor >= base * 0.99
+    }
+
+    /// To a lens (ramped, like the Camera app) or a pinch's factor (at once), within what the device can do: up to
+    /// 10× past the wide.
+    func zoom(to factor: CGFloat, ramp: Bool = false) {
+        guard let device, (try? device.lockForConfiguration()) != nil else { return }
+        defer { device.unlockForConfiguration() }
+        let factor = min(max(factor, device.minAvailableVideoZoomFactor), min(device.maxAvailableVideoZoomFactor, base * 10))
+        if ramp {
+            device.ramp(toVideoZoomFactor: factor, withRate: 12)
+        } else {
+            device.cancelVideoZoomRamp()
+            device.videoZoomFactor = factor
+        }
+    }
+
+    var zoomFactor: CGFloat { device?.videoZoomFactor ?? 1 }
+
+    /// Focus and exposure on a point of the picture (0–1, the device's own coordinates), then keep following it.
+    func focus(at point: CGPoint) {
+        guard let device, (try? device.lockForConfiguration()) != nil else { return }
+        defer { device.unlockForConfiguration() }
+        if device.isFocusPointOfInterestSupported {
+            device.focusPointOfInterest = point
+            device.focusMode = device.isFocusModeSupported(.continuousAutoFocus) ? .continuousAutoFocus : .autoFocus
+        }
+        if device.isExposurePointOfInterestSupported {
+            device.exposurePointOfInterest = point
+            device.exposureMode = .continuousAutoExposure
+        }
     }
 
     /// Starts the session again when it stopped under us (a runtime error, back from the background).
@@ -472,12 +726,19 @@ final class MealCamera: NSObject, ObservableObject {
         queue.async { session.stopRunning() }
     }
 
-    /// Keeps the preview and the photos upright as the phone turns.
+    /// Keeps the preview upright as the phone turns: the coordinator's angle, followed as it changes (it's only right
+    /// once the layer is on screen).
     func attach(_ layer: AVCaptureVideoPreviewLayer) {
         guard let device else { return }
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
         rotation = coordinator
-        layer.connection?.videoRotationAngle = coordinator.videoRotationAngleForHorizonLevelPreview
+        observations.append(coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]) { [weak layer] coordinator, _ in
+            let angle = coordinator.videoRotationAngleForHorizonLevelPreview
+            DispatchQueue.main.async {
+                guard let connection = layer?.connection, connection.isVideoRotationAngleSupported(angle) else { return }
+                connection.videoRotationAngle = angle
+            }
+        })
     }
 
     func toggleTorch() {
@@ -561,19 +822,48 @@ private final class PhotoTaker: NSObject, AVCapturePhotoCaptureDelegate {
     }
 }
 
-/// The live picture, filling its frame.
+/// The live picture, filling its frame: tap to focus there (`focused` gets the point, for the ring), pinch to zoom.
 private struct MealCameraPreview: UIViewRepresentable {
     let camera: MealCamera
+    let focused: (CGPoint) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(camera: camera, focused: focused) }
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
         view.previewLayer.session = camera.session
         view.previewLayer.videoGravity = .resizeAspectFill
         camera.attach(view.previewLayer)
+        view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap)))
+        view.addGestureRecognizer(UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pinch)))
         return view
     }
 
     func updateUIView(_ view: PreviewView, context: Context) {}
+
+    @MainActor
+    final class Coordinator: NSObject {
+        let camera: MealCamera
+        let focused: (CGPoint) -> Void
+        private var pinchStart: CGFloat = 1
+
+        init(camera: MealCamera, focused: @escaping (CGPoint) -> Void) {
+            self.camera = camera
+            self.focused = focused
+        }
+
+        @objc func tap(_ gesture: UITapGestureRecognizer) {
+            guard let view = gesture.view as? PreviewView else { return }
+            let point = gesture.location(in: view)
+            camera.focus(at: view.previewLayer.captureDevicePointConverted(fromLayerPoint: point))
+            focused(point)
+        }
+
+        @objc func pinch(_ gesture: UIPinchGestureRecognizer) {
+            if gesture.state == .began { pinchStart = camera.zoomFactor }
+            camera.zoom(to: pinchStart * gesture.scale)
+        }
+    }
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }

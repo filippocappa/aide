@@ -1803,6 +1803,24 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(MealCamera.limit, 4)
     }
 
+    func testTheMealCameraOffersTheLensesThePhoneHas() {
+        // A Pro Max: ultra wide, wide from 2, the 5× telephoto from 10.
+        let triple = MealCamera.lenses(kinds: [.builtInTripleCamera, .builtInUltraWideCamera, .builtInWideAngleCamera,
+                                               .builtInTelephotoCamera], switchOvers: [2, 10], maxZoom: 123)
+        XCTAssertEqual(triple.base, 2)
+        XCTAssertEqual(triple.lenses.map(\.label), ["0.5", "1", "2", "5"])
+        XCTAssertEqual(triple.lenses.map(\.factor), [1, 2, 4, 10])
+        // A 2× telephoto: no 2 of its own beside it.
+        let dual = MealCamera.lenses(kinds: [.builtInDualCamera, .builtInWideAngleCamera, .builtInTelephotoCamera],
+                                     switchOvers: [2], maxZoom: 16)
+        XCTAssertEqual(dual.lenses.map(\.label), ["1", "2"])
+        XCTAssertEqual(dual.lenses.map(\.factor), [1, 2])
+        // The wide alone.
+        let wide = MealCamera.lenses(kinds: [.builtInWideAngleCamera], switchOvers: [], maxZoom: 10)
+        XCTAssertEqual(wide.base, 1)
+        XCTAssertEqual(wide.lenses.map(\.label), ["1", "2"])
+    }
+
     func testAMealsFoodsCarryTheirQuality() throws {
         let meal = try JSONDecoder.api.decode(Meal.self, from: Data(#"""
         {"id": 1, "name": "Insalata", "quality": 97,
