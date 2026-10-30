@@ -56,6 +56,20 @@ enum Theme {
     static let userBubbleText = color(light: 0x111111, dark: 0xF2F2F2)
 }
 
+/// The Health scores' rings (docs/API.md, "Scores"): Strain orange, Sleep indigo, Recovery green, amber or red by how
+/// recovered. Each is a gradient, start to end of the ring; the same in light and dark.
+enum ScoreColors {
+    private static func c(_ hex: UInt32) -> Color { Color(uiColor: UIColor(hex: hex)) }
+    static let strain = [c(0xFFB340), c(0xFF6A1F)]
+    static let sleep = [c(0x8E8CFF), c(0x5E5CE6)]
+    static func recovery(_ score: Int?) -> [Color] {
+        guard let score else { return [c(0x8E8E93), c(0x8E8E93)] }
+        if score >= 67 { return [c(0x5EE07B), c(0x22B04B)] }
+        if score >= 34 { return [c(0xFFD84D), c(0xF5A623)] }
+        return [c(0xFF7A6B), c(0xE5383B)]
+    }
+}
+
 extension View {
     /// A floating control: Liquid Glass where the system has it, else a frosted material with a soft shadow.
     @ViewBuilder func glass<S: Shape>(in shape: S) -> some View {

@@ -435,7 +435,7 @@ private struct DigestCard: View {
         var out: [Line] = []
         for section in digest.sections {
             switch section.content {
-            case .sleep(let night, let usual):
+            case .sleep(let night, let usual, _):
                 var text = "\(SleepCard.duration(night.asleepMin)) asleep"
                 if let usual, abs(night.asleepMin - usual) >= 15 {
                     let gap = SleepCard.duration(abs(night.asleepMin - usual))

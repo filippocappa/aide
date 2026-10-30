@@ -22,7 +22,7 @@ struct DigestView: View {
                 case .reminders(let reminders): group(section.title) { ReminderRows(reminders: reminders) }
                 case .habits(let habits): group(section.title) { HabitRows(habits: habits) }
                 case .mail(let items): group(section.title) { MailRows(items: items) }
-                case .sleep(let night, let usual): group(section.title) { SleepCard(night: night, usualAsleepMin: usual) }
+                case .sleep(let night, let usual, let score): group(section.title) { SleepCard(night: night, usualAsleepMin: usual, score: score) }
                 case .recovery(let recovery): group(section.title) { RecoveryRow(recovery: recovery) }
                 case .objectives(let objectives, let period):
                     group(section.title) { DigestObjectiveRows(objectives: objectives, period: period) }
@@ -234,6 +234,8 @@ private struct MailRows: View {
 struct SleepCard: View {
     let night: SleepNight
     let usualAsleepMin: Int?
+    /// The sleep score (docs/API.md, "Scores"), when the server has one.
+    var score: Int? = nil
 
     private var stages: [(label: String, minutes: Int, color: Color)] {
         guard let deep = night.deepMin, let core = night.coreMin, let rem = night.remMin else { return [] }
@@ -245,6 +247,7 @@ struct SleepCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text("\(Self.duration(night.asleepMin)) asleep").font(.title3.weight(.semibold))
+                if let score { ScorePill(text: "Sleep \(score)%", color: ScoreColors.sleep[1]) }
                 Spacer(minLength: 8)
                 if let span = timeSpan { Text(span).font(.subheadline).foregroundStyle(.secondary).monospacedDigit() }
             }
@@ -296,6 +299,19 @@ struct SleepCard: View {
     }
 }
 
+/// "Sleep 86%" in a tinted capsule.
+struct ScorePill: View {
+    let text: String
+    let color: Color
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.bold)).monospacedDigit()
+            .foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(color.opacity(0.15), in: Capsule())
+    }
+}
+
 /// How rested the numbers say you are, compared with your own usual. Not medical advice.
 struct RecoveryRow: View {
     let recovery: Recovery
@@ -313,6 +329,9 @@ struct RecoveryRow: View {
             HStack(spacing: 8) {
                 Circle().fill(look.color).frame(width: 9, height: 9)
                 Text(look.label).font(.body.weight(.semibold))
+                if let score = recovery.score {
+                    ScorePill(text: "\(score)%", color: ScoreColors.recovery(score)[1])
+                }
             }
             Text(recovery.summary).font(.subheadline)
             HStack(spacing: 16) {

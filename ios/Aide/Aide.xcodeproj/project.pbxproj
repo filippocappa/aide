@@ -94,6 +94,7 @@
 		C24F2E73A92BACD6109776BA /* LockMonitor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0ED3D94C12E8FE5324793C80 /* LockMonitor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C9E49AE1E7182DCFB48FDE7A /* TodayWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B080CFFD5248A57D95546299 /* TodayWidget.swift */; };
 		CDA6BD42FE40FA43362C4856 /* HealthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591D1D0440D0AE931595EE83 /* HealthView.swift */; };
+		CE2D4B4269DEFB55B032EC1B /* ScoreViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCA7B69273B0FB7E574AC3DB /* ScoreViews.swift */; };
 		D70DECEDF4E4EC132639432C /* TeamChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */; };
 		DCCB151C61A44732969A6427 /* FoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDFDB90CA977D76111828E4F /* FoodViews.swift */; };
 		DCEC0F33C64ACC4F4D889BCE /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58AE8C76701A110B13945027 /* ChatViewModel.swift */; };
@@ -239,6 +240,7 @@
 		B767930966E7CE68008A6BC6 /* WidgetSamples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSamples.swift; sourceTree = "<group>"; };
 		B9FC43C842297C98B8EC0DAE /* AideTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AideTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC045FC4847C746FA98D8C55 /* ScanViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanViews.swift; sourceTree = "<group>"; };
+		BCA7B69273B0FB7E574AC3DB /* ScoreViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoreViews.swift; sourceTree = "<group>"; };
 		BDD7CC531B6DFD14673ABD6C /* LocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationService.swift; sourceTree = "<group>"; };
 		BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitsView.swift; sourceTree = "<group>"; };
 		C3FB4B94DD1D7FF3EEAFB454 /* MealCameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealCameraView.swift; sourceTree = "<group>"; };
@@ -315,6 +317,7 @@
 				390203A3696FD54CC8786945 /* RouteCard.swift */,
 				53C02A40AE154F5373B2E531 /* RoutinesView.swift */,
 				BC045FC4847C746FA98D8C55 /* ScanViews.swift */,
+				BCA7B69273B0FB7E574AC3DB /* ScoreViews.swift */,
 				415C01E53630052EF49DC680 /* ScreenTimeView.swift */,
 				DBB893CFE71A535E6990CADF /* SettingsView.swift */,
 				031232FED72D4C9A787D8843 /* StudyCards.swift */,
@@ -793,6 +796,7 @@
 				9A5EC9E4AB9A77C8A2AF2FF6 /* RouteCard.swift in Sources */,
 				77A8815630784AAAA723B773 /* RoutinesView.swift in Sources */,
 				3D0111BD8AD5B12BEFAD16CF /* ScanViews.swift in Sources */,
+				CE2D4B4269DEFB55B032EC1B /* ScoreViews.swift in Sources */,
 				56104DC93C630DB4D289AF44 /* ScreenLock.swift in Sources */,
 				9E964C66BAD175385D222CD3 /* ScreenTimeService.swift in Sources */,
 				8D99AB3FE92EDB74DCBA6C04 /* ScreenTimeView.swift in Sources */,

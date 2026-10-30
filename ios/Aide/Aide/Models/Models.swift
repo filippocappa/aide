@@ -1075,10 +1075,13 @@ struct HealthUpload: Encodable { let days: [HealthDay] }
 /// A health day as the server has it, for Settings → Apple Health: what has reached Aide.
 struct HealthDayReading: Decodable, Hashable {
     struct Workout: Decodable, Hashable {
+        var id: String? = nil
         let type: String
         let minutes: Int?
         var start: String?
+        var end: String? = nil
         var kcal: Int?
+        var avgHr: Int? = nil
     }
     let date: String
     let sleep: SleepNight?
@@ -1091,7 +1094,120 @@ struct HealthDayReading: Decodable, Hashable {
     let exerciseMin: Int?
     let workouts: [Workout]?
     var naps: [SleepNap]? = nil
+    /// 24 hourly averages, nil where there's no sample (since 2026-10-30).
+    var hrHourly: [Int?]? = nil
+    var maxHr: Int? = nil
 }
+
+/// A day's Sleep, Recovery and Strain, worked out on the server (docs/API.md, "Scores").
+struct HealthScores: Decodable, Hashable {
+    /// One part of a score: what it is, how it did alone (0–100), and its share of the score.
+    struct Part: Decodable, Hashable, Identifiable {
+        let key: String
+        let label: String
+        /// Sleep's parts are text ("6h40 of 7h48"); recovery's a number with its usual and unit.
+        let text: String?
+        let value: Double?
+        let usual: Double?
+        let unit: String?
+        let score: Int?
+        let weight: Int
+        var id: String { key }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = try c.decode(String.self, forKey: .key)
+            label = try c.decodeIfPresent(String.self, forKey: .label) ?? key
+            text = try? c.decodeIfPresent(String.self, forKey: .value)
+            value = try? c.decodeIfPresent(Double.self, forKey: .value)
+            usual = try c.decodeIfPresent(Double.self, forKey: .usual)
+            unit = try c.decodeIfPresent(String.self, forKey: .unit)
+            score = try c.decodeIfPresent(Int.self, forKey: .score)
+            weight = try c.decodeIfPresent(Int.self, forKey: .weight) ?? 0
+        }
+        private enum CodingKeys: String, CodingKey { case key, label, value, usual, unit, score, weight }
+    }
+
+    struct Sleep: Decodable, Hashable {
+        let score: Int
+        let asleepMin: Int?
+        let needMin: Int
+        let debtMin: Int
+        let contributors: [Part]
+    }
+
+    struct Calibrating: Decodable, Hashable { let days: Int; let needs: Int }
+
+    struct Recovery: Decodable, Hashable {
+        let score: Int?
+        let level: String?
+        let calibrating: Calibrating?
+        /// "respiratory_rate", "wrist_temp": each holds the score at 50 at most.
+        let flags: [String]
+        let contributors: [Part]
+    }
+
+    struct StrainWorkout: Decodable, Hashable, Identifiable {
+        let id: String
+        let type: String
+        let minutes: Int?
+        let strain: Int
+    }
+
+    struct Strain: Decodable, Hashable {
+        let score: Int
+        let trimp: Double
+        /// From workouts alone, until heart rate comes from the phone.
+        let estimated: Bool
+        /// The day's band, from recovery: [low, high].
+        let target: [Int]?
+        let restHr: Int?
+        let maxHr: Int?
+        /// Minutes in 50–60, 60–70, 70–80, 80–90 and 90–100% of the heart-rate reserve.
+        let zones: [Int]
+        let workouts: [StrainWorkout]
+    }
+
+    struct Load: Decodable, Hashable {
+        let acute: Double
+        let chronic: Double
+        let ratio: Double
+        /// detraining, maintaining, building, overreaching
+        let label: String
+    }
+
+    struct Vital: Decodable, Hashable {
+        let value: Double?
+        let usual: Double?
+        let low: Double?
+        let high: Double?
+    }
+
+    struct Vitals: Decodable, Hashable {
+        var hrvMs: Vital?
+        var restingHr: Vital?
+        var respiratoryRate: Vital?
+        var wristTempC: Vital?
+        var asleepMin: Vital?
+    }
+
+    let date: String
+    let sleep: Sleep?
+    let recovery: Recovery?
+    let strain: Strain?
+    let load: Load?
+    let vitals: Vitals?
+    let line: String
+}
+
+/// One day's three scores, for the trend charts; nil where there's no data.
+struct ScoreDay: Decodable, Hashable {
+    let date: String
+    let sleep: Int?
+    let recovery: Int?
+    let strain: Int?
+}
+struct ScoreHistory: Decodable { let days: [ScoreDay] }
 
 struct HealthDayList: Decodable { let days: [HealthDayReading] }
 struct HealthUploadResult: Decodable {
@@ -1119,6 +1235,8 @@ struct WakeResult: Decodable {
 struct Recovery: Decodable, Hashable {
     let level: String // "good", "normal" or "low"
     let summary: String
+    /// 0–100 (docs/API.md, "Scores"); nil from an older server or while calibrating.
+    var score: Int? = nil
     let hrvMs: Double?
     let hrvUsualMs: Double?
     let restingHr: Int?
@@ -1175,7 +1293,7 @@ struct DigestSection: Decodable, Identifiable {
         case mail([MailItem])
         case reminders([Reminder])
         case habits([Habit])
-        case sleep(SleepNight, usualAsleepMin: Int?)
+        case sleep(SleepNight, usualAsleepMin: Int?, score: Int?)
         case recovery(Recovery)
         case objectives([Objective], period: String)
         case replies([MailDraft])
@@ -1195,7 +1313,8 @@ struct DigestSection: Decodable, Identifiable {
         case "reminders": content = .reminders(try c.decode([Reminder].self, forKey: .reminders))
         case "habits": content = .habits(try c.decode([Habit].self, forKey: .habits))
         case "sleep": content = .sleep(try c.decode(SleepNight.self, forKey: .sleep),
-                                       usualAsleepMin: try c.decodeIfPresent(Int.self, forKey: .usualAsleepMin))
+                                       usualAsleepMin: try c.decodeIfPresent(Int.self, forKey: .usualAsleepMin),
+                                       score: try c.decodeIfPresent(Int.self, forKey: .score))
         case "recovery": content = .recovery(try Recovery(from: decoder))
         case "objectives": content = .objectives(try c.decode([Objective].self, forKey: .objectives),
                                                  period: try c.decodeIfPresent(String.self, forKey: .period) ?? "day")
@@ -1205,7 +1324,7 @@ struct DigestSection: Decodable, Identifiable {
         }
     }
     private enum CodingKeys: String, CodingKey {
-        case type, title, events, items, reminders, habits, sleep, usualAsleepMin, text, objectives, period, drafts
+        case type, title, events, items, reminders, habits, sleep, usualAsleepMin, score, text, objectives, period, drafts
     }
 }
 

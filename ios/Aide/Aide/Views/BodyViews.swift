@@ -159,145 +159,8 @@ enum HealthDayName {
     }
 }
 
-/// The Body page of the Health tab: last night, recovery, today's activity, weight and recent workouts, each opening its
-/// chart.
-struct BodySections: View {
-    /// Newest first; nil while loading.
-    let days: [HealthDayReading]?
-    let error: String?
-    /// The weight readings and trend; nil while loading, or from a server without them.
-    var weight: WeightList? = nil
-    let open: (HealthMetric) -> Void
-    var openWeight: () -> Void = {}
-    var logWeight: () -> Void = {}
-
-    var body: some View {
-        if let days, !days.isEmpty {
-            sleep(days)
-            recovery(days)
-            activity(days)
-            weightSection
-            workouts(days)
-        } else if let error {
-            Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
-        } else if days != nil {
-            Section {
-                Text("Nothing from Apple Health yet. Turn it on in Settings → Apple Health, and wear your Watch to bed for sleep and recovery.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-        } else {
-            SkeletonSections(sections: 3, rows: 1, mark: false)
-        }
-    }
-
-    /// "Nap 10:42–12:30 (1h40)".
-    private static func nap(_ nap: SleepNap) -> String {
-        let time = Date.FormatStyle(date: .omitted, time: .shortened)
-        let span = [nap.start, nap.end].compactMap(Wire.parse).map { $0.formatted(time) }.joined(separator: "–")
-        return "Nap \(span) (\(SleepCard.duration(nap.asleepMin)))"
-    }
-
-    @ViewBuilder private func sleep(_ days: [HealthDayReading]) -> some View {
-        if let night = days.first(where: { $0.sleep != nil }), let s = night.sleep {
-            let usual = HealthMetric.sleep.latest(in: days)?.usual.map { Int(($0 * 60).rounded()) }
-            Section {
-                Button { open(.sleep) } label: {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SleepCard(night: s, usualAsleepMin: usual)
-                        if let naps = days.first?.naps, !naps.isEmpty {
-                            Label(naps.map(Self.nap).joined(separator: ", "), systemImage: "powersleep")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        MiniChart(metric: .sleep, days: Array(days.prefix(7)))
-                            .frame(height: 44)
-                    }
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            } header: {
-                header(Self.isToday(night.date) ? "Last night" : "Sleep, \(HealthDayName.of(night.date))",
-                       icon: "moon.zzz.fill", color: .indigo)
-            }
-            .listRowBackground(Theme.row)
-        }
-    }
-
-    @ViewBuilder private func recovery(_ days: [HealthDayReading]) -> some View {
-        let metrics: [HealthMetric] = [.hrv, .restingHr, .breathing, .wristTemp].filter { $0.latest(in: days) != nil }
-        if !metrics.isEmpty {
-            Section {
-                tiles(metrics, days)
-            } header: {
-                header("Recovery", icon: "heart.text.square.fill", color: .red)
-            } footer: {
-                Text("Last night's numbers next to your own usual, the average of the days before.")
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
-        }
-    }
-
-    @ViewBuilder private func activity(_ days: [HealthDayReading]) -> some View {
-        let metrics: [HealthMetric] = [.steps, .activeKcal, .exercise].filter { $0.latest(in: days) != nil }
-        if !metrics.isEmpty {
-            Section {
-                tiles(metrics, days)
-            } header: {
-                header("Activity", icon: "figure.walk", color: .orange)
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
-        }
-    }
-
-    @ViewBuilder private var weightSection: some View {
-        if let weight {
-            Section {
-                WeightCard(weight: weight, open: openWeight, log: logWeight)
-            } header: {
-                header("Weight", icon: "scalemass.fill", color: WeightSummary.color)
-            }
-            .listRowBackground(Theme.row)
-        }
-    }
-
-    @ViewBuilder private func workouts(_ days: [HealthDayReading]) -> some View {
-        let recent = days.prefix(14).flatMap { day in (day.workouts ?? []).map { (day.date, $0) } }
-        if !recent.isEmpty {
-            Section {
-                ForEach(Array(recent.prefix(8).enumerated()), id: \.offset) { _, item in
-                    WorkoutRow(date: item.0, workout: item.1)
-                }
-            } header: {
-                header("Workouts", icon: "dumbbell.fill", color: .green)
-            } footer: {
-                Text("The last two weeks. A workout can tick a habit: set it on the habit.")
-            }
-            .listRowBackground(Theme.row)
-        }
-    }
-
-    private func tiles(_ metrics: [HealthMetric], _ days: [HealthDayReading]) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            ForEach(metrics) { m in
-                Button { open(m) } label: { MetricTile(metric: m, days: days) }
-                    .buttonStyle(CardPress())
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func header(_ title: String, icon: String, color: Color) -> some View {
-        Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(color) }
-    }
-
-    private static func isToday(_ date: String) -> Bool { Wire.day(date).map(Calendar.current.isDateInToday) ?? false }
-}
-
 /// One measure on a card: the latest number, how it sits next to usual, and the last week in small.
-private struct MetricTile: View {
+struct MetricTile: View {
     let metric: HealthMetric
     let days: [HealthDayReading]
 
@@ -379,9 +242,11 @@ private struct MiniChart: View {
     }
 }
 
-private struct WorkoutRow: View {
+struct WorkoutRow: View {
     let date: String
     let workout: HealthDayReading.Workout
+    /// What it added to the day's strain (docs/API.md, "Scores").
+    var strain: Int? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -397,7 +262,11 @@ private struct WorkoutRow: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 if let m = workout.minutes { Text("\(m) min").monospacedDigit() }
-                if let k = workout.kcal { Text("\(k) kcal").font(.caption).foregroundStyle(.secondary).monospacedDigit() }
+                if let strain {
+                    Text("+\(strain)% strain").font(.caption.weight(.semibold)).foregroundStyle(ScoreColors.strain[1]).monospacedDigit()
+                } else if let k = workout.kcal {
+                    Text("\(k) kcal").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
             }
         }
         .accessibilityElement(children: .combine)

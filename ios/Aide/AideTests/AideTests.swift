@@ -855,17 +855,61 @@ final class HealthTests: XCTestCase {
         let json = #"""
         {"kind":"wake","greeting":"Morning.","sections":[
           {"type":"sleep","title":"Last night","usual_asleep_min":438,"sleep":{"bedtime":"2026-10-19T00:12:00+02:00",
-           "wake":"2026-10-19T07:41:00+02:00","asleep_min":412,"in_bed_min":449,"awake_min":37,"deep_min":58,"core_min":251,"rem_min":103}},
+           "wake":"2026-10-19T07:41:00+02:00","asleep_min":412,"in_bed_min":449,"awake_min":37,"deep_min":58,"core_min":251,"rem_min":103},"score":86},
           {"type":"recovery","title":"Recovery","level":"good","summary":"HRV above your usual.","hrv_ms":61.5,"hrv_usual_ms":55.0,
-           "resting_hr":52,"resting_hr_usual":54}]}
+           "resting_hr":52,"resting_hr_usual":54,"score":72}]}
         """#
         let digest = try JSONDecoder.api.decode(Digest.self, from: Data(json.utf8))
-        guard case .sleep(let night, let usual) = digest.sections[0].content else { return XCTFail() }
+        guard case .sleep(let night, let usual, let score) = digest.sections[0].content else { return XCTFail() }
         XCTAssertEqual(night.asleepMin, 412)
         XCTAssertEqual(usual, 438)
+        XCTAssertEqual(score, 86)
         guard case .recovery(let r) = digest.sections[1].content else { return XCTFail() }
         XCTAssertEqual(r.level, "good")
         XCTAssertEqual(r.restingHrUsual, 54)
+        XCTAssertEqual(r.score, 72)
+    }
+
+    /// As the server answered for 2026-10-29: a part's value is text for sleep and a number for recovery.
+    func testHealthScoresDecode() throws {
+        let json = #"""
+        {"date":"2026-10-29","sleep":{"score":92,"asleep_min":473,"need_min":510,"debt_min":65,"contributors":[
+          {"key":"duration","label":"Hours vs need","value":"7h53 of 8h30","score":93,"weight":50},
+          {"key":"restorative","label":"Deep and REM","value":null,"score":null,"weight":20}]},
+         "recovery":{"score":63,"level":"normal","calibrating":null,"contributors":[
+          {"key":"hrv","label":"HRV","value":104.1,"usual":92.2,"unit":"ms","weight":50,"score":77}],"flags":["wrist_temp"]},
+         "strain":{"score":58,"trimp":131.2,"estimated":true,"target":[35,60],"rest_hr":44,"max_hr":193,
+          "zones":[0,0,0,0,0],"workouts":[{"id":"EDE3","type":"run","minutes":54,"strain":58}]},
+         "load":{"acute":55.5,"chronic":67.3,"ratio":0.82,"label":"maintaining"},
+         "vitals":{"hrv_ms":{"value":104.1,"usual":92.25,"low":67.42,"high":117.08},
+          "resting_hr":{"value":null,"usual":41.0,"low":36.55,"high":45.45},"asleep_min":{"value":473,"usual":452,"low":374.9,"high":529.1}},
+         "line":"Recovery 63% after 7h53 asleep: a normal day, aim for 35–60% strain."}
+        """#
+        let s = try JSONDecoder.api.decode(HealthScores.self, from: Data(json.utf8))
+        XCTAssertEqual(s.sleep?.contributors.first?.text, "7h53 of 8h30")
+        XCTAssertNil(s.sleep?.contributors.last?.score)
+        XCTAssertEqual(s.recovery?.contributors.first?.value, 104.1)
+        XCTAssertEqual(s.recovery?.flags, ["wrist_temp"])
+        XCTAssertEqual(s.strain?.target, [35, 60])
+        XCTAssertEqual(s.strain?.workouts.first?.strain, 58)
+        XCTAssertEqual(s.load?.label, "maintaining")
+        XCTAssertEqual(s.vitals?.hrvMs?.value, 104.1)
+        XCTAssertNil(s.vitals?.restingHr?.value)
+        XCTAssertNil(s.vitals?.wristTempC)
+        XCTAssertEqual(ScoreKind.sleep.caption(s), "7h53 of 8h30")
+        XCTAssertEqual(ScoreKind.strain.caption(s), "Aim 35–60")
+        XCTAssertEqual(ScoreKind.recovery.caption(s), "Normal")
+
+        let calibrating = try JSONDecoder.api.decode(HealthScores.self, from: Data(#"""
+        {"date":"2026-10-30","sleep":null,"recovery":{"score":null,"level":null,"calibrating":{"days":9,"needs":14},
+         "contributors":[],"flags":[]},"strain":null,"load":null,"vitals":null,"line":"Calibrating."}
+        """#.utf8))
+        XCTAssertEqual(ScoreKind.recovery.caption(calibrating), "Calibrating 9/14")
+
+        let history = try JSONDecoder.api.decode(ScoreHistory.self, from: Data(#"""
+        {"days":[{"date":"2026-10-30","sleep":null,"recovery":null,"strain":0},{"date":"2026-10-29","sleep":92,"recovery":63,"strain":58}]}
+        """#.utf8))
+        XCTAssertEqual(history.days.map { ScoreKind.recovery.score($0) }, [nil, 63])
     }
 
     func testObjectivesDecodeInBlocksAndInTheDigest() throws {

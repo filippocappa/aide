@@ -548,6 +548,20 @@ final class APIClient {
         return list.days
     }
 
+    /// Sleep, Recovery and Strain for a day (today by default), with what they're made of.
+    func healthScores(date: Date? = nil) async throws -> HealthScores {
+        let query = date.map { [URLQueryItem(name: "date", value: Wire.dayString($0))] } ?? []
+        return try await send("GET", "/v1/health/scores", query: query)
+    }
+
+    /// The three scores for each of `days` days up to `to`, newest first.
+    func healthScoreHistory(days: Int = 30, to: Date? = nil) async throws -> [ScoreDay] {
+        var query = [URLQueryItem(name: "days", value: String(days))]
+        if let to { query.append(URLQueryItem(name: "to", value: Wire.dayString(to))) }
+        let history: ScoreHistory = try await send("GET", "/v1/health/scores/history", query: query)
+        return history.days
+    }
+
     /// The weight readings for `days` days back, the trend, and what was logged through Aide (docs/API.md, Weight).
     func weight(days: Int = 90) async throws -> WeightList {
         try await send("GET", "/v1/health/weight", query: [URLQueryItem(name: "days", value: String(days))])

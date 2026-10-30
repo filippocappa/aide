@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The Health tab, in two pages. Body: what Apple Health says (sleep, recovery, activity, weight, workouts), each
-/// opening its chart. Food: what you ate, day by day; meals come from photos with a few words, or the words alone, that
-/// Coach names and estimates (a packet's barcode in a photo brings its real numbers); tap one to fix the numbers, swipe to
-/// delete. Every meal also goes to Apple Health
+/// The Health tab, one page for a day (today, or an earlier one from the arrows): Strain, Recovery and Sleep as rings
+/// (docs/API.md, "Scores"; each opens its page) with the day in a sentence, last night's numbers against your usual
+/// range, the day's heart rate and workouts, activity and weight, then Food: what you ate; meals come from photos with
+/// a few words, or the words alone, that Coach names and estimates (a packet's barcode in a photo brings its real
+/// numbers); tap one to fix the numbers, swipe to delete. Every meal also goes to Apple Health
 /// (`HealthService.writeMeals`). (Habits are on Today.)
 struct HealthView: View {
     @EnvironmentObject private var env: AppEnvironment
@@ -12,7 +13,10 @@ struct HealthView: View {
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var health: HealthService
 
-    @AppStorage("healthPage") private var page = "body"
+    /// The day's scores; nil while loading or from a server without them.
+    @State private var scores: HealthScores?
+    @State private var scoresLoaded = false
+    @State private var scoreKind: ScoreKind?
     /// Newest first; nil while loading.
     @State private var bodyDays: [HealthDayReading]?
     @State private var bodyError: String?
@@ -23,7 +27,6 @@ struct HealthView: View {
 
     @State private var day = Calendar.current.startOfDay(for: Date())
     @State private var food: FoodDay?
-    @State private var foodDays: [FoodDaySummary] = []
     /// An older server without food: the food part is left out.
     @State private var noFood = false
     @State private var foodError: String?
@@ -48,55 +51,55 @@ struct HealthView: View {
 
     private var coach: Agent { chat.agent("coach") }
 
-    /// The last seven days, today last.
-    private var week: [Date] {
-        let today = Calendar.current.startOfDay(for: Date())
-        return (0..<7).reversed().compactMap { Calendar.current.date(byAdding: .day, value: -$0, to: today) }
-    }
-
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
+
+    /// The chosen day's reading from Apple Health.
+    private var reading: HealthDayReading? { bodyDays?.first { $0.date == Wire.dayString(day) } }
+
+    /// The days up to the chosen one, newest first: the tiles show the chosen day's numbers.
+    private var daysUpTo: [HealthDayReading] {
+        let shown = Wire.dayString(day)
+        return (bodyDays ?? []).filter { $0.date <= shown }
+    }
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Picker("Page", selection: $page) {
-                        Text("Body").tag("body")
-                        if !noFood { Text("Food").tag("food") }
-                    }
-                    .pickerStyle(.segmented)
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
-                }
-                switch page {
-                case "food" where !noFood:
-                    Section {
-                        WeekStrip(days: week, summaries: Dictionary(foodDays.map { ($0.date, $0) }) { _, last in last },
-                                  goal: food?.goals.calories, tint: coach.tint, selection: $day)
-                    }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
-                    if let food {
-                        Section {
-                            NavigationLink { NutritionDayView(day: food, tint: coach.tint) } label: {
-                                DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
+            ScrollViewReader { proxy in
+                List {
+                    Section { dayHeader }
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
+                    scoreSections
+                    weightSection
+                    if !noFood {
+                        if let food {
+                            Section {
+                                NavigationLink { NutritionDayView(day: food, tint: coach.tint) } label: {
+                                    DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
+                                }
+                            } header: {
+                                sectionHeader("Food", icon: "fork.knife", color: coach.tint)
                             }
+                            .listRowBackground(Theme.row)
+                            .id("food")
                         }
-                        .listRowBackground(Theme.row)
+                        foodSection
+                        // Its own section: a clear row inside the card's section cut off the card's rounded bottom.
+                        Section { logButton }
+                        mealsSection
                     }
-                    foodSection
-                    // Its own section: a clear row inside the card's section cut off the card's rounded bottom.
-                    Section { logButton }
-                    mealsSection
-                default:
-                    BodySections(days: bodyDays, error: bodyError, weight: weight, open: { metric = $0 },
-                                 openWeight: { showWeight = true }, logWeight: { loggingWeight = true })
+                }
+                .onChange(of: scrollToFood) {
+                    if scrollToFood { withAnimation { proxy.scrollTo("food", anchor: .top) }; scrollToFood = false }
                 }
             }
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
             .navigationTitle("Health")
             .navigationDestination(item: $metric) { m in HealthMetricView(metric: m, days: bodyDays ?? []) }
+            .navigationDestination(item: $scoreKind) { kind in
+                if let scores { ScoreDetailView(kind: kind, scores: scores, day: reading, date: day) }
+            }
             .navigationDestination(isPresented: $showWeight) { WeightView { await loadWeight() } }
             .weightEntry(isPresented: $loggingWeight) { await loadWeight() }
             .sheet(isPresented: $showGoals, onDismiss: { Task { await loadFood() } }) {
@@ -149,10 +152,11 @@ struct HealthView: View {
                           logged: loggedPacket, askCoach: code.photo.map { photo in { coachInstead = photo } })
             }
             .refreshable {
+                await loadBody(upload: true)
                 async let food: Void = loadFood()
-                async let body: Void = loadBody(upload: true)
+                async let scores: Void = loadScores()
                 await food
-                await body
+                await scores
             }
             .onChange(of: env.mealLog) { startMealLog() }
             .task {
@@ -160,15 +164,170 @@ struct HealthView: View {
                 await loadBody()
                 #if DEBUG
                 if settings.isPreview, let m = UserDefaults.standard.string(forKey: "previewMetric") {
-                    page = "body"; metric = HealthMetric(rawValue: m)
+                    metric = HealthMetric(rawValue: m)
+                }
+                if settings.isPreview, case let back = UserDefaults.standard.integer(forKey: "previewDaysBack"), back > 0,
+                   let earlier = Calendar.current.date(byAdding: .day, value: -back, to: day) {
+                    day = earlier
+                }
+                if settings.isPreview, let k = UserDefaults.standard.string(forKey: "previewScore") {
+                    scoreKind = ScoreKind(rawValue: k)
                 }
                 if settings.isPreview, let code = UserDefaults.standard.string(forKey: "previewBarcode") {
-                    page = "food"; scanned = ScannedCode(code: code)
+                    scanned = ScannedCode(code: code)
                 }
                 #endif
             }
-            .task(id: day) { await loadFood() }
+            .task(id: day) {
+                async let food: Void = loadFood()
+                async let scores: Void = loadScores()
+                await food
+                await scores
+            }
         }
+    }
+
+    // MARK: The day
+
+    @State private var scrollToFood = false
+
+    /// "‹ Today, 30 October ›": everything below follows it.
+    private var dayHeader: some View {
+        HStack {
+            Button { move(-1) } label: {
+                Image(systemName: "chevron.left").font(.body.weight(.semibold)).frame(width: 36, height: 36)
+            }
+            .accessibilityLabel("Day before")
+            Spacer()
+            VStack(spacing: 0) {
+                Text(dayTitle).font(.headline)
+                if isToday || Calendar.current.isDateInYesterday(day) {
+                    Text(day.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button { move(1) } label: {
+                Image(systemName: "chevron.right").font(.body.weight(.semibold)).frame(width: 36, height: 36)
+            }
+            .disabled(isToday)
+            .accessibilityLabel("Day after")
+        }
+        .buttonStyle(.borderless)
+        .tint(.primary)
+    }
+
+    private func move(_ days: Int) {
+        guard let next = Calendar.current.date(byAdding: .day, value: days, to: day), next <= Date() else { return }
+        withAnimation(.snappy) { day = Calendar.current.startOfDay(for: next) }
+    }
+
+    @ViewBuilder private var scoreSections: some View {
+        if scoresLoaded || scores != nil {
+            Section {
+                ScoresCard(scores: scores, coach: coach, open: { kind in if scores != nil { scoreKind = kind } },
+                           ask: { push.route = .agent(coach.id) })
+            }
+            .listRowBackground(Theme.row)
+        } else if bodyError == nil {
+            SkeletonSections(sections: 1, rows: 2, mark: false)
+        }
+        if let bodyError {
+            Section { Label(bodyError, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
+        } else if bodyDays?.isEmpty == true {
+            Section {
+                Text("Nothing from Apple Health yet. Turn it on in Settings → Apple Health, and wear your Watch to bed for sleep and recovery.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        let vitals = vitalRows
+        if !vitals.isEmpty {
+            Section {
+                ForEach(vitals, id: \.0) { m, v in
+                    Button { metric = m } label: { VitalRow(metric: m, vital: v).contentShape(Rectangle()) }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Shows the chart")
+                }
+            } header: {
+                sectionHeader("Last night", icon: "moon.zzz.fill", color: .indigo)
+            } footer: {
+                Text("The middle of each gauge is your usual range, from the 60 days before.")
+            }
+            .listRowBackground(Theme.row)
+        }
+        if let reading, reading.hrHourly?.contains(where: { $0 != nil }) == true {
+            Section {
+                DayHeartChart(day: reading)
+            } header: {
+                sectionHeader("Heart rate", icon: "heart.fill", color: .red)
+            }
+            .listRowBackground(Theme.row)
+        }
+        if let workouts = reading?.workouts, !workouts.isEmpty {
+            Section {
+                ForEach(Array(workouts.enumerated()), id: \.offset) { _, w in
+                    WorkoutRow(date: reading?.date ?? "", workout: w,
+                               strain: scores?.strain?.workouts.first { $0.id == w.id }?.strain)
+                }
+            } header: {
+                sectionHeader("Workouts", icon: "figure.run", color: ScoreColors.strain[1])
+            }
+            .listRowBackground(Theme.row)
+        }
+        let activity: [HealthMetric] = [.steps, .activeKcal, .exercise].filter { m in reading.flatMap(m.value) != nil }
+        if !activity.isEmpty {
+            Section {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(activity) { m in
+                        Button { metric = m } label: { MetricTile(metric: m, days: daysUpTo) }
+                            .buttonStyle(CardPress())
+                    }
+                }
+                .padding(.vertical, 2)
+            } header: {
+                sectionHeader("Activity", icon: "figure.walk", color: .orange)
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
+        }
+    }
+
+    /// Last night's numbers that have a value, with their usual range.
+    private var vitalRows: [(HealthMetric, HealthScores.Vital)] {
+        guard let v = scores?.vitals else { return [] }
+        let all: [(HealthMetric, HealthScores.Vital?)] = [(.hrv, v.hrvMs), (.restingHr, v.restingHr),
+                                                         (.breathing, v.respiratoryRate), (.wristTemp, v.wristTempC),
+                                                         (.sleep, v.asleepMin)]
+        return all.compactMap { m, x in x.flatMap { $0.value != nil ? (m, $0) : nil } }
+    }
+
+    @ViewBuilder private var weightSection: some View {
+        if let weight, isToday {
+            Section {
+                WeightCard(weight: weight, open: { showWeight = true }, log: { loggingWeight = true })
+            } header: {
+                sectionHeader("Weight", icon: "scalemass.fill", color: WeightSummary.color)
+            }
+            .listRowBackground(Theme.row)
+        }
+    }
+
+    private func sectionHeader(_ title: String, icon: String, color: Color) -> some View {
+        Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(color) }
+    }
+
+    private func loadScores() async {
+        guard settings.isConfigured else { return }
+        let shown = day
+        do {
+            let loaded = try await env.api.healthScores(date: shown)
+            guard shown == day else { return }
+            withAnimation { scores = loaded }
+        } catch {
+            if Task.isCancelled { return }
+            scores = nil // an older server without scores, or none for the day
+        }
+        scoresLoaded = true
     }
 
     // MARK: Food
@@ -177,8 +336,8 @@ struct HealthView: View {
     private func startMealLog() {
         guard let way = env.mealLog else { return }
         env.mealLog = nil
-        page = "food"
         day = Calendar.current.startOfDay(for: Date())
+        scrollToFood = true
         Task {
             try? await Task.sleep(for: .milliseconds(500)) // after the tab switch and any sheet going away
             switch way {
@@ -244,7 +403,7 @@ struct HealthView: View {
             }
         } header: {
             HStack {
-                Text(dayTitle)
+                if food == nil { sectionHeader("Food", icon: "fork.knife", color: coach.tint) }
                 Spacer()
                 Button("Targets") { showGoals = true }
                     .font(.subheadline.weight(.semibold))
@@ -318,12 +477,9 @@ struct HealthView: View {
         guard settings.isConfigured else { return }
         let shown = day
         do {
-            async let dayFood = env.api.food(date: shown)
-            async let days = env.api.foodDays(from: week[0], to: week[week.count - 1])
-            let (loaded, summaries) = try await (dayFood, days)
+            let loaded = try await env.api.food(date: shown)
             guard shown == day else { return } // another day was picked meanwhile
             food = loaded
-            foodDays = summaries
             foodError = nil
             noFood = false
         } catch APIError.server(let status, _) where status == 404 {
