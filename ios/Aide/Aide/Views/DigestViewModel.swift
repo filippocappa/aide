@@ -41,7 +41,26 @@ final class DigestViewModel: ObservableObject {
     var completeReminder: ((Reminder, Bool) async -> Bool)?
 
     private let api: APIClient
-    init(api: APIClient) { self.api = api }
+    init(api: APIClient) {
+        self.api = api
+        // The last one shown, so the Team tab has its note at once; the server's answer replaces it.
+        if let data = try? Data(contentsOf: Self.latestFile), let kept = try? JSONDecoder.api.decode(Digest.self, from: data) {
+            latest = kept
+            latestLoaded = true
+        }
+    }
+
+    private static let latestFile = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appending(path: "latest-digest.json")
+
+    /// Whether this briefing's note has been shown before (it's written in once, the first time).
+    func isNew(_ digest: Digest) -> Bool {
+        UserDefaults.standard.string(forKey: "digest.seen") != Self.key(digest)
+    }
+
+    func markSeen(_ digest: Digest) { UserDefaults.standard.set(Self.key(digest), forKey: "digest.seen") }
+
+    private static func key(_ digest: Digest) -> String { "\(digest.kind) \(digest.generatedAt ?? digest.greeting)" }
 
     func load() async {
         isLoading = true
@@ -76,11 +95,14 @@ final class DigestViewModel: ObservableObject {
     func loadLatest() async {
         defer { latestLoaded = true }
         do {
-            latest = try await api.digest(kind: "latest")
+            let data = try await api.raw("/v1/digest", query: [URLQueryItem(name: "kind", value: "latest")])
+            latest = try JSONDecoder.api.decode(Digest.self, from: data)
+            try? data.write(to: Self.latestFile, options: .atomic)
         } catch APIError.server(400, _) {
             latest = try? await api.digest(kind: ChatViewModel.digestKind())
         } catch APIError.server(404, _) {
             latest = nil
+            try? FileManager.default.removeItem(at: Self.latestFile)
         } catch {
             // offline: keep what's shown
         }

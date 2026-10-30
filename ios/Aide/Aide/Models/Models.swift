@@ -258,11 +258,14 @@ struct Routine: Decodable, Identifiable, Hashable {
     var enabled: Bool
     /// A watch posts only when something needs you ("Watches"); absent from an older server.
     var watch: Bool?
+    /// One line to the user on what it does (since 2026-10-30); nil on one made in the app.
+    var summary: String?
     var conversationId: String?
     var nextRun: String?
     var lastRun: String?
 
     var isWatch: Bool { watch == true }
+    var blurb: String { Schedule.blurb(summary, prompt) }
 }
 struct RoutineList: Decodable { let routines: [Routine] }
 /// `spoke` is false when a watch found nothing and posted nothing.
@@ -277,6 +280,8 @@ struct RoutineDraft: Encodable, Hashable {
     var days: [Int]
     var enabled: Bool
     var watch = false
+    /// An idea's line comes along; nil leaves the routine's as it is.
+    var summary: String?
 }
 
 struct RoutineIdea: Decodable, Hashable {
@@ -285,6 +290,9 @@ struct RoutineIdea: Decodable, Hashable {
     let time: String
     let days: [Int]
     let watch: Bool
+    let summary: String?
+
+    var blurb: String { Schedule.blurb(summary, prompt) }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -293,11 +301,20 @@ struct RoutineIdea: Decodable, Hashable {
         time = try c.decodeIfPresent(String.self, forKey: .time) ?? "09:00"
         days = try c.decodeIfPresent([Int].self, forKey: .days) ?? []
         watch = try c.decodeIfPresent(Bool.self, forKey: .watch) ?? false
+        summary = try c.decodeIfPresent(String.self, forKey: .summary)
     }
-    private enum CodingKeys: String, CodingKey { case title, prompt, time, days, watch }
+    private enum CodingKeys: String, CodingKey { case title, prompt, time, days, watch, summary }
 }
 
 enum Schedule {
+    /// What a routine does in a line: the server's `summary`, else the first sentence of its instructions.
+    static func blurb(_ summary: String?, _ prompt: String) -> String {
+        if let line = summary?.trimmingCharacters(in: .whitespacesAndNewlines), !line.isEmpty { return line }
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let end = text.range(of: ". ") else { return text }
+        return String(text[..<end.lowerBound]) + "."
+    }
+
     /// "Every day at 09:00", "Weekdays at 09:00", "Sundays at 18:00", "Mon, Wed and Fri at 07:30".
     static func label(time: String, days: [Int], joiner: String = "at") -> String {
         let set = Set(days)
@@ -320,6 +337,8 @@ struct HistoryResponse: Decodable {
     let messages: [HistoryMessage]
     /// A turn still running in the chat: the message being answered (not in `messages` until it's done).
     let working: Working?
+    /// Think harder is on: the smarter model answers this chat. Absent from older servers.
+    let smart: Bool?
 
     struct Working: Decodable, Equatable {
         let agent: String

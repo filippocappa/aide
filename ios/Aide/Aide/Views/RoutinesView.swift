@@ -2,7 +2,7 @@ import SwiftUI
 
 /// One agent's routines: jobs it runs on a schedule, each posting in its own chat (docs/API.md, "Routines").
 /// Its watches come first: checks that speak up only when something needs you ("Watches").
-/// Switch them on and off here, tap one to change it, or start from one of the agent's ideas.
+/// Each says in a line what it does; switch them on and off here, tap one to change it, or start from an idea.
 struct RoutinesSheet: View {
     @EnvironmentObject private var chat: ChatViewModel
     let agent: Agent
@@ -16,58 +16,62 @@ struct RoutinesSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                let watches = chat.routines(of: agent).filter(\.isWatch)
-                if !watches.isEmpty {
-                    Section {
-                        rows(watches)
-                    } header: {
-                        Text("Keeps an eye on")
-                    } footer: {
-                        Text("\(agent.name) checks at these times and speaks up only when something needs you.")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Text("Jobs \(agent.name) does by itself at a set time. Watches check quietly and speak up only "
+                         + "when something needs you; routines post every time.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                    let watches = chat.routines(of: agent).filter(\.isWatch)
+                    if !watches.isEmpty {
+                        DetailCard("Watches", padding: 0) { rows(watches) }
                     }
-                }
-                Section {
                     let routines = chat.routines(of: agent).filter { !$0.isWatch }
-                    if routines.isEmpty {
-                        Text("Nothing yet. \(agent.name) can do something for you on a schedule and post it in its own chat.")
-                            .foregroundStyle(.secondary)
-                    }
-                    rows(routines)
-                    NavigationLink {
-                        RoutineEditor(agent: agent, choose: choose)
-                    } label: {
-                        Label("New routine", systemImage: "plus")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(agent.tint)
-                    }
-                    .listRowBackground(Theme.row)
-                }
-                if !ideas.isEmpty {
-                    Section("Ideas") {
-                        ForEach(ideas, id: \.self) { idea in
-                            NavigationLink {
-                                RoutineEditor(agent: agent, idea: idea, choose: choose)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Label {
-                                        Text(idea.title)
-                                    } icon: {
-                                        if idea.watch { Image(systemName: "eye").foregroundStyle(agent.tint) }
-                                    }
-                                    .labelStyle(.titleAndIcon)
-                                    Text(idea.watch ? "Only when something needs you · "
-                                         + Schedule.label(time: idea.time, days: idea.days)
-                                         : Schedule.label(time: idea.time, days: idea.days))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
+                    DetailCard("Routines", padding: 0) {
+                        if routines.isEmpty {
+                            Text("Nothing yet. \(agent.name) can do something for you on a schedule and post it in its own chat.")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                                .padding(.horizontal, 16).padding(.vertical, 14)
+                            RowDivider(leading: 16)
+                        }
+                        rows(routines)
+                        if !routines.isEmpty { RowDivider(leading: 60) }
+                        NavigationLink {
+                            RoutineEditor(agent: agent, choose: choose)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "plus").font(.body.weight(.semibold))
+                                    .frame(width: 32, height: 32)
+                                Text("New routine").font(.body.weight(.medium))
+                                Spacer()
                             }
-                            .listRowBackground(Theme.row)
+                            .foregroundStyle(tint)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(RowPress())
+                    }
+                    if !ideas.isEmpty {
+                        DetailCard("Ideas", note: "Tap one to look it over, then Save to turn it on.", padding: 0) {
+                            ForEach(Array(ideas.enumerated()), id: \.element) { i, idea in
+                                if i > 0 { RowDivider(leading: 60) }
+                                NavigationLink {
+                                    RoutineEditor(agent: agent, idea: idea, choose: choose)
+                                } label: {
+                                    RoutineLine(title: idea.title, blurb: idea.blurb, watch: idea.watch, tint: tint,
+                                                when: Schedule.label(time: idea.time, days: idea.days)) {
+                                        Image(systemName: "plus.circle.fill").font(.title2).foregroundStyle(tint)
+                                    }
+                                }
+                                .buttonStyle(RowPress())
+                            }
                         }
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
             }
-            .scrollContentBackground(.hidden)
             .background(Theme.grouped)
             .navigationTitle("\(agent.name)'s routines")
             .navigationBarTitleDisplayMode(.inline)
@@ -77,51 +81,82 @@ struct RoutinesSheet: View {
         .presentationBackground(Theme.grouped)
     }
 
+    private var tint: Color { agent.orchestrator ? Theme.slate : agent.tint }
+
     private func rows(_ routines: [Routine]) -> some View {
-        ForEach(routines) { routine in
-            NavigationLink {
-                RoutineEditor(agent: agent, routine: routine, choose: choose)
-            } label: {
-                RoutineRow(routine: routine, tint: agent.tint)
+        ForEach(Array(routines.enumerated()), id: \.element.id) { i, routine in
+            if i > 0 { RowDivider(leading: 60) }
+            HStack(spacing: 0) {
+                NavigationLink {
+                    RoutineEditor(agent: agent, routine: routine, choose: choose)
+                } label: {
+                    RoutineLine(title: routine.title, blurb: routine.blurb, watch: routine.isWatch, tint: tint,
+                                when: when(routine), on: routine.enabled) { EmptyView() }
+                }
+                .buttonStyle(RowPress())
+                Toggle(routine.title, isOn: Binding(
+                    get: { routine.enabled },
+                    set: { on in Task { await chat.setEnabled(routine, on) } }))
+                    .labelsHidden()
+                    .tint(tint)
+                    .padding(.trailing, 16)
             }
-            .listRowBackground(Theme.row)
         }
-        .onDelete { offsets in
-            let doomed = offsets.map { routines[$0] }
-            Task { for r in doomed { await chat.delete(r) } }
-        }
+    }
+
+    /// "Weekdays at 11:00 · next Tomorrow 11:00", or "… · off".
+    private func when(_ routine: Routine) -> String {
+        let schedule = Schedule.label(time: routine.time, days: routine.days)
+        guard routine.enabled else { return schedule + " · off" }
+        guard let next = routine.nextRun.flatMap(Wire.parse) else { return schedule }
+        let day = ActivityDays.upcoming(next)
+        return schedule + " · next " + (Calendar.current.isDateInToday(next) ? "today \(day)" : day)
     }
 }
 
-/// A routine: what it's called, when it runs, and a switch.
-private struct RoutineRow: View {
-    @EnvironmentObject private var chat: ChatViewModel
-    let routine: Routine
+/// A routine or an idea in a card: an eye or a clock, its name, what it does and when.
+private struct RoutineLine<Trailing: View>: View {
+    let title: String
+    let blurb: String
+    let watch: Bool
     let tint: Color
+    let when: String
+    var on = true
+    @ViewBuilder let trailing: () -> Trailing
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(routine.title)
-                Text(Schedule.label(time: routine.time, days: routine.days))
-                    .font(.caption).foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: watch ? "eye" : "clock")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(on ? tint : .secondary)
+                .frame(width: 32, height: 32)
+                .background((on ? tint : Color.secondary).opacity(0.14), in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.body.weight(.medium)).foregroundStyle(on ? .primary : .secondary)
+                Text(blurb).font(.subheadline).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(when).font(.caption).foregroundStyle(.tertiary)
             }
-            Spacer()
-            Toggle(routine.title, isOn: Binding(
-                get: { routine.enabled },
-                set: { on in Task { await chat.setEnabled(routine, on) } }))
-                .labelsHidden()
-                .tint(tint)
+            Spacer(minLength: 8)
+            trailing()
         }
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 
-/// Make or change a routine: its name, what the agent should do, the time and the days.
+/// Make or change a routine: what it does, when, whether it posts every time, and what the agent is asked.
 struct RoutineEditor: View {
     @EnvironmentObject private var chat: ChatViewModel
     @Environment(\.dismiss) private var dismiss
     let agent: Agent
     var routine: Routine?
+    private let idea: RoutineIdea?
     let choose: (PastChatsSheet.Choice) -> Void
 
     @State private var title: String
@@ -138,6 +173,7 @@ struct RoutineEditor: View {
     init(agent: Agent, routine: Routine? = nil, idea: RoutineIdea? = nil, choose: @escaping (PastChatsSheet.Choice) -> Void) {
         self.agent = agent
         self.routine = routine
+        self.idea = idea
         self.choose = choose
         _title = State(initialValue: routine?.title ?? idea?.title ?? "")
         _prompt = State(initialValue: routine?.prompt ?? idea?.prompt ?? "")
@@ -147,14 +183,46 @@ struct RoutineEditor: View {
         _watch = State(initialValue: routine?.isWatch ?? idea?.watch ?? false)
     }
 
+    private var tint: Color { agent.orchestrator ? Theme.slate : agent.tint }
+    private var trimmedPrompt: String { prompt.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var blurb: String? { routine?.blurb ?? idea?.blurb }
+
     private var canSave: Bool {
-        !title.trimmingCharacters(in: .whitespaces).isEmpty && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !title.trimmingCharacters(in: .whitespaces).isEmpty && !trimmedPrompt.isEmpty
     }
 
     var body: some View {
         Form {
+            if let blurb {
+                Section("What it does") {
+                    Text(blurb).foregroundStyle(.secondary)
+                }
+                .listRowBackground(Theme.row)
+            }
+            Section("Name") {
+                TextField("e.g. Weekly recap", text: $title)
+            }
+            .listRowBackground(Theme.row)
             Section {
-                TextField("Name, e.g. Weekly recap", text: $title)
+                Toggle("On", isOn: $enabled).tint(tint)
+                DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
+                DayPicker(days: $days, tint: tint)
+            } header: {
+                Text("When")
+            } footer: {
+                Text(Schedule.label(time: Self.string(from: time), days: days.sorted()) + ". No day picked means every day.")
+            }
+            .listRowBackground(Theme.row)
+            Section {
+                choice("Every time", detail: "Posts a note in its chat on every run.", picked: !watch) { watch = false }
+                choice("Only when something needs you",
+                       detail: "Checks quietly and posts only if there's something for you. It can't change anything on its own.",
+                       picked: watch) { watch = true }
+            } header: {
+                Text("Posts")
+            }
+            .listRowBackground(Theme.row)
+            Section {
                 ZStack(alignment: .topLeading) {
                     if prompt.isEmpty {
                         Text("What should \(agent.name) do each time?")
@@ -165,17 +233,10 @@ struct RoutineEditor: View {
                         .frame(minHeight: 110)
                         .scrollContentBackground(.hidden)
                 }
-            }
-            .listRowBackground(Theme.row)
-            Section {
-                DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
-                DayPicker(days: $days, tint: agent.tint)
-                Toggle("On", isOn: $enabled).tint(agent.tint)
-                Toggle("Only when something needs you", isOn: $watch).tint(agent.tint)
+            } header: {
+                Text("Instructions")
             } footer: {
-                Text(Schedule.label(time: Self.string(from: time), days: days.sorted())
-                     + (watch ? ". \(agent.name) checks then and posts only if something needs you; it can't change "
-                        + "anything on its own." : "."))
+                Text("What \(agent.name) is asked each run, with its tools and memory. You don't see this in the chat.")
             }
             .listRowBackground(Theme.row)
             if let routine {
@@ -203,6 +264,7 @@ struct RoutineEditor: View {
                 Text(error).foregroundStyle(.red).listRowBackground(Theme.row)
             }
         }
+        .tint(tint)
         .scrollContentBackground(.hidden)
         .background(Theme.grouped)
         .navigationTitle(routine == nil ? "New routine" : routine!.title)
@@ -216,12 +278,36 @@ struct RoutineEditor: View {
         }
     }
 
+    /// One of two answers, with a tick on the picked one.
+    private func choice(_ title: String, detail: String, picked: Bool, pick: @escaping () -> Void) -> some View {
+        Button(action: pick) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(.primary)
+                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(tint)
+                    .opacity(picked ? 1 : 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .accessibilityAddTraits(picked ? .isSelected : [])
+    }
+
     private func save() async {
         isBusy = true
         defer { isBusy = false }
+        // The line for the app stays with the instructions it was written for: an idea's comes along, and
+        // changing a routine's instructions clears it (the app then shows their first sentence).
+        let summary: String? = if let routine {
+            trimmedPrompt == routine.prompt ? nil : ""
+        } else {
+            trimmedPrompt == idea?.prompt ? idea?.summary : nil
+        }
         let draft = RoutineDraft(agent: agent.id, title: title.trimmingCharacters(in: .whitespaces),
-                                 prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
-                                 time: Self.string(from: time), days: days.sorted(), enabled: enabled, watch: watch)
+                                 prompt: trimmedPrompt, time: Self.string(from: time), days: days.sorted(),
+                                 enabled: enabled, watch: watch, summary: summary)
         do {
             try await chat.save(draft, id: routine?.id)
             dismiss()

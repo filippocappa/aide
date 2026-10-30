@@ -43,7 +43,7 @@ struct TeamChatView: View {
                     .accessibilityLabel("Chats")
                 Spacer()
             }
-            .overlay { Text("Team chat").font(.headline) }
+            .overlay { HeaderTitle(text: "Team chat") }
             .padding(.horizontal, 14)
             .padding(.top, 6)
         }

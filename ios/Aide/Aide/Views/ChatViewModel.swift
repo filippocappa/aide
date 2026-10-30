@@ -57,6 +57,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var isSending = false
     /// Chats with a reply on its way, by conversation id, also after you've left them: the agent's card says so.
     @Published private(set) var working: [String: Working] = [:]
+    /// Think harder is on in the open chat (`/v1/history`'s `smart`).
+    @Published private(set) var smart = false
     struct Working: Equatable {
         let agent: String
         var status: String
@@ -179,6 +181,7 @@ final class ChatViewModel: ObservableObject {
         conversationID = nil
         messages = []
         pending = []
+        smart = false
         leaveTurn()
         stopWatchingNotebook()
     }
@@ -366,6 +369,7 @@ final class ChatViewModel: ObservableObject {
         do {
             let history = try await api.history(limit: 200, conversationID: id)
             guard !isSending, !isActing, id == conversationID else { return }
+            smart = history.smart ?? false
             var loaded = Self.messages(history)
             if let running = history.working { // a turn this app lost track of (it was closed): wait for it
                 let asked = Message(role: .user, text: running.text, photos: running.photos ?? [])
@@ -545,11 +549,13 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func think() async {
+    /// Think harder on or off for this chat; flipped back when the server says no.
+    func setSmart(_ on: Bool) async {
+        smart = on
         do {
-            try await api.think(conversationID: conversationID)
-            messages.append(Message(role: .assistant, text: "Using the smarter model for the rest of this chat."))
+            try await api.think(conversationID: conversationID, on: on)
         } catch {
+            smart = !on
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
         }
     }

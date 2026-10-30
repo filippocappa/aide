@@ -178,9 +178,12 @@ final class APIClient {
         let _: OKResponse = try await send("POST", "/v1/mail/drafts/\(id)/dismiss", body: EmptyBody())
     }
 
-    func think(conversationID: String? = nil) async throws {
-        let _: OKResponse = try await send("POST", "/v1/think", body: ConversationBody(conversationId: conversationID))
+    /// The smarter model for the rest of the chat, or (`on` false) the usual one again.
+    func think(conversationID: String? = nil, on: Bool = true) async throws {
+        let _: OKResponse = try await send("POST", "/v1/think", body: ThinkBody(conversationId: conversationID, on: on))
     }
+
+    private struct ThinkBody: Encodable { let conversationId: String?; let on: Bool }
 
     func history(limit: Int = 50, conversationID: String? = nil) async throws -> HistoryResponse {
         var query = [URLQueryItem(name: "limit", value: String(limit))]

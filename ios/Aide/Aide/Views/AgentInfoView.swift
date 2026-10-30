@@ -4,7 +4,7 @@ import SwiftUI
 /// eye on (its routines and watches), the connectors it reaches, and the instructions it's given before every chat
 /// behind a row. The buttons leave the sheet: whoever shows it runs `act` once it's gone.
 struct AgentInfoSheet: View {
-    enum Action { case newChat, starter(String), pastChats, routines, activity, thinkHarder, quiz, practiceExam }
+    enum Action { case newChat, starter(String), pastChats, routines, activity, quiz, practiceExam }
 
     @EnvironmentObject private var chat: ChatViewModel
     let agent: Agent
@@ -14,6 +14,8 @@ struct AgentInfoSheet: View {
     /// Opened from a chat's ••• button: the profile carries that chat's own buttons too (a course chat's quiz and
     /// practice exam).
     var inChat = false
+    /// The chat's Think harder switch, when opened from a chat.
+    var smart: Binding<Bool>?
     var course = false
 
     var body: some View {
@@ -36,7 +38,7 @@ struct AgentInfoSheet: View {
                             .padding(.horizontal, -16)
                         }
                     }
-                    if let act, inChat { chatButtons(act) }
+                    if let act, inChat, smart != nil || course { chatButtons(act) }
                     if !routines.isEmpty || act != nil { watching }
                     if agent.prompt.isEmpty {
                         Text("The server doesn't share this yet. Update it to see \(agent.name)'s connectors and instructions.")
@@ -103,15 +105,18 @@ struct AgentInfoSheet: View {
 
     /// Its routines and watches with when they run; the row under them opens the routines sheet.
     private var watching: some View {
-        DetailCard("Keeps an eye on", note: "Routines are jobs \(agent.name) does on its own at their time, each "
-                   + "posting in a chat of its own. The ones with an eye are watches: they check on time and only post "
-                   + "when something needs you.", padding: 0) {
+        DetailCard("Keeps an eye on", note: "Jobs \(agent.name) does by itself at a set time. Watches (the eye) "
+                   + "check quietly and speak up only when something needs you; routines post every time.", padding: 0) {
             ForEach(Array(routines.enumerated()), id: \.element.id) { i, r in
                 if i > 0 { RowDivider(leading: 52) }
-                StatusRow(r.title, detail: Schedule.label(time: r.time, days: r.days)) {
-                    Image(systemName: r.isWatch ? "eye" : "alarm").foregroundStyle(.secondary)
+                Button { act?(.routines) } label: {
+                    StatusRow(r.title, detail: r.blurb, time: r.enabled ? r.time : "Off") {
+                        Image(systemName: r.isWatch ? "eye" : "clock").foregroundStyle(.secondary)
+                    }
+                    .opacity(r.enabled ? 1 : 0.5)
                 }
-                .opacity(r.enabled ? 1 : 0.5)
+                .buttonStyle(RowPress())
+                .disabled(act == nil)
             }
             if let act {
                 if !routines.isEmpty { RowDivider(leading: 52) }
@@ -123,10 +128,23 @@ struct AgentInfoSheet: View {
         }
     }
 
-    /// What this chat can do: think harder for the rest of it; in a course chat, a quiz by voice and a practice exam.
+    /// What this chat can do: think harder (a switch); in a course chat, a quiz by voice and a practice exam.
     private func chatButtons(_ act: @escaping (Action) -> Void) -> some View {
         DetailCard("This chat", padding: 0) {
-            Button { act(.thinkHarder) } label: { linkRow("Think harder", icon: "brain", detail: "The smarter model for the rest of it") }
+            if let smart {
+                Toggle(isOn: smart) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "brain").foregroundStyle(.secondary).frame(width: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Think harder")
+                            Text("The smarter model, for this chat only").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .tint(agent.orchestrator ? Theme.slate : agent.tint)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
             if course {
                 RowDivider(leading: 52)
                 Button { act(.quiz) } label: { linkRow("Quiz me", icon: "waveform", detail: "By voice, from the notebook") }

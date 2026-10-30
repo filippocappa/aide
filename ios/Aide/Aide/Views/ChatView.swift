@@ -92,14 +92,16 @@ struct ChatView: View {
             case .starter(let text): Task { await chat.startChat(with: chat.agent); await chat.send(text) }
             case .pastChats: showPastChats = true
             case .routines: showRoutines = true
-            case .thinkHarder: Task { await chat.think() }
             case .quiz: Task { await voice.start(saying: "Quiz me") }
             case .practiceExam: showPractice = true
             case .activity: break
             }
         }) {
             AgentInfoSheet(agent: chat.agent, act: { infoAction = $0; showInfo = false }, showsActivity: false,
-                           inChat: true, course: chat.course != nil)
+                           inChat: true,
+                           smart: chat.conversationID == nil ? nil
+                               : Binding(get: { chat.smart }, set: { on in Task { await chat.setSmart(on) } }),
+                           course: chat.course != nil)
         }
         .fullScreenCover(isPresented: $showPractice, onDismiss: {
             Task { await chat.loadHistory() } // Professor's note on the result
@@ -845,15 +847,33 @@ struct HeaderIcon: View {
     }
 }
 
-/// Behind the header: solid page colour down to the buttons, then a short fade, so text scrolling up disappears
-/// cleanly instead of showing through under the buttons.
+/// Behind a chat's header: the page colour under the status bar, then a blur that thins out, so messages slide
+/// softly under the buttons instead of being cut off by a solid band.
 struct HeaderBackdrop: View {
     var body: some View {
-        VStack(spacing: 0) {
-            Theme.background
-            LinearGradient(colors: [Theme.background, Theme.background.opacity(0)], startPoint: .top, endPoint: .bottom)
-                .frame(height: 28)
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial)
+                .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.45),
+                                             .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+            LinearGradient(stops: [.init(color: Theme.background, location: 0),
+                                   .init(color: Theme.background, location: 0.3),
+                                   .init(color: Theme.background.opacity(0.8), location: 0.55),
+                                   .init(color: Theme.background.opacity(0), location: 1)],
+                           startPoint: .top, endPoint: .bottom)
         }
+        .allowsHitTesting(false)
+    }
+}
+
+/// A chat's name in the header, on the same glass as its buttons.
+struct HeaderTitle: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 16)
+            .frame(height: 44)
+            .glass(in: Capsule())
     }
 }
 

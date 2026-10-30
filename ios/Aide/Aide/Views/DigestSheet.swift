@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The digest on its own page, reachable from any chat. The period (wake-up, evening, week, month)
-/// sits in a menu in the corner rather than on the page; Refresh writes it again.
+/// The briefing on its own page: the period as chips at the top (wake-up, evening, week, month), the note, then
+/// its sections as cards. Refresh writes it again.
 struct DigestSheet: View {
     @EnvironmentObject private var digest: DigestViewModel
     @Environment(\.dismiss) private var dismiss
@@ -9,37 +9,31 @@ struct DigestSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                if let error = digest.refreshError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.footnote).foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20).padding(.top, 12)
+                VStack(alignment: .leading, spacing: 18) {
+                    periods
+                    if let error = digest.refreshError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.footnote).foregroundStyle(.red)
+                    }
+                    DigestView(digest: digest.digest)
+                        .opacity(digest.isRefreshing ? 0.4 : 1)
+                        .animation(.easeOut(duration: 0.2), value: digest.isRefreshing)
                 }
-                DigestView(digest: digest.digest)
-                    .opacity(digest.isRefreshing ? 0.4 : 1)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 32)
             }
+            .previewAnchor()
+            .pageGlow(Theme.accent)
             .background(Theme.background)
-            .navigationTitle(digest.kind.label)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Picker("Period", selection: $digest.kind) {
-                            ForEach(DigestViewModel.Kind.picked) { Text($0.label).tag($0) }
-                        }
-                    } label: {
-                        Image(systemName: "calendar")
-                    }
-                    .accessibilityLabel("Period")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
                     if digest.isRefreshing {
                         ProgressView()
                     } else {
                         Button { Task { await digest.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                            .accessibilityLabel("Refresh")
+                            .accessibilityLabel("Write it again")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
@@ -47,5 +41,26 @@ struct DigestSheet: View {
             .onChange(of: digest.kind) { _, _ in digest.refreshError = nil; Task { await digest.load() } }
             .task { await digest.load() }
         }
+    }
+
+    /// Wake-up · Evening · Week · Month; the picked one filled.
+    private var periods: some View {
+        HStack(spacing: 8) {
+            ForEach(DigestViewModel.Kind.picked) { kind in
+                let picked = digest.kind == kind
+                Button { digest.kind = kind } label: {
+                    Text(kind.label)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(picked ? Theme.background : .primary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(picked ? Color.primary : Theme.chip, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(CardPress())
+                .accessibilityAddTraits(picked ? .isSelected : [])
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: digest.kind)
     }
 }

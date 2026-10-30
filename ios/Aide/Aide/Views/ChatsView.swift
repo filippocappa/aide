@@ -144,7 +144,7 @@ struct ChatsView: View {
         case .pastChats: pastChats = agent
         case .routines: routinesFor = agent
         case .activity: activity = .agent(agent)
-        case .thinkHarder, .quiz, .practiceExam: break // only in a chat
+        case .quiz, .practiceExam: break // only in a chat
         }
     }
 
@@ -172,7 +172,7 @@ struct ChatsView: View {
 
     #if DEBUG
     /// Simulator screenshots: `-previewOpen team` opens the Team chat, `-previewOpen coach` Coach's latest chat,
-    /// `-previewOpen new:coach` a blank one (nothing is sent until you write), `-previewOpen files:f_1,f_2` a Moodle
+    /// `-previewOpen digest` the latest briefing, `-previewOpen routines:coach` Coach's routines, `-previewOpen new:coach` a blank one (nothing is sent until you write), `-previewOpen files:f_1,f_2` a Moodle
     /// notification's files.
     private func openForPreview() async {
         // On the phone, launched over the cable with `-voiceTest YES`: a voice chat with Aide, to try voice from the Mac.
@@ -183,10 +183,12 @@ struct ChatsView: View {
         }
         guard settings.isPreview, let target = UserDefaults.standard.string(forKey: "previewOpen") else { return }
         if target == "team" { showTeam = true; return }
+        if target == "digest" { await digest.loadLatest(); digest.showLatest(); return }
         if target.hasPrefix("errand:"), let id = Int(target.dropFirst(7)) { env.browser = .errand(id, title: "Errand"); return }
         if target.hasPrefix("chat:") { await chat.open(id: String(target.dropFirst(5))); return }
         if target.hasPrefix("files:") { env.newFiles = NewFiles(ids: target.dropFirst(6).split(separator: ",").map(String.init)); return }
         if target.hasPrefix("info:") { infoFor = chat.agent(String(target.dropFirst(5))); return }
+        if target.hasPrefix("routines:") { await chat.loadRoutines(); routinesFor = chat.agent(String(target.dropFirst(9))); return }
         if target.hasPrefix("new:") { await chat.newChat(with: chat.agent(String(target.dropFirst(4)))); return }
         if target == "voice" { await chat.newChat(with: chat.orchestrator); await env.voice.toggle(); return }
         await chat.talk(to: chat.agent(target))
@@ -471,6 +473,54 @@ struct ConversationRow: View {
 
 /// The top of the Team tab: the time of day, the latest briefing's note in full (tap: its Details), and chips for how
 /// many habits are done today and what's waiting for your OK; each chip opens Today there.
+/// Text written in a word at a time, the first time it's shown (`reveal`); laid out in full from the start,
+/// so nothing below it moves. Reduce Motion shows it at once.
+private struct RevealText: View {
+    let text: AttributedString
+    let reveal: Bool
+    let done: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var start: Date?
+    @State private var finished = false
+
+    private static let perWord = 0.045
+
+    /// Where each word ends, as character offsets.
+    private var stops: [Int] {
+        let chars = Array(String(text.characters))
+        return chars.indices.filter { $0 == chars.count - 1 || (chars[$0] != " " && chars[$0 + 1] == " ") }.map { $0 + 1 }
+    }
+
+    var body: some View {
+        if let start, !finished {
+            TimelineView(.animation) { context in
+                Text(shown(Int(context.date.timeIntervalSince(start) / Self.perWord) + 1))
+            }
+            .task {
+                try? await Task.sleep(for: .seconds(Double(stops.count) * Self.perWord))
+                finished = true
+            }
+        } else {
+            Text(text)
+                .onAppear {
+                    guard reveal, start == nil else { return }
+                    done()
+                    if !reduceMotion { start = Date() }
+                }
+        }
+    }
+
+    /// The first `words` words, the rest there but clear.
+    private func shown(_ words: Int) -> AttributedString {
+        let stops = stops
+        guard words < stops.count else { return text }
+        var out = text
+        let from = out.characters.index(out.startIndex, offsetBy: stops[max(0, words - 1)])
+        out[from..<out.endIndex].foregroundColor = .clear
+        return out
+    }
+}
+
 private struct Greeting: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var digest: DigestViewModel
@@ -504,7 +554,9 @@ private struct Greeting: View {
     @ViewBuilder private var briefing: some View {
         if let latest = digest.latest {
             Button { digest.showLatest() } label: {
-                Text(latest.greeting.markdown)
+                RevealText(text: latest.greeting.markdown, reveal: digest.isNew(latest)) { digest.markSeen(latest) }
+                    .id(latest.greeting)
+                    .transition(.opacity)
                     .font(.body)
                     .lineSpacing(2)
                     .multilineTextAlignment(.leading)
@@ -514,6 +566,7 @@ private struct Greeting: View {
             }
             .buttonStyle(CardPress())
             .accessibilityHint("Opens the briefing")
+            .animation(.easeOut(duration: 0.3), value: latest.greeting)
         } else if !digest.latestLoaded {
             VStack(alignment: .leading, spacing: 8) {
                 SkeletonBar(height: 14)
