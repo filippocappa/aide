@@ -77,15 +77,18 @@ enum ScoreKind: String, CaseIterable, Identifiable, Hashable {
         case .strain:
             "How hard your heart worked today: time with your heart rate well above rest, weighted by how high it went (Banister's TRIMP), on a 0–100 scale that gets harder to fill near the top. Recovery sets the day's target band."
         case .recovery:
-            "Last night's heart rate variability (half of it), resting heart rate and sleep score, each against your own usual over the 60 days before. A usual night lands in the 60s. Breathing rate or wrist temperature well above usual holds it at 50. Not medical advice."
+            "Last night's heart rate variability, its 7-day trend, resting heart rate, sleep score and training load, each against your own usual over the 60 days before (the trend after Plews and Buchheit: a week says more than one morning). A usual night lands around 60. Breathing rate or wrist temperature well above usual holds it at 50. Not medical advice."
         case .sleep:
-            "Hours asleep against what you needed (7h30, plus half of what the last three nights were short, at most an hour more), deep and REM sleep, time asleep in bed, and how close bedtime was to your usual."
+            "Hours asleep against what you needed (learnt from your own nights), deep and REM sleep, time asleep in bed, and how close bedtime and waking were to your usual."
         }
     }
 }
 
 /// "7h53"
 private func hm(_ minutes: Int) -> String { "\(minutes / 60)h\(String(format: "%02d", minutes % 60))" }
+
+/// "+9 min", "+1h05"
+private func plus(_ minutes: Int) -> String { minutes < 60 ? "+\(minutes) min" : "+" + hm(minutes) }
 
 /// A score in a gradient ring, with the strain target as a faint arc on the track.
 struct ScoreDial: View {
@@ -353,9 +356,15 @@ struct ScoreDetailView: View {
     let date: Date
 
     @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var chat: ChatViewModel
+    @EnvironmentObject private var push: PushService
     /// What the Health page had, then the day's own, fetched again on open.
     @State private var scores: HealthScores
     @State private var history: [ScoreDay]?
+    /// Coach's take, once asked for.
+    @State private var insight: String?
+    @State private var asking = false
+    @State private var insightError: String?
 
     init(kind: ScoreKind, scores: HealthScores, day: HealthDayReading?, date: Date) {
         self.kind = kind
@@ -380,6 +389,8 @@ struct ScoreDetailView: View {
                 .padding(.vertical, 12)
             }
             .listRowBackground(Theme.row)
+
+            coachSection
 
             switch kind {
             case .recovery: recoverySections
@@ -441,6 +452,59 @@ struct ScoreDetailView: View {
         }
     }
 
+    // MARK: Coach's take
+
+    private var coach: Agent { chat.agent("coach") }
+
+    /// Asked for with a tap (one model call), then the way into Coach's chat to talk it over.
+    private var coachSection: some View {
+        Section {
+            if let insight {
+                HStack(alignment: .top, spacing: 10) {
+                    AgentMark(agent: coach, size: 26)
+                    Text(insight).font(.callout).textSelection(.enabled)
+                }
+                .padding(.vertical, 4)
+                .transition(.opacity)
+                Button { push.route = .agent(coach.id) } label: {
+                    Label("Talk it over with \(coach.name)", systemImage: "bubble.left.and.text.bubble.right")
+                }
+            } else if asking {
+                HStack(spacing: 10) {
+                    LivePebble(mood: "thinking", size: 26, figure: coach.figure)
+                        .foregroundStyle(coach.tint)
+                        .allowsHitTesting(false)
+                    Text("\(coach.name) is looking at your numbers…").font(.footnote).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            } else {
+                Button { Task { await askCoach() } } label: {
+                    Label("What does \(coach.name) make of it?", systemImage: "sparkles")
+                }
+                .tint(coach.tint)
+                if let insightError {
+                    Label(insightError, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
+                }
+            }
+        } header: {
+            Text("\(coach.name)'s take")
+        }
+        .listRowBackground(Theme.row)
+        .animation(.easeInOut(duration: 0.25), value: asking)
+    }
+
+    private func askCoach() async {
+        asking = true
+        insightError = nil
+        defer { asking = false }
+        do {
+            let got = try await env.api.healthInsight(kind: kind.rawValue, date: date)
+            withAnimation { insight = got.text }
+        } catch {
+            insightError = error.localizedDescription
+        }
+    }
+
     // MARK: Recovery
 
     @ViewBuilder private var recoverySections: some View {
@@ -482,12 +546,19 @@ struct ScoreDetailView: View {
             }
             .listRowBackground(Theme.row)
             Section {
-                LabeledContent("Needed", value: hm(s.needMin))
+                if let n = s.need {
+                    LabeledContent("Your usual need", value: hm(n.base))
+                    if n.strain > 0 { LabeledContent("After the day before's strain", value: plus(n.strain)) }
+                    if n.debt > 0 { LabeledContent("Catching up on recent nights", value: plus(n.debt)) }
+                }
+                LabeledContent("Needed last night", value: hm(s.needMin)).fontWeight(.semibold)
                 LabeledContent("Short, last 3 nights", value: s.debtMin > 0 ? hm(s.debtMin) : "Nothing")
             } header: {
                 Text("Sleep need")
             } footer: {
-                Text("Half of what you were short over the last three nights is added to the next night's 7h30, at most an hour.")
+                if s.need != nil {
+                    Text("Your usual need is learnt from up to 90 of your nights, leaving out the shortest and longest tenth. A hard day adds a little, and half of what the last three nights were short adds the rest, at most 45 min.")
+                }
             }
             .listRowBackground(Theme.row)
         }
@@ -499,12 +570,12 @@ struct ScoreDetailView: View {
         if let s = scores.strain {
             if s.zones.reduce(0, +) > 0 {
                 Section {
-                    ZonesChart(zones: s.zones)
+                    ZonesChart(zones: s.zones, bpm: s.zoneBpm)
                 } header: {
                     Text("Heart-rate zones")
                 } footer: {
                     if let rest = s.restHr, let top = s.maxHr {
-                        Text("Minutes in each share of your heart-rate reserve, from \(rest) bpm at rest to \(top) bpm at most.")
+                        Text("Minutes in each zone of your heart-rate reserve, from \(rest) bpm at rest (your 30-day usual) to \(top) bpm at most (the middle of your three highest workout peaks, so one strap glitch doesn't count). Zone 1 starts at half the reserve, each next one 10% higher. The Workout app on the Watch may set its zones a little differently.")
                     }
                 }
                 .listRowBackground(Theme.row)
@@ -628,15 +699,22 @@ private struct PartRow: View {
     }
 }
 
-/// Minutes per heart-rate zone, as bars.
-private struct ZonesChart: View {
+/// Minutes per heart-rate zone, as bars, each named by its bpm when the server sends them.
+struct ZonesChart: View {
     let zones: [Int]
+    /// Where zones 1–5 start, then the max.
+    var bpm: [Int]? = nil
     private static let names = ["50–60%", "60–70%", "70–80%", "80–90%", "90–100%"]
+
+    static func name(_ i: Int, bpm: [Int]?) -> String {
+        if let bpm, bpm.count == 6 { return "Z\(i + 1) · \(bpm[i])–\(bpm[i + 1])" }
+        return "Z\(i + 1) · \(names[i])"
+    }
 
     var body: some View {
         Chart {
             ForEach(Array(zones.prefix(5).enumerated()), id: \.offset) { i, minutes in
-                BarMark(x: .value("Minutes", minutes), y: .value("Zone", "Z\(i + 1) · \(Self.names[i])"))
+                BarMark(x: .value("Minutes", minutes), y: .value("Zone", Self.name(i, bpm: bpm)))
                     .foregroundStyle(ScoreColors.strain[1].opacity(0.35 + 0.13 * Double(i)))
                     .cornerRadius(3)
                     .annotation(position: .trailing) {

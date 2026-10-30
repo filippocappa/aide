@@ -1132,8 +1132,18 @@ struct HealthScores: Decodable, Hashable {
         let score: Int
         let asleepMin: Int?
         let needMin: Int
+        /// What the need is made of; nil from an older server.
+        let need: Need?
         let debtMin: Int
         let contributors: [Part]
+    }
+
+    /// The night's need: your usual from past nights, more after a hard day, some of what the last nights were short.
+    struct Need: Decodable, Hashable {
+        let need: Int
+        let base: Int
+        let strain: Int
+        let debt: Int
     }
 
     struct Calibrating: Decodable, Hashable { let days: Int; let needs: Int }
@@ -1165,6 +1175,8 @@ struct HealthScores: Decodable, Hashable {
         let maxHr: Int?
         /// Minutes in 50–60, 60–70, 70–80, 80–90 and 90–100% of the heart-rate reserve.
         let zones: [Int]
+        /// Where zones 1–5 start in bpm, then the max; nil from an older server.
+        let zoneBpm: [Int]?
         let workouts: [StrainWorkout]
     }
 
@@ -2421,3 +2433,15 @@ struct BrowserSites: Decodable {
 
 struct SiteToOpen: Encodable { let url: String }
 struct OpenedSite: Decodable { let site: String; let url: String }
+
+/// Coach's take on one score (docs/API.md, "Coach's take").
+struct HealthInsight: Decodable, Hashable {
+    let kind: String
+    let date: String
+    let text: String
+}
+
+struct HealthInsightRequest: Encodable {
+    let kind: String
+    let date: String
+}

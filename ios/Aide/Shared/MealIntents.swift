@@ -1,6 +1,6 @@
 import AppIntents
 
-// Logging a meal from Control Center, the Lock Screen or the Action Button: opens the app on Health → Food with the
+// Logging a meal from Control Center, the Lock Screen or the Action Button: opens the app on the Food tab with the
 // camera up, or the box to describe it. In both targets (a control that opens the app must be), but it runs in the
 // app, which sets `MealLog.open`.
 

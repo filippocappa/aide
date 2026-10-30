@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// What to eat and how the day went (docs/API.md, "Targets and the day score"): the card on top of Health → Food,
+/// What to eat and how the day went (docs/API.md, "Targets and the day score"): the card on top of the Food tab,
 /// the day's page behind it, and the targets page (also in Settings) where Coach can propose them.
 
 /// Nutri-Score's own colours, a to e.
@@ -67,7 +67,7 @@ struct ScoreRing: View {
     }
 }
 
-/// On top of Health → Food: the day's score, what's left to eat and what a workout added. Taps open the day's page.
+/// On top of the Food tab: the day's score, what's left to eat and what a workout added. Taps open the day's page.
 struct DayScoreCard: View {
     let day: FoodDay
     let isToday: Bool

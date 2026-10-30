@@ -150,7 +150,7 @@ final class AppEnvironment: ObservableObject {
             } else if let conversation = errand.conversationId {
                 await chat.open(id: conversation)
             }
-        case .health, .chats, .meal:
+        case .health, .food, .chats, .meal:
             break // tabs, switched by ContentView
         }
     }

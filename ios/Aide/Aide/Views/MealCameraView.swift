@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 import Vision
 
-/// What the meal camera ends with; Health → Food carries it out once the camera has gone.
+/// What the meal camera ends with; the Food tab carries it out once the camera has gone.
 enum MealCameraResult {
     case photos([PickedPhoto])
     /// A packet logged from its barcode, on the page the camera opened.

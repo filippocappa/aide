@@ -562,6 +562,12 @@ final class APIClient {
         return history.days
     }
 
+    /// Coach's take on one of the day's scores (`sleep`, `recovery`, `strain`): one model call, so it can take a while.
+    func healthInsight(kind: String, date: Date) async throws -> HealthInsight {
+        try await send("POST", "/v1/health/insight",
+                       body: HealthInsightRequest(kind: kind, date: Wire.dayString(date)), timeout: 120)
+    }
+
     /// The weight readings for `days` days back, the trend, and what was logged through Aide (docs/API.md, Weight).
     func weight(days: Int = 90) async throws -> WeightList {
         try await send("GET", "/v1/health/weight", query: [URLQueryItem(name: "days", value: String(days))])

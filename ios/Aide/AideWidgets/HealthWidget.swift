@@ -78,7 +78,7 @@ struct HealthWidgetView: View {
             }
         }
         .widgetBackground()
-        .widgetURL(URL(string: "aide://health"))
+        .widgetURL(URL(string: "aide://food"))
     }
 
     private var totals: FoodTotals { entry.food?.value.totals ?? FoodTotals() }

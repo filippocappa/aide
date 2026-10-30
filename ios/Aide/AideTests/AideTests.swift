@@ -549,6 +549,7 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(PushRoute(url: URL(string: "aide://today")!), .today)
         XCTAssertEqual(PushRoute(url: URL(string: "aide://objectives")!), .objectives)
         XCTAssertEqual(PushRoute(url: URL(string: "aide://health")!), .health)
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://food")!), .food)
         XCTAssertNil(PushRoute(url: URL(string: "aide://agent")!))
         XCTAssertNil(PushRoute(url: URL(string: "aide://something-new")!))
         XCTAssertNil(PushRoute(url: URL(string: "https://example.com/team")!))
@@ -873,13 +874,14 @@ final class HealthTests: XCTestCase {
     /// As the server answered for 2026-10-29: a part's value is text for sleep and a number for recovery.
     func testHealthScoresDecode() throws {
         let json = #"""
-        {"date":"2026-10-29","sleep":{"score":92,"asleep_min":473,"need_min":510,"debt_min":65,"contributors":[
+        {"date":"2026-10-29","sleep":{"score":92,"asleep_min":473,"need_min":510,"debt_min":65,
+          "need":{"need":510,"base":458,"strain":7,"debt":45},"contributors":[
           {"key":"duration","label":"Hours vs need","value":"7h53 of 8h30","score":93,"weight":50},
-          {"key":"restorative","label":"Deep and REM","value":null,"score":null,"weight":20}]},
+          {"key":"deep","label":"Deep sleep","value":null,"score":null,"weight":15}]},
          "recovery":{"score":63,"level":"normal","calibrating":null,"contributors":[
           {"key":"hrv","label":"HRV","value":104.1,"usual":92.2,"unit":"ms","weight":50,"score":77}],"flags":["wrist_temp"]},
          "strain":{"score":58,"trimp":131.2,"estimated":true,"target":[35,60],"rest_hr":44,"max_hr":193,
-          "zones":[0,0,0,0,0],"workouts":[{"id":"EDE3","type":"run","minutes":54,"strain":58}]},
+          "zones":[0,0,0,0,0],"zone_bpm":[121,136,152,167,183,198],"workouts":[{"id":"EDE3","type":"run","minutes":54,"strain":58}]},
          "load":{"acute":55.5,"chronic":67.3,"ratio":0.82,"label":"maintaining"},
          "vitals":{"hrv_ms":{"value":104.1,"usual":92.25,"low":67.42,"high":117.08},
           "resting_hr":{"value":null,"usual":41.0,"low":36.55,"high":45.45},"asleep_min":{"value":473,"usual":452,"low":374.9,"high":529.1}},
@@ -891,6 +893,10 @@ final class HealthTests: XCTestCase {
         XCTAssertEqual(s.recovery?.contributors.first?.value, 104.1)
         XCTAssertEqual(s.recovery?.flags, ["wrist_temp"])
         XCTAssertEqual(s.strain?.target, [35, 60])
+        XCTAssertEqual(s.sleep?.need?.base, 458)
+        XCTAssertEqual(s.strain?.zoneBpm?.count, 6)
+        XCTAssertEqual(ZonesChart.name(2, bpm: s.strain?.zoneBpm), "Z3 · 152–167")
+        XCTAssertEqual(ZonesChart.name(0, bpm: nil), "Z1 · 50–60%")
         XCTAssertEqual(s.strain?.workouts.first?.strain, 58)
         XCTAssertEqual(s.load?.label, "maintaining")
         XCTAssertEqual(s.vitals?.hrvMs?.value, 104.1)

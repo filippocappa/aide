@@ -146,8 +146,13 @@ Strain, Recovery and Sleep as gradient rings with the server's line of the day (
 its page (what it's made of, flags, sleep need, zones, workouts' strain, cardio load, 30 days); last night's numbers
 on gauges against the usual range, the day's heart rate, workouts with their strain, activity tiles and weight, then
 Food (`Views/ScoreViews.swift`; the metric charts in `Views/BodyViews.swift`). Scores come from the server
-(`scores.py`, contract "Scores"); the app sends heart rate as `hr_minutes`, `hr_hourly` and `max_hr`. Not yet tried on
-the phone. Habits moved to Today (#21). Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
+(`scores.py`, contract "Scores"); the app sends heart rate as `hr_minutes`, `hr_hourly` and `max_hr`. Second pass
+(2026-10-30, after the first look on the phone): sleep need learnt from his own nights (trimmed mean of up to 90, plus
+the day before's strain and half the 3 nights' net shortfall, at most 45 min), deep and REM scored apart, stricter
+efficiency, bed and wake consistency; recovery adds the 7-day HRV trend and the training load; max HR is the middle of
+the 3 highest workout peaks, zones shown in bpm (`zone_bpm`). Each score's page asks Coach for its take
+(`POST /v1/health/insight`, contract "Coach's take"). Food is its own tab (`Views/FoodView.swift`; Team · Study ·
+Health · Food · Settings; `aide://food`, the meal buttons and the Food widget open it). Habits moved to Today (#21). Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
 (live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
 implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for sleep), the `wake` digest with a
 time-aware greeting and leave-by times (Maps: walk and transit, arriving 10 min early, home and per-place mode from memory, else `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
