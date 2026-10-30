@@ -82,7 +82,7 @@ struct DayScoreCard: View {
                     Text(left).font(.footnote).foregroundStyle(.secondary).monospacedDigit()
                 }
                 if day.goals.calories != nil, let bonus = Self.bonusLine(day.bonus) { // without targets it adds to nothing
-                    Label(bonus, systemImage: day.bonus.planned ? "calendar" : "figure.run")
+                    Label(bonus, systemImage: "figure.run")
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(tint)
                 }
@@ -121,14 +121,9 @@ struct DayScoreCard: View {
         return parts.joined(separator: " · ")
     }
 
-    /// "+656 kcal from your run", "+619 kcal: “run” at 17:00 in your calendar".
+    /// "+656 kcal from your run": only workouts the Watch recorded add anything (since 2026-10-30).
     static func bonusLine(_ bonus: FoodBonus) -> String? {
-        guard bonus.kcal > 0 else { return nil }
-        if bonus.planned {
-            let run = bonus.workouts.first
-            let at = run?.start.flatMap(Wire.parse).map { " at \($0.formatted(date: .omitted, time: .shortened))" } ?? ""
-            return "+\(bonus.kcal) kcal: “\(run?.title ?? "run")”\(at) in your calendar"
-        }
+        guard bonus.kcal > 0, !bonus.planned else { return nil }
         let names = bonus.workouts.map { workoutName($0.type) }
         let list = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names.last!
         return "+\(bonus.kcal) kcal from your \(list)"
@@ -157,16 +152,6 @@ struct NutritionDayView: View {
     @State private var editing = false
 
     private var date: Date { Wire.day(day.date) ?? Date() }
-
-    /// "60 min at your usual 11.5 kcal a minute is 688 kcal; 90% of it counts. The Watch's number takes over once
-    /// it's done."
-    static func plannedSum(_ bonus: FoodBonus) -> String {
-        guard let run = bonus.workouts.first, let rate = run.kcalMin else {
-            return "Counted at your usual pace; the Watch's number takes over once it's done."
-        }
-        let share = bonus.share.map { $0 == 1 ? "" : "; \(Int(($0 * 100).rounded()))% of it counts (your targets' workout share)" } ?? ""
-        return "\(run.minutes) min at your usual \(String(format: "%.1f", rate)) kcal a minute running is \(run.kcal) kcal\(share). Not running? Move or delete the event. Once the Watch has the run, its number takes over."
-    }
 
     var body: some View {
         List {
@@ -203,7 +188,7 @@ struct NutritionDayView: View {
                 Text(hasTargets ? "Targets" : "Eaten")
             } footer: {
                 if hasTargets, let bonus = DayScoreCard.bonusLine(day.bonus) {
-                    Text(bonus + (day.bonus.planned ? ". " + Self.plannedSum(day.bonus) : ", mostly as carbs."))
+                    Text(bonus + ", mostly as carbs.")
                 }
             }
             if let score = day.score, score.parts != nil {

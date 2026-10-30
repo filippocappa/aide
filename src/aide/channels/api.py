@@ -28,7 +28,7 @@ from ..engine import Engine
 from ..errands import ErrandRunner, ErrandStore
 from ..food import MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
 from ..foods import MAX_NAME as MAX_FOOD_NAME, FoodDB
-from ..nutrition import PROPOSE_PROMPT, PROPOSE_TOKENS, Nutrition, now_events, parse_proposal, proposal_input
+from ..nutrition import PROPOSE_PROMPT, PROPOSE_TOKENS, Nutrition, parse_proposal, proposal_input
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
 from ..icloud import CalendarBackend, CalEvent
@@ -502,7 +502,6 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     nutrition = Nutrition(food, health)
     health.age = lambda: nutrition.targets()["profile"].get("age")
     weights = weights or WeightStore(db.conn, tz, health)
-    today_events: dict = {}  # today's calendar events for a planned run: {"at": loop time, "day", "events"}
     if habits.health_days is None:  # limit habits count from Apple Health
         habits.health_days = health
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
@@ -1054,17 +1053,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(404, f"no meal {meal_id}")
         return meal
 
-    async def events_today() -> list:
-        """Today's calendar events, read at most every 10 minutes (a run in them adds to today's targets)."""
-        now = asyncio.get_running_loop().time()
-        if today_events.get("day") != food.today() or now - today_events.get("at", 0) > 600:
-            events = await asyncio.to_thread(now_events, calendar, tz)
-            today_events.update(at=now, day=food.today(), events=events)
-        return today_events["events"]
-
     async def food_day(d: date) -> dict:
         meals = food.day(d)
-        day = nutrition.day(d, await events_today() if d == food.today() else None)
+        day = nutrition.day(d)
         # goals are the day's targets (the base plus its workouts), so an older app's ring follows them
         quality = nutrition.meals(meals)
         return {"date": d.isoformat(), "meals": [food.as_json(m) | quality[m["id"]] for m in meals],

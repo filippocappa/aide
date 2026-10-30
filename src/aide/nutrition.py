@@ -1,7 +1,7 @@
 """What to eat and how the day went. Contract in docs/API.md, "Food".
 
-Targets: the rest-day base (the food goals) plus what the day's workouts burned, as the Watch says, mostly as carbs;
-before a run, a run in the calendar counts at the user's usual kcal a minute. A food's grade is its Nutri-Score
+Targets: the rest-day base (the food goals) plus what the day's workouts burned, as the Watch says, mostly as carbs.
+A food's grade is its Nutri-Score
 (the 2023 rules), Open Food Facts' grade when it has one, else worked out from its numbers per 100 g. The day score
 (0–100) is 60% how close the day came to its targets and 40% quality: half the day's nutrients (fibre, fruit and veg,
 saturated fat, free sugars, salt against guidelines), a quarter how little was ultra-processed (NOVA 4) and a quarter
@@ -10,7 +10,6 @@ through the engine).
 """
 
 import json
-import re
 import sqlite3
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -28,8 +27,6 @@ WORKOUTS = {"on": True, "share": 1.0, "carbs_pct": 80}  # what a workout adds, b
 PROFILE = ("weight_kg", "height_cm", "age", "sex", "goal", "note")
 MAX_NOTE = 500
 MAX_ANSWERS = 8  # answers to Coach's questions kept for the next proposals
-RUN_WORDS = re.compile(r"\b(run|runs|running|jog|jogging|corsa|corsetta|correre)\b", re.I)
-RUN_KCAL_MIN = 11.0  # kcal a minute of running, before the user's own runs say otherwise
 KJ = 4.184
 
 # -- Nutri-Score (2023) ---------------------------------------------------------------------------------------------
@@ -354,42 +351,17 @@ class Nutrition:
                     out[w["id"]] = w
         return list(out.values())
 
-    def run_rate(self, before: date) -> float:
-        """The user's kcal a minute running, from the last 60 days' runs; RUN_KCAL_MIN without any."""
-        if self.health is None:
-            return RUN_KCAL_MIN
-        kcal = minutes = 0.0
-        for day in self.health.between(before - timedelta(days=60), before):
-            for w in day.get("workouts", []):
-                if w.get("type") == "run" and w.get("kcal") and workout_minutes(w):
-                    kcal, minutes = kcal + w["kcal"], minutes + workout_minutes(w)
-        return kcal / minutes if minutes >= 20 else RUN_KCAL_MIN
-
-    def bonus(self, d: date, events: list | None = None) -> dict:
-        """What the day's workouts add: their kcal (times the share), or, before any, a run in the calendar
-        (`events`, today's: a title that says run, or a calendar called Run) at the usual rate, `planned`."""
+    def bonus(self, d: date) -> dict:
+        """What the day's workouts add: the kcal the Watch says they burned, times the share. Nothing before one is
+        recorded: a run in the calendar isn't counted (it may not happen, and its length is a guess)."""
         settings = self.targets()["workouts"]
         done = [w for w in self._workouts(d) if w.get("kcal")]
-        if not settings["on"]:
+        if not settings["on"] or not done:
             return {"kcal": 0, "planned": False, "workouts": []}
-        if done:
-            burned = sum(w["kcal"] for w in done)
-            return {"kcal": round(burned * settings["share"]), "planned": False, "share": settings["share"],
-                    "workouts": [{"type": w.get("type", "other"), "kcal": round(w["kcal"]),
-                                  "minutes": round(workout_minutes(w))} for w in done]}
-        runs = [e for e in events or [] if not e.all_day and (RUN_WORDS.search(e.title) or RUN_WORDS.search(e.calendar))
-                and e.start.astimezone(self.tz).date() == d]
-        if not runs:
-            return {"kcal": 0, "planned": False, "workouts": []}
-        rate = self.run_rate(d)
-        planned = []
-        for e in runs:
-            minutes = (e.end - e.start).total_seconds() / 60
-            planned.append({"type": "run", "kcal": round(minutes * rate), "minutes": round(minutes),
-                            "title": e.title, "start": e.start.astimezone(self.tz).isoformat(),
-                            "kcal_min": round(rate, 1)})
-        return {"kcal": round(sum(p["kcal"] for p in planned) * settings["share"]), "planned": True,
-                "share": settings["share"], "workouts": planned}
+        burned = sum(w["kcal"] for w in done)
+        return {"kcal": round(burned * settings["share"]), "planned": False, "share": settings["share"],
+                "workouts": [{"type": w.get("type", "other"), "kcal": round(w["kcal"]),
+                              "minutes": round(workout_minutes(w))} for w in done]}
 
     def day_targets(self, d: date, bonus: dict | None = None) -> dict:
         """The base plus the day's bonus: its kcal, carbs_pct of them as carbs and the rest as fat."""
@@ -450,11 +422,11 @@ class Nutrition:
                             "quality": meal_quality(items), "quality_parts": meal_parts(items)}
         return out
 
-    def day(self, d: date, events: list | None = None) -> dict:
+    def day(self, d: date) -> dict:
         """The day's targets, what's left of them, its bonus and its score (final once the day is over)."""
         meals = self.food.day(d)
         eaten = totals(meals)
-        bonus = self.bonus(d, events if d == self.food.today() else None)
+        bonus = self.bonus(d)
         targets = self.day_targets(d, bonus)
         left = {k: targets[k] - eaten[k] if targets.get(k) else None for k in MACROS}
         return {"targets": targets, "left": left, "bonus": bonus,
@@ -591,14 +563,3 @@ def parse_proposal(answer) -> dict:
                 "carbs_pct": round(min(100, max(0, float(carbs))))}
     questions = [str(q).strip() for q in answer.get("questions") or [] if str(q).strip()][:2]
     return {"base": base, "workouts": workouts, "why": str(answer.get("why") or "").strip(), "questions": questions}
-
-
-def now_events(calendar, tz: ZoneInfo) -> list:
-    """Today's calendar events, for a run planned later today; [] when the calendar can't be read."""
-    if calendar is None:
-        return []
-    start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    try:
-        return calendar.events(start, start + timedelta(days=1))
-    except Exception:  # noqa: BLE001 - the calendar is a nicety here
-        return []

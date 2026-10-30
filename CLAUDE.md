@@ -154,7 +154,7 @@ the day before's strain and half the 3 nights' net shortfall, at most 45 min), d
 efficiency, bed and wake consistency; recovery adds the 7-day HRV trend and the training load; max HR is the middle of
 the 3 highest workout peaks, zones shown in bpm (`zone_bpm`). Recovery's heart part is the heart rate asleep (`sleep_hr`,
 the phone's average over the night's sleep stages; `sleep_hr_low` the lowest ~15 min), not Apple's resting HR, which is
-mostly a daytime number and often missing in the morning (that one stays for strain's rest HR and as the fallback). Third pass (2026-10-30, from the phone): sleep weighs hours more (duration 50%, 90% of the need scores 75, 80% scores 50; efficiency 5%, full only at 97%), each part shows the usual of the last 30 nights (`usual`, `diff_min`); the cardio load stops the day before (today's half day made every morning look like detraining) and says why (`why`, the 7 days' strain); recovery says how it's worked out; a calendar on the day header. Food: the planned run's kcal explained (`start`, `kcal_min`, `share`), each meal's `quality_parts` on its page, Log a meal as Photo · Describe · Barcode, Coach's chats take photos with the meal camera. Each score's page asks Coach for its take
+mostly a daytime number and often missing in the morning (that one stays for strain's rest HR and as the fallback). Third pass (2026-10-30, from the phone): sleep weighs hours more (duration 50%, 90% of the need scores 75, 80% scores 50; efficiency 5%, full only at 97%), each part shows the usual of the last 30 nights (`usual`, `diff_min`); the cardio load stops the day before (today's half day made every morning look like detraining) and says why (`why`, the 7 days' strain); recovery says how it's worked out; a calendar on the day header. Food: a run in the calendar no longer adds kcal before it happens (only the Watch's workouts do), each meal's `quality_parts` on its page, Log a meal as Photo · Describe · Barcode, Coach's chats take photos with the meal camera. Each score's page asks Coach for its take
 (`POST /v1/health/insight`, contract "Coach's take"). Food is its own tab (`Views/FoodView.swift`; Team · Study ·
 Health · Food · Settings; `aide://food`, the meal buttons and the Food widget open it). Habits moved to Today (#21). Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
 (live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
@@ -209,8 +209,7 @@ that chat); `log_meal` takes only items (new foods saved as they're logged), so 
 OFF's placeholder "100 g" serving is ignored; the message box makes a new text field on send (the keyboard wrote the
 sent text back).
 Targets and the day score (2026-10-29, both sides, contract "Food", "Targets and the day score"; `nutrition.py`): a
-rest-day base plus the day's Watch workout kcal (× `share`, `carbs_pct` as carbs, the rest fat), or before it a run in
-the calendar at the user's usual kcal a minute; `goals` on `GET /v1/food` is now the day's targets. Each food's
+rest-day base plus the day's Watch workout kcal (× `share`, `carbs_pct` as carbs, the rest fat); `goals` on `GET /v1/food` is now the day's targets. Each food's
 Nutri-Score (2023 rules; Open Food Facts' grade when it has one, else from sugars, saturated fat, fibre, salt, fruit
 and veg share and kind, which Coach gives as it logs a new food) and NOVA. A 0–100 day score: 60% numbers, 40% the
 calorie-weighted grades (counted from half the day's kcal graded). `POST /v1/food/targets/propose`: Coach's proposal

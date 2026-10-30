@@ -685,19 +685,15 @@ number or null (no goal); all null until set, here or by Coach in chat ("aim for
 ```
 - `base` is the rest day (the same as Goals). On a day with workouts, their Watch kcal times `share` (0–1.5) is
   added: `carbs_pct` (0–100) of it as carbs (4 kcal/g), the rest as fat (9 kcal/g); protein stays. Calories round to 10.
-- Before any workout today, a timed calendar event today whose title says run (run, jog, corsa, correre…), or any in
-  a calendar called Run, counts at
-  the user's own kcal a minute running (the last 60 days' runs; 11 without), `planned: true`. Once the Watch has a
-  workout that day, only the done workouts count.
+- Only workouts the Watch recorded count. (Until 2026-10-30 a run in today's calendar counted before it happened,
+  `planned: true`; it's gone: the run may not happen, and its length was a guess. `planned` stays, always false.)
 - `profile` (each key may be null; `sex` is `male` or `female`, `goal` `lose`, `keep`, `gain` or, since 2026-10-29,
   `perform`: eating for training and racing at a steady weight) is what proposals start from; the app fills it from
   Apple Health. `note` (since 2026-10-29, up to 500 characters) is what the user tells Coach in their own words.
 - Targets are optional: without them the day score is quality alone.
 
-Bonus: `{"kcal": 656, "planned": false, "share": 1.0, "workouts": [{"type": "run", "kcal": 656, "minutes": 54}]}` (a
-planned one also has the event's `title`, its `start` and the `kcal_min` it was counted at, since 2026-10-30, so the
-app can say "Run at 17:00 in your calendar: 60 min × 11.5 kcal"); `{"kcal": 0, "planned": false, "workouts": []}`
-without any. `share` (since 2026-10-30) is the targets' `workouts.share` the workouts' kcal were multiplied by.
+Bonus: `{"kcal": 656, "planned": false, "share": 1.0, "workouts": [{"type": "run", "kcal": 656, "minutes": 54}]}`;
+`{"kcal": 0, "planned": false, "workouts": []}` without any. `share` (since 2026-10-30) is the targets' `workouts.share` the workouts' kcal were multiplied by.
 
 Score: `{"score": 82, "final": false, "numbers": 90, "quality": 70, "graded": 0.85, "grades": {"a": 640, "b": 300,
 "c": 400, "d": 0, "e": 120}, "parts": {"nutrients": 74, "processing": 60, "grades": 68}, "nutrients": {...},

@@ -714,14 +714,10 @@ struct FoodBonus: Decodable, Hashable {
         let kcal: Int
         let minutes: Int
         let title: String?
-        /// A planned run's start and the kcal a minute it was counted at (since 2026-10-30).
-        var start: String? = nil
-        var kcalMin: Double? = nil
     }
     var kcal = 0
+    /// Always false since 2026-10-30 (a run in the calendar no longer counts before it happens).
     var planned = false
-    /// The share of the workouts' kcal that's added (the targets' `workouts.share`; since 2026-10-30).
-    var share: Double? = nil
     var workouts: [Workout] = []
 }
 

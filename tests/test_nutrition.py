@@ -11,7 +11,6 @@ from aide.db import Database
 from aide.food import FoodStore
 from aide.foods import FoodDB
 from aide.health import HealthStore
-from aide.icloud import CalEvent
 from aide.nutrition import Nutrition, nutriscore, score, weakest
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
@@ -136,25 +135,14 @@ def test_a_run_adds_its_kcal_mostly_as_carbs(stores):
         nutrition.set_targets(profile={"goal": "bulk"})
 
 
-def test_a_run_in_the_calendar_counts_before_it_happens_at_the_usual_rate(stores):
+def test_a_run_in_the_calendar_adds_nothing_until_the_watch_has_it(stores):
     f, _, health, nutrition, _ = stores
     f.set_goals(BASE)
     today = f.today()
-    week_ago = today - timedelta(days=7)
-    health.save([{"date": week_ago.isoformat(), "workouts": [run(week_ago, kcal=600, minutes=50)]}])  # 12 kcal/min
-    at = datetime.combine(today, time(18), ROME)
-    events = [CalEvent("e1", "Home", "Corsa al Valentino", at, at + timedelta(minutes=45)),
-              CalEvent("e2", "Home", "Running club dinner", today, today + timedelta(days=1)),  # all day
-              CalEvent("e3", "Work", "Lezione", at, at + timedelta(hours=2))]
-    bonus = nutrition.bonus(today, events)
-    assert (bonus["kcal"], bonus["planned"], bonus["workouts"][0]["title"]) == (540, True, "Corsa al Valentino")
-    assert bonus["workouts"][0]["start"] == at.isoformat() and bonus["workouts"][0]["kcal_min"] == 12.0
-    # The Run calendar's events are runs whatever they're called.
-    assert nutrition.bonus(today, [CalEvent("e4", "Run", "Valentino 10k", at, at + timedelta(minutes=30))])["kcal"] == 360
-    # Once the Watch has the run, that's what counts.
+    assert nutrition.bonus(today) == {"kcal": 0, "planned": False, "workouts": []}
     health.save([{"date": today.isoformat(), "workouts": [run(today, kcal=500)]}])
-    assert nutrition.bonus(today, events) == {"kcal": 500, "planned": False, "share": 1.0,
-                                              "workouts": [{"type": "run", "kcal": 500, "minutes": 54}]}
+    assert nutrition.bonus(today) == {"kcal": 500, "planned": False, "share": 1.0,
+                                      "workouts": [{"type": "run", "kcal": 500, "minutes": 54}]}
 
 
 async def test_new_items_carry_their_quality_and_the_day_gets_a_score(stores, tmp_path):
@@ -280,16 +268,6 @@ def test_the_api_gives_the_days_targets_score_and_coachs_proposal(api_env):
 def test_a_proposal_that_doesnt_parse_is_a_502(api_env):
     api, *_ = api_env(model=[done("I think about 2500 kcal.")])
     assert api.post("/v1/food/targets/propose", headers=AUTH).status_code == 502
-
-
-def test_a_planned_run_in_the_calendar_shows_on_todays_food(api_env):
-    at = datetime.combine(datetime.now(ROME).date(), time(23, 0), ROME)
-    api, f, *_ = api_env(events=[CalEvent("e1", "Home", "Run", at, at + timedelta(minutes=30))])
-    f.set_goals(BASE)
-    day = api.get("/v1/food", headers=AUTH).json()
-    assert day["bonus"] == {"kcal": 330, "planned": True, "share": 1.0,
-                            "workouts": [{"type": "run", "kcal": 330, "minutes": 30, "title": "Run",
-                                          "start": at.isoformat(), "kcal_min": 11.0}]}
 
 
 def test_coach_gives_its_take_on_a_score_when_asked(api_env):
