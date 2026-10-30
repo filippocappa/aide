@@ -171,6 +171,11 @@ final class ChatViewModel: ObservableObject {
         conversations.filter { self.agent($0.agent).id == agent.id && $0.routine == nil }
     }
 
+    /// `agent`'s chats that have `query` in their title or messages, newest first.
+    func search(_ query: String, with agent: Agent) async throws -> [Conversation] {
+        try await api.searchConversations(query).filter { self.agent($0.agent).id == agent.id && $0.routine == nil }
+    }
+
     /// The digest that fits the time of day: "daily" (morning) before 17:00, "evening" after.
     static func digestKind(at now: Date = Date()) -> String {
         Calendar.current.component(.hour, from: now) < 17 ? "wake" : "evening"

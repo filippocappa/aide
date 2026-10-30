@@ -172,7 +172,7 @@ struct ChatsView: View {
 
     #if DEBUG
     /// Simulator screenshots: `-previewOpen team` opens the Team chat, `-previewOpen coach` Coach's latest chat,
-    /// `-previewOpen digest` the latest briefing, `-previewOpen routines:coach` Coach's routines, `-previewOpen new:coach` a blank one (nothing is sent until you write), `-previewOpen files:f_1,f_2` a Moodle
+    /// `-previewOpen digest` the latest briefing, `-previewOpen routines:coach` Coach's routines, `-previewOpen past:coach` its past chats, `-previewOpen new:coach` a blank one (nothing is sent until you write), `-previewOpen files:f_1,f_2` a Moodle
     /// notification's files.
     private func openForPreview() async {
         // On the phone, launched over the cable with `-voiceTest YES`: a voice chat with Aide, to try voice from the Mac.
@@ -189,6 +189,7 @@ struct ChatsView: View {
         if target.hasPrefix("files:") { env.newFiles = NewFiles(ids: target.dropFirst(6).split(separator: ",").map(String.init)); return }
         if target.hasPrefix("info:") { infoFor = chat.agent(String(target.dropFirst(5))); return }
         if target.hasPrefix("routines:") { await chat.loadRoutines(); routinesFor = chat.agent(String(target.dropFirst(9))); return }
+        if target.hasPrefix("past:") { await chat.loadConversations(); pastChats = chat.agent(String(target.dropFirst(5))); return }
         if target.hasPrefix("new:") { await chat.newChat(with: chat.agent(String(target.dropFirst(4)))); return }
         if target == "voice" { await chat.newChat(with: chat.orchestrator); await env.voice.toggle(); return }
         await chat.talk(to: chat.agent(target))
@@ -382,35 +383,42 @@ private struct TeamRow: View {
     }
 }
 
-/// One agent's chats, newest first, with a new chat on top. Swipe to delete.
+/// One agent's chats, newest first, with a new chat on top. Swipe to delete. Search looks through the titles and
+/// every message, on the server.
 struct PastChatsSheet: View {
     enum Choice { case new(Agent), open(Conversation), openID(String) }
 
     @EnvironmentObject private var chat: ChatViewModel
     let agent: Agent
     let choose: (Choice) -> Void
+    @State private var query = ""
+    @State private var results: [Conversation]?
+    @State private var searchError: String?
+
+    private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         NavigationStack {
             List {
-                Button { choose(.new(agent)) } label: {
-                    Label("New chat", systemImage: "square.and.pencil")
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(agent.tint)
-                }
-                .listRowBackground(Theme.row)
-                Section {
-                    let chats = chat.chats(with: agent)
-                    if chats.isEmpty {
-                        Text("No chats with \(agent.name) yet.").foregroundStyle(.secondary)
+                if searching {
+                    found
+                } else {
+                    Button { choose(.new(agent)) } label: {
+                        Label("New chat", systemImage: "square.and.pencil")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(agent.tint)
                     }
-                    ForEach(chats) { c in
-                        Button { choose(.open(c)) } label: { ConversationRow(conversation: c) }
-                            .listRowBackground(c.id == chat.conversationID ? Theme.chip : Theme.row)
-                    }
-                    .onDelete { offsets in
-                        let doomed = offsets.map { chats[$0] }
-                        Task { for c in doomed { await chat.delete(c) } }
+                    .listRowBackground(Theme.row)
+                    Section {
+                        let chats = chat.chats(with: agent)
+                        if chats.isEmpty {
+                            Text("No chats with \(agent.name) yet.").foregroundStyle(.secondary)
+                        }
+                        ForEach(chats) { c in row(c) }
+                            .onDelete { offsets in
+                                let doomed = offsets.map { chats[$0] }
+                                Task { for c in doomed { await chat.delete(c) } }
+                            }
                     }
                 }
             }
@@ -418,9 +426,48 @@ struct PastChatsSheet: View {
             .background(Theme.grouped)
             .navigationTitle(agent.name)
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "Search chats with \(agent.name)")
+            .task(id: query) { await search() }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationBackground(Theme.grouped)
+    }
+
+    @ViewBuilder private var found: some View {
+        if let error = searchError {
+            Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
+                .listRowBackground(Theme.row)
+        } else if let results {
+            if results.isEmpty {
+                Text("No chats with \(agent.name) mention that.").foregroundStyle(.secondary)
+                    .listRowBackground(Theme.row)
+            }
+            ForEach(results) { c in row(c) }
+        } else {
+            HStack { Spacer(); ProgressView(); Spacer() }.listRowBackground(Color.clear)
+        }
+    }
+
+    private func row(_ c: Conversation) -> some View {
+        Button { choose(.open(c)) } label: { ConversationRow(conversation: c, highlight: searching ? query : nil) }
+            .listRowBackground(c.id == chat.conversationID ? Theme.chip : Theme.row)
+    }
+
+    /// A moment after the typing stops, so each letter doesn't ask the server.
+    private func search() async {
+        let words = query.trimmingCharacters(in: .whitespaces)
+        results = nil
+        searchError = nil
+        guard !words.isEmpty else { return }
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled else { return }
+        do {
+            let found = try await chat.search(words, with: agent)
+            if !Task.isCancelled { results = found }
+        } catch {
+            if !Task.isCancelled { searchError = error.localizedDescription }
+        }
     }
 }
 
@@ -434,9 +481,11 @@ extension ChatViewModel {
     }
 }
 
-/// One chat: the title, when it was last used, and a preview.
+/// One chat: the title, when it was last used, and a preview (in search results, the line that matched).
 struct ConversationRow: View {
     let conversation: Conversation
+    /// In search results: the words looked for, shown in bold in the line that matched.
+    var highlight: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -452,12 +501,26 @@ struct ConversationRow: View {
                     Text(Self.when(date)).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if let preview = conversation.preview, !preview.isEmpty {
+            if let match = conversation.match, let highlight {
+                Text(Self.bold(highlight, in: match)).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            } else if let preview = conversation.preview, !preview.isEmpty {
                 Text(preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             }
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
+    }
+
+    /// `text` with each place it has `words` (any case) in bold and full colour.
+    static func bold(_ words: String, in text: String) -> AttributedString {
+        var out = AttributedString(text)
+        var from = out.startIndex
+        while let hit = out[from...].range(of: words, options: [.caseInsensitive, .diacriticInsensitive]) {
+            out[hit].inlinePresentationIntent = .stronglyEmphasized
+            out[hit].foregroundColor = .primary
+            from = hit.upperBound
+        }
+        return out
     }
 
     /// 14:05 today, "Yesterday", the weekday this week, else the date.
@@ -471,8 +534,6 @@ struct ConversationRow: View {
     }
 }
 
-/// The top of the Team tab: the time of day, the latest briefing's note in full (tap: its Details), and chips for how
-/// many habits are done today and what's waiting for your OK; each chip opens Today there.
 /// Text written in a word at a time, the first time it's shown (`reveal`); laid out in full from the start,
 /// so nothing below it moves. Reduce Motion shows it at once.
 private struct RevealText: View {
@@ -522,6 +583,8 @@ private struct RevealText: View {
     }
 }
 
+/// The top of the Team tab: the time of day, the latest briefing's note in full (tap: its Details), and chips for how
+/// many habits are done today and what's waiting for your OK; each chip opens Today there.
 private struct Greeting: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var digest: DigestViewModel

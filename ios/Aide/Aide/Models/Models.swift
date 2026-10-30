@@ -140,6 +140,8 @@ struct Conversation: Decodable, Identifiable, Hashable {
     var routine: Int? = nil
     /// The course this chat is Professor's chat for (docs/API.md, "Notebook").
     var course: Int? = nil
+    /// In a search's results: the line that has the words, cut around them (nil when only the title has them).
+    var match: String? = nil
 }
 struct ConversationList: Decodable { let conversations: [Conversation] }
 

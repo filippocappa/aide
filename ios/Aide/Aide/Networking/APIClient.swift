@@ -196,6 +196,13 @@ final class APIClient {
         return list.conversations
     }
 
+    /// The chats whose title or messages have `query`, each with the line that matched.
+    func searchConversations(_ query: String) async throws -> [Conversation] {
+        let list: ConversationList = try await send("GET", "/v1/conversations",
+                                                    query: [URLQueryItem(name: "q", value: query)])
+        return list.conversations
+    }
+
     /// With a digest kind the chat opens with that digest's greeting. The server may have to make the
     /// digest first, which can take 30 s.
     func createConversation(digest: String? = nil, agent: String? = nil) async throws -> Conversation {
