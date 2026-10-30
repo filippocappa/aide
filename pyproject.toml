@@ -24,11 +24,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Lecture transcription on the GPU (study.py, whisper.py). Only the server box installs it: uv sync --extra whisper
+# Transcription on the GPU (study.py, whisper.py): Whisper, and NeMo for Parakeet on English (about 6 GB with torch).
+# Only the server box installs it: uv sync --extra whisper
 whisper = [
     "faster-whisper>=1.1",
     "nvidia-cublas-cu12",
     "nvidia-cudnn-cu12>=9,<10",
+    "nemo_toolkit[asr]>=2.4",
 ]
 
 [project.scripts]

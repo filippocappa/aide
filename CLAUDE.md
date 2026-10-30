@@ -34,7 +34,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   `foods.py`: saved foods per 100 g with the usual portion, which meals are added up from (`tools/nutrition.py`: Open Food Facts).
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
-- `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU.
+- `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU
+  (Parakeet for English, Whisper for the rest and to pick the language).
   `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes, served by
   `webdav.py` (its own unit, `deploy/aide-webdav.service`, published by `tailscale serve` on 8443). `moodle.py`:
   the university Moodle's PDFs into the study files (login through the app; the token in `.env`).

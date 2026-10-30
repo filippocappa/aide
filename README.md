@@ -347,7 +347,8 @@ privacy policy (make your own, see [Gmail](#gmail)); the agents' prompts, in `sr
 4. **Push (optional).** See [Push notifications](#push-notifications). Without it nothing reaches the phone
    unless the app is open.
 5. **Lecture transcription (optional).** On a box with an NVIDIA GPU and `ffmpeg`, `uv sync --extra whisper` adds
-   faster-whisper and the CUDA libraries (about 2 GB); the model (about 1.6 GB) downloads on the first lecture.
+   faster-whisper, NVIDIA's NeMo and the CUDA libraries (about 8 GB). English goes to Parakeet (about 2.4 GB), the
+   rest to Whisper (about 1.6 GB); both download on first use.
    Without it, lectures from photos and text still work.
 6. **Run.** `uv sync && uv run aide` (`uv sync --extra whisper` on the server). The API listens on localhost;
    `tailscale serve` publishes it to the phone.

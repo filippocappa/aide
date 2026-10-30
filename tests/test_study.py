@@ -466,3 +466,44 @@ async def test_a_page_that_cant_be_read_is_left_as_it_is(env):
     assert study.files.read_pages(f) == set()
     await read_all(reader)
     assert study.files.pages(f) == [(1, "Una pagina"), (2, "Seconda")]
+
+
+def test_english_goes_to_parakeet_and_the_rest_to_whisper(monkeypatch, capsys):
+    import sys
+    import types
+
+    from aide import whisper
+
+    heard = {"lang": "en", "parakeet": 0}
+
+    class Model:
+        def __init__(self, *a, **kw):
+            pass
+
+        def detect_language(self, audio, **kw):
+            return heard["lang"], 0.9, []
+
+        def transcribe(self, audio, language=None, **kw):
+            seg = types.SimpleNamespace(start=1.04, text=" Whisper's line. ")
+            return [seg], types.SimpleNamespace(language=language, duration=32.4)
+
+    def parakeet(audio):
+        heard["parakeet"] += 1
+        if heard.get("fail"):
+            raise RuntimeError("out of memory")
+        return [(0.5, "Parakeet's line.")]
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=Model))
+    monkeypatch.setattr(whisper, "decode", lambda path: [0.0] * 16000 * 30)
+    monkeypatch.setattr(whisper, "parakeet", parakeet)
+    monkeypatch.setattr(sys, "argv", ["whisper", "talk.m4a"])
+
+    def run():
+        whisper.main()
+        return paragraphs(capsys.readouterr().out)
+
+    assert run() == ("[0:00] Parakeet's line.", "en", 30)
+    heard["lang"] = "it"
+    assert run() == ("[0:01] Whisper's line.", "it", 32) and heard["parakeet"] == 1
+    heard.update(lang="en", fail=True)
+    assert run() == ("[0:01] Whisper's line.", "en", 32) and heard["parakeet"] == 2
