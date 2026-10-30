@@ -92,10 +92,14 @@ struct ChatView: View {
             case .starter(let text): Task { await chat.startChat(with: chat.agent); await chat.send(text) }
             case .pastChats: showPastChats = true
             case .routines: showRoutines = true
+            case .thinkHarder: Task { await chat.think() }
+            case .quiz: Task { await voice.start(saying: "Quiz me") }
+            case .practiceExam: showPractice = true
             case .activity: break
             }
         }) {
-            AgentInfoSheet(agent: chat.agent, act: { infoAction = $0; showInfo = false }, showsActivity: false)
+            AgentInfoSheet(agent: chat.agent, act: { infoAction = $0; showInfo = false }, showsActivity: false,
+                           inChat: true, course: chat.course != nil)
         }
         .fullScreenCover(isPresented: $showPractice, onDismiss: {
             Task { await chat.loadHistory() } // Professor's note on the result
@@ -198,19 +202,7 @@ struct ChatView: View {
         HStack(spacing: 8) {
             headerButton("chevron.left", label: "Chats") { dismiss() }
             Spacer()
-            Menu {
-                Button("New chat", systemImage: "square.and.pencil") { Task { await chat.startChat(with: chat.agent) } }
-                Button("Past chats", systemImage: "clock") { showPastChats = true }
-                Button("Routines", systemImage: "alarm") { showRoutines = true }
-                if chat.course != nil {
-                    Button("Quiz me", systemImage: "waveform") { Task { await voice.start(saying: "Quiz me") } }
-                    Button("Practice exam", systemImage: "checklist") { showPractice = true }
-                }
-                Button("Think harder", systemImage: "brain") { Task { await chat.think() } }
-                Button("About \(chat.agent.name)", systemImage: "info.circle") { showInfo = true }
-            } label: {
-                headerIcon("ellipsis")
-            }
+            headerButton("ellipsis", label: "About \(chat.agent.name)") { showInfo = true }
             .disabled(!settings.isConfigured)
         }
         .padding(.horizontal, 14)

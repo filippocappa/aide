@@ -144,6 +144,7 @@ struct ChatsView: View {
         case .pastChats: pastChats = agent
         case .routines: routinesFor = agent
         case .activity: activity = .agent(agent)
+        case .thinkHarder, .quiz, .practiceExam: break // only in a chat
         }
     }
 
@@ -484,10 +485,6 @@ private struct Greeting: View {
                 briefing
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        if let latest = digest.latest {
-                            Chip(title: DigestViewModel.Kind(rawValue: latest.kind)?.label ?? "Briefing",
-                                 systemImage: "sun.horizon") { digest.showLatest() }
-                        }
                         Chip(title: habitsLine, systemImage: "checkmark.circle.fill", iconColor: .green) { open(.habits) }
                         if waiting > 0 {
                             Chip(title: "\(waiting) waiting", systemImage: "tray.full.fill", style: .prominent) { open(.top) }
