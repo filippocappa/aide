@@ -262,6 +262,12 @@ With $c_1 = 0.5$, what is the multiplier?
 """
 
 
+def test_an_exercises_source_as_a_short_name():
+    from aide.quiz import _source_name
+    assert _source_name("Esercitazione 3.pdf, p. 2; solution: Soluzioni 3.pdf, p. 1") == "Esercitazione 3, p. 2"
+    assert _source_name("2026-09-28.pdf, p. 1; solution: 2026-09-28.pdf, p. 1") == "Sheet of 28 Sep, p. 1"
+
+
 def with_exercises(nb, t) -> None:
     nb.notebook.set_exercises(t["islm"], EXERCISES, [], True)
 

@@ -570,8 +570,11 @@ def _given(q: dict, a) -> str | dict | None:
 
 def _source_name(source: str) -> str:
     """An exercise's "from" note as a short name: "Esercitazione 3.pdf, p. 2; solution: …" → "Esercitazione 3, p. 2"."""
-    name = source.split(";")[0].strip()
-    return re.sub(r"\.pdf\b", "", name, flags=re.I)
+    name = re.sub(r"\.pdf\b", "", source.split(";")[0].strip(), flags=re.I)
+    if m := re.match(r"(\d{4}-\d{2}-\d{2})\b", name):  # files named by their date: "Sheet of 28 Sep, p. 1"
+        day = datetime.fromisoformat(m.group(1))
+        name = f"Sheet of {day.day} {day:%b}" + name[m.end():]
+    return name
 
 
 def _open_answer(a) -> dict | None:
