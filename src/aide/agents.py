@@ -57,7 +57,26 @@ class AgentDef:
 
 
 def _idea(title: str, prompt: str, time: str, days: tuple[int, ...], watch: bool = False) -> dict:
-    return {"title": title, "prompt": prompt, "time": time, "days": days, "watch": watch}
+    return {"title": title, "prompt": prompt, "time": time, "days": days, "watch": watch,
+            "summary": ROUTINE_SUMMARIES.get(title)}
+
+
+# One line each for the app, to the user: what the routine or watch does (its `summary`).
+ROUTINE_SUMMARIES = {
+    "Mail that needs you": "Reads your unread mail and tells you only about messages that need an answer, with a "
+                           "reply drafted.",
+    "Tomorrow": "Looks over tomorrow's calendar and reminders, and speaks up for a clash, an early start or something "
+                "to prepare.",
+    "Recovery check": "Checks last night's sleep and recovery, and warns you when a hard day is planned after a poor "
+                      "night.",
+    "Habits tonight": "Looks at your habits and nudges you only when a streak is about to break.",
+    "Weigh-in": "Reminds you to weigh in when you haven't for a week, and flags a weight trend that's off your goal.",
+    "Plan my week": "A plan for the coming week: what matters most, where it's tight, what to move.",
+    "Mail sweep": "Your unread mail sorted: what needs an answer today, what can wait, and dates for the calendar.",
+    "Review what I studied": "Asks what you studied this week, then quizzes you on it.",
+    "Weekly recap": "Your week's sleep, training and habits in short, with one thing to try next.",
+    "Week's spending": "Asks what you spent this week and compares it with your budget.",
+}
 
 
 # -- prompt fragments ------------------------------------------------------------

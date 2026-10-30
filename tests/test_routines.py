@@ -447,6 +447,32 @@ async def test_an_agent_sets_up_a_watch_by_chat(env):
     assert all("NOTHING" in agent._system(a)[0]["text"] for a in AGENTS)
 
 
+def test_routines_carry_a_line_for_the_app(env):
+    client, agent, *_ = env()
+    added = agent.routines.add_starting_watches()
+    assert added[0]["summary"].startswith("Reads your unread mail")
+    # One made from an idea before summaries existed gets its line; one of the user's own stays without.
+    agent.routines.conn.execute("UPDATE routines SET summary = NULL")
+    mine = client.post("/v1/routines", json=dict(RECAP, title="My thing"), headers=AUTH).json()
+    assert mine["summary"] is None
+    agent.routines.add_starting_watches()
+    got = {r["title"]: r["summary"] for r in client.get("/v1/routines", headers=AUTH).json()["routines"]}
+    assert got["Tomorrow"].startswith("Looks over tomorrow") and got["My thing"] is None
+    r = client.patch(f"/v1/routines/{mine['id']}", json={"summary": " Does my thing. "}, headers=AUTH).json()
+    assert r["summary"] == "Does my thing."
+    ideas = {a["id"]: a["routine_ideas"] for a in client.get("/v1/agents", headers=AUTH).json()["agents"]}
+    assert all(i["summary"] for i in ideas["coach"])
+
+
+async def test_an_agent_gives_its_routine_a_line(env):
+    _, agent, *_ = env()
+    tools = {t.name: t for t in agent.registries["coach"]}
+    assert "summary" in tools["create_routine"].input_schema["required"]
+    await tools["create_routine"].handler(title="Sleep watch", prompt="Check my sleep.", time="09:30", days=[],
+                                          watch=True, summary="Checks your sleep.")
+    assert agent.routines.all("coach")[-1]["summary"] == "Checks your sleep."
+
+
 def test_an_older_database_gets_the_watch_column(tmp_path):
     path = tmp_path / "old.db"
     Database(path).close()

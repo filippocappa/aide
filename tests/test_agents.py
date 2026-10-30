@@ -117,7 +117,8 @@ def test_agents_endpoint_matches_the_contract(env):
         "orchestrator": False, "starters": ["How did I sleep this week?", "Should I train hard today?",
                                             "What have I eaten today?"],
         "routine_ideas": [{"title": "Weekly recap", "prompt": AGENTS["coach"].routine_ideas[0]["prompt"],
-                           "time": "18:00", "days": [7], "watch": False}]}
+                           "time": "18:00", "days": [7], "watch": False,
+                           "summary": "Your week's sleep, training and habits in short, with one thing to try next."}]}
     assert [(i["title"], i["time"], i["days"], i["watch"]) for a in agents for i in a["routine_ideas"]] == [
         ("Plan my week", "20:00", [7], False), ("Mail sweep", "09:00", [1, 2, 3, 4, 5], False),
         ("Mail that needs you", "11:00", [1, 2, 3, 4, 5], True), ("Tomorrow", "18:30", [1, 2, 3, 4, 7], True),

@@ -162,10 +162,15 @@ def test_title_falls_back_to_the_first_message(env):
 def test_think_per_conversation(env):
     client, agent, _ = env()
     cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
-    assert client.post("/v1/think", json={"conversation_id": cid}, headers=AUTH).json() == {"ok": True}
+    assert client.post("/v1/think", json={"conversation_id": cid}, headers=AUTH).json() == {"ok": True, "smart": True}
     assert agent.db.conversation_model(agent.db.app_conversation(cid)["id"]) == agent.smart_model
     assert agent.db.conversation_model(agent.db.current_conversation(CONVERSATION, agent.idle)) is None
-    assert client.post("/v1/think", headers=AUTH).json() == {"ok": True}  # old clients send no body
+    assert client.get(f"/v1/history?conversation_id={cid}", headers=AUTH).json()["smart"] is True
+    # Off again: the usual model.
+    client.post("/v1/think", json={"conversation_id": cid, "on": False}, headers=AUTH)
+    assert agent.db.conversation_model(agent.db.app_conversation(cid)["id"]) is None
+    assert client.get(f"/v1/history?conversation_id={cid}", headers=AUTH).json()["smart"] is False
+    assert client.post("/v1/think", headers=AUTH).json()["ok"]  # old clients send no body
 
 
 def test_delete_conversation(env):

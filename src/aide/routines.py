@@ -12,7 +12,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from .agents import AGENTS, LATER_WATCHES, STARTING_WATCHES, check_agent
+from .agents import AGENTS, LATER_WATCHES, ROUTINE_SUMMARIES, STARTING_WATCHES, check_agent
 from .db import Database, utcnow
 from .push import Push
 
@@ -27,7 +27,7 @@ RETRY = timedelta(minutes=10)  # after a failed run
 WATCH_CAP = 3  # watch notes a day, all watches together; later scheduled checks that day are skipped
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _TIME = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
-EDITABLE = ("title", "prompt", "time", "days", "enabled", "watch")
+EDITABLE = ("title", "prompt", "time", "days", "enabled", "watch", "summary")
 
 
 def check_time(value: str) -> str:
@@ -127,16 +127,16 @@ class RoutineStore:
         return [r for r in rows if agent is None or r["agent"] == agent]
 
     def create(self, agent: str, title: str, prompt: str, time: str, days: list[int] | None = None,  # noqa: A002
-               enabled: bool = True, watch: bool = False) -> dict:
+               enabled: bool = True, watch: bool = False, summary: str | None = None) -> dict:
         agent, title, prompt = check_agent(agent), _text(title, "title"), _text(prompt, "prompt")
         time, days = check_time(time), check_days(days or [])
         chat = self.db.new_app_conversation(agent)
         self.db.set_conversation_title(chat["id"], title)
         cur = self.conn.execute(
-            "INSERT INTO routines (agent, title, prompt, time, days, enabled, conversation_id, since, watch) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO routines (agent, title, prompt, time, days, enabled, conversation_id, since, watch, summary) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (agent, title, prompt, time, json.dumps(days), int(enabled), chat["id"], utcnow().isoformat(),
-             int(watch)))
+             int(watch), (summary or "").strip() or None))
         return self.get(cur.lastrowid)
 
     def add_starting_watches(self) -> list[dict]:
@@ -144,7 +144,14 @@ class RoutineStore:
         bring it back."""
         added = [self.create(agent, **idea) for agent, idea in STARTING_WATCHES] if self.db.once("starting-watches") \
             else []
-        return added + [self.create(agent, **idea) for name, agent, idea in LATER_WATCHES if self.db.once(name)]
+        added += [self.create(agent, **idea) for name, agent, idea in LATER_WATCHES if self.db.once(name)]
+        self.fill_summaries()
+        return added
+
+    def fill_summaries(self) -> None:
+        """The app's line for routines made from an idea before they had one, matched by title."""
+        for title, summary in ROUTINE_SUMMARIES.items():
+            self.conn.execute("UPDATE routines SET summary = ? WHERE summary IS NULL AND title = ?", (summary, title))
 
     def watch_notes_today(self, now: datetime | None = None) -> int:
         """Notes posted by watches since local midnight."""
@@ -169,6 +176,8 @@ class RoutineStore:
             changes["enabled"] = int(bool(changes["enabled"]))
         if "watch" in changes:
             changes["watch"] = int(bool(changes["watch"]))
+        if "summary" in changes:
+            changes["summary"] = changes["summary"].strip() or None
         if {"time", "days", "enabled"} & set(changes):  # a new schedule starts now: no catching up on old slots
             changes["since"] = utcnow().isoformat()
         if changes:
@@ -192,7 +201,8 @@ class RoutineStore:
         def local(dt: datetime | None) -> str | None:
             return dt.astimezone(self.tz).replace(microsecond=0).isoformat() if dt else None
         return {"id": r["id"], "agent": r["agent"], "title": r["title"], "prompt": r["prompt"], "time": r["time"],
-                "days": r["days"], "enabled": r["enabled"], "watch": r["watch"], "conversation_id": r["public_id"],
+                "days": r["days"], "enabled": r["enabled"], "watch": r["watch"], "summary": r["summary"],
+                "conversation_id": r["public_id"],
                 "next_run": local(self.next_run(r)),
                 "last_run": local(datetime.fromisoformat(r["last_run"]) if r["last_run"] else None)}
 

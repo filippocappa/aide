@@ -158,7 +158,7 @@ it (about a second a sentence), in whatever language was spoken, Italian and Eng
 on with `/v1/chat` as usual. 400 for an empty body, 413 over 10 MB, 415 for another type, 502 if the model failed
 (try again), 503 when the server has no OpenRouter key (then use the phone's own recogniser).
 
-`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}]}`
+`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}], "smart": false}` (`smart`: Think harder is on in that chat, since 2026-10-30)
 (`attachments`, `consulted` and `team` as in `/v1/chat`, `[]` on user messages and plain replies; a user message
 sent with photos also has `"photos": ["p_…"]`, absent otherwise; reminders in them are reloaded as they are now,
 so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said before. Tool calls and internal notes are left out.
@@ -179,7 +179,7 @@ The app keeps many chats. Every chat endpoint takes an optional `conversation_id
 | `DELETE /v1/conversations/{id}` | | `{"ok": true}`. The shared conversation can't be deleted (400). |
 | `POST /v1/chat` | `{"text": "…", "conversation_id": "c_91f…"}` | Same as before, plus `"conversation_id"`. The server sets `title` from the first exchange. |
 | `GET /v1/history` | `?limit=50&conversation_id=c_91f…` | As before, for that conversation. |
-| `POST /v1/think` | `{"conversation_id": "c_91f…"}` (optional) | `{"ok": true}`. Smarter model for that conversation. |
+| `POST /v1/think` | `{"conversation_id": "c_91f…", "on": true}` (both optional) | `{"ok": true, "smart": true}`. Smarter model for that conversation; `"on": false` (since 2026-10-30) goes back to the usual one. `GET /v1/history` says which with `smart`. |
 
 The app creates a conversation with `POST /v1/conversations` before the first message of each new chat. If that returns 404 or 405 (older server), it falls back to the shared conversation.
 
@@ -288,8 +288,12 @@ asking an agent ("every Sunday at 18 recap my week").
 {"id": 3, "agent": "coach", "title": "Weekly recap",
  "prompt": "Recap my sleep, training and habits for the week, and suggest one thing for next week.",
  "time": "18:00", "days": [7], "enabled": true, "watch": false,
+ "summary": "Your week's sleep, training and habits in short, with one thing to try next.",
  "conversation_id": "c_7ab…", "next_run": "2026-10-25T18:00:00+02:00", "last_run": null}
 ```
+- `summary` (since 2026-10-30) is one line for the app, to the user: what the routine does, shown under its title.
+  The ideas and the starting watches have one (filled in on older ones by title); an agent gives one when it makes a
+  routine by chat. `null` on a routine made in the app without one: show the first sentence of `prompt`.
 - `time` is `HH:MM` local (`AIDE_TIMEZONE`). `days` are ISO weekdays, 1 = Monday … 7 = Sunday; `[]` means every
   day. `next_run` is `null` while `enabled` is false.
 - `prompt` is what the agent is asked each run (the user never sees it in the chat). The run uses the agent's
@@ -301,8 +305,8 @@ asking an agent ("every Sunday at 18 recap my week").
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/routines` | `?agent=coach` (optional) | `{"routines": [ … ]}`, by agent order, then `time`. |
-| `POST /v1/routines` | `{"agent", "title", "prompt", "time", "days", "enabled", "watch"}` (`days` default `[]`, `enabled` default true, `watch` default false) | the new routine. `400` for an unknown agent, a bad time or an empty prompt. |
-| `PATCH /v1/routines/{id}` | any of `title`, `prompt`, `time`, `days`, `enabled`, `watch` | the routine. |
+| `POST /v1/routines` | `{"agent", "title", "prompt", "time", "days", "enabled", "watch", "summary"}` (`days` default `[]`, `enabled` default true, `watch` default false) | the new routine. `400` for an unknown agent, a bad time or an empty prompt. |
+| `PATCH /v1/routines/{id}` | any of `title`, `prompt`, `time`, `days`, `enabled`, `watch`, `summary` | the routine. |
 | `DELETE /v1/routines/{id}` | | `{"ok": true}` |
 | `POST /v1/routines/{id}/run` | `{}` | runs it now, as a scheduled run would (also when disabled), and returns `{"routine": …, "conversation_id": "c_7ab…", "spoke": true}` once the message is posted. `spoke` is false when a watch found nothing (nothing was posted). Can take 30 s. |
 
@@ -319,7 +323,7 @@ asking an agent ("every Sunday at 18 recap my week").
   run straight away (harmless, like `remember`), and the reply says what was set. Deleting one by chat is queued
   like other destructive actions. Aide can make routines for any agent; the others only for themselves.
 - **Ideas.** `GET /v1/agents` gains `routine_ideas` per agent (default `[]`): `[{"title", "prompt", "time",
-  "days"}]`, offered by the app as one-tap starting points. E.g. Coach "Weekly recap" (Sun 18:00), Secretary
+  "days", "summary"}]`, offered by the app as one-tap starting points. E.g. Coach "Weekly recap" (Sun 18:00), Secretary
   "Mail sweep" (Mon–Fri 09:00), Professor "Review what I studied" (Sun 17:00), Finance "Week's spending" (Sun
   19:00), Aide "Plan my week" (Sun 20:00). Schedules are weekly patterns only; monthly can come later.
   Each idea also has `watch` (see below).

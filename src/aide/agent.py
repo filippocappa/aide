@@ -289,9 +289,13 @@ class Agent:
             cancel_queued,
         )
 
-    def think(self, channel: str, conversation: str | None = None) -> None:
-        """Use the smart model for the rest of the current conversation."""
-        self.db.set_conversation_model(self._resolve(channel, conversation), self.smart_model)
+    def think(self, channel: str, conversation: str | None = None, on: bool = True) -> None:
+        """Use the smart model for the rest of the current conversation, or (`on` False) the usual one again."""
+        self.db.set_conversation_model(self._resolve(channel, conversation), self.smart_model if on else None)
+
+    def thinking(self, channel: str, conversation: str | None = None) -> bool:
+        """Whether the conversation was switched to the smart model."""
+        return self.db.conversation_model(self._resolve(channel, conversation)) == self.smart_model
 
     async def reply(self, channel: str, text: str, conversation: str | None = None) -> str:
         """Answer in the shared conversation, or in the app chat `conversation`."""

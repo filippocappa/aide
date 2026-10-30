@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS routines (
     conversation_id INTEGER NOT NULL REFERENCES conversations(id),
     since           TEXT NOT NULL,  -- UTC; only slots after this run (set on create and on schedule changes)
     last_run        TEXT,           -- UTC
-    watch           INTEGER NOT NULL DEFAULT 0  -- 1: posts only when something needs the user
+    watch           INTEGER NOT NULL DEFAULT 0, -- 1: posts only when something needs the user
+    summary         TEXT            -- one line for the app: what it does, to the user
 );
 
 -- Things the server does once per database, like setting up the starting watches.
@@ -162,6 +163,9 @@ class Database:
                 self.conn.execute(TEAM_TABLE)
                 self.conn.execute("INSERT INTO team_messages SELECT * FROM team_messages_old")
                 self.conn.execute("DROP TABLE team_messages_old")
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(routines)")}
+        if "summary" not in columns:  # databases created before routines had a line for the app
+            self.conn.execute("ALTER TABLE routines ADD COLUMN summary TEXT")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(memory)")}
         if "agent" not in columns:  # databases created before agents: every item is shared
             self.conn.execute("ALTER TABLE memory ADD COLUMN agent TEXT")
@@ -257,7 +261,7 @@ class Database:
         row = self.conn.execute("SELECT model FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
         return row["model"]
 
-    def set_conversation_model(self, conversation_id: int, model: str) -> None:
+    def set_conversation_model(self, conversation_id: int, model: str | None) -> None:
         self.conn.execute("UPDATE conversations SET model = ? WHERE id = ?", (model, conversation_id))
 
     def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list, list, list, dict | None]]:

@@ -227,6 +227,7 @@ class RoutineIn(BaseModel):
     days: list[int] = []
     enabled: bool = True
     watch: bool = False
+    summary: str | None = None
 
 
 class RoutinePatch(BaseModel):
@@ -236,6 +237,7 @@ class RoutinePatch(BaseModel):
     days: list[int] | None = None
     enabled: bool | None = None
     watch: bool | None = None
+    summary: str | None = None
 
 
 Period = Literal["day", "week", "month"]
@@ -280,6 +282,10 @@ class ActionsIn(BaseModel):
 
 class ConversationIn(BaseModel):
     conversation_id: str | None = None
+
+
+class ThinkIn(ConversationIn):
+    on: bool = True
 
 
 class NewConversationIn(BaseModel):
@@ -766,9 +772,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"ok": True}
 
     @app.post("/v1/think", dependencies=[Depends(auth)])
-    async def think(body: ConversationIn | None = None):
-        agent.think(CONVERSATION, body.conversation_id if body else None)
-        return {"ok": True}
+    async def think(body: ThinkIn | None = None):
+        body = body or ThinkIn()
+        agent.think(CONVERSATION, body.conversation_id, body.on)
+        return {"ok": True, "smart": body.on}
 
     @app.get("/v1/history", dependencies=[Depends(auth)])
     async def history(limit: int = 50, conversation_id: str | None = None):
@@ -799,7 +806,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             m["attachments"] = [a for a in m["attachments"] if a["type"] != "videos" or a["videos"]]
         # A turn still running here isn't in the history yet (it's saved when it ends): what was asked, and by whom.
         running = working.get(conversation_id or CONVERSATION)
-        return {"messages": messages, **({"working": running} if running else {})}
+        return {"messages": messages, "smart": agent.thinking(CONVERSATION, conversation_id),
+                **({"working": running} if running else {})}
 
     @app.get("/v1/team", dependencies=[Depends(auth)])
     async def team(limit: int = 100):
