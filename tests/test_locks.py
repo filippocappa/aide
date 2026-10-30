@@ -162,13 +162,16 @@ def client():
 def test_api(client):
     made = client.post("/v1/locks", json={"title": "Focus", "minutes": 30}, headers=AUTH).json()
     assert made["once"] and made["locked"] and made["until"]
-    bed = client.post("/v1/locks", json={"title": "Bedtime", "start": "23:00", "end": "07:00", "days": []},
+    # Two hours from now, so it's never on while this runs (a lock that's on can't be edited).
+    start = (datetime.now(ROME) + timedelta(hours=2)).strftime("%H:00")
+    end = (datetime.now(ROME) + timedelta(hours=3)).strftime("%H:00")
+    bed = client.post("/v1/locks", json={"title": "Bedtime", "start": start, "end": end, "days": []},
                       headers=AUTH).json()
-    assert bed["summary"] == "Every day 23:00–07:00" and bed["start"] == "23:00" and not bed["once"]
+    assert bed["summary"] == f"Every day {start}–{end}" and bed["start"] == start and not bed["once"]
     assert client.post("/v1/locks", json={"title": "x"}, headers=AUTH).status_code == 400
 
     assert client.patch(f"/v1/locks/{bed['id']}", json={"days": [1, 2, 3, 4, 5]},
-                        headers=AUTH).json()["summary"] == "Mon–Fri 23:00–07:00"
+                        headers=AUTH).json()["summary"] == f"Mon–Fri {start}–{end}"
     assert client.post(f"/v1/locks/{made['id']}/unlock", json={"reason": "finished"},
                        headers=AUTH).json() == {"lock": None}
 

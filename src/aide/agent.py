@@ -51,6 +51,18 @@ TITLE_PROMPT = """Write a title of two to five words for a chat that starts with
 Reply with the title only: no quotes, no full stop."""
 
 
+def _snippet(text: str, needle: str, around: int = 50) -> str:
+    """`text` on one line, cut to about `around` characters each side of `needle`, on word ends."""
+    flat = " ".join(text.split())
+    at = flat.casefold().find(needle)
+    start, end = max(0, at - around), min(len(flat), at + len(needle) + around)
+    if start and (cut := flat.find(" ", start, at)) != -1:
+        start = cut + 1
+    if end < len(flat) and (cut := flat.rfind(" ", at + len(needle), end)) != -1:
+        end = cut
+    return ("…" if start else "") + flat[start:end] + ("…" if end < len(flat) else "")
+
+
 class UnknownConversation(LookupError):
     pass
 
@@ -146,8 +158,10 @@ class Agent:
     def _key(channel: str, conversation: str | None) -> str | None:
         return None if conversation == channel else conversation
 
-    def conversations(self, channel: str) -> list[dict]:
-        """Every chat, newest first. The shared conversation is listed under the channel name."""
+    def conversations(self, channel: str, query: str | None = None) -> list[dict]:
+        """Every chat, newest first. The shared conversation is listed under the channel name. With `query`, only
+        the chats whose title or messages have it (any case), each with `match`: the latest line that has it, cut
+        around it (None when only the title does)."""
         # Read-only: listing must not start a new shared conversation, so an idle one shows no preview.
         shared = self.db.latest_conversation(channel)
         if shared is None:  # a brand-new database
@@ -159,11 +173,18 @@ class Agent:
         rows += [{"id": r["public_id"], "agent": r["agent"], "title": r["title"], "routine": r["routine"],
                   "internal": r["id"], "updated_at": r["last_active_at"]} for r in self.db.app_conversations()]
         rows.sort(key=lambda r: r["updated_at"], reverse=True)
+        needle = (query or "").strip().casefold()
+        found = []
         for r in rows:
             internal = r.pop("internal")
-            last = self._visible(internal)[-1:] if internal else []
-            r["preview"] = (last[0]["text"] or "Photo") if last else None
-        return rows
+            visible = self._visible(internal) if internal else []
+            r["preview"] = (visible[-1]["text"] or "Photo") if visible else None
+            if not needle:
+                continue
+            line = next((m["text"] for m in reversed(visible) if needle in m["text"].casefold()), None)
+            if line is not None or needle in (r["title"] or "").casefold():
+                found.append({**r, "match": line and _snippet(line, needle)})
+        return found if needle else rows
 
     def new_conversation(self, opening: str | None = None, agent: str = ORCHESTRATOR) -> dict:
         """A new app chat with `agent`. With `opening`, it's Aide's and starts with that as its first message

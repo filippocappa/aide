@@ -174,7 +174,7 @@ The app keeps many chats. Every chat endpoint takes an optional `conversation_id
 
 | Endpoint | Body / query | Response |
 |---|---|---|
-| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the first chat (`id` `main`), titled "First chat". A chat with a turn running has `"working": true` (since 2026-10-29). |
+| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the first chat (`id` `main`), titled "First chat". A chat with a turn running has `"working": true` (since 2026-10-29). `?q=dentist` (since 2026-10-30): only the chats whose title or messages have it (any case), each with `match`, the latest message line that has it cut to ~50 characters each side (`null` when only the title has it). |
 | `POST /v1/conversations` | `{}`, `{"agent": "coach"}`, or `{"digest": "daily" \| "evening"}` | The new conversation (same shape as a list row, `title: null`). `agent` defaults to `aide`; an unknown one is `400`. With `digest`, the chat is Aide's (`agent` is ignored) and starts with that digest's greeting as Aide's first message: it's in `/v1/history` and `preview`, and the model knows it said it. See Digest. |
 | `DELETE /v1/conversations/{id}` | | `{"ok": true}`. The shared conversation can't be deleted (400). |
 | `POST /v1/chat` | `{"text": "…", "conversation_id": "c_91f…"}` | Same as before, plus `"conversation_id"`. The server sets `title` from the first exchange. |

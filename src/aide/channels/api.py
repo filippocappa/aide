@@ -564,7 +564,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     def conversation_json(c: dict) -> dict:
         return {"id": c["id"], "agent": c["agent"], "title": c["title"], "routine": c["routine"],
                 "course": study.chat_course(c["id"]), "preview": c["preview"], "updated_at": local(c["updated_at"]),
-                **({"working": True} if c["id"] in working else {})}
+                **({"working": True} if c["id"] in working else {}), **({"match": c["match"]} if "match" in c else {})}
 
     def team_json(t: dict) -> dict:
         return {**t, "ts": local(t["ts"])}
@@ -928,8 +928,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return objectives.block(body.period, day)
 
     @app.get("/v1/conversations", dependencies=[Depends(auth)])
-    async def conversations():
-        return {"conversations": [conversation_json(c) for c in agent.conversations(CONVERSATION)]}
+    async def conversations(q: str | None = None):
+        return {"conversations": [conversation_json(c) for c in agent.conversations(CONVERSATION, q)]}
 
     @app.post("/v1/conversations", dependencies=[Depends(auth)])
     async def new_conversation(body: NewConversationIn | None = None):

@@ -182,3 +182,12 @@ async def test_stamp_says_where_the_phone_is(db):
     await agent.reply("discord", "and now?")
     assert client.requests[1]["messages"][-1]["content"][0]["text"].endswith("] and now?")
     assert "phone" not in client.requests[1]["messages"][-1]["content"][0]["text"]
+
+
+def test_a_search_match_is_cut_around_the_words():
+    from aide.agent import _snippet
+    text = "We talked about a lot of things before this. " * 3 + "The dentist is on Friday at 10.\n\nThen " + "more words after it here. " * 4
+    cut = _snippet(text, "dentist")
+    assert cut.startswith("…") and cut.endswith("…") and "The dentist is on Friday" in cut
+    assert len(cut) < 130 and "\n" not in cut
+    assert _snippet("dentist friday", "friday") == "dentist friday"

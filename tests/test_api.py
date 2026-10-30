@@ -149,6 +149,22 @@ def test_app_conversation_is_separate_and_gets_a_title(env):
     assert [(r["id"], r["title"]) for r in rows] == [(new["id"], "Dentist on Friday"), ("main", "First chat")]
 
 
+def test_conversations_can_be_searched(env):
+    client, _, _ = env([done("Booked the dentist for Friday at 10."), done("Dentist"),
+                        done("Pasta tonight then."), done("Dinner")])
+    first = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    client.post("/v1/chat", json={"text": "book me the dentist", "conversation_id": first}, headers=AUTH)
+    second = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    client.post("/v1/chat", json={"text": "what should I cook", "conversation_id": second}, headers=AUTH)
+
+    rows = client.get("/v1/conversations?q=FRIDAY", headers=AUTH).json()["conversations"]
+    assert [(r["id"], r["match"]) for r in rows] == [(first, "Booked the dentist for Friday at 10.")]
+    rows = client.get("/v1/conversations?q=dinner", headers=AUTH).json()["conversations"]
+    assert [(r["id"], r["match"]) for r in rows] == [(second, None)]  # the title alone
+    assert client.get("/v1/conversations?q=zebra", headers=AUTH).json()["conversations"] == []
+    assert all("match" not in r for r in client.get("/v1/conversations", headers=AUTH).json()["conversations"])
+
+
 def test_title_falls_back_to_the_first_message(env):
     client, _, _ = env([done("ok")])  # no scripted title response: the title call fails
     cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
