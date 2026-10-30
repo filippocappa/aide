@@ -28,7 +28,8 @@ Aide is a Python server that runs on a home machine and an iOS app that talks to
 Anything destructive or outward-facing (sending mail, deleting an event, moving a reminder, placing an order) is
 queued in code and runs only after you tap **Confirm** in the app. The model never runs it directly.
 
-Besides chat, the app has a Today page (the briefing, what's waiting for you, habits and objectives), routines and
+Besides chat, the app has a Today page (the briefing, what's waiting for you, habits and objectives), a Health page
+(Strain, Recovery and Sleep scores, last night's numbers against your usual, food; see [Health scores](#health-scores)), routines and
 watches (an agent's scheduled job, or a check that posts only when something needs you), widgets, and Live
 Activities on the Lock Screen and in the Dynamic Island (the next tram, the next event, an agent at work).
 
@@ -82,6 +83,25 @@ flowchart TB
     Loop --> Browser -->|"reads, fills carts;<br/>orders after Confirm"| Sites
     Sched -->|"tram alerts"| GTT
 ```
+
+## Health scores
+
+The Health page opens on three rings, Bevel-style: **Strain**, **Recovery** and **Sleep**, each 0–100 and each
+opening a page with what it's made of and the last 30 days. They're worked out on the server (`scores.py`, contract
+in [docs/API.md](docs/API.md), "Scores") from the days the app uploads from Apple Health, against your own past
+rather than population norms, so Coach, the wake-up briefing and the app all quote the same numbers. None of it is
+medical advice.
+
+| Score | From | How |
+|---|---|---|
+| **Sleep** | last night's sleep and the 14 before | hours asleep against the need (7h30, plus half of what the last 3 nights were short, at most +1 h) 50%; deep and REM share 20%; time asleep in bed 15%; bedtime against your usual 15% |
+| **Recovery** | HRV, resting heart rate, the sleep score | each against a 60-day baseline (median and MAD): HRV 50%, resting HR 30%, sleep 20%, so a usual night lands in the 60s. Breathing rate (+1/min) or wrist temperature (+0.5 °C) above usual caps it at 50. Needs 14 days to calibrate |
+| **Strain** | heart-rate minutes per 5-bpm band | Banister's TRIMP above 40% of your heart-rate reserve (walking about isn't load), as `100·(1 − e^(−TRIMP/150))`: a hard hour is ~60%. Recovery sets the day's target (low 10–35, normal 35–60, good 55–80). Before heart rate arrives, estimated from workout calories |
+
+Also: heart-rate zones and each workout's share of the day's strain, and cardio load, the last 7 days' average
+TRIMP against the last 28 (detraining under 0.8×, maintaining, building 1.0–1.3×, overreaching above). The phone
+sends only summaries of heart rate (minutes per band, hourly averages, the day's top); the samples stay on it. The
+constants are at the top of `scores.py`.
 
 ## How study notes are made
 
@@ -252,6 +272,7 @@ src/aide/
   digest.py              daily, weekly and monthly digests; objectives.py: each specialist's objectives
   reminders.py, habits.py, food.py, photos.py
   health.py, wake.py     Apple Health days and usual numbers; the wake-up briefing
+  scores.py              Strain, Recovery and Sleep scores from the Health days
   gmail.py, gmail_auth.py  Gmail API client; one-time OAuth sign-in script
   push.py                APNs pushes and the devices table
   study.py, whisper.py   courses, lectures and their notes; transcription on the GPU
