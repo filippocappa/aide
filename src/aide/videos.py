@@ -154,9 +154,11 @@ def transcript(segments: list[tuple[float, str]], every: int = PARAGRAPH) -> str
 def _caption_track(info: dict) -> tuple[str, list[dict]] | None:
     """The best captions: the video's own in its language (else any of its own), else YouTube's automatic ones in
     the spoken language. (language, formats)"""
-    lang = (info.get("language") or "").split("-")[0].lower()
     own = {k: v for k, v in (info.get("subtitles") or {}).items() if k != "live_chat"}
     auto = info.get("automatic_captions") or {}
+    # YouTube often leaves `language` out; the automatic track marked -orig is always in the spoken language.
+    spoken = info.get("language") or next((k.removesuffix("-orig") for k in auto if k.endswith("-orig")), "")
+    lang = spoken.split("-")[0].lower()
 
     def pick(tracks: dict, keys: list[str]) -> tuple[str, list[dict]] | None:
         for k in keys:

@@ -108,6 +108,9 @@ def test_captions_become_marked_paragraphs():
     assert _caption_track(INFO)[0] == "en-orig"
     own = {**INFO, "language": "it", "subtitles": {"en": [{}], "it": [{}], "live_chat": [{}]}}
     assert _caption_track(own)[0] == "it"
+    # No language from YouTube: the spoken one comes from the -orig track, not the English translation.
+    unsaid = {**own, "language": None, "automatic_captions": {"it-orig": [{}], "en": [{}]}}
+    assert _caption_track(unsaid)[0] == "it"
 
 
 async def test_a_video_is_read_briefed_and_posted_with_its_frames(env):
