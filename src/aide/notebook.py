@@ -2176,14 +2176,14 @@ class NotebookWorker:
         return done
 
     async def grade(self, course: dict, quiz_id: str) -> None:
-        """A mock exam's open answers marked by the smart model against each question's model answer and marking,
+        """A mock or practice exam's open answers marked by the smart model against each question's model answer and marking,
         photos of the user's work read as images; then the result in the course chat."""
         quizzes = self._quizzes()
         quiz = quizzes.quiz(quiz_id)
         todo = quizzes.grading(quiz) if quiz else []
         if not todo:
             return
-        self.store.set_step(course["id"], "Marking the mock exam")
+        self.store.set_step(course["id"], "Marking the answers")
         photos = getattr(self.agent, "photos", None)
         content = []
         for n in todo:

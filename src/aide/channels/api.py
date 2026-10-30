@@ -180,7 +180,9 @@ def readable(markdown: str, latex: bool = False, inline: bool = False) -> str:
 
 class QuizStart(BaseModel):
     course: int
-    count: int = Field(default=30, ge=1, le=MOST_QUESTIONS)
+    count: int = Field(default=30, ge=0, le=MOST_QUESTIONS)  # multiple-choice questions
+    cards: int = Field(default=0, ge=0, le=MOST_QUESTIONS)  # flashcards, answered right or wrong as the user judges
+    exercises: int = Field(default=0, ge=0, le=MOST_QUESTIONS)  # the course's own exercises, open, marked after
     minutes: int | None = Field(default=None, ge=1, le=600)  # null: untimed
     topics: list[str] | None = None  # topic ids; null: all
     mock: str | None = None  # a mock exam's id (m_…): that paper, its time and scoring; count, minutes, topics unused
@@ -198,6 +200,11 @@ class WriterDecide(BaseModel):
 class OpenAnswer(BaseModel):  # a mock exam's open question: typed, or photos of the work on paper, or both
     text: str = ""
     photos: list[str] = Field(default=[], max_length=4)
+
+
+class QuizCheck(BaseModel):
+    n: int
+    answer: str | OpenAnswer | None = None  # as in QuizFinish; null: blank
 
 
 class QuizFinish(BaseModel):
@@ -1271,7 +1278,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def study_overview():
         courses = await study.courses()
         on = await study.now()
-        return {"courses": [study.course_json(c) | {"notebook": notebook.summary(c["id"])} for c in courses],
+        def brief(cid: int) -> dict | None:
+            if (summary := notebook.summary(cid)) is None:
+                return None
+            return summary | {"mastery": quizzes.mastery(cid)}
+
+        return {"courses": [study.course_json(c) | {"notebook": brief(c["id"])} for c in courses],
                 "unfiled": study.unfiled(),
                 "now": {"course": on[0]["id"], "name": on[0]["name"], "ends": on[1].astimezone(tz).isoformat()}
                 if on else None,
@@ -1702,7 +1714,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     raise HTTPException(404, f"no mock exam {body.mock} in this course")
                 quiz = quizzes.start_mock(body.mock)
             else:
-                quiz = quizzes.start(cid, body.count, body.minutes, body.topics)
+                quiz = quizzes.start(cid, body.count, body.minutes, body.topics, body.cards, body.exercises)
         except ValueError as e:
             raise HTTPException(409, str(e))
         return JSONResponse(quizzes.quiz_json(quiz), status_code=201)
@@ -1711,14 +1723,25 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def get_quiz(quiz_id: str):
         return quizzes.quiz_json(quiz_or_404(quiz_id))
 
+    def open_answer(a):
+        if isinstance(a, OpenAnswer):
+            return {"text": a.text, "photos": [p for p in a.photos if photos is not None and photos.exists(p)]}
+        return a
+
+    @app.post("/v1/quizzes/{quiz_id}/check", dependencies=[Depends(auth)])
+    async def check_quiz(quiz_id: str, body: QuizCheck):
+        quiz_or_404(quiz_id)
+        try:
+            return quizzes.check(quiz_id, body.n, open_answer(body.answer))
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+
     @app.post("/v1/quizzes/{quiz_id}/finish", dependencies=[Depends(auth)])
     async def finish_quiz(quiz_id: str, body: QuizFinish):
         quiz_or_404(quiz_id)
-        answers = {}
-        for n, a in body.answers.items():
-            if isinstance(a, OpenAnswer):
-                a = {"text": a.text, "photos": [p for p in a.photos if photos is not None and photos.exists(p)]}
-            answers[n] = a
+        answers = {n: open_answer(a) for n, a in body.answers.items()}
         try:
             quiz = quizzes.finish(quiz_id, answers)
         except ValueError as e:

@@ -30,8 +30,8 @@ def test_a_days_reading_is_aides_last_else_healths(env):
     weights, health, _ = env
     today = weights.today()
     health.save([{"date": (today - timedelta(days=n)).isoformat(), "weight_kg": 70 + n / 10} for n in (0, 1, 2)])
-    first = weights.log(71.3, at(today, 7))
-    weights.log(71.1, at(today, 9))
+    first = weights.log(71.3, at(today, 0))  # just after midnight: never in the future, whenever the test runs
+    weights.log(71.1, at(today, 0) + timedelta(minutes=1))
     got = weights.readings(today - timedelta(days=2), today)
     assert [(r["date"], r["kg"], r["source"]) for r in got] == [
         ((today - timedelta(days=2)).isoformat(), 70.2, "health"), ((today - timedelta(days=1)).isoformat(), 70.1, "health"),

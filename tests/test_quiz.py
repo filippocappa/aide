@@ -131,7 +131,11 @@ def test_the_study_tab_reads_notes_as_plain_text(nb):
     assert nb.api.get(f"/v1/files/{nb.file['id']}/pages/99", headers=AUTH).status_code == 404
 
     courses = {c["id"]: c for c in nb.api.get("/v1/study", headers=AUTH).json()["courses"]}
-    assert courses[cid]["notebook"] == {"topics": 2, "questions": 6, "proposals": 0, "writing": False}
+    brief = courses[cid]["notebook"]
+    assert {k: v for k, v in brief.items() if k != "mastery"} == {"topics": 2, "questions": 6, "proposals": 0,
+                                                                  "writing": False}
+    assert [(m["title"], m["known"], m["learning"], m["unseen"]) for m in brief["mastery"]] == \
+        [("The IS-LM model", 0, 0, 3), ("Phillips curve", 0, 0, 3)]
     assert all(c["notebook"] is None for i, c in courses.items() if i != cid)
 
 
@@ -247,6 +251,89 @@ MOCK = """{"minutes": 90, "right": 1, "wrong": 0, "blank": 0}
 > [!info]- Marking
 > - 5 points: IS shifts right
 > - 10 points: the rate rises and investment falls"""
+
+
+EXERCISES = """**Exercise 1.** (from: Esercitazione 3.pdf, p. 2; solution: Soluzioni 3.pdf, p. 1)
+With $c_1 = 0.5$, what is the multiplier?
+
+> [!success]- Solution
+> $1/(1-0.5) = 2$.
+> **Answer:** 2
+"""
+
+
+def with_exercises(nb, t) -> None:
+    nb.notebook.set_exercises(t["islm"], EXERCISES, [], True)
+
+
+async def test_a_practice_exam_mixes_questions_cards_and_the_courses_exercises(nb):
+    from test_notebook import drain, sent
+
+    t = notebook_with_questions(nb)
+    with_cards(nb, t)
+    with_exercises(nb, t)
+    cid = nb.macro["id"]
+    bank = nb.api.get(f"/v1/quizzes?course={cid}", headers=AUTH).json()
+    assert (bank["cards"], bank["exercises"]) == (2, 1)
+    islm = bank["topics"][0]
+    assert {k: islm[k] for k in ("questions", "cards", "exercises", "known", "learning", "unseen")} == \
+        {"questions": 3, "cards": 2, "exercises": 1, "known": 0, "learning": 0, "unseen": 5}
+
+    quiz = nb.api.post("/v1/quizzes", json={"course": cid, "count": 2, "cards": 1, "exercises": 1},
+                       headers=AUTH).json()
+    assert [q.get("type", "mcq") for q in quiz["questions"]] == ["mcq", "mcq", "card", "open"]
+    assert quiz["questions"][0]["source"] == {"kind": "professor", "name": None}
+    ex = quiz["questions"][3]
+    assert ex["source"] == {"kind": "course", "name": "Esercitazione 3, p. 2"} and ex["points"] == 1
+    assert ex["text"].startswith("With c₁ = 0.5") and "model_answer" not in ex
+
+    # Checked one at a time: each answer is final and comes back with its key.
+    key = QuizStore(nb.notebook).quiz(quiz["id"])["questions"][0]["key"]
+    checked = nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": 1, "answer": key}, headers=AUTH).json()
+    assert (checked["answer"], checked["key"], checked["correct"]) == (key, key, True)
+    assert checked["explanation"].startswith("Because of")
+    again = nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": 1, "answer": "A"}, headers=AUTH)
+    assert again.status_code == 409
+    card = nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": 3, "answer": "wrong"}, headers=AUTH).json()
+    assert card["type"] == "card" and card["answer"] == "wrong" and card["correct"] is False and card["key"]
+    shown = nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": 4, "answer": {"text": "It is 2."}},
+                        headers=AUTH).json()
+    assert shown["model_answer"].startswith("1/(1−0.5) = 2") and shown["awarded"] is None
+    assert shown["response"] == {"text": "It is 2.", "photos": []}
+    assert nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": 9}, headers=AUTH).status_code == 404
+    taking = nb.api.get(f"/v1/quizzes/{quiz['id']}", headers=AUTH).json()
+    assert taking["checked"] == [1, 3, 4] and "key" not in taking["questions"][1]
+
+    # Finished: the checked answers stand over what's sent, the card scores no penalty, the exercise is marked.
+    finished = nb.api.post(f"/v1/quizzes/{quiz['id']}/finish", json={"answers": {"1": "Z", "3": "right"}},
+                           headers=AUTH).json()
+    assert {k: finished["score"][k] for k in ("points", "max", "right", "wrong", "blank", "grading")} == \
+        {"points": 1.0, "max": 4.0, "right": 1, "wrong": 2, "blank": 1, "grading": True}  # the exercise waits
+    before = len(nb.client.requests)
+    nb.client.responses.append(done('[{"n": 4, "points": 1, "feedback": "Right."}]'))
+    await drain(nb)
+    [grade] = nb.client.requests[before:]
+    assert "Question 4 (1 points):" in sent(grade) and "The course's solution" in sent(grade)
+    marked = nb.api.get(f"/v1/quizzes/{quiz['id']}", headers=AUTH).json()
+    assert (marked["score"]["points"], marked["score"]["grading"]) == (2.0, False)
+    assert chat_messages(nb)[-1]["attachments"][0]["quiz"]["score"]["points"] == 2.0
+
+    after = nb.api.get(f"/v1/quizzes?course={cid}", headers=AUTH).json()["topics"][0]
+    assert after["known"] + after["learning"] >= 2  # the card and the questions answered count
+    [course] = [c for c in nb.api.get("/v1/study", headers=AUTH).json()["courses"] if c["id"] == cid]
+    mastery = course["notebook"]["mastery"]
+    assert [m["title"] for m in mastery] == ["The IS-LM model", "Phillips curve"]
+    assert mastery[0] == {k: after[k] for k in ("id", "title", "known", "learning", "unseen")}
+
+
+def test_a_practice_exam_with_only_cards_or_none_of_them(nb):
+    t = notebook_with_questions(nb)
+    cid = nb.macro["id"]
+    r = nb.api.post("/v1/quizzes", json={"course": cid, "count": 0, "cards": 3}, headers=AUTH)
+    assert r.status_code == 409  # no cards yet
+    with_cards(nb, t)
+    quiz = nb.api.post("/v1/quizzes", json={"course": cid, "count": 0, "cards": 3}, headers=AUTH).json()
+    assert [q["type"] for q in quiz["questions"]] == ["card", "card"]
 
 
 async def test_a_mock_exam_like_the_real_one_taken_and_its_open_answer_marked(nb):

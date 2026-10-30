@@ -31,7 +31,7 @@ import unicodedata
 from datetime import datetime
 
 from .db import utcnow
-from .notebook import NotebookStore, max_points, mcqs, mock_title, parse_question
+from .notebook import NotebookStore, exercises, max_points, mcqs, mock_title, parse_question
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quizzes (
@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS quizzes (
     finished_at TEXT,
     kind        TEXT NOT NULL DEFAULT 'exam',  -- exam: the app's practice exam; chat: Professor asking; mock
     mock        TEXT,                  -- a mock exam's id (m_…)
-    scoring     TEXT                   -- JSON: a mock's {"right", "wrong", "blank"}; NULL: RIGHT and WRONG
+    scoring     TEXT,                  -- JSON: a mock's {"right", "wrong", "blank"}; NULL: RIGHT and WRONG
+    checked     TEXT                   -- JSON: answers checked one at a time while taking it, {"3": "B"}: final
 );
 CREATE TABLE IF NOT EXISTS quiz_answers (
     id          INTEGER PRIMARY KEY,
@@ -60,6 +61,8 @@ CREATE INDEX IF NOT EXISTS quiz_answers_key ON quiz_answers (course_id, qkey, an
 """
 
 RIGHT, WRONG = 1.0, -0.25  # points, as in the exam
+PROFESSOR = {"kind": "professor", "name": None}  # where a notebook question or flashcard comes from
+EXERCISE_RUBRIC = "The course's solution: full marks for the same result with sound working, half for the right method."
 MOST = 60  # questions in one practice exam
 ANSWER_CHARS = 20_000  # an open answer's text, at most
 ANSWER_PHOTOS = 4  # photos of the work on paper, at most, for an open answer
@@ -77,7 +80,8 @@ class QuizStore:
         self.conn.executescript(SCHEMA)
         have = {r["name"] for r in self.conn.execute("PRAGMA table_info(quizzes)")}
         for column, sql in (("kind", "kind TEXT NOT NULL DEFAULT 'exam'"),  # from before quizzes
-                            ("mock", "mock TEXT"), ("scoring", "scoring TEXT")):  # from before mock exams
+                            ("mock", "mock TEXT"), ("scoring", "scoring TEXT"),  # from before mock exams
+                            ("checked", "checked TEXT")):  # from before answers shown after each question
             if column not in have:
                 self.conn.execute(f"ALTER TABLE quizzes ADD COLUMN {sql}")
         self.rng = rng or random.Random()
@@ -118,6 +122,26 @@ class QuizStore:
                             "topic": t["public_id"], "topic_title": t["title"], "last": last.get(key)})
         return out
 
+    def exercise_bank(self, course_id: int) -> list[dict]:
+        """Every exercise in the course's exercise sets, as an open question worth a point: the course's own (an
+        exercise sheet, a past exam), its solution the model answer."""
+        last = self._last(course_id)
+        topics = {t["id"]: t for t in self.notebook.topics(course_id)}
+        out = []
+        for e in self.notebook.exercise_sets(course_id):
+            t = topics.get(e["topic_id"])
+            for x in exercises(e["body"]) if t else []:
+                solution = x["block"].partition("> [!success]")[2]
+                solution = "\n".join(re.sub(r"^>\s?", "", line) for line in solution.splitlines()[1:]).strip()
+                if not x["text"] or not solution:
+                    continue
+                key = qkey(x["text"])
+                out.append({"type": "open", "points": 1.0, "text": x["text"], "model_answer": solution,
+                            "rubric": EXERCISE_RUBRIC, "qkey": key, "topic": t["public_id"], "topic_title": t["title"],
+                            "source": {"kind": "course", "name": _source_name(x["source"])} if x["source"]
+                            else PROFESSOR, "last": last.get(key)})
+        return out
+
     def pick(self, bank: list[dict], count: int) -> list[dict]:
         """`count` questions: wrong or blank last time first, then never seen, then right longest ago; no topic
         more than its share until the others run out."""
@@ -141,12 +165,26 @@ class QuizStore:
     # -- practice exams ----------------------------------------------------------------
 
     def start(self, course_id: int, count: int = 30, minutes: int | None = None,
-              topics: list[str] | None = None) -> dict:
-        bank = self.bank(course_id, topics)
-        if not bank:
+              topics: list[str] | None = None, cards: int = 0, exercises: int = 0) -> dict:
+        """A practice exam: `count` multiple-choice questions, then `cards` flashcards (answered right or wrong as
+        the user judges) and `exercises` of the course's own (open, marked by the `grade` job), at most MOST."""
+        count, cards, exercises = max(0, count), max(0, cards), max(0, exercises)
+        bank = self.bank(course_id, topics) if count else []
+        flash = self.cards(course_id, topics) if cards else []
+        sheets = [q for q in self.exercise_bank(course_id) if not topics or q["topic"] in topics] if exercises else []
+        if not bank and not flash and not sheets:
             raise ValueError("This course's notebook has no questions yet.")
-        questions = [{k: q[k] for k in ("qkey", "topic", "topic_title", "text", "options", "key", "explanation")}
-                     for q in self.pick(bank, max(1, min(count, MOST)))]
+        exercises = min(exercises, MOST)
+        cards = min(cards, MOST - exercises)
+        count = min(count, MOST - exercises - cards)
+        keep = ("qkey", "topic", "topic_title", "text", "options", "key", "explanation")
+        questions = [{k: q[k] for k in keep} | {"source": PROFESSOR} for q in self.pick(bank, count)] + \
+                    [{k: q[k] for k in keep if k != "options"} | {"type": "card", "source": PROFESSOR}
+                     for q in self.pick(flash, cards)] + \
+                    [{k: q[k] for k in ("type", "points", "text", "model_answer", "rubric", "qkey", "topic",
+                                        "topic_title", "source")} for q in self.pick(sheets, exercises)]
+        if not questions:
+            raise ValueError("This course's notebook has none of those yet.")
         public_id = "x_" + secrets.token_hex(6)
         self.conn.execute(
             "INSERT INTO quizzes (public_id, course_id, minutes, questions, started_at) VALUES (?, ?, ?, ?, ?)",
@@ -161,7 +199,8 @@ class QuizStore:
             return None
         return {**dict(row), "questions": json.loads(row["questions"]),
                 "answers": json.loads(row["answers"]) if row["answers"] else None,
-                "scoring": json.loads(row["scoring"]) if row["scoring"] else None}
+                "scoring": json.loads(row["scoring"]) if row["scoring"] else None,
+                "checked": json.loads(row["checked"]) if row["checked"] else {}}
 
     def quizzes(self, course_id: int, limit: int = 20, kind: str = "exam") -> list[dict]:
         return [self.quiz(r[0]) for r in self.conn.execute(
@@ -173,8 +212,9 @@ class QuizStore:
         m = self.notebook.mock(mock_id)
         if m is None:
             raise LookupError(f"no mock exam {mock_id}")
+        source = {"kind": "course", "name": mock_title(m)} if m.get("source") else PROFESSOR
         questions = [q | {"qkey": qkey(q["text"]), "topic": q["topic"] or "", "topic_title": q["topic_title"] or
-                          "The course"} for q in m["questions"]]
+                          "The course", "source": source} for q in m["questions"]]
         public_id = "x_" + secrets.token_hex(6)
         self.conn.execute(
             "INSERT INTO quizzes (public_id, course_id, minutes, questions, started_at, kind, mock, scoring) "
@@ -191,13 +231,12 @@ class QuizStore:
         now = utcnow().isoformat()
         given = {}
         for n, q in enumerate(quiz["questions"], 1):
-            a = answers.get(str(n))
-            if q.get("type") == "open":
-                given[str(n)] = _open_answer(a)
-                continue
-            a = a.strip().upper()[:1] if isinstance(a, str) and a.strip() else None
-            given[str(n)] = a if a in {o["letter"] for o in q["options"]} else None
-            self._record(quiz["course_id"], q, given[str(n)], now)
+            if str(n) in quiz["checked"]:  # checked while taking it: that answer stands
+                given[str(n)] = quiz["checked"][str(n)]
+            else:
+                given[str(n)] = _given(q, answers.get(str(n)))
+            if q.get("type") != "open":
+                self._record(quiz["course_id"], q, given[str(n)], now)
         quiz["answers"] = given
         score = self.score(quiz)["points"]
         self.conn.execute("UPDATE quizzes SET answers = ?, score = ?, finished_at = ? WHERE id = ?",
@@ -208,6 +247,24 @@ class QuizStore:
         self.conn.execute(
             "INSERT INTO quiz_answers (course_id, qkey, answer, correct, answered_at) VALUES (?, ?, ?, ?, ?)",
             (course_id, q["qkey"], "open" if isinstance(answer, dict) else answer, int(correct(q, answer)), at))
+
+    def check(self, public_id: str, n: int, answer: str | dict | None) -> dict:
+        """One question answered while taking a practice or mock exam, for answers shown after each question: the
+        answer is kept (final: `finish` uses it) and the question comes back as it will on the results, without the
+        marks of an open one (those come when it's finished)."""
+        quiz = self.quiz(public_id)
+        if quiz["kind"] == "chat":
+            raise LookupError(f"no practice exam {public_id}")
+        if quiz["finished_at"]:
+            raise ValueError("This practice exam is already finished.")
+        if not 1 <= n <= len(quiz["questions"]):
+            raise LookupError(f"no question {n}")
+        if str(n) in quiz["checked"]:
+            raise ValueError(f"Question {n} is already checked.")
+        q = quiz["questions"][n - 1]
+        quiz["checked"][str(n)] = _given(q, answer)
+        self.conn.execute("UPDATE quizzes SET checked = ? WHERE id = ?", (json.dumps(quiz["checked"]), quiz["id"]))
+        return self.question_json(quiz, n, reveal=True)
 
     # -- marking a mock exam's open answers ----------------------------------------------
 
@@ -341,13 +398,16 @@ class QuizStore:
             if q.get("type") == "open":
                 most += q["points"]
                 points += (a or {}).get("awarded") or 0
+            elif q.get("type") == "card":  # self-marked: no penalty
+                most += 1
+                points += kind == "right"
             else:
                 most += scoring["right"]
                 points += scoring.get(kind, 0)
         out = {"points": points, "max": most, "right": right, "wrong": wrong, "blank": blank,
                "topics": sorted(topics.values(), key=lambda t: (t["right"] / (t["right"] + t["wrong"] + t["blank"]),
                                                                  t["title"]))}
-        if quiz.get("kind") == "mock":
+        if quiz.get("kind") == "mock" or any(q.get("type") == "open" for q in quiz["questions"]):
             out["grading"] = bool(QuizStore.grading(quiz))
         return out
 
@@ -396,6 +456,9 @@ class QuizStore:
                     feedback = f": {a['feedback'][:200]}" if a and a.get("feedback") else ""
                     missed.append(f"{n}. {q['text'][:160]} (open, {_points(got)}/{_points(q['points'])}{feedback}; "
                                   f"{q['topic_title']})")
+            elif q.get("type") == "card":
+                if a != "right":
+                    missed.append(f"{n}. {q['text'][:160]} (flashcard, {'missed' if a else 'blank'}; {q['topic_title']})")
             elif a != q["key"]:
                 missed.append(f"{n}. {q['text'][:160]} (answered {a or 'blank'}, key {q['key']}; {q['topic_title']})")
         what = f"Mock exam {quiz['mock']} taken" if quiz.get("mock") else "Practice exam finished"
@@ -415,17 +478,30 @@ class QuizStore:
 
     # -- JSON for the API --------------------------------------------------------------
 
+    def mastery(self, course_id: int) -> list[dict]:
+        """Each written topic in order, how well it's known: its questions and flashcards last answered right
+        (`known`), wrong or blank (`learning`), never (`unseen`)."""
+        return [{"id": t["id"], "title": t["title"], "known": t["right"], "learning": t["wrong"], "unseen": t["unseen"]}
+                for t in self.progress(course_id)]
+
     def bank_json(self, course_id: int) -> dict:
         bank = self.bank(course_id)
-        topics: dict[str, dict] = {}
+        topics: dict[str, dict] = {t["id"]: t | {"questions": 0, "cards": 0, "exercises": 0}
+                                   for t in self.mastery(course_id)}
         for q in bank:
-            t = topics.setdefault(q["topic"], {"id": q["topic"], "title": q["topic_title"], "questions": 0})
-            t["questions"] += 1
+            topics[q["topic"]]["questions"] += 1
+        for q in self.cards(course_id):
+            topics[q["topic"]]["cards"] += 1
+        for q in self.exercise_bank(course_id):
+            if q["topic"] in topics:
+                topics[q["topic"]]["exercises"] += 1
         intro = self.notebook.intro(course_id)
         return {"course": course_id, "exam": intro["exam"] if intro else None, "questions": len(bank),
                 "to_review": sum(1 for q in bank if q["last"] and not q["last"]["correct"]),
                 "unseen": sum(1 for q in bank if q["last"] is None),
-                "topics": list(topics.values()),
+                "cards": sum(t["cards"] for t in topics.values()),
+                "exercises": sum(t["exercises"] for t in topics.values()),
+                "topics": [t for t in topics.values() if t["questions"] or t["cards"] or t["exercises"]],
                 "scoring": {"right": RIGHT, "wrong": WRONG, "blank": 0},
                 "past": [self.quiz_json(q, brief=True) for q in self.quizzes(course_id)]}
 
@@ -439,26 +515,34 @@ class QuizStore:
                "score": {k: v for k, v in self.score(quiz).items() if k != "topics" or not brief} if done else None}
         if brief:
             return out
-        questions = []
-        for n, q in enumerate(quiz["questions"], 1):
-            item = {"n": n, "topic": {"id": q["topic"], "title": q["topic_title"]}, "text": plain_math(q["text"]),
-                    "options": [{"letter": o["letter"], "text": plain_math(o["text"])} for o in q.get("options", [])]}
-            if q.get("type") == "card":
-                item["type"] = "card"
-            if q.get("type") == "open":
-                item |= {"type": "open", "points": q["points"]}
-                if done:
-                    a = quiz["answers"].get(str(n))
-                    item |= {"answer": None, "response": {"text": a["text"], "photos": a["photos"]} if a else None,
-                             "awarded": a.get("awarded") if a else 0, "feedback": a.get("feedback") if a else None,
-                             "correct": correct(q, a), "model_answer": plain_math(q["model_answer"]),
-                             "rubric": plain_math(q["rubric"])}
-            elif done:
-                answer = quiz["answers"].get(str(n))
-                item |= {"answer": answer, "key": plain_math(q["key"]), "correct": correct(q, answer),
-                         "explanation": plain_math(q["explanation"])}
-            questions.append(item)
-        return out | {"questions": questions}
+        return out | {"questions": [self.question_json(quiz, n, done or str(n) in quiz["checked"])
+                                    for n in range(1, len(quiz["questions"]) + 1)],
+                      "checked": sorted(int(n) for n in quiz["checked"])}
+
+    @staticmethod
+    def question_json(quiz: dict, n: int, reveal: bool) -> dict:
+        """Question n as the app shows it; with `reveal` (finished, or checked while taking it), the answer given and
+        the key. An open one's marks only once the exam is finished."""
+        q = quiz["questions"][n - 1]
+        item = {"n": n, "topic": {"id": q["topic"], "title": q["topic_title"]}, "text": plain_math(q["text"]),
+                "options": [{"letter": o["letter"], "text": plain_math(o["text"])} for o in q.get("options", [])],
+                "source": q.get("source")}
+        if q.get("type") == "card":
+            item["type"] = "card"
+        done = quiz["finished_at"] is not None
+        a = (quiz["answers"] if done else quiz["checked"]).get(str(n)) if reveal else None
+        if q.get("type") == "open":
+            item |= {"type": "open", "points": q["points"]}
+            if reveal:
+                item |= {"answer": None, "response": {"text": a["text"], "photos": a["photos"]} if a else None,
+                         "awarded": (a.get("awarded") if a else 0) if done else None,
+                         "feedback": a.get("feedback") if done and a else None,
+                         "correct": correct(q, a) if done else None, "model_answer": plain_math(q["model_answer"]),
+                         "rubric": plain_math(q["rubric"])}
+        elif reveal:
+            item |= {"answer": a, "key": plain_math(q["key"]), "correct": correct(q, a),
+                     "explanation": plain_math(q["explanation"])}
+        return item
 
 
 def _points(x: float) -> str:
@@ -471,6 +555,23 @@ def correct(q: dict, answer: str | dict | None) -> bool:
     if q.get("type") == "open":
         return isinstance(answer, dict) and (answer.get("awarded") or 0) >= q["points"] / 2
     return answer == "right" if q.get("type") == "card" else answer == q.get("key")
+
+
+def _given(q: dict, a) -> str | dict | None:
+    """An answer as kept: an open question's {"text", "photos"}, a flashcard's "right" or "wrong", else a letter
+    among the options; None when blank or not one of them."""
+    if q.get("type") == "open":
+        return _open_answer(a)
+    if q.get("type") == "card":
+        return a.strip().lower() if isinstance(a, str) and a.strip().lower() in ("right", "wrong") else None
+    a = a.strip().upper()[:1] if isinstance(a, str) and a.strip() else None
+    return a if a in {o["letter"] for o in q["options"]} else None
+
+
+def _source_name(source: str) -> str:
+    """An exercise's "from" note as a short name: "Esercitazione 3.pdf, p. 2; solution: …" → "Esercitazione 3, p. 2"."""
+    name = source.split(";")[0].strip()
+    return re.sub(r"\.pdf\b", "", name, flags=re.I)
 
 
 def _open_answer(a) -> dict | None:

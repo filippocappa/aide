@@ -809,6 +809,10 @@ null, "next_exam": {"date": "2026-11-10T09:00:00+01:00", "title": "Macroeconomic
 "notebook": {"topics": 11, "questions": 65, "proposals": 1, "writing": false} or null}`.
 `files` counts its files (since 2026-10-21). `notebook` is null until the course's notebook is started (below);
 `topics` counts the written ones, `proposals` the pending ones, `writing` is true while one is applied.
+Since 2026-10-31 it also has `"mastery": [{"id": "t_…", "title": "…", "known": 4, "learning": 2, "unseen": 3}]`, a
+row per written topic in the notebook's order: its multiple-choice questions and flashcards last answered right
+(`known`), wrong or blank (`learning`), never (`unseen`), from every practice exam, mock and quiz. The app draws a dot
+per topic from it.
 `chat` is null until the course has a chat; then the app opens it, else asks for one with the POST above.
 
 The ready message in the course chat comes from Professor ("Notes from Tuesday's macroeconomics lecture…"); the
@@ -1099,12 +1103,14 @@ score is a `quiz` card on that message (Chat, attachments) and the push says it 
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/quizzes?course=2` | | Bank. `404` no such course. |
-| `POST /v1/quizzes` | `{"course": 2, "count": 30, "minutes": 45, "topics": ["t_…"]}`; `count` 1–60 (default 30, fewer when the bank is smaller), `minutes` null (default) for untimed, `topics` null for all. Or `{"course": 2, "mock": "m_…"}` (since 2026-10-29): that mock exam, its time and scoring | `201`, Quiz without keys. `409` the notebook has no questions. `404` the mock isn't the course's. |
+| `POST /v1/quizzes` | `{"course": 2, "count": 30, "cards": 5, "exercises": 2, "minutes": 45, "topics": ["t_…"]}`; `count` the multiple-choice questions, 0–60 (default 30, fewer when the bank is smaller), `cards` flashcards and `exercises` the course's own exercises (since 2026-10-31, default 0; 60 in all at most), `minutes` null (default) for untimed, `topics` null for all. Or `{"course": 2, "mock": "m_…"}` (since 2026-10-29): that mock exam, its time and scoring | `201`, Quiz without keys. `409` the notebook has no questions. `404` the mock isn't the course's. |
 | `GET /v1/quizzes/{id}` | | Quiz (with keys once finished). `404`. |
+| `POST /v1/quizzes/{id}/check` | `{"n": 3, "answer": "B"}` (since 2026-10-31): one question answered while taking it, as in `finish` (a flashcard's `"right"` or `"wrong"`, an open one's `{"text", "photos"}`, null blank). The answer is final: `finish` keeps it over what it's sent | That Question with its key, as once finished (an open one with `model_answer` and `rubric`, `awarded` and `correct` null until marked). `409` checked already or finished; `404` no such question, or a chat quiz. |
 | `POST /v1/quizzes/{id}/finish` | `{"answers": {"1": "B", "2": null, "16": {"text": "…", "photos": ["p_…"]}}}`, by question number; left out or null is blank. An open question's answer: typed `text`, photos of the work on paper (`POST /v1/photos`, up to 4), or both | Quiz, finished. `409` already finished. |
 
 Bank: `{"course": 2, "exam": "20 to 35 multiple-choice questions…" or null, "questions": 65, "unseen": 40,
-"to_review": 6, "topics": [{"id": "t_…", "title": "…", "questions": 6}], "scoring": {"right": 1, "wrong": -0.25,
+"to_review": 6, "cards": 40, "exercises": 12, "topics": [{"id": "t_…", "title": "…", "questions": 6, "cards": 4,
+"exercises": 1, "known": 4, "learning": 2, "unseen": 4}], "scoring": {"right": 1, "wrong": -0.25,
 "blank": 0}, "past": [Quiz without questions, newest first, finished only]}`.
 
 Quiz: `{"id": "x_…", "kind": "exam" or "chat" (since 2026-10-27), "title": "Practice exam", "Mock exam 1" or "Quiz" (since 2026-10-31), "course": 2, "minutes": 45 or null, "count": 30, "started_at": "…", "finished_at": "…" or null,
@@ -1114,11 +1120,20 @@ Quiz: `{"id": "x_…", "kind": "exam" or "chat" (since 2026-10-27), "title": "Pr
 `"answer": "B" or null, "key": "C", "correct": false, "explanation": "markdown"`. The notes' LaTeX comes as plain
 Unicode in `text`, `options` and `explanation` ($\pi_{t-1}$ as πₜ₋₁).
 
+Since 2026-10-31 a practice exam can mix kinds, in this order: the multiple-choice questions (shuffled), then the
+flashcards (`"type": "card"`, no `options`; the user turns it and says `"right"` or `"wrong"`; `key` is the card's
+answer; right 1, wrong 0, no penalty), then the course's own exercises (`"type": "open"`, `"points": 1`, marked after
+the finish like a mock's open answers, against the course's solution). Every question has `"source": {"kind":
+"course", "name": "Esercitazione 3, p. 2"}` (the course's own material: an exercise sheet, a paper the course gave out)
+or `{"kind": "professor", "name": null}` (written by Professor: the notebook's questions and flashcards, its mocks);
+null on quizzes from before. A Quiz has `"checked": [1, 3]`, the questions answered with `check`, which come with
+their key already.
+
 Mock exams (since 2026-10-29): `kind` is `"mock"`, with `"mock": "m_…"` (null otherwise) and its `"scoring"` (on
 every quiz: the practice exam's is right 1, wrong −0.25, blank 0); `score.points` and `max` count by it. A question can
 be `"type": "open"` with its `"points"`, and no `options`. Open answers are marked after the finish by the smart
 model, against the question's model answer and marking (photos read as images): until then `score` has `"grading":
-true` (a mock's score always has `grading`), the open ones count 0, and the app polls `GET /v1/quizzes/{id}` every few
+true` (a mock's score always has `grading`, and since 2026-10-31 any quiz with an open question), the open ones count 0, and the app polls `GET /v1/quizzes/{id}` every few
 seconds. Professor posts the result in the course's chat once they're marked. Once finished, an open question has
 `"answer": null, "response": {"text": "…", "photos": ["p_…"]} or null (blank), "awarded": 9.5 or null (not marked:
 the marking failed; it counts 0), "feedback": "…" or null, "correct": true (awarded at least half its points),
