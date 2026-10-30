@@ -71,6 +71,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var loadError: String?
     /// A chat is on screen, pushed over the chat list. Opening or starting a chat sets it.
     @Published var isChatOpen = false
+    /// The next chat to open starts with the keyboard up ("Ask Aide anything" on the Team tab).
+    var typeOnOpen = false
     /// The team talk of the reply on its way, message by message as it streams in.
     @Published private(set) var liveTeam: [TeamMessage] = []
     /// The reply on its way, as it's written. Replaced by the finished reply.

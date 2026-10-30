@@ -173,3 +173,179 @@ extension String {
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(self)
     }
 }
+
+// MARK: - The pages' shared pieces
+
+extension View {
+    /// A card on a grouped page: white (dark grey in dark mode), 22 pt round, 16 inside unless rows bring their own.
+    func card(padding: CGFloat = 16) -> some View {
+        self.padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+}
+
+/// A titled card: the title above, the content on a card, a note under it. `padding` 0 for rows that bring their own.
+struct DetailCard<Content: View>: View {
+    let title: String?
+    let note: String?
+    var padding: CGFloat = 16
+    let content: Content
+
+    init(_ title: String? = nil, note: String? = nil, padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.note = note
+        self.padding = padding
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title {
+                Text(title).font(.title3.weight(.bold)).padding(.horizontal, 4)
+            }
+            VStack(alignment: .leading, spacing: 0) { content }.card(padding: padding)
+            if let note {
+                Text(note).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
+            }
+        }
+    }
+}
+
+/// The top of a page: a small line over a large title, then what the page has to say and its chips.
+struct TopBlock<Content: View>: View {
+    let overline: String?
+    let title: String
+    let content: Content
+
+    init(_ title: String, overline: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.overline = overline
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                if let overline {
+                    Text(overline).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                }
+                Text(title).font(.largeTitle.bold())
+            }
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.top, 14)
+        .padding(.bottom, 4)
+    }
+}
+
+extension TopBlock where Content == EmptyView {
+    init(_ title: String, overline: String? = nil) { self.init(title, overline: overline) { EmptyView() } }
+}
+
+/// A grey capsule to tap. `prominent` is the page's own colour, for what's waiting for you; `warning` is orange.
+struct Chip: View {
+    enum Style { case plain, prominent, warning }
+    let title: String
+    var systemImage: String?
+    /// The icon's own colour on a plain chip (a green tick).
+    var iconColor: Color?
+    var style: Style = .plain
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage).foregroundStyle(iconColor.map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
+                }
+                Text(title)
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(background, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(CardPress())
+    }
+
+    private var foreground: Color {
+        switch style {
+        case .plain: .primary
+        case .prominent: Theme.onAccent
+        case .warning: .white
+        }
+    }
+
+    private var background: Color {
+        switch style {
+        case .plain: Theme.chip
+        case .prominent: Theme.accent
+        case .warning: .orange
+        }
+    }
+}
+
+/// One thing that happened, in a card of rows: a mark, what it was, a line of detail and when.
+struct StatusRow<Mark: View>: View {
+    let title: String
+    var detail: String?
+    var time: String?
+    let mark: Mark
+
+    init(_ title: String, detail: String? = nil, time: String? = nil, @ViewBuilder mark: () -> Mark) {
+        self.title = title
+        self.detail = detail
+        self.time = time
+        self.mark = mark()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            mark.frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title).font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
+                    Spacer(minLength: 4)
+                    if let time { Text(time).font(.caption).foregroundStyle(.tertiary) }
+                }
+                if let detail, !detail.isEmpty {
+                    Text(detail.markdown).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The hairline between rows in a card, from where the text starts.
+struct RowDivider: View {
+    var leading: CGFloat = 56
+    var body: some View { Divider().padding(.leading, leading) }
+}
+
+/// A row in a card: greys a little under the finger.
+struct RowPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.background(configuration.isPressed ? Theme.chip : Color.clear)
+    }
+}
+
+/// Cards give a little under the finger, without bouncing back.
+struct CardPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}

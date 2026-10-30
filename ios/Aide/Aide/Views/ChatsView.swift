@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// The Team tab, the app's home: the briefing behind the sun in the corner, a strip for the day (habits, what's
-/// waiting; the Today page from it),
-/// then your team. Aide on a wide card on top, the specialists two by two below, each alive in its own
-/// colour with the last line of its latest chat. Tapping a card carries on that chat (or starts one); long-press
-/// for a new chat or past chats. A chat opens on top. Below them, the team's own group chat. Only conversations:
-/// digests, routines' and watches' posts and what's waiting for you are on Today.
+/// The Team tab, the app's home: a greeting with the latest briefing's note (tap: the briefing) and chips for the day
+/// (habits, what's waiting; each opens Today), over a glow in Aide's colour. Then Aide, pinned with a box to write in,
+/// and a card of rows: the team's group chat first, then each specialist with the last line of its latest chat.
+/// Tapping a row carries on that chat (or starts one); long-press for a new chat, past chats, routines, activity or
+/// its profile. A chat opens on top. Only conversations: digests, routines' and watches' posts and what's waiting for
+/// you are on Today.
 struct ChatsView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
@@ -23,6 +23,8 @@ struct ChatsView: View {
     @State private var activity: ActivityScope?
     /// Picked in the Activity sheet; opened once it's gone.
     @State private var openAfterActivity: String?
+    /// Picked on an agent's profile; run once the sheet is gone.
+    @State private var infoAction: (Agent, AgentInfoSheet.Action)?
     /// Things waiting for your OK, for the tab's badge.
     @Binding var waiting: Int
 
@@ -30,36 +32,43 @@ struct ChatsView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
-                    header
-                    if settings.isConfigured { TodayStrip(waiting: $waiting) }
-                    if !settings.isConfigured {
-                        Text("Add your server token in Settings to start.")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    card(chat.orchestrator, wide: true)
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
-                              spacing: 12) {
-                        if chat.agentsLoaded || !settings.isConfigured {
-                            ForEach(chat.agents.filter { !$0.orchestrator }) { card($0, wide: false) }
-                        } else {
-                            ForEach(0..<4, id: \.self) { _ in AgentCardPlaceholder() }
+                    if settings.isConfigured {
+                        Greeting(waiting: $waiting)
+                    } else {
+                        TopBlock("Your team") {
+                            Text("Add your server token in Settings to start.").foregroundStyle(.secondary)
                         }
                     }
-                    TeamCard(agents: chat.agents, latest: chat.team.last,
-                             name: { $0 == "user" ? "You" : chat.agent($0).name }) { showTeam = true }
+                    AideCard(agent: chat.orchestrator, latest: chat.chats(with: chat.orchestrator).first,
+                             working: chat.working(for: chat.orchestrator), mood: mood(chat.orchestrator),
+                             loading: loading,
+                             open: { Task { await chat.talk(to: chat.orchestrator) } },
+                             write: { Task { chat.typeOnOpen = true; await chat.startChat(with: chat.orchestrator) } },
+                             talk: { Task { await chat.startChat(with: chat.orchestrator); await env.voice.toggle() } })
                         .disabled(!settings.isConfigured)
+                        .contextMenu { menu(chat.orchestrator) }
+                    VStack(spacing: 0) {
+                        TeamRow(agents: chat.agents, latest: chat.team.last,
+                                name: { $0 == "user" ? "You" : chat.agent($0).name }) { showTeam = true }
+                            .disabled(!settings.isConfigured)
+                        if chat.agentsLoaded || !settings.isConfigured {
+                            ForEach(chat.agents.filter { !$0.orchestrator }) { agent in
+                                RowDivider(leading: 72)
+                                row(agent)
+                            }
+                        } else {
+                            ForEach(0..<4, id: \.self) { _ in RowDivider(leading: 72); AgentRowPlaceholder() }
+                        }
+                    }
+                    .card(padding: 0)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }
-            .background(Theme.background)
+            .pageGlow(settings.isConfigured ? Theme.accent : nil)
             // Its own header rather than a navigation bar: the chats hide the bar, and a bar coming back as a
             // chat closes appears all at once instead of sliding in with the page.
             .toolbar(.hidden, for: .navigationBar)
-            .overlay(alignment: .top) { // the status bar over a solid strip, not over scrolling cards
-                Theme.background.frame(height: 0).ignoresSafeArea(edges: .top)
-            }
             .navigationDestination(isPresented: $chat.isChatOpen) { ChatView() }
             .navigationDestination(isPresented: $showTeam) {
                 TeamChatView { id in openAfterTeam = id; showTeam = false }
@@ -70,7 +79,9 @@ struct ChatsView: View {
             .sheet(item: $routinesFor, onDismiss: runChoice) { agent in
                 RoutinesSheet(agent: agent) { choice = $0; routinesFor = nil }
             }
-            .sheet(item: $infoFor) { AgentInfoSheet(agent: $0) }
+            .sheet(item: $infoFor, onDismiss: runInfoAction) { agent in
+                AgentInfoSheet(agent: agent) { infoAction = (agent, $0); infoFor = nil }
+            }
             .sheet(item: $activity, onDismiss: afterActivity) { scope in
                 ActivitySheet(agent: scope.agent) { id in openAfterActivity = id; activity = nil }
             }
@@ -100,33 +111,39 @@ struct ChatsView: View {
         }
     }
 
-    private var header: some View {
-        HStack {
-            Text("Your team").font(.largeTitle.bold())
-            Spacer()
-            Button { digest.showLatest() } label: { HeaderIcon(name: "sun.horizon") }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Briefing")
-                .disabled(!settings.isConfigured)
-        }
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+    private var loading: Bool { settings.isConfigured && !chat.conversationsLoaded }
+
+    private func mood(_ agent: Agent) -> String {
+        !settings.isConfigured ? "sleeping" : chat.working(for: agent) != nil ? "thinking" : "awake"
     }
 
-    private func card(_ agent: Agent, wide: Bool) -> some View {
-        let working = chat.working(for: agent)
-        return AgentCard(agent: agent, latest: chat.chats(with: agent).first, wide: wide, working: working,
-                  mood: !settings.isConfigured ? "sleeping" : working != nil ? "thinking" : "awake",
-                  loading: settings.isConfigured && !chat.conversationsLoaded) {
+    private func row(_ agent: Agent) -> some View {
+        AgentRow(agent: agent, latest: chat.chats(with: agent).first, working: chat.working(for: agent),
+                 mood: mood(agent), loading: loading) {
             Task { await chat.talk(to: agent) }
         }
         .disabled(!settings.isConfigured)
-        .contextMenu {
-            Button("New chat", systemImage: "square.and.pencil") { Task { await chat.startChat(with: agent) } }
-            Button("Past chats", systemImage: "clock") { pastChats = agent }
-            Button("Routines", systemImage: "alarm") { routinesFor = agent }
-            Button("Activity", systemImage: "list.bullet.rectangle") { activity = .agent(agent) }
-            Button("About \(agent.name)", systemImage: "info.circle") { infoFor = agent }
+        .contextMenu { menu(agent) }
+    }
+
+    @ViewBuilder private func menu(_ agent: Agent) -> some View {
+        Button("New chat", systemImage: "square.and.pencil") { Task { await chat.startChat(with: agent) } }
+        Button("Past chats", systemImage: "clock") { pastChats = agent }
+        Button("Routines", systemImage: "alarm") { routinesFor = agent }
+        Button("Activity", systemImage: "list.bullet.rectangle") { activity = .agent(agent) }
+        Button("About \(agent.name)", systemImage: "info.circle") { infoFor = agent }
+    }
+
+    /// A button on an agent's profile, once the sheet is gone.
+    private func runInfoAction() {
+        guard let (agent, action) = infoAction else { return }
+        infoAction = nil
+        switch action {
+        case .newChat: Task { await chat.startChat(with: agent) }
+        case .starter(let text): Task { await chat.startChat(with: agent); await chat.send(text) }
+        case .pastChats: pastChats = agent
+        case .routines: routinesFor = agent
+        case .activity: activity = .agent(agent)
         }
     }
 
@@ -182,84 +199,91 @@ struct ChatsView: View {
     }
 }
 
-/// One teammate: alive in its colour on a plain card, with the last line of its latest chat (or what it does,
-/// before you've talked).
-private struct AgentCard: View {
+/// Aide, pinned above the team: the last line of its latest chat (tap: carry on), and a box to write in that opens a
+/// new chat with the keyboard up, or with voice from the mic.
+private struct AideCard: View {
     let agent: Agent
     let latest: Conversation?
-    let wide: Bool
-    /// What it's doing in a chat you left while it answers ("Asking Secretary…"); nil when it isn't.
     var working: String?
     let mood: String
-    /// The chats are on their way: placeholder lines instead of the role.
     var loading = false
     let open: () -> Void
+    let write: () -> Void
+    let talk: () -> Void
 
     var body: some View {
-        Button(action: open) {
-            Group {
-                if wide {
-                    HStack(spacing: 14) {
-                        figure(60)
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(alignment: .firstTextBaseline) { name; Spacer(minLength: 4); time }
-                            line(2)
-                        }
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .top) { figure(44); Spacer(minLength: 4); time }
-                        VStack(alignment: .leading, spacing: 3) { name; line(2) }
-                        Spacer(minLength: 0)
-                    }
-                    .frame(minHeight: 128, alignment: .top)
+        VStack(spacing: 14) {
+            Button(action: open) {
+                HStack(spacing: 14) {
+                    LivePebble(mood: mood, size: 52, figure: agent.figure)
+                        .foregroundStyle(agent.tint)
+                        .allowsHitTesting(false)
+                    AgentText(agent: agent, latest: latest, working: working, loading: loading, lines: 1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(CardPress())
+            .accessibilityHint(latest == nil ? "Starts a chat" : "Opens your latest chat")
+            HStack(spacing: 8) {
+                Button(action: write) {
+                    Text("Ask \(agent.name) anything")
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 16)
+                        .padding(.vertical, 11)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Starts a new chat")
+                Button(action: talk) {
+                    Image(systemName: "mic.fill")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Talk to \(agent.name)")
+            }
+            .background(Theme.chip, in: Capsule())
+        }
+        .card()
+    }
+}
+
+/// The name, when, and the last line of an agent's latest chat (what it does, before you've talked; what it's doing
+/// while it answers in a chat you left).
+private struct AgentText: View {
+    let agent: Agent
+    let latest: Conversation?
+    var working: String?
+    var loading = false
+    var lines = 2
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(agent.name).font(.headline).foregroundStyle(.primary)
+                Spacer(minLength: 4)
+                if let date = latest?.updatedAt.flatMap(Wire.parse) {
+                    Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.tertiary)
                 }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        }
-        .buttonStyle(CardPress())
-        .accessibilityElement(children: .combine)
-        .accessibilityHint(latest == nil ? "Starts a chat" : "Opens your latest chat")
-    }
-
-    private func figure(_ size: CGFloat) -> some View {
-        LivePebble(mood: mood, size: size, figure: agent.figure)
-            .foregroundStyle(agent.tint)
-            .allowsHitTesting(false)
-    }
-
-    private var name: some View {
-        Text(agent.name).font(.headline)
-    }
-
-    @ViewBuilder private var time: some View {
-        if let date = latest?.updatedAt.flatMap(Wire.parse) {
-            Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.tertiary)
-        }
-    }
-
-    @ViewBuilder private func line(_ lines: Int) -> some View {
-        if loading {
-            VStack(alignment: .leading, spacing: 7) {
-                SkeletonBar(height: 11)
-                SkeletonBar(width: wide ? 150 : 70, height: 11)
+            if loading {
+                VStack(alignment: .leading, spacing: 7) {
+                    SkeletonBar(height: 11)
+                    if lines > 1 { SkeletonBar(width: 150, height: 11) }
+                }
+                .padding(.vertical, 3)
+                .shimmering()
+            } else {
+                Text(working ?? preview)
+                    .font(.subheadline)
+                    .foregroundStyle(working == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(agent.tint))
+                    .lineLimit(lines, reservesSpace: lines > 1)
+                    .multilineTextAlignment(.leading)
             }
-            .padding(.vertical, 3)
-            .shimmering()
-        } else {
-            previewText(lines)
         }
-    }
-
-    private func previewText(_ lines: Int) -> some View {
-        Text(working ?? preview)
-            .font(.subheadline)
-            .foregroundStyle(working == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(agent.tint))
-            .lineLimit(lines, reservesSpace: true)
-            .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var preview: String {
@@ -268,29 +292,54 @@ private struct AgentCard: View {
     }
 }
 
-/// A specialist's card while the team is on its way: the same size, grey shapes for the figure and the words.
-private struct AgentCardPlaceholder: View {
+/// One specialist, a row in the team's card.
+private struct AgentRow: View {
+    let agent: Agent
+    let latest: Conversation?
+    var working: String?
+    let mood: String
+    var loading = false
+    let open: () -> Void
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        Button(action: open) {
+            HStack(alignment: .top, spacing: 12) {
+                LivePebble(mood: mood, size: 44, figure: agent.figure)
+                    .foregroundStyle(agent.tint)
+                    .allowsHitTesting(false)
+                AgentText(agent: agent, latest: latest, working: working, loading: loading)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowPress())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(latest == nil ? "Starts a chat" : "Opens your latest chat")
+    }
+}
+
+/// A specialist's row while the team is on its way: the same size, grey shapes for the figure and the words.
+private struct AgentRowPlaceholder: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
             Circle().fill(Color.secondary.opacity(0.16)).frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 8) {
                 SkeletonBar(width: 80, height: 14)
                 SkeletonBar(height: 11)
-                SkeletonBar(width: 70, height: 11)
+                SkeletonBar(width: 150, height: 11)
             }
-            Spacer(minLength: 0)
         }
-        .frame(minHeight: 128, alignment: .top)
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shimmering()
         .accessibilityHidden(true)
     }
 }
 
-/// The way into the team's group chat: everyone together, with the latest message.
-private struct TeamCard: View {
+/// The way into the team's group chat, the first row: everyone stacked, with the latest message.
+private struct TeamRow: View {
     let agents: [Agent]
     let latest: TeamMessage?
     let name: (String) -> String
@@ -298,17 +347,16 @@ private struct TeamCard: View {
 
     var body: some View {
         Button(action: open) {
-            HStack(spacing: 14) {
-                HStack(spacing: -10) {
+            HStack(alignment: .top, spacing: 12) {
+                HStack(spacing: -14) {
                     ForEach(agents) { agent in
-                        LivePebble(mood: "calm", size: 30, figure: agent.figure)
-                            .foregroundStyle(agent.tint)
-                            .allowsHitTesting(false)
+                        PebbleMark(size: 22, figure: agent.figure).foregroundStyle(agent.tint)
                     }
                 }
-                VStack(alignment: .leading, spacing: 3) {
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("Team chat").font(.headline)
+                        Text("Team chat").font(.headline).foregroundStyle(.primary)
                         Spacer(minLength: 4)
                         if let date = latest?.ts.flatMap(Wire.parse) {
                             Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.tertiary)
@@ -317,28 +365,17 @@ private struct TeamCard: View {
                     Text(latest.map { "\(name($0.from)): \($0.text)" } ?? "Talk to all of them at once")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(2, reservesSpace: true)
                         .multilineTextAlignment(.leading)
                 }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(CardPress())
+        .buttonStyle(RowPress())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens the team chat")
-    }
-}
-
-/// Cards give a little under the finger, without bouncing back.
-struct CardPress: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
@@ -431,8 +468,9 @@ struct ConversationRow: View {
     }
 }
 
-/// The day on top of the team: how many habits are done today and what's waiting for your OK; each opens Today.
-private struct TodayStrip: View {
+/// The top of the Team tab: the time of day, the latest briefing's note in full (tap: its Details), and chips for how
+/// many habits are done today and what's waiting for your OK; each chip opens Today there.
+private struct Greeting: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var digest: DigestViewModel
     @Environment(\.scenePhase) private var scenePhase
@@ -440,46 +478,70 @@ private struct TodayStrip: View {
     @State private var habits: [Habit]?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            row(icon: "checkmark.circle.fill", color: .green) {
-                Text(habitsLine)
-            } action: { open(.habits) }
-            if waiting > 0 {
-                Divider().padding(.leading, 40)
-                row(icon: "tray.full.fill", color: .orange) {
-                    Text("\(waiting) waiting for you")
-                } action: { open(.top) }
+        TimelineView(.everyMinute) { context in
+            TopBlock(Self.title(at: context.date),
+                     overline: context.date.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
+                briefing
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        if let latest = digest.latest {
+                            Chip(title: DigestViewModel.Kind(rawValue: latest.kind)?.label ?? "Briefing",
+                                 systemImage: "sun.horizon") { digest.showLatest() }
+                        }
+                        Chip(title: habitsLine, systemImage: "checkmark.circle.fill", iconColor: .green) { open(.habits) }
+                        if waiting > 0 {
+                            Chip(title: "\(waiting) waiting", systemImage: "tray.full.fill", style: .prominent) { open(.top) }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .padding(.horizontal, -20)
+                .padding(.top, 2)
             }
         }
-        .font(.subheadline)
-        .background(Theme.row, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .task { await load() }
         .onChange(of: env.showToday) { _, shown in if !shown { Task { await load() } } } // ticked something there
         .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await load() } } }
     }
 
-    private func row(icon: String, color: Color, @ViewBuilder text: () -> some View,
-                     action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon).foregroundStyle(color).frame(width: 20)
-                text().foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+    @ViewBuilder private var briefing: some View {
+        if let latest = digest.latest {
+            Button { digest.showLatest() } label: {
+                Text(latest.greeting.markdown)
+                    .font(.body)
+                    .lineSpacing(2)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
+            .buttonStyle(CardPress())
+            .accessibilityHint("Opens the briefing")
+        } else if !digest.latestLoaded {
+            VStack(alignment: .leading, spacing: 8) {
+                SkeletonBar(height: 14)
+                SkeletonBar(height: 14)
+                SkeletonBar(width: 180, height: 14)
+            }
+            .shimmering()
         }
-        .buttonStyle(.plain)
     }
 
-    /// "3 of 5 habits done today". Counted habits (a daily limit) aren't in it: they're never "done" during the day.
+    static func title(at date: Date) -> String {
+        switch Calendar.current.component(.hour, from: date) {
+        case 5..<12: "Good morning"
+        case 12..<18: "Good afternoon"
+        default: "Good evening"
+        }
+    }
+
+    /// "3 of 5 habits". Counted habits (a daily limit) aren't in it: they're never "done" during the day.
     private var habitsLine: String {
         guard let habits else { return "Habits" }
         let ticked = habits.filter { !$0.isLimit }
         guard !ticked.isEmpty else { return habits.isEmpty ? "No habits yet" : "Habits" }
         let done = ticked.filter { $0.doneToday || ($0.isWeekly && $0.thisWeek >= ($0.cadence.perWeek ?? 1)) }.count
-        return done == ticked.count ? "All \(ticked.count) habits done today" : "\(done) of \(ticked.count) habits done today"
+        return done == ticked.count ? "All \(ticked.count) habits" : "\(done) of \(ticked.count) habits"
     }
 
     private func open(_ focus: TodayFocus) {

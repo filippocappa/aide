@@ -11,6 +11,8 @@ struct ChatView: View {
     /// Picked in Past chats; run once the sheet is gone.
     @State private var pastChoice: PastChatsSheet.Choice?
     @State private var showRoutines = false
+    /// A button on the agent's profile; run once the sheet is gone.
+    @State private var infoAction: AgentInfoSheet.Action?
     @State private var showInfo = false
     @State private var showPractice = false
     @State private var justReplied = false
@@ -82,7 +84,19 @@ struct ChatView: View {
         .background(Theme.background)
         .toolbar(.hidden, for: .navigationBar) // Pebble and its buttons are the header
         .toolbar(.hidden, for: .tabBar) // a chat has the whole screen
-        .sheet(isPresented: $showInfo) { AgentInfoSheet(agent: chat.agent) }
+        .sheet(isPresented: $showInfo, onDismiss: {
+            guard let action = infoAction else { return }
+            infoAction = nil
+            switch action {
+            case .newChat: Task { await chat.startChat(with: chat.agent) }
+            case .starter(let text): Task { await chat.startChat(with: chat.agent); await chat.send(text) }
+            case .pastChats: showPastChats = true
+            case .routines: showRoutines = true
+            case .activity: break
+            }
+        }) {
+            AgentInfoSheet(agent: chat.agent, act: { infoAction = $0; showInfo = false }, showsActivity: false)
+        }
         .fullScreenCover(isPresented: $showPractice, onDismiss: {
             Task { await chat.loadHistory() } // Professor's note on the result
         }) {
@@ -108,6 +122,13 @@ struct ChatView: View {
         }
         .onAppear {
             chat.isOnScreen = true
+            if chat.typeOnOpen {
+                chat.typeOnOpen = false
+                Task {
+                    try? await Task.sleep(for: .milliseconds(350)) // once the push has settled
+                    composerFocused = true
+                }
+            }
             if let id = chat.conversationID { chat.live?.chatOpened(conversation: id) }
         }
         .onChange(of: chat.conversationID) { _, id in

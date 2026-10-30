@@ -55,7 +55,7 @@ struct TodayView: View {
                     notesSection.id(TodayFocus.notes)
                 }
                 .scrollContentBackground(.hidden)
-                .background(Theme.grouped)
+                .pageGlow(Theme.accent)
                 .navigationTitle("Today")
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) { addMenu }
@@ -130,6 +130,10 @@ struct TodayView: View {
                     Text("No digest yet. The morning one comes with your wake-up, or at its time in Settings.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
+            } header: {
+                Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+                    .font(.subheadline.weight(.medium))
+                    .textCase(nil)
             }
             .listRowBackground(Theme.row)
         }

@@ -348,34 +348,6 @@ struct DayHeartChart: View {
 
 // MARK: - A score's page
 
-/// A titled card on a score's page: the title above, the content on a rounded card, a note under it.
-struct DetailCard<Content: View>: View {
-    let title: String?
-    let note: String?
-    let content: Content
-
-    init(_ title: String? = nil, note: String? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.note = note
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let title {
-                Text(title).font(.title3.weight(.bold)).padding(.horizontal, 4)
-            }
-            VStack(alignment: .leading, spacing: 0) { content }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            if let note {
-                Text(note).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
-            }
-        }
-    }
-}
-
 /// One score: the ring on a glow of its colour with the week under it, what it's made of, and the trend.
 struct ScoreDetailView: View {
     let kind: ScoreKind
