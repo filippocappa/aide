@@ -242,6 +242,16 @@ def meal_quality(items: list[dict]) -> int | None:  # one item works the same: a
     return None if q is None else round(q)
 
 
+def meal_parts(items: list[dict]) -> dict | None:
+    """What a meal's quality is made of: nutrients, processing and grades, each 0–100 or None (`_quality`'s parts),
+    with the weight each has in it."""
+    total = sum(i["kcal"] for i in items)
+    if total < 1:
+        return None
+    parts = _quality(items, final=True, scale=DAY_KCAL / total)["parts"]
+    return {k: {"score": None if v is None else round(v), "weight": round(100 * PARTS[k])} for k, v in parts.items()}
+
+
 def weakest(s: dict | None) -> str | None:
     """The day's weakest quality point in a few words ("fibre 14/30 g", "40% ultra-processed"), or None."""
     if not s:
@@ -364,7 +374,7 @@ class Nutrition:
             return {"kcal": 0, "planned": False, "workouts": []}
         if done:
             burned = sum(w["kcal"] for w in done)
-            return {"kcal": round(burned * settings["share"]), "planned": False,
+            return {"kcal": round(burned * settings["share"]), "planned": False, "share": settings["share"],
                     "workouts": [{"type": w.get("type", "other"), "kcal": round(w["kcal"]),
                                   "minutes": round(workout_minutes(w))} for w in done]}
         runs = [e for e in events or [] if not e.all_day and (RUN_WORDS.search(e.title) or RUN_WORDS.search(e.calendar))
@@ -376,9 +386,10 @@ class Nutrition:
         for e in runs:
             minutes = (e.end - e.start).total_seconds() / 60
             planned.append({"type": "run", "kcal": round(minutes * rate), "minutes": round(minutes),
-                            "title": e.title})
+                            "title": e.title, "start": e.start.astimezone(self.tz).isoformat(),
+                            "kcal_min": round(rate, 1)})
         return {"kcal": round(sum(p["kcal"] for p in planned) * settings["share"]), "planned": True,
-                "workouts": planned}
+                "share": settings["share"], "workouts": planned}
 
     def day_targets(self, d: date, bonus: dict | None = None) -> dict:
         """The base plus the day's bonus: its kcal, carbs_pct of them as carbs and the rest as fat."""
@@ -426,7 +437,7 @@ class Nutrition:
     def meals(self, meals: list[dict]) -> dict[int, dict]:
         """Each meal's items (name, grams, kcal, grade, nova and their own quality) and the meal's quality, by meal
         id; a meal logged without items has none and no quality."""
-        out = {m["id"]: {"items": [], "quality": None} for m in meals}
+        out = {m["id"]: {"items": [], "quality": None, "quality_parts": None} for m in meals}
         by_meal: dict[int, list[dict]] = {}
         for i in self.items(meals):
             by_meal.setdefault(i["meal_id"], []).append(i)
@@ -436,7 +447,7 @@ class Nutrition:
             out[meal_id] = {"items": [{"name": i["name"], "grams": i["grams"] and round(i["grams"]),
                                        "kcal": round(i["kcal"]), "grade": i["grade"], "nova": i["nova"],
                                        "quality": meal_quality([i])} for i in items],
-                            "quality": meal_quality(items)}
+                            "quality": meal_quality(items), "quality_parts": meal_parts(items)}
         return out
 
     def day(self, d: date, events: list | None = None) -> dict:

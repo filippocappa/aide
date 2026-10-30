@@ -1984,7 +1984,17 @@ final class NutritionTests: XCTestCase {
         let bonus = try JSONDecoder.api.decode(FoodBonus.self, from: Data(#"""
         {"kcal": 540, "planned": true, "workouts": [{"type": "run", "kcal": 540, "minutes": 45, "title": "Corsa al Valentino"}]}
         """#.utf8))
-        XCTAssertEqual(DayScoreCard.bonusLine(bonus), "+540 kcal for Corsa al Valentino")
+        XCTAssertEqual(DayScoreCard.bonusLine(bonus), "+540 kcal: “Corsa al Valentino” in your calendar")
+        XCTAssertEqual(NutritionDayView.plannedSum(bonus), "Counted at your usual pace; the Watch's number takes over once it's done.")
+    }
+
+    func testAPlannedRunShowsItsSum() throws {
+        let bonus = try JSONDecoder.api.decode(FoodBonus.self, from: Data(#"""
+        {"kcal": 621, "planned": true, "share": 0.9, "workouts": [{"type": "run", "kcal": 690, "minutes": 60,
+         "title": "run", "start": "2026-10-30T17:00:00+01:00", "kcal_min": 11.5}]}
+        """#.utf8))
+        XCTAssertTrue(DayScoreCard.bonusLine(bonus)!.hasPrefix("+621 kcal: “run” at "))
+        XCTAssertTrue(NutritionDayView.plannedSum(bonus).hasPrefix("60 min at your usual 11.5 kcal a minute running is 690 kcal; 90% of it counts"))
     }
 
     func testTargetsEncodeSnakeCaseWithClearedProfileFields() throws {

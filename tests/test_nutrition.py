@@ -148,11 +148,12 @@ def test_a_run_in_the_calendar_counts_before_it_happens_at_the_usual_rate(stores
               CalEvent("e3", "Work", "Lezione", at, at + timedelta(hours=2))]
     bonus = nutrition.bonus(today, events)
     assert (bonus["kcal"], bonus["planned"], bonus["workouts"][0]["title"]) == (540, True, "Corsa al Valentino")
+    assert bonus["workouts"][0]["start"] == at.isoformat() and bonus["workouts"][0]["kcal_min"] == 12.0
     # The Run calendar's events are runs whatever they're called.
     assert nutrition.bonus(today, [CalEvent("e4", "Run", "Valentino 10k", at, at + timedelta(minutes=30))])["kcal"] == 360
     # Once the Watch has the run, that's what counts.
     health.save([{"date": today.isoformat(), "workouts": [run(today, kcal=500)]}])
-    assert nutrition.bonus(today, events) == {"kcal": 500, "planned": False,
+    assert nutrition.bonus(today, events) == {"kcal": 500, "planned": False, "share": 1.0,
                                               "workouts": [{"type": "run", "kcal": 500, "minutes": 54}]}
 
 
@@ -180,11 +181,13 @@ async def test_new_items_carry_their_quality_and_the_day_gets_a_score(stores, tm
     # Each meal's foods and quality: its nutrients per 2000 kcal, so a side of oil alone has no fibre to show.
     meal = f.day(f.today())[0]
     got = nutrition.meals([meal])[meal["id"]]
+    assert got["quality_parts"] == {"nutrients": {"score": 100, "weight": 50}, "processing": {"score": 100, "weight": 25},
+                                    "grades": {"score": 87, "weight": 25}}
     assert got["quality"] == 97 and "Meal quality 97/100 (Mela 100, Olio extravergine 75)" in said
     assert [(i["name"], i["grams"], i["kcal"], i["grade"], i["nova"], i["quality"]) for i in got["items"]] == [
         ("Mela", 150, 78, "a", 1, 100), ("Olio extravergine", 10, 88, "b", 2, 75)]
     bare = f.add("Pizza", 800, 30, 90, 30)
-    assert nutrition.meals([bare]) == {bare["id"]: {"items": [], "quality": None}}
+    assert nutrition.meals([bare]) == {bare["id"]: {"items": [], "quality": None, "quality_parts": None}}
 
 
 def test_a_meal_gets_coachs_emoji_or_one_from_its_name(stores):
@@ -284,8 +287,9 @@ def test_a_planned_run_in_the_calendar_shows_on_todays_food(api_env):
     api, f, *_ = api_env(events=[CalEvent("e1", "Home", "Run", at, at + timedelta(minutes=30))])
     f.set_goals(BASE)
     day = api.get("/v1/food", headers=AUTH).json()
-    assert day["bonus"] == {"kcal": 330, "planned": True,
-                            "workouts": [{"type": "run", "kcal": 330, "minutes": 30, "title": "Run"}]}
+    assert day["bonus"] == {"kcal": 330, "planned": True, "share": 1.0,
+                            "workouts": [{"type": "run", "kcal": 330, "minutes": 30, "title": "Run",
+                                          "start": at.isoformat(), "kcal_min": 11.0}]}
 
 
 def test_coach_gives_its_take_on_a_score_when_asked(api_env):

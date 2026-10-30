@@ -522,8 +522,12 @@ struct ScoreDetailView: View {
                 .listRowBackground(Theme.row)
             }
             if !r.contributors.isEmpty {
-                Section("What it's made of") {
+                Section {
                     ForEach(r.contributors) { PartRow(part: $0, color: kind.colors(r.score)[1]) }
+                } header: {
+                    Text("What it's made of")
+                } footer: {
+                    Text("Each part is scored against your own last 60 days: a usual morning lands around 60, better than usual higher, worse lower. Higher HRV is better, a lower heart rate asleep is better, and a training load well over your usual costs a little. The bar is that part alone; the % is its share of the score.")
                 }
                 .listRowBackground(Theme.row)
             }
@@ -541,8 +545,12 @@ struct ScoreDetailView: View {
             .listRowBackground(Theme.row)
         }
         if let s = scores.sleep {
-            Section("What it's made of") {
+            Section {
                 ForEach(s.contributors) { PartRow(part: $0, color: ScoreColors.sleep[1]) }
+            } header: {
+                Text("What it's made of")
+            } footer: {
+                Text("Hours against what you needed count for half: 90% of the need scores 75, 80% scores 50. Deep and REM are scored on their share of the night; your usual (last 30 nights) is under each.")
             }
             .listRowBackground(Theme.row)
             Section {
@@ -593,11 +601,11 @@ struct ScoreDetailView: View {
         }
         if let load = scores.load {
             Section {
-                LoadCard(load: load)
+                LoadCard(load: load, date: Wire.day(scores.date) ?? .now)
             } header: {
                 Text("Cardio load")
             } footer: {
-                Text("The last 7 days' average against the last 28's. Building is where fitness grows; well over it, rest catches up with you.")
+                Text(load.why ?? "The last 7 days' average against the last 28's. Building is where fitness grows; well over it, rest catches up with you.")
             }
             .listRowBackground(Theme.row)
         }
@@ -681,11 +689,25 @@ private struct PartRow: View {
                 }
             }
             .frame(height: 6)
+            if let usual = part.usualText {
+                HStack(spacing: 4) {
+                    Text("Usual \(usual)")
+                    if let diff = part.diffMin, abs(diff) >= 5 {
+                        Text("· \(diff > 0 ? "+" : "−")\(hm(abs(diff)))")
+                            .foregroundStyle(diff > 0 ? Color.green : Color.orange)
+                    } else if part.diffMin != nil {
+                        Text("· as usual")
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityValue(part.score.map { "\($0) of 100" } ?? "no data")
     }
+
+    private func hm(_ minutes: Int) -> String { minutes >= 60 ? "\(minutes / 60)h\(String(format: "%02d", minutes % 60))" : "\(minutes) min" }
 
     /// "6h40 of 7h48", "61.5 ms · usual 55", "No data".
     private var value: String {
@@ -731,6 +753,8 @@ struct ZonesChart: View {
 /// The last week's load against the last four, as a word and a position on a scale.
 private struct LoadCard: View {
     let load: HealthScores.Load
+    /// The day the page is for: the bars are the 7 before it.
+    var date: Date = .now
 
     private var look: (word: String, color: Color) {
         switch load.label {
@@ -768,13 +792,54 @@ private struct LoadCard: View {
             }
             .frame(height: 14)
             HStack {
-                Text("Last 7 days \(Int(load.acute.rounded()))")
+                Text(load.acuteStrain.map { "Last 7 days \($0)% a day" } ?? "Last 7 days \(Int(load.acute.rounded()))")
                 Spacer()
-                Text("Last 28 days \(Int(load.chronic.rounded()))")
+                Text(load.chronicStrain.map { "4 weeks \($0)% a day" } ?? "Last 28 days \(Int(load.chronic.rounded()))")
             }
             .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            if let days = load.days, days.count == 7 {
+                LoadWeek(days: days, usual: load.chronicStrain, date: date)
+            }
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The 7 days before, each day's strain as a bar, with the 4-week average as a line.
+private struct LoadWeek: View {
+    let days: [Int?]
+    let usual: Int?
+    let date: Date
+
+    var body: some View {
+        Chart {
+            ForEach(Array(days.enumerated()), id: \.offset) { i, v in
+                BarMark(x: .value("Day", i), y: .value("Strain", v ?? 0), width: .ratio(0.6))
+                    .foregroundStyle(ScoreColors.strain[1].opacity(v == nil ? 0.15 : 0.8))
+                    .cornerRadius(3)
+            }
+            if let usual {
+                RuleMark(y: .value("Usual", usual))
+                    .foregroundStyle(.secondary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            }
+        }
+        .chartYScale(domain: 0...100)
+        .chartYAxis(.hidden)
+        .chartXAxis {
+            AxisMarks(values: Array(0..<7)) { value in
+                AxisValueLabel {
+                    if let i = value.as(Int.self) { Text(label(i)) }
+                }
+            }
+        }
+        .frame(height: 90)
+    }
+
+    /// The weekday of each bar: the last is the day before `date`.
+    private func label(_ i: Int) -> String {
+        let day = Calendar.current.date(byAdding: .day, value: i - 7, to: date) ?? date
+        return day.formatted(.dateTime.weekday(.narrow))
     }
 }

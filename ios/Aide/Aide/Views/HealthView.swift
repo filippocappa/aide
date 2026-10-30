@@ -209,9 +209,10 @@ struct HealthView: View {
 
 }
 
-/// "‹ Today, 30 October ›", for Health and Food: everything below follows it.
+/// "‹ Today, 30 October ›", for Health and Food: everything below follows it. Tapping the date opens a calendar.
 struct DayHeader: View {
     @Binding var day: Date
+    @State private var picking = false
 
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
 
@@ -222,13 +223,19 @@ struct DayHeader: View {
             }
             .accessibilityLabel("Day before")
             Spacer()
-            VStack(spacing: 0) {
-                Text(title).font(.headline)
-                if isToday || Calendar.current.isDateInYesterday(day) {
-                    Text(day.formatted(.dateTime.weekday(.wide).day().month(.wide)))
-                        .font(.caption).foregroundStyle(.secondary)
+            Button { picking = true } label: {
+                VStack(spacing: 0) {
+                    HStack(spacing: 4) {
+                        Text(title).font(.headline)
+                        Image(systemName: "calendar").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    if isToday || Calendar.current.isDateInYesterday(day) {
+                        Text(day.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
+            .accessibilityHint("Opens a calendar")
             Spacer()
             Button { move(1) } label: {
                 Image(systemName: "chevron.right").font(.body.weight(.semibold)).frame(width: 36, height: 36)
@@ -238,6 +245,10 @@ struct DayHeader: View {
         }
         .buttonStyle(.borderless)
         .tint(.primary)
+        .sheet(isPresented: $picking) {
+            DayCalendar(day: $day)
+                .presentationDetents([.medium])
+        }
     }
 
     /// "Today", "Yesterday" or "Monday 19 October".
@@ -250,5 +261,32 @@ struct DayHeader: View {
     private func move(_ days: Int) {
         guard let next = Calendar.current.date(byAdding: .day, value: days, to: day), next <= Date() else { return }
         withAnimation(.snappy) { day = Calendar.current.startOfDay(for: next) }
+    }
+}
+
+/// A month calendar to jump to a day (up to today); picking one closes it.
+private struct DayCalendar: View {
+    @Binding var day: Date
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            DatePicker("Day", selection: Binding(get: { day }, set: { picked in
+                withAnimation(.snappy) { day = Calendar.current.startOfDay(for: picked) }
+                dismiss()
+            }), in: ...Date(), displayedComponents: .date)
+            .datePickerStyle(.graphical)
+            .labelsHidden()
+            .padding(.horizontal)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Today") {
+                        withAnimation(.snappy) { day = Calendar.current.startOfDay(for: .now) }
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+            }
+        }
     }
 }

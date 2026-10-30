@@ -211,25 +211,33 @@ struct FoodView: View {
         .listRowBackground(Theme.row)
     }
 
-    /// Camera, library or a few words; Coach (or, for a photo of one packet, the server) does the rest.
+    /// Three ways in, side by side: a photo (Aide's camera, with the library in it), a few words, or a barcode (the
+    /// camera reads it by itself, or type it). Coach (or, for one packet, the server) does the rest.
     private var logButton: some View {
-        Menu {
-            if MealCamera.isAvailable {
-                Button("Take photo", systemImage: "camera") { showCamera = true }
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Button {
+                    if MealCamera.isAvailable { showCamera = true } else { showLibrary = true }
+                } label: {
+                    LogTile(title: "Photo", systemImage: "camera.fill", filled: true)
+                }
+                Button { describing = true } label: {
+                    LogTile(title: "Describe", systemImage: "text.cursor", filled: false)
+                }
+                Menu {
+                    if MealCamera.isAvailable {
+                        Button("Scan it", systemImage: "barcode.viewfinder") { showCamera = true }
+                    }
+                    Button("Type the number", systemImage: "number") { typingBarcode = true }
+                } label: {
+                    LogTile(title: "Barcode", systemImage: "barcode", filled: false)
+                }
             }
-            Button("Choose photos", systemImage: "photo.on.rectangle") { showLibrary = true }
-            Button("Describe it", systemImage: "text.cursor") { describing = true }
-            Section {
-                Button("Type a barcode", systemImage: "barcode") { typingBarcode = true }
+            .buttonStyle(.plain)
+            if !isToday {
+                Text("Logging for \(day.formatted(.dateTime.weekday(.wide).day().month(.wide)))")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-        } label: {
-            Label(isToday ? "Log a meal" : "Log a meal on \(day.formatted(.dateTime.weekday(.wide)))",
-                  systemImage: "camera.fill")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Theme.onAccent)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Theme.accent, in: Capsule())
         }
         .disabled(!settings.isConfigured || logging)
         .listRowBackground(Color.clear)
@@ -327,5 +335,25 @@ struct FoodView: View {
             Task { await health.writeMeals() }
             return nil
         } catch { return error.localizedDescription }
+    }
+}
+
+/// One of the Log buttons: an icon over a word, the photo one filled in the accent colour.
+private struct LogTile: View {
+    let title: String
+    let systemImage: String
+    let filled: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage).font(.title3.weight(.semibold))
+            Text(title).font(.footnote.weight(.semibold))
+        }
+        .foregroundStyle(filled ? Theme.onAccent : Theme.accent)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(filled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.accent.opacity(0.14)),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }

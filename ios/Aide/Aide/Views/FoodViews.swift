@@ -364,6 +364,17 @@ struct MealSheet: View {
             } footer: {
                 Text("Quality is 0–100: the meal's fibre, fruit and veg, saturated fat, sugars and salt for its calories (half), how little of it is ultra-processed (a quarter) and its foods' Nutri-Scores (a quarter).")
             }
+            if let parts = meal.qualityParts {
+                Section {
+                    QualityPartRow(name: "Nutrients", detail: "Fibre, fruit and veg, saturated fat, sugars and salt, per 2,000 kcal of this meal", part: parts.nutrients)
+                    QualityPartRow(name: "Processing", detail: "The share of its calories that's ultra-processed (NOVA 4): full marks at 10% or less, none from 50%", part: parts.processing)
+                    QualityPartRow(name: "Food grades", detail: "Its foods' Nutri-Scores, by calories (A 100, B 75, C 50, D 25, E 0)", part: parts.grades)
+                } header: {
+                    Text("Why \(meal.quality.map { "\($0)" } ?? "this score")")
+                } footer: {
+                    Text("A meal of one food is judged as if all 2,000 kcal of the day were that food, so plain chicken has no fibre or fruit and veg and loses points there, and a packaged yogurt with an A grade still loses on processing.")
+                }
+            }
         }
     }
 
@@ -453,5 +464,31 @@ struct NumberField: View {
                 Text(unit).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// One part of a meal's quality: its name, what it measures, its score and share.
+private struct QualityPartRow: View {
+    let name: String
+    let detail: String
+    let part: MealQualityParts.Part
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(name).font(.subheadline.weight(.medium))
+                Text("\(part.weight)%").font(.caption).foregroundStyle(.tertiary)
+                Spacer()
+                if let score = part.score {
+                    Text("\(score)").font(.subheadline.weight(.semibold)).monospacedDigit()
+                        .foregroundStyle(Grade.scoreColor(score, tint: Theme.accent))
+                } else {
+                    Text("No data").font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
     }
 }

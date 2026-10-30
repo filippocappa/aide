@@ -553,6 +553,8 @@ struct Meal: Decodable, Identifiable, Hashable {
     var items: [MealItem] = []
     /// 0–100, nil without enough data (docs/API.md, "Food").
     var quality: Int?
+    /// What `quality` is made of (since 2026-10-30): nutrients, processing, grades.
+    var qualityParts: MealQualityParts?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -570,9 +572,11 @@ struct Meal: Decodable, Identifiable, Hashable {
         emoji = try c.decodeIfPresent(String.self, forKey: .emoji) ?? "🍽️"
         items = try c.decodeIfPresent([MealItem].self, forKey: .items) ?? []
         quality = try c.number(.quality)
+        qualityParts = try? c.decodeIfPresent(MealQualityParts.self, forKey: .qualityParts)
     }
     private enum CodingKeys: String, CodingKey {
-        case id, name, eatenAt, calories, proteinG, carbsG, fatG, waterMl, caffeineMg, photo, notes, emoji, items, quality
+        case id, name, eatenAt, calories, proteinG, carbsG, fatG, waterMl, caffeineMg, photo, notes, emoji, items, quality,
+             qualityParts
     }
 
     var eatenDate: Date? { Wire.parse(eatenAt) }
@@ -581,6 +585,17 @@ struct Meal: Decodable, Identifiable, Hashable {
     static func newestFirst(_ meals: [Meal]) -> [Meal] {
         meals.sorted { ($0.eatenDate ?? .distantPast, $0.id) > ($1.eatenDate ?? .distantPast, $1.id) }
     }
+}
+
+/// A meal's quality in its three parts, each 0–100 or nil without data, with its weight in % of the quality.
+struct MealQualityParts: Decodable, Hashable {
+    struct Part: Decodable, Hashable {
+        let score: Int?
+        let weight: Int
+    }
+    let nutrients: Part
+    let processing: Part
+    let grades: Part
 }
 
 /// One food in a meal: how much, its Nutri-Score (`grade`, a–e), NOVA group (4 is ultra-processed) and quality
@@ -699,9 +714,14 @@ struct FoodBonus: Decodable, Hashable {
         let kcal: Int
         let minutes: Int
         let title: String?
+        /// A planned run's start and the kcal a minute it was counted at (since 2026-10-30).
+        var start: String? = nil
+        var kcalMin: Double? = nil
     }
     var kcal = 0
     var planned = false
+    /// The share of the workouts' kcal that's added (the targets' `workouts.share`; since 2026-10-30).
+    var share: Double? = nil
     var workouts: [Workout] = []
 }
 
@@ -1115,6 +1135,10 @@ struct HealthScores: Decodable, Hashable {
         let text: String?
         let value: Double?
         let usual: Double?
+        /// Sleep's usual, written like its `text` ("0h58 · 12%"; since 2026-10-30).
+        let usualText: String?
+        /// Sleep's timed parts: tonight's minutes against the usual (since 2026-10-30).
+        let diffMin: Int?
         let unit: String?
         let score: Int?
         let weight: Int
@@ -1126,12 +1150,14 @@ struct HealthScores: Decodable, Hashable {
             label = try c.decodeIfPresent(String.self, forKey: .label) ?? key
             text = try? c.decodeIfPresent(String.self, forKey: .value)
             value = try? c.decodeIfPresent(Double.self, forKey: .value)
-            usual = try c.decodeIfPresent(Double.self, forKey: .usual)
+            usual = try? c.decodeIfPresent(Double.self, forKey: .usual)
+            usualText = try? c.decodeIfPresent(String.self, forKey: .usual)
+            diffMin = try? c.decodeIfPresent(Int.self, forKey: .diffMin)
             unit = try c.decodeIfPresent(String.self, forKey: .unit)
             score = try c.decodeIfPresent(Int.self, forKey: .score)
             weight = try c.decodeIfPresent(Int.self, forKey: .weight) ?? 0
         }
-        private enum CodingKeys: String, CodingKey { case key, label, value, usual, unit, score, weight }
+        private enum CodingKeys: String, CodingKey { case key, label, value, usual, unit, score, weight, diffMin }
     }
 
     struct Sleep: Decodable, Hashable {
@@ -1192,6 +1218,12 @@ struct HealthScores: Decodable, Hashable {
         let ratio: Double
         /// detraining, maintaining, building, overreaching
         let label: String
+        /// The two averages as strain %, the 7 days' strain (oldest first) and the label's reason in a sentence;
+        /// nil from a server before 2026-10-30.
+        var acuteStrain: Int? = nil
+        var chronicStrain: Int? = nil
+        var days: [Int?]? = nil
+        var why: String? = nil
     }
 
     struct Vital: Decodable, Hashable {

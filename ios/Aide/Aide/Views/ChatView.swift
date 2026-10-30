@@ -18,6 +18,9 @@ struct ChatView: View {
     @State private var photos: [PickedPhoto] = []
     @State private var showCamera = false
     @State private var showLibrary = false
+    /// Coach's chats: Aide's meal camera instead of the system one, and what it ended with.
+    @State private var showMealCamera = false
+    @State private var mealCameraResult: MealCameraResult?
     /// A barcode read in a lone photo in Coach's chat: its "How much?" sheet.
     @State private var scanned: ScannedCode?
     /// The scanned photo goes into the message instead ("Ask Coach instead").
@@ -122,6 +125,9 @@ struct ChatView: View {
             } else {
                 photos = Array((photos + picked).prefix(Self.maxPhotos))
             }
+        }
+        .fullScreenCover(isPresented: $showMealCamera, onDismiss: afterMealCamera) {
+            MealCameraView(tint: chat.agent.tint, conversation: chat.conversationID) { mealCameraResult = $0 }
         }
         .sheet(item: $scanned, onDismiss: {
             if let photo = coachInstead { photos = [photo] }
@@ -335,10 +341,25 @@ struct ChatView: View {
         .animation(.easeOut(duration: 0.2), value: photos)
     }
 
+    /// What the meal camera ended with, once it's gone: shots go into the message, a logged packet's card is in the
+    /// chat already.
+    private func afterMealCamera() {
+        guard let result = mealCameraResult else { return }
+        mealCameraResult = nil
+        switch result {
+        case .photos(let picked): photos = Array((photos + picked).prefix(Self.maxPhotos))
+        case .logged: Task { await chat.loadHistory() }
+        case .library: showLibrary = true
+        case .describe: composerFocused = true
+        }
+    }
+
     /// Take a photo or pick some, up to four a message.
     private var attachMenu: some View {
         Menu {
-            if CameraPicker.isAvailable {
+            if chat.agent.id == "coach", MealCamera.isAvailable {
+                Button("Take photo", systemImage: "camera") { showMealCamera = true }
+            } else if CameraPicker.isAvailable {
                 Button("Take photo", systemImage: "camera") { showCamera = true }
             }
             Button("Choose photos", systemImage: "photo.on.rectangle") { showLibrary = true }

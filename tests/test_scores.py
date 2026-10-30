@@ -9,7 +9,7 @@ from test_health import ROME, TODAY, world  # noqa: F401  (the fixture)
 D = date(2026, 10, 30)
 
 
-def day(d: date, asleep=450, bedtime="23:30", deep=70, rem=110, in_bed=470, hrv=55.0, rhr=54, **extra) -> dict:
+def day(d: date, asleep=450, bedtime="23:30", deep=70, rem=110, in_bed=460, hrv=55.0, rhr=54, **extra) -> dict:
     """A health day for `d` with last night's sleep going to bed at `bedtime` the evening before."""
     h, m = map(int, bedtime.split(":"))
     start = datetime.combine(d - timedelta(days=1 if h >= 12 else 0), datetime.min.time(), ROME).replace(hour=h, minute=m)
@@ -47,11 +47,11 @@ def test_a_short_late_night_scores_lower_and_debt_raises_the_need():
     for i in (1, 2, 3):
         d = D - timedelta(days=i)
         days[d.isoformat()] = day(d, asleep=390)
-    s = scores.sleep_score(with_today(days, asleep=300, bedtime="01:30", in_bed=360), D)
+    s = scores.sleep_score(with_today(days, asleep=300, bedtime="01:30", in_bed=350), D)
     assert s["need_min"] == 450 + 45  # half of 3 × 60 short, capped at 45
     assert s["debt_min"] == 60 + 60 + 150
     parts = {p["key"]: p for p in s["contributors"]}
-    assert parts["duration"]["value"] == "5h00 of 8h15" and parts["duration"]["score"] == 21
+    assert parts["duration"]["value"] == "5h00 of 8h15" and parts["duration"]["score"] == 2
     assert parts["consistency"]["value"] == "bed 2h00 later, up on time" and parts["consistency"]["score"] == 55  # wake 10 min off
     assert s["score"] < 65
 
@@ -75,8 +75,9 @@ def test_sleep_without_stages_or_history_weighs_what_it_has():
     parts = {p["key"]: p["score"] for p in s["contributors"]}
     assert parts["deep"] is None and parts["rem"] is None and parts["consistency"] is None
     assert s["need_min"] == 480
-    duration, eff = 1 - 2 * (1 - 420 / 480), (420 / 450 - 0.80) / 0.15
-    assert s["score"] == round(100 * (45 * duration + 10 * eff) / 55)
+    duration, eff = 1 - 2.5 * (1 - 420 / 480), (420 / 450 - 0.85) / 0.12
+    assert s["score"] == round(100 * (50 * duration + 5 * eff) / 55)
+    assert all(p["usual"] is None for p in s["contributors"])  # no nights before
     assert scores.sleep_score({}, D) is None
 
 
@@ -212,3 +213,25 @@ def test_hr_hourly_keeps_its_nulls_in_place(world):  # noqa: F811
     assert w.health.get(TODAY)["hr_hourly"] == hourly
     with pytest.raises(ValueError):
         w.health.save([{"date": TODAY.isoformat(), "hr_hourly": [70] * 23}])
+
+
+def test_sleep_parts_carry_the_usual_night():
+    days = with_today(past(), asleep=480, deep=40, rem=130)
+    parts = {p["key"]: p for p in scores.sleep_score(days, D)["contributors"]}
+    assert (parts["duration"]["usual"], parts["duration"]["diff_min"]) == ("7h30", 30)
+    assert (parts["deep"]["usual"], parts["deep"]["diff_min"]) == ("1h10 · 16%", -30)
+    assert (parts["rem"]["usual"], parts["rem"]["diff_min"]) == ("1h50 · 24%", 20)
+    assert parts["efficiency"]["usual"] == "98%" and parts["consistency"]["usual"] is None
+
+
+def test_the_days_load_stops_the_day_before_and_says_why():
+    days = past(30)
+    for i in range(1, 29):
+        d = D - timedelta(days=i)
+        days[d.isoformat()]["workouts"] = [{"id": f"W{i}", "kcal": 300 if i <= 7 else 600}]
+    days[D.isoformat()] = day(D)  # today, nothing done yet: it mustn't count as a rest day
+    lo = scores.day_scores(days, D)["load"]
+    assert lo["ratio"] == round((7 * 60) / 7 / ((7 * 60 + 21 * 120) / 28), 2) and lo["label"] == "detraining"
+    assert lo["days"] == [scores.strain_of(60)] * 7
+    assert lo["why"] == (f"The last 7 days averaged {scores.strain_of(60)}% strain a day, 43% less than your 4-week "
+                         f"average of {lo['chronic_strain']}% (0.57×): under 0.8× your fitness starts to slip.")

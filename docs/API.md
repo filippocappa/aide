@@ -646,6 +646,9 @@ and their quality:
 the item alone), with fibre, fruit and veg and salt counted per 2000 kcal of it, so a plate of vegetables is full of
 fibre for its calories and a pastry isn't. `grade` is the item's Nutri-Score, `nova` its processing group, each null
 when its food doesn't say. A meal logged without items has `"items": []` and `"quality": null`.
+Since 2026-10-30 a Meal also has `quality_parts`, what its `quality` is made of (null with no items): `{"nutrients":
+{"score": 100, "weight": 50}, "processing": {"score": 100, "weight": 25}, "grades": {"score": 87, "weight": 25}}`,
+each part's `score` 0–100 or null without data, as the day score's `parts` (below), `weight` in % of the quality.
 
 **Apple Health** (since 2026-10-27): the app writes every meal of the last 14 days as its own food entry (a
 `food` correlation: energy, protein, carbs, fat, and water and caffeine when not 0, named after the meal, with the
@@ -691,8 +694,10 @@ number or null (no goal); all null until set, here or by Coach in chat ("aim for
   Apple Health. `note` (since 2026-10-29, up to 500 characters) is what the user tells Coach in their own words.
 - Targets are optional: without them the day score is quality alone.
 
-Bonus: `{"kcal": 656, "planned": false, "workouts": [{"type": "run", "kcal": 656, "minutes": 54}]}` (a planned one
-also has the event's `title`); `{"kcal": 0, "planned": false, "workouts": []}` without any.
+Bonus: `{"kcal": 656, "planned": false, "share": 1.0, "workouts": [{"type": "run", "kcal": 656, "minutes": 54}]}` (a
+planned one also has the event's `title`, its `start` and the `kcal_min` it was counted at, since 2026-10-30, so the
+app can say "Run at 17:00 in your calendar: 60 min × 11.5 kcal"); `{"kcal": 0, "planned": false, "workouts": []}`
+without any. `share` (since 2026-10-30) is the targets' `workouts.share` the workouts' kcal were multiplied by.
 
 Score: `{"score": 82, "final": false, "numbers": 90, "quality": 70, "graded": 0.85, "grades": {"a": 640, "b": 300,
 "c": 400, "d": 0, "e": 120}, "parts": {"nutrients": 74, "processing": 60, "grades": 68}, "nutrients": {...},
@@ -1310,11 +1315,11 @@ medical advice.
     "score": 71, "asleep_min": 400, "need_min": 486, "debt_min": 58,
     "need": {"need": 486, "base": 458, "strain": 12, "debt": 16},
     "contributors": [
-      {"key": "duration", "label": "Hours vs need", "value": "6h40 of 8h06", "score": 65, "weight": 45},
-      {"key": "deep", "label": "Deep sleep", "value": "0h52 · 13%", "score": 80, "weight": 15},
-      {"key": "rem", "label": "REM sleep", "value": "1h39 · 25%", "score": 100, "weight": 15},
-      {"key": "efficiency", "label": "Time asleep in bed", "value": "91%", "score": 73, "weight": 10},
-      {"key": "consistency", "label": "Bed and wake vs usual", "value": "bed 0h38 later, up on time", "score": 82, "weight": 15}
+      {"key": "duration", "label": "Hours vs need", "value": "6h40 of 8h06", "score": 56, "weight": 50, "usual": "7h52", "diff_min": -72},
+      {"key": "deep", "label": "Deep sleep", "value": "0h52 · 13%", "score": 80, "weight": 15, "usual": "0h58 · 12%", "diff_min": -6},
+      {"key": "rem", "label": "REM sleep", "value": "1h39 · 25%", "score": 100, "weight": 15, "usual": "1h45 · 22%", "diff_min": -6},
+      {"key": "efficiency", "label": "Time asleep in bed", "value": "91%", "score": 50, "weight": 5, "usual": "97%", "diff_min": null},
+      {"key": "consistency", "label": "Bed and wake vs usual", "value": "bed 0h38 later, up on time", "score": 82, "weight": 15, "usual": null, "diff_min": null}
     ]
   },
   "recovery": {
@@ -1332,7 +1337,9 @@ medical advice.
     "zones": [14, 22, 18, 6, 0], "zone_bpm": [123, 137, 150, 164, 178, 192],
     "workouts": [{"id": "A04C…", "type": "run", "minutes": 54, "strain": 38}]
   },
-  "load": {"acute": 62.1, "chronic": 55.4, "ratio": 1.12, "label": "building"},
+  "load": {"acute": 62.1, "chronic": 55.4, "ratio": 1.12, "label": "building", "acute_strain": 34, "chronic_strain": 31,
+           "days": [40, 0, 55, 12, 61, 30, 41],
+           "why": "The last 7 days averaged 34% strain a day, 12% more than your 4-week average of 31% (1.12×): 1–1.3× builds it."},
   "vitals": {
     "hrv_ms": {"value": 61.5, "usual": 55.0, "low": 49.2, "high": 60.8},
     "sleep_hr": {"value": 47, "usual": 49, "low": 47, "high": 51},
@@ -1344,11 +1351,16 @@ medical advice.
   "line": "Recovery 72% after 6h40 asleep: a good day to push, aim for 55–80% strain."
 }
 ```
-- **`sleep`** (`null` without a night): time asleep against the night's need 45% (each share of the need missed
-  costs twice that: 90% of it scores 80), deep share of the night 15% (full at 15%, none at 5%), REM share 15% (full
-  at 23%, none at 10%), asleep / in bed 10% (full at 95%, none at 80%), and bedtime and wake against the medians of
+- **`sleep`** (`null` without a night): time asleep against the night's need 50% (each share of the need missed
+  costs 2.5 times that: 90% of it scores 75, 80% scores 50), deep share of the night 15% (full at 15%, none at 5%), REM
+  share 15% (full at 23%, none at 10%), asleep / in bed 5% (full at 97%, none at 85%; the Watch's "in bed" is mostly
+  the sleep itself, so this is nearly always high), and bedtime and wake against the medians of
   the 14 nights before 15% (their average offset: full within 20 min, none at 2 h; needs 5 nights). A part without
-  data (no stages, no history) is left out (`score` and `value` `null`) and the rest re-weighted.
+  data (no stages, no history) is left out (`score` and `value` `null`) and the rest re-weighted. Since 2026-10-30
+  each part has its **`usual`**, written like `value` (the median of the 30 nights before: time asleep, deep and REM
+  with their share, asleep / in bed; null for consistency, which is already against the usual, and with fewer than 5
+  nights), and **`diff_min`**, the night's minutes minus the usual (duration, deep, REM; else null).
+  Weights were 45/15/15/10/15 before 2026-10-30, and a missed need cost twice its share.
   **`need`** is learnt from the user's own nights, as Oura does: `base` is the mean of up to 90 nights before with the
   shortest and longest 10% left out, kept within 7h30–9h30 (8h with fewer than 14 nights); `strain` adds 0.3 min per %
   of the day before's strain (Whoop: a hard day asks for more); `debt` is half of what the 3 nights before were short
@@ -1372,8 +1384,11 @@ medical advice.
   10–35; `null` without recovery). `zones` are minutes in 50–60, 60–70, 70–80, 80–90 and 90–100% of the reserve;
   `zone_bpm` is where zones 1–5 start in bpm, then `max_hr`.
   Each workout carries its own `strain`.
-- **`load`**: the last 7 days' average TRIMP against the last 28's; `ratio` under 0.8 `detraining`, under 1.0
-  `maintaining`, up to 1.3 `building`, above `overreaching`. `null` with fewer than 14 days stored in the 28.
+- **`load`**: the last 7 days' average TRIMP against the last 28's, **up to the day before** (since 2026-10-30: a
+  day under way counted as a rest day, so every morning looked like detraining); `ratio` under 0.8 `detraining`, under
+  1.0 `maintaining`, up to 1.3 `building`, above `overreaching`. `null` with fewer than 14 days stored in the 28.
+  Since 2026-10-30: `acute_strain` and `chronic_strain`, the two averages as strain %; `days`, those 7 days' strain,
+  oldest first (null for a day not stored); `why`, one sentence saying what the label rests on.
 - **`vitals`**: each night number with its usual (median of the 60 days before) and usual range (`low`–`high`,
   one spread either side), for the app's gauges. `usual`, `low` and `high` are `null` with fewer than 14 days.
 - **`line`**: one sentence from code, no model call.

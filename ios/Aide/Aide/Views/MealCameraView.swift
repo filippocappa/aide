@@ -16,11 +16,13 @@ enum MealCameraResult {
 /// food barcode holds still in view, its page opens over the camera by itself (`ScanSheet`, no model call), and
 /// Cancel there comes back to the camera. The lenses as in the Camera app (0.5, 1, 2, the telephoto), pinch to zoom,
 /// tap to focus, and macro on its own up close (the phone's virtual camera switches lens like the Camera app). The
-/// library and "Describe" are a tap away. Chat photos keep the system camera (`CameraPicker`).
+/// library and "Describe" are a tap away. Coach's chats use it too; other chats keep the system camera (`CameraPicker`).
 struct MealCameraView: View {
     let tint: Color
     /// The day a packet is logged on; nil is today.
     var date: String?
+    /// Coach's chat the camera was opened from: a packet's meal card is posted there.
+    var conversation: String? = nil
     let done: (MealCameraResult) -> Void
 
     @StateObject private var camera = MealCamera()
@@ -99,7 +101,7 @@ struct MealCameraView: View {
             if code == nil { ignored = nil }
         }
         .sheet(item: $scanning, onDismiss: afterScan) { code in
-            ScanSheet(barcode: code.code, date: date, tint: tint, logged: { scanLogged = $0 },
+            ScanSheet(barcode: code.code, date: date, conversation: conversation, tint: tint, logged: { scanLogged = $0 },
                       askCoach: { scanToCoach = true })
         }
     }
