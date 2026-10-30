@@ -48,3 +48,25 @@ struct HeartSummary: Equatable {
         max = readings.map(\.top).max().map { Int($0.rounded()) }
     }
 }
+
+/// The night's heart rate while asleep (docs/API.md, "Health day": `sleep_hr`, `sleep_hr_low`), what recovery reads:
+/// the average over the sleep stages, and the lowest average of 3 readings in a row (~15 min), so one dip doesn't count.
+struct AsleepHeart: Equatable {
+    let avg: Int
+    let low: Int
+
+    static let minReadings = 6
+
+    init(avg: Int, low: Int) {
+        self.avg = avg
+        self.low = low
+    }
+
+    /// `readings` sorted by start; `asleep` the night's sleep stages (awake stretches left out).
+    init?(_ readings: [HeartReading], asleep: [(start: Date, end: Date)]) {
+        let bpm = readings.filter { r in asleep.contains { r.start >= $0.start && r.start < $0.end } }.map(\.bpm)
+        guard bpm.count >= Self.minReadings else { return nil }
+        avg = Int((bpm.reduce(0, +) / Double(bpm.count)).rounded())
+        low = Int((0...(bpm.count - 3)).map { bpm[$0..<$0 + 3].reduce(0, +) / 3 }.min()!.rounded())
+    }
+}

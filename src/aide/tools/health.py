@@ -26,7 +26,8 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
         for nap in d.get("naps", []):
             parts.append(f"nap {hours(nap.get('asleep_min'))} ({datetime.fromisoformat(nap['start']).astimezone(tz):%H:%M}–"
                          f"{datetime.fromisoformat(nap['end']).astimezone(tz):%H:%M})")
-        for key, label in (("resting_hr", "resting HR {} bpm"), ("hrv_ms", "HRV {} ms"), ("steps", "{} steps"),
+        for key, label in (("sleep_hr", "HR asleep {} bpm"), ("sleep_hr_low", "lowest {} bpm"),
+                           ("resting_hr", "resting HR {} bpm"), ("hrv_ms", "HRV {} ms"), ("steps", "{} steps"),
                            ("exercise_min", "{} exercise min"), ("inhaler_usage", "inhaler usage {}")):
             if key in d:
                 parts.append(label.format(d[key]))
@@ -63,6 +64,7 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
                + (f" Cardio load {load['label']} (last 7 days {load['ratio']}× the last 28)." if load else ""), "",
                "Averages:",
                f"- sleep: {avg(sleep, hours)}",
+               f"- HR asleep: {avg([d['sleep_hr'] for d in days if 'sleep_hr' in d], lambda v: f'{v:.0f} bpm')}",
                f"- resting HR: {avg([d['resting_hr'] for d in days if 'resting_hr' in d], lambda v: f'{v:.0f} bpm')}",
                f"- HRV: {avg([d['hrv_ms'] for d in days if 'hrv_ms' in d], lambda v: f'{v:.0f} ms')}",
                f"- steps: {avg([d['steps'] for d in days if 'steps' in d], lambda v: f'{v:.0f}')}",

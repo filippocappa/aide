@@ -1950,6 +1950,28 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual((obj["workouts"] as? [[String: Any]])?.first?["km"] as? Double, 9.8)
     }
 
+    func testHeartRateAsleepLeavesAwakeStretchesOut() throws {
+        let bed = Date(timeIntervalSince1970: 1_800_000_000)
+        func r(_ m: Int, _ bpm: Double) -> HeartReading {
+            let t = bed.addingTimeInterval(Double(m * 60))
+            return HeartReading(start: t, end: t, bpm: bpm, top: bpm)
+        }
+        let asleep = [(start: bed, end: bed.addingTimeInterval(3600)),
+                      (start: bed.addingTimeInterval(5400), end: bed.addingTimeInterval(9000))]
+        let readings = [r(5, 50), r(15, 48), r(25, 44), r(35, 42), r(45, 43),
+                        r(70, 90),  // up in the night: awake, left out
+                        r(95, 46), r(105, 47), r(115, 49)]
+        let heart = AsleepHeart(readings, asleep: asleep)
+        XCTAssertEqual(heart, AsleepHeart(avg: 46, low: 43))  // 369 / 8; 44, 42, 43 the lowest three in a row
+        XCTAssertNil(AsleepHeart(Array(readings.prefix(5)), asleep: asleep))  // fewer than 6
+        var day = HealthDay(date: "2026-10-30")
+        day.sleepHr = 46
+        day.sleepHrLow = 43
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(day)) as? [String: Any])
+        XCTAssertEqual(obj["sleep_hr"] as? Int, 46)
+        XCTAssertEqual(obj["sleep_hr_low"] as? Int, 43)
+    }
+
     func testHeartSummaryHoldsEachReadingUntilTheNextAtMostTenMinutes() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/Rome")!

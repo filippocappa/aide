@@ -17,11 +17,14 @@ final class HealthService: ObservableObject {
 
     private enum Keys {
         static let backfilled = "healthBackfilled"
+        static let backfillVersion = "healthBackfillVersion"
         static let lastUpload = "healthLastUpload"
     }
 
     /// Days sent the first time, so the server has baselines from the first morning.
     static let backfillDays = 60
+    /// Raised when the days carry something new the server should have for all of them (2: heart rate asleep).
+    static let backfillVersion = 2
 
     private let store = HKHealthStore()
     private let api: APIClient
@@ -146,8 +149,12 @@ final class HealthService: ObservableObject {
         defer { isUploading = false }
 
         let backfilled = UserDefaults.standard.bool(forKey: Keys.backfilled)
+            && UserDefaults.standard.integer(forKey: Keys.backfillVersion) >= Self.backfillVersion
         var result = await send(days: backfilled ? days : Self.backfillDays)
-        if result == .sent { UserDefaults.standard.set(true, forKey: Keys.backfilled) }
+        if result == .sent {
+            UserDefaults.standard.set(true, forKey: Keys.backfilled)
+            UserDefaults.standard.set(Self.backfillVersion, forKey: Keys.backfillVersion)
+        }
         while uploadAgain, result == .sent {
             uploadAgain = false
             result = await send(days: days)
@@ -481,10 +488,15 @@ final class HealthService: ObservableObject {
         let vo2Unit = HKUnit.literUnit(with: .milli).unitDivided(by: .gramUnit(with: .kilo).unitMultiplied(by: .minute()))
 
         let bpm = HKUnit.count().unitDivided(by: .minute())
+        let nights = (0..<count).map { offset in
+            calendar.date(byAdding: .day, value: offset, to: first)
+                .flatMap { SleepSummary.night(endingOn: $0, from: segments, calendar: calendar) }
+        }
+        let asleepHeart = await asleepHeart(nights: nights, segments: segments)
         return (0..<count).compactMap { offset -> HealthDay? in
             guard let day = calendar.date(byAdding: .day, value: offset, to: first),
                   let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { return nil }
-            let night = SleepSummary.night(endingOn: day, from: segments, calendar: calendar)
+            let night = nights[offset]
             let nightSpan = night.flatMap { n in n.bedtimeDate.flatMap { s in n.wakeDate.map { (s, $0) } } }
 
             var hrvMs = nightSpan.flatMap { Self.average(hrv, .secondUnit(with: .milli), $0.0, $0.1) }
@@ -495,6 +507,8 @@ final class HealthService: ObservableObject {
                 date: Wire.dayString(day),
                 sleep: night,
                 restingHr: resting.statistics(for: day)?.averageQuantity().map { Int($0.doubleValue(for: bpm).rounded()) },
+                sleepHr: asleepHeart[offset]?.avg,
+                sleepHrLow: asleepHeart[offset]?.low,
                 hrvMs: hrvMs.map(Self.oneDecimal),
                 respiratoryRate: nightSpan.flatMap { Self.average(respiratory, bpm, $0.0, $0.1) }.map(Self.oneDecimal),
                 wristTempC: nightSpan.flatMap { Self.average(temp, .degreeCelsius(), $0.0, $0.1) }
@@ -531,6 +545,25 @@ final class HealthService: ObservableObject {
                                     top: (series?.maximumQuantity ?? s.quantity).doubleValue(for: bpm))
             }
             out[offset] = HeartSummary(readings, day: day, next: next, calendar: calendar)
+        }
+        return out
+    }
+
+    /// Each night's heart rate while asleep, by offset: the samples from bedtime to wake, a night at a time.
+    private func asleepHeart(nights: [SleepNight?], segments: [SleepSegment]) async -> [Int: AsleepHeart] {
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        let stages: Set<SleepSegment.Stage> = [.asleep, .core, .deep, .rem]
+        var out: [Int: AsleepHeart] = [:]
+        for (offset, night) in nights.enumerated() {
+            guard let bed = night?.bedtimeDate, let wake = night?.wakeDate, wake > bed,
+                  let samples = try? await quantitySamples(Self.heartRate, from: bed, to: wake) else { continue }
+            let asleep = segments.filter { stages.contains($0.stage) && $0.end > bed && $0.start < wake }
+                .map { (start: max($0.start, bed), end: min($0.end, wake)) }
+            let readings = samples.map { s in
+                let value = ((s as? HKDiscreteQuantitySample)?.averageQuantity ?? s.quantity).doubleValue(for: bpm)
+                return HeartReading(start: s.startDate, end: s.endDate, bpm: value, top: value)
+            }
+            out[offset] = AsleepHeart(readings, asleep: asleep)
         }
         return out
     }

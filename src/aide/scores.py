@@ -30,7 +30,11 @@ SLEEP_PARTS = {"duration": 45, "deep": 15, "rem": 15, "efficiency": 10, "consist
 # Recovery
 BASELINE = 60  # days before, for the usual numbers
 MIN_BASELINE = 14
-RECOVERY_PARTS = {"hrv": 30, "hrv_week": 20, "resting_hr": 25, "sleep": 15, "load": 10}
+RECOVERY_PARTS = {"hrv": 30, "hrv_week": 20, "sleep_hr": 25, "resting_hr": 25, "sleep": 15, "load": 10}
+# The heart part: heart rate while asleep (the phone's average over the night's sleep stages, as Oura and Whoop read the
+# night), else Apple's resting heart rate for the day, which is mostly worked out while awake and often missing in the
+# morning. Only one of the two counts.
+HEART_KEYS = (("sleep_hr", "Heart rate asleep"), ("resting_hr", "Resting heart rate"))
 TREND_DAYS, MIN_TREND_DAYS = 7, 4  # HRV's rolling mean (Plews and Buchheit: the trend says more than one morning)
 LOAD_EASY = 1.05  # acute:chronic load at which training neither helps nor costs recovery; each 0.25 over is a spread
 RECOVERY_SHIFT = 0.5  # a usual day scores ~60, as on Whoop
@@ -189,7 +193,7 @@ def vitals(days: dict[str, dict], day: date) -> dict:
     past = _before(days, day, BASELINE)
     today = days.get(day.isoformat()) or {}
     out = {}
-    for key, floor in (("hrv_ms", 3.0), ("resting_hr", RHR_SPREAD_MIN), ("respiratory_rate", 0.4),
+    for key, floor in (("hrv_ms", 3.0), ("sleep_hr", 2.0), ("resting_hr", RHR_SPREAD_MIN), ("respiratory_rate", 0.4),
                        ("wrist_temp_c", 0.15), ("asleep_min", 25)):
         get = (lambda d: d.get("sleep", {}).get("asleep_min")) if key == "asleep_min" else (lambda d, k=key: d.get(k))
         values = [v for v in map(get, past) if v is not None]
@@ -219,7 +223,7 @@ def _week_mean(days: dict[str, dict], day: date) -> float | None:
 
 def recovery_score(days: dict[str, dict], day: date, sleep: dict | None, age: int | None = None) -> dict | None:
     today = days.get(day.isoformat()) or {}
-    hrv, rhr = today.get("hrv_ms"), today.get("resting_hr")
+    hrv = today.get("hrv_ms")
     if hrv is None:
         return None
     past = [d for d in _before(days, day, BASELINE) if d.get("hrv_ms")]
@@ -238,11 +242,13 @@ def recovery_score(days: dict[str, dict], day: date, sleep: dict | None, age: in
         z = _clip((week - median(weeks)) / _spread(weeks, HRV_SPREAD_MIN / 2), -3, 3)
         parts.append({"key": "hrv_week", "label": "HRV, last 7 days", "value": round(math.exp(week), 1),
                       "usual": round(math.exp(median(weeks)), 1), "unit": "ms", "z": z})
-    rhrs = [d["resting_hr"] for d in past if d.get("resting_hr") is not None]
-    if rhr is not None and len(rhrs) >= MIN_BASELINE:
-        z = _clip(-(rhr - median(rhrs)) / _spread(rhrs, RHR_SPREAD_MIN), -3, 3)
-        parts.append({"key": "resting_hr", "label": "Resting heart rate", "value": rhr, "usual": round(median(rhrs)),
-                      "unit": "bpm", "z": z})
+    for key, label in HEART_KEYS:
+        values = [d[key] for d in past if d.get(key) is not None]
+        if today.get(key) is not None and len(values) >= MIN_BASELINE:
+            z = _clip(-(today[key] - median(values)) / _spread(values, RHR_SPREAD_MIN), -3, 3)
+            parts.append({"key": key, "label": label, "value": today[key], "usual": round(median(values)),
+                          "unit": "bpm", "z": z})
+            break
     if sleep:
         parts.append({"key": "sleep", "label": "Sleep", "value": sleep["score"], "usual": None, "unit": "%",
                       "z": _clip((sleep["score"] - 70) / 15, -3, 3)})

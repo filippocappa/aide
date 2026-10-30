@@ -1052,6 +1052,9 @@ struct HealthDay: Encodable, Equatable {
     var date: String
     var sleep: SleepNight?
     var restingHr: Int?
+    /// Heart rate while asleep: the night's average and lowest (~15 min); recovery reads these.
+    var sleepHr: Int? = nil
+    var sleepHrLow: Int? = nil
     var hrvMs: Double?
     var respiratoryRate: Double?
     var wristTempC: Double?
@@ -1096,6 +1099,7 @@ struct HealthDayReading: Decodable, Hashable {
     var naps: [SleepNap]? = nil
     /// 24 hourly averages, nil where there's no sample (since 2026-10-30).
     var hrHourly: [Int?]? = nil
+    var sleepHr: Int? = nil
     var maxHr: Int? = nil
 }
 
@@ -1197,6 +1201,7 @@ struct HealthScores: Decodable, Hashable {
 
     struct Vitals: Decodable, Hashable {
         var hrvMs: Vital?
+        var sleepHr: Vital?
         var restingHr: Vital?
         var respiratoryRate: Vital?
         var wristTempC: Vital?

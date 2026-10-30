@@ -4,13 +4,14 @@ import SwiftUI
 /// What Apple Health says, as the server has it (docs/API.md, "Apple Health"): one number per day and measure.
 /// Each is compared with your own usual, the average of the days before (not Apple's baseline, which apps can't see).
 enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
-    case sleep, restingHr, hrv, breathing, wristTemp, steps, activeKcal, exercise
+    case sleep, sleepHr, restingHr, hrv, breathing, wristTemp, steps, activeKcal, exercise
 
     var id: String { rawValue }
 
     var name: String {
         switch self {
         case .sleep: "Sleep"
+        case .sleepHr: "Heart rate asleep"
         case .restingHr: "Resting heart rate"
         case .hrv: "Heart rate variability"
         case .breathing: "Breathing rate"
@@ -23,6 +24,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
 
     var short: String {
         switch self {
+        case .sleepHr: "HR asleep"
         case .restingHr: "Resting HR"
         case .hrv: "HRV"
         case .breathing: "Breathing"
@@ -34,6 +36,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     var icon: String {
         switch self {
         case .sleep: "bed.double.fill"
+        case .sleepHr: "bed.double.circle.fill"
         case .restingHr: "heart.fill"
         case .hrv: "waveform.path.ecg"
         case .breathing: "lungs.fill"
@@ -47,7 +50,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     var color: Color {
         switch self {
         case .sleep: .indigo
-        case .restingHr, .hrv: .red
+        case .sleepHr, .restingHr, .hrv: .red
         case .breathing: .cyan
         case .wristTemp: .orange
         case .steps: .orange
@@ -60,7 +63,8 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     var about: String {
         switch self {
         case .sleep: "Time asleep in the night that ended that morning, from your Watch. Naps are counted apart."
-        case .restingHr: "Apple's resting heart rate for the day. Lower than usual often means well rested."
+        case .sleepHr: "Your average heart rate while asleep, awake stretches left out: what recovery reads. Lower than usual often means well rested."
+        case .restingHr: "Apple's resting heart rate for the day, worked out mostly while you're awake. Recovery reads your heart rate asleep instead."
         case .hrv: "The average variability during the night's sleep. Higher than usual usually means recovered."
         case .breathing: "Breaths per minute, averaged over the night."
         case .wristTemp: "Averaged over the night. Up more than half a degree on usual, with resting heart rate up and HRV down, can mean you're getting sick."
@@ -71,7 +75,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     }
 
     /// Read over the night, not the day.
-    var nightly: Bool { [.sleep, .hrv, .breathing, .wristTemp].contains(self) }
+    var nightly: Bool { [.sleep, .sleepHr, .hrv, .breathing, .wristTemp].contains(self) }
 
     /// Daily totals are bars; nightly averages are a line.
     var bars: Bool { [.sleep, .steps, .activeKcal, .exercise].contains(self) }
@@ -80,7 +84,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     var better: Int {
         switch self {
         case .sleep, .hrv, .steps, .activeKcal, .exercise: 1
-        case .restingHr: -1
+        case .sleepHr, .restingHr: -1
         case .breathing, .wristTemp: 0
         }
     }
@@ -91,6 +95,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     func value(_ day: HealthDayReading) -> Double? {
         switch self {
         case .sleep: day.sleep.map { Double($0.asleepMin) / 60 }
+        case .sleepHr: day.sleepHr.map(Double.init)
         case .restingHr: day.restingHr.map(Double.init)
         case .hrv: day.hrvMs
         case .breathing: day.respiratoryRate
@@ -104,7 +109,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     func format(_ v: Double) -> String {
         switch self {
         case .sleep: SleepCard.duration(Int((v * 60).rounded()))
-        case .restingHr: "\(Int(v.rounded())) bpm"
+        case .sleepHr, .restingHr: "\(Int(v.rounded())) bpm"
         case .hrv: "\(Int(v.rounded())) ms"
         case .breathing: "\(v.formatted(.number.precision(.fractionLength(1)))) /min"
         case .wristTemp: "\(v.formatted(.number.precision(.fractionLength(2)))) °C"
@@ -123,7 +128,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         case .wristTemp: return sign + "\(a.formatted(.number.precision(.fractionLength(1)))) °C"
         case .breathing: return sign + a.formatted(.number.precision(.fractionLength(1)))
         case .steps: return sign + Int(a.rounded()).formatted()
-        default: return sign + "\(Int(a.rounded()))" + (self == .hrv ? " ms" : self == .restingHr ? " bpm" : self == .activeKcal ? " kcal" : " min")
+        default: return sign + "\(Int(a.rounded()))" + (self == .hrv ? " ms" : self == .restingHr || self == .sleepHr ? " bpm" : self == .activeKcal ? " kcal" : " min")
         }
     }
 
@@ -131,7 +136,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     func isUsual(_ d: Double) -> Bool {
         switch self {
         case .sleep: abs(d) < 0.25
-        case .restingHr: abs(d) < 2
+        case .sleepHr, .restingHr: abs(d) < 2
         case .hrv: abs(d) < 5
         case .breathing: abs(d) < 0.5
         case .wristTemp: abs(d) < 0.2

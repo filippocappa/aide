@@ -1214,6 +1214,8 @@ the server's liveness check; these routes sit under it and need the token like e
     "deep_min": 58, "core_min": 251, "rem_min": 103
   },
   "resting_hr": 52,
+  "sleep_hr": 47,
+  "sleep_hr_low": 43,
   "hrv_ms": 61.5,
   "respiratory_rate": 14.2,
   "wrist_temp_c": 35.91,
@@ -1249,7 +1251,10 @@ Each workout may also carry `"avg_hr": 151, "max_hr": 184`.
 - `naps` (since 2026-10-26; missing when there were none) is the day's other sleep: stretches that start after
   the night's `wake` (or midnight) and before the next midnight, 10 min to 4 h asleep, the same gap rule as the
   night; the next night (an early bedtime) isn't one.
-- `resting_hr` (bpm) is Apple's resting heart rate for that day. `hrv_ms` is the average HRV (SDNN, Apple's
+- `resting_hr` (bpm) is Apple's resting heart rate for that day (worked out mostly while awake; often not there yet
+  in the morning). `sleep_hr` (since 2026-10-30) is the average heart rate during that night's sleep stages (awake
+  stretches left out), and `sleep_hr_low` the lowest average of 3 readings in a row (~15 min) in them; both need 6
+  readings asleep. `hrv_ms` is the average HRV (SDNN, Apple's
   measure) during that night's sleep, or over the day if there's none from the night. `respiratory_rate`
   (breaths/min) and `wrist_temp_c` (absolute °C, Series 8 and later) are averages over the night. The server
   compares them with the user's own past numbers; Apple's "baseline" isn't available to apps.
@@ -1313,7 +1318,7 @@ medical advice.
     "contributors": [
       {"key": "hrv", "label": "HRV", "value": 61.5, "usual": 55.0, "unit": "ms", "score": 93, "weight": 30},
       {"key": "hrv_week", "label": "HRV, last 7 days", "value": 57.2, "usual": 55.0, "unit": "ms", "score": 74, "weight": 20},
-      {"key": "resting_hr", "label": "Resting heart rate", "value": 52, "usual": 54, "unit": "bpm", "score": 82, "weight": 25},
+      {"key": "sleep_hr", "label": "Heart rate asleep", "value": 47, "usual": 49, "unit": "bpm", "score": 82, "weight": 25},
       {"key": "sleep", "label": "Sleep", "value": 71, "usual": null, "unit": "%", "score": 66, "weight": 15},
       {"key": "load", "label": "Training load", "value": 1.12, "usual": 1.0, "unit": "×", "score": 59, "weight": 10}
     ]
@@ -1326,6 +1331,7 @@ medical advice.
   "load": {"acute": 62.1, "chronic": 55.4, "ratio": 1.12, "label": "building"},
   "vitals": {
     "hrv_ms": {"value": 61.5, "usual": 55.0, "low": 49.2, "high": 60.8},
+    "sleep_hr": {"value": 47, "usual": 49, "low": 47, "high": 51},
     "resting_hr": {"value": 52, "usual": 54, "low": 52, "high": 56},
     "respiratory_rate": {"value": 14.2, "usual": 14.0, "low": 13.6, "high": 14.4},
     "wrist_temp_c": {"value": 35.91, "usual": 35.88, "low": 35.73, "high": 36.03},
@@ -1346,7 +1352,8 @@ medical advice.
   shortfall against `base` over the last 3 nights, this one included.
 - **`recovery`** (`null` without last night's `hrv_ms`): ln HRV (30%), the 7-day mean of ln HRV against the rolling
   7-day means of the 60 days before (`hrv_week`, 20%; Plews and Buchheit: the week's trend says more than one
-  morning; needs 4 of the 7 days), resting HR (25%, lower is better), the sleep score (15%) and the training load's
+  morning; needs 4 of the 7 days), heart rate asleep (`sleep_hr`, 25%, lower is better; as Oura and Whoop read the
+  night; `resting_hr`, Apple's resting HR, in its place until 14 days have `sleep_hr`), the sleep score (15%) and the training load's
   ratio (`load`, 10%: up to 1.05 costs nothing, each 0.25 above it is a spread), each as how far it is from the
   user's usual (median and spread of the 60 days before) and combined into a score where a usual night lands around
   60. A part without data is left out and the rest re-weighted. While fewer than 14 days of HRV are

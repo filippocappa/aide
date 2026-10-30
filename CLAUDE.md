@@ -150,7 +150,9 @@ Food (`Views/ScoreViews.swift`; the metric charts in `Views/BodyViews.swift`). S
 (2026-10-30, after the first look on the phone): sleep need learnt from his own nights (trimmed mean of up to 90, plus
 the day before's strain and half the 3 nights' net shortfall, at most 45 min), deep and REM scored apart, stricter
 efficiency, bed and wake consistency; recovery adds the 7-day HRV trend and the training load; max HR is the middle of
-the 3 highest workout peaks, zones shown in bpm (`zone_bpm`). Each score's page asks Coach for its take
+the 3 highest workout peaks, zones shown in bpm (`zone_bpm`). Recovery's heart part is the heart rate asleep (`sleep_hr`,
+the phone's average over the night's sleep stages; `sleep_hr_low` the lowest ~15 min), not Apple's resting HR, which is
+mostly a daytime number and often missing in the morning (that one stays for strain's rest HR and as the fallback). Each score's page asks Coach for its take
 (`POST /v1/health/insight`, contract "Coach's take"). Food is its own tab (`Views/FoodView.swift`; Team · Study ·
 Health · Food · Settings; `aide://food`, the meal buttons and the Food widget open it). Habits moved to Today (#21). Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
 (live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the

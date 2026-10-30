@@ -101,6 +101,20 @@ def test_low_hrv_and_high_resting_hr_mean_low_recovery():
     assert good["score"] >= 67 and good["level"] == "good"
 
 
+def test_heart_rate_asleep_takes_over_from_apples_resting_hr():
+    days = with_today(past(), rhr=48)
+    keys = [p["key"] for p in scores.recovery_score(days, D, None)["contributors"]]
+    assert "resting_hr" in keys and "sleep_hr" not in keys  # no nights with it yet
+    for i, d in enumerate(days.values()):
+        d["sleep_hr"] = 45 + i % 3 - 1
+    days[D.isoformat()].update(sleep_hr=52, resting_hr=40)  # a restless night, whatever Apple says
+    r = scores.recovery_score(days, D, None)
+    heart = [p for p in r["contributors"] if p["key"] in ("sleep_hr", "resting_hr")]
+    assert [(p["key"], p["value"], p["usual"]) for p in heart] == [("sleep_hr", 52, 45)]
+    assert heart[0]["score"] < 20 and heart[0]["label"] == "Heart rate asleep"
+    assert scores.vitals(days, D)["sleep_hr"]["usual"] == 45
+
+
 def test_a_heavy_week_costs_recovery():
     days = with_today(past())
     calm = scores.recovery_score(days, D, None)["score"]

@@ -150,7 +150,8 @@ struct HealthView: View {
     /// Last night's numbers that have a value, with their usual range.
     private var vitalRows: [(HealthMetric, HealthScores.Vital)] {
         guard let v = scores?.vitals else { return [] }
-        let all: [(HealthMetric, HealthScores.Vital?)] = [(.hrv, v.hrvMs), (.restingHr, v.restingHr),
+        let all: [(HealthMetric, HealthScores.Vital?)] = [(.hrv, v.hrvMs), (.sleepHr, v.sleepHr),
+                                                         (.restingHr, v.sleepHr == nil ? v.restingHr : nil),
                                                          (.breathing, v.respiratoryRate), (.wristTemp, v.wristTempC),
                                                          (.sleep, v.asleepMin)]
         return all.compactMap { m, x in x.flatMap { $0.value != nil ? (m, $0) : nil } }
