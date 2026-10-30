@@ -42,6 +42,17 @@ final class ChatViewModel: ObservableObject {
     }
     /// ChatView is showing; a push for this chat then lands in it instead of as a banner.
     var isOnScreen = false
+
+    /// Errands whose card comes again further down the chat (a later post about the same one): the earlier cards
+    /// fold to a line, so there's one card to act on.
+    func errandsAgain(after message: Message) -> Set<Int> {
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return [] }
+        var ids = Set<Int>()
+        for later in messages[(index + 1)...] {
+            for case .errands(let errands) in later.attachments { ids.formUnion(errands.map(\.id)) }
+        }
+        return ids
+    }
     /// A reply is on its way in the open chat.
     @Published private(set) var isSending = false
     /// Chats with a reply on its way, by conversation id, also after you've left them: the agent's card says so.

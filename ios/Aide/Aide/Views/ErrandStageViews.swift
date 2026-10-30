@@ -833,7 +833,7 @@ private struct SkeletonStage: View {
     }
 }
 
-// MARK: - The sheet
+// MARK: - The login card
 
 /// The errand full size, and the app's own screen for your part: a login (AutoFill offers your password and the
 /// SMS code), a choice of where to send the code, a CAPTCHA's picture. What you enter goes straight into the page;
@@ -845,6 +845,8 @@ struct StageSheet: View {
     var tint: Color = Theme.glow
     /// After it closes, to load the errand again.
     var onClose: () -> Void = {}
+    /// Takes it off the screen without the cover's slide (set by `.stage(item:)`).
+    var hide: (() -> Void)?
 
     @StateObject private var live = BrowserLive()
     @State private var values: [String: String] = [:]
@@ -856,12 +858,43 @@ struct StageSheet: View {
     @State private var loggedIn = false
     @State private var realPage = false
     @State private var finishing = false
-    /// How tall the sheet's content is, for a small sheet around a login.
+    /// How tall the card's content is: the card fits it.
     @State private var height: CGFloat = 220
+    /// In: popped up from the middle (out the same way, before it's dismissed).
+    @State private var shown = false
     @FocusState private var focused: String?
 
     var body: some View {
-        NavigationStack {
+        GeometryReader { geo in
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                    .overlay(Color.black.opacity(0.3))
+                    .ignoresSafeArea()
+                    .opacity(shown ? 1 : 0)
+                card(room: geo.size.height - 32)
+                    .padding(.horizontal, 16)
+                    .scaleEffect(shown ? 1 : 0.86)
+                    .opacity(shown ? 1 : 0)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .presentationBackground(.clear)
+        .onAppear { withAnimation(.spring(duration: 0.4, bounce: 0.2)) { shown = true } }
+        .task { connect() }
+        .onDisappear { live.disconnect() }
+        .onChange(of: live.scene) { old, new in moved(from: old, to: new) }
+        .fullScreenCover(isPresented: $realPage) {
+            BrowserSheet(target: target) {
+                if case .site = target { close() }
+            }
+        }
+    }
+
+    /// The page's bar on top (as in the errand's card), what's asked under it, the button at the bottom; as tall as
+    /// that, up to the room there is (the keyboard takes some), scrolling past it.
+    private func card(room: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            bar
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     content
@@ -872,32 +905,46 @@ struct StageSheet: View {
                         }
                         .buttonStyle(.plain)
                         .frame(maxWidth: .infinity)
-                        .padding(.top, 8)
                     }
                 }
-                .padding(16)
+                .padding(20)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
             }
             .scrollBounceBehavior(.basedOnSize)
-            .safeAreaInset(edge: .bottom) { footer }
-            .background(Theme.grouped)
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } }
-            }
+            .frame(height: max(min(height, room - Self.bar - (showsFooter ? Self.footer : 0)), 120))
+            footer
         }
-        .presentationDetents([detent])
-        .presentationDragIndicator(.visible)
-        .animation(.spring(duration: 0.35), value: detent)
-        .task { connect() }
-        .onDisappear { live.disconnect() }
-        .onChange(of: live.scene) { old, new in moved(from: old, to: new) }
-        .fullScreenCover(isPresented: $realPage) {
-            BrowserSheet(target: target) {
-                if case .site = target { close() }
+        .frame(maxWidth: 420)
+        .background(Theme.grouped)
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Theme.line))
+        .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
+        .animation(.spring(duration: 0.35), value: height)
+        .animation(.spring(duration: 0.35), value: showsFooter)
+    }
+
+    private static let bar: CGFloat = 52
+    private static let footer: CGFloat = 70
+
+    /// Like the address bar over the page drawn in the chat: the site, and Close.
+    private var bar: some View {
+        HStack(spacing: 10) {
+            SiteIcon(url: live.scene?.iconURL, size: 22)
+            Text(live.scene?.siteName ?? title).font(.subheadline.weight(.semibold)).lineLimit(1)
+            Spacer(minLength: 8)
+            Button { close() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(Theme.chip, in: Circle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
         }
+        .padding(.horizontal, 16)
+        .frame(height: Self.bar)
+        .background(Theme.chip.opacity(0.5))
     }
 
     private var title: String {
@@ -909,14 +956,6 @@ struct StageSheet: View {
 
     private var isSite: Bool { if case .site = target { true } else { false } }
 
-    /// A small sheet around a login, a code or a CAPTCHA (and while the page opens); full height to watch Aide work.
-    private var compact: Bool {
-        loggedIn || live.closed != nil || live.scene == nil || (live.control && live.scene?.isYourTurn == true)
-    }
-
-    private var detent: PresentationDetent {
-        compact ? .height(min(height + 64, 700)) : .large
-    }
 
     @ViewBuilder
     private var content: some View {
@@ -925,8 +964,11 @@ struct StageSheet: View {
             Text(isSite ? "Aide's browser stays logged in there." : "Aide goes on from here.")
                 .font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity)
         } else if let closed = live.closed {
-            Label(closed, systemImage: "wifi.exclamationmark")
-            Button("Try again") { connect() }.buttonStyle(.bordered)
+            VStack(spacing: 12) {
+                Label(closed, systemImage: "wifi.exclamationmark")
+                Button("Try again") { connect() }.buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity)
         } else if live.control, let scene = live.scene, scene.isYourTurn {
             yourTurn(scene)
         } else if live.scene == nil {
@@ -956,14 +998,24 @@ struct StageSheet: View {
 
     private func yourTurn(_ scene: PageScene) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                SiteIcon(url: scene.iconURL, size: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(scene.turnTitle).font(.title3.weight(.semibold))
-                    Text("Aide types it into \(scene.siteName) for you, and never sees it.")
-                        .font(.footnote).foregroundStyle(.secondary)
+            // The page drawn in the chat, come forward: the site with its lock, then what it asks.
+            VStack(spacing: 8) {
+                ZStack(alignment: .bottomTrailing) {
+                    SiteIcon(url: scene.iconURL, size: 60)
+                    Image(systemName: scene.turnSymbol)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Theme.onAccent)
+                        .padding(6)
+                        .background(tint, in: Circle())
+                        .offset(x: 8, y: 8)
                 }
+                .padding(.bottom, 4)
+                Text(scene.turnTitle).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
+                Text("Aide types it into \(scene.siteName) for you, and never sees it.")
+                    .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 4)
             if let error = scene.form?.error {
                 Label(error, systemImage: "exclamationmark.circle.fill").font(.subheadline).foregroundStyle(.red)
             }
@@ -1078,9 +1130,11 @@ struct StageSheet: View {
         }
     }
 
+    private var showsFooter: Bool { live.control && !loggedIn && !(live.scene?.isYourTurn ?? false) }
+
     @ViewBuilder
     private var footer: some View {
-        if live.control && !loggedIn && !(live.scene?.isYourTurn ?? false) {
+        if showsFooter {
             Button {
                 Task { await finish() }
             } label: {
@@ -1091,9 +1145,8 @@ struct StageSheet: View {
             .foregroundStyle(Theme.onAccent)
             .controlSize(.large)
             .disabled(finishing)
-            .padding(.horizontal, 16).padding(.vertical, 10)
+            .padding(.horizontal, 20).padding(.bottom, 20).padding(.top, 2)
             .frame(maxWidth: .infinity)
-            .background(Theme.grouped)
         }
     }
 
@@ -1209,13 +1262,23 @@ struct StageSheet: View {
         await live.done()
         finishing = false
         onClose()
-        dismiss()
+        leave()
     }
 
     private func close() {
         live.disconnect()
         onClose()
-        dismiss()
+        leave()
+    }
+
+    /// Back into the middle, then off the screen.
+    private func leave() {
+        focused = nil
+        withAnimation(.spring(duration: 0.25)) { shown = false }
+        Task {
+            try? await Task.sleep(for: .milliseconds(220))
+            if let hide { hide() } else { dismiss() }
+        }
     }
 }
 
@@ -1286,5 +1349,40 @@ struct PageField: View {
         let flags = ["39": "🇮🇹", "34": "🇪🇸", "33": "🇫🇷", "49": "🇩🇪", "44": "🇬🇧", "1": "🇺🇸", "41": "🇨🇭",
                      "43": "🇦🇹", "31": "🇳🇱", "32": "🇧🇪", "351": "🇵🇹", "30": "🇬🇷", "353": "🇮🇪", "48": "🇵🇱"]
         return flags[code.filter(\.isNumber)] ?? "🌐"
+    }
+}
+
+extension View {
+    /// The login card (`StageSheet`) over everything, popping up in the middle instead of sliding up as a sheet.
+    func stage(item: Binding<BrowserTarget?>, tint: Color = Theme.glow,
+               onClose: @escaping () -> Void = {}) -> some View {
+        modifier(StagePresenter(item: item, tint: tint, onClose: onClose))
+    }
+}
+
+/// A full-screen cover shown and hidden without its slide: the card does its own coming and going.
+private struct StagePresenter: ViewModifier {
+    @Binding var item: BrowserTarget?
+    let tint: Color
+    let onClose: () -> Void
+    @State private var shown: BrowserTarget?
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { show(item) }
+            .onChange(of: item) { _, new in show(new) }
+            .fullScreenCover(item: $shown) { target in
+                StageSheet(target: target, tint: tint, onClose: onClose) {
+                    show(nil)
+                    item = nil
+                }
+            }
+    }
+
+    private func show(_ target: BrowserTarget?) {
+        guard target != shown else { return }
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) { shown = target }
     }
 }

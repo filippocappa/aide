@@ -214,7 +214,7 @@ struct ChatView: View {
                             } else if !message.consulted.isEmpty {
                                 ConsultedRow(agents: message.consulted.map { chat.agent($0) })
                             }
-                            MessageRow(message: message)
+                            MessageRow(message: message, foldedErrands: chat.errandsAgain(after: message))
                             if chat.startsWithDigest, message.id == chat.messages.first?.id { digestDetails }
                         }
                         .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity))
@@ -496,6 +496,7 @@ struct SendButton: View {
 /// and share underneath.
 private struct MessageRow: View {
     let message: ChatViewModel.Message
+    var foldedErrands: Set<Int> = []
     @State private var copied = false
 
     var body: some View {
@@ -521,7 +522,7 @@ private struct MessageRow: View {
                 }
                 .padding(.horizontal, 2)
                 ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
-                    AttachmentCard(attachment: attachment)
+                    AttachmentCard(attachment: attachment, foldedErrands: foldedErrands)
                 }
                 if !message.isError, !message.text.isEmpty { actions }
             }
@@ -584,6 +585,8 @@ private struct MessagePhotos: View {
 /// here, events show on a week, files open, a notebook proposal is answered. A long list shows its first few until you ask for the rest.
 struct AttachmentCard: View {
     let attachment: Attachment
+    /// Errands shown again further down: one line here.
+    var foldedErrands: Set<Int> = []
     @State private var expanded = false
     private static let fold = 5
 
@@ -605,7 +608,9 @@ struct AttachmentCard: View {
         case .proposal(let proposal):
             card { ProposalAnswerCard(proposal: proposal) }
         case .errands(let errands):
-            VStack(spacing: 10) { ForEach(errands) { ErrandCard(errand: $0) } }
+            VStack(spacing: 10) {
+                ForEach(errands) { ErrandCard(errand: $0, folded: foldedErrands.contains($0.id)) }
+            }
         case .purchases(let purchases):
             VStack(spacing: 10) { ForEach(purchases) { PurchaseCard(purchase: $0) } }
         case .products(let products):

@@ -202,6 +202,6 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { digest.isPresented && !env.showToday }, set: { digest.isPresented = $0 })) {
             DigestSheet()
         }
-        .sheet(item: $env.browser) { StageSheet(target: $0) }
+        .stage(item: $env.browser)
     }
 }

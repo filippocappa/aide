@@ -97,6 +97,10 @@ final class BrowserLive: ObservableObject {
 
     private var task: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
+    /// To open again after a drop (the phone moving from mobile data to Wi-Fi, Tailscale reconnecting).
+    private var request: URLRequest?
+    private var retries = 0
+    private static let retryAfter: [Duration] = [.milliseconds(500), .seconds(1), .seconds(2), .seconds(3)]
 
     var control: Bool { status?.control ?? false }
     /// Open and not closed by the server.
@@ -113,6 +117,12 @@ final class BrowserLive: ObservableObject {
             self.errand = errand
             Self.watching[errand, default: 0] += 1
         }
+        self.request = request
+        retries = 0
+        open(request)
+    }
+
+    private func open(_ request: URLRequest) {
         let task = URLSession.shared.webSocketTask(with: request)
         task.maximumMessageSize = 16 << 20
         self.task = task
@@ -129,6 +139,7 @@ final class BrowserLive: ObservableObject {
         reader = nil
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
+        request = nil
     }
 
     func tap(x: Double, y: Double) { send(["type": "tap", "x": x, "y": y]) }
@@ -165,10 +176,20 @@ final class BrowserLive: ObservableObject {
                 message = try await task.receive()
             } catch {
                 guard !Task.isCancelled else { return }
+                // A drop, not the server closing it on purpose: open it again, quietly, a few times.
+                let dropped = [.invalid, .abnormalClosure, .goingAway].contains(task.closeCode)
+                if dropped, let request, retries < Self.retryAfter.count {
+                    try? await Task.sleep(for: Self.retryAfter[retries])
+                    guard !Task.isCancelled, self.task === task else { return }
+                    retries += 1
+                    open(request)
+                    return
+                }
                 closed = task.closeCode == .policyViolation ? "The server didn't open this page."
                     : "The live view closed."
                 return
             }
+            retries = 0
             let data: Data
             switch message {
             case .string(let text): data = Data(text.utf8)
@@ -432,8 +453,13 @@ struct ErrandCard: View {
     @State private var confirming: QueuedAction?
     @State private var busy = false
     @State private var error: String?
+    /// The same errand's card comes again further down: just its line here.
+    private let folded: Bool
 
-    init(errand: Errand) { _errand = State(initialValue: errand) }
+    init(errand: Errand, folded: Bool = false) {
+        _errand = State(initialValue: errand)
+        self.folded = folded
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -445,21 +471,25 @@ struct ErrandCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            if !errand.isOver {
+            if !errand.isOver, !folded {
                 Text(errand.line).font(.subheadline).foregroundStyle(.secondary).lineLimit(4)
             }
-            if ErrandLiveBox.shows(errand) {
+            if !folded, ErrandLiveBox.shows(errand) {
                 ErrandLiveBox(errand: errand, tint: chat.agent("aide").tint) {
                     browser = .errand(errand.id, title: errand.title)
                 }
                 .transition(.asymmetric(insertion: .scale(scale: 0.96, anchor: .top).combined(with: .opacity),
                                         removal: .opacity))
             }
-            ErrandButtons(errand: errand, busy: busy,
-                          takeOver: { browser = .errand(errand.id, title: errand.title) },
-                          answer: { answer in Task { await act { try await env.api.replyErrand(errand.id, answer: answer) } } },
-                          review: { Task { await review() } },
-                          cancel: { Task { await act { try await env.api.cancelErrand(errand.id) } } })
+            if !folded {
+                ErrandButtons(errand: errand, busy: busy,
+                              takeOver: { browser = .errand(errand.id, title: errand.title) },
+                              answer: { answer in
+                                  Task { await act { try await env.api.replyErrand(errand.id, answer: answer) } }
+                              },
+                              review: { Task { await review() } },
+                              cancel: { Task { await act { try await env.api.cancelErrand(errand.id) } } })
+            }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
             }
@@ -476,9 +506,7 @@ struct ErrandCard: View {
                 }
             }
         }
-        .sheet(item: $browser) { target in
-            StageSheet(target: target, tint: chat.agent("aide").tint) { Task { await refresh() } }
-        }
+        .stage(item: $browser, tint: chat.agent("aide").tint) { Task { await refresh() } }
         .fullScreenCover(item: $realPage) { target in
             BrowserSheet(target: target) { Task { await refresh() } }
         }
@@ -1035,9 +1063,7 @@ struct BrowserSettingsView: View {
         .navigationTitle("Browser")
         .task { await load() }
         .refreshable { await load() }
-        .sheet(item: $browser) { target in
-            StageSheet(target: target) { Task { await load() } }
-        }
+        .stage(item: $browser) { Task { await load() } }
     }
 
     private func load() async {

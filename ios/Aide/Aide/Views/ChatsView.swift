@@ -165,6 +165,7 @@ struct ChatsView: View {
         }
         guard settings.isPreview, let target = UserDefaults.standard.string(forKey: "previewOpen") else { return }
         if target == "team" { showTeam = true; return }
+        if target.hasPrefix("errand:"), let id = Int(target.dropFirst(7)) { env.browser = .errand(id, title: "Errand"); return }
         if target.hasPrefix("chat:") { await chat.open(id: String(target.dropFirst(5))); return }
         if target.hasPrefix("files:") { env.newFiles = NewFiles(ids: target.dropFirst(6).split(separator: ",").map(String.init)); return }
         if target.hasPrefix("info:") { infoFor = chat.agent(String(target.dropFirst(5))); return }
