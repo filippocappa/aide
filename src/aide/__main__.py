@@ -42,6 +42,7 @@ from .moodle import MoodleSync
 from .notebook import NotebookStore, NotebookWorker
 from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
+from .videos import VideoStore, VideoWorker
 from .weight import WeightStore
 from .webdav import USER as WEBDAV_USER
 from .tools import ToolRegistry
@@ -62,6 +63,7 @@ from .tools.plans import plan_tools
 from .tools.quiz import quiz_tools
 from .tools.study import study_tools
 from .tools.transit import leave_tools, transit_tools
+from .tools.videos import video_tools
 from .leave import LeaveWatcher
 from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts
 from .upcoming import EventWatcher
@@ -159,6 +161,9 @@ def main() -> None:
         tools += errand_tools(errands, errand_chat)
     else:
         log.warning("Playwright's Chromium not installed (uv run playwright install chromium): no browser errands")
+    video_store = VideoStore(db.conn, settings.timezone)
+    videos = VideoWorker(video_store, engine, photos, push, whisper_transcribe if whisper_available() else None)
+    tools += video_tools(videos, lambda: CONVERSATION if agent._conversation in (None, TEAM) else agent._conversation)
     location = Location(db.conn, push)
     maps = None
     if settings.google_maps_api_key:
@@ -208,6 +213,7 @@ def main() -> None:
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
     if errands:
         errands.agent = agent
+    videos.agent = agent
     whereabouts = Whereabouts(location, maps) if maps is not None else None
     if whereabouts:
         agent.whereabouts = whereabouts.describe
@@ -254,6 +260,8 @@ def main() -> None:
     if settings.webdav_password:
         vault = Vault(settings.vault_dir / settings.vault_name, study, notebook)
         notes.vault = vault
+        vault.videos, vault.photos = video_store, photos
+        video_store.on_ready.append(vault.kick)
         vault_info = {"url": settings.webdav_url, "user": WEBDAV_USER, "password": settings.webdav_password,
                       "vault": settings.vault_name}
     else:
@@ -277,6 +285,7 @@ def main() -> None:
             *([leave.run()] if leave else []),
             *([events.run()] if events else []),
             *([errands.run()] if errands else []),
+            videos.run(),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
@@ -285,7 +294,7 @@ def main() -> None:
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off,
-                             weights=weights)
+                             weights=weights, videos=videos)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

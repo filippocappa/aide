@@ -51,6 +51,7 @@ from ..leave import LeaveWatcher
 from ..locks import LockStore
 from ..tools.nutrition import OpenFoodFacts, read_label, save_product
 from ..transit import AlertStore, Boards, Location
+from ..videos import VideoWorker, find_link
 from ..wake import WakeService
 from ..weight import WeightStore
 
@@ -404,6 +405,12 @@ class ErrandReplyIn(BaseModel):
     answer: str
 
 
+class VideoIn(BaseModel):
+    url: str  # a YouTube link, or text with one in it (what the share sheet gives)
+    question: str | None = None
+    conversation_id: str | None = None  # none: a new chat with Aide
+
+
 class SiteIn(BaseModel):
     url: str  # a site (amazon.it) or a page on it, to log in there
 
@@ -481,7 +488,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                locks: LockStore | None = None, errands: ErrandRunner | None = None,
                errand_store: ErrandStore | None = None, plans: PlanStore | None = None,
                foods: FoodDB | None = None, off: OpenFoodFacts | None = None,
-               weights: WeightStore | None = None) -> FastAPI:
+               weights: WeightStore | None = None, videos: VideoWorker | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -779,7 +786,18 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     a["proposal"] = notebook.proposal_json(p)  # applied or declined since
                 elif a["type"] == "files":
                     a["files"] = [file_json(f) for old in a["files"] if (f := study.files.get(old["id"]))]
-            m["attachments"] = [a for a in m["attachments"] if a["type"] != "files" or a["files"]]
+                elif a["type"] == "videos" and videos:  # a working card shows how far it got; deleted ones go
+                    a["videos"] = [videos.store.card(v) for old in a["videos"] if (v := videos.store.get(old["id"]))]
+            m["attachments"] = [a for a in m["attachments"] if a["type"] not in ("files", "videos") or a[a["type"]]]
+        # A video's card shows once, on its latest message (the brief), not again on the "on it" before it.
+        later: set[str] = set()
+        for m in reversed(messages):
+            for a in m["attachments"]:
+                if a["type"] == "videos":
+                    shown = {v["id"] for v in a["videos"]}
+                    a["videos"] = [v for v in a["videos"] if v["id"] not in later]
+                    later |= shown
+            m["attachments"] = [a for a in m["attachments"] if a["type"] != "videos" or a["videos"]]
         # A turn still running here isn't in the history yet (it's saved when it ends): what was asked, and by whom.
         running = working.get(conversation_id or CONVERSATION)
         return {"messages": messages, **({"working": running} if running else {})}
@@ -2112,6 +2130,53 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.delete("/v1/devices/{token}", dependencies=[Depends(auth)])
     async def delete_device(token: str):
         push.remove(token)
+        return {"ok": True}
+
+    # -- YouTube videos ---------------------------------------------------------
+
+    def video_worker() -> VideoWorker:
+        if videos is None:
+            raise HTTPException(503, "videos aren't set up on the server")
+        return videos
+
+    def video_or_404(video_id: str) -> dict:
+        v = video_worker().store.get(video_id)
+        if v is None:
+            raise HTTPException(404, f"no video {video_id}")
+        return v
+
+    @app.post("/v1/videos", dependencies=[Depends(auth)])
+    async def start_video(body: VideoIn):
+        """A video shared from the app (YouTube's Share): read in the background, its brief posted in the chat."""
+        worker = video_worker()
+        url = find_link(body.url)
+        if url is None:
+            raise HTTPException(400, "that isn't a YouTube video link")
+        question = (body.question or "").strip() or None
+        if body.conversation_id and db.app_conversation(body.conversation_id) is None:
+            raise HTTPException(404, f"no conversation {body.conversation_id}")
+        conversation = body.conversation_id or db.new_app_conversation(ORCHESTRATOR)["public_id"]
+        v = worker.start(url, conversation, question)
+        await agent.post(conversation, url + (f"\n\n{question}" if question else ""),
+                         "Reading it now: the brief comes here in a few minutes.",
+                         [{"type": "videos", "videos": [worker.store.card(v)]}], record=False)
+        return {"video": worker.store.full(v), "conversation_id": conversation}
+
+    @app.get("/v1/videos", dependencies=[Depends(auth)])
+    async def list_videos(q: str | None = None, limit: int = 100):
+        if videos is None:
+            return {"videos": [], "enabled": False}
+        return {"videos": [videos.store.card(v) for v in videos.store.search(q, max(1, min(limit, 500)))],
+                "enabled": True}
+
+    @app.get("/v1/videos/{video_id}", dependencies=[Depends(auth)])
+    async def get_video(video_id: str):
+        return video_worker().store.full(video_or_404(video_id))
+
+    @app.delete("/v1/videos/{video_id}", dependencies=[Depends(auth)])
+    async def delete_video(video_id: str):
+        video_or_404(video_id)
+        video_worker().delete(video_id)
         return {"ok": True}
 
     # -- browser errands -------------------------------------------------------

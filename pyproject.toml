@@ -20,6 +20,7 @@ dependencies = [
     "uvicorn>=0.54.0",
     "websockets>=15.0",  # uvicorn serves the browser live view (/v1/browser/live) with it
     "wsgidav>=4.3",
+    "yt-dlp>=2026.10.26",  # YouTube videos (videos.py); YouTube breaks old ones: uv lock --upgrade-package yt-dlp
 ]
 
 [project.optional-dependencies]

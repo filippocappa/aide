@@ -210,7 +210,7 @@ class Agent:
                 if not isinstance(content, str) or content.startswith(("[The user replied", "[The user tapped", _OPENED)):
                     continue  # tool results, confirm/cancel and plan notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
-                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND, SCANNED)):
+                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND, _VIDEO, SCANNED)):
                     continue  # a routine's prompt, the note before new lecture notes or a notebook proposal
                 if photos := _PHOTO.findall(text):
                     out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
@@ -712,7 +712,8 @@ def _merge(attachments: list[dict]) -> list[dict]:
     merged: dict[str, dict[str, dict]] = {}
     for a in attachments:
         key = {"reminders": "reminders", "events": "events", "meals": "meals", "departures": "departures",
-               "routes": "routes", "errands": "errands", "purchases": "purchases"}.get(a["type"])
+               "routes": "routes", "errands": "errands", "purchases": "purchases",
+               "videos": "videos"}.get(a["type"])
         if key is None:
             continue
         items = merged.setdefault(a["type"], {})
@@ -738,6 +739,7 @@ _ROUTINE = "[Scheduled routine"
 _LECTURE = "[Lecture notes ready"
 _NOTEBOOK = "[Notebook"
 _ERRAND = "[Errand #"
+_VIDEO = "[Video #"  # videos.NOTE
 SCANNED = "[Scanned in the app"
 
 

@@ -83,6 +83,10 @@ from the tools the assistant used in that turn, not parsed from its text:
 - `products`: what an errand found, best first (since 2026-10-28; see Browser errands), `{"type": "products",
   "errand_id": 7, "site": "amazon.it", "products": [Product]}`, on the errand's closing message. The text above it
   is short (which one and why); the cards carry names, prices and links.
+- `videos`: a YouTube video Aide or Professor is reading or has read (since 2026-10-30; see Videos), `{"type":
+  "videos", "videos": [VideoCard]}`: when one is started (`queued`), on the brief when it's ready, and when it
+  failed. `/v1/history` gives each card as the video is now, drops the cards of deleted videos, and shows a video's
+  card only on the latest message that has it.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
@@ -1935,6 +1939,85 @@ App to server (only while `control` is true):
 - `{"type": "frames", "on": true}` (since 2026-10-28, any time): start or stop the frames ("Show the real page").
 - `{"type": "done"}`: you're done. For an errand waiting on you, the same as `POST /v1/errands/{id}/done`; with
   `?site=`, the page is closed (the login stays). The server then closes the socket.
+
+## Videos
+
+Send Aide a YouTube video and get back what happens in it and what to know (since 2026-10-30). There are two ways in:
+- paste a link in any chat with Aide or Professor (the model calls `summarize_video`);
+- share it from YouTube or Safari through the app's share extension (`POST /v1/videos`, which opens a new Aide chat).
+
+The server reads the video in the background, one at a time:
+1. yt-dlp gets the details and captions: the video's own captions in its language, else YouTube's automatic ones.
+   With no captions it transcribes the audio with Whisper.
+2. Sonnet writes the brief in English, whatever the video's language.
+3. A frame is taken a few seconds after each key moment, and Haiku keeps only the frames that show something (a
+   slide, a diagram, code, a product), not a person talking.
+4. It posts the brief in the chat with its card, and sends a `message` push.
+
+It takes about 30 s for a 20-minute video with captions, and longer for Whisper. The agents read a video already
+read with `read_video` (the brief, or the transcript's lines about something, with their times) and list them with
+`list_videos`.
+
+```jsonc
+// VideoCard: on chat messages (`videos` attachment) and in the list
+{
+  "id": "v_3f9a1c2b7d",
+  "youtube_id": "aircAruvnKk",
+  "url": "https://www.youtube.com/watch?v=aircAruvnKk",   // the link as given
+  "status": "queued",            // queued | working | ready | failed
+  "step": "Writing the brief",   // while queued or working: what it's doing, else null
+  "error": null,                 // failed: why, in words for the user ("It's a private video.")
+  "title": "But what is a neural network?",   // null until it's been looked up
+  "channel": "3Blue1Brown",
+  "duration": 1120,              // seconds, or null
+  "thumbnail": "https://i.ytimg.com/vi/aircAruvnKk/maxresdefault.jpg",
+  "gist": "Two lines on what it is.",   // null until ready
+  "moments": 9,                  // how many key moments
+  "frames": 6,                   // how many of them have a frame
+  "cover": "p_5afef32c44506e0e", // the first frame's photo id (GET /v1/photos/{id}), or null
+  "created_at": "2026-10-30T13:46:00+01:00"
+}
+```
+
+A **Video** (`GET /v1/videos/{id}`, `POST /v1/videos`) is a VideoCard plus the brief. Its `moments` is the list,
+not the count:
+```jsonc
+{
+  /* …VideoCard… */
+  "question": "Is it hard?",     // what the user asked of it, or null
+  "published": "2017-10-05",     // or null
+  "language": "en",              // the spoken language
+  "source": "captions",          // captions (the video's own) | auto (YouTube's) | whisper; null until read
+  "conversation_id": "c_…",      // the chat it was asked from and posts in
+  "chapters": [{"t": 0, "title": "Intro"}],   // the video's own chapters, seconds
+  "tldr": "A paragraph.",
+  "know": ["What you should know, a line each."],
+  "takeaway": "The one thing to remember.",
+  "answer": "The answer to `question` from the video, or that it doesn't say; null without a question.",
+  "moments": [
+    {"t": 163, "title": "Neurons and activations", "text": "Two or three lines.",
+     "frame": "p_90b73538e54acca8",   // a photo id, or absent: no frame worth showing
+     "url": "https://www.youtube.com/watch?v=aircAruvnKk&t=163s"}   // opens YouTube at that moment
+  ]
+}
+```
+Moments are in time order, 4 to 10 of them. Frames are 1280 px wide JPEGs, served by `GET /v1/photos/{id}`.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/videos` | `{"url": "https://youtu.be/…", "question": "what does he say about X?", "conversation_id": null}` | `{"video": Video, "conversation_id": "c_…"}`. `url` may be any text with a YouTube link in it. Without `conversation_id` it makes a new Aide chat, titled after the video once that's known. The chat gets the link (and the question) as your message and "Reading it now" with the card. `400`: no YouTube link; `404`: unknown `conversation_id` |
+| `GET /v1/videos?q=neural&limit=100` | | `{"videos": [VideoCard], "enabled": true}`, newest first; `q` matches the title, channel and brief |
+| `GET /v1/videos/{id}` | | the Video; `404` |
+| `DELETE /v1/videos/{id}` | | `{"ok": true}`: the video, its brief, its frames and its vault page go; `404` |
+
+Without the worker the endpoints answer `503` and the list is empty with `enabled` false.
+
+What it can't read fails with the reason: private, members-only, age-restricted or removed videos, live streams,
+and videos over 4 hours. A restart puts a video being read back in the queue.
+
+Each ready video is also a page in the Obsidian vault, `Aide/Videos/<title>.md`: the link, channel and date, your
+question and its answer, the TL;DR, what to know, the moments with their times (links to YouTube) and frames
+(`Aide/Videos/Frames/`), the takeaway, and the transcript folded.
 
 ## Push
 

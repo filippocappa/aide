@@ -6,6 +6,7 @@ Everything Aide writes is under Aide/ in the vault, one folder per course:
   the topic's flashcards for the Spaced Repetition plugin, and Images/ with the slides the topics show as figures;
 - otherwise an index page named after the course;
 - and in every course, Sources/ with a page per lecture, and Files/ with the PDFs.
+YouTube videos Aide read (videos.py) go in Aide/Videos/, a page each, their frames in Aide/Videos/Frames/.
 
 Aide only changes what it wrote: a file the user edited (its hash isn't the one Aide wrote) or deleted is theirs
 from then on, and Aide leaves it alone. Two exceptions. A topic page is shared: the user's edits are read back into
@@ -27,7 +28,8 @@ from pathlib import Path
 
 from .material import page_image
 from .notebook import FIGURE, date_line, figures, max_points, mock_paper, mock_title
-from .study import StudyStore
+from .study import StudyStore, stamp
+from .videos import watch_url
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +138,8 @@ class Vault:
         self.folder = folder
         self.study = study
         self.notebook = notebook  # NotebookStore, or None: no notebook pages
+        self.videos = None  # VideoStore, with photos (PhotoStore, the frames): the videos' pages
+        self.photos = None
         self.conn = study.conn
         self.conn.executescript(SCHEMA)
         self._wake = asyncio.Event()
@@ -317,7 +321,64 @@ class Vault:
             elif lectures or files:
                 items.append(Item(f"{folders[cid]}/{_file_name(c['name'])}.md", f"course:{cid}",
                                   self._course(c, lectures, lecture_paths, files, file_paths)))
+        return items + self._video_items()
+
+    # -- YouTube videos --------------------------------------------------------------
+
+    def _video_items(self) -> list[Item]:
+        if self.videos is None:
+            return []
+        items, taken = [], set()
+        for v in reversed(self.videos.search(ready=True, limit=100_000)):  # oldest first: an older page keeps its name
+            stem, n = _file_name(v["title"] or v["youtube_id"]), 2
+            name = stem
+            while name.casefold() in taken:
+                name, n = f"{stem} ({n})", n + 1
+            taken.add(name.casefold())
+            frames = {}
+            for m in (v["summary"] or {}).get("moments") or []:
+                if m.get("frame") and self.photos and (src := self.photos._path(m["frame"])):
+                    path = f"{ROOT}/Videos/Frames/{m['frame']}{src.suffix}"
+                    frames[m["frame"]] = path
+                    items.append(Item(path, f"video-frame:{v['public_id']}", source=src,
+                                      version=f"{src.stat().st_size}:{m['frame']}"))
+            items.append(Item(f"{ROOT}/Videos/{name}.md", f"video:{v['public_id']}", self._video(v, frames)))
         return items
+
+    def _video(self, v: dict, frames: dict[str, str]) -> str:
+        s = v["summary"] or {}
+        created = datetime.fromisoformat(v["created_at"]).astimezone(self.study.tz)
+        meta = ["---", f"url: {v['url']}", f'channel: "{(v["channel"] or "").replace(chr(34), "")}"']
+        if v["published"]:
+            meta.append(f"published: {v['published']}")
+        if v["duration"]:
+            meta.append(f'length: "{stamp(v["duration"])}"')
+        meta += [f"read: {created:%Y-%m-%d}", f"video: {v['public_id']}", "tags:", "  - video", "---"]
+        out = ["\n".join(meta), f"# {v['title']}",
+               f"[{v['channel'] or 'YouTube'}]({watch_url(v['youtube_id'])})"
+               + (f" · {stamp(v['duration'])}" if v["duration"] else "")]
+        if v["question"] and s.get("answer"):
+            out.append(f"> [!question] {v['question']}\n> {s['answer']}")
+        if s.get("tldr"):
+            out.append("## TL;DR\n" + s["tldr"])
+        if s.get("know"):
+            out.append("## What to know\n" + "\n".join(f"- {k}" for k in s["know"]))
+        if s.get("moments"):
+            lines = []
+            for m in s["moments"]:
+                block = f"### [{stamp(m['t'])}]({watch_url(v['youtube_id'], m['t'])}) {m['title']}\n{m['text']}"
+                if m.get("frame") in frames:
+                    block += f"\n\n![[{frames[m['frame']]}]]"
+                lines.append(block)
+            out.append("## Key moments\n\n" + "\n\n".join(lines))
+        if s.get("takeaway"):
+            out.append(f"> [!tip] Takeaway\n> {s['takeaway']}")
+        if v["transcript"]:
+            out.append("> [!quote]- Transcript\n" + _quote(v["transcript"]))
+        out.append("*Written by Aide from the video's "
+                   + {"captions": "captions", "auto": "automatic captions", "whisper": "sound"}.get(v["source"], "transcript")
+                   + ". Edit this page and Aide leaves it as you made it.*")
+        return "\n\n".join(out) + "\n"
 
     def _lecture(self, lec: dict, course: dict | None, index: str | None, file_paths: dict,
                  expanded: list[str]) -> str:

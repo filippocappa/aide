@@ -24,6 +24,7 @@ TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alert
            "update_transit_alert", "delete_transit_alert")
 WEB = ("web_search", "fetch_page")
 BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
+VIDEO = ("summarize_video", "read_video", "list_videos")
 PURCHASES = ("list_purchases",)
 HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
 HEALTH = ("health",)
@@ -130,7 +131,7 @@ a later start or a shorter lock. A strict lock (only when they ask for one, or a
 ended from chat at all: only with one of their 3 emergency passes a month, in the app; while it's on, the app's \
 Screen Time page is locked too. Offer strict when they keep unlocking a lock that matters to them."""
 
-_CARDS = """- In the app, the reminders, calendar events, meals and routes your tools listed, created or changed this turn are \
+_CARDS = """- In the app, the reminders, calendar events, meals, routes and videos your tools listed, created or changed this turn are \
 shown under your reply as cards (with tick boxes for reminders). So don't repeat them line \
 by line: one short sentence is enough ("Four open reminders, the next one at 15:00."), plus anything worth \
 pointing out (a clash, something overdue)."""
@@ -148,6 +149,13 @@ like other deletions."""
 _WEB = """- Web: for anything current (news, prices, events, opening dates) or any fact you aren't sure of, use \
 web_search rather than guessing; use topic news for recent events. If the snippets aren't enough, read the best \
 result with fetch_page. Answer in a few lines and always give the link to your source."""
+
+_VIDEO = """- YouTube: when the user sends a YouTube link (youtube.com, youtu.be, a Shorts link), call summarize_video \
+with it, and with what they want from it as `question` if they said. It reads the video in the background and posts \
+the brief in this chat with a card (what happens, what to know, the key moments with frames, as a page and as slides \
+in the app), so reply in one line that you're on it and don't summarise it yourself or search the web for it. For \
+follow-ups on a video already read ("what did he say about X?"), read_video with a query gives the transcript's \
+parts with their times; answer from them and give the [m:ss]. list_videos finds older ones."""
 
 _MAPS = """- Maps: for places ("a pharmacy open now near me") use find_places, and for how long it takes to get somewhere \
 use travel_time (driving, with live traffic, is the default; walk, bicycle, or transit for train and bus). Both \
@@ -334,7 +342,7 @@ AIDE_PROMPT = _prompt(
     "You are Aide, a personal assistant for one person, and the one they talk to first. Like an executive "
     "assistant with a team behind them, you understand what they want, hand it to the specialist whose work it "
     "is, and report back. You look things up on the web and on maps yourself.",
-    _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _MAPS, _TRANSIT, _BROWSER, _DELEGATE, _ROUTINES, _WATCHES,
+    _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _VIDEO, _MAPS, _TRANSIT, _BROWSER, _DELEGATE, _ROUTINES, _WATCHES,
     _ROUTINES_ANY, _OBJECTIVES, _OBJECTIVES_ANY,
 )
 
@@ -351,7 +359,7 @@ PROFESSOR_PROMPT = _prompt(
     "explain step by step, starting from what the user already knows, with a small example where it helps. "
     "After a longer explanation, check understanding with one short question. Study plans are concrete: "
     "topics, order and time per session, working back from the exam date.",
-    _BASICS, _QUEUE, _STUDY, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _STUDY, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _VIDEO, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 COACH_PROMPT = _prompt(
@@ -405,7 +413,7 @@ LATER_WATCHES = tuple((n, a, dict(i, days=list(i["days"]))) for n, a, i in _LATE
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
-             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *MAPS, *TRANSIT, *BROWSER),
+             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *VIDEO, *MAPS, *TRANSIT, *BROWSER),
              orchestrator=True,
              routine_ideas=(_idea("Plan my week", "Look at my calendar, reminders and habits for the coming week and "
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
@@ -418,7 +426,7 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                             *(i for a, i in _STARTING_WATCHES if a == "secretary"))),
     AgentDef("professor", "Professor", "Study and lectures", "#7A4FD0",
              ("What did we cover in ", "Explain ", "Make me a study plan for "), PROFESSOR_PROMPT,
-             (*STUDY, *CALENDAR_READ, *PLANS, *WEB),
+             (*STUDY, *CALENDAR_READ, *PLANS, *WEB, *VIDEO),
              routine_ideas=(_idea("Review what I studied", "Ask me what I studied this week, then quiz me on it with "
                                   "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training, food and habits", "#23A26D",
@@ -451,6 +459,7 @@ _CONNECTORS = (
                                      "write_exercises", "write_mock_exam", "notes_writer", "add_review_session",
                                      "cancel_review_session"}),
     ("web", "Web search", WEB, set()),
+    ("youtube", "YouTube", VIDEO, {"summarize_video"}),
     ("maps", "Google Maps", MAPS, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
     ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand"}),

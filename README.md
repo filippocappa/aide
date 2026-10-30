@@ -500,6 +500,19 @@ video of the site; the real page is in the card's long-press menu.
 Setup on the server, once: `uv run playwright install chromium` (and `uv run playwright install-deps chromium` on a
 fresh Ubuntu for its libraries).
 
+## YouTube videos
+
+Share a YouTube video to Aide (the share sheet, from the YouTube app or Safari) or paste its link in a chat, and a
+few minutes later the brief comes back in that chat: what it's about, what to know, the key moments with their
+times (a tap opens YouTube there), and frames from the video where the picture matters. The brief opens as a page and
+plays as slides. Briefs are in English, whatever the video's language. Settings → Videos lists them, and each is a
+page in the Obsidian vault under `Aide/Videos/`.
+
+It reads the video's captions with [yt-dlp](https://github.com/yt-dlp/yt-dlp), or, with no captions, transcribes the
+audio with Whisper (the `whisper` extra). Frames are taken with `ffmpeg`, so the server needs it. YouTube changes
+often and old yt-dlp versions stop working: when videos start failing to load, update it with
+`uv lock --upgrade-package yt-dlp && uv sync --extra whisper` and restart.
+
 ## Trams and buses (Turin)
 
 Secretary knows GTT: the timetable (rebuilt nightly from GTT's GTFS) and the live feed. Tram alerts push "Tram 4 in

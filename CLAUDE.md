@@ -55,6 +55,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `browser.py`: Aide's own Chromium (Playwright, headless, a phone-sized page, a profile per site in `data/browser/`),
   the page listing the model reads, the live view's screencast and input. `errands.py`: browser errands (the store,
   the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
+- `videos.py`: YouTube videos (yt-dlp, captions or Whisper, the brief, frames), posted back in the chat it came from.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -429,6 +430,16 @@ plans"): a turn's events in one card in time order, marked found, created or pro
 Professor) puts a plan on it that goes in the calendar only on Add; the app's `Views/EventWeekView.swift` (week strip,
 the chosen day, the event's sheet with Move, Delete, Open in Calendar). Also a reply survives the app going to the
 background (pings, `working` on history, a `message` push when no Live Activity is left).
+
+**Done, server (2026-10-30), app in progress:** YouTube videos (contract in `docs/API.md`, "Videos"; `videos.py`,
+`tools/videos.py`). A link pasted in Aide's or Professor's chat (`summarize_video`) or shared through the app
+(`POST /v1/videos`, a new Aide chat) is read in the background: yt-dlp's details and captions (the video's own, else
+YouTube's automatic ones; no captions: Whisper on the audio), a brief in English by Sonnet (gist, TL;DR, what to know,
+4–10 key moments with times, the takeaway, the answer to the user's question), a frame after each moment from the
+stream (ffmpeg, no download) and Haiku keeping only the ones that show something; posted in the chat with a `videos`
+card and a push. `read_video` and `list_videos` for follow-ups. Each one is a page in the vault (`Aide/Videos/`).
+Tried on cappa: 3Blue1Brown (captions, 27–43 s), Geopop in Italian (brief in English), Whisper on 10 min (42 s).
+yt-dlp must be kept current (README, "YouTube videos").
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from

@@ -39,6 +39,10 @@ class PhotoStore:
     def exists(self, photo_id: str) -> bool:
         return self._path(photo_id) is not None
 
+    def delete(self, photo_id: str) -> None:
+        if (path := self._path(photo_id)) is not None:
+            path.unlink(missing_ok=True)
+
     def load(self, photo_id: str) -> tuple[bytes, str] | None:
         """The photo's bytes and content type, or None for an unknown id."""
         if (path := self._path(photo_id)) is None:
