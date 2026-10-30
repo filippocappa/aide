@@ -348,7 +348,35 @@ struct DayHeartChart: View {
 
 // MARK: - A score's page
 
-/// One score: the big ring, what it's made of, and the last 30 days.
+/// A titled card on a score's page: the title above, the content on a rounded card, a note under it.
+struct DetailCard<Content: View>: View {
+    let title: String?
+    let note: String?
+    let content: Content
+
+    init(_ title: String? = nil, note: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.note = note
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title {
+                Text(title).font(.title3.weight(.bold)).padding(.horizontal, 4)
+            }
+            VStack(alignment: .leading, spacing: 0) { content }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            if let note {
+                Text(note).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
+            }
+        }
+    }
+}
+
+/// One score: the ring on a glow of its colour with the week under it, what it's made of, and the trend.
 struct ScoreDetailView: View {
     let kind: ScoreKind
     /// The day as Apple Health has it (the night, workouts); nil when not loaded.
@@ -365,6 +393,8 @@ struct ScoreDetailView: View {
     @State private var insight: String?
     @State private var asking = false
     @State private var insightError: String?
+    @State private var selected: Date?
+    @State private var range = 30
 
     init(kind: ScoreKind, scores: HealthScores, day: HealthDayReading?, date: Date) {
         self.kind = kind
@@ -372,42 +402,36 @@ struct ScoreDetailView: View {
         self.date = date
         _scores = State(initialValue: scores)
     }
-    @State private var selected: Date?
+
+    private var tint: Color { kind.colors(kind.score(scores))[1] }
 
     var body: some View {
-        List {
-            Section {
-                VStack(spacing: 14) {
-                    ScoreDial(kind: kind, score: kind.score(scores),
-                              band: kind == .strain ? scores.strain?.target : nil, size: 168)
-                    Text(headline).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
-                    if let sub = subline {
-                        Text(sub).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    }
+        ScrollView {
+            VStack(spacing: 28) {
+                hero
+                coachCard
+                switch kind {
+                case .recovery: recoverySections
+                case .sleep: sleepSections
+                case .strain: strainSections
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                DetailCard("Trend", note: kind.about) { trend }
             }
-            .listRowBackground(Theme.row)
-
-            coachSection
-
-            switch kind {
-            case .recovery: recoverySections
-            case .sleep: sleepSections
-            case .strain: strainSections
-            }
-
-            Section {
-                trend
-            } header: {
-                Text("Last 30 days")
-            } footer: {
-                Text(kind.about)
-            }
-            .listRowBackground(Theme.row)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
         }
-        .scrollContentBackground(.hidden)
+        #if DEBUG
+        // Simulator screenshots: `-previewAnchor center` or `bottom` shows the rest of the page.
+        .defaultScrollAnchor(UserDefaults.standard.string(forKey: "previewAnchor") == "bottom" ? .bottom
+                             : UserDefaults.standard.string(forKey: "previewAnchor") == "center" ? .center : .top)
+        #endif
+        .background(alignment: .top) {
+            LinearGradient(colors: [tint.opacity(0.38), tint.opacity(0.12), tint.opacity(0)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 460)
+                .ignoresSafeArea(edges: .top)
+                .animation(.easeInOut, value: kind.score(scores))
+        }
         .background(Theme.grouped)
         .navigationTitle(kind.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -415,6 +439,41 @@ struct ScoreDetailView: View {
             async let fresh = try? env.api.healthScores(date: date)
             history = (try? await env.api.healthScoreHistory(days: 30, to: date)) ?? []
             if let fresh = await fresh { scores = fresh }
+        }
+    }
+
+    // MARK: Hero
+
+    private var hero: some View {
+        VStack(spacing: 18) {
+            ScoreDial(kind: kind, score: kind.score(scores),
+                      band: kind == .strain ? scores.strain?.target : nil, size: 184)
+            VStack(spacing: 6) {
+                Text(headline).font(.title2.weight(.bold)).multilineTextAlignment(.center)
+                if let sub = subline {
+                    Text(sub).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 8)
+            if week.contains(where: { $0.score != nil }) {
+                ScoreWeek(kind: kind, days: week)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+    }
+
+    /// The 7 days up to the page's, nil where there's no score.
+    private var week: [(date: Date, score: Int?)] {
+        guard let history else { return [] }
+        let cal = Calendar.current
+        var byDay: [String: Int] = [:]
+        for d in history { if let v = kind.score(d) { byDay[d.date] = v } }
+        let last = cal.startOfDay(for: date)
+        return (0..<7).reversed().compactMap { back in
+            guard let d = cal.date(byAdding: .day, value: -back, to: last) else { return nil }
+            return (d, byDay[Wire.dayString(d)])
         }
     }
 
@@ -457,39 +516,48 @@ struct ScoreDetailView: View {
     private var coach: Agent { chat.agent("coach") }
 
     /// Asked for with a tap (one model call), then the way into Coach's chat to talk it over.
-    private var coachSection: some View {
-        Section {
+    private var coachCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
             if let insight {
-                HStack(alignment: .top, spacing: 10) {
-                    AgentMark(agent: coach, size: 26)
+                HStack(alignment: .top, spacing: 12) {
+                    AgentMark(agent: coach, size: 28)
                     Text(insight).font(.callout).textSelection(.enabled)
                 }
-                .padding(.vertical, 4)
                 .transition(.opacity)
                 Button { push.route = .agent(coach.id) } label: {
                     Label("Talk it over with \(coach.name)", systemImage: "bubble.left.and.text.bubble.right")
-                }
-            } else if asking {
-                HStack(spacing: 10) {
-                    LivePebble(mood: "thinking", size: 26, figure: coach.figure)
-                        .foregroundStyle(coach.tint)
-                        .allowsHitTesting(false)
-                    Text("\(coach.name) is looking at your numbers…").font(.footnote).foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            } else {
-                Button { Task { await askCoach() } } label: {
-                    Label("What does \(coach.name) make of it?", systemImage: "sparkles")
+                        .font(.subheadline.weight(.semibold))
                 }
                 .tint(coach.tint)
+            } else if asking {
+                HStack(spacing: 12) {
+                    LivePebble(mood: "thinking", size: 28, figure: coach.figure)
+                        .foregroundStyle(coach.tint)
+                        .allowsHitTesting(false)
+                    Text("\(coach.name) is looking at your numbers…").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+            } else {
+                Button { Task { await askCoach() } } label: {
+                    HStack(spacing: 12) {
+                        AgentMark(agent: coach, size: 28)
+                        Text("What does \(coach.name) make of it?").font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: 0)
+                        Image(systemName: "sparkles").foregroundStyle(coach.tint)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(CardPress())
                 if let insightError {
                     Label(insightError, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
                 }
             }
-        } header: {
-            Text("\(coach.name)'s take")
         }
-        .listRowBackground(Theme.row)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(coach.tint.opacity(0.25)))
         .animation(.easeInOut(duration: 0.25), value: asking)
     }
 
@@ -505,31 +573,37 @@ struct ScoreDetailView: View {
         }
     }
 
+    /// Parts one under the other, a hairline between.
+    private func parts(_ parts: [HealthScores.Part]) -> some View {
+        ForEach(Array(parts.enumerated()), id: \.element.id) { i, part in
+            if i > 0 { Divider().padding(.vertical, 12) }
+            PartRow(part: part, kind: kind)
+        }
+    }
+
     // MARK: Recovery
 
     @ViewBuilder private var recoverySections: some View {
         if let r = scores.recovery {
             if !r.flags.isEmpty {
-                Section {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(r.flags, id: \.self) { flag in
                         Label(flag == "wrist_temp" ? "Wrist temperature above your usual" : "Breathing rate above your usual",
                               systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .font(.subheadline.weight(.semibold))
                     }
-                } footer: {
                     Text("Either can mean your body is fighting something, so recovery is held at 50% at most.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
-                .listRowBackground(Theme.row)
+                .foregroundStyle(.orange)
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
             if !r.contributors.isEmpty {
-                Section {
-                    ForEach(r.contributors) { PartRow(part: $0, color: kind.colors(r.score)[1]) }
-                } header: {
-                    Text("What it's made of")
-                } footer: {
-                    Text("Each part is scored against your own last 60 days: a usual morning lands around 60, better than usual higher, worse lower. Higher HRV is better, a lower heart rate asleep is better, and a training load well over your usual costs a little. The bar is that part alone; the % is its share of the score.")
+                DetailCard("Contributors", note: "Each part is scored against your own last 60 days: a usual morning lands around 60, better than usual higher, worse lower. Higher HRV is better, a lower heart rate asleep is better, and a training load well over your usual costs a little.") {
+                    parts(r.contributors)
                 }
-                .listRowBackground(Theme.row)
             }
         }
     }
@@ -538,37 +612,26 @@ struct ScoreDetailView: View {
 
     @ViewBuilder private var sleepSections: some View {
         if let night = day?.sleep {
-            Section("Last night") {
-                SleepCard(night: night, usualAsleepMin: scores.vitals?.asleepMin?.usual.map { Int($0) })
-                    .padding(.vertical, 4)
+            DetailCard("Last night", note: night.deepMin != nil ? "The marks are the usual range for adults; your own usual is under Deep and REM in Contributors." : nil) {
+                SleepStages(night: night)
             }
-            .listRowBackground(Theme.row)
         }
         if let s = scores.sleep {
-            Section {
-                ForEach(s.contributors) { PartRow(part: $0, color: ScoreColors.sleep[1]) }
-            } header: {
-                Text("What it's made of")
-            } footer: {
-                Text("Hours against what you needed count for half: 90% of the need scores 75, 80% scores 50. Deep and REM are scored on their share of the night; your usual (last 30 nights) is under each.")
+            DetailCard("Contributors", note: "Hours against what you needed count for half: 90% of the need scores 75, 80% scores 50. Deep and REM are scored on their share of the night.") {
+                parts(s.contributors)
             }
-            .listRowBackground(Theme.row)
-            Section {
-                if let n = s.need {
-                    LabeledContent("Your usual need", value: hm(n.base))
-                    if n.strain > 0 { LabeledContent("After the day before's strain", value: plus(n.strain)) }
-                    if n.debt > 0 { LabeledContent("Catching up on recent nights", value: plus(n.debt)) }
-                }
-                LabeledContent("Needed last night", value: hm(s.needMin)).fontWeight(.semibold)
-                LabeledContent("Short, last 3 nights", value: s.debtMin > 0 ? hm(s.debtMin) : "Nothing")
-            } header: {
-                Text("Sleep need")
-            } footer: {
-                if s.need != nil {
-                    Text("Your usual need is learnt from up to 90 of your nights, leaving out the shortest and longest tenth. A hard day adds a little, and half of what the last three nights were short adds the rest, at most 45 min.")
+            DetailCard("Sleep need", note: s.need != nil ? "Your usual need is learnt from up to 90 of your nights, leaving out the shortest and longest tenth. A hard day adds a little, and half of what the last three nights were short adds the rest, at most 45 min." : nil) {
+                VStack(spacing: 12) {
+                    if let n = s.need {
+                        NeedLine(label: "Your usual need", value: hm(n.base), icon: "bed.double.fill")
+                        if n.strain > 0 { NeedLine(label: "After the day before's strain", value: plus(n.strain), icon: "flame.fill") }
+                        if n.debt > 0 { NeedLine(label: "Catching up on recent nights", value: plus(n.debt), icon: "arrow.uturn.backward") }
+                        Divider()
+                    }
+                    NeedLine(label: "Needed last night", value: hm(s.needMin), icon: "moon.stars.fill", bold: true)
+                    NeedLine(label: "Short, last 3 nights", value: s.debtMin > 0 ? hm(s.debtMin) : "Nothing", icon: "hourglass")
                 }
             }
-            .listRowBackground(Theme.row)
         }
     }
 
@@ -577,44 +640,34 @@ struct ScoreDetailView: View {
     @ViewBuilder private var strainSections: some View {
         if let s = scores.strain {
             if s.zones.reduce(0, +) > 0 {
-                Section {
+                DetailCard("Heart-rate zones", note: s.restHr.flatMap { rest in s.maxHr.map { top in
+                    "Zones of your heart-rate reserve, from \(rest) bpm at rest (your 30-day usual) to \(top) bpm at most (the middle of your three highest workout peaks, so one strap glitch doesn't count). Zone 1 starts at half the reserve, each next one 10% higher. The Workout app on the Watch may set its zones a little differently."
+                } }) {
                     ZonesChart(zones: s.zones, bpm: s.zoneBpm)
-                } header: {
-                    Text("Heart-rate zones")
-                } footer: {
-                    if let rest = s.restHr, let top = s.maxHr {
-                        Text("Minutes in each zone of your heart-rate reserve, from \(rest) bpm at rest (your 30-day usual) to \(top) bpm at most (the middle of your three highest workout peaks, so one strap glitch doesn't count). Zone 1 starts at half the reserve, each next one 10% higher. The Workout app on the Watch may set its zones a little differently.")
-                    }
                 }
-                .listRowBackground(Theme.row)
             }
             if !s.workouts.isEmpty {
-                Section("Workouts") {
-                    ForEach(s.workouts) { w in
+                DetailCard("Workouts") {
+                    ForEach(Array(s.workouts.enumerated()), id: \.element.id) { i, w in
+                        if i > 0 { Divider().padding(.vertical, 10) }
                         let reading = day?.workouts?.first { $0.id == w.id }
                             ?? HealthDayReading.Workout(id: w.id, type: w.type, minutes: w.minutes, start: nil, kcal: nil)
                         WorkoutRow(date: scores.date, workout: reading, strain: w.strain)
                     }
                 }
-                .listRowBackground(Theme.row)
             }
         }
         if let load = scores.load {
-            Section {
+            DetailCard("Cardio load", note: load.why ?? "The last 7 days' average against the last 28's. Building is where fitness grows; well over it, rest catches up with you.") {
                 LoadCard(load: load, date: Wire.day(scores.date) ?? .now)
-            } header: {
-                Text("Cardio load")
-            } footer: {
-                Text(load.why ?? "The last 7 days' average against the last 28's. Building is where fitness grows; well over it, rest catches up with you.")
             }
-            .listRowBackground(Theme.row)
         }
     }
 
     // MARK: Trend
 
     private var points: [(Date, Int)] {
-        (history ?? []).reversed().compactMap { d in
+        (history ?? []).reversed().suffix(range).compactMap { d in
             guard let date = Wire.day(d.date), let v = kind.score(d) else { return nil }
             return (date, v)
         }
@@ -628,125 +681,334 @@ struct ScoreDetailView: View {
     @ViewBuilder private var trend: some View {
         if history == nil {
             ProgressView().frame(maxWidth: .infinity, minHeight: 160)
-        } else if points.isEmpty {
+        } else if points.isEmpty && range == 30 {
             Text("No days with a score yet.").foregroundStyle(.secondary)
         } else {
-            let avg = points.map(\.1).reduce(0, +) / points.count
-            VStack(alignment: .leading, spacing: 10) {
+            let avg = points.isEmpty ? 0 : points.map(\.1).reduce(0, +) / points.count
+            VStack(alignment: .leading, spacing: 14) {
+                Picker("Range", selection: $range) {
+                    Text("7 days").tag(7)
+                    Text("30 days").tag(30)
+                }
+                .pickerStyle(.segmented)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(picked.map { $0.0.formatted(.dateTime.weekday(.wide).day().month(.wide)).uppercased() } ?? "AVERAGE")
                         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Text("\(picked?.1 ?? avg)%").font(.title.weight(.semibold)).monospacedDigit()
+                    Text("\(picked?.1 ?? avg)%").font(.largeTitle.weight(.bold)).monospacedDigit()
                         .contentTransition(.numericText())
                 }
+                .animation(.snappy, value: picked?.0)
                 Chart {
                     ForEach(points, id: \.0) { date, v in
-                        BarMark(x: .value("Day", date, unit: .day), y: .value(kind.name, v), width: .ratio(0.6))
-                            .foregroundStyle(kind.colors(v)[1].opacity(picked == nil || picked?.0 == date ? 0.9 : 0.3))
-                            .cornerRadius(3)
+                        BarMark(x: .value("Day", date, unit: .day), y: .value(kind.name, v), width: .ratio(0.62))
+                            .foregroundStyle(kind.colors(v)[1].gradient.opacity(picked == nil || picked?.0 == date ? 1 : 0.3))
+                            .cornerRadius(4)
                     }
-                    if picked == nil {
+                    if picked == nil, !points.isEmpty {
                         RuleMark(y: .value("Average", avg))
                             .foregroundStyle(.secondary)
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                     }
                 }
                 .chartYScale(domain: 0...100)
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: [0, 50, 100]) { _ in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+                        AxisValueLabel()
+                    }
+                }
                 .chartXAxis {
-                    AxisMarks(values: .stride(by: .day, count: 7)) { _ in
-                        AxisGridLine()
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                    if range == 7 {
+                        AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.weekday(.narrow)) }
+                    } else {
+                        AxisMarks(values: .stride(by: .day, count: 7)) { _ in
+                            AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                        }
                     }
                 }
                 .chartXSelection(value: $selected)
-                .frame(height: 170)
+                .frame(height: 180)
+                .animation(.snappy, value: range)
             }
-            .padding(.vertical, 6)
             .sensoryFeedback(.selection, trigger: picked?.0)
         }
     }
 }
 
-/// One part of a score: its value, how it did alone, and its share.
-private struct PartRow: View {
-    let part: HealthScores.Part
-    let color: Color
+/// The week under the ring: a bar a day, the page's day in full colour with its number.
+private struct ScoreWeek: View {
+    let kind: ScoreKind
+    let days: [(date: Date, score: Int?)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .bottom, spacing: 10) {
+            ForEach(Array(days.enumerated()), id: \.offset) { i, d in
+                let last = i == days.count - 1
+                VStack(spacing: 5) {
+                    Text(d.score.map(String.init) ?? "–")
+                        .font(.caption2.weight(last ? .bold : .medium)).monospacedDigit()
+                        .foregroundStyle(last ? Color.primary : Color.secondary)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(d.score.map { kind.colors($0)[1].opacity(last ? 1 : 0.4) } ?? Color.primary.opacity(0.08))
+                        .frame(width: 22, height: max(6, 54 * Double(d.score ?? 0) / 100))
+                    Text(d.date.formatted(.dateTime.weekday(.narrow)))
+                        .font(.caption2.weight(last ? .bold : .regular))
+                        .foregroundStyle(last ? Color.primary : Color.secondary)
+                }
+                .frame(height: 92, alignment: .bottom)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Last 7 days: " + days.compactMap { $0.score.map(String.init) }.joined(separator: ", "))
+    }
+}
+
+/// A part's score in a word, as Oura says it.
+private func standing(_ score: Int?) -> (word: String, color: Color) {
+    guard let score else { return ("No data", .secondary) }
+    if score >= 80 { return ("Optimal", Color(uiColor: UIColor(hex: 0x30D158))) }
+    if score >= 60 { return ("Good", Color(uiColor: UIColor(hex: 0x64D2FF))) }
+    if score >= 40 { return ("Fair", Color(uiColor: UIColor(hex: 0xFFB340))) }
+    return ("Pay attention", Color(uiColor: UIColor(hex: 0xFF6B4A)))
+}
+
+/// One part of a score: its name and share, how it stands in a word, the value, a bar, and your usual.
+private struct PartRow: View {
+    let part: HealthScores.Part
+    let kind: ScoreKind
+
+    var body: some View {
+        let stand = standing(part.score)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(stand.color)
+                    .frame(width: 28, height: 28)
+                    .background(stand.color.opacity(0.15), in: Circle())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(part.label).font(.subheadline.weight(.semibold))
+                    Text("\(part.weight)% of score").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                Text(stand.word).font(.caption.weight(.bold)).foregroundStyle(stand.color)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(stand.color.opacity(0.14), in: Capsule())
+            }
             HStack(alignment: .firstTextBaseline) {
-                Text(part.label).font(.subheadline.weight(.medium))
-                Text("\(part.weight)%").font(.caption).foregroundStyle(.tertiary)
-                Spacer()
-                Text(value).font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
+                Text(value).font(.title3.weight(.semibold)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Spacer(minLength: 8)
+                if let usual { usual }
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.07))
                     if let s = part.score {
-                        Capsule().fill(color).frame(width: max(6, geo.size.width * Double(s) / 100))
+                        Capsule().fill(stand.color.gradient).frame(width: max(6, geo.size.width * Double(s) / 100))
                     }
                 }
             }
             .frame(height: 6)
-            if let usual = part.usualText {
-                HStack(spacing: 4) {
-                    Text("Usual \(usual)")
-                    if let diff = part.diffMin, abs(diff) >= 5 {
-                        Text("· \(diff > 0 ? "+" : "−")\(hm(abs(diff)))")
-                            .foregroundStyle(diff > 0 ? Color.green : Color.orange)
-                    } else if part.diffMin != nil {
-                        Text("· as usual")
-                    }
-                }
-                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            }
         }
-        .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(part.score.map { "\($0) of 100" } ?? "no data")
+        .accessibilityValue(part.score.map { "\($0) of 100, \(stand.word)" } ?? "no data")
+    }
+
+    private var icon: String {
+        switch part.key {
+        case "hrv": "waveform.path.ecg"
+        case "hrv_week": "chart.line.uptrend.xyaxis"
+        case "sleep_hr", "resting_hr": "heart.fill"
+        case "sleep": "moon.fill"
+        case "load": "figure.run"
+        case "duration": "clock.fill"
+        case "deep": "moon.zzz.fill"
+        case "rem": "brain.head.profile"
+        case "efficiency": "bed.double.fill"
+        case "consistency": "calendar.badge.clock"
+        default: kind.icon
+        }
     }
 
     private func hm(_ minutes: Int) -> String { minutes >= 60 ? "\(minutes / 60)h\(String(format: "%02d", minutes % 60))" : "\(minutes) min" }
 
-    /// "6h40 of 7h48", "61.5 ms · usual 55", "No data".
+    private func fmt(_ x: Double) -> String {
+        x.rounded() == x ? String(Int(x)) : x.formatted(.number.precision(.fractionLength(1)))
+    }
+
+    /// "6h40 of 7h48", "61.5 ms", "No data".
     private var value: String {
         if let text = part.text { return text }
         guard let v = part.value else { return "No data" }
-        let unit = part.unit.map { $0 == "%" ? "%" : " \($0)" } ?? ""
-        let fmt = { (x: Double) in x.rounded() == x ? String(Int(x)) : x.formatted(.number.precision(.fractionLength(1))) }
-        var out = fmt(v) + unit
-        if let u = part.usual { out += " · usual \(fmt(u))" }
-        return out
+        return fmt(v) + (part.unit.map { $0 == "%" || $0 == "×" ? $0 : " \($0)" } ?? "")
+    }
+
+    /// Under the usual: "usual 55 ↑" for numbers, "usual 7h12 · −0h32" for the night's timed parts.
+    private var usual: AnyView? {
+        if let u = part.usualText {
+            var line = Text("usual \(u)")
+            if let diff = part.diffMin {
+                line = line + Text(abs(diff) < 5 ? " · as usual" : " · \(diff > 0 ? "+" : "−")\(hm(abs(diff)))")
+                    .foregroundColor(abs(diff) < 5 ? .secondary : diff > 0 ? .green : .orange)
+            }
+            return AnyView(line.font(.caption).foregroundStyle(.secondary).monospacedDigit())
+        }
+        guard let u = part.usual, let v = part.value else { return nil }
+        let arrow = v > u ? "arrow.up" : v < u ? "arrow.down" : "equal"
+        return AnyView(HStack(spacing: 3) {
+            Image(systemName: arrow).font(.caption2.weight(.bold)).foregroundStyle(standing(part.score).color)
+            Text("usual \(fmt(u))")
+        }
+        .font(.caption).foregroundStyle(.secondary).monospacedDigit())
     }
 }
 
-/// Minutes per heart-rate zone, as bars, each named by its bpm when the server sends them.
+/// A line of the sleep need: an icon, what it is, how much.
+private struct NeedLine: View {
+    let label: String
+    let value: String
+    let icon: String
+    var bold = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon).font(.footnote).foregroundStyle(ScoreColors.sleep[1]).frame(width: 22)
+            Text(label).font(.subheadline.weight(bold ? .semibold : .regular))
+            Spacer()
+            Text(value).font(.subheadline.weight(bold ? .bold : .medium)).monospacedDigit()
+        }
+    }
+}
+
+/// Last night's stages: the night as one bar, then each stage with its share against the usual range for adults.
+private struct SleepStages: View {
+    let night: SleepNight
+
+    private struct Stage { let name: String; let minutes: Int; let color: Color; let range: ClosedRange<Double> }
+
+    private var stages: [Stage] {
+        guard let deep = night.deepMin, let core = night.coreMin, let rem = night.remMin else { return [] }
+        return [
+            Stage(name: "Awake", minutes: night.awakeMin ?? 0, color: Color(uiColor: UIColor(hex: 0xFF8A65)), range: 0...0.10),
+            Stage(name: "REM", minutes: rem, color: Color(uiColor: UIColor(hex: 0x64D2FF)), range: 0.18...0.25),
+            Stage(name: "Core", minutes: core, color: Color(uiColor: UIColor(hex: 0x0A84FF)), range: 0.45...0.60),
+            Stage(name: "Deep", minutes: deep, color: Color(uiColor: UIColor(hex: 0x5E5CE6)), range: 0.13...0.23),
+        ]
+    }
+
+    var body: some View {
+        let total = Double(max(1, stages.reduce(0) { $0 + $1.minutes }))
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(SleepCard.duration(night.asleepMin)) asleep").font(.title3.weight(.semibold))
+                Spacer(minLength: 8)
+                if let bed = night.bedtimeDate, let wake = night.wakeDate {
+                    Label("\(bed.formatted(date: .omitted, time: .shortened)) – \(wake.formatted(date: .omitted, time: .shortened))",
+                          systemImage: "bed.double")
+                        .font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+            if stages.isEmpty {
+                Text("Stages come from the Watch when you sleep with it on.").font(.subheadline).foregroundStyle(.secondary)
+            } else {
+                GeometryReader { geo in
+                    HStack(spacing: 2) {
+                        ForEach(stages.filter { $0.minutes > 0 }, id: \.name) { s in
+                            s.color.frame(width: max(2, (geo.size.width - 6) * Double(s.minutes) / total))
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .frame(height: 14)
+                VStack(spacing: 14) {
+                    ForEach(stages, id: \.name) { s in
+                        let share = Double(s.minutes) / total
+                        VStack(spacing: 6) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Circle().fill(s.color).frame(width: 8, height: 8)
+                                Text(s.name).font(.subheadline.weight(.semibold))
+                                Text("\(Int((share * 100).rounded()))%").font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(s.range.contains(share) ? s.color : .orange).monospacedDigit()
+                                Spacer()
+                                Text(SleepCard.duration(s.minutes)).font(.subheadline).monospacedDigit()
+                            }
+                            GeometryReader { geo in
+                                let w = geo.size.width
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(Color.primary.opacity(0.07))
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color.primary.opacity(0.14))
+                                        .frame(width: w * (s.range.upperBound - s.range.lowerBound), height: 12)
+                                        .offset(x: w * s.range.lowerBound)
+                                    Capsule().fill(s.color).frame(width: max(4, w * share))
+                                }
+                            }
+                            .frame(height: 8)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Minutes per heart-rate zone: the most-used one in words, then a coloured bar per zone with its bpm.
 struct ZonesChart: View {
     let zones: [Int]
     /// Where zones 1–5 start, then the max.
     var bpm: [Int]? = nil
     private static let names = ["50–60%", "60–70%", "70–80%", "80–90%", "90–100%"]
+    static let colors: [Color] = [0x8E8E93, 0x0A84FF, 0x30D158, 0xFF9F0A, 0xFF453A].map { Color(uiColor: UIColor(hex: $0)) }
 
     static func name(_ i: Int, bpm: [Int]?) -> String {
         if let bpm, bpm.count == 6 { return "Z\(i + 1) · \(bpm[i])–\(bpm[i + 1])" }
         return "Z\(i + 1) · \(names[i])"
     }
 
+    private func range(_ i: Int) -> String {
+        if let bpm, bpm.count == 6 { return "\(bpm[i])–\(bpm[i + 1]) bpm" }
+        return Self.names[i]
+    }
+
     var body: some View {
-        Chart {
-            ForEach(Array(zones.prefix(5).enumerated()), id: \.offset) { i, minutes in
-                BarMark(x: .value("Minutes", minutes), y: .value("Zone", Self.name(i, bpm: bpm)))
-                    .foregroundStyle(ScoreColors.strain[1].opacity(0.35 + 0.13 * Double(i)))
-                    .cornerRadius(3)
-                    .annotation(position: .trailing) {
-                        Text("\(minutes) min").font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+        let shown = Array(zones.prefix(5))
+        let top = max(1, shown.max() ?? 1)
+        let most = shown.firstIndex(of: shown.max() ?? 0) ?? 0
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(shown.reduce(0, +)) min in the zones").font(.title3.weight(.semibold)).monospacedDigit()
+                Text("Most in zone \(most + 1)").font(.subheadline).foregroundStyle(.secondary)
+            }
+            ForEach(Array(shown.enumerated()).reversed(), id: \.offset) { i, minutes in
+                HStack(spacing: 10) {
+                    Text("Z\(i + 1)")
+                        .font(.caption.weight(.heavy)).foregroundStyle(.white)
+                        .frame(width: 30, height: 22)
+                        .background(Self.colors[i], in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(range(i)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                            Spacer()
+                            Text("\(minutes) min").font(.subheadline.weight(.semibold)).monospacedDigit()
+                                .foregroundStyle(minutes == 0 ? .secondary : .primary)
+                        }
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.primary.opacity(0.07))
+                                if minutes > 0 {
+                                    Capsule().fill(Self.colors[i].gradient).frame(width: max(6, geo.size.width * Double(minutes) / Double(top)))
+                                }
+                            }
+                        }
+                        .frame(height: 6)
                     }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Zone \(i + 1), \(range(i)), \(minutes) minutes")
             }
         }
-        .chartXAxis(.hidden)
-        .frame(height: 150)
-        .padding(.vertical, 6)
     }
 }
 
@@ -801,7 +1063,6 @@ private struct LoadCard: View {
                 LoadWeek(days: days, usual: load.chronicStrain, date: date)
             }
         }
-        .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
     }
 }
@@ -815,7 +1076,8 @@ private struct LoadWeek: View {
     var body: some View {
         Chart {
             ForEach(Array(days.enumerated()), id: \.offset) { i, v in
-                BarMark(x: .value("Day", i), y: .value("Strain", v ?? 0), width: .ratio(0.6))
+                // Categories, not numbers: on a numeric axis a ratio width has no band and the bars vanish.
+                BarMark(x: .value("Day", String(i)), y: .value("Strain", v ?? 0), width: .ratio(0.6))
                     .foregroundStyle(ScoreColors.strain[1].opacity(v == nil ? 0.15 : 0.8))
                     .cornerRadius(3)
             }
@@ -828,9 +1090,9 @@ private struct LoadWeek: View {
         .chartYScale(domain: 0...100)
         .chartYAxis(.hidden)
         .chartXAxis {
-            AxisMarks(values: Array(0..<7)) { value in
+            AxisMarks(values: (0..<7).map(String.init)) { value in
                 AxisValueLabel {
-                    if let i = value.as(Int.self) { Text(label(i)) }
+                    if let i = value.as(String.self).flatMap(Int.init) { Text(label(i)) }
                 }
             }
         }
