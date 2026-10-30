@@ -62,12 +62,15 @@ struct ChatView: View {
                         .padding(.top, Self.voiceHeader)
                         .transition(Self.swap)
                 } else {
-                    VStack(spacing: 0) {
-                        transcript
-                        if !chat.pending.isEmpty { PendingCard() }
-                        composer
-                    }
-                    .transition(Self.swap)
+                    // The messages scroll on under the message box, which is glass.
+                    transcript
+                        .bottomBar {
+                            VStack(spacing: 0) {
+                                if !chat.pending.isEmpty { PendingCard() }
+                                composer
+                            }
+                        }
+                        .transition(Self.swap)
                 }
             }
             header
@@ -380,10 +383,10 @@ struct ChatView: View {
             Button("Choose photos", systemImage: "photo.on.rectangle") { showLibrary = true }
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 34, height: 34)
-                .background(Theme.chip, in: Circle())
+                .background(MessageBoxGlass.isOn ? Color.clear : Theme.chip, in: Circle())
         }
         .disabled(!settings.isConfigured || chat.isSending || photos.count >= Self.maxPhotos)
         .accessibilityLabel("Add photos")
@@ -482,8 +485,7 @@ struct MessageBox<Buttons: View>: View {
             buttons
         }
         .padding(7)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Theme.line, lineWidth: 0.5))
+        .messageBoxSurface()
         .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .onTapGesture { focused.wrappedValue = true } // the whole box, not just the line of text
         .onChange(of: reset) {
@@ -494,6 +496,24 @@ struct MessageBox<Buttons: View>: View {
         // out over the voice panel's End button as a visible stripe.
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+enum MessageBoxGlass {
+    /// Liquid Glass where the system has it: the messages show through as they scroll under the box.
+    static var isOn: Bool {
+        if #available(iOS 26, *) { return true } else { return false }
+    }
+}
+
+private extension View {
+    @ViewBuilder func messageBoxSurface() -> some View {
+        let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
+        if #available(iOS 26, *) {
+            glassEffect(.regular, in: shape)
+        } else {
+            background(Theme.card, in: shape).overlay(shape.stroke(Theme.line, lineWidth: 0.5))
+        }
     }
 }
 

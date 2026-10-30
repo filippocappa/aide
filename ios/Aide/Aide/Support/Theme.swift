@@ -104,6 +104,15 @@ extension View {
         #endif
     }
 
+    /// Pinned at the bottom with the page scrolling under it, softly faded out where the system can.
+    @ViewBuilder func bottomBar<V: View>(@ViewBuilder _ content: () -> V) -> some View {
+        if #available(iOS 26, *) {
+            safeAreaBar(edge: .bottom, spacing: 0, content: content)
+        } else {
+            safeAreaInset(edge: .bottom, spacing: 0, content: content)
+        }
+    }
+
     /// A floating control: Liquid Glass where the system has it, else a frosted material with a soft shadow.
     @ViewBuilder func glass<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26, *) {

@@ -483,7 +483,8 @@ private struct RevealText: View {
     @State private var start: Date?
     @State private var finished = false
 
-    private static let perWord = 0.045
+    /// Quick: 25 ms a word, and never more than 0.8 s for the whole note.
+    private var perWord: Double { min(0.025, 0.8 / Double(max(1, stops.count))) }
 
     /// Where each word ends, as character offsets.
     private var stops: [Int] {
@@ -494,10 +495,10 @@ private struct RevealText: View {
     var body: some View {
         if let start, !finished {
             TimelineView(.animation) { context in
-                Text(shown(Int(context.date.timeIntervalSince(start) / Self.perWord) + 1))
+                Text(shown(Int(context.date.timeIntervalSince(start) / perWord) + 1))
             }
             .task {
-                try? await Task.sleep(for: .seconds(Double(stops.count) * Self.perWord))
+                try? await Task.sleep(for: .seconds(Double(stops.count) * perWord))
                 finished = true
             }
         } else {

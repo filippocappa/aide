@@ -77,7 +77,7 @@ struct RoutinesSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .task { await chat.loadRoutines() }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationBackground(Theme.grouped)
     }
 

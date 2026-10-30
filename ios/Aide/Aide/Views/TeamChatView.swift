@@ -17,11 +17,13 @@ struct TeamChatView: View {
     private var working: Agent? { chat.teamWorking.map { chat.agent($0) } }
 
     var body: some View {
-        VStack(spacing: 0) {
-            transcript
-            if !chat.pending.isEmpty { PendingCard() }
-            composer
-        }
+        transcript
+            .bottomBar {
+                VStack(spacing: 0) {
+                    if !chat.pending.isEmpty { PendingCard() }
+                    composer
+                }
+            }
         .overlay(alignment: .top) { header }
         .background(Theme.background)
         .toolbar(.hidden, for: .navigationBar)

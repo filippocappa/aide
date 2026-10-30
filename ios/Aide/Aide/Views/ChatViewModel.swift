@@ -209,7 +209,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func open(id: String) async {
-        if id != conversationID { openedDigest = nil }
+        if id != conversationID { openedDigest = nil; smart = false } // the chat's own, once its history comes
         if !conversations.contains(where: { $0.id == id }) { await loadConversations() } // e.g. from a notification
         agentID = conversations.first { $0.id == id }?.agent ?? orchestrator.id
         conversationID = id
