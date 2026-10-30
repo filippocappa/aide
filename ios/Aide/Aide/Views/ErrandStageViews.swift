@@ -235,35 +235,120 @@ struct ErrandStage: View {
     }
 }
 
-private struct StageBar: View {
+/// A browser window's bar, drawn: the three dots on the left (the red one closes, where there's something to close),
+/// the address in the middle (what Aide searches for, typed out, on a search), the cart and the live dot on the right,
+/// and a loading line under it while a page opens.
+struct StageBar: View {
     let scene: PageScene?
     let tint: Color
     let live: Bool
+    /// The login card's: the red dot closes it.
+    var close: (() -> Void)?
+    /// Before the page has a name.
+    var fallback = "Opening…"
     @State private var bump = false
+    /// How far the loading line has run; nil when no page is opening.
+    @State private var loading: CGFloat?
+    @State private var loads = 0
 
     var body: some View {
-        HStack(spacing: 8) {
-            SiteIcon(url: scene?.iconURL, size: 18)
-            Text(scene?.siteName ?? "Opening…")
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            if let count = scene?.cart?.count, count > 0 {
-                Label("\(count)", systemImage: "cart.fill")
-                    .font(.caption2.weight(.bold))
-                    .monospacedDigit()
-                    .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(tint.opacity(0.2), in: Capsule())
-                    .scaleEffect(bump ? 1.3 : 1)
+        HStack(spacing: 10) {
+            lights
+            address.frame(maxWidth: .infinity)
+            HStack(spacing: 6) {
+                if let count = scene?.cart?.count, count > 0 {
+                    Label("\(count)", systemImage: "cart.fill")
+                        .font(.caption2.weight(.bold))
+                        .monospacedDigit()
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(tint.opacity(0.2), in: Capsule())
+                        .scaleEffect(bump ? 1.3 : 1)
+                }
+                LiveDot(on: live, tint: tint)
             }
-            LiveDot(on: live, tint: tint)
+            .frame(minWidth: 46, alignment: .trailing) // as wide as the dots, so the address sits in the middle
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Theme.chip.opacity(0.6))
+        .background(Theme.chip.opacity(0.75))
+        .overlay(alignment: .bottom) {
+            GeometryReader { geo in
+                Rectangle().fill(tint)
+                    .frame(width: geo.size.width * (loading ?? 1), height: 2)
+                    .opacity(loading == nil ? 0 : 1)
+            }
+            .frame(height: 2)
+            .allowsHitTesting(false)
+        }
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 0.5) }
+        .onChange(of: scene?.url) { _, _ in load() }
         .onChange(of: scene?.cart?.count) { old, new in
             guard (new ?? 0) > (old ?? 0) else { return }
             withAnimation(.spring(duration: 0.25)) { bump = true }
             withAnimation(.spring(duration: 0.4).delay(0.25)) { bump = false }
+        }
+    }
+
+    private var lights: some View {
+        HStack(spacing: 6) {
+            Button { close?() } label: {
+                Circle().fill(Color(red: 1, green: 0.37, blue: 0.34))
+                    .overlay {
+                        if close != nil {
+                            Image(systemName: "xmark").font(.system(size: 6.5, weight: .black))
+                                .foregroundStyle(.black.opacity(0.55))
+                        }
+                    }
+                    .frame(width: 12, height: 12)
+                    .padding(close == nil ? 0 : 8) // a finger's room around the dot
+                    .contentShape(Rectangle())
+                    .padding(close == nil ? 0 : -8)
+            }
+            .buttonStyle(.plain)
+            .disabled(close == nil)
+            .accessibilityLabel("Close")
+            .accessibilityHidden(close == nil)
+            Circle().fill(Color(red: 1, green: 0.74, blue: 0.18)).frame(width: 12, height: 12)
+            Circle().fill(Color(red: 0.16, green: 0.79, blue: 0.25)).frame(width: 12, height: 12)
+        }
+        .accessibilityElement(children: close == nil ? .ignore : .contain)
+    }
+
+    @ViewBuilder
+    private var address: some View {
+        HStack(spacing: 5) {
+            if let query = scene?.query, !query.isEmpty {
+                Image(systemName: "magnifyingglass").font(.caption2.weight(.bold)).foregroundStyle(tint)
+                TypingText(text: query).lineLimit(1)
+            } else {
+                if scene != nil {
+                    Image(systemName: "lock.fill").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+                }
+                SiteIcon(url: scene?.iconURL, size: 14)
+                Text(scene?.siteName ?? fallback).lineLimit(1)
+            }
+        }
+        .font(.caption.weight(.medium))
+        .padding(.horizontal, 10).frame(height: 24)
+        .frame(maxWidth: 230)
+        .background(Theme.background.opacity(0.6), in: Capsule())
+        .id(scene?.query ?? scene?.siteName ?? fallback)
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.2), value: scene?.query)
+    }
+
+    /// The line runs most of the way, then finishes and fades: a page opening.
+    private func load() {
+        loads += 1
+        let this = loads
+        loading = 0
+        withAnimation(.easeOut(duration: 0.6)) { loading = 0.8 }
+        Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            guard loads == this else { return } // a newer page took over the line
+            withAnimation(.easeOut(duration: 0.2)) { loading = 1 }
+            try? await Task.sleep(for: .milliseconds(250))
+            guard loads == this else { return }
+            withAnimation(.easeOut(duration: 0.3)) { loading = nil }
         }
     }
 }
@@ -319,7 +404,6 @@ private struct ResultsStage: View {
     var body: some View {
         let tiles = Array(scene.items.prefix(large ? 6 : 4))
         VStack(alignment: .leading, spacing: 10) {
-            SearchPill(query: scene.query ?? scene.title ?? "", tint: tint)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                 if tiles.isEmpty {
                     ForEach(0..<4, id: \.self) { _ in
@@ -463,22 +547,6 @@ private struct StageRow: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(tint, lineWidth: lit ? 2 : 0))
         .scaleEffect(chosen ? 1.04 : lit ? 1.01 : 1)
         .shadow(color: .black.opacity(lit ? 0.15 : 0), radius: 6, y: 3)
-    }
-}
-
-private struct SearchPill: View {
-    let query: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(tint)
-            TypingText(text: query).lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .font(.footnote)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(Theme.chip, in: Capsule())
     }
 }
 
@@ -867,8 +935,10 @@ struct StageSheet: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
+                // Just a little: the chat stays readable behind it.
                 Rectangle().fill(.ultraThinMaterial)
-                    .overlay(Color.black.opacity(0.3))
+                    .opacity(0.55)
+                    .overlay(Color.black.opacity(0.12))
                     .ignoresSafeArea()
                     .opacity(shown ? 1 : 0)
                 card(room: geo.size.height - 32)
@@ -916,35 +986,20 @@ struct StageSheet: View {
         }
         .frame(maxWidth: 420)
         .background(Theme.grouped)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(Theme.line))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.line))
         .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
         .animation(.spring(duration: 0.35), value: height)
         .animation(.spring(duration: 0.35), value: showsFooter)
     }
 
-    private static let bar: CGFloat = 52
+    private static let bar: CGFloat = 44
     private static let footer: CGFloat = 70
 
-    /// Like the address bar over the page drawn in the chat: the site, and Close.
+    /// The same window bar as the page drawn in the chat; its red dot closes.
     private var bar: some View {
-        HStack(spacing: 10) {
-            SiteIcon(url: live.scene?.iconURL, size: 22)
-            Text(live.scene?.siteName ?? title).font(.subheadline.weight(.semibold)).lineLimit(1)
-            Spacer(minLength: 8)
-            Button { close() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 30, height: 30)
-                    .background(Theme.chip, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
-        }
-        .padding(.horizontal, 16)
-        .frame(height: Self.bar)
-        .background(Theme.chip.opacity(0.5))
+        StageBar(scene: live.scene, tint: tint, live: live.connected, close: close, fallback: title)
+            .frame(height: Self.bar)
     }
 
     private var title: String {
