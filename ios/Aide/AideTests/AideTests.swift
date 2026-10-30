@@ -1511,6 +1511,61 @@ final class ErrandTests: XCTestCase {
         XCTAssertNotNil(purchases.first?.date)
     }
 
+    func testVideoAttachmentDecodesWorkingAndReady() throws {
+        let json = """
+        [{"type": "videos", "videos": [
+          {"id": "v_1a2b", "youtube_id": "aircAruvnKk", "url": "https://www.youtube.com/watch?v=aircAruvnKk",
+           "status": "working", "step": "Writing the brief", "error": null, "title": null, "channel": null,
+           "duration": null, "thumbnail": null, "gist": null, "moments": 0, "frames": 0, "cover": null,
+           "created_at": "2026-10-30T09:12:00+00:00"},
+          {"id": "v_3c4d", "youtube_id": "aircAruvnKk", "url": "https://www.youtube.com/watch?v=aircAruvnKk",
+           "status": "ready", "step": null, "error": null, "title": "But what is a neural network?",
+           "channel": "3Blue1Brown", "duration": 1118, "thumbnail": "https://i.ytimg.com/vi/aircAruvnKk/maxresdefault.jpg",
+           "gist": "How a network of simple units reads handwritten digits.", "moments": 8, "frames": 6,
+           "cover": "p_0123456789abcdef", "created_at": "2026-10-30T09:12:00+00:00"}]}]
+        """
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .videos(let videos) = attachments[0] else { return XCTFail("expected videos") }
+        XCTAssertTrue(videos[0].isWorking)
+        XCTAssertEqual(videos[0].thumbnailURL?.absoluteString, "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg")
+        XCTAssertTrue(videos[1].isReady)
+        XCTAssertEqual(videos[1].youtubeId, "aircAruvnKk")
+        XCTAssertEqual(VideoThumbnail.counts(videos[1]), "8 key moments · 6 frames")
+        XCTAssertNotNil(videos[1].date)
+    }
+
+    func testFullVideoDecodes() throws {
+        let json = """
+        {"id": "v_3c4d", "youtube_id": "aircAruvnKk", "url": "https://www.youtube.com/watch?v=aircAruvnKk",
+         "status": "ready", "step": null, "error": null, "title": "But what is a neural network?", "channel": "3Blue1Brown",
+         "duration": 1118, "thumbnail": null, "gist": "Digits.", "moments": [
+           {"t": 0, "title": "The digits", "text": "A 28×28 grid.", "url": "https://www.youtube.com/watch?v=aircAruvnKk&t=0s"},
+           {"t": 312, "title": "Layers", "text": "Edges, then loops.", "frame": "p_0123456789abcdef",
+            "url": "https://www.youtube.com/watch?v=aircAruvnKk&t=312s"}],
+         "frames": 1, "cover": "p_0123456789abcdef", "created_at": "2026-10-30T09:12:00+00:00",
+         "question": null, "published": "2017-10-05", "language": "en", "source": "captions",
+         "conversation_id": "c_9", "chapters": [{"t": 0, "title": "Intro"}], "tldr": "Neurons hold numbers.",
+         "know": ["Weights", "Biases"], "takeaway": "It's just a function.", "answer": null}
+        """
+        let v = try JSONDecoder.api.decode(Video.self, from: Data(json.utf8))
+        XCTAssertEqual(v.keyMoments.count, 2)
+        XCTAssertNil(v.keyMoments[0].frame)
+        XCTAssertEqual(v.keyMoments[1].frame, "p_0123456789abcdef")
+        XCTAssertEqual(v.conversationId, "c_9")
+        XCTAssertEqual(v.points, ["Weights", "Biases"])
+        XCTAssertTrue(VideoPage.byline(v).hasPrefix("3Blue1Brown · 18:38 · "))
+        XCTAssertEqual(VideoCard(v).frames, 1)
+        XCTAssertEqual(VideoCard.clock(3725), "1:02:05")
+    }
+
+    func testShareFindsYouTubeLinks() {
+        XCTAssertTrue(ShareLinks.isYouTube("https://youtu.be/aircAruvnKk?si=x"))
+        XCTAssertTrue(ShareLinks.isYouTube("https://m.youtube.com/watch?v=aircAruvnKk"))
+        XCTAssertFalse(ShareLinks.isYouTube("https://vimeo.com/1"))
+        XCTAssertEqual(ShareLinks.firstLink(in: "Watch this https://youtu.be/aircAruvnKk now"),
+                       "https://youtu.be/aircAruvnKk")
+    }
+
     func testProductsAttachmentDecodes() throws {
         let json = """
         [{"type": "products", "errand_id": 3, "site": "amazon.it", "products": [

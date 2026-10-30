@@ -29,6 +29,7 @@ targets:
       - ScreenTime
     dependencies:
       - target: AideWidgets
+      - target: AideShare
       - target: LockMonitor
       - target: LockShield
       - package: SwiftMath
@@ -94,6 +95,39 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).widgets
         CODE_SIGN_ENTITLEMENTS: AideWidgets/AideWidgets.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+  # The share sheet: a YouTube link from the YouTube app or Safari goes to Aide (docs/API.md, "Videos"). It reads the
+  # server's URL and token from the App Group's keychain, as the widgets do.
+  AideShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - AideShare
+      - Aide/Models/Models.swift
+      - Aide/Networking/APIClient.swift
+      - Aide/Support/AppSettings.swift
+      - Aide/Support/Keychain.swift
+      - Aide/Support/Theme.swift
+      - Aide/Support/Figure.swift
+      - ScreenTime/ScreenLock.swift
+    info:
+      path: AideShare/Info.plist
+      properties:
+        CFBundleDisplayName: Aide
+        AideKeychainService: $(AIDE_BUNDLE_ID)
+        AideAppGroup: group.$(AIDE_BUNDLE_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).share
+        CODE_SIGN_ENTITLEMENTS: AideShare/AideShare.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
   # Screen Time locks (docs/API.md, "Screen Time"): the monitor shields and opens the apps on each lock's schedule,

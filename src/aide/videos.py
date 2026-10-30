@@ -541,15 +541,17 @@ class VideoWorker:
     # -- telling the user ---------------------------------------------------------------------
 
     async def _post(self, v: dict) -> None:
+        """The card carries the title, the gist and the page; the message says only what it doesn't (the answer to
+        the user's question, else the TL;DR). The whole brief is in the note, for the model's follow-ups."""
         s = v["summary"] or {}
-        lines = [f"**{v['title']}**", s.get("gist") or ""]
-        if s.get("answer"):
-            lines.append(s["answer"])
-        if s.get("know"):
-            lines.append("\n".join(f"- {k}" for k in s["know"]))
-        text = "\n\n".join(x for x in lines if x)
-        await self._send(v, f"{NOTE}{v['public_id']}: the brief is ready]", text,
-                         f"Summary ready: {v['title']}", s.get("gist") or "")
+        text = s.get("answer") or s.get("tldr") or s.get("gist") or v["title"]
+        brief = [f"{v['title']} ({v['channel']}). TL;DR: {s.get('tldr') or s.get('gist') or ''}"]
+        brief += [f"- {k}" for k in s.get("know") or []]
+        if s.get("takeaway"):
+            brief.append(f"Takeaway: {s['takeaway']}")
+        note = (f"{NOTE}{v['public_id']}: the brief is ready, shown to the user as a card with a page] "
+                + "\n".join(brief))
+        await self._send(v, note, text, f"Summary ready: {v['title']}", s.get("gist") or "")
 
     async def _failed(self, v: dict, reason: str) -> None:
         v = self.store.update(v["public_id"], status="failed", step=None, error=reason)

@@ -140,9 +140,12 @@ async def test_a_video_is_read_briefed_and_posted_with_its_frames(env):
     assert full["frames"] == 1 and full["cover"] == s["moments"][1]["frame"] and full["moments"] == full["moments"]
     # Posted in the chat with its card; the note before it stays out of sight.
     last = agent.visible_history(CONVERSATION)[-1]
-    assert last["role"] == "assistant" and "**How neural networks learn**" in last["text"]
+    assert last["role"] == "assistant" and last["text"] == BRIEF["tldr"]  # the card has the title and the gist
     assert last["attachments"][0]["videos"][0]["status"] == "ready"
     assert not any(m["text"].startswith("[Video #") for m in agent.visible_history(CONVERSATION))
+    notes = [c for role, c, *_ in agent.db.history_with_ts(agent._resolve(CONVERSATION, None))
+             if role == "user" and isinstance(c, str) and "[Video #" in c]
+    assert "- The cost averages over examples." in notes[-1]  # the brief, for follow-ups
 
     # Follow-ups read the transcript where it mentions something, with its times.
     found = worker.read(v["public_id"], "gradient descent")

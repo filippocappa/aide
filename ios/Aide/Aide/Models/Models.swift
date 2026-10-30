@@ -69,6 +69,7 @@ enum Attachment: Decodable, Hashable {
     case errands([Errand])
     case purchases([Purchase])
     case products([Product])
+    case videos([VideoCard])
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -84,11 +85,12 @@ enum Attachment: Decodable, Hashable {
         case "errands": self = .errands(try c.decode([Errand].self, forKey: .errands))
         case "purchases": self = .purchases(try c.decode([Purchase].self, forKey: .purchases))
         case "products": self = .products(try c.decode([Product].self, forKey: .products))
+        case "videos": self = .videos(try c.decode([VideoCard].self, forKey: .videos))
         default: self = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
-        case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products
+        case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
@@ -2449,4 +2451,123 @@ struct HealthInsight: Decodable, Hashable {
 struct HealthInsightRequest: Encodable {
     let kind: String
     let date: String
+}
+
+// MARK: - Videos (docs/API.md, "Videos")
+
+/// A YouTube video Aide reads: its card in chat and in the list.
+struct VideoCard: Decodable, Identifiable, Hashable {
+    let id: String
+    let youtubeId: String
+    let url: String
+    /// queued | working | ready | failed
+    let status: String
+    /// While queued or working: what it's doing ("Writing the brief").
+    var step: String?
+    /// Failed: why, in words for the user.
+    var error: String?
+    var title: String?
+    var channel: String?
+    /// Seconds.
+    var duration: Int?
+    var thumbnail: String?
+    var gist: String?
+    var moments: Int?
+    var frames: Int?
+    /// The first frame's photo id.
+    var cover: String?
+    let createdAt: String
+
+    var isReady: Bool { status == "ready" }
+    var isFailed: Bool { status == "failed" }
+    var isWorking: Bool { status == "queued" || status == "working" }
+    var thumbnailURL: URL? { URL(string: thumbnail ?? "https://i.ytimg.com/vi/\(youtubeId)/hqdefault.jpg") }
+    var date: Date? { Wire.parse(createdAt) }
+
+    /// 1:02:03 or 18:40.
+    static func clock(_ seconds: Int) -> String {
+        let h = seconds / 3600, m = seconds / 60 % 60, s = seconds % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+}
+
+struct VideoMoment: Decodable, Identifiable, Hashable {
+    /// Seconds into the video.
+    let t: Int
+    let title: String
+    let text: String
+    /// A photo id: absent when no frame was worth showing.
+    var frame: String?
+    /// YouTube at that moment.
+    let url: String
+    var id: Int { t }
+}
+
+struct VideoChapter: Decodable, Hashable {
+    let t: Int
+    let title: String
+}
+
+/// A video with its brief: the page.
+struct Video: Decodable, Identifiable, Hashable {
+    let id: String
+    let youtubeId: String
+    let url: String
+    let status: String
+    var step: String?
+    var error: String?
+    var title: String?
+    var channel: String?
+    var duration: Int?
+    var thumbnail: String?
+    var gist: String?
+    var cover: String?
+    let createdAt: String
+    var question: String?
+    var published: String?
+    var language: String?
+    /// captions | auto | whisper
+    var source: String?
+    var conversationId: String?
+    var chapters: [VideoChapter]?
+    var tldr: String?
+    var know: [String]?
+    var takeaway: String?
+    var answer: String?
+    var moments: [VideoMoment]?
+
+    var keyMoments: [VideoMoment] { moments ?? [] }
+    var points: [String] { know ?? [] }
+    var thumbnailURL: URL? { URL(string: thumbnail ?? "https://i.ytimg.com/vi/\(youtubeId)/hqdefault.jpg") }
+    var watchURL: URL? { URL(string: "https://www.youtube.com/watch?v=\(youtubeId)") }
+}
+
+struct VideoList: Decodable {
+    let videos: [VideoCard]
+    var enabled: Bool?
+}
+
+struct VideoStarted: Decodable {
+    let video: Video
+    let conversationId: String
+}
+
+struct VideoToStart: Encodable {
+    let url: String
+    var question: String?
+    var conversationId: String?
+}
+
+/// Links in what's shared to Aide (the share extension).
+enum ShareLinks {
+    static func isYouTube(_ link: String) -> Bool {
+        guard let host = URL(string: link)?.host?.lowercased() else { return false }
+        return host == "youtu.be" || host == "youtube.com" || host.hasSuffix(".youtube.com")
+    }
+
+    /// The first web link in shared text ("Watch this https://youtu.be/…").
+    static func firstLink(in text: String) -> String? {
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        return detector?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))?.url?.absoluteString
+    }
 }

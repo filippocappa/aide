@@ -459,7 +459,7 @@ private struct NoteFigure: View {
     }
 }
 
-private struct ZoomedImage: View {
+struct ZoomedImage: View {
     let image: UIImage
     let caption: String
     @Environment(\.dismiss) private var dismiss

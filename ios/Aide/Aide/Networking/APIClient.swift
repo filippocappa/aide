@@ -359,6 +359,25 @@ final class APIClient {
         try await send("GET", "/v1/purchases", query: days.map { [URLQueryItem(name: "days", value: String($0))] } ?? [])
     }
 
+    // MARK: Videos (docs/API.md, "Videos")
+
+    /// Starts reading a YouTube video; without `conversationId` in a new chat with Aide.
+    func startVideo(_ url: String, question: String? = nil, conversationId: String? = nil) async throws -> VideoStarted {
+        try await send("POST", "/v1/videos", body: VideoToStart(url: url, question: question, conversationId: conversationId))
+    }
+
+    func videos(search: String? = nil) async throws -> VideoList {
+        try await send("GET", "/v1/videos", query: search.map { [URLQueryItem(name: "q", value: $0)] } ?? [])
+    }
+
+    func video(_ id: String) async throws -> Video {
+        try await send("GET", "/v1/videos/\(id)")
+    }
+
+    func deleteVideo(_ id: String) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/videos/\(id)", body: EmptyBody())
+    }
+
     /// The live view's socket: an errand's page, or a site to log in to. The token goes in the header, as for
     /// every other call.
     /// `frames` false: no frames until `frames(on:)`, for the app's own drawing of the page (its `scene`).

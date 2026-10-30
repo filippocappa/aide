@@ -1952,7 +1952,8 @@ The server reads the video in the background, one at a time:
 2. Sonnet writes the brief in English, whatever the video's language.
 3. A frame is taken a few seconds after each key moment, and Haiku keeps only the frames that show something (a
    slide, a diagram, code, a product), not a person talking.
-4. It posts the brief in the chat with its card, and sends a `message` push.
+4. It posts in the chat with its card, and sends a `message` push. The message's text is only what the card doesn't
+   show: the answer to the user's question, else the TL;DR (the title, gist and the rest are on the card and its page).
 
 It takes about 30 s for a 20-minute video with captions, and longer for Whisper. The agents read a video already
 read with `read_video` (the brief, or the transcript's lines about something, with their times) and list them with

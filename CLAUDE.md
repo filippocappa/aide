@@ -431,7 +431,7 @@ Professor) puts a plan on it that goes in the calendar only on Add; the app's `V
 the chosen day, the event's sheet with Move, Delete, Open in Calendar). Also a reply survives the app going to the
 background (pings, `working` on history, a `message` push when no Live Activity is left).
 
-**Done, server (2026-10-30), app in progress:** YouTube videos (contract in `docs/API.md`, "Videos"; `videos.py`,
+**Done, both sides (2026-10-30), not yet tried on the phone:** YouTube videos (contract in `docs/API.md`, "Videos"; `videos.py`,
 `tools/videos.py`). A link pasted in Aide's or Professor's chat (`summarize_video`) or shared through the app
 (`POST /v1/videos`, a new Aide chat) is read in the background: yt-dlp's details and captions (the video's own, else
 YouTube's automatic ones; no captions: Whisper on the audio), a brief in English by Sonnet (gist, TL;DR, what to know,
@@ -439,7 +439,12 @@ YouTube's automatic ones; no captions: Whisper on the audio), a brief in English
 stream (ffmpeg, no download) and Haiku keeping only the ones that show something; posted in the chat with a `videos`
 card and a push. `read_video` and `list_videos` for follow-ups. Each one is a page in the vault (`Aide/Videos/`).
 Tried on cappa: 3Blue1Brown (captions, 27–43 s), Geopop in Italian (brief in English), Whisper on 10 min (42 s).
-yt-dlp must be kept current (README, "YouTube videos").
+yt-dlp must be kept current (README, "YouTube videos"). App (`Views/VideoViews.swift`): the card in chat (thumbnail, the
+step while it's read, the gist, "9 key moments"), the page (Play as slides, YouTube, the answer, TL;DR, what to know, the
+moments on a timeline with time chips opening YouTube there and their frames, zoomable, the takeaway), the slides
+(story-style: cover, answer, a slide per moment, Remember; tap to skip, hold to pause, drag down to close), Settings →
+Videos (search, swipe to delete). The `AideShare` extension (bundle `.share`, App Group) sends a shared YouTube link with
+an optional question. The chat message is only the answer or the TL;DR; the card has the rest.
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
