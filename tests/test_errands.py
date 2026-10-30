@@ -778,6 +778,17 @@ SCENE_PAGES = {
     "/ap/otp": _html('<p>Inserisci il codice che ti abbiamo inviato</p><form><input name="otp" '
                      'autocomplete="one-time-code" maxlength="6"><button type="submit">Invia codice</button></form>',
                      "Verifica"),
+    # Glovo's phone login: the dialling code is a read-only box that opens a country search, in English.
+    "/it/login": _html('<form onsubmit="return false"><span id="flag">🇪🇸</span><input type="tel" placeholder="Prefisso" '
+                       'aria-label="Prefisso" value="+34" readonly onclick="m.hidden = false; q.focus()">'
+                       '<input type="tel" placeholder="Numero di telefono"><button type="submit">Continua con WhatsApp'
+                       '</button></form><div id="m" hidden role="dialog"><input id="q" type="search" placeholder="Cerca un '
+                       'Paese" oninput="for (const r of m.querySelectorAll(\'button\')) r.hidden = !r.innerText.includes'
+                       '(this.value)">' + "".join(
+                           f'<button type="button" onclick="document.querySelector(\'[aria-label=Prefisso]\').value = '
+                           f'\'{code}\'; m.hidden = true">{name} ({code})</button>'
+                           for name, code in [("Spain", "+34"), ("Italy", "+39"), ("Ivory Coast", "+225")]) +
+                       "</div>", "Glovo"),
     "/captcha": _html('<form><p>Inserisci i caratteri che vedi</p><img src="/captcha.jpg" alt="captcha" width="200" '
                       'height="70"><input type="text" name="captchacharacters"><button type="submit">Continua'
                       "</button></form>", "Amazon.it"),
@@ -867,6 +878,18 @@ async def test_real_chromium_scenes(tmp_path):
         await browser.open(owner, "https://shop.test/ap/otp")
         scene = await browser.scene(owner)
         assert scene["kind"] == "code" and scene["form"]["fields"][0]["kind"] == "code"
+
+        # A dialling code: shown as a code with the user's suggested, set by picking the country from its list.
+        await browser.open(owner, "https://shop.test/it/login")
+        scene = await browser.scene(owner)
+        dial, number = scene["form"]["fields"]
+        assert scene["kind"] == "login" and number["kind"] == "phone"
+        assert (dial["kind"], dial["value"], dial["suggested"]) == ("dial", "+34", "+39")
+        await browser.put(owner, dial["ref"], "39")
+        assert await browser._page(owner).locator("[aria-label=Prefisso]").input_value() == "+39"
+        assert (await browser.scene(owner))["form"]["fields"][0]["value"] == "+39"
+        assert await browser.fill(owner, dial["ref"], "+225") == "Set the dialling code to +225."  # the model's too
+        assert await browser._page(owner).locator("[aria-label=Prefisso]").input_value() == "+225"
 
         await browser.open(owner, "https://shop.test/captcha")
         scene = await browser.scene(owner)

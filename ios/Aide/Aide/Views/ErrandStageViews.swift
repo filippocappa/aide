@@ -76,10 +76,13 @@ struct PageScene: Decodable, Equatable {
 
     struct Field: Decodable, Equatable, Identifiable {
         let ref: String
-        /// username, password, code, phone, text
+        /// username, password, code, phone, dial (a dialling code: "+34"), text
         let kind: String
         var label: String?
         var filled: Bool
+        /// A dial field's code on the page now, and the user's own, which the app puts in for them.
+        var value: String?
+        var suggested: String?
         var id: String { ref }
     }
 
@@ -853,6 +856,8 @@ struct StageSheet: View {
     @State private var loggedIn = false
     @State private var realPage = false
     @State private var finishing = false
+    /// How tall the sheet's content is, for a small sheet around a login.
+    @State private var height: CGFloat = 220
     @FocusState private var focused: String?
 
     var body: some View {
@@ -871,6 +876,7 @@ struct StageSheet: View {
                     }
                 }
                 .padding(16)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
             }
             .scrollBounceBehavior(.basedOnSize)
             .safeAreaInset(edge: .bottom) { footer }
@@ -881,6 +887,9 @@ struct StageSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } }
             }
         }
+        .presentationDetents([detent])
+        .presentationDragIndicator(.visible)
+        .animation(.spring(duration: 0.35), value: detent)
         .task { connect() }
         .onDisappear { live.disconnect() }
         .onChange(of: live.scene) { old, new in moved(from: old, to: new) }
@@ -900,10 +909,19 @@ struct StageSheet: View {
 
     private var isSite: Bool { if case .site = target { true } else { false } }
 
+    /// A small sheet around a login, a code or a CAPTCHA (and while the page opens); full height to watch Aide work.
+    private var compact: Bool {
+        loggedIn || live.closed != nil || live.scene == nil || (live.control && live.scene?.isYourTurn == true)
+    }
+
+    private var detent: PresentationDetent {
+        compact ? .height(min(height + 64, 700)) : .large
+    }
+
     @ViewBuilder
     private var content: some View {
         if loggedIn {
-            DoneStage(text: "Logged in to \(live.scene?.siteName ?? title)", tint: tint).frame(height: 300)
+            DoneStage(text: "Logged in to \(live.scene?.siteName ?? title)", tint: tint).frame(height: 200)
             Text(isSite ? "Aide's browser stays logged in there." : "Aide goes on from here.")
                 .font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity)
         } else if let closed = live.closed {
@@ -911,6 +929,8 @@ struct StageSheet: View {
             Button("Try again") { connect() }.buttonStyle(.bordered)
         } else if live.control, let scene = live.scene, scene.isYourTurn {
             yourTurn(scene)
+        } else if live.scene == nil {
+            Narration(text: "Opening the page…", tint: tint).frame(minHeight: 80)
         } else {
             if live.control, let reason = live.status?.reason {
                 Label(reason, systemImage: "hand.point.up.left.fill").font(.subheadline)
@@ -957,20 +977,24 @@ struct StageSheet: View {
                     .foregroundStyle(Theme.onAccent)
             }
         }
-        .padding(16)
-        .background(Theme.row, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .animation(.spring(duration: 0.35), value: scene)
     }
 
     @ViewBuilder
     private func formView(_ form: PageScene.Fields) -> some View {
-        ForEach(form.fields) { field in
-            PageField(kind: field.kind, label: field.label ?? (field.filled ? "Filled in" : nil), text: binding(field.ref))
-                .focused($focused, equals: field.ref)
-                .submitLabel(field.id == form.fields.last?.id ? .go : .next)
-                .onSubmit { next(after: field, in: form) }
-                .padding(.horizontal, 12).padding(.vertical, 11)
-                .background(Theme.chip, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        ForEach(Self.rows(form.fields), id: \.first?.id) { row in
+            HStack(spacing: 8) {
+                ForEach(row) { field in
+                    PageField(kind: field.kind, label: field.label ?? (field.filled ? "Filled in" : nil),
+                              text: binding(field.ref))
+                        .focused($focused, equals: field.ref)
+                        .submitLabel(field.id == form.fields.last?.id ? .go : .next)
+                        .onSubmit { next(after: field, in: form) }
+                        .padding(.horizontal, 12).padding(.vertical, 11)
+                        .frame(width: field.kind == "dial" ? 104 : nil)
+                        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
         }
         if !form.choices.isEmpty {
             VStack(spacing: 0) {
@@ -1073,6 +1097,39 @@ struct StageSheet: View {
         }
     }
 
+    /// The form's fields a row each, but a dialling code shares its row with the number after it.
+    static func rows(_ fields: [PageScene.Field]) -> [[PageScene.Field]] {
+        var rows: [[PageScene.Field]] = []
+        for field in fields {
+            if let last = rows.last, last.count == 1, last[0].kind == "dial", field.kind == "phone" {
+                rows[rows.count - 1].append(field)
+            } else {
+                rows.append([field])
+            }
+        }
+        return rows
+    }
+
+    /// What goes into the page: a number typed with its code ("+39 340…", "0039 340…") loses it when the form has a
+    /// code field, which takes it instead. Only what changed is sent (the page's own code stays untouched).
+    static func filling(_ form: PageScene.Fields, _ values: [String: String]) -> [(ref: String, text: String)] {
+        var values = values
+        if let dial = form.fields.first(where: { $0.kind == "dial" }),
+           let phone = form.fields.first(where: { $0.kind == "phone" }),
+           let typed = values[phone.ref]?.trimmingCharacters(in: .whitespaces),
+           let code = (values[dial.ref] ?? dial.value).map({ $0.filter(\.isNumber) }), !code.isEmpty {
+            let digits = typed.filter { $0.isNumber || $0 == "+" }
+            for lead in ["+" + code, "00" + code] where digits.hasPrefix(lead) {
+                values[phone.ref] = String(digits.dropFirst(lead.count))
+            }
+        }
+        return form.fields.compactMap { field in
+            guard let value = values[field.ref], !value.isEmpty else { return nil }
+            if field.kind == "dial", value.filter(\.isNumber) == field.value?.filter(\.isNumber) { return nil }
+            return (field.ref, value)
+        }
+    }
+
     /// Every field has something, or the page already had it.
     static func ready(_ form: PageScene.Fields, _ values: [String: String]) -> Bool {
         form.fields.allSatisfy { $0.filled || !(values[$0.ref] ?? "").isEmpty }
@@ -1092,9 +1149,7 @@ struct StageSheet: View {
 
     /// The fields into the page, then its button (or Enter).
     private func submit(_ form: PageScene.Fields) {
-        for field in form.fields {
-            if let value = values[field.ref], !value.isEmpty { live.fill(ref: field.ref, text: value) }
-        }
+        for (ref, text) in Self.filling(form, values) { live.fill(ref: ref, text: text) }
         if let submit = form.submit { live.press(ref: submit.ref) } else { live.key("Enter") }
         sent()
     }
@@ -1121,6 +1176,10 @@ struct StageSheet: View {
         guard let new else { return }
         if old?.kind != new.kind || old?.url != new.url || old?.form?.fields.map(\.ref) != new.form?.fields.map(\.ref) {
             values = [:]
+            // The user's own dialling code in place of the site's (Glovo starts on Spain's +34).
+            for field in new.form?.fields ?? [] where field.kind == "dial" {
+                values[field.ref] = field.suggested ?? field.value
+            }
             chosen = nil
             sending = false
         } else if new.form?.error != old?.form?.error {
@@ -1200,6 +1259,13 @@ struct PageField: View {
                 TextField(label ?? "Code", text: $text)
                     .textContentType(.oneTimeCode)
                     .keyboardType(.numberPad)
+            case "dial":
+                HStack(spacing: 6) {
+                    Text(Self.flag(text)).font(.title3)
+                    TextField("+39", text: $text)
+                        .keyboardType(.phonePad)
+                }
+                .accessibilityLabel(label ?? "Country code")
             case "phone":
                 TextField(label ?? "Phone", text: $text)
                     .textContentType(.telephoneNumber)
@@ -1213,5 +1279,12 @@ struct PageField: View {
         }
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
+    }
+
+    /// The flag for a dialling code, for the common ones ("+39": 🇮🇹), else a globe.
+    static func flag(_ code: String) -> String {
+        let flags = ["39": "🇮🇹", "34": "🇪🇸", "33": "🇫🇷", "49": "🇩🇪", "44": "🇬🇧", "1": "🇺🇸", "41": "🇨🇭",
+                     "43": "🇦🇹", "31": "🇳🇱", "32": "🇧🇪", "351": "🇵🇹", "30": "🇬🇷", "353": "🇮🇪", "48": "🇵🇱"]
+        return flags[code.filter(\.isNumber)] ?? "🌐"
     }
 }

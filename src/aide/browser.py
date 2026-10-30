@@ -32,6 +32,7 @@ IDLE = 15 * 60  # seconds a site's browser stays open with no page in use
 # Two-part public suffixes, so www.amazon.co.uk is amazon.co.uk (one profile per site).
 _SECOND_LEVEL = {"co.uk", "org.uk", "ac.uk", "com.au", "co.jp", "com.br", "co.in", "com.mx", "co.nz", "com.tr"}
 _SITE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
+_DIAL_CODE = re.compile(r"^(\+|00)?\d{1,4}$")  # what a dialling code looks like typed: +39, 39, 0039
 
 # Mobile Chrome on Android, with this Chromium's version (set at launch).
 _UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v} Mobile Safari/537.36"
@@ -319,6 +320,38 @@ _MAIN_IMAGE_JS = r"""
 }
 """
 
+# Is this element a dialling-code field ("Prefisso" +34, a country-code <select>)? The scene's test, for one element.
+_IS_DIAL_JS = r"""
+e => {
+  const label = (e.getAttribute('aria-label') || (e.labels && e.labels[0] && e.labels[0].innerText) || e.placeholder || '');
+  const hint = [e.autocomplete, e.name, e.id, label].join(' ').toLowerCase();
+  if (/prefisso|prefix|country.?code|calling.?code|dial(l?ing)?.?code|codice (del )?paese|indicativo|tel-country-code/.test(hint)) return true;
+  if (e.tagName === 'SELECT') return [...e.options].filter(o => /\+\d{1,4}\b/.test(o.text)).length > 5;
+  return /^\+\d{1,4}$/.test((e.value || '').trim());
+}
+"""
+
+# The country with this dialling code in the list a code field opened ("🇮🇹 Italy (+39)"): marked data-aide-pick
+# (the row itself when it's an option, a list item or a button, else the smallest box saying it). Only listbox options
+# when `strict`. True when found.
+_DIAL_PICK_JS = r"""
+([code, strict]) => {
+  const re = new RegExp('\\+' + code.replace(/\D/g, '') + '(?!\\d)');
+  const visible = el => { const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+    return r.width >= 2 && r.height >= 2 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const says = el => { const t = (el.innerText || '').trim(); return t.length < 80 && re.test(t) && (t.match(/\+\d/g) || []).length === 1; };
+  const rows = [...document.querySelectorAll(strict ? '[role=option]' : '[role=option],li,button,a,label,div,span')]
+    .filter(el => visible(el) && !el.closest('input,select,textarea') && says(el));
+  if (!rows.length) return false;
+  const area = el => { const r = el.getBoundingClientRect(); return r.width * r.height; };
+  const row = rows.filter(el => el.matches('[role=option],li,button,a,label')).sort((a, b) => area(a) - area(b))[0] ||
+    rows.sort((a, b) => area(a) - area(b))[0];
+  row.dataset.aidePick = '1';
+  return true;
+}
+"""
+
+
 # What the focused element wants, so the app can show the right native field (AutoFill for passwords and codes).
 _FOCUS_JS = r"""
 () => {
@@ -371,18 +404,23 @@ _SCENE_JS = r"""
   const meta = n => { const m = document.querySelector(`meta[property="${n}"],meta[name="${n}"]`); return m ? clean(m.content) : null; };
   const buttons = () => [...document.querySelectorAll('button,input[type=submit],input[type=button],a[role=button],[role=button]')].filter(visible);
 
-  // The fields on the page, by what they want.
+  // The fields on the page, by what they want. A dialling code ("Prefisso" +34) is its own: often a box that opens a
+  // country list, so the app shows it as a code and the server picks the country.
+  const DIAL = /prefisso|prefix|country.?code|calling.?code|dial(l?ing)?.?code|codice (del )?paese|indicativo|tel-country-code/;
+  const dialOf = el => { const m = (el.tagName === 'SELECT' ? clean(el.selectedOptions[0] && el.selectedOptions[0].text) : el.value || '').match(/\+\d{1,4}\b/); return m ? m[0] : null; };
   const kindOf = el => {
     const hint = [el.autocomplete, el.name, el.id, el.getAttribute('inputmode'), el.placeholder, labelOf(el)].join(' ').toLowerCase();
+    if (el.tagName === 'SELECT') return DIAL.test(hint) || [...el.options].filter(o => /\+\d{1,4}\b/.test(o.text)).length > 5 ? 'dial' : null;
     if (['checkbox', 'radio', 'submit', 'button', 'image', 'reset', 'file', 'range', 'color', 'hidden'].includes(el.type)) return null;
     if (el.type === 'password') return 'password';
+    if (DIAL.test(hint) || /^\+\d{1,4}$/.test((el.value || '').trim())) return 'dial';
     if (el.type === 'search' || /search|cerca|field-keywords|query|\bq\b/.test(hint)) return 'search';
     if (el.type !== 'email' && /one-time-code|otp|2fa|mfa|verif|codice|\bcode\b|\bpin\b/.test(hint)) return 'code';
     if (el.type === 'email' || /email|e-mail|username|user|login|account|claim/.test(hint)) return 'username';
     if (el.type === 'tel' || /\btel\b|phone|cellulare|telefono|mobile/.test(hint)) return 'phone';
     return 'text';
   };
-  const inputs = [...document.querySelectorAll('input,textarea')].filter(visible).map(el => ({el, kind: kindOf(el)})).filter(f => f.kind);
+  const inputs = [...document.querySelectorAll('input,textarea,select')].filter(visible).map(el => ({el, kind: kindOf(el)})).filter(f => f.kind);
   const search = inputs.find(f => f.kind === 'search');
   const query = clean((search && search.el.value) || params.get('k') || params.get('q') || params.get('query') ||
     params.get('search') || params.get('keywords') || '').slice(0, 80) || null;
@@ -418,8 +456,9 @@ _SCENE_JS = r"""
   if (out.kind === 'page' && (pw || codeish || (user && loginish && !search))) {
     const first = (pw || (codeish && code) || user).el;
     const root = first.form || first.closest('form,[role=dialog],main') || document.body;
-    const fields = inputs.filter(f => root.contains(f.el) && ['username', 'password', 'code', 'phone', 'text'].includes(f.kind))
-      .slice(0, 4).map(f => ({ref: refOf(f.el), kind: f.kind, label: labelOf(f.el) || null, filled: !!f.el.value}));
+    const fields = inputs.filter(f => root.contains(f.el) && ['username', 'password', 'code', 'phone', 'dial', 'text'].includes(f.kind))
+      .slice(0, 4).map(f => ({ref: refOf(f.el), kind: f.kind, label: labelOf(f.el) || null, filled: !!f.el.value,
+                              ...(f.kind === 'dial' ? {value: dialOf(f.el)} : {})}));
     const GO = /continu|accedi|sign.?in|log.?in|avanti|next|verific|verify|invia|submit|conferma|confirm|ok\b|entra/i;
     const submit = [...root.querySelectorAll('button[type=submit],input[type=submit]')].find(visible) ||
       [...root.querySelectorAll('button,[role=button],input[type=button],a')].filter(visible).find(b => GO.test(textOf(b)));
@@ -610,9 +649,10 @@ _SCENE_JS = r"""
 
 
 class Browser:
-    def __init__(self, root: Path, headed: bool = False):
+    def __init__(self, root: Path, headed: bool = False, dial: str = "+39"):
         self.root = root
         self.headed = headed  # under Xvfb (a DISPLAY): harder for sites to tell from a person's browser
+        self.dial = dial  # the user's dialling code, suggested for a login's code field
         self._pw = None
         self._ua: str | None = None
         self._contexts: dict[str, object] = {}  # site -> BrowserContext
@@ -912,6 +952,9 @@ class Browser:
         box, label = await self._where_is(locator)
         self._did(owner, "type", None if label is None else text, box)  # never what goes in a password field
         try:
+            if _DIAL_CODE.match(text.strip()) and await locator.evaluate(_IS_DIAL_JS):
+                await self._dial(page, locator, text)
+                return f"Set the dialling code to {text.strip()}."
             if await locator.evaluate("e => e.readOnly === true"):
                 # A field that opens its own search when tapped (stations, places, dates): type in that one.
                 await self._tap(locator)
@@ -1008,9 +1051,13 @@ class Browser:
         if page is None:
             return None
         try:
-            return await page.evaluate(_SCENE_JS)
+            scene = await page.evaluate(_SCENE_JS)
         except Exception:
             return None  # mid-navigation: next time
+        for field in (scene.get("form") or {}).get("fields") or []:
+            if field["kind"] == "dial":
+                field["suggested"] = self.dial
+        return scene
 
     async def crop(self, owner: str, ref: str) -> tuple[bytes, dict] | None:
         """A JPEG of one element (a CAPTCHA) and its box on the visible page (0–1), or None."""
@@ -1029,8 +1076,41 @@ class Browser:
 
     async def put(self, owner: str, ref: str, text: str) -> None:
         """The user's text into a field (from the app's own login screen). Never recorded or logged."""
-        locator = self._ref(self._page(owner), ref)
-        await locator.fill(text, timeout=ACTION_TIMEOUT)
+        page = self._page(owner)
+        locator = self._ref(page, ref)
+        if _DIAL_CODE.match(text.strip()) and await locator.evaluate(_IS_DIAL_JS):
+            await self._dial(page, locator, text)
+        else:
+            await locator.fill(text, timeout=ACTION_TIMEOUT)
+
+    async def _dial(self, page, locator, code: str) -> None:
+        """A dialling code into its field: chosen in a <select>, typed where it takes typing, or picked from the country
+        list the field opens, searched by the code (Glovo's list is in English: "Italia" finds nothing, "+39" does)."""
+        code = "+" + re.sub(r"\D", "", code).removeprefix("00")
+        if await locator.evaluate("e => e.tagName") == "SELECT":
+            value = await locator.evaluate(
+                r"(e, c) => { const o = [...e.options].find(o => o.value === c || o.value === c.slice(1) || "
+                r"(o.text.match(/\+\d{1,4}/) || [])[0] === c); return o ? o.value : null; }", code)
+            if value is None:
+                raise BrowserError(f"{code} isn't in the list.")
+            await locator.select_option(value=value)
+            return
+        if await locator.evaluate("e => !e.readOnly && !e.disabled"):
+            await locator.fill(code)
+            if await page.evaluate(_DIAL_PICK_JS, [code, True]):  # it opened a list as it was typed in
+                await self._tap(page.locator("[data-aide-pick]").first)
+        else:
+            await self._tap(locator)
+            await page.wait_for_timeout(700)
+            search = page.locator("input:focus:not([readonly]), input[type=search]:visible").first
+            if await search.count():
+                await search.fill(code)
+                await page.wait_for_timeout(600)
+            if not await page.evaluate(_DIAL_PICK_JS, [code, False]):
+                raise BrowserError(f"{code} isn't in the list the code field opened.")
+            await self._tap(page.locator("[data-aide-pick]").first)
+        await page.evaluate("() => document.querySelectorAll('[data-aide-pick]').forEach(e => delete e.dataset.aidePick)")
+        await asyncio.sleep(SETTLE)
 
     async def press_ref(self, owner: str, ref: str, tick: str | None = None) -> None:
         """The user's press on a button or choice (`tick`: a "stay logged in" box to tick first)."""

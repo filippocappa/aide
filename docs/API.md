@@ -1903,8 +1903,12 @@ Server to app:
   - `form` (on `login` and `code`): `{"fields": [{"ref": "7", "kind": "username", "label": "Indirizzo e-mail",
     "filled": false}], "submit": {"ref": "8", "text": "Continua"}, "choices": [{"ref": "9", "text": "SMS al
     ***12"}], "remember": "10", "remembered": false, "error": "Password errata"}`. Field `kind`: `username`,
-    `password`, `code`, `phone` or `text`; `filled`: it has a value (a password's is never read). `submit`, `remember`
+    `password`, `code`, `phone`, `dial` or `text`; `filled`: it has a value (a password's is never read). `submit`, `remember`
     (a "stay logged in" box) and `error` may be null; `choices`: radio options (where to send a code), often empty.
+    A `dial` field (since 2026-10-30) is a phone number's dialling code ("Prefisso"), often a box that opens a country
+    list rather than one to type in: it carries `value` (the code on the page now, `"+34"`, or null) and `suggested`
+    (the user's own, `"+39"`). The app puts `suggested` in for the user and sends a `fill` with the code (`"+39"`,
+    `"39"`, `"0039"`) only when it differs from `value`; the server picks that country on the page.
   - `captcha` (on `captcha`): `{"kind": "text" | "grid" | "checkbox" | "other", "ref": "12", "input_ref": "13",
     "submit_ref": "14"}`: `text` is a picture of characters to type in `input_ref`, then press `submit_ref` (either may
     be null); the others are solved by tapping its picture (`crop`).

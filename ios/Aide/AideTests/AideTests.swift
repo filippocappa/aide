@@ -1583,6 +1583,23 @@ final class ErrandTests: XCTestCase {
         XCTAssertFalse(StageSheet.ready(form, [:]))  // the email is missing; the password was there
         XCTAssertTrue(StageSheet.ready(form, ["7": "me@example.it"]))
 
+        // Glovo's phone login: the code shares a row with the number, a number typed with its code loses it, and the
+        // code is sent only when it isn't the page's already.
+        let phone = try JSONDecoder.api.decode(PageScene.self, from: Data("""
+        {"kind": "login", "site": "glovoapp.com", "items": [], "form": {"fields": [
+          {"ref": "1", "kind": "dial", "label": "Prefisso", "filled": true, "value": "+34", "suggested": "+39"},
+          {"ref": "2", "kind": "phone", "label": "Numero di telefono", "filled": false}],
+         "submit": {"ref": "3", "text": "SMS"}, "choices": [], "remember": null, "remembered": null, "error": null}}
+        """.utf8))
+        let phoneForm = try XCTUnwrap(phone.form)
+        XCTAssertEqual(StageSheet.rows(phoneForm.fields).map { $0.map(\.ref) }, [["1", "2"]])
+        XCTAssertEqual(phoneForm.fields[0].suggested, "+39")
+        let sent = StageSheet.filling(phoneForm, ["1": "+39", "2": "+39 340 123 4567"])
+        XCTAssertEqual(sent.map(\.ref), ["1", "2"])
+        XCTAssertEqual(sent.map(\.text), ["+39", "3401234567"])
+        XCTAssertEqual(StageSheet.filling(phoneForm, ["1": "+34", "2": "612345678"]).map(\.ref), ["2"])
+        XCTAssertEqual(PageField.flag("+39"), "🇮🇹")
+
         let captcha = try JSONDecoder.api.decode(PageScene.self, from: Data("""
         {"kind": "captcha", "site": "amazon.it", "title": "Amazon.it", "url": null, "icon": null, "query": null, "items": [],
          "product": null, "cart": null, "form": null,
