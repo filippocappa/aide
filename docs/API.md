@@ -1949,7 +1949,9 @@ The server notifies the phone through APNs. It sends only when it has a key (`AP
   `production` for TestFlight and App Store builds. The server must send each token to the matching APNs host.
 - The app registers on every launch (the token can change), and when notifications are turned on in Settings.
   A `404` means an older server: the app ignores it.
-- When APNs answers that a token is invalid (`410`, or `400 BadDeviceToken`), the server deletes the device.
+- When APNs answers that a token is no longer valid (`410 Unregistered`), the server deletes the device. A `400
+  BadDeviceToken` keeps it: that's also the answer for a good token sent to the other host (a Debug build installed
+  over a TestFlight one), and the app's next registration puts the right `environment` back.
 
 ### Payloads
 

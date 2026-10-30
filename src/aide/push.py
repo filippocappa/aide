@@ -102,19 +102,27 @@ class Push:
 
     async def send(self, payload: dict, background: bool = False) -> tuple[int, int]:
         """Send one payload to every device. Returns (sent, failed); with push off, nothing is sent."""
+        sent, failed, _ = await self._deliver(payload, background)
+        return sent, failed
+
+    async def _deliver(self, payload: dict, background: bool = False) -> tuple[int, int, bool]:
+        """(sent, failed, retry): `retry` when nothing went out but every failure can pass, so a later try may."""
         devices = self.devices()
         if not self.enabled or not devices:
-            return 0, len(devices)
+            return 0, len(devices), False
         headers = {
             "apns-topic": self.bundle_id,
             "apns-push-type": "background" if background else "alert",
             "apns-priority": "5" if background else "10",
         }
-        sent = 0
+        sent, retry = 0, True
         for d in devices:
-            if await self._send_one(d, payload, headers):
+            status, reason = await self._send_one(d, payload, headers)
+            if status == 200:
                 sent += 1
-        return sent, len(devices) - sent
+            else:
+                retry = retry and self.transient(status, reason)
+        return sent, len(devices) - sent, retry and not sent
 
     async def _post(self, token: str, environment: str, payload: dict, headers: dict) -> tuple[int, str]:
         """One request to APNs: (status, reason), status 0 when it didn't get there."""
@@ -139,21 +147,30 @@ class Push:
 
     @staticmethod
     def gone(status: int, reason: str) -> bool:
-        """APNs says the token is no good any more."""
-        return status == 410 or reason == "BadDeviceToken"
+        """APNs says the token is no good any more. Not BadDeviceToken: APNs also answers that for a good token sent
+        to the other host (a Debug build installed over a TestFlight one, or the reverse), and the app registers
+        again on launch with the right environment."""
+        return status == 410 or reason == "Unregistered"
 
-    async def _send_one(self, device: dict, payload: dict, headers: dict) -> bool:
+    @staticmethod
+    def transient(status: int, reason: str) -> bool:
+        """A failure that can pass: no answer, throttled, APNs down, or a JWT that expired (it's signed afresh)."""
+        return status in (0, 429) or status >= 500 or reason == "ExpiredProviderToken"
+
+    async def _send_one(self, device: dict, payload: dict, headers: dict) -> tuple[int, str]:
         token = device["token"]
         status, reason = await self._post(token, device["environment"], payload, headers)
         if status == 200:
             self.conn.execute("UPDATE devices SET last_push_at = ? WHERE token = ?", (_now(), token))
-            return True
-        if self.gone(status, reason):
+        elif self.gone(status, reason):
             log.info("APNs says device %s… is gone (%s): removing it", token[:8], reason or status)
             self.remove(token)
+        elif reason == "BadDeviceToken":
+            log.warning("APNs says device %s… is a bad token for %s: kept, the app's next registration fixes the "
+                        "environment if that's it", token[:8], device["environment"])
         elif status:
             log.warning("APNs refused a push to %s…: %s %s", token[:8], status, reason)
-        return False
+        return status, reason
 
     async def send_live(self, token: str, environment: str, payload: dict, priority: int = 5) -> tuple[int, str]:
         """A Live Activity push (docs/API.md, "Live Activities") to a push-to-start or an activity's token."""
@@ -163,16 +180,22 @@ class Push:
                    "apns-priority": str(priority)}
         return await self._post(token, environment, payload, headers)
 
-    async def _alert(self, kind: str, title: str, body: str, level: str | None = None, **extra) -> bool:
+    @staticmethod
+    def _alert_payload(kind: str, title: str, body: str, level: str | None = None, **extra) -> dict:
         payload = {"aps": {"alert": {"title": title, "body": body}, "sound": "default", "thread-id": kind},
                    "aide": {"kind": kind, **extra}}
         if level:
             payload["aps"]["interruption-level"] = level
-        sent, _ = await self.send(payload)
+        return payload
+
+    async def _alert(self, kind: str, title: str, body: str, level: str | None = None, **extra) -> bool:
+        sent, _ = await self.send(self._alert_payload(kind, title, body, level, **extra))
         return sent > 0
 
-    async def send_reminder(self, reminder_id: str, title: str, body: str = "") -> bool:
-        return await self._alert("reminder", title, body, reminder_id=reminder_id)
+    async def send_reminder(self, reminder_id: str, title: str, body: str = "") -> bool | None:
+        """True when it went out; None when it didn't but a later try may (no answer, throttled, APNs down)."""
+        sent, _, retry = await self._deliver(self._alert_payload("reminder", title, body, reminder_id=reminder_id))
+        return True if sent else None if retry else False
 
     async def send_digest(self, kind: str, greeting: str, month: date | None = None) -> bool:
         title = DIGEST_TITLES.get(kind) or f"{month or datetime.now():%B}"

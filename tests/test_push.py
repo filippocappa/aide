@@ -106,7 +106,8 @@ async def test_invalid_tokens_are_removed(env):
         push.register(t, "sandbox")
     apns.replies = {SANDBOX: (410, "Unregistered"), PROD: (400, "BadDeviceToken"), "c3" * 32: (429, "TooManyRequests")}
     assert await push.send_test() == (0, 3)
-    assert [d["token"] for d in push.devices()] == ["c3" * 32]  # throttled, not invalid: kept
+    # throttled, not invalid: kept; BadDeviceToken may only be the wrong APNs host for this build: kept
+    assert [d["token"] for d in push.devices()] == [PROD, "c3" * 32]
 
 
 async def test_digest_and_message_payloads(env):
@@ -206,11 +207,50 @@ async def test_a_push_that_fails_is_tried_once(env, monkeypatch):
     store.create("Bins", datetime.now(timezone.utc) - timedelta(minutes=1))
     await run_fallback(store, push, monkeypatch)  # no devices
     push.register(SANDBOX, "sandbox")
-    apns.replies = {SANDBOX: (500, "InternalServerError")}
+    apns.replies = {SANDBOX: (400, "BadDeviceToken")}
     store.create("Pills", datetime.now(timezone.utc) - timedelta(hours=1))
     await run_fallback(store, push, monkeypatch)
     assert len(apns.requests) == 1  # Bins was already given up on; Pills tried once
     assert store.unsynced_due(datetime.now(timezone.utc)) == []
+
+
+async def test_a_push_that_can_pass_is_tried_again(env, monkeypatch):
+    db, push, apns = env
+    push.register(SANDBOX, "sandbox")
+    store = ReminderStore(db.conn)
+    rem = store.create("Bins", datetime.now(timezone.utc) - timedelta(minutes=1))
+    apns.replies = {SANDBOX: (503, "ServiceUnavailable")}
+    await run_fallback(store, push, monkeypatch)
+    assert len(apns.requests) > 1  # every tick
+    assert [r.id for r in store.unsynced_due(datetime.now(timezone.utc))] == [rem.id]
+    apns.replies = {}
+    await run_fallback(store, push, monkeypatch)
+    assert apns.payloads()[-1]["aide"] == {"kind": "reminder", "reminder_id": rem.id}
+    assert store.unsynced_due(datetime.now(timezone.utc)) == []
+
+
+async def test_retries_stop_after_a_while(env, monkeypatch):
+    db, push, apns = env
+    monkeypatch.setattr(scheduler, "RETRY_FOR", timedelta(0))
+    push.register(SANDBOX, "sandbox")
+    store = ReminderStore(db.conn)
+    store.create("Bins", datetime.now(timezone.utc) - timedelta(minutes=1))
+    apns.replies = {SANDBOX: (429, "TooManyRequests")}
+    await run_fallback(store, push, monkeypatch)
+    assert len(apns.requests) == 1
+    assert store.unsynced_due(datetime.now(timezone.utc)) == []
+
+
+async def test_send_reminder_says_when_to_try_again(env):
+    _, push, apns = env
+    push.register(SANDBOX, "sandbox")
+    push.register(PROD, "production")
+    apns.replies = {SANDBOX: (500, ""), PROD: (429, "TooManyRequests")}
+    assert await push.send_reminder("r1", "Bins") is None
+    apns.replies = {SANDBOX: (500, ""), PROD: (400, "BadDeviceToken")}
+    assert await push.send_reminder("r1", "Bins") is False  # one of them was refused for good
+    apns.replies = {SANDBOX: (500, "")}
+    assert await push.send_reminder("r1", "Bins") is True  # the other went out
 
 
 # -- digest ----------------------------------------------------------------------
