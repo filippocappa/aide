@@ -1122,7 +1122,7 @@ Unicode in `text`, `options` and `explanation` ($\pi_{t-1}$ as πₜ₋₁).
 
 Since 2026-10-31 a practice exam can mix kinds, in this order: the multiple-choice questions (shuffled), then the
 flashcards (`"type": "card"`, no `options`; the user turns it and says `"right"` or `"wrong"`; `key` is the card's
-answer; right 1, wrong 0, no penalty), then the course's own exercises (`"type": "open"`, `"points": 1`, marked after
+answer, there from the start since the card is turned before it's marked; right 1, wrong 0, no penalty), then the course's own exercises (`"type": "open"`, `"points": 1`, marked after
 the finish like a mock's open answers, against the course's solution). Every question has `"source": {"kind":
 "course", "name": "Esercitazione 3, p. 2"}` (the course's own material: an exercise sheet, a paper the course gave out)
 or `{"kind": "professor", "name": null}` (written by Professor: the notebook's questions and flashcards, its mocks);

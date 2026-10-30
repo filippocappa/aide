@@ -527,8 +527,8 @@ class QuizStore:
         item = {"n": n, "topic": {"id": q["topic"], "title": q["topic_title"]}, "text": plain_math(q["text"]),
                 "options": [{"letter": o["letter"], "text": plain_math(o["text"])} for o in q.get("options", [])],
                 "source": q.get("source")}
-        if q.get("type") == "card":
-            item["type"] = "card"
+        if q.get("type") == "card":  # its back from the start: it's turned before it's marked, and marked by the user
+            item |= {"type": "card", "key": plain_math(q["key"])}
         done = quiz["finished_at"] is not None
         a = (quiz["answers"] if done else quiz["checked"]).get(str(n)) if reveal else None
         if q.get("type") == "open":

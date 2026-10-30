@@ -289,6 +289,7 @@ async def test_a_practice_exam_mixes_questions_cards_and_the_courses_exercises(n
                        headers=AUTH).json()
     assert [q.get("type", "mcq") for q in quiz["questions"]] == ["mcq", "mcq", "card", "open"]
     assert quiz["questions"][0]["source"] == {"kind": "professor", "name": None}
+    assert "key" not in quiz["questions"][0] and quiz["questions"][2]["key"]  # a card's back, to turn it
     ex = quiz["questions"][3]
     assert ex["source"] == {"kind": "course", "name": "Esercitazione 3, p. 2"} and ex["points"] == 1
     assert ex["text"].startswith("With c₁ = 0.5") and "model_answer" not in ex
