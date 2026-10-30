@@ -103,7 +103,13 @@ struct ChatView: View {
             if active { composerFocused = false } // no keyboard in voice
             UIApplication.shared.isIdleTimerDisabled = active // locking would cut off the microphone
         }
-        .onAppear { chat.isOnScreen = true }
+        .onAppear {
+            chat.isOnScreen = true
+            if let id = chat.conversationID { chat.live?.chatOpened(conversation: id) }
+        }
+        .onChange(of: chat.conversationID) { _, id in
+            if chat.isOnScreen, let id { chat.live?.chatOpened(conversation: id) }
+        }
         .onDisappear {
             chat.isOnScreen = false
             UIApplication.shared.isIdleTimerDisabled = false

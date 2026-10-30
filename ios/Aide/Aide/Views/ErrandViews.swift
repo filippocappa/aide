@@ -14,6 +14,8 @@ enum BrowserTarget: Identifiable, Hashable {
         case .site(let site): "site:\(site)"
         }
     }
+
+    var errand: Int? { if case .errand(let id, _) = self { id } else { nil } }
 }
 
 // MARK: - The live view
@@ -100,9 +102,17 @@ final class BrowserLive: ObservableObject {
     /// Open and not closed by the server.
     var connected: Bool { task != nil && closed == nil }
 
-    func connect(_ request: URLRequest) {
+    /// Errands whose live view is on screen (a count each: a sheet can open over another), so their pushes stay quiet.
+    private(set) static var watching: [Int: Int] = [:]
+    private var errand: Int?
+
+    func connect(_ request: URLRequest, errand: Int? = nil) {
         disconnect()
         closed = nil
+        if let errand {
+            self.errand = errand
+            Self.watching[errand, default: 0] += 1
+        }
         let task = URLSession.shared.webSocketTask(with: request)
         task.maximumMessageSize = 16 << 20
         self.task = task
@@ -111,6 +121,10 @@ final class BrowserLive: ObservableObject {
     }
 
     func disconnect() {
+        if let errand {
+            Self.watching[errand] = (Self.watching[errand] ?? 1) > 1 ? Self.watching[errand]! - 1 : nil
+            self.errand = nil
+        }
         reader?.cancel()
         reader = nil
         task?.cancel(with: .normalClosure, reason: nil)
@@ -385,7 +399,7 @@ struct BrowserSheet: View {
         case .errand(let id, _): request = try? env.api.browserLiveRequest(errand: id)
         case .site(let site): request = try? env.api.browserLiveRequest(site: site)
         }
-        if let request { live.connect(request) }
+        if let request { live.connect(request, errand: target.errand) }
     }
 
     private func finish() async {
@@ -594,7 +608,7 @@ struct ErrandLiveBox: View {
             // Keeps it open: a page that isn't there yet (just started) or a dropped socket is tried again.
             while !Task.isCancelled {
                 if !live.connected, let request = try? env.api.browserLiveRequest(errand: errand.id, frames: false) {
-                    live.connect(request)
+                    live.connect(request, errand: errand.id)
                 }
                 try? await Task.sleep(for: .seconds(3))
             }

@@ -245,6 +245,25 @@ async def test_one_countdown_per_tram_kept_across_a_restart(env, timetable):  # 
     live.dismiss(key)  # swiped away
     await again.tick(at(8, 1, 50))
     assert again.following == {} and fake.location_requests == asked + 1
+    assert [a["event"] for a in aps(apns)] == ["start"]  # swiped away: nothing more goes
+
+
+async def test_a_tram_followed_too_long_ends(env, timetable):  # noqa: F811
+    db, push, live, apns = env
+    fake = FakePush()
+    location = Location(db.conn, fake)
+    alerts = AlertStore(db.conn, ROME, timetable)
+    alerts.create("1", "4", now=at(7, 50).astimezone(timezone.utc))
+    watcher = AlertWatcher(alerts, Transit(timetable, FakeLive()), location, Walks(), fake, live)
+    location.save(*STOP_252, 15, at(8, 0))
+    live.set_start_token("tram", START, "sandbox")
+    await watcher.tick(at(8, 0, 20))
+    [key] = watcher.following
+    live.register(key, ACTIVITY, "sandbox")
+    await watcher.tick(at(10, 1))
+    assert watcher.following == {}
+    end = aps(apns)[-1]
+    assert end["event"] == "end" and end["content-state"]["gone"] is True
 
 
 async def test_a_one_off_asked_again_is_kept_once_and_right_away_starts_now(env, timetable):  # noqa: F811
@@ -285,7 +304,8 @@ def quick(monkeypatch):
 
 
 async def test_an_agent_turn_asks_writes_and_finishes(env, quick):
-    _, _, live, apns = env
+    _, push, live, apns = env
+    push.register("e5" * 32, "sandbox")
     live.register("agent:c1", ACTIVITY, "sandbox")
     turn = live.turn("c1", "aide")
     turn.team({"from": "aide", "to": "coach", "text": "How did I sleep?"})
@@ -296,14 +316,17 @@ async def test_an_agent_turn_asks_writes_and_finishes(env, quick):
     await settle()
     turn.finished("You slept well.\n\nMore below.")
     await settle()
-    asking, writing, finished, end = aps(apns)
-    assert asking["content-state"] == {"status": "asking", "detail": "Asking Coach", "text": "",
-                                       "since": turn.since}
-    assert writing["content-state"]["status"] == "writing"
-    assert finished["content-state"] == {"status": "done", "detail": "", "text": "You slept well.",
-                                         "since": turn.since}
-    assert finished["alert"] == {"title": "Aide", "body": "You slept well.", "sound": "default"}
-    assert end["event"] == "end" and end["dismissal-date"] >= int(time.time()) + 29 * 60
+    asking, writing, end, message = apns.payloads()
+    assert asking["aps"]["content-state"] == {"status": "asking", "detail": "Asking Coach", "text": "",
+                                              "since": turn.since}
+    assert writing["aps"]["content-state"]["status"] == "writing"
+    # Over: the activity goes at once, with no alert, and the reply is one plain push that stays.
+    assert end["aps"]["event"] == "end" and "alert" not in end["aps"]
+    assert end["aps"]["content-state"] == {"status": "done", "detail": "", "text": "You slept well.",
+                                           "since": turn.since}
+    assert end["aps"]["dismissal-date"] <= int(time.time())
+    assert message["aps"]["alert"] == {"title": "Aide", "body": "You slept well."}
+    assert message["aide"] == {"kind": "message", "conversation_id": "c1"}
     assert live.token("agent:c1") is None
 
 
@@ -343,13 +366,34 @@ async def test_a_reply_after_the_app_hung_up_comes_as_a_push(env, quick):
     [p] = apns.payloads()
     assert p["aps"]["alert"] == {"title": "Professor", "body": "Here's the plan."}
     assert p["aide"] == {"kind": "message", "conversation_id": "c1"}
-    # With the activity still there, its alert says it: no second push.
+    # With the activity still there, it ends at once and the push is the one notification.
     live.register("agent:c1", ACTIVITY, "sandbox")
     turn = live.turn("c1", "professor")
     turn.listening = False
     turn.finished("Done.")
     await settle()
-    assert [r.url.path for r in apns.requests[1:]] == [f"/3/device/{ACTIVITY}"] * 2
+    assert [r.url.path for r in apns.requests[1:]] == [f"/3/device/{ACTIVITY}", f"/3/device/{'e5' * 32}"]
+    assert "alert" not in apns.payloads()[1]["aps"]
+
+
+async def test_a_turn_that_started_an_errand_hands_over_quietly(env, quick):
+    _, push, live, apns = env
+    push.register("e5" * 32, "sandbox")
+    live.handed_over("c1")  # no agent start token: the errand gets no activity, so the reply is pushed
+    live.register("agent:c1", ACTIVITY, "sandbox")
+    live.turn("c1", "aide").finished("On it.")
+    await settle()
+    assert [r.url.path for r in apns.requests] == [f"/3/device/{ACTIVITY}", f"/3/device/{'e5' * 32}"]
+    live.set_start_token("agent", START, "sandbox")
+    live.handed_over("c1")
+    live.register("agent:c1", ACTIVITY, "sandbox")
+    live.turn("c1", "aide").finished("On it: I'm opening Glovo.")
+    await settle()
+    assert [a["event"] for a in aps(apns)[2:]] == ["end"]  # the errand's activity is what comes next
+    live.register("agent:c1", ACTIVITY, "sandbox")
+    live.turn("c1", "aide").finished("Anything else?")  # once
+    await settle()
+    assert len(apns.requests) == 5
 
 
 async def test_a_failed_turn_ends_without_an_alert(env, quick):
@@ -370,14 +414,14 @@ def test_chat_and_team_chat_push_to_the_registered_key(env, quick):
         assert c.post("/v1/live/activities", json={"key": "agent:main", "token": ACTIVITY,
                                                     "environment": "sandbox"}, headers=AUTH).json() == {"ok": True}
         assert c.post("/v1/chat", json={"text": "my day?"}, headers=AUTH).status_code == 200
-        wait_for(apns, 2)
-        assert [p["event"] for p in aps(apns)] == ["update", "end"]
-        assert aps(apns)[0]["alert"]["body"] == "Here's your day."
+        wait_for(apns, 1)
+        assert [p["event"] for p in aps(apns)] == ["end"]
+        assert aps(apns)[0]["content-state"]["text"] == "Here's your day."
         c.post("/v1/live/activities", json={"key": "agent:team", "token": ACTIVITY, "environment": "sandbox"},
                headers=AUTH)
         assert c.post("/v1/team", json={"text": "@coach status?"}, headers=AUTH).status_code == 200
-        wait_for(apns, 4)
-        assert aps(apns)[2]["alert"] == {"title": "Coach", "body": "All good from me.", "sound": "default"}
+        wait_for(apns, 2)
+        assert aps(apns)[1]["content-state"]["text"] == "All good from me."
         # With the app open, it deletes the key first: nothing goes.
         c.post("/v1/live/activities", json={"key": "agent:main", "token": ACTIVITY, "environment": "sandbox"},
                headers=AUTH)
@@ -407,22 +451,39 @@ def test_token_endpoints(env):
                   headers=AUTH).status_code == 400
 
 
-async def test_a_routine_starts_quietly_and_ends_at_once(env):
+async def test_a_restart_ends_the_activities_of_cut_off_jobs(env):
     _, _, live, apns = env
-    routine = {"id": 4, "agent": "coach", "title": "Weekly plan", "public_id": "r-77"}
-    assert await live.routine_started(routine) is None  # no start token: nothing
     live.set_start_token("agent", START, "sandbox")
-    key = await live.routine_started(routine)
-    assert key == "agent:r-77"
-    [start] = aps(apns)
-    assert start["attributes"] == {"key": key, "agent": "coach", "name": "Coach", "color": start["attributes"]["color"],
-                                   "conversation": "r-77", "title": "Weekly plan"}
-    assert start["alert"] == {"title": "Coach · Weekly plan", "body": "Working on it"}  # no sound
-    assert start["content-state"]["status"] == "working"
-    live.register(key, ACTIVITY, "sandbox")
-    await live.routine_ended(key, start["content-state"]["since"], "Three runs this week.\nDetails…")
-    end = aps(apns)[1]
-    assert end["event"] == "end" and end["content-state"]["text"] == "Three runs this week."
+    for key in ("agent:c1", "errand:4", "notes:p_1", "tram:1:t:20261030", "event:abc:1"):
+        live.register(key, ACTIVITY, "sandbox")
+    assert await live.sweep() == 3
+    ends = aps(apns)
+    assert [a["event"] for a in ends] == ["end"] * 3
+    assert ends[0]["content-state"]["status"] == "failed" and ends[0]["dismissal-date"] <= int(time.time())
+    # trams and events are followed again from their own tables
+    assert live.token("tram:1:t:20261030") and live.token("event:abc:1") and live.start_token("agent")
+    assert await live.sweep() == 0
+
+
+async def test_an_errand_that_needs_you_says_it_on_its_activity(env, monkeypatch):
+    _, _, live, apns = env
+    monkeypatch.setattr(live_mod, "THROTTLE", 0)
+    run = live.errand(4, "c1", "Pizza")
+    assert await run.needs_you("Log in to Glovo") is False  # never started: the errand pushes instead
+    live.set_start_token("agent", START, "sandbox")
+    run = live.errand(4, "c1", "Pizza")
+    run.start("Opening Glovo")
+    assert await run.needs_you("Log in to Glovo") is False  # no update token yet
+    live.register("errand:4", ACTIVITY, "sandbox")
+    assert await run.needs_you("Log in to Glovo") is True
+    update = aps(apns)[-1]
+    assert update["content-state"]["status"] == "needs_you" and update["content-state"]["errand"] == 4
+    assert update["alert"] == {"title": "Aide · Pizza", "body": "Log in to Glovo", "sound": "default"}
+    assert update["stale-date"] > int(time.time()) + 29 * 60
+    run.put_away()  # the user didn't come: it goes, still saying what it needs
+    await settle()
+    end = aps(apns)[-1]
+    assert end["event"] == "end" and end["content-state"]["status"] == "needs_you"
     assert end["dismissal-date"] <= int(time.time())
 
 

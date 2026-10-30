@@ -17,7 +17,6 @@ from .db import Database, utcnow
 from .push import Push
 
 if TYPE_CHECKING:
-    from .live import LiveActivities
     from .agent import Agent
 
 log = logging.getLogger(__name__)
@@ -233,10 +232,10 @@ async def deliver(agent: "Agent", channel: str, routine: dict, push: Push | None
     return reply
 
 
-async def routine_schedule(agent: "Agent", channel: str, push: Push | None,
-                           live: "LiveActivities | None" = None) -> None:
+async def routine_schedule(agent: "Agent", channel: str, push: Push | None) -> None:
     """Run each routine at its time, and once after a short outage (less than CATCH_UP late). Watches are skipped
-    once today's notes reach WATCH_CAP. A routine (not a watch) shows as a Live Activity while it runs."""
+    once today's notes reach WATCH_CAP. No Live Activity: a routine is a minute's work, and its push is the one
+    notification."""
     store: RoutineStore = agent.routines
     failed: dict[int, datetime] = {}
     while True:
@@ -250,18 +249,12 @@ async def routine_schedule(agent: "Agent", channel: str, push: Push | None,
                     store.mark_run(r["id"], now)
                     log.info("watch %s (%s) skipped: %d notes today already", r["id"], r["title"], WATCH_CAP)
                     continue
-                key = await live.routine_started(r) if live and not r["watch"] else None
-                since = int(now.timestamp())
-                reply = None
                 try:
-                    reply = await deliver(agent, channel, r, push)
+                    await deliver(agent, channel, r, push)
                 except Exception:
                     log.exception("routine %s (%s) failed", r["id"], r["title"])
                     failed[r["id"]] = now
                     continue
-                finally:
-                    if key:
-                        await live.routine_ended(key, since, reply)
                 failed.pop(r["id"], None)
                 log.info("routine %s (%s) ran", r["id"], r["title"])
         except Exception:

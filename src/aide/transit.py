@@ -1087,6 +1087,8 @@ class AlertWatcher:
         f = self.following[key]
         if now - f["started"] > LIVE_FOR or self.live.dismissed(key):
             del self.following[key]
+            if not self.live.dismissed(key):  # followed too long: it goes, rather than waiting on iOS's 8 hours
+                await self.live.end(key, {**f["state"], "gone": True}, now)
             return
         await self.nudge(key, now)
         if f.get("riding"):

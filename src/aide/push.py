@@ -100,13 +100,15 @@ class Push:
             self._jwt = (signed, now)
         return self._jwt[0]
 
-    async def send(self, payload: dict, background: bool = False) -> tuple[int, int]:
+    async def send(self, payload: dict, background: bool = False, collapse: str | None = None) -> tuple[int, int]:
         """Send one payload to every device. Returns (sent, failed); with push off, nothing is sent."""
-        sent, failed, _ = await self._deliver(payload, background)
+        sent, failed, _ = await self._deliver(payload, background, collapse)
         return sent, failed
 
-    async def _deliver(self, payload: dict, background: bool = False) -> tuple[int, int, bool]:
-        """(sent, failed, retry): `retry` when nothing went out but every failure can pass, so a later try may."""
+    async def _deliver(self, payload: dict, background: bool = False,
+                       collapse: str | None = None) -> tuple[int, int, bool]:
+        """(sent, failed, retry): `retry` when nothing went out but every failure can pass, so a later try may.
+        `collapse`: a newer push with the same id replaces the older one in Notification Center."""
         devices = self.devices()
         if not self.enabled or not devices:
             return 0, len(devices), False
@@ -115,6 +117,8 @@ class Push:
             "apns-push-type": "background" if background else "alert",
             "apns-priority": "5" if background else "10",
         }
+        if collapse:
+            headers["apns-collapse-id"] = collapse[:64]
         sent, retry = 0, True
         for d in devices:
             status, reason = await self._send_one(d, payload, headers)
@@ -188,8 +192,9 @@ class Push:
             payload["aps"]["interruption-level"] = level
         return payload
 
-    async def _alert(self, kind: str, title: str, body: str, level: str | None = None, **extra) -> bool:
-        sent, _ = await self.send(self._alert_payload(kind, title, body, level, **extra))
+    async def _alert(self, kind: str, title: str, body: str, level: str | None = None, collapse: str | None = None,
+                     **extra) -> bool:
+        sent, _ = await self.send(self._alert_payload(kind, title, body, level, **extra), collapse=collapse)
         return sent > 0
 
     async def send_reminder(self, reminder_id: str, title: str, body: str = "") -> bool | None:
@@ -203,7 +208,8 @@ class Push:
 
     async def send_message(self, conversation_id: str, title: str, body: str, routine: int | None = None) -> bool:
         """`routine`: a routine's or watch's post, which the app shows as a note on Today."""
-        return await self._alert("message", title, body, conversation_id=conversation_id,
+        return await self._alert("message", title, body, collapse=f"message-{conversation_id}",
+                                 conversation_id=conversation_id,
                                  **({"routine": routine} if routine is not None else {}))
 
     async def send_lecture(self, lecture_id: str, title: str, body: str) -> bool:
@@ -216,7 +222,7 @@ class Push:
     async def send_errand(self, errand_id: int, conversation_id: str | None, title: str, body: str,
                           level: str | None = None) -> bool:
         """A browser errand that needs the user (time-sensitive: a login, a Confirm) or is over."""
-        return await self._alert("errand", title, body, level=level, errand_id=errand_id,
+        return await self._alert("errand", title, body, level=level, collapse=f"errand-{errand_id}", errand_id=errand_id,
                                  **({"conversation_id": conversation_id} if conversation_id else {}))
 
     async def send_transit(self, alert_id: int, title: str, body: str) -> bool:

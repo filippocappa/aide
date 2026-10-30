@@ -6,6 +6,10 @@ next calendar event's countdown, kept by upcoming.EventWatcher).
 Push-to-start tokens are kept per kind until the app deletes one or APNs refuses it. An activity's update token is
 kept under the key in its attributes, for TOKEN_AGE at most. A start asks iOS for that token (`input-push-token`):
 without it iOS hands the app one only now and then, and the activity stays as it started.
+
+One notification per moment: an activity shows the work while it goes on, quietly; when the work needs the user (an
+errand's login, question or Confirm) the activity says so with the alert, in place of a push; when it's over, the
+activity goes at once and a plain push (which stays in Notification Center) is the notification.
 """
 
 import asyncio
@@ -26,7 +30,7 @@ KINDS = {"tram": "TramActivityAttributes", "agent": "AgentActivityAttributes", "
 TOKEN_AGE = timedelta(hours=12)
 THROTTLE = 2.0  # seconds between an agent activity's updates
 SETTLE = 3.0  # seconds after a turn before its last update: the app, if open, ends the activity itself first
-DONE_FOR = timedelta(minutes=30)  # a finished turn's activity stays this long on the Lock Screen
+WAITING_FOR = timedelta(minutes=30)  # an errand waiting for the user keeps its activity this long
 TEXT_MAX = 140
 ENDED_FOR = timedelta(hours=1)  # an end that went out before the token came is sent when it comes, this long
 _running: set[asyncio.Task] = set()  # the background pushes, held until they're done
@@ -61,6 +65,7 @@ class LiveActivities:
         # started); the end goes out when the token comes, so the activity doesn't stay on "working".
         self._ended: dict[str, tuple[dict, datetime, datetime]] = {}
         self._dismissed: set[str] = set()  # keys of activities the user swiped away
+        self._handed: set[str] = set()  # conversations whose turn started an errand: its activity takes over
 
     @property
     def enabled(self) -> bool:
@@ -182,6 +187,22 @@ class LiveActivities:
         self._stamps.pop(key, None)
         return sent
 
+    async def sweep(self) -> int:
+        """At startup: the activities of jobs the restart cut off (chat turns, notes jobs, errands) are ended now, so
+        none stays on "working" for hours. Trams and events are picked up again from their own tables."""
+        keys = [r["key"] for r in self.conn.execute(
+            "SELECT key FROM live_tokens WHERE key NOT LIKE 'start:%' AND key NOT LIKE 'tram:%' "
+            "AND key NOT LIKE 'event:%'")]
+        state = {"status": "failed", "detail": "Interrupted", "text": "", "since": int(time.time())}
+        for key in keys:
+            try:
+                await self.end(key, state, datetime.now(timezone.utc))
+            except Exception:
+                log.exception("%s: Live Activity didn't end", key)
+        if keys:
+            log.info("ended %d Live Activities left from before the restart", len(keys))
+        return len(keys)
+
     async def registered(self, key: str) -> None:
         """The app handed over an activity's token: one that has ended meanwhile is ended now."""
         ended = self._ended.pop(key, None)
@@ -194,34 +215,22 @@ class LiveActivities:
     def turn(self, conversation: str, agent: str | None = None) -> "AgentTurn":
         return AgentTurn(self, f"agent:{conversation}", agent, conversation)
 
-    async def routine_started(self, routine: dict) -> str | None:
-        """A scheduled routine's activity, push-started. Returns its key, or None if it didn't start."""
-        a = AGENTS[routine["agent"]]
-        key = f"agent:{routine['public_id']}"
-        attributes = {"key": key, "agent": a.id, "name": a.name, "color": a.color,
-                      "conversation": routine["public_id"], "title": routine["title"]}
-        state = {"status": "working", "detail": "", "text": "", "since": int(time.time())}
-        try:
-            ok = await self.start("agent", attributes, state,
-                                  {"title": f"{a.name} · {routine['title']}", "body": "Working on it"},
-                                  stale=datetime.now(timezone.utc) + timedelta(minutes=10))
-        except Exception:
-            log.exception("routine %s: Live Activity didn't start", routine["id"])
-            return None
-        return key if ok else None
+    def handed_over(self, conversation: str) -> None:
+        """The chat's turn started an errand, whose own activity comes next: the turn's ends quietly, no push."""
+        if self.enabled and self.start_token("agent"):
+            self._handed.add(conversation)
+
+    def took_over(self, conversation: str | None) -> bool:
+        if conversation in self._handed:
+            self._handed.discard(conversation)
+            return True
+        return False
 
     def notes(self, key: str, conversation: str, title: str, total: int | None = None) -> "NotesRun":
         return NotesRun(self, key, conversation, title, total)
 
     def errand(self, errand_id: int, conversation: str, title: str) -> "ErrandRun":
         return ErrandRun(self, f"errand:{errand_id}", conversation, title, None)
-
-    async def routine_ended(self, key: str, since: int, reply: str | None) -> None:
-        state = {"status": "done", "detail": "", "text": clip(reply) if reply else "", "since": since}
-        try:
-            await self.end(key, state, datetime.now(timezone.utc))
-        except Exception:
-            log.exception("%s: Live Activity didn't end", key)
 
 
 class AgentTurn:
@@ -301,16 +310,20 @@ class AgentTurn:
         return self.live.token(self.key) is not None
 
     async def _finish(self, reply: str, agent: str | None) -> None:
+        """The reply is in. With the app open it has ended the activity itself (and read the reply). Otherwise the
+        activity goes now and the reply comes as a push; none when an errand the turn started took over."""
         try:
             done = self._state_of("done", text=clip(reply))
             name = AGENTS.get(agent or ORCHESTRATOR, AGENTS[ORCHESTRATOR]).name
+            handed = self.live.took_over(self.conversation)
             if not await self._settle() or not self.live.enabled:
                 # The app ended it itself, or never had one. If it hung up before the reply, say so with a push.
-                if not self.listening and self._pushable():
+                if not self.listening and self._pushable() and not handed:
                     await self.live.push.send_message(self.conversation, name, done["text"])
                 return
-            await self.live.update(self.key, done, alert={"title": name, "body": done["text"], "sound": "default"})
-            await self.live.end(self.key, done, datetime.now(timezone.utc) + DONE_FOR)
+            await self.live.end(self.key, done, datetime.now(timezone.utc))
+            if self._pushable() and not handed:
+                await self.live.push.send_message(self.conversation, name, done["text"])
         except Exception:
             log.exception("%s: Live Activity didn't finish", self.key)
 
@@ -318,7 +331,7 @@ class AgentTurn:
         try:
             if await self._settle():
                 await self.live.end(self.key, self._state_of("failed", "Something went wrong"),
-                                    datetime.now(timezone.utc) + DONE_FOR)
+                                    datetime.now(timezone.utc))
         except Exception:
             log.exception("%s: Live Activity didn't end", self.key)
 
@@ -380,9 +393,9 @@ class NotesRun(AgentTurn):
 
 
 class ErrandRun(NotesRun):
-    """A browser errand's activity: Aide `browsing` with the step it's on, `needs_you` (with an alert) when it waits
-    for the user (a login, a choice, a Confirm), then done or failed. Push-started once, kept across the errand's
-    phases."""
+    """A browser errand's activity: Aide `browsing` with the step it's on, `needs_you` (with an alert, in place of the
+    errand's push) when it waits for the user (a login, a choice, a Confirm), then done or failed. Push-started once,
+    kept across the errand's phases; put away when the user hasn't come for WAITING_FOR."""
 
     AGENT = "aide"
 
@@ -408,20 +421,28 @@ class ErrandRun(NotesRun):
         if detail and detail != self.detail:
             self.browsing(detail)
 
-    def needs_you(self, detail: str) -> None:
+    async def needs_you(self, detail: str) -> bool:
+        """True when the activity got it (with its alert): then the errand sends no push of its own."""
         if not (self.live.enabled and self._started):
-            return
+            return False
         self.detail = detail
+        try:
+            if not await self._started:
+                return False
+            if self._task and not self._task.done():
+                await self._task  # a browsing update still going out must not come after this one
+            return await self.live.update(self.key, self._state_of("needs_you", clip(detail)),
+                                          alert={"title": f"Aide · {self.title}", "body": clip(detail),
+                                                 "sound": "default"},
+                                          stale=datetime.now(timezone.utc) + WAITING_FOR)
+        except Exception:
+            log.exception("%s: Live Activity update failed", self.key)
+            return False
 
-        async def send() -> None:
-            try:
-                await self._started
-                await self.live.update(self.key, self._state_of("needs_you", clip(detail)),
-                                       alert={"title": f"Aide · {self.title}", "body": clip(detail),
-                                              "sound": "default"})
-            except Exception:
-                log.exception("%s: Live Activity update failed", self.key)
-        self._spawn(send())
+    def put_away(self) -> None:
+        """The user hasn't come: the activity goes, the errand still waits in its chat and in Waiting for you."""
+        if self.live.enabled and self._started:
+            self._spawn(self._close(self._state_of("needs_you", clip(self.detail))))
 
 
 def hooks(*callbacks: Callable | None) -> Callable:

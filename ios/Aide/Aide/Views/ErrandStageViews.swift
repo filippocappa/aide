@@ -1200,7 +1200,7 @@ struct StageSheet: View {
         case .errand(let id, _): request = try? env.api.browserLiveRequest(errand: id, frames: false)
         case .site(let site): request = try? env.api.browserLiveRequest(site: site, frames: false)
         }
-        if let request { live.connect(request) }
+        if let request { live.connect(request, errand: target.errand) }
     }
 
     private func finish() async {

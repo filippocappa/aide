@@ -54,6 +54,7 @@ CHECK_EVERY = 30  # seconds between the worker's looks at errands waiting on a C
 COMMIT_TEXT = 48  # characters: longer texts aren't buttons
 PICTURE_SECONDS = 30  # at the end, opening product pages for the pictures no page showed
 CONFIRM_TTL = timedelta(minutes=30)  # agent.PENDING_TTL: an unanswered Confirm expires
+WAITING_FOR = timedelta(minutes=30)  # live.WAITING_FOR: an errand waiting for the user keeps its activity this long
 
 # Buttons that commit: they need the user's Confirm. (Going to the checkout, adding to the cart, searching don't.)
 COMMIT = re.compile(
@@ -337,6 +338,8 @@ class ErrandRunner:
         if site:
             site = site_of(site)
         errand = self.store.create(task, title, site, conversation)
+        if conversation and self.live is not None:
+            self.live.handed_over(conversation)
         self.store.log(errand["id"], "Waiting to start" if self.current else "Starting", counts=False)
         self.queue.put_nowait(errand["id"])
         return self.store.get(errand["id"])
@@ -463,10 +466,12 @@ class ErrandRunner:
                 if status == "expired":
                     await self._post(e, "An errand's Confirm expired", f"\"{e['title']}\": you didn't confirm in "
                                      "30 minutes, so nothing was ordered. Ask again whenever you like.", card=True)
-        now = utcnow().isoformat()
+        now = utcnow()
         for e in self.store.by_status("needs_you"):
-            if e["wake_at"] and e["wake_at"] <= now:
+            if e["wake_at"] and e["wake_at"] <= now.isoformat():
                 self._resume(e, "The Claude plan's limit has reset. Go on.")
+            elif e["id"] in self._runs and e["updated_at"] <= (now - WAITING_FOR).isoformat():
+                self._runs.pop(e["id"]).put_away()  # the next phase starts a new one
         await self.browser.prune()
 
     # -- one phase ---------------------------------------------------------------
@@ -597,33 +602,31 @@ class ErrandRunner:
         elif kind == "need_user":
             why, reason = args["why"], args["reason"].strip()
             e = self.store.update(errand_id, status="needs_you", why=why, reason=reason, step=reason)
-            if run:
-                run.needs_you(reason)
+            covered = await run.needs_you(reason) if run else False
             activity.record(self.store.conn, "aide", "errand", e["title"], f"Needs you: {reason}", e["conversation"])
             button = {"login": "Log in", "code": "Enter the code", "captcha": "Solve it"}.get(why)
             await self._post(e, "An errand needs the user in the live view",
                              f"I need you on {e['site'] or 'the site'}: {reason} "
                              + (f"Tap {button}: I go on by myself once it's done." if button
                                 else "Tap Take over, and tell me when you're done."),
-                             card=True, push=f"Aide needs you on {e['site'] or 'the site'}", level="time-sensitive")
+                             card=True, push=None if covered else f"Aide needs you on {e['site'] or 'the site'}",
+                             level="time-sensitive")
         elif kind == "ask_user":
             question, options = args["question"].strip(), args.get("options") or []
             e = self.store.update(errand_id, status="needs_you", why="question", reason=question,
                                   options=options or None, step="Waiting for your answer")
-            if run:
-                run.needs_you(question)
+            covered = await run.needs_you(question) if run else False
             lines = "\n".join(f"- {o}" for o in options)
             await self._post(e, "An errand asks the user something", question + (f"\n{lines}" if lines else ""),
-                             card=True, push=f"Aide · {e['title']}")
+                             card=True, push=None if covered else f"Aide · {e['title']}")
         elif kind == "ask_confirm":
             e = self.store.get(errand_id)
-            if run:
-                run.needs_you(f"Confirm: {e['confirm']['summary']}")
+            covered = await run.needs_you(f"Confirm: {e['confirm']['summary']}") if run else False
             c = e["confirm"]
             await self._post(e, "An errand waits for the user's Confirm",
                              f"Ready: {c['summary']}, {c['total']}. Confirm and I'll do it.", card=True,
-                             push=f"Aide · confirm on {e['site'] or 'the site'}", body=f"{c['summary']}, {c['total']}",
-                             level="time-sensitive")
+                             push=None if covered else f"Aide · confirm on {e['site'] or 'the site'}",
+                             body=f"{c['summary']}, {c['total']}", level="time-sensitive")
         elif kind == "plan_limit":
             resets = args.get("resets_at")
             when = f" (it resets at {resets.astimezone(self.store.tz):%H:%M})" if resets else ""
@@ -631,10 +634,9 @@ class ErrandRunner:
             e = self.store.update(errand_id, status="needs_you", why="plan_limit", reason=question,
                                   options=["Wait for the reset", "Finish on OpenRouter"], step="Paused: plan limit",
                                   confirm={**(e["confirm"] or {}), "resets_at": resets.isoformat() if resets else None})
-            if run:
-                run.needs_you("Paused at the plan's limit")
+            covered = await run.needs_you("Paused at the plan's limit") if run else False
             await self._post(e, "An errand paused at the plan's limit", question, card=True,
-                             push=f"Aide · {e['title']}")
+                             push=None if covered else f"Aide · {e['title']}")
 
     def _fail(self, errand_id: int, text: str) -> None:
         e = self.store.update(errand_id, status="failed", result=text, step="Stopped")

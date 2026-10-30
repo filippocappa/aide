@@ -1966,12 +1966,12 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server, a habit with `health` was counted, a meal or a Screen Time lock changed | | (not shown) the app runs a reminders sync, writes `health_logged` and meals to Health, and sets the locks |
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
 | `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens Today on the digest (since 2026-10-26; before: a new chat with it) |
-| `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal; or a chat reply finished after the app hung up on the stream, with no Live Activity left to say it (since 2026-10-29; title the agent's name, body the reply's first line) | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |
+| `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal; or a chat reply finished after the app hung up on the stream (since 2026-10-29; title the agent's name, body the reply's first line; since 2026-10-30 also when a Live Activity was there, which the server ends first) | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |
 | `lecture` | alert | a lecture's notes are ready, or it failed (title "Professor · macroeconomics") | `lecture_id` | opens that lecture |
 | `moodle` | alert | a Moodle sync brought new files (title "Moodle · 3 new files", a line per course naming them: "Macroeconomics: Lecture Notes: Monetary Policy, Lect: Monetary Policy"), or the login expired | `files` (the new files' ids, up to 20; since 2026-10-26), `login` (true: log in again) | lists the new files (`GET /v1/files/{id}`), each opening its PDF; the Moodle login with `login` |
 | `transit` | alert, `interruption-level: time-sensitive` | a tram alert fires ("Tram 4 in 7 min: leave now") | `alert_id` | nothing special (opens the app) |
 | `location` | silent (like `sync`) | a tram alert wants to know where the phone is | | (not shown) the app sends a fresh fix to `POST /v1/location` |
-| `errand` | alert; `interruption-level: time-sensitive` when it needs you in the live view or waits for a Confirm | a browser errand needs you (a login, a code, a card step), asks something, waits for a Confirm, is done or failed (since 2026-10-27) | `errand_id`, `conversation_id` | needing you in the live view: opens it (`aide://errand/<id>`); else the conversation |
+| `errand` | alert; `interruption-level: time-sensitive` when it needs you in the live view or waits for a Confirm | a browser errand needs you (a login, a code, a card step), asks something, waits for a Confirm (since 2026-10-30 only when its Live Activity didn't say it), is done or failed (since 2026-10-27). Not shown while the app is on that errand's chat or live view | `errand_id`, `conversation_id` | needing you in the live view: opens it (`aide://errand/<id>`); else the conversation |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
 ```json
@@ -1985,6 +1985,8 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 {"aps": {"content-available": 1}, "aide": {"kind": "sync"}}
 ```
 - Alert pushes use `thread-id` = the kind, so iOS groups them.
+- Since 2026-10-30, `message` and `errand` pushes carry `apns-collapse-id` (`message-<conversation id>`,
+  `errand-<errand id>`): a newer one for the same chat or errand replaces the older one in Notification Center.
 - A scheduled digest is pushed to every device.
 - Silent `sync` pushes are coalesced: at most one per 10 seconds, so a burst of changes sends one.
 
@@ -1996,9 +1998,13 @@ Three kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's
   the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left,
   or, once the user is on it, until they get off.
 - **`agent`**: an agent at work. The app starts one when it sends a chat or Team chat message; the server keeps it
-  up to date (asking another agent, writing) and ends it with the reply's first line, so a reply that comes in with
-  the phone locked lights up the screen. The server also starts one for each scheduled routine run (not watches),
-  and since 2026-10-27 one for Professor writing notes (a notebook proposal being applied, a lecture's notes).
+  up to date (asking another agent, writing) and ends it at once when the reply is in, which then comes as a
+  `message` push. Since 2026-10-27 the server also starts one for Professor writing notes (a notebook proposal being
+  applied, a lecture's notes), and one for each browser errand.
+
+One notification for each thing (since 2026-10-30): while an agent works, its activity is quiet; when it needs you
+(a login, a question, a Confirm), the activity says so with an alert and no other push goes; when it's done or
+failed, the activity goes at once and one normal push takes its place.
 - **`event`** (since 2026-10-27): the next calendar event's countdown, started by the server 10 minutes before a
   timed event on the Work calendar ("Macroeconomics in 10 min · Aula 5"), unless leave-now has set a tram alert for it.
 
@@ -2102,14 +2108,15 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
 
 - A chat turn: the app starts the activity (status `working`) and registers its key; the server sends `update`s as
   the turn goes (each ask; `writing` once, when the reply starts), at most one per 2 seconds, priority 5. About 3 s
-  after the turn ends, if the key is still there, it sends an `update` with `done` and an `alert` (the agent's name,
-  the first line), then an `end` dismissed after 30 minutes. A failed turn ends with `failed`, no alert.
+  after the turn ends, if the key is still there, it sends an `end` with `done` (`text` the first line), dismissed at
+  once and with no alert, then the `message` push with the reply (since 2026-10-30; before: an alert on the activity
+  and an `end` dismissed after 30 minutes). A failed turn ends with `failed`, no alert, dismissed at once.
+  A turn that started a browser errand hands over to the errand's activity: when the server has an `agent` start
+  token, the turn's activity ends at once with no push, since the errand's is what comes next.
   An app that lost the stream leaves the activity to the server (no `failed` of its own, no delete) while the
-  chat's history says `working`, so the `done` alert still comes.
-- A scheduled routine (not a watch): the server push-to-starts it (key `agent:<routine conversation id>`,
-  `title` the routine's), with a quiet alert (title "Coach · Weekly plan", body "Working on it", no sound; a start needs one).
-  When the run ends it sends `end` with `done`, dismissed at once: the `message` push that follows is the
-  notification.
+  chat's history says `working`, so the `message` push still comes.
+- Routines start none (since 2026-10-30; before, each scheduled run had one with a "Working on it" alert): the
+  `message` push with the result is a routine's one notification.
 - A notes job (since 2026-10-27): the server push-starts it under the key `notes:<proposal id>` (a notebook
   proposal being applied) or `notes:<lecture id>` (a lecture of a course), agent `professor`, `conversation` the chat
   the result goes to (the proposal's own, else the course's), `title` the course's name, with a quiet alert
@@ -2123,11 +2130,20 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
   `errand:<errand id>`, agent `aide`, `conversation` the errand's chat, `title` the errand's, with a quiet alert
   ("Aide · USB-C cable"). Status `browsing` with `detail` the step ("Opened amazon.it", "Clicked Aggiungi al
   carrello"), at most one update per 2 s; `needs_you` with an `alert` when it waits for the user (`detail`: "Log in
-  to Amazon", the question, "Confirm: Order the cable"); back to `browsing` when it goes on (one activity across the
-  whole errand); then `end` with `done` (`text` the result) or `failed`, dismissed at once. Its content state has one
+  to Amazon", the question, "Confirm: Order the cable"; `stale-date` 30 minutes on). Since 2026-10-30 that alert is
+  the one notification: the `errand` push for it goes only when the activity didn't take the update (no start token,
+  no update token yet, APNs refused it). After 30 minutes waiting the activity ends at once, still `needs_you` (the
+  errand goes on waiting in its chat and in Waiting for you), and a new one starts when the errand goes on. Back to
+  `browsing` when it goes on (one activity across the whole errand); then `end` with `done` (`text` the result) or
+  `failed`, dismissed at once. Its content state has one
   more field, `errand` (the errand's id), absent on every other agent activity; `done` and `total` are null.
   Tapping it opens the live view while it needs you (`aide://errand/<id>`), else the conversation.
 - Tapping the activity opens the conversation (`aide://conversation/<id>`; the Team chat: `aide://team`).
+- When the server starts (since 2026-10-30), it ends at once, as `failed` with `detail` "Interrupted", every chat,
+  errand and notes activity whose key it still has: the restart cut their jobs off. Tram and event countdowns are
+  followed again instead.
+- Opening a chat in the app ends its `agent:<conversation id>` activity and clears that chat's delivered
+  notifications.
 
 **`event`** (`EventActivityAttributes`). Attributes: `key` (`event:<12 hex of the uid's hash>:<start, Unix>`),
 `title`, `calendar`. Content state: `start` and `end` (Unix seconds; `end` null when there's none), `place` (the

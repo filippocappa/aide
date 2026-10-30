@@ -82,17 +82,25 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    /// Show banners while the app is open too, except a message for the chat on screen: that one is loaded into it.
+    /// Show banners while the app is open too, except for what's already on screen: a message for the chat on screen
+    /// (it's loaded into it), or an errand whose chat or live view is open.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
-        let route = PushRoute(userInfo: notification.request.content.userInfo)
+        let userInfo = notification.request.content.userInfo
+        let route = PushRoute(userInfo: userInfo)
+        let conversation = (userInfo["aide"] as? [String: Any])?["conversation_id"] as? String
         return await MainActor.run {
             let chat = env.chat
-            guard case .conversation(let id) = route, chat.isOnScreen, chat.conversationID == id else {
+            switch route {
+            case .conversation(let id) where chat.isOnScreen && chat.conversationID == id:
+                Task { await chat.loadHistory() }
+                return []
+            case .errand(let id) where BrowserLive.watching[id] != nil
+                || (chat.isOnScreen && conversation != nil && chat.conversationID == conversation):
+                return []
+            default:
                 return [.banner, .list, .sound]
             }
-            Task { await chat.loadHistory() }
-            return []
         }
     }
 

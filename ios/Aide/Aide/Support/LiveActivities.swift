@@ -1,9 +1,11 @@
 import ActivityKit
 import UIKit
+import UserNotifications
 
 /// The app's side of the Live Activities (docs/API.md, "Live Activities"): it hands the server the tokens it pushes
-/// to, and starts an agent's activity when a message goes out. The server starts tram countdowns and routine runs
-/// itself, and keeps every activity up to date; the widget extension draws them.
+/// to, and starts an agent's activity when a message goes out. The server starts tram countdowns, errands and notes
+/// jobs itself, and keeps every activity up to date; the widget extension draws them. One notification for each
+/// thing: a finished reply's activity goes at once and the server's `message` push takes its place.
 @MainActor
 final class LiveActivities {
     private let api: APIClient
@@ -133,7 +135,7 @@ final class LiveActivities {
     }
 
     /// The reply is in. Read here with the app open, the activity goes at once and the server is told not to push;
-    /// in the background it shows the reply, and the server ends it with an alert.
+    /// in the background it shows the reply until the server ends it, seconds later, and pushes the reply instead.
     func agentFinished(conversation: String, reply: String, failed: Bool = false) {
         let key = "agent:\(conversation)"
         guard let activity = agents.removeValue(forKey: key) else { return }
@@ -152,16 +154,43 @@ final class LiveActivities {
     }
 
     /// Back in the app: replies already in have been seen, so their activities go, and so do ones the server stopped
-    /// keeping up to date (a job whose end never reached the phone).
+    /// keeping up to date (a job whose end never reached the phone, a tram that has gone, an event that has begun).
     func appBecameActive() {
         resendTokens()
         for activity in Activity<AgentActivityAttributes>.activities
         where activity.content.state.isOver || activity.activityState == .stale {
-            let key = activity.attributes.key
-            Task {
-                try? await api.deleteLiveActivity(key: key)
-                await activity.end(nil, dismissalPolicy: .immediate)
+            end(activity, key: activity.attributes.key)
+        }
+        for activity in Activity<TramActivityAttributes>.activities where activity.activityState == .stale {
+            end(activity, key: activity.attributes.key)
+        }
+        for activity in Activity<EventActivityAttributes>.activities where activity.activityState == .stale {
+            end(activity, key: activity.attributes.key)
+        }
+    }
+
+    /// A chat is on screen: what its agent said while you were away has been read there. Its activity goes (unless a
+    /// reply is still coming from here) and so do its notifications.
+    func chatOpened(conversation: String) {
+        let key = "agent:\(conversation)"
+        if agents[key] == nil {
+            for activity in Activity<AgentActivityAttributes>.activities where activity.attributes.key == key {
+                end(activity, key: key)
             }
+        }
+        let center = UNUserNotificationCenter.current()
+        Task {
+            let ids = await center.deliveredNotifications().filter {
+                ($0.request.content.userInfo["aide"] as? [String: Any])?["conversation_id"] as? String == conversation
+            }.map(\.request.identifier)
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
+    }
+
+    private func end<A: ActivityAttributes>(_ activity: Activity<A>, key: String) {
+        Task {
+            try? await api.deleteLiveActivity(key: key)
+            await activity.end(nil, dismissalPolicy: .immediate)
         }
     }
 

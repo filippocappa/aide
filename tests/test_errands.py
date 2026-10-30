@@ -899,3 +899,76 @@ async def test_real_chromium_scenes(tmp_path):
         assert shot[:2] == b"\xff\xd8" and 0 < box["width"] < 1 and 0 <= box["y"] < 1
     finally:
         await browser.stop()
+
+
+class ErrandPush:
+    def __init__(self):
+        self.sent = []
+
+    async def send_errand(self, errand_id, conversation_id, title, body, level=None):
+        self.sent.append((errand_id, title))
+        return True
+
+
+class FakeRun:
+    def __init__(self, reaches: bool):
+        self.reaches, self.asked, self.away = reaches, [], False
+
+    def start(self, detail):
+        pass
+
+    def step(self, detail):
+        pass
+
+    async def needs_you(self, detail):
+        self.asked.append(detail)
+        return self.reaches
+
+    def put_away(self):
+        self.away = True
+
+
+class ErrandLive:
+    def __init__(self, reaches: bool):
+        self.reaches, self.runs, self.handed = reaches, [], []
+
+    def errand(self, errand_id, conversation, title):
+        self.runs.append(FakeRun(self.reaches))
+        return self.runs[-1]
+
+    def handed_over(self, conversation):
+        self.handed.append(conversation)
+
+
+@pytest.mark.parametrize("reaches", [True, False])
+async def test_a_login_is_one_notification(env, reaches):
+    """The errand's activity says it needs you with its alert; the errand's own push only goes without one."""
+    make, _, _ = env
+    runner, _, _ = make([
+        calls(("open_page", {"url": "https://glovoapp.com/login"})),
+        calls(("need_user", {"why": "login", "reason": "Log in to Glovo."})),
+    ])
+    runner.push, runner.live = ErrandPush(), ErrandLive(reaches)
+    runner.start("Order a pizza", "Pizza", "glovoapp.com", CONVERSATION)
+    assert runner.live.handed == [CONVERSATION]  # the chat turn's activity hands over to the errand's
+    e = await next_phase(runner)
+    assert e["status"] == "needs_you" and runner.live.runs[0].asked == ["Log in to Glovo."]
+    assert runner.push.sent == ([] if reaches else [(e["id"], "Aide needs you on glovoapp.com")])
+
+
+async def test_an_errand_waiting_too_long_puts_its_activity_away(env):
+    make, db, _ = env
+    runner, _, _ = make([
+        calls(("open_page", {"url": "https://glovoapp.com/login"})),
+        calls(("need_user", {"why": "login", "reason": "Log in to Glovo."})),
+    ])
+    runner.push, runner.live = ErrandPush(), ErrandLive(True)
+    runner.start("Order a pizza", "Pizza", "glovoapp.com", CONVERSATION)
+    e = await next_phase(runner)
+    run = runner.live.runs[0]
+    await runner._check()
+    assert not run.away  # not yet
+    db.conn.execute("UPDATE errands SET updated_at = '2020-01-01T00:00:00+00:00' WHERE id = ?", (e["id"],))
+    await runner._check()
+    assert run.away and e["id"] not in runner._runs
+    assert runner.store.get(e["id"])["status"] == "needs_you"  # still waiting in its chat

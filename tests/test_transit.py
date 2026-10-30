@@ -508,7 +508,7 @@ async def test_push_payloads():
         def enabled(self):
             return True
 
-        async def send(self, payload, background=False):
+        async def send(self, payload, background=False, collapse=None):
             sent.append((payload, background))
             return 1, 0
 

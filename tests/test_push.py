@@ -125,6 +125,16 @@ async def test_digest_and_message_payloads(env):
                                                          "Coach · Weekly recap"]
     assert p[3]["aide"] == {"kind": "message", "conversation_id": "c_1"} and p[3]["aps"]["thread-id"] == "message"
     assert p[4]["aide"] == {"kind": "message", "conversation_id": "c_2", "routine": 3}
+    # a newer push for the same chat replaces the older one in Notification Center; digests don't collapse
+    assert [r.headers.get("apns-collapse-id") for r in apns.requests] == [None, None, None, "message-c_1",
+                                                                          "message-c_2"]
+
+
+async def test_an_errands_pushes_collapse(env):
+    _, push, apns = env
+    push.register(SANDBOX, "sandbox")
+    await push.send_errand(7, "c_1", "Aide · Pizza", "Done.")
+    assert apns.requests[0].headers["apns-collapse-id"] == "errand-7"
 
 
 async def test_no_key_means_push_off(tmp_path):

@@ -260,12 +260,13 @@ def main() -> None:
         log.info("AIDE_WEBDAV_PASSWORD not set: no Obsidian vault")
 
     async def run() -> None:
+        await live.sweep()  # activities of jobs the last stop cut off
         replanner.start()
         wake = WakeService(digest, health, settings.timezone, push)
         jobs = [
             reminder_fallback(reminders, settings.timezone, push),
             digest_schedule(digest, push),
-            routine_schedule(agent, CONVERSATION, push, live),
+            routine_schedule(agent, CONVERSATION, push),
             worker.run(),
             notes.run(),
             reader.run(),
