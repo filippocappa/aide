@@ -96,7 +96,7 @@ order: each ask, then that agent's answer. The app draws it above the reply as a
 
 ```json
 "team": [
-  {"from": "aide", "to": "coach", "text": "Filippo asks if he should go to the gym tonight. He slept 6h and has a full day.", "ts": "2026-10-19T18:02:11+02:00"},
+  {"from": "aide", "to": "coach", "text": "The user asks if they should go to the gym tonight. He slept 6h and has a full day.", "ts": "2026-10-19T18:02:11+02:00"},
   {"from": "coach", "to": "aide", "text": "HRV is 12% under his usual. An easy session is fine; skip heavy legs.", "ts": "2026-10-19T18:02:19+02:00"}
 ]
 ```
@@ -474,7 +474,7 @@ Draft:
 ```json
 {"id": 3, "message_id": "18f…", "thread_id": "18f…", "from": "Anna Bianchi", "from_address": "anna@example.com",
  "subject": "Dinner Friday?", "preview": "Are you free Friday at 8?", "received_at": "2026-10-22T18:02:00+02:00",
- "why": "Anna asks if Friday at 8 works", "body": "Friday at 8 works for me. See you then!\nFilippo",
+ "why": "Anna asks if Friday at 8 works", "body": "Friday at 8 works for me. See you then!\nMarco",
  "status": "waiting", "agent": "secretary", "created_at": "2026-10-22T21:55:10+02:00"}
 ```
 - `why` may be `null`. `body` is the reply's plain text, without a subject or quoted text; it goes to the sender
@@ -859,7 +859,7 @@ the notes are written again.
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/moodle` | | `{"enabled": true, "site": "https://elearning.unito.it/sme", "connected": true, "user": "Filippo Cappa", "last_sync": "2026-10-21T14:00:00+02:00" or null, "error": null or "the Moodle login has expired", "courses": [MoodleCourse]}`; `{"enabled": false}` without `AIDE_MOODLE_URL`. Not connected: `user` null, `courses` empty. |
+| `GET /v1/moodle` | | `{"enabled": true, "site": "https://elearning.unito.it/sme", "connected": true, "user": "Marco Rossi", "last_sync": "2026-10-21T14:00:00+02:00" or null, "error": null or "the Moodle login has expired", "courses": [MoodleCourse]}`; `{"enabled": false}` without `AIDE_MOODLE_URL`. Not connected: `user` null, `courses` empty. |
 | `POST /v1/moodle/login` | | `{"url", "scheme"}`, above. `503` not set up. |
 | `POST /v1/moodle/connect` | `{"url": "moodlemobile://token=…"}` | `GET /v1/moodle`'s object. `400` not this server's login (or too old): log in again; `502` Moodle didn't take the token. |
 | `POST /v1/moodle/sync` | | `202`, `GET /v1/moodle`'s object; the sync runs in the background (poll `GET`, `last_sync` changes). `409` not connected. |
@@ -1155,7 +1155,7 @@ goal (see Food). Those days count as checked, worked out on every read, so they 
 by hand still add to them. "Eat healthy" with `"food": "logged"` ticks itself once a meal is in.
 
 **Limit habits** (since 2026-10-26): `{"type": "limit", "max": 5}` is a daily count that has to stay at or under
-`max` (1–100), like "5 coffees a day at most". You log each one (`POST /v1/habits/{id}/count`); nothing logged
+`max` (1–100), like "3 coffees a day at most". You log each one (`POST /v1/habits/{id}/count`); nothing logged
 means 0.
 - `count` is today's count (`null` on other habits). `counts` maps each local date with a count in the last 26
   weeks to it, `{"2026-10-25": 3, …}` (only days over 0; `{}` on other habits), for the trend and the grid.
@@ -1165,7 +1165,7 @@ means 0.
 - `streak` counts the days before today in a row that were done, and is 0 once today goes over.
 - Checking a limit habit (`/check`) is `400`; the count is its check.
 - `health` (since 2026-10-26, default `null`): a limit habit can also count from Apple Health. `"inhaler_usage"`
-  follows the health day's `inhaler_usage` (Health's Inhaler Usage, where the user may log coffees). A day's count
+  follows the health day's `inhaler_usage` (Health's Inhaler Usage, where the user may log the habit). A day's count
   is then the larger of Health's number and what was logged here, so one logged in both places counts once. `/count`
   adds to the count as shown (Health's included); taking back can't go below Health's number. `400` on a habit
   that isn't a limit habit, or for another value.
@@ -1193,8 +1193,8 @@ days, today included), newest first, for a GitHub-style grid. Every endpoint tha
 while it's still in progress. Names are unique, ignoring case (a duplicate is `400`); checking a future date is
 `400`; an unknown id is `404`.
 
-The assistant also gets tools to add, check, count and list habits (deleting is queued for confirmation), so "I
-had another one" in chat logs one. Coach sees each limit habit's count today and the last 7 days.
+The assistant also gets tools to add, check, count and list habits (deleting is queued for confirmation), so "had
+another coffee" in chat logs one. Coach sees each limit habit's count today and the last 7 days.
 
 ## Apple Health
 
@@ -1940,7 +1940,7 @@ The server notifies the phone through APNs. It sends only when it has a key (`AP
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/devices` | `{"token": "a1b2…", "environment": "sandbox" \| "production", "name": "Filippo's iPhone"}` | `{"ok": true}`. Adds or updates the device (keyed by `token`). |
+| `POST /v1/devices` | `{"token": "a1b2…", "environment": "sandbox" \| "production", "name": "My iPhone"}` | `{"ok": true}`. Adds or updates the device (keyed by `token`). |
 | `GET /v1/devices` | | `{"devices": [{"token": "a1b2…", "environment": "sandbox", "name": "…", "registered_at": "…", "last_push_at": "…" \| null}]}` |
 | `DELETE /v1/devices/{token}` | | `{"ok": true}`, also for an unknown token. |
 | `POST /v1/devices/test` | `{}` | `{"sent": 1, "failed": 0}`. Sends a visible test push to every device. |

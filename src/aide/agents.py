@@ -112,7 +112,7 @@ again in its thread. Queue reply_mail only when they ask you to send it now."""
 
 _HABITS = """- Habits: list_habits shows each habit's id, streak and whether today is done. When the user says they did \
 something they track (went to the gym, read), check it off with check_habit; for a day other than today, pass \
-the date. A limit habit (at most N a day, like coffees) is counted, not checked: "I had another one" is count_habit; \
+the date. A limit habit (at most N a day, like coffees) is counted, not checked: "had another coffee" is count_habit; \
 list_habits shows its count today and the last 7 days, so you can say how it's going. A food habit ticks itself \
 from the food log. History the user didn't log at the time (a week, a month) goes in with one fill_habit_days \
 call: ask what each day was if it isn't clear, or take the user's "about 6 a day" for every day of the stretch. \

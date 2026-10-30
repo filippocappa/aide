@@ -50,7 +50,7 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
             return f"{fmt(mean(values))} (over {len(values)} days)" if values else "no data"
 
         sleep = [d["sleep"]["asleep_min"] for d in days if "asleep_min" in d.get("sleep", {})]
-        # Inhaler Usage: where the user logs coffees. A day without data from the phone counts as empty too.
+        # Inhaler Usage: where the user logs a limit habit. A day without data from the phone counts as empty too.
         have = {d["date"] for d in days if "inhaler_usage" in d}
         empty = [start + timedelta(days=i) for i in range((end - start).days + 1)]
         empty = [day for day in empty if day.isoformat() not in have]
@@ -77,7 +77,7 @@ def health_tools(store: HealthStore, tz: ZoneInfo) -> list[Tool]:
         Tool("health", "Read the user's Apple Health summaries for a date range: the day's scores (recovery, sleep "
              "and strain, 0–100%, the same numbers the app shows; strain's target comes from recovery), sleep (time "
              "asleep, bedtime, wake), naps, resting heart rate, HRV, steps, exercise minutes, workouts and Inhaler Usage (where the user "
-             "logs coffees; the days with nothing logged are listed), per day and on average. "
+             "logs a limit habit; the days with nothing logged are listed), per day and on average. "
              "Default: the last 7 days. Data arrives from the phone, so the latest day may be partial. Compare with "
              "the user's own numbers; don't make medical claims.",
              {"type": "object", "additionalProperties": False, "required": [], "properties": {

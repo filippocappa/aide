@@ -1062,7 +1062,7 @@ struct HealthDay: Encodable, Equatable {
     var activeKcal: Int?
     var restingKcal: Int?  // Health's Resting Energy: what the food targets' proposal starts from
     var exerciseMin: Int?
-    var inhalerUsage: Int?  // Health's Inhaler Usage: a limit habit may count from it (coffees)
+    var inhalerUsage: Int?  // Health's Inhaler Usage: a limit habit may count from it
     var naps: [SleepNap]?  // nil when there were none
     var workouts: [HealthWorkout] = []
     var weightKg: Double?  // the day's latest weight; for the food targets

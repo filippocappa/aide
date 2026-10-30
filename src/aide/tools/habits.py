@@ -80,7 +80,7 @@ def habit_tools(store: HabitStore) -> list[Tool]:
     return [
         Tool("add_habit", "Start tracking a habit. Daily unless per_week is given (times per Monday-to-Sunday "
              "week, 1–7). max makes it a limit habit: a daily count that has to stay at or under max (e.g. at most "
-             "5 coffees a day), logged with count_habit; with health it also counts from that Apple Health number "
+             "3 coffees a day), logged with count_habit; with health it also counts from that Apple Health number "
              "(inhaler_usage: the Inhaler Usage the user logs there). food makes it tick itself from the food log: logged (a "
              "meal logged), protein_g or calories (at that goal). Runs immediately.",
              _obj({"name": {"type": "string"}, "per_week": {"type": "integer"}, "max": {"type": "integer"},
@@ -97,7 +97,7 @@ def habit_tools(store: HabitStore) -> list[Tool]:
              _obj({**hid, "add": {"type": "integer", "description": "default 1"}, **date}, ["habit_id"]),
              count_habit),
         Tool("fill_habit_days", "Fill in many past days of a habit at once, for history the user didn't log as it "
-             "happened (\"I had about 6 coffees a day this past month\", \"I went to the gym every Monday in October\"). "
+             "happened (\"about 6 coffees a day this past month\", \"I went to the gym every Monday in October\"). "
              "Each day sets that day's total for a limit habit (count, Apple Health's included, not added to it), or "
              "done true/false for another. A limit habit counts every day from the first one filled in, a day left out "
              "as none: so fill in each day of the stretch. Counts logged this way reach Apple Health too (the last 60 "

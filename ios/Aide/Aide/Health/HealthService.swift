@@ -80,7 +80,7 @@ final class HealthService: ObservableObject {
         HKObjectType.workoutType(), bodyMass, height, vo2Max,
         HKCharacteristicType(.dateOfBirth), HKCharacteristicType(.biologicalSex),
     ] + food.map(\.0) + distances)
-    /// Inhaler Usage: a limit habit's counts logged through Aide are written there (the user logs coffees in it).
+    /// Inhaler Usage: a limit habit's counts logged through Aide are written there (the user may log the habit in it too).
     /// The food kinds: every meal logged through Aide. Body Mass: the weights logged through Aide.
     private static let shareTypes: Set<HKSampleType> = Set([inhaler, bodyMass] + food.map(\.0))
 

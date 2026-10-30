@@ -2,7 +2,7 @@
 // (developer.apple.com > Account > Membership details > Team ID).
 DEVELOPMENT_TEAM = XXXXXXXXXX
 
-// Your own bundle ID, if this isn't Filippo's team (a bundle ID belongs to one team). Set APNS_BUNDLE_ID in the
+// Your own bundle ID, if you're not on the owner's team (a bundle ID belongs to one team). Set APNS_BUNDLE_ID in the
 // server's .env to the same.
 // AIDE_BUNDLE_ID = com.example.aide
 

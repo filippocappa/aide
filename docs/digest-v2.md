@@ -1,7 +1,7 @@
 # Digest v2: proposal (for the Ubuntu session)
 
 Status: **server part built** (2026-10-19, Ubuntu; contract in `docs/API.md`, "Digest" and "Conversations").
-**App part built** (2026-10-19, Mac): see "App changes" below. Written on the Mac on 2026-10-19 from Filippo's feedback.
+**App part built** (2026-10-19, Mac): see "App changes" below. Written on the Mac on 2026-10-19 from the user's feedback.
 
 Built as proposed, plus the details the app may care about: the `reminders` window ends at the end of the
 period (so tonight's later reminders show in the evening digest too); `mail` is capped at 25; `POST
@@ -16,8 +16,8 @@ makes a fresh digest first (can take 5–30 s, so show the typing indicator); th
   so reminders you've done since (or that have passed) are still listed.
 - **Overdue clutter.** `ReminderStore.due_before` includes every open reminder ever due. Many are one-off alerts
   ("call X at 10") that are just past, not real to-dos.
-- **Mail is "unread in inbox"** (for the evening: unread from today). Filippo wants "what mail came in today".
-- **It reads like a calendar dump.** In practice it's mostly the 7-day calendar list. Filippo wants something closer to
+- **Mail is "unread in inbox"** (for the evening: unread from today). The user wants "what mail came in today".
+- **It reads like a calendar dump.** In practice it's mostly the 7-day calendar list. The user wants something closer to
   "Hi, here's your schedule for tomorrow and the things you have to do."
 - The app no longer shows the digest on the empty new-chat screen (only behind the sun button), because a full
   card page there felt heavy.

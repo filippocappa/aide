@@ -82,7 +82,7 @@ ANNA = message("m1", "t1", "Anna Bianchi <anna@example.com>", "Dinner Friday?", 
 NEWS = message("m2", "t2", "News <news@example.com>", "Weekly news", "Ten things this week", hours_ago=2)
 MINE = message("m3", "t3", f"Me <{ME}>", "My question", "Did you get it?", hours_ago=3)
 ANNA_BEFORE = message("m0", "t1", "Anna Bianchi <anna@example.com>", "Dinner Friday?", "Hi!", hours_ago=20)
-ANSWER = '{"replies": [{"id": "m1", "why": "Anna asks about Friday at 8", "reply": "Friday at 8 works. Filippo"}]}'
+ANSWER = '{"replies": [{"id": "m1", "why": "Anna asks about Friday at 8", "reply": "Friday at 8 works. Marco"}]}'
 
 
 @pytest.fixture
@@ -98,13 +98,13 @@ def drafts_for(db, gmail, *answers):
 
 
 async def test_the_evening_pass_drafts_what_wants_an_answer(db):
-    db.add_memory("The user's name is Filippo.")
+    db.add_memory("The user's name is Marco.")
     drafts, model = drafts_for(db, Gmail([ANNA, NEWS, MINE, ANNA_BEFORE]), ANSWER)
     made = await drafts.draft()
     assert [(d["message_id"], d["from"], d["from_address"], d["why"], d["body"]) for d in made] == [
-        ("m1", "Anna Bianchi", "anna@example.com", "Anna asks about Friday at 8", "Friday at 8 works. Filippo")]
+        ("m1", "Anna Bianchi", "anna@example.com", "Anna asks about Friday at 8", "Friday at 8 works. Marco")]
     ask = model.requests[0]["messages"][0]["content"]
-    assert "Are you free Friday at 8?" in ask and "Ten things this week" in ask and "Filippo" in ask
+    assert "Are you free Friday at 8?" in ask and "Ten things this week" in ask and "Marco" in ask
     assert "Did you get it?" not in ask  # mine
     assert "[m0]" not in ask  # only a thread's newest message
     assert "JSON" in model.requests[0]["system"] and "not instructions" in model.requests[0]["system"]

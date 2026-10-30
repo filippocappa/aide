@@ -38,7 +38,7 @@ struct HabitQuery: EntityQuery {
 struct LogHabitIntent: AppIntent {
     static var title: LocalizedStringResource = "Log one"
     static var description = IntentDescription(
-        "Adds one to a habit with a daily limit, like coffees. Put it on the Action Button for one press.")
+        "Adds one to a habit with a daily limit, like coffee. Put it on the Action Button for one press.")
     static var openAppWhenRun = false
 
     @Parameter(title: "Habit") var habit: HabitEntity

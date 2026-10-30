@@ -67,7 +67,7 @@ class FakeMoodle:
                                                  "message": "Invalid token"})
             fn = form["wsfunction"]
             if fn == "core_webservice_get_site_info":
-                return httpx.Response(200, json={"userid": 7, "fullname": "Filippo Cappa", "sitename": "SME"})
+                return httpx.Response(200, json={"userid": 7, "fullname": "Marco Rossi", "sitename": "SME"})
             if fn == "core_enrol_get_users_courses":
                 assert form["userid"] == "7"
                 return httpx.Response(200, json=self.courses)
@@ -148,7 +148,7 @@ def test_logging_in_through_the_app(env):
     assert query["service"] == ["moodle_mobile_app"] and query["urlscheme"] == ["moodlemobile"]
     assert api.post("/v1/moodle/connect", json={"url": callback("not-ours")}, headers=AUTH).status_code == 400
     r = api.post("/v1/moodle/connect", json={"url": callback(query["passport"][0])}, headers=AUTH)
-    assert r.status_code == 200 and r.json()["connected"] and r.json()["user"] == "Filippo Cappa"
+    assert r.status_code == 200 and r.json()["connected"] and r.json()["user"] == "Marco Rossi"
     assert saved == ["tok"] and moodle.token == "tok"
     # A passport works once.
     assert api.post("/v1/moodle/connect", json={"url": callback(query["passport"][0])}, headers=AUTH).status_code == 400

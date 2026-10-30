@@ -472,7 +472,7 @@ better than filler.
 - Don't repeat an objective already set for the period, nor copy one from the week or month above: a day's \
 objective is a step toward the week's, not the same thing again.
 - Habits are not objectives. They're what the person always does, with their own streaks, and they're tracked \
-already. Never make a day's objective of a habit's daily round ("Log your meals today", "Stretch today", "Under 5 \
+already. Never make a day's objective of a habit's daily round ("Log your meals today", "Stretch today", "Under 3 \
 coffees today"). When a habit matters this period, make a week's or month's target of it, tied to the habit: \
 "Hit the protein goal 5 days this week", "Stay under the coffee limit 6 days this week".
 - A reminder is already on their to-do list. Make one an objective only when it's the period's real priority, at \

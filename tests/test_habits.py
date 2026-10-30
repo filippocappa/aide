@@ -218,7 +218,7 @@ def test_what_is_logged_here_is_written_to_health(api):
     assert after["health_logged"] == {today.isoformat(): 1}
     habits.count(coffee.id, -5)
     assert habits.find(coffee.id).health_logged == ()
-    plain = habits.add("Coffee", max_count=3)
+    plain = habits.add("Snacks", max_count=3)
     habits.count(plain.id)
     assert "health_logged" not in plain.as_json() and len(pushes) == 3
 

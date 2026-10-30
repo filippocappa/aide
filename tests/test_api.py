@@ -378,11 +378,11 @@ async def _remember(db, *texts):
 
 async def test_remember_skips_duplicates_and_rewordings():
     db = Database(":memory:")
-    out = await _remember(db, "Name is Filippo", "My name is Filippo", "User's name is filippo.", "Vegetarian",
+    out = await _remember(db, "Name is Marco", "My name is Marco", "User's name is marco.", "Vegetarian",
                           "Is vegetarian")
     assert [o.split(":")[0] for o in out] == ["Remembered", "Already saved, nothing added", "Already saved, nothing added",
                                               "Remembered", "Already saved, nothing added"]
-    assert [m["text"] for m in db.memories()] == ["Vegetarian", "Name is Filippo"]
+    assert [m["text"] for m in db.memories()] == ["Vegetarian", "Name is Marco"]
 
 
 async def test_remember_merges_extra_detail_but_not_a_negation():

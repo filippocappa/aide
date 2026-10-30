@@ -56,7 +56,7 @@ targets:
         NSLocationWhenInUseUsageDescription: Aide sends where you are to your server, so a tram alert knows how long the walk to the stop is.
         NSLocationAlwaysAndWhenInUseUsageDescription: With Always, tram alerts know the walk to the stop with the app closed. Aide sends your location only when you move about 500 m or an alert is about to fire.
         NSHealthShareUsageDescription: Aide reads your sleep, heart rate, HRV, steps and workouts to write your wake-up briefing and tick off workout habits.
-        NSHealthUpdateUsageDescription: Aide writes the meals and drinks you log through it (calories, protein, carbs, fat, water, caffeine), and the coffees to Inhaler Usage, so you don't have to log them twice.
+        NSHealthUpdateUsageDescription: Aide writes the meals and drinks you log through it (calories, protein, carbs, fat, water, caffeine), and a limit habit's counts to Inhaler Usage, so you don't have to log them twice.
         # Silent pushes wake the app to sync reminders (docs/API.md, Push).
         UIBackgroundModes:
           - remote-notification

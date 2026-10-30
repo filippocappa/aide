@@ -1,6 +1,6 @@
 # Aide
 
-Personal AI assistant for one person (Filippo): calendar, reminders, habits and later mail, through chat.
+Personal AI assistant for one person: calendar, reminders, habits and later mail, through chat.
 [SPEC.md](SPEC.md) is the original plan; this file is the current state and how to work on it.
 
 ## Two machines, one repo
@@ -73,9 +73,9 @@ Rules that matter here:
 ## iOS app (MacBook)
 
 SwiftUI, iOS 17+, Xcode project in `ios/Aide/`. Paid Apple Developer Program account (active since
-2026-10-20; team `6HCM796G2T`), so:
+2026-10-20; team ID in `Signing.local.xcconfig`), so:
 - Sign with the paid team, not "Personal Team". Installs last a year, and TestFlight is available.
-- **Push notifications** (APNs): live since 2026-10-20 (key `79B9MDBW26` on `cappa`, in `~/.config/aide/`). `PushService` registers the
+- **Push notifications** (APNs): live since 2026-10-20 (the key on `cappa`, in `~/.config/aide/`, its ID in `.env`). `PushService` registers the
   device token, silent `sync` pushes run the reminders sync, taps route through `AppEnvironment.open(_:)`.
 - Push is opt-in per Mac: `AIDE_ENTITLEMENTS = Aide/Aide.entitlements` in `ios/Aide/Config/Signing.local.xcconfig`
   (see the `.example`). This MacBook has it on. A Personal Team can't sign it.
@@ -416,11 +416,11 @@ corner (the digest sheet: Wake-up, Evening, Week, Month, and Refresh to write it
 done today", what's waiting) above the team; Today opens from it as a page (`env.showToday`). The Morning digest is off
 (2026-10-26): the wake-up briefing is the morning one. Notifications open Today on their item (a routine's push carries `routine`), or the
 chat. Routine chats are left out of Chats. Limit habits (`{"type": "limit", "max": 5}`, `POST /v1/habits/{id}/count`,
-the `count_habit` tool, "I had another one") show "2/5" with − and +. Food habits tick from the food log. The planner
+the `count_habit` tool, "had another coffee") show "2/5" with − and +. Food habits tick from the food log. The planner
 leaves habits out of a day's objectives, and Coach sees each limit habit's last 7 days. One tap: the "Log one" App
 Intent (Shortcuts, Action Button), the Health widget's +, a Control Center control (iOS 18,
 `AideWidgets/HabitControl.swift`). A limit habit can count from Apple Health (`health: "inhaler_usage"`: the user logs
-coffees as Inhaler Usage; the day's count is the larger of Health's and the app's). "Coffee" (at most 5) is set up
+the habit as Inhaler Usage; the day's count is the larger of Health's and the app's). One habit is set up
 that way. Counts logged through Aide (an agent, the app, a widget) go back to Health (2026-10-27): the server keeps each
 day's `health_logged` and the app makes its own Inhaler Usage samples match, never touching the user's.
 

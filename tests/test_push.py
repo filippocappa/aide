@@ -283,7 +283,7 @@ def test_devices_api(env):
     store = ReminderStore(db.conn)
     agent = Agent(FakeClient([]), db, ToolRegistry(reminder_tools(store, ROME)), model="m", tz=ROME)
     client = TestClient(create_app(agent, store, None, ROME, TOKEN, push=push))
-    body = {"token": SANDBOX.upper(), "environment": "sandbox", "name": "Filippo's iPhone"}
+    body = {"token": SANDBOX.upper(), "environment": "sandbox", "name": "My iPhone"}
     assert client.post("/v1/devices", json=body, headers=AUTH).json() == {"ok": True}
     assert client.post("/v1/devices", json={**body, "name": "iPhone"}, headers=AUTH).json() == {"ok": True}
     [d] = client.get("/v1/devices", headers=AUTH).json()["devices"]
