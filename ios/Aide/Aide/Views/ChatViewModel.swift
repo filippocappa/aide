@@ -167,8 +167,9 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// The agent's chats, newest first. Not routine chats: their posts are notes on Today, which opens them.
+    /// The old shared chat ("main", from before the app had chats of its own) only while it has something in it.
     func chats(with agent: Agent) -> [Conversation] {
-        conversations.filter { self.agent($0.agent).id == agent.id && $0.routine == nil }
+        conversations.filter { self.agent($0.agent).id == agent.id && $0.routine == nil && ($0.id != "main" || $0.preview != nil) }
     }
 
     /// `agent`'s chats that have `query` in their title or messages, newest first.

@@ -383,7 +383,7 @@ private struct TeamRow: View {
     }
 }
 
-/// One agent's chats, newest first, with a new chat on top. Swipe to delete. Search looks through the titles and
+/// One agent's chats, newest first, New chat in the corner. Swipe to delete. Search looks through the titles and
 /// every message, on the server.
 struct PastChatsSheet: View {
     enum Choice { case new(Agent), open(Conversation), openID(String) }
@@ -391,6 +391,7 @@ struct PastChatsSheet: View {
     @EnvironmentObject private var chat: ChatViewModel
     let agent: Agent
     let choose: (Choice) -> Void
+    @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var results: [Conversation]?
     @State private var searchError: String?
@@ -403,32 +404,39 @@ struct PastChatsSheet: View {
                 if searching {
                     found
                 } else {
-                    Button { choose(.new(agent)) } label: {
-                        Label("New chat", systemImage: "square.and.pencil")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(agent.tint)
+                    let chats = chat.chats(with: agent)
+                    if chats.isEmpty {
+                        Text("No chats with \(agent.name) yet.").foregroundStyle(.secondary)
+                            .listRowBackground(Theme.row)
                     }
-                    .listRowBackground(Theme.row)
-                    Section {
-                        let chats = chat.chats(with: agent)
-                        if chats.isEmpty {
-                            Text("No chats with \(agent.name) yet.").foregroundStyle(.secondary)
+                    ForEach(chats) { c in row(c) }
+                        .onDelete { offsets in
+                            let doomed = offsets.map { chats[$0] }
+                            Task { for c in doomed { await chat.delete(c) } }
                         }
-                        ForEach(chats) { c in row(c) }
-                            .onDelete { offsets in
-                                let doomed = offsets.map { chats[$0] }
-                                Task { for c in doomed { await chat.delete(c) } }
-                            }
-                    }
                 }
             }
+            .listSectionSpacing(.compact)
+            .contentMargins(.top, 4, for: .scrollContent)
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
             .navigationTitle(agent.name)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close", systemImage: "xmark") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("New chat", systemImage: "square.and.pencil") { choose(.new(agent)) }
+                        .tint(agent.tint)
+                }
+            }
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "Search chats with \(agent.name)")
             .task(id: query) { await search() }
+            #if DEBUG
+            .onAppear { if let words = UserDefaults.standard.string(forKey: "previewSearch") { query = words } }
+            #endif
         }
         .presentationDetents([.large])
         .presentationBackground(Theme.grouped)
@@ -451,7 +459,7 @@ struct PastChatsSheet: View {
 
     private func row(_ c: Conversation) -> some View {
         Button { choose(.open(c)) } label: { ConversationRow(conversation: c, highlight: searching ? query : nil) }
-            .listRowBackground(c.id == chat.conversationID ? Theme.chip : Theme.row)
+            .listRowBackground(Theme.row)
     }
 
     /// A moment after the typing stops, so each letter doesn't ask the server.
@@ -504,7 +512,7 @@ struct ConversationRow: View {
             if let match = conversation.match, let highlight {
                 Text(Self.bold(highlight, in: match)).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             } else if let preview = conversation.preview, !preview.isEmpty {
-                Text(preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                Text(preview.markdown).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             }
         }
         .padding(.vertical, 3)
