@@ -198,9 +198,9 @@ struct VitalRow: View {
         HStack(spacing: 12) {
             Image(systemName: metric.icon)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(metric.color)
+                .foregroundStyle(.secondary)
                 .frame(width: 30, height: 30)
-                .background(metric.color.opacity(0.14), in: Circle())
+                .background(Color.primary.opacity(0.07), in: Circle())
             VStack(alignment: .leading, spacing: 1) {
                 Text(metric.short).font(.subheadline.weight(.medium))
                 Text(compare).font(.caption).foregroundStyle(tone).lineLimit(1)
@@ -209,7 +209,7 @@ struct VitalRow: View {
             if let v = vital.value {
                 Text(metric.format(v * scale)).font(.subheadline.weight(.semibold)).monospacedDigit()
             }
-            RangeGauge(value: vital.value, low: vital.low, high: vital.high, color: tone == .secondary ? metric.color : tone)
+            RangeGauge(value: vital.value, low: vital.low, high: vital.high, color: tone == .secondary ? .primary : tone)
                 .frame(width: 64, height: 8)
         }
         .accessibilityElement(children: .combine)
@@ -425,14 +425,7 @@ struct ScoreDetailView: View {
         .defaultScrollAnchor(UserDefaults.standard.string(forKey: "previewAnchor") == "bottom" ? .bottom
                              : UserDefaults.standard.string(forKey: "previewAnchor") == "center" ? .center : .top)
         #endif
-        .background(alignment: .top) {
-            LinearGradient(colors: [tint.opacity(0.38), tint.opacity(0.12), tint.opacity(0)],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: 460)
-                .ignoresSafeArea(edges: .top)
-                .animation(.easeInOut, value: kind.score(scores))
-        }
-        .background(Theme.grouped)
+        .pageGlow(tint)
         .navigationTitle(kind.name)
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -528,7 +521,7 @@ struct ScoreDetailView: View {
                     Label("Talk it over with \(coach.name)", systemImage: "bubble.left.and.text.bubble.right")
                         .font(.subheadline.weight(.semibold))
                 }
-                .tint(coach.tint)
+                .tint(Theme.accent)
             } else if asking {
                 HStack(spacing: 12) {
                     LivePebble(mood: "thinking", size: 28, figure: coach.figure)
@@ -544,7 +537,7 @@ struct ScoreDetailView: View {
                         Text("What does \(coach.name) make of it?").font(.subheadline.weight(.semibold))
                             .foregroundStyle(.primary)
                         Spacer(minLength: 0)
-                        Image(systemName: "sparkles").foregroundStyle(coach.tint)
+                        Image(systemName: "sparkles").foregroundStyle(.secondary)
                     }
                     .contentShape(Rectangle())
                 }
@@ -557,7 +550,7 @@ struct ScoreDetailView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(coach.tint.opacity(0.25)))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
         .animation(.easeInOut(duration: 0.25), value: asking)
     }
 
@@ -577,7 +570,7 @@ struct ScoreDetailView: View {
     private func parts(_ parts: [HealthScores.Part]) -> some View {
         ForEach(Array(parts.enumerated()), id: \.element.id) { i, part in
             if i > 0 { Divider().padding(.vertical, 12) }
-            PartRow(part: part, kind: kind)
+            PartRow(part: part, kind: kind, tint: tint)
         }
     }
 
@@ -763,37 +756,41 @@ private struct ScoreWeek: View {
     }
 }
 
-/// A part's score in a word, as Oura says it.
-private func standing(_ score: Int?) -> (word: String, color: Color) {
-    guard let score else { return ("No data", .secondary) }
-    if score >= 80 { return ("Optimal", Color(uiColor: UIColor(hex: 0x30D158))) }
-    if score >= 60 { return ("Good", Color(uiColor: UIColor(hex: 0x64D2FF))) }
-    if score >= 40 { return ("Fair", Color(uiColor: UIColor(hex: 0xFFB340))) }
-    return ("Pay attention", Color(uiColor: UIColor(hex: 0xFF6B4A)))
+/// A part's score in a word, as Oura says it; only the last one warns.
+private func standing(_ score: Int?) -> (word: String, warns: Bool) {
+    guard let score else { return ("No data", false) }
+    if score >= 80 { return ("Optimal", false) }
+    if score >= 60 { return ("Good", false) }
+    if score >= 40 { return ("Fair", false) }
+    return ("Pay attention", true)
 }
 
 /// One part of a score: its name and share, how it stands in a word, the value, a bar, and your usual.
 private struct PartRow: View {
     let part: HealthScores.Part
     let kind: ScoreKind
+    let tint: Color
 
     var body: some View {
         let stand = standing(part.score)
+        // One hue a page: the score's own, orange only for a part that needs attention.
+        let color = stand.warns ? Color.orange : tint
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(stand.color)
+                    .foregroundStyle(color)
                     .frame(width: 28, height: 28)
-                    .background(stand.color.opacity(0.15), in: Circle())
+                    .background(color.opacity(0.15), in: Circle())
                 VStack(alignment: .leading, spacing: 1) {
                     Text(part.label).font(.subheadline.weight(.semibold))
                     Text("\(part.weight)% of score").font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
-                Text(stand.word).font(.caption.weight(.bold)).foregroundStyle(stand.color)
+                Text(stand.word).font(.caption.weight(.semibold))
+                    .foregroundStyle(stand.warns ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(stand.color.opacity(0.14), in: Capsule())
+                    .background((stand.warns ? Color.orange : Color.primary).opacity(stand.warns ? 0.14 : 0.07), in: Capsule())
             }
             HStack(alignment: .firstTextBaseline) {
                 Text(value).font(.title3.weight(.semibold)).monospacedDigit()
@@ -805,7 +802,7 @@ private struct PartRow: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.07))
                     if let s = part.score {
-                        Capsule().fill(stand.color.gradient).frame(width: max(6, geo.size.width * Double(s) / 100))
+                        Capsule().fill(color.gradient).frame(width: max(6, geo.size.width * Double(s) / 100))
                     }
                 }
             }
@@ -857,7 +854,7 @@ private struct PartRow: View {
         guard let u = part.usual, let v = part.value else { return nil }
         let arrow = v > u ? "arrow.up" : v < u ? "arrow.down" : "equal"
         return AnyView(HStack(spacing: 3) {
-            Image(systemName: arrow).font(.caption2.weight(.bold)).foregroundStyle(standing(part.score).color)
+            Image(systemName: arrow).font(.caption2.weight(.bold))
             Text("usual \(fmt(u))")
         }
         .font(.caption).foregroundStyle(.secondary).monospacedDigit())
@@ -890,10 +887,10 @@ private struct SleepStages: View {
     private var stages: [Stage] {
         guard let deep = night.deepMin, let core = night.coreMin, let rem = night.remMin else { return [] }
         return [
-            Stage(name: "Awake", minutes: night.awakeMin ?? 0, color: Color(uiColor: UIColor(hex: 0xFF8A65)), range: 0...0.10),
-            Stage(name: "REM", minutes: rem, color: Color(uiColor: UIColor(hex: 0x64D2FF)), range: 0.18...0.25),
-            Stage(name: "Core", minutes: core, color: Color(uiColor: UIColor(hex: 0x0A84FF)), range: 0.45...0.60),
-            Stage(name: "Deep", minutes: deep, color: Color(uiColor: UIColor(hex: 0x5E5CE6)), range: 0.13...0.23),
+            Stage(name: "Awake", minutes: night.awakeMin ?? 0, color: Color(uiColor: UIColor(hex: 0xDCDBFF)), range: 0...0.10),
+            Stage(name: "REM", minutes: rem, color: Color(uiColor: UIColor(hex: 0xA6A4FF)), range: 0.18...0.25),
+            Stage(name: "Core", minutes: core, color: Color(uiColor: UIColor(hex: 0x7A78F5)), range: 0.45...0.60),
+            Stage(name: "Deep", minutes: deep, color: Color(uiColor: UIColor(hex: 0x4A47C9)), range: 0.13...0.23),
         ]
     }
 
@@ -960,7 +957,7 @@ struct ZonesChart: View {
     /// Where zones 1–5 start, then the max.
     var bpm: [Int]? = nil
     private static let names = ["50–60%", "60–70%", "70–80%", "80–90%", "90–100%"]
-    static let colors: [Color] = [0x8E8E93, 0x0A84FF, 0x30D158, 0xFF9F0A, 0xFF453A].map { Color(uiColor: UIColor(hex: $0)) }
+    static let colors: [Color] = [0xFFE2BF, 0xFFC98A, 0xFFAA55, 0xFF8530, 0xFF5A1F].map { Color(uiColor: UIColor(hex: $0)) }
 
     static func name(_ i: Int, bpm: [Int]?) -> String {
         if let bpm, bpm.count == 6 { return "Z\(i + 1) · \(bpm[i])–\(bpm[i + 1])" }
@@ -984,7 +981,7 @@ struct ZonesChart: View {
             ForEach(Array(shown.enumerated()).reversed(), id: \.offset) { i, minutes in
                 HStack(spacing: 10) {
                     Text("Z\(i + 1)")
-                        .font(.caption.weight(.heavy)).foregroundStyle(.white)
+                        .font(.caption.weight(.heavy)).foregroundStyle(.black.opacity(0.75))
                         .frame(width: 30, height: 22)
                         .background(Self.colors[i], in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     VStack(alignment: .leading, spacing: 4) {
@@ -1020,9 +1017,9 @@ private struct LoadCard: View {
 
     private var look: (word: String, color: Color) {
         switch load.label {
-        case "detraining": ("Detraining", .blue)
+        case "detraining": ("Detraining", .secondary)
         case "maintaining": ("Maintaining", .secondary)
-        case "building": ("Building", .green)
+        case "building": ("Building", ScoreColors.strain[1])
         default: ("Overreaching", .orange)
         }
     }
@@ -1041,10 +1038,12 @@ private struct LoadCard: View {
                 let x = { (r: Double) in w * (min(1.6, max(0.5, r)) - 0.5) / 1.1 }
                 ZStack(alignment: .leading) {
                     HStack(spacing: 2) {
-                        Color.blue.opacity(0.35).frame(width: x(0.8) - 1)
-                        Color.secondary.opacity(0.3).frame(width: x(1.0) - x(0.8) - 2)
-                        Color.green.opacity(0.45).frame(width: x(1.3) - x(1.0) - 2)
-                        Color.orange.opacity(0.45)
+                        // Strain's orange, stronger as the load grows.
+                        let o = ScoreColors.strain[1]
+                        o.opacity(0.15).frame(width: x(0.8) - 1)
+                        o.opacity(0.3).frame(width: x(1.0) - x(0.8) - 2)
+                        o.opacity(0.55).frame(width: x(1.3) - x(1.0) - 2)
+                        o.opacity(0.85)
                     }
                     .clipShape(Capsule())
                     Circle().fill(Color.primary).overlay(Circle().stroke(Theme.row, lineWidth: 2))

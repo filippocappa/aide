@@ -71,6 +71,25 @@ enum ScoreColors {
 }
 
 extension View {
+    /// A soft glow of a colour at the top of the page, on the grouped background: the page's one hue. Nil: none yet
+    /// (it fades in when the colour comes).
+    func pageGlow(_ color: Color?) -> some View {
+        background(alignment: .top) {
+            ZStack {
+                if let color {
+                    LinearGradient(colors: [color.opacity(0.38), color.opacity(0.12), color.opacity(0)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .transition(.opacity)
+                }
+            }
+            .frame(height: 460, alignment: .top)
+            .frame(maxWidth: .infinity)
+            .ignoresSafeArea(edges: .top)
+            .animation(.easeInOut(duration: 0.6), value: color == nil)
+        }
+        .background(Theme.grouped)
+    }
+
     /// A floating control: Liquid Glass where the system has it, else a frosted material with a soft shadow.
     @ViewBuilder func glass<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26, *) {

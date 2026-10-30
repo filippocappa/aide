@@ -27,6 +27,14 @@ struct HealthView: View {
 
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
 
+    /// The day's recovery colour, as on its page; sleep's while recovery is still learning or missing; none until
+    /// the scores come, so it fades in once.
+    private var glow: Color? {
+        guard let scores else { return nil }
+        if let r = scores.recovery, r.calibrating == nil { return ScoreColors.recovery(r.score)[1] }
+        return ScoreColors.sleep[1]
+    }
+
     /// The chosen day's reading from Apple Health.
     private var reading: HealthDayReading? { bodyDays?.first { $0.date == Wire.dayString(day) } }
 
@@ -46,7 +54,7 @@ struct HealthView: View {
                 weightSection
             }
             .scrollContentBackground(.hidden)
-            .background(Theme.grouped)
+            .pageGlow(glow)
             .navigationTitle("Health")
             .navigationDestination(item: $metric) { m in HealthMetricView(metric: m, days: bodyDays ?? []) }
             .navigationDestination(item: $scoreKind) { kind in
@@ -104,7 +112,7 @@ struct HealthView: View {
                         .accessibilityHint("Shows the chart")
                 }
             } header: {
-                sectionHeader("Last night", icon: "moon.zzz.fill", color: .indigo)
+                sectionHeader("Last night", icon: "moon.zzz.fill")
             } footer: {
                 Text("The middle of each gauge is your usual range, from the 60 days before.")
             }
@@ -114,7 +122,7 @@ struct HealthView: View {
             Section {
                 DayHeartChart(day: reading)
             } header: {
-                sectionHeader("Heart rate", icon: "heart.fill", color: .red)
+                sectionHeader("Heart rate", icon: "heart.fill")
             }
             .listRowBackground(Theme.row)
         }
@@ -125,7 +133,7 @@ struct HealthView: View {
                                strain: scores?.strain?.workouts.first { $0.id == w.id }?.strain)
                 }
             } header: {
-                sectionHeader("Workouts", icon: "figure.run", color: ScoreColors.strain[1])
+                sectionHeader("Workouts", icon: "figure.run")
             }
             .listRowBackground(Theme.row)
         }
@@ -140,7 +148,7 @@ struct HealthView: View {
                 }
                 .padding(.vertical, 2)
             } header: {
-                sectionHeader("Activity", icon: "figure.walk", color: .orange)
+                sectionHeader("Activity", icon: "figure.walk")
             }
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
@@ -162,14 +170,14 @@ struct HealthView: View {
             Section {
                 WeightCard(weight: weight, open: { showWeight = true }, log: { loggingWeight = true })
             } header: {
-                sectionHeader("Weight", icon: "scalemass.fill", color: WeightSummary.color)
+                sectionHeader("Weight", icon: "scalemass.fill")
             }
             .listRowBackground(Theme.row)
         }
     }
 
-    private func sectionHeader(_ title: String, icon: String, color: Color) -> some View {
-        Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(color) }
+    private func sectionHeader(_ title: String, icon: String) -> some View {
+        Label(title, systemImage: icon)
     }
 
     private func loadScores() async {

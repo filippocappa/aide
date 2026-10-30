@@ -47,15 +47,11 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// The night's numbers in sleep's colour, the day's in strain's: two hues for the whole of Health.
     var color: Color {
         switch self {
-        case .sleep: .indigo
-        case .sleepHr, .restingHr, .hrv: .red
-        case .breathing: .cyan
-        case .wristTemp: .orange
-        case .steps: .orange
-        case .activeKcal: .pink
-        case .exercise: .green
+        case .sleep, .sleepHr, .restingHr, .hrv, .breathing, .wristTemp: ScoreColors.sleep[1]
+        case .steps, .activeKcal, .exercise: ScoreColors.strain[1]
         }
     }
 

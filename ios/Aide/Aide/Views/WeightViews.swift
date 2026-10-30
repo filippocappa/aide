@@ -6,7 +6,8 @@ import SwiftUI
 // days, a row on the targets page, and "Log weight", which the phone also writes to Health.
 
 extension WeightSummary {
-    static let color = Color.teal
+    /// Neutral: Health keeps to sleep's and strain's colours.
+    static let color = Theme.accent
 
     /// "66.0 kg".
     static func kg(_ v: Double) -> String { "\(v.formatted(.number.precision(.fractionLength(1)))) kg" }
