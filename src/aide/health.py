@@ -120,8 +120,8 @@ class HealthStore:
         days, age, out = self._window(start, end), self.age(), []
         for i in range((end - start).days + 1):
             day = end - timedelta(days=i)
-            sleep = scores.sleep_score(days, day)
-            recovery = scores.recovery_score(days, day, sleep)
+            sleep = scores.sleep_score(days, day, age)
+            recovery = scores.recovery_score(days, day, sleep, age)
             strain = scores.strain_score(days, day, recovery, age)
             out.append({"date": day.isoformat(), "sleep": sleep and sleep["score"],
                         "recovery": recovery and recovery["score"], "strain": strain and strain["score"]})
@@ -137,7 +137,7 @@ class HealthStore:
         found = self.get(day)
         if not found or not found.get("sleep"):
             return None
-        sleep = scores.sleep_score(self._window(day, day), day)
+        sleep = scores.sleep_score(self._window(day, day), day, self.age())
         return {"type": "sleep", "title": "Last night", "sleep": found["sleep"], "usual_asleep_min": self.usual_asleep(day),
                 "score": sleep and sleep["score"]}
 
@@ -153,12 +153,46 @@ class HealthStore:
         rhr_usual = median(d["resting_hr"] for d in past)
         level, summary = recovery(hrv, hrv_usual, rhr, rhr_usual)
         days = self._window(day, day)
-        score = (scores.recovery_score(days, day, scores.sleep_score(days, day)) or {}).get("score")
+        score = (scores.recovery_score(days, day, scores.sleep_score(days, day, self.age()), self.age()) or {}).get("score")
         if score is not None:  # the score has the last word on the level
             level = scores.level(score)
         return {"type": "recovery", "title": "Recovery", "level": level, "summary": summary, "score": score,
                 "hrv_ms": hrv, "hrv_usual_ms": round(hrv_usual, 1), "resting_hr": rhr,
                 "resting_hr_usual": round(rhr_usual)}
+
+
+# -- Coach's take on a score (POST /v1/health/insight) ------------------------------------------------
+
+INSIGHT_KINDS = ("sleep", "recovery", "strain")
+INSIGHT_TOKENS = 700
+INSIGHT_PROMPT = """You are Coach, the health and training specialist in Filippo's personal assistant. He opened \
+his {kind} score in the app and asked for your take. You get the day's three scores (Sleep, Recovery, Strain, each \
+0-100, with what they're made of), last night's numbers against his usual, his last 30 days of scores, the last 14 \
+days of raw data, and what you remember about him.
+
+Write 3 to 5 short sentences, plain text, no headings, lists or markdown, no greeting:
+- what drove today's {kind} score, with the numbers that matter (as the app shows them);
+- the pattern behind it over the last days or weeks, if there is one (a run of short nights, late bedtimes, a heavy \
+training block, HRV drifting);
+- one concrete thing to do today or tonight.
+Talk to him as "you". Speak only from the data you're given; say so when it's thin. Compare with his own usual, \
+not population norms. No diagnoses or medical claims; if something has been off for days (breathing rate, \
+temperature, resting heart rate), suggest he keeps an eye on it."""
+
+
+def insight_input(store: HealthStore, kind: str, day: date, memories: list[str]) -> str:
+    """What Coach reads for its take on one score: the day's scores, 30 days of them, 14 raw days, memory."""
+    raw = [{k: v for k, v in d.items() if k not in ("hr_minutes", "hr_hourly")}
+           for d in store.between(day - timedelta(days=13), day)]
+    parts = {
+        "score asked about": kind,
+        "date": day.isoformat(),
+        "today": store.scores(day),
+        "last 30 days (newest first)": store.score_history(day - timedelta(days=29), day),
+        "raw health days, last 14 (newest first)": raw,
+        "what you remember": memories,
+    }
+    return json.dumps(parts, ensure_ascii=False, default=str)
 
 
 def recovery(hrv: float, hrv_usual: float, rhr: float, rhr_usual: float) -> tuple[str, str]:

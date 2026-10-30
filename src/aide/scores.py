@@ -12,22 +12,29 @@ from datetime import date, datetime, timedelta
 from statistics import median
 
 # Sleep
-SLEEP_NEED = 450  # min asleep a night, before debt
+NEED_NIGHTS, MIN_NEED_NIGHTS = 90, 14  # nights the base need is learnt from (Oura: 90 days, odd nights left out)
+NEED_TRIM = 0.1  # share of the shortest and of the longest nights left out
+NEED_DEFAULT, NEED_MIN, NEED_MAX = 480, 450, 570  # min asleep: before there's history, and the bounds on the base
+STRAIN_NEED = 0.3  # min of need per % of the day before's strain (Whoop: a hard day asks for more sleep)
 DEBT_NIGHTS = 3  # nights whose shortfall adds to the need
 DEBT_SHARE = 0.5  # of that shortfall carried into the need
-DEBT_CAP = 60  # min the need can grow by
-RESTORATIVE_FULL = 0.40  # deep + REM share of the night for full marks
-EFFICIENCY_FULL, EFFICIENCY_ZERO = 0.92, 0.75  # asleep / in bed
-CONSISTENCY_FULL, CONSISTENCY_ZERO = 30, 120  # min from the usual bedtime
+DEBT_CAP = 45  # min the need can grow by
+DURATION_SLOPE = 2.0  # score lost per share of the need missed: 90% of it scores 80
+DEEP_FULL, DEEP_ZERO = 0.15, 0.05  # deep share of the night (typical adults: 13–23%)
+REM_FULL, REM_ZERO = 0.23, 0.10  # REM share (typical: 20–25%)
+EFFICIENCY_FULL, EFFICIENCY_ZERO = 0.95, 0.80  # asleep / in bed
+CONSISTENCY_FULL, CONSISTENCY_ZERO = 20, 120  # min bedtime and wake are off the usual, on average
 CONSISTENCY_NIGHTS, MIN_CONSISTENCY_NIGHTS = 14, 5
-SLEEP_PARTS = {"duration": 50, "restorative": 20, "efficiency": 15, "consistency": 15}
+SLEEP_PARTS = {"duration": 45, "deep": 15, "rem": 15, "efficiency": 10, "consistency": 15}
 
 # Recovery
 BASELINE = 60  # days before, for the usual numbers
 MIN_BASELINE = 14
-RECOVERY_PARTS = {"hrv": 50, "resting_hr": 30, "sleep": 20}
-RECOVERY_SHIFT = 0.3  # a usual day scores ~62, as on Whoop
-HRV_SPREAD_MIN, RHR_SPREAD_MIN = 0.08, 2.0  # floors on the spread (ln ms, bpm), so a steady past isn't twitchy
+RECOVERY_PARTS = {"hrv": 30, "hrv_week": 20, "resting_hr": 25, "sleep": 15, "load": 10}
+TREND_DAYS, MIN_TREND_DAYS = 7, 4  # HRV's rolling mean (Plews and Buchheit: the trend says more than one morning)
+LOAD_EASY = 1.05  # acute:chronic load at which training neither helps nor costs recovery; each 0.25 over is a spread
+RECOVERY_SHIFT = 0.5  # a usual day scores ~60, as on Whoop
+HRV_SPREAD_MIN, RHR_SPREAD_MIN = 0.08, 3.0  # floors on the spread (ln ms, bpm), so a steady past isn't twitchy
 FLAG_CAP = 50  # a flag caps recovery here
 RESPIRATORY_FLAG, TEMP_FLAG = 1.0, 0.5  # breaths/min, °C above the usual
 
@@ -36,6 +43,7 @@ TRIMP_SCALE = 150  # TRIMP at which strain is 63%; a hard hour lands around 60%
 HRR_FLOOR = 0.4  # heart-rate reserve below this (~110 bpm) is daily life, walking included, not load
 REST_WINDOW, MAX_WINDOW = 30, 90  # days, for resting and max heart rate
 DEFAULT_REST, DEFAULT_MAX = 60, 190
+TOP_MAXES = 3  # the max heart rate is the middle of the top this many
 KCAL_PER_TRIMP = 5  # a workout without heart rate: its kcal over this
 TARGETS = {"low": (10, 35), "normal": (35, 60), "good": (55, 80)}
 ZONES = (0.5, 0.6, 0.7, 0.8, 0.9)  # heart-rate reserve where zones 1–5 start
@@ -81,39 +89,66 @@ def _weighted(parts: list[dict]) -> float | None:
 # -- sleep ---------------------------------------------------------------------------
 
 
-def _bedtime_minutes(sleep: dict) -> float | None:
-    """Bedtime as minutes since the noon before, so 23:30 and 00:30 are an hour apart."""
+def _clock(sleep: dict, key: str) -> float | None:
+    """`bedtime` as minutes since noon, `wake` since 18:00, so 23:30 and 00:30 are an hour apart, as are 11:30 and
+    12:30."""
     try:
-        t = datetime.fromisoformat(sleep["bedtime"])
+        t = datetime.fromisoformat(sleep[key])
     except (KeyError, TypeError, ValueError):
         return None
-    return ((t.hour - 12) % 24) * 60 + t.minute
+    return ((t.hour - (12 if key == "bedtime" else 18)) % 24) * 60 + t.minute
 
 
-def sleep_need(days: dict[str, dict], day: date) -> tuple[int, int]:
-    """(Need for the night that ended on `day`, the debt behind it): the base plus half the last nights' shortfall."""
-    nights = [d["sleep"]["asleep_min"] for d in _before(days, day, DEBT_NIGHTS) if "asleep_min" in d.get("sleep", {})]
-    debt = sum(max(0, SLEEP_NEED - n) for n in nights)
-    return SLEEP_NEED + min(DEBT_CAP, round(DEBT_SHARE * debt)), debt
+def _asleep(d: dict | None) -> float | None:
+    return (d or {}).get("sleep", {}).get("asleep_min")
 
 
-def sleep_score(days: dict[str, dict], day: date) -> dict | None:
+def base_need(days: dict[str, dict], day: date) -> int:
+    """The user's own need: the mean of the last 90 nights with the shortest and longest tenth left out, as Oura
+    does, within 7h30–9h30. Habit, not a lab measure: a lasting debt hides in it, hence the floor."""
+    nights = sorted(n for n in map(_asleep, _before(days, day, NEED_NIGHTS)) if n)
+    if len(nights) < MIN_NEED_NIGHTS:
+        return NEED_DEFAULT
+    cut = int(len(nights) * NEED_TRIM)
+    kept = nights[cut:len(nights) - cut]
+    return round(_clip(sum(kept) / len(kept), NEED_MIN, NEED_MAX))
+
+
+def sleep_need(days: dict[str, dict], day: date, age: int | None = None) -> dict:
+    """The need for the night that ended on `day`: the base, plus some for the day before's strain, plus half of
+    what the last 3 nights were short of the base, net of what they were over (capped)."""
+    base = base_need(days, day)
+    before = days.get((day - timedelta(days=1)).isoformat())
+    strain = 0
+    if before:
+        rest, top = heart(days, day - timedelta(days=1), age)
+        strain = strain_of(day_trimp(before, rest, top)[0])
+    nights = [n for n in map(_asleep, _before(days, day, DEBT_NIGHTS)) if n]
+    debt = max(0, sum(base - n for n in nights))
+    extra_strain = round(STRAIN_NEED * strain)
+    extra_debt = min(DEBT_CAP, round(DEBT_SHARE * debt))
+    return {"need": base + extra_strain + extra_debt, "base": base, "strain": extra_strain, "debt": extra_debt}
+
+
+def _share_part(key: str, label: str, minutes, asleep: float, full: float, zero: float) -> dict:
+    share = minutes / asleep if minutes is not None else None
+    return {"key": key, "label": label, "value": f"{hm(minutes)} · {round(100 * share)}%" if share is not None else None,
+            "score": _clip((share - zero) / (full - zero)) if share is not None else None}
+
+
+def sleep_score(days: dict[str, dict], day: date, age: int | None = None) -> dict | None:
     found = days.get(day.isoformat()) or {}
     s = found.get("sleep") or {}
     asleep = s.get("asleep_min")
     if not asleep:
         return None
-    need, _ = sleep_need(days, day)
+    need = sleep_need(days, day, age)
     parts = []
 
-    parts.append({"key": "duration", "label": "Hours vs need", "value": f"{hm(asleep)} of {hm(need)}",
-                  "score": _clip(asleep / need)})
-
-    stages = [s.get(k) for k in ("deep_min", "rem_min")]
-    share = sum(stages) / asleep if all(v is not None for v in stages) else None
-    parts.append({"key": "restorative", "label": "Deep and REM",
-                  "value": f"{hm(sum(stages))} · {round(100 * share)}%" if share is not None else None,
-                  "score": _clip(share / RESTORATIVE_FULL) if share is not None else None})
+    parts.append({"key": "duration", "label": "Hours vs need", "value": f"{hm(asleep)} of {hm(need['need'])}",
+                  "score": _clip(1 - DURATION_SLOPE * (1 - asleep / need["need"]))})
+    parts.append(_share_part("deep", "Deep sleep", s.get("deep_min"), asleep, DEEP_FULL, DEEP_ZERO))
+    parts.append(_share_part("rem", "REM sleep", s.get("rem_min"), asleep, REM_FULL, REM_ZERO))
 
     in_bed = s.get("in_bed_min")
     eff = asleep / in_bed if in_bed else None
@@ -121,27 +156,29 @@ def sleep_score(days: dict[str, dict], day: date) -> dict | None:
                   "value": f"{round(100 * min(1, eff))}%" if eff is not None else None,
                   "score": _clip((eff - EFFICIENCY_ZERO) / (EFFICIENCY_FULL - EFFICIENCY_ZERO)) if eff is not None else None})
 
-    bedtime = _bedtime_minutes(s)
-    usual = [b for b in (_bedtime_minutes(d.get("sleep") or {}) for d in _before(days, day, CONSISTENCY_NIGHTS))
-             if b is not None]
-    off = None
-    if bedtime is not None and len(usual) >= MIN_CONSISTENCY_NIGHTS:
-        off = bedtime - median(usual)
-    parts.append({"key": "consistency", "label": "Bedtime vs usual",
-                  "value": (("on time" if abs(off) < 10 else f"{hm(abs(off))} {'later' if off > 0 else 'earlier'}")
-                            if off is not None else None),
-                  "score": (_clip((CONSISTENCY_ZERO - abs(off)) / (CONSISTENCY_ZERO - CONSISTENCY_FULL))
-                            if off is not None else None)})
+    # Regularity: how far bedtime and wake were from their usual, on average (a late night and a late morning both count)
+    past = [d.get("sleep") or {} for d in _before(days, day, CONSISTENCY_NIGHTS)]
+    offs, words = [], []
+    for key, name in (("bedtime", "bed"), ("wake", "up")):
+        mine, usual = _clock(s, key), [c for c in (_clock(p, key) for p in past) if c is not None]
+        if mine is None or len(usual) < MIN_CONSISTENCY_NIGHTS:
+            continue
+        off = mine - median(usual)
+        offs.append(abs(off))
+        words.append(f"{name} on time" if abs(off) < 15 else f"{name} {hm(abs(off))} {'later' if off > 0 else 'earlier'}")
+    mean_off = sum(offs) / len(offs) if offs else None
+    parts.append({"key": "consistency", "label": "Bed and wake vs usual", "value": ", ".join(words) or None,
+                  "score": (_clip((CONSISTENCY_ZERO - mean_off) / (CONSISTENCY_ZERO - CONSISTENCY_FULL))
+                            if mean_off is not None else None)})
 
     for p in parts:
         p["weight"] = SLEEP_PARTS[p["key"]]
     score = _weighted(parts)
-    after = [d["sleep"]["asleep_min"] for d in [*_before(days, day, DEBT_NIGHTS - 1), found]
-             if "asleep_min" in d.get("sleep", {})]
+    after = [n for n in map(_asleep, [*_before(days, day, DEBT_NIGHTS - 1), found]) if n]
     for p in parts:
         p["score"] = round(100 * p["score"]) if p["score"] is not None else None
-    return {"score": round(100 * score), "asleep_min": asleep, "need_min": need,
-            "debt_min": sum(max(0, SLEEP_NEED - n) for n in after), "contributors": parts}
+    return {"score": round(100 * score), "asleep_min": asleep, "need_min": need["need"], "need": need,
+            "debt_min": round(max(0, sum(need["base"] - n for n in after))), "contributors": parts}
 
 
 # -- recovery ------------------------------------------------------------------------
@@ -169,7 +206,18 @@ def level(score: int) -> str:
     return "low" if score < 34 else "normal" if score < 67 else "good"
 
 
-def recovery_score(days: dict[str, dict], day: date, sleep: dict | None) -> dict | None:
+def _log_hrv(d: dict | None) -> float | None:
+    return math.log(d["hrv_ms"]) if d and d.get("hrv_ms") else None
+
+
+def _week_mean(days: dict[str, dict], day: date) -> float | None:
+    """The mean ln HRV of the 7 days to `day`, with at least 4 of them."""
+    logs = [v for v in (_log_hrv(days.get((day - timedelta(days=i)).isoformat())) for i in range(TREND_DAYS))
+            if v is not None]
+    return sum(logs) / len(logs) if len(logs) >= MIN_TREND_DAYS else None
+
+
+def recovery_score(days: dict[str, dict], day: date, sleep: dict | None, age: int | None = None) -> dict | None:
     today = days.get(day.isoformat()) or {}
     hrv, rhr = today.get("hrv_ms"), today.get("resting_hr")
     if hrv is None:
@@ -179,10 +227,17 @@ def recovery_score(days: dict[str, dict], day: date, sleep: dict | None) -> dict
         return {"score": None, "level": None, "calibrating": {"days": len(past), "needs": MIN_BASELINE},
                 "contributors": [], "flags": []}
 
+    # Each against the 60 days before: median and MAD, so one odd morning in the past doesn't move the usual
     logs = [math.log(d["hrv_ms"]) for d in past]
     z_hrv = _clip((math.log(hrv) - median(logs)) / _spread(logs, HRV_SPREAD_MIN), -3, 3)
     parts = [{"key": "hrv", "label": "HRV", "value": hrv, "usual": round(math.exp(median(logs)), 1), "unit": "ms",
               "z": z_hrv}]
+    week = _week_mean(days, day)
+    weeks = [w for w in (_week_mean(days, day - timedelta(days=i)) for i in range(1, BASELINE + 1)) if w is not None]
+    if week is not None and len(weeks) >= MIN_BASELINE:
+        z = _clip((week - median(weeks)) / _spread(weeks, HRV_SPREAD_MIN / 2), -3, 3)
+        parts.append({"key": "hrv_week", "label": "HRV, last 7 days", "value": round(math.exp(week), 1),
+                      "usual": round(math.exp(median(weeks)), 1), "unit": "ms", "z": z})
     rhrs = [d["resting_hr"] for d in past if d.get("resting_hr") is not None]
     if rhr is not None and len(rhrs) >= MIN_BASELINE:
         z = _clip(-(rhr - median(rhrs)) / _spread(rhrs, RHR_SPREAD_MIN), -3, 3)
@@ -191,6 +246,10 @@ def recovery_score(days: dict[str, dict], day: date, sleep: dict | None) -> dict
     if sleep:
         parts.append({"key": "sleep", "label": "Sleep", "value": sleep["score"], "usual": None, "unit": "%",
                       "z": _clip((sleep["score"] - 70) / 15, -3, 3)})
+    # Training load up to yesterday (Oura's activity balance): well over the usual costs, under it helps a little
+    if lo := load(days, day - timedelta(days=1), age):
+        parts.append({"key": "load", "label": "Training load", "value": lo["ratio"], "usual": 1.0, "unit": "×",
+                      "z": _clip(-(lo["ratio"] - LOAD_EASY) / 0.25, -3, 1)})
     for p in parts:
         p["weight"] = RECOVERY_PARTS[p["key"]]
     z = sum(p["z"] * p["weight"] for p in parts) / sum(p["weight"] for p in parts)
@@ -216,14 +275,16 @@ def recovery_score(days: dict[str, dict], day: date, sleep: dict | None) -> dict
 
 
 def heart(days: dict[str, dict], day: date, age: int | None = None) -> tuple[float, float]:
-    """(Resting, max) heart rate for `day`: the 30-day median resting HR, and the highest workout max in 90 days
-    (else the highest day max), never under the age estimate."""
+    """(Resting, max) heart rate for `day`: the 30-day median resting HR, and the max from the workouts of the last
+    90 days (else the days' highs), never under the age estimate. The max is the middle of the top three: the Watch's
+    optical sensor throws the odd spike (230 bpm on a walk), and one spike shouldn't move every zone."""
     rests = [d["resting_hr"] for d in [*_before(days, day, REST_WINDOW), days.get(day.isoformat()) or {}]
              if d.get("resting_hr") is not None]
     window = [*_before(days, day, MAX_WINDOW), days.get(day.isoformat()) or {}]
     maxes = [w["max_hr"] for d in window for w in d.get("workouts", []) if w.get("max_hr")]
     maxes = maxes or [d["max_hr"] for d in window if d.get("max_hr")]
-    top = max([*maxes, 208 - 0.7 * age if age else 0]) or DEFAULT_MAX
+    peak = median(sorted(maxes)[-TOP_MAXES:]) if len(maxes) >= TOP_MAXES else max(maxes, default=0)
+    top = max(peak, 208 - 0.7 * age if age else 0) or DEFAULT_MAX
     rest = median(rests) if rests else DEFAULT_REST
     return rest, max(top, rest + 40)
 
@@ -267,6 +328,7 @@ def strain_score(days: dict[str, dict], day: date, recovery: dict | None, age: i
     return {"score": strain_of(trimp), "trimp": round(trimp, 1), "estimated": estimated,
             "target": list(TARGETS[lvl]) if lvl else None, "rest_hr": round(rest), "max_hr": round(top),
             "zones": [round(z) for z in zones],
+            "zone_bpm": [round(rest + f * (top - rest)) for f in ZONES] + [round(top)],
             "workouts": [{"id": w["id"], "type": w.get("type", "other"), "minutes": w.get("minutes"),
                           "strain": strain_of(workout_trimp(w, rest, top))} for w in today.get("workouts", [])]}
 
@@ -314,8 +376,8 @@ def line(sleep: dict | None, recovery: dict | None, strain: dict | None) -> str:
 
 
 def day_scores(days: dict[str, dict], day: date, age: int | None = None) -> dict:
-    sleep = sleep_score(days, day)
-    recovery = recovery_score(days, day, sleep)
+    sleep = sleep_score(days, day, age)
+    recovery = recovery_score(days, day, sleep, age)
     strain = strain_score(days, day, recovery, age)
     return {"date": day.isoformat(), "sleep": sleep, "recovery": recovery, "strain": strain,
             "load": load(days, day, age), "vitals": vitals(days, day), "line": line(sleep, recovery, strain)}

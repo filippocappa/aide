@@ -327,6 +327,11 @@ class WeightIn(BaseModel):
     at: datetime | None = None  # UTC offset required; omit for now
 
 
+class InsightIn(BaseModel):
+    kind: Literal["sleep", "recovery", "strain"]
+    day: date | None = Field(None, alias="date")  # local date; omit for today
+
+
 class WakeIn(BaseModel):
     at: datetime | None = None
     source: str = "app"
@@ -1920,6 +1925,20 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def health_score_history(days: int = Query(30, ge=1, le=366), end: date | None = Query(None, alias="to")):
         end = end or datetime.now(tz).date()
         return {"days": health.score_history(end - timedelta(days=days - 1), end)}
+
+    @app.post("/v1/health/insight", dependencies=[Depends(auth)])
+    async def health_insight(body: InsightIn):
+        """Coach's take on one of the day's scores, asked for from its page; nothing is stored."""
+        from ..health import INSIGHT_PROMPT, INSIGHT_TOKENS, insight_input
+        day = body.day or datetime.now(tz).date()
+        text = insight_input(health, body.kind, day, [m["text"] for m in db.memories("coach")])
+        try:
+            answer = await ask_once(INSIGHT_PROMPT.format(kind=body.kind), [{"type": "text", "text": text}],
+                                    INSIGHT_TOKENS)
+        except (httpx.HTTPError, anthropic.APIError, RuntimeError) as e:
+            log.warning("health insight failed: %s", e)
+            raise HTTPException(502, f"Coach couldn't answer: {e}") from None
+        return {"kind": body.kind, "date": day.isoformat(), "text": answer.strip()}
 
     @app.get("/v1/health/weight", dependencies=[Depends(auth)])
     async def weight(days: int = Query(90, ge=1, le=366)):

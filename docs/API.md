@@ -1298,25 +1298,29 @@ medical advice.
 {
   "date": "2026-10-30",
   "sleep": {
-    "score": 86, "asleep_min": 400, "need_min": 468, "debt_min": 36,
+    "score": 71, "asleep_min": 400, "need_min": 486, "debt_min": 58,
+    "need": {"need": 486, "base": 458, "strain": 12, "debt": 16},
     "contributors": [
-      {"key": "duration", "label": "Hours vs need", "value": "6h40 of 7h48", "score": 85, "weight": 50},
-      {"key": "restorative", "label": "Deep and REM", "value": "2h31 · 38%", "score": 94, "weight": 20},
-      {"key": "efficiency", "label": "Time asleep in bed", "value": "91%", "score": 94, "weight": 15},
-      {"key": "consistency", "label": "Bedtime vs usual", "value": "0h38 later", "score": 91, "weight": 15}
+      {"key": "duration", "label": "Hours vs need", "value": "6h40 of 8h06", "score": 65, "weight": 45},
+      {"key": "deep", "label": "Deep sleep", "value": "0h52 · 13%", "score": 80, "weight": 15},
+      {"key": "rem", "label": "REM sleep", "value": "1h39 · 25%", "score": 100, "weight": 15},
+      {"key": "efficiency", "label": "Time asleep in bed", "value": "91%", "score": 73, "weight": 10},
+      {"key": "consistency", "label": "Bed and wake vs usual", "value": "bed 0h38 later, up on time", "score": 82, "weight": 15}
     ]
   },
   "recovery": {
     "score": 72, "level": "good", "calibrating": null, "flags": [],
     "contributors": [
-      {"key": "hrv", "label": "HRV", "value": 61.5, "usual": 55.0, "unit": "ms", "score": 93, "weight": 50},
-      {"key": "resting_hr", "label": "Resting heart rate", "value": 52, "usual": 54, "unit": "bpm", "score": 82, "weight": 30},
-      {"key": "sleep", "label": "Sleep", "value": 84, "usual": null, "unit": "%", "score": 80, "weight": 20}
+      {"key": "hrv", "label": "HRV", "value": 61.5, "usual": 55.0, "unit": "ms", "score": 93, "weight": 30},
+      {"key": "hrv_week", "label": "HRV, last 7 days", "value": 57.2, "usual": 55.0, "unit": "ms", "score": 74, "weight": 20},
+      {"key": "resting_hr", "label": "Resting heart rate", "value": 52, "usual": 54, "unit": "bpm", "score": 82, "weight": 25},
+      {"key": "sleep", "label": "Sleep", "value": 71, "usual": null, "unit": "%", "score": 66, "weight": 15},
+      {"key": "load", "label": "Training load", "value": 1.12, "usual": 1.0, "unit": "×", "score": 59, "weight": 10}
     ]
   },
   "strain": {
     "score": 41, "trimp": 79.3, "estimated": false, "target": [55, 80], "rest_hr": 53, "max_hr": 192,
-    "zones": [14, 22, 18, 6, 0],
+    "zones": [14, 22, 18, 6, 0], "zone_bpm": [123, 137, 150, 164, 178, 192],
     "workouts": [{"id": "A04C…", "type": "run", "minutes": 54, "strain": 38}]
   },
   "load": {"acute": 62.1, "chronic": 55.4, "ratio": 1.12, "label": "building"},
@@ -1330,30 +1334,46 @@ medical advice.
   "line": "Recovery 72% after 6h40 asleep: a good day to push, aim for 55–80% strain."
 }
 ```
-- **`sleep`** (`null` without a night): duration against the night's need 50%, deep plus REM share of the night
-  20% (full marks at 40%), asleep / in bed 15% (full at 92%, none at 75%), bedtime against the median of the 14
-  nights before 15% (full within 30 min, none at 2 h; needs 5 nights). A part without data (no stages, no history)
-  is left out (`score` and `value` `null`) and the rest re-weighted. `need_min` is 7h30 plus half the shortfall of the
-  3 nights before, at most 1 h more. `debt_min` is the shortfall against 7h30 over the last 3 nights, this one
-  included.
-- **`recovery`** (`null` without last night's `hrv_ms`): ln HRV (50%), resting HR (30%, lower is better; left out
-  when missing) and the sleep score (20%), each as how far it is from the user's usual (median and spread of the 60
-  days before) and combined into a score where a usual night lands in the 60s. While fewer than 14 days of HRV are
+- **`sleep`** (`null` without a night): time asleep against the night's need 45% (each share of the need missed
+  costs twice that: 90% of it scores 80), deep share of the night 15% (full at 15%, none at 5%), REM share 15% (full
+  at 23%, none at 10%), asleep / in bed 10% (full at 95%, none at 80%), and bedtime and wake against the medians of
+  the 14 nights before 15% (their average offset: full within 20 min, none at 2 h; needs 5 nights). A part without
+  data (no stages, no history) is left out (`score` and `value` `null`) and the rest re-weighted.
+  **`need`** is learnt from the user's own nights, as Oura does: `base` is the mean of up to 90 nights before with the
+  shortest and longest 10% left out, kept within 7h30–9h30 (8h with fewer than 14 nights); `strain` adds 0.3 min per %
+  of the day before's strain (Whoop: a hard day asks for more); `debt` is half of what the 3 nights before were short
+  of `base`, net of what they were over, at most 45 min. `need_min` is their sum (`need.need`). `debt_min` is the net
+  shortfall against `base` over the last 3 nights, this one included.
+- **`recovery`** (`null` without last night's `hrv_ms`): ln HRV (30%), the 7-day mean of ln HRV against the rolling
+  7-day means of the 60 days before (`hrv_week`, 20%; Plews and Buchheit: the week's trend says more than one
+  morning; needs 4 of the 7 days), resting HR (25%, lower is better), the sleep score (15%) and the training load's
+  ratio (`load`, 10%: up to 1.05 costs nothing, each 0.25 above it is a spread), each as how far it is from the
+  user's usual (median and spread of the 60 days before) and combined into a score where a usual night lands around
+  60. A part without data is left out and the rest re-weighted. While fewer than 14 days of HRV are
   stored: `score` and `level` `null`, `calibrating: {"days": 9, "needs": 14}`. `flags`: `respiratory_rate` (1 or more
   breaths/min above usual) and `wrist_temp` (0.5 °C or more above), each caps the score at 50. `level`: under 34
   `low`, under 67 `normal`, else `good`. A contributor's `score` is that part alone on the same scale.
 - **`strain`** (`null` without a stored day): cardio load from heart rate. Banister's TRIMP over `hr_minutes`
-  (heart-rate reserve from `rest_hr`, the 30-day median resting HR, to `max_hr`, the highest workout max of 90
-  days, else the day max, never under 208 − 0.7 × age from the food profile), counting only time above 40% of the
-  reserve; `score` = 100 × (1 − e^(−TRIMP/150)). Without `hr_minutes`, from the workouts (`avg_hr` × minutes, else
+  (heart-rate reserve from `rest_hr`, the 30-day median resting HR, to `max_hr`: the middle of the 3 highest workout
+  maxes of 90 days, so one strap spike doesn't count, else the day max, never under 208 − 0.7 × age from the food
+  profile), counting only time above 40% of the reserve; `score` = 100 × (1 − e^(−TRIMP/150)). Without `hr_minutes`, from the workouts (`avg_hr` × minutes, else
   kcal / 5) and `estimated: true`. `target` is the day's band from recovery (`good` 55–80, `normal` 35–60, `low`
-  10–35; `null` without recovery). `zones` are minutes in 50–60, 60–70, 70–80, 80–90 and 90–100% of the reserve.
+  10–35; `null` without recovery). `zones` are minutes in 50–60, 60–70, 70–80, 80–90 and 90–100% of the reserve;
+  `zone_bpm` is where zones 1–5 start in bpm, then `max_hr`.
   Each workout carries its own `strain`.
 - **`load`**: the last 7 days' average TRIMP against the last 28's; `ratio` under 0.8 `detraining`, under 1.0
   `maintaining`, up to 1.3 `building`, above `overreaching`. `null` with fewer than 14 days stored in the 28.
 - **`vitals`**: each night number with its usual (median of the 60 days before) and usual range (`low`–`high`,
   one spread either side), for the app's gauges. `usual`, `low` and `high` are `null` with fewer than 14 days.
 - **`line`**: one sentence from code, no model call.
+
+### Coach's take
+
+`POST /v1/health/insight` `{"kind": "sleep" | "recovery" | "strain", "date": "2026-10-30"}` (`date` optional,
+default today) → `{"kind", "date", "text"}`: a few plain sentences from Coach on what drove that score, the pattern
+behind it over the last weeks, and one thing to do. One model call (the background engine) with the day's scores,
+30 days of them, 14 raw days and Coach's memory; nothing is stored. 502 when the model doesn't answer. Asked for
+from the score's page, never on its own.
 
 ### Weight
 

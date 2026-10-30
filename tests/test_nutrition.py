@@ -286,3 +286,20 @@ def test_a_planned_run_in_the_calendar_shows_on_todays_food(api_env):
     day = api.get("/v1/food", headers=AUTH).json()
     assert day["bonus"] == {"kcal": 330, "planned": True,
                             "workouts": [{"type": "run", "kcal": 330, "minutes": 30, "title": "Run"}]}
+
+
+def test_coach_gives_its_take_on_a_score_when_asked(api_env):
+    api, f, health, model = api_env(model=[done("  Your HRV is below your usual after a late night.  ")])
+    today = f.today()
+    health.save([{"date": (today - timedelta(days=n)).isoformat(), "hrv_ms": 60.0, "resting_hr": 45,
+                  "hr_minutes": [[100, 30]]} for n in range(20)])
+    got = api.post("/v1/health/insight", json={"kind": "recovery"}, headers=AUTH).json()
+    assert got == {"kind": "recovery", "date": today.isoformat(),
+                   "text": "Your HRV is below your usual after a late night."}
+    req = model.requests[0]
+    assert "recovery score" in req["system"]
+    asked = json.loads(req["messages"][0]["content"][0]["text"])
+    assert asked["score asked about"] == "recovery" and len(asked["last 30 days (newest first)"]) == 30
+    assert len(asked["raw health days, last 14 (newest first)"]) == 14
+    assert "hr_minutes" not in asked["raw health days, last 14 (newest first)"][0]
+    assert api.post("/v1/health/insight", json={"kind": "mood"}, headers=AUTH).status_code in (400, 422)
