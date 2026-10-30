@@ -420,11 +420,7 @@ struct ScoreDetailView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
         }
-        #if DEBUG
-        // Simulator screenshots: `-previewAnchor center` or `bottom` shows the rest of the page.
-        .defaultScrollAnchor(UserDefaults.standard.string(forKey: "previewAnchor") == "bottom" ? .bottom
-                             : UserDefaults.standard.string(forKey: "previewAnchor") == "center" ? .center : .top)
-        #endif
+        .previewAnchor()
         .pageGlow(tint)
         .navigationTitle(kind.name)
         .navigationBarTitleDisplayMode(.inline)

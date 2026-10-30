@@ -90,6 +90,20 @@ extension View {
         .background(Theme.grouped)
     }
 
+    /// Simulator screenshots: `-previewAnchor center` or `bottom` opens a scrolling page further down. Nothing in
+    /// release builds.
+    @ViewBuilder func previewAnchor() -> some View {
+        #if DEBUG
+        switch UserDefaults.standard.string(forKey: "previewAnchor") {
+        case "bottom": defaultScrollAnchor(.bottom)
+        case "center": defaultScrollAnchor(.center)
+        default: self
+        }
+        #else
+        self
+        #endif
+    }
+
     /// A floating control: Liquid Glass where the system has it, else a frosted material with a soft shadow.
     @ViewBuilder func glass<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26, *) {
