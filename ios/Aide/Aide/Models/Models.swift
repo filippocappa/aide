@@ -70,6 +70,8 @@ enum Attachment: Decodable, Hashable {
     case purchases([Purchase])
     case products([Product])
     case videos([VideoCard])
+    case quiz(Quiz)
+    case review(ReviewSession)
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -86,11 +88,14 @@ enum Attachment: Decodable, Hashable {
         case "purchases": self = .purchases(try c.decode([Purchase].self, forKey: .purchases))
         case "products": self = .products(try c.decode([Product].self, forKey: .products))
         case "videos": self = .videos(try c.decode([VideoCard].self, forKey: .videos))
+        case "quiz": self = .quiz(try c.decode(Quiz.self, forKey: .quiz))
+        case "review": self = .review(try c.decode(ReviewSession.self, forKey: .review))
         default: self = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
         case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
+        case quiz, review
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
@@ -1856,10 +1861,12 @@ struct QuizBank: Decodable {
 struct QuizBankTopic: Decodable, Identifiable, Hashable { let id: String; let title: String; let questions: Int }
 struct QuizScoring: Decodable, Hashable { let right: Double; let wrong: Double; var blank: Double? }
 
-struct Quiz: Decodable, Identifiable {
+struct Quiz: Decodable, Identifiable, Hashable {
     let id: String
     /// "exam" (a practice exam), "chat" (Professor quizzing in the course chat) or "mock" (a mock exam).
     var kind: String?
+    /// "Practice exam", "Mock exam 1", "Quiz".
+    var title: String?
     /// The mock exam taken, when it's one.
     var mock: String?
     var scoring: QuizScoring?
@@ -1869,10 +1876,30 @@ struct Quiz: Decodable, Identifiable {
     var startedAt: String?
     var finishedAt: String?
     var score: QuizScore?
+    /// None in the bank's `past`, a mock's `last` and the chat's card.
     var questions: [QuizQuestion] = []
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        mock = try c.decodeIfPresent(String.self, forKey: .mock)
+        scoring = try c.decodeIfPresent(QuizScoring.self, forKey: .scoring)
+        course = try c.decode(Int.self, forKey: .course)
+        minutes = try c.decodeIfPresent(Int.self, forKey: .minutes)
+        count = try c.decodeIfPresent(Int.self, forKey: .count) ?? 0
+        startedAt = try c.decodeIfPresent(String.self, forKey: .startedAt)
+        finishedAt = try c.decodeIfPresent(String.self, forKey: .finishedAt)
+        score = try c.decodeIfPresent(QuizScore.self, forKey: .score)
+        questions = try c.decodeIfPresent([QuizQuestion].self, forKey: .questions) ?? []
+    }
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, title, mock, scoring, course, minutes, count, startedAt, finishedAt, score, questions
+    }
 }
 
-struct QuizQuestion: Decodable, Identifiable {
+struct QuizQuestion: Decodable, Identifiable, Hashable {
     let n: Int
     let topic: QuizTopicRef
     let text: String
@@ -1900,7 +1927,7 @@ struct QuizResponse: Decodable, Hashable { var text: String?; var photos: [Strin
 struct QuizTopicRef: Decodable, Hashable { let id: String; let title: String }
 struct QuizOption: Decodable, Hashable { let letter: String; let text: String }
 
-struct QuizScore: Decodable {
+struct QuizScore: Decodable, Hashable {
     let points: Double
     let max: Double
     let right: Int
@@ -1911,7 +1938,7 @@ struct QuizScore: Decodable {
     var grading: Bool?
 }
 
-struct QuizTopicScore: Decodable, Identifiable {
+struct QuizTopicScore: Decodable, Identifiable, Hashable {
     let id: String
     let title: String
     let right: Int
@@ -1927,6 +1954,8 @@ struct ReviewSession: Decodable, Identifiable, Hashable {
     let start: String
     let minutes: Int
     var topics: [String] = []
+    /// The course's name, on the chat card when one starts.
+    var name: String?
 }
 struct ReviewSessionList: Decodable { let sessions: [ReviewSession] }
 

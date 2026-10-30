@@ -1728,7 +1728,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return quizzes.quiz_json(quiz)
         # Professor's note in the course chat; the missed questions go in the note it reads, for "go through them".
         try:
-            await agent.post(study.chat(quiz["course_id"]), quizzes.note(quiz), quizzes.summary(quiz))
+            await agent.post(study.chat(quiz["course_id"]), quizzes.note(quiz), quizzes.summary(quiz),
+                             [quizzes.card(quiz)])
         except Exception:
             log.exception("couldn't post a practice exam's result")
         return quizzes.quiz_json(quiz)

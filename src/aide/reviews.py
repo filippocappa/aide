@@ -170,15 +170,17 @@ class ReviewWatcher:
                 continue
             name = course["name"][:1].upper() + course["name"][1:]
             topics = ", ".join(s["topics"])
-            text = (f"Time for your {name} review ({s['minutes']} min)" + (f": {topics}." if topics else ".") +
-                    " Shall I quiz you? Say \"quiz me\", or start a voice quiz from the ••• menu.")
+            alert = (f"Time for your {name} review ({s['minutes']} min)" + (f": {topics}." if topics else ".") +
+                     " Shall I quiz you?")
+            text = f"Time for your {name} review. Shall I quiz you" + (" on these?" if topics else "?")
             note = (f"[Review session {s['public_id']} starts now: {name}, {s['minutes']} min" +
                     (f", topics {topics}" if topics else "") + ". When the user wants the quiz, quiz_me on these "
                     "topics.]")
             chat = self.store.study.chat(s["course_id"])
-            await self.agent.post(chat, note, text)
+            card = {"type": "review", "review": self.store.as_json(s) | {"name": name}}
+            await self.agent.post(chat, note, text, [card])
             if self.push is not None:
                 try:
-                    await self.push.send_message(chat, f"Professor · {name}", text[:180])
+                    await self.push.send_message(chat, f"Professor · {name}", alert[:180])
                 except Exception:
                     log.exception("couldn't push a review session")

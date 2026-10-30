@@ -1592,10 +1592,12 @@ class NotebookWorker:
                 self.store.set_proposal(p["id"], "failed", result=error)
             if job["kind"] == "grade" and course is not None and self._quizzes().quiz(job["args"]["quiz"]):
                 # The score stands on the rest, not left grading for good, and the result comes all the same.
-                quiz = self._quizzes().ungraded(job["args"]["quiz"])
-                await self._post(course, self._quizzes().note(quiz), f"I couldn't mark the open answers ({error}), "
+                quizzes = self._quizzes()
+                quiz = quizzes.ungraded(job["args"]["quiz"])
+                await self._post(course, quizzes.note(quiz), f"I couldn't mark the open answers ({error}), "
                                  "so they count 0 for now; ask me to look at them in chat.\n\n"
-                                 + self._quizzes().summary(quiz), push=True)
+                                 + quizzes.summary(quiz), push=True, attachments=[quizzes.card(quiz)],
+                                 alert=quizzes.headline(quiz) + " The open answers couldn't be marked.")
                 return
             if course is not None and job["kind"] != "dates":  # a background read: the log is enough
                 what = {"start": "set up the notebook", "intro": "rewrite the Introduction", "outline": "plan the topics", "triage": "look at the new "
@@ -2206,7 +2208,8 @@ class NotebookWorker:
             raise RuntimeError("the marks came back unreadable")
         quizzes.set_grades(quiz_id, grades)
         quiz = quizzes.ungraded(quiz_id)  # any the answer left out
-        await self._post(course, quizzes.note(quiz), quizzes.summary(quiz), push=True)
+        await self._post(course, quizzes.note(quiz), quizzes.summary(quiz), push=True,
+                         attachments=[quizzes.card(quiz)], alert=quizzes.headline(quiz))
 
     def _quizzes(self):
         if self.quizzes is None:
@@ -2311,13 +2314,14 @@ class NotebookWorker:
                 + (f"\nThe items:\n{items}" if items else "") + "]")
 
     async def _post(self, course: dict, note: str, text: str, push: bool = False, chat: str | None = None,
-                    attachments: list[dict] | None = None) -> None:
-        """In `chat` while it's there (a proposal's own), else the course's chat."""
+                    attachments: list[dict] | None = None, alert: str | None = None) -> None:
+        """In `chat` while it's there (a proposal's own), else the course's chat. `alert`: the push's text, when
+        the message's own leaves out what its card shows."""
         if not chat or self.study.db.app_conversation(chat) is None:
             chat = self.study.chat(course["id"])
         await self.agent.post(chat, note, text, attachments)
         if push and self.push is not None:
             try:
-                await self.push.send_message(chat, f"Professor · {course['name']}", text[:180])
+                await self.push.send_message(chat, f"Professor · {course['name']}", (alert or text)[:180])
             except Exception:
                 log.exception("couldn't push a notebook note")

@@ -57,8 +57,12 @@ def test_a_practice_exam_from_the_notebook_scored_like_the_exam(nb):
     assert nb.api.post(f"/v1/quizzes/{quiz['id']}/finish", json={}, headers=AUTH).status_code == 409
 
     last = chat_messages(nb)[-1]
-    assert last["text"].startswith("Practice exam: **1.75 / 4** (2 right, 1 wrong, 1 blank) in 0 min.")
-    assert "To go over:" in last["text"] and "Want to go through them?" in last["text"]
+    assert last["text"].startswith("To go over:") and last["text"].endswith("Want to go through them?")
+    [card] = last["attachments"]  # the score is on the card, the note Professor reads stays out of sight
+    assert card["type"] == "quiz" and "questions" not in card["quiz"]
+    assert (card["quiz"]["id"], card["quiz"]["title"], card["quiz"]["score"]["points"]) == (quiz["id"], "Practice exam", 1.75)
+    assert [t["title"] for t in card["quiz"]["score"]["topics"]]
+    assert not any(m["text"].startswith("[Practice exam") for m in chat_messages(nb))
     after = nb.api.get(f"/v1/quizzes?course={cid}", headers=AUTH).json()
     assert (after["unseen"], after["to_review"]) == (2, 2)
     assert after["past"][0]["id"] == quiz["id"] and after["past"][0]["score"]["points"] == 1.75
@@ -309,9 +313,12 @@ async def test_a_mock_exam_like_the_real_one_taken_and_its_open_answer_marked(nb
     assert (q3["awarded"], q3["feedback"], q3["correct"], q3["answer"]) == (9.5, "You left out investment.", True, None)
     assert q3["response"] == {"text": "IS shifts right and the rate rises.", "photos": [photo]}
     assert q3["model_answer"].startswith("Spending shifts IS right") and "10 points" in q3["rubric"]
-    result = chat_messages(nb)[-1]["text"]
-    assert result.startswith("Mock exam 1: **10.5 / 17** (2 right, 1 wrong, 0 blank)")
-    assert "- Question 3: 9.5 / 15. You left out investment." in result
+    result = chat_messages(nb)[-1]
+    assert result["text"].startswith("- Question 3: 9.5 / 15. You left out investment.")
+    [card] = result["attachments"]
+    assert (card["quiz"]["title"], card["quiz"]["score"]["points"], card["quiz"]["score"]["max"]) == ("Mock exam 1", 10.5, 17)
+    assert nb.push.messages[-1][2] == "Mock exam 1: 10.5 / 17 (2 right, 1 wrong, 0 blank)."
+    assert not any(m["text"].startswith("[Mock exam") for m in chat_messages(nb))
     [m] = nb.api.get(f"/v1/notebook/mocks?course={cid}", headers=AUTH).json()["mocks"]
     assert (m["taken"], m["best"], m["last"]["id"]) == (1, 10.5, quiz["id"])
 

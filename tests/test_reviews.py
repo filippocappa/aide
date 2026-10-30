@@ -71,11 +71,14 @@ async def test_a_session_that_starts_is_announced_in_the_course_chat(nb, reviews
 
     await watcher.tick((start + timedelta(hours=2, minutes=1)).astimezone(timezone.utc))
     chat = nb.study.chat(nb.macro["id"])
-    text = ("Time for your Macroeconomics review (45 min): The IS-LM model. Shall I quiz you? Say \"quiz me\", or start "
-            "a voice quiz from the ••• menu.")
-    assert nb.push.messages == [(chat, "Professor · Macroeconomics", text[:180])]
+    assert nb.push.messages == [(chat, "Professor · Macroeconomics",
+                                 "Time for your Macroeconomics review (45 min): The IS-LM model. Shall I quiz you?")]
     history = nb.api.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"]
-    assert history[-1]["text"] == text
+    assert [m["role"] for m in history] == ["assistant"]  # the note Professor reads isn't shown
+    assert history[-1]["text"] == "Time for your Macroeconomics review. Shall I quiz you on these?"
+    assert history[-1]["attachments"] == [{"type": "review", "review": {
+        "id": s["public_id"], "course": nb.macro["id"], "start": (start + timedelta(hours=2)).isoformat(),
+        "minutes": 45, "topics": ["The IS-LM model"], "name": "Macroeconomics"}}]
     await watcher.tick((start + timedelta(hours=2, minutes=2)).astimezone(timezone.utc))
     assert len(nb.push.messages) == 1  # once
 

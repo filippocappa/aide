@@ -673,6 +673,10 @@ struct AttachmentCard: View {
             if !products.isEmpty { ProductsCard(products: products) }
         case .videos(let videos):
             VStack(spacing: 10) { ForEach(videos) { VideoCardView(card: $0) } }
+        case .quiz(let quiz):
+            QuizResultCard(quiz: quiz)
+        case .review(let session):
+            ReviewStartCard(session: session)
         case .unknown:
             EmptyView()
         }

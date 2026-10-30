@@ -231,8 +231,8 @@ class Agent:
                 if not isinstance(content, str) or content.startswith(("[The user replied", "[The user tapped", _OPENED)):
                     continue  # tool results, confirm/cancel and plan notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
-                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND, _VIDEO, SCANNED)):
-                    continue  # a routine's prompt, the note before new lecture notes or a notebook proposal
+                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND, _VIDEO, SCANNED, _REVIEW, *_QUIZ)):
+                    continue  # a routine's prompt, the note before new lecture notes, a notebook proposal, a quiz
                 if photos := _PHOTO.findall(text):
                     out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
                                 "attachments": attachments, "consulted": consulted, "team": team})
@@ -765,6 +765,8 @@ _LECTURE = "[Lecture notes ready"
 _NOTEBOOK = "[Notebook"
 _ERRAND = "[Errand #"
 _VIDEO = "[Video #"  # videos.NOTE
+_REVIEW = "[Review session"  # reviews.ReviewWatcher
+_QUIZ = ("[Practice exam", "[Mock exam")  # quiz.QuizStore.note
 SCANNED = "[Scanned in the app"
 
 

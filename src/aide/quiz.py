@@ -351,30 +351,39 @@ class QuizStore:
             out["grading"] = bool(QuizStore.grading(quiz))
         return out
 
-    def summary(self, quiz: dict) -> str:
-        """Professor's note in the course chat after a practice or mock exam."""
-        s = self.score(quiz)
-        minutes = round((datetime.fromisoformat(quiz["finished_at"]) -
-                         datetime.fromisoformat(quiz["started_at"])).total_seconds() / 60)
+    def title(self, quiz: dict) -> str:
         m = self.notebook.mock(quiz["mock"]) if quiz.get("mock") else None
-        name = mock_title(m) if m else "Practice exam"
-        text = (f"{name}: **{_points(s['points'])} / {_points(s['max'])}** ({s['right']} right, "
-                f"{s['wrong']} wrong, {s['blank']} blank) in {minutes} min.")
+        return mock_title(m) if m else "Quiz" if quiz["kind"] == "chat" else "Practice exam"
+
+    def headline(self, quiz: dict) -> str:
+        """The score in a line, for the push: in the chat it's on the quiz card."""
+        s = self.score(quiz)
+        return (f"{self.title(quiz)}: {_points(s['points'])} / {_points(s['max'])} ({s['right']} right, "
+                f"{s['wrong']} wrong, {s['blank']} blank).")
+
+    def summary(self, quiz: dict) -> str:
+        """Professor's message in the course chat after a practice or mock exam, above its card (the score)."""
+        s = self.score(quiz)
+        parts = []
         marked = [(n, q, a) for n, q in enumerate(quiz["questions"], 1)
                   if q.get("type") == "open" and isinstance(a := quiz["answers"].get(str(n)), dict)]
         if marked:
-            text += "\n\n" + "\n".join(
+            parts.append("\n".join(
                 f"- Question {n}: " + (f"{_points(a['awarded'])} / {_points(q['points'])}. {a.get('feedback') or ''}"
                                        if a.get("awarded") is not None else f"not marked ({_points(q['points'])} points).")
-                for n, q, a in marked).rstrip()
+                for n, q, a in marked).rstrip())
         weak = [t for t in s["topics"] if t["wrong"] + t["blank"]][:3]
         if weak:
-            text += "\n\nTo go over: " + ", ".join(
-                f"{t['title']} ({t['right']} of {t['right'] + t['wrong'] + t['blank']})" for t in weak) + "."
-            text += " Want to go through them?"
+            parts.append("To go over: " + ", ".join(
+                f"{t['title']} ({t['right']} of {t['right'] + t['wrong'] + t['blank']})" for t in weak) +
+                ". Want to go through them?")
         else:
-            text += "\n\nAll right. Nothing to go over."
-        return text
+            parts.append("All right. Nothing to go over.")
+        return "\n\n".join(parts)
+
+    def card(self, quiz: dict) -> dict:
+        """The result as a chat card (docs/API.md, Chat, `quiz`): the Quiz without its questions."""
+        return {"type": "quiz", "quiz": {k: v for k, v in self.quiz_json(quiz).items() if k != "questions"}}
 
     def note(self, quiz: dict) -> str:
         """What Professor reads with the result in the course chat: the questions missed, for "go through them"."""
@@ -422,7 +431,8 @@ class QuizStore:
 
     def quiz_json(self, quiz: dict, brief: bool = False) -> dict:
         done = quiz["finished_at"] is not None
-        out = {"id": quiz["public_id"], "kind": quiz["kind"], "course": quiz["course_id"], "minutes": quiz["minutes"],
+        out = {"id": quiz["public_id"], "kind": quiz["kind"], "title": self.title(quiz), "course": quiz["course_id"],
+               "minutes": quiz["minutes"],
                "mock": quiz["mock"], "scoring": quiz["scoring"] or {"right": RIGHT, "wrong": WRONG, "blank": 0},
                "count": len(quiz["questions"]), "started_at": self.study.local(quiz["started_at"]),
                "finished_at": self.study.local(quiz["finished_at"]) if done else None,

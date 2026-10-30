@@ -688,6 +688,26 @@ final class PushTests: XCTestCase {
         XCTAssertNil(board.lines[0].arrivals[1].toAt)
     }
 
+    func testQuizAndReviewAttachmentsDecode() throws {
+        let json = #"""
+        [{"type":"quiz","quiz":{"id":"x_1","kind":"mock","title":"Mock exam 1","course":2,"minutes":90,"mock":"m_1",
+          "scoring":{"right":1,"wrong":0,"blank":0},"count":3,"started_at":"2026-10-30T10:00:00+01:00",
+          "finished_at":"2026-10-30T10:42:00+01:00","score":{"points":10.5,"max":17,"right":2,"wrong":1,"blank":0,
+          "grading":false,"topics":[{"id":"t_1","title":"The IS-LM model","right":1,"wrong":1,"blank":0}]}}},
+         {"type":"review","review":{"id":"v_1","course":2,"start":"2026-10-28T15:00:00+01:00","minutes":45,
+          "topics":["The IS-LM model"],"name":"Macroeconomics"}}]
+        """#
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .quiz(let quiz) = attachments[0] else { return XCTFail("expected quiz") }
+        XCTAssertEqual(quiz.title, "Mock exam 1")
+        XCTAssertEqual(quiz.score?.points, 10.5)
+        XCTAssertEqual(quiz.score?.topics?.first?.total, 2)
+        XCTAssertTrue(quiz.questions.isEmpty)
+        guard case .review(let session) = attachments[1] else { return XCTFail("expected review") }
+        XCTAssertEqual(session.name, "Macroeconomics")
+        XCTAssertEqual(session.topics, ["The IS-LM model"])
+    }
+
     func testRoutesAttachmentDecodes() throws {
         let json = """
         [{"type": "routes", "routes": [

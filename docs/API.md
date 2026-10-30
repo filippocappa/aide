@@ -87,6 +87,11 @@ from the tools the assistant used in that turn, not parsed from its text:
   "videos", "videos": [VideoCard]}`: when one is started (`queued`), on the brief when it's ready, and when it
   failed. `/v1/history` gives each card as the video is now, drops the cards of deleted videos, and shows a video's
   card only on the latest message that has it.
+- `quiz`: a finished practice or mock exam (since 2026-10-31; see Practice exams), `{"type": "quiz", "quiz": Quiz
+  without questions}`, on Professor's message with the result. The score, right, wrong and blank and the topics are
+  on the card; the message's text is what to go over (and an open question's marks).
+- `review`: a review session starting (since 2026-10-31; see Quizzes and review sessions), `{"type": "review",
+  "review": Session plus "name" (the course's)}`, on Professor's message when it starts.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
@@ -1088,7 +1093,8 @@ Since 2026-10-21 (`quiz.py`): a practice exam from a notebook's own multiple-cho
 (right +1, wrong −0.25, blank 0). No model call. Questions last answered wrong or left blank come first, then those
 never seen, then the ones answered right longest ago, spread over the topics, in a shuffled order. The app keeps the
 time (`minutes`) and sends the answers at the end; when it's finished, Professor posts the score and the weakest
-topics in the course's chat (and knows which questions were missed, to go through them there).
+topics in the course's chat (and knows which questions were missed, to go through them there). Since 2026-10-31 the
+score is a `quiz` card on that message (Chat, attachments) and the push says it in a line.
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -1101,7 +1107,7 @@ Bank: `{"course": 2, "exam": "20 to 35 multiple-choice questions…" or null, "q
 "to_review": 6, "topics": [{"id": "t_…", "title": "…", "questions": 6}], "scoring": {"right": 1, "wrong": -0.25,
 "blank": 0}, "past": [Quiz without questions, newest first, finished only]}`.
 
-Quiz: `{"id": "x_…", "kind": "exam" or "chat" (since 2026-10-27), "course": 2, "minutes": 45 or null, "count": 30, "started_at": "…", "finished_at": "…" or null,
+Quiz: `{"id": "x_…", "kind": "exam" or "chat" (since 2026-10-27), "title": "Practice exam", "Mock exam 1" or "Quiz" (since 2026-10-31), "course": 2, "minutes": 45 or null, "count": 30, "started_at": "…", "finished_at": "…" or null,
 "score": null or {"points": 22.75, "max": 30, "right": 24, "wrong": 5, "blank": 1, "topics": [{"id": "t_…", "title":
 "…", "right": 1, "wrong": 2, "blank": 0}] (weakest first)}, "questions": [{"n": 1, "topic": {"id": "t_…", "title":
 "…"}, "text": "markdown", "options": [{"letter": "A", "text": "…"}]}]}`. Once finished, each question also has
@@ -1136,7 +1142,8 @@ Nothing new for the app to call: it's chat. To start one by voice, open the cour
 the weakest topics) and, once they agree, puts each in the timetable calendar as "Review: Macroeconomics" with the
 topics in its notes. When one starts, Professor says so in the course chat with a push (a plain chat message push,
 `conversation_id` the course chat) and offers the quiz on its topics. A session moved in the calendar is followed;
-one deleted there is dropped. Review events never count as lectures or courses.
+one deleted there is dropped. Review events never count as lectures or courses. Since 2026-10-31 that message
+carries a `review` card (Chat, attachments) with the session's time, length and topics.
 
 | Endpoint | Body | Response |
 |---|---|---|

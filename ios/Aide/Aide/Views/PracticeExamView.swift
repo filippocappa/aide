@@ -541,6 +541,8 @@ private struct OptionRow: View {
 
 private struct PracticeResults: View {
     let quiz: Quiz
+    /// Opened from the result's card in the course chat: no pointer back to it.
+    var fromChat = false
     @State private var onlyMissed = true
 
     private var shown: [QuizQuestion] { onlyMissed ? quiz.questions.filter { $0.correct != true } : quiz.questions }
@@ -582,7 +584,7 @@ private struct PracticeResults: View {
                     ProgressView().controlSize(.small)
                 }
                 .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
-            } else {
+            } else if !fromChat {
                 Text("Professor has the result in the course's chat.").font(.footnote).foregroundStyle(.secondary)
             }
         }
@@ -607,6 +609,197 @@ private struct PracticeResults: View {
                 }
             }
         }
+    }
+}
+
+// MARK: In the chat
+
+/// A finished practice or mock exam in the course chat (docs/API.md, Chat, `quiz`): the score in a ring, right,
+/// wrong and blank, the weakest topics; a tap opens every answer.
+struct QuizResultCard: View {
+    let quiz: Quiz
+    @EnvironmentObject private var chat: ChatViewModel
+    @State private var open = false
+
+    /// Of the most the paper scores, 0–100 (wrong answers can take points below 0).
+    private func percent(_ score: QuizScore) -> Int {
+        score.max > 0 ? Int((min(max(score.points / score.max, 0), 1) * 100).rounded()) : 0
+    }
+
+    private var took: String? {
+        guard let start = quiz.startedAt.flatMap(Wire.parse), let end = quiz.finishedAt.flatMap(Wire.parse) else { return nil }
+        let minutes = max(1, Int((end.timeIntervalSince(start) / 60).rounded()))
+        return "\(minutes) min"
+    }
+
+    var body: some View {
+        Button { open = true } label: {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 6) {
+                    Image(systemName: quiz.kind == "mock" ? "doc.text.fill" : "checklist")
+                    Text(quiz.title ?? "Practice exam").fontWeight(.semibold)
+                    Spacer(minLength: 0)
+                    if let took { Label(took, systemImage: "clock").labelStyle(.titleAndIcon) }
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                if let score = quiz.score {
+                    HStack(spacing: 16) {
+                        ScoreRing(score: percent(score), tint: chat.agent.tint, size: 64)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("\(score.points.points) / \(score.max.points)")
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                            HStack(spacing: 12) {
+                                tally(score.right, "checkmark.circle.fill", .green)
+                                tally(score.wrong, "xmark.circle.fill", .red)
+                                tally(score.blank, "minus.circle.fill", .secondary)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    topics(score)
+                }
+                HStack(spacing: 4) {
+                    Text("See every answer")
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $open) { QuizResultSheet(id: quiz.id) }
+    }
+
+    private func tally(_ count: Int, _ icon: String, _ color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon).foregroundStyle(color)
+            Text("\(count)").monospacedDigit()
+        }
+        .font(.subheadline.weight(.medium))
+    }
+
+    /// The three weakest topics, as bars; none when every topic was right.
+    @ViewBuilder private func topics(_ score: QuizScore) -> some View {
+        let weak = (score.topics ?? []).filter { $0.right < $0.total }.prefix(3)
+        if !weak.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(weak)) { topic in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(topic.title).lineLimit(1)
+                            Spacer()
+                            Text("\(topic.right) of \(topic.total)").monospacedDigit().foregroundStyle(.secondary)
+                        }
+                        .font(.footnote)
+                        Capsule().fill(chat.agent.tint.opacity(0.15))
+                            .overlay(alignment: .leading) {
+                                GeometryReader { g in
+                                    Capsule().fill(chat.agent.tint)
+                                        .frame(width: g.size.width * Double(topic.right) / Double(max(1, topic.total)))
+                                }
+                            }
+                            .frame(height: 5)
+                    }
+                }
+            }
+        } else if score.topics != nil {
+            Label("Every topic right", systemImage: "star.fill").font(.footnote.weight(.medium)).foregroundStyle(.green)
+        }
+    }
+}
+
+/// Every answer of a finished quiz, from the chat's card.
+struct QuizResultSheet: View {
+    let id: String
+    @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.dismiss) private var dismiss
+    @State private var quiz: Quiz?
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let quiz {
+                    PracticeResults(quiz: quiz, fromChat: true)
+                } else if let error {
+                    ContentUnavailableView("Couldn't load it", systemImage: "exclamationmark.triangle", description: Text(error))
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .task {
+            do { quiz = try await env.api.quiz(id) } catch { self.error = error.localizedDescription }
+        }
+    }
+}
+
+/// A review session starting, in the course chat (docs/API.md, Chat, `review`): the course, how long, the topics,
+/// and the quiz a tap away, typed or by voice.
+struct ReviewStartCard: View {
+    let session: ReviewSession
+    @EnvironmentObject private var chat: ChatViewModel
+    @EnvironmentObject private var voice: VoiceController
+
+    private var when: String? {
+        Wire.parse(session.start)?.formatted(date: .omitted, time: .shortened)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "book.fill")
+                Text("Review session").fontWeight(.semibold)
+                Spacer(minLength: 0)
+                Label([when, "\(session.minutes) min"].compactMap { $0 }.joined(separator: " · "), systemImage: "clock")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            Text(session.name ?? "Review").font(.title3.weight(.bold))
+            if !session.topics.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(session.topics, id: \.self) { topic in
+                        HStack(alignment: .top, spacing: 8) {
+                            Circle().fill(chat.agent.tint).frame(width: 6, height: 6).padding(.top, 7)
+                            Text(topic).font(.subheadline)
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 10) {
+                Button { Task { await chat.send("Quiz me") } } label: {
+                    Label("Quiz me", systemImage: "questionmark.bubble.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .foregroundStyle(Theme.onAccent)
+                        .background(Theme.accent, in: Capsule())
+                }
+                Button { Task { await voice.start(saying: "Quiz me") } } label: {
+                    Label("By voice", systemImage: "waveform")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .foregroundStyle(Theme.accent)
+                        .background(Theme.background.opacity(0.6), in: Capsule())
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(chat.isSending || voice.isActive)
+            .padding(.top, 2)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
