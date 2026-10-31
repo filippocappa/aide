@@ -949,6 +949,44 @@ final class APIClient {
                                                                   write: write))
     }
 
+    // MARK: Lessons
+
+    /// A course's lessons in order, and the one to learn next.
+    func lessonPath(course: Int) async throws -> LessonPath {
+        try await send("GET", "/v1/lessons", query: [URLQueryItem(name: "course", value: "\(course)")])
+    }
+
+    func lesson(topic: String) async throws -> Lesson {
+        try await send("GET", "/v1/topics/\(topic)/lesson", query: Self.readable)
+    }
+
+    /// The topic's lesson, written first when there's none (or `again`); `restart` goes through it from the start.
+    func startLesson(topic: String, again: Bool = false, restart: Bool = false) async throws -> Lesson {
+        try await send("POST", "/v1/topics/\(topic)/lesson", query: Self.readable,
+                       body: LessonStartBody(again: again, restart: restart))
+    }
+
+    func lessonProgress(_ id: String, at: Int) async throws -> LessonBrief {
+        try await send("POST", "/v1/lessons/\(id)/progress", body: LessonProgressBody(at: at))
+    }
+
+    func checkLesson(_ id: String, step: Int, check: Int, answer: String) async throws -> LessonCheckResult {
+        try await send("POST", "/v1/lessons/\(id)/check", query: Self.readable,
+                       body: LessonCheckBody(step: step, check: check, answer: answer), timeout: 60)
+    }
+
+    func askLesson(_ id: String, step: Int, question: String, history: [LessonQA]) async throws -> String {
+        let answer: LessonAnswer = try await send("POST", "/v1/lessons/\(id)/ask", query: Self.readable,
+                                                  body: LessonAskBody(step: step, question: question, history: history),
+                                                  timeout: 90)
+        return answer.answer
+    }
+
+    func finishLesson(_ id: String, explanation: String?) async throws -> Lesson {
+        try await send("POST", "/v1/lessons/\(id)/finish", query: Self.readable,
+                       body: LessonFinishBody(explanation: explanation), timeout: 90)
+    }
+
     /// A study session's open answer: right or not, as the user says, over the model's mark.
     func markQuiz(_ id: String, n: Int, correct: Bool) async throws -> QuizQuestion {
         try await send("POST", "/v1/quizzes/\(id)/mark", body: QuizMarkBody(n: n, correct: correct))

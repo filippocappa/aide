@@ -42,6 +42,7 @@ from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError, page_image
 from ..moodle import MoodleError, MoodleSync
+from ..lessons import LessonStore
 from ..notebook import NotebookStore
 from ..objectives import ObjectivePlanner, ObjectiveStore
 from ..quiz import MOST as MOST_QUESTIONS, QuizStore, mark as mark_answer, plain_math
@@ -214,6 +215,36 @@ class WriterDecide(BaseModel):
 class OpenAnswer(BaseModel):  # a mock exam's open question: typed, or photos of the work on paper, or both
     text: str = ""
     photos: list[str] = Field(default=[], max_length=4)
+
+
+class LessonStart(BaseModel):
+    again: bool = False  # write it again (from the notes as they are now)
+    restart: bool = False  # go through it again from the start
+
+
+class LessonCheck(BaseModel):
+    step: int
+    check: int
+    answer: str  # a choice's letter, or the words
+
+
+class LessonProgress(BaseModel):
+    at: int  # steps done
+
+
+class LessonQA(BaseModel):
+    q: str
+    a: str
+
+
+class LessonAsk(BaseModel):
+    step: int
+    question: str
+    history: list[LessonQA] = []  # earlier questions on this step, oldest first
+
+
+class LessonFinish(BaseModel):
+    explanation: str | None = None  # the topic explained back in their own words
 
 
 class QuizCheck(BaseModel):
@@ -521,7 +552,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                locks: LockStore | None = None, errands: ErrandRunner | None = None,
                errand_store: ErrandStore | None = None, plans: PlanStore | None = None,
                foods: FoodDB | None = None, off: OpenFoodFacts | None = None,
-               weights: WeightStore | None = None, videos: VideoWorker | None = None) -> FastAPI:
+               weights: WeightStore | None = None, videos: VideoWorker | None = None,
+               lessons: LessonStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -543,6 +575,19 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
     quizzes = quizzes or QuizStore(notebook)
+
+    async def lesson_ask(system: str, content: list[dict], max_tokens: int, fast: bool, live: bool) -> str:
+        """A lesson's model call: through the engine (the Claude plan first, when it writes notes), never waiting at
+        the plan's limit while the user is waiting; straight to OpenRouter without an engine."""
+        if engine is not None:
+            return await engine.ask(system, content, max_tokens, fast=fast, wait=not live)
+        response = await agent.client.beta.messages.create(
+            model=agent.model if fast else agent.smart_model, max_tokens=max_tokens, system=system,
+            messages=[{"role": "user", "content": content}])
+        return "".join(b.text for b in response.content if b.type == "text").strip()
+
+    lessons = lessons or LessonStore(notebook, lesson_ask, engine.plan_blocked if engine else None)
+    lessons.mastery = lessons.mastery or quizzes.mastery
     reviews = reviews or ReviewStore(db.conn, tz, calendar, study)
     plans = plans or PlanStore(db.conn, tz, calendar, reviews)
     objectives = objectives or ObjectiveStore(db.conn, tz, habits, food, health, store)
@@ -1731,6 +1776,102 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if plain:
             out["body"] = readable(out["body"], latex, inline)
             out["cards_list"] = [{"q": readable(c["q"]), "a": readable(c["a"])} for c in out["cards_list"]]
+        return out
+
+    def lesson_or_404(lesson_id: str) -> dict:
+        if (lesson := lessons.lesson(lesson_id)) is None:
+            raise HTTPException(404, f"no lesson {lesson_id}")
+        return lesson
+
+    def lesson_json(lesson: dict, plain: bool, latex: bool, inline: bool) -> dict:
+        return lessons.json(lesson, (lambda s: readable(s, latex, inline)) if plain else (lambda s: s))
+
+    @app.get("/v1/lessons", dependencies=[Depends(auth)])
+    async def lesson_path(course: int):
+        return lessons.path(course_or_404(course))
+
+    @app.get("/v1/topics/{topic_id}/lesson", dependencies=[Depends(auth)])
+    async def get_lesson(topic_id: str, plain: bool = False, latex: bool = False, inline: bool = False):
+        if (t := notebook.topic(topic_id)) is None:
+            raise HTTPException(404, f"no topic {topic_id}")
+        if (lesson := lessons.for_topic(t["id"])) is None:
+            raise HTTPException(404, "no lesson for this topic yet")
+        return lesson_json(lesson, plain, latex, inline)
+
+    @app.post("/v1/topics/{topic_id}/lesson", dependencies=[Depends(auth)])
+    async def start_lesson(topic_id: str, body: LessonStart | None = None, plain: bool = False, latex: bool = False,
+                           inline: bool = False):
+        if (t := notebook.topic(topic_id)) is None:
+            raise HTTPException(404, f"no topic {topic_id}")
+        body = body or LessonStart()
+        try:
+            lesson = lessons.want(t, again=body.again)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        if body.restart and lesson["status"] == "ready":
+            lesson = lessons.restart(lesson["public_id"])
+        return JSONResponse(lesson_json(lesson, plain, latex, inline),
+                            status_code=202 if lesson["status"] == "building" else 200)
+
+    @app.post("/v1/lessons/{lesson_id}/progress", dependencies=[Depends(auth)])
+    async def lesson_progress(lesson_id: str, body: LessonProgress):
+        lesson_or_404(lesson_id)
+        try:
+            return lessons.brief(lessons.advance(lesson_id, body.at))
+        except ValueError as e:
+            raise HTTPException(409 if "written" in str(e) else 400, str(e))
+
+    @app.post("/v1/lessons/{lesson_id}/check", dependencies=[Depends(auth)])
+    async def lesson_check(lesson_id: str, body: LessonCheck, plain: bool = False, latex: bool = False,
+                           inline: bool = False):
+        lesson_or_404(lesson_id)
+        try:
+            out = await lessons.answer(lesson_id, body.step, body.check, body.answer)
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(409 if "written" in str(e) else 400, str(e))
+        except Exception as e:  # the mark couldn't be had: the app shows what was expected
+            log.warning("lesson mark failed: %s", e)
+            c = lessons._check(lessons.lesson(lesson_id), body.step, body.check)
+            out = {"step": body.step, "check": body.check, "type": c["type"], "answer": body.answer.strip(),
+                   "correct": None, "awarded": None, "key": None, "feedback": None, "key_why": None,
+                   "expected": c.get("answer")}
+        if plain:
+            for k in ("feedback", "key_why", "expected"):
+                if out.get(k):
+                    out[k] = readable(out[k], latex, inline)
+        return out
+
+    @app.post("/v1/lessons/{lesson_id}/ask", dependencies=[Depends(auth)])
+    async def lesson_question(lesson_id: str, body: LessonAsk, plain: bool = False, latex: bool = False,
+                              inline: bool = False):
+        lesson_or_404(lesson_id)
+        try:
+            answer = await lessons.ask_about(lesson_id, body.step, body.question, [h.model_dump() for h in body.history])
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(409 if "written" in str(e) else 400, str(e))
+        except Exception as e:
+            log.warning("lesson question failed: %s", e)
+            raise HTTPException(502, "Professor couldn't answer just now. Try again in a moment.")
+        return {"answer": readable(answer, latex, inline) if plain else answer, "markdown": answer}
+
+    @app.post("/v1/lessons/{lesson_id}/finish", dependencies=[Depends(auth)])
+    async def lesson_finish(lesson_id: str, body: LessonFinish | None = None, plain: bool = False,
+                            latex: bool = False, inline: bool = False):
+        lesson_or_404(lesson_id)
+        try:
+            lesson = await lessons.finish(lesson_id, (body or LessonFinish()).explanation)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        except Exception as e:
+            log.warning("lesson explanation failed: %s", e)
+            raise HTTPException(502, "Professor couldn't read your explanation just now. Try again in a moment.")
+        out = lesson_json(lesson, plain, latex, inline)
+        nxt = lessons.next_topic(lesson["course_id"], after=lesson["topic_id"])
+        out["next"] = {"id": nxt["public_id"], "title": nxt["title"]} if nxt else None
         return out
 
     @app.get("/v1/proposals", dependencies=[Depends(auth)])

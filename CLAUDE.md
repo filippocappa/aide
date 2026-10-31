@@ -43,6 +43,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   routines and watches (Claude Agent SDK, Aide's tools in-process), digests, drafts, titles, objectives.
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
+- `lessons.py`: a lesson per notebook topic (hook, goals, steps with checks), written from the topic's notes through
+  `engine.py`; marking, Ask and the explanation back.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
 - `activity.py`: the feed of what the agents did, behind `/v1/activity`; `/v1/approvals` gathers what waits for the user.
 - `objectives.py`: each specialist's objectives for the day, week and month: the store, progress from the data,
@@ -359,6 +361,16 @@ for mastery. The marker falls back to the Claude plan when OpenRouter refuses (t
 user from `free_time`, `study_progress` and the exam date, put in the timetable calendar as "Review: <course>" (never
 a lecture), followed when moved or deleted there; when one starts Professor offers the quiz in the chat, with a push.
 The course page lists them (swipe to cancel). Not yet tried on the phone.
+Lessons (2026-10-31, `lessons.py`, contract "Lessons"; `Views/LessonViews.swift`): a topic taught a step at a time.
+Professor turns the topic's notes into a lesson the first time it's opened (a hook, goals, 4–10 short steps, each with
+a key idea, the same idea told another way, a multiple-choice or written check and a second one if the first is
+missed), on the Claude plan first (smart model; at its limit it waits, as notes do). A step: read or listen (`say`, the
+maths in words), Got it or Not quite (another way, then Ask), the check (choices checked with no model call, written
+answers marked by the fast model), Ask Professor about the step. At the end the user explains the topic back and
+Professor says what stuck and which steps to look at again; then the next topic's lesson is written ahead. Lessons are
+kept, marked stale when the notes change. App: "Learn this topic" on a topic page, "Learn" on the course page (the path:
+up next, every topic with how far its lesson got). On OpenRouter it would be ~$0.10 to write a lesson (Sonnet) and
+~$0.05 of live calls to go through one. Not yet tried on the phone.
 Since 2026-10-22 (`engine.py`, contract "Who writes the notes"): lecture notes and notebook jobs can run on the
 user's Claude plan through Claude Code on `cappa` (`claude -p`, Sonnet writes, Haiku reads; set in Settings → Claude
 plan; on now). At the plan's limit a job pauses and Professor asks: wait, or finish on OpenRouter.

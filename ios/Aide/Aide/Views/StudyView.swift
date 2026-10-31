@@ -399,6 +399,7 @@ struct CourseView: View {
     @State private var busy: String?
     @State private var showPractice = false
     @State private var studying: StudyTarget?
+    @State private var learning = false
     @State private var confirmStart = false
     @State private var importing: Import?
     @State private var openFile: StudyFile?
@@ -516,6 +517,9 @@ struct CourseView: View {
                 if let fresh = try? await env.api.courseDates(course: course.id) { dates = fresh }
             }
         }
+        .fullScreenCover(isPresented: $learning, onDismiss: { Task { await load() } }) {
+            LearnPathView(course: course).macCoverSize()
+        }
         .fullScreenCover(isPresented: $showPractice, onDismiss: { Task { await load() } }) {
             PracticeExamView(course: course.id, courseName: course.name)
         }
@@ -561,8 +565,9 @@ struct CourseView: View {
         let questions = written.contains { ($0.questions ?? 0) > 0 }
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                Chip(title: "Learn", systemImage: "graduationcap", style: .prominent, tint: Theme.study) { learning = true }
                 if questions {
-                    Chip(title: "Quiz me", systemImage: "rectangle.on.rectangle.angled", style: .prominent, tint: Theme.study) {
+                    Chip(title: "Quiz me", systemImage: "rectangle.on.rectangle.angled") {
                         studying = StudyTarget(course: course.id, name: course.title)
                     }
                     Chip(title: "Practice exam", systemImage: "checklist") { showPractice = true }

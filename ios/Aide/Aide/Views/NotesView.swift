@@ -574,6 +574,7 @@ struct TopicPageView: View {
     @State private var page: TopicPage?
     @State private var error: String?
     @State private var studying: StudyTarget?
+    @State private var learning: LessonTopicRef?
 
     var body: some View {
         NoteScroll(headings: headings) {
@@ -582,10 +583,16 @@ struct TopicPageView: View {
                 if let summary = page?.summary ?? topic.summary {
                     Text(summary.markdown).font(.title3).foregroundStyle(.secondary)
                 }
-                if let course, (topic.questions ?? 0) + (topic.cards ?? 0) > 0 || page?.cardsList?.isEmpty == false {
-                    Chip(title: "Study this topic", systemImage: "rectangle.on.rectangle.angled", style: .prominent,
-                         tint: Theme.study) {
-                        studying = StudyTarget(course: course.id, name: course.title, topics: [topic.id])
+                if let course {
+                    HStack(spacing: 8) {
+                        Chip(title: "Learn this topic", systemImage: "graduationcap", style: .prominent, tint: Theme.study) {
+                            learning = LessonTopicRef(id: topic.id, title: topic.title)
+                        }
+                        if (topic.questions ?? 0) + (topic.cards ?? 0) > 0 || page?.cardsList?.isEmpty == false {
+                            Chip(title: "Quiz me", systemImage: "rectangle.on.rectangle.angled") {
+                                studying = StudyTarget(course: course.id, name: course.title, topics: [topic.id])
+                            }
+                        }
                     }
                 }
                 if let page {
@@ -610,6 +617,9 @@ struct TopicPageView: View {
         .refreshable { await load() }
         .fullScreenCover(item: $studying) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+        }
+        .fullScreenCover(item: $learning) { ref in
+            if let course { LessonView(topic: ref, course: course.id, courseName: course.title).macCoverSize() }
         }
     }
 

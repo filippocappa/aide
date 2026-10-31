@@ -2059,6 +2059,132 @@ enum QuizAnswer: Encodable, Equatable {
 
 struct QuizFinishBody: Encodable { let answers: [String: QuizAnswer] }
 struct QuizCheckBody: Encodable { let n: Int; let answer: QuizAnswer? }
+
+// MARK: Lessons (docs/API.md, "Lessons")
+
+/// A lesson in brief: on the path, and the top of a whole one.
+struct LessonBrief: Decodable, Hashable {
+    let id: String
+    /// building, ready or failed.
+    let status: String
+    /// The steps, once it's written.
+    var count: Int?
+    var at: Int
+    var startedAt: String?
+    var finishedAt: String?
+    /// From the explanation back: solid, partly or not_yet.
+    var verdict: String?
+    var stale: Bool?
+
+    var ready: Bool { status == "ready" }
+    var building: Bool { status == "building" }
+    var finished: Bool { finishedAt != nil }
+}
+
+struct LessonTopicRef: Decodable, Hashable { let id: String; let title: String }
+
+/// A topic taught a step at a time: a hook and goals, then steps to read, each with its checks.
+struct Lesson: Decodable, Hashable {
+    let id: String
+    let status: String
+    var count: Int?
+    var at: Int
+    var startedAt: String?
+    var finishedAt: String?
+    var verdict: String?
+    var stale: Bool?
+    let topic: LessonTopicRef
+    let course: Int
+    var error: String?
+    /// Held at the Claude plan's limit until about then.
+    var waiting: String?
+    var hook: String?
+    var goals: [String]
+    var steps: [LessonStep]
+    var explained: LessonExplained?
+    /// After finishing: the topic to learn next.
+    var next: LessonTopicRef?
+
+    var ready: Bool { status == "ready" }
+    var building: Bool { status == "building" }
+    var finished: Bool { finishedAt != nil }
+}
+
+struct LessonStep: Decodable, Hashable, Identifiable {
+    let n: Int
+    let title: String
+    let body: String
+    /// The same idea told another way, for Not quite.
+    let again: String
+    /// The step as it's read aloud (the maths in words); nil: read the body.
+    var say: String?
+    let keyIdea: String
+    let checks: [LessonCheck]
+    /// The latest answer to each check, by its number.
+    var answers: [String: LessonGiven]
+
+    var id: Int { n }
+}
+
+struct LessonCheck: Decodable, Hashable {
+    let n: Int
+    /// choice or write.
+    let type: String
+    let question: String
+    var options: [QuizOption]?
+
+    var isChoice: Bool { type == "choice" }
+}
+
+struct LessonGiven: Decodable, Hashable { let answer: String; var correct: Bool? }
+
+struct LessonCheckResult: Decodable, Hashable {
+    let step: Int
+    let check: Int
+    let type: String
+    let answer: String
+    /// nil: a written answer the model couldn't mark (judge it against `expected`).
+    var correct: Bool?
+    var key: String?
+    var feedback: String?
+    var keyWhy: String?
+    var awarded: Double?
+    var expected: String?
+}
+
+struct LessonExplained: Decodable, Hashable {
+    let text: String
+    let verdict: String
+    var got: [String]
+    var missing: [String]
+    /// Step numbers to look at again.
+    var review: [Int]
+    var feedback: String
+}
+
+struct LessonPath: Decodable {
+    let course: Int
+    var next: String?
+    var topics: [LessonPathTopic]
+}
+
+struct LessonPathTopic: Decodable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    var summary: String?
+    var lesson: LessonBrief?
+    var known: Int
+    var learning: Int
+    var unseen: Int
+}
+
+struct LessonStartBody: Encodable { var again = false; var restart = false }
+struct LessonProgressBody: Encodable { let at: Int }
+struct LessonCheckBody: Encodable { let step: Int; let check: Int; let answer: String }
+struct LessonQA: Codable, Hashable { let q: String; let a: String }
+struct LessonAskBody: Encodable { let step: Int; let question: String; let history: [LessonQA] }
+struct LessonAnswer: Decodable { let answer: String }
+struct LessonFinishBody: Encodable { let explanation: String? }
 struct QuizMarkBody: Encodable { let n: Int; let correct: Bool }
 
 // MARK: Moodle and the Obsidian vault (docs/API.md, "Moodle", "Obsidian vault")

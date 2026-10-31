@@ -21,6 +21,7 @@
 		0AC8B5D8AC5743C33B9BCBC3 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */; };
 		0B4609FC7D85FD28662E5F68 /* RouteCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 390203A3696FD54CC8786945 /* RouteCard.swift */; };
 		0BEE49E816A3DA0FB4136763 /* LocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDD7CC531B6DFD14673ABD6C /* LocationService.swift */; };
+		0C682A1B292AA4AB212F18A1 /* LessonViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7010333B02FB2C5C4B8EC49 /* LessonViews.swift */; };
 		0C860598D1CAEEF1B982C06E /* HealthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591D1D0440D0AE931595EE83 /* HealthView.swift */; };
 		0CD0E22F88733316E0A2FC75 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
 		0E8E4C39F0C5E93AC75C7BBB /* WidgetSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADE4DEA766E09C8CD558DC9B /* WidgetSupport.swift */; };
@@ -94,6 +95,7 @@
 		6050EEA9BDAD57AB18630D2E /* DigestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */; };
 		614FB8A923D0C9B65B375A44 /* FoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDFDB90CA977D76111828E4F /* FoodViews.swift */; };
 		61A1F84D398D52BD6F25287F /* AideWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7399AF7109C6333CB3244BC /* AideWidgets.swift */; };
+		61D729A8CAB38BDD3EF58DB4 /* LessonViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7010333B02FB2C5C4B8EC49 /* LessonViews.swift */; };
 		6708C50E1250EA8C57D751E3 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
 		675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48D3B662149E81DAF5A28319 /* TouchTracker.swift */; };
 		6A8A6B60D44134404B6B202A /* NutritionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C667A9215ADB1783C8AC6E2C /* NutritionViews.swift */; };
@@ -382,6 +384,7 @@
 		F32DFE4D7AD03B872AE8A96C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		F4B434BFB9F5B347D240B333 /* ErrandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrandViews.swift; sourceTree = "<group>"; };
 		F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSheet.swift; sourceTree = "<group>"; };
+		F7010333B02FB2C5C4B8EC49 /* LessonViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LessonViews.swift; sourceTree = "<group>"; };
 		F7399AF7109C6333CB3244BC /* AideWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideWidgets.swift; sourceTree = "<group>"; };
 		FBBFAA140586D1B2AF141D34 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceController.swift; sourceTree = "<group>"; };
@@ -432,6 +435,7 @@
 				DDFDB90CA977D76111828E4F /* FoodViews.swift */,
 				BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */,
 				591D1D0440D0AE931595EE83 /* HealthView.swift */,
+				F7010333B02FB2C5C4B8EC49 /* LessonViews.swift */,
 				91B4431689B0F772EB8EDA27 /* LivePebble.swift */,
 				C3FB4B94DD1D7FF3EEAFB454 /* MealCameraView.swift */,
 				3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */,
@@ -1009,6 +1013,7 @@
 				0C860598D1CAEEF1B982C06E /* HealthView.swift in Sources */,
 				47D7731AC05A4379219EB018 /* HeartSummary.swift in Sources */,
 				707BBC79D4EA16657F5EE1E0 /* Keychain.swift in Sources */,
+				0C682A1B292AA4AB212F18A1 /* LessonViews.swift in Sources */,
 				08A5571E8EB41AB9C395DF84 /* LineBadge.swift in Sources */,
 				4C000D653119BA082E8C4B3A /* LivePebble.swift in Sources */,
 				CACCC83A44CB8718FB4A36C7 /* MacAppDelegate.swift in Sources */,
@@ -1087,6 +1092,7 @@
 				CDA6BD42FE40FA43362C4856 /* HealthView.swift in Sources */,
 				B80EB1D82215C188A6E90082 /* HeartSummary.swift in Sources */,
 				1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */,
+				61D729A8CAB38BDD3EF58DB4 /* LessonViews.swift in Sources */,
 				9458E33FE7340C8EDED1D46F /* LineBadge.swift in Sources */,
 				10275D194F779A427E756B09 /* LiveActivities.swift in Sources */,
 				3DDC6EFD08DE031E76848EBC /* LiveActivityAttributes.swift in Sources */,

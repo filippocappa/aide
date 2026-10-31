@@ -1189,6 +1189,53 @@ turned and written. A study session is untimed (`minutes` ignored, null), its qu
 - `finish` closes it: only the checked answers count, nothing is posted in the chat, no marking job. Study sessions
   aren't in the bank's `past` and don't count for objectives.
 
+### Lessons
+
+Since 2026-10-31 (`lessons.py`): a topic taught a step at a time, Brilliant's way, for learning it rather than
+practising it. Professor writes a lesson once per topic from its notes (the smart model, through the notes engine: the
+Claude plan when it's on, where a lesson waits at the plan's limit like notes do; ~$0.10 a topic on OpenRouter): a
+hook and goals, then 4–10 steps, each one idea in a short read, the same idea told another way ("Not quite"), and two
+checks, a multiple choice and a question answered in words (asked when the first is missed). A lesson is kept; it's
+written again when the notes changed and it isn't started (a started one is `stale` until asked `again`). While the
+user goes through it, Ask, a written check's mark and the explanation back call the model while they wait: the plan
+first, OpenRouter at its limit, never a wait. Finishing a lesson writes the next topic's in the background. Lesson
+checks don't count for mastery or objectives.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/lessons?course=2` | | Path. `404` no such course. |
+| `GET /v1/topics/{id}/lesson` | | Lesson. `404` no topic, or no lesson yet. |
+| `POST /v1/topics/{id}/lesson` | optional `{"again": true}` (write it again from the notes now), `{"restart": true}` (go through it again from the start) | Lesson: `202` while it's written (poll the GET every few seconds), else `200`. `409` the topic has no notes. |
+| `POST /v1/lessons/{id}/progress` | `{"at": 3}`: the steps done (0 to the count) | Lesson brief. `409` not written yet. |
+| `POST /v1/lessons/{id}/check` | `{"step": 1, "check": 1, "answer": "B"}`: a choice's letter or, for a `write` check, the words | Check result. `404` no such step or check; `400` an empty answer or no such letter. |
+| `POST /v1/lessons/{id}/ask` | `{"step": 2, "question": "why above 1?", "history": [{"q": "…", "a": "…"}]}`: earlier questions on this step, oldest first | `{"answer": "…", "markdown": "…"}`. `502` the model didn't answer. |
+| `POST /v1/lessons/{id}/finish` | optional `{"explanation": "…"}`: the topic explained back in the user's own words (typed or dictated) | Lesson with `explained`, plus `"next": {"id": "t_…", "title": "…"} or null`. `502` the explanation couldn't be read (nothing is saved: send it again, or without it). |
+
+Every endpoint that returns lesson text takes `plain`, `latex` and `inline` as `GET /v1/topics/{id}` does.
+
+Lesson brief: `{"id": "ls_…", "status": "building" | "ready" | "failed", "count": 6 or null, "at": 2, "started_at",
+"finished_at" (UTC or null), "verdict": "solid" | "partly" | "not_yet" | null (from the explanation back), "stale":
+false}`.
+
+Lesson: a brief plus `{"topic": {"id": "t_…", "title": "…"}, "course": 2, "error": "…" or null (failed), "waiting":
+"2026-10-31T18:00:00Z" or null (building, held at the plan's limit until about then), "hook": "markdown", "goals":
+["You'll be able to …"], "steps": [{"n": 1, "title": "…", "body": "markdown (formulas, figures as in a topic)",
+"again": "markdown", "say": "the step to read aloud, maths in words" or null (read `body` then), "key_idea": "…",
+"checks": [{"n": 1, "type": "choice", "question": "…", "options": [{"letter": "A", "text": "…"}]}, {"n": 2, "type":
+"write", "question": "…"}], "answers": {"1": {"answer": "B", "correct": false}}}], "explained": null or {"text": "…",
+"verdict": "partly", "got": ["…"], "missing": ["…"], "review": [2, 4] (step numbers), "feedback": "…"},
+"updated_at"}`. No keys or reasons until a check is answered. A step has at least the choice; the `write` one can be
+missing.
+
+Check result: `{"step": 1, "check": 1, "type": "choice", "answer": "B", "correct": false, "key": "C", "feedback": "why
+B is wrong", "key_why": "why C is right", "awarded": null, "expected": null}`. A `write` check: `key` and `key_why`
+null, `awarded` 0, 0.5 or 1, `correct` (at least 0.5), `feedback` from the fast model, `expected` what a right answer
+has. When the marking failed, `correct`, `awarded` and `feedback` are null: show `expected` and let the user judge.
+
+Path: `{"course": 2, "next": "t_…" or null, "topics": [{"id": "t_…", "title": "…", "summary": "…" or null, "lesson":
+Lesson brief or null, "known": 4, "learning": 1, "unseen": 3}]}`: the written topics in order. `next` is the first
+whose lesson isn't finished, skipping topics already known (every question and flashcard last answered right).
+
 ### Quizzes and review sessions
 
 Since 2026-10-27 (`quiz.py`, `reviews.py`, `tools/quiz.py`; #4).

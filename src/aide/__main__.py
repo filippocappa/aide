@@ -33,6 +33,7 @@ from .icloud import ICloudCalendar
 from .live import LiveActivities
 from .locks import LockStore
 from .push import Push
+from .lessons import LessonStore
 from .quiz import QuizStore
 from .reminders import ReminderStore
 from .plans import PlanStore
@@ -133,6 +134,11 @@ def main() -> None:
         log.info("Claude Code not found: notes are written through OpenRouter only")
     tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
     quizzes = QuizStore(notebook)
+
+    async def lesson_ask(system, content, max_tokens, fast, live):  # the plan first; live calls never wait at its limit
+        return await engine.ask(system, content, max_tokens, fast=fast, wait=not live)
+    lessons = LessonStore(notebook, lesson_ask, engine.plan_blocked)
+    lessons.mastery = quizzes.mastery
     reviews = ReviewStore(db.conn, settings.timezone, cal, study)
     tools += quiz_tools(quizzes, reviews, study, notebook, settings.timezone)
     plans = PlanStore(db.conn, settings.timezone, cal, reviews)
@@ -294,6 +300,7 @@ def main() -> None:
             *([events.run()] if events else []),
             *([errands.run()] if errands else []),
             videos.run(),
+            lessons.run(),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
@@ -302,7 +309,7 @@ def main() -> None:
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off,
-                             weights=weights, videos=videos)
+                             weights=weights, videos=videos, lessons=lessons)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
