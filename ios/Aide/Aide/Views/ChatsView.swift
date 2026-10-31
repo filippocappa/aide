@@ -144,7 +144,7 @@ struct ChatsView: View {
         case .pastChats: pastChats = agent
         case .routines: routinesFor = agent
         case .activity: activity = .agent(agent)
-        case .quiz, .practiceExam: break // only in a chat
+        case .quiz, .quizByVoice, .practiceExam: break // only in a chat
         }
     }
 

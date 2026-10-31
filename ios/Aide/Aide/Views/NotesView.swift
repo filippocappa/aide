@@ -555,9 +555,12 @@ private struct NoteContents: View {
 /// A topic of a course's notebook: the notes, then its flashcards.
 struct TopicPageView: View {
     let topic: NotebookTopic
+    /// Its course, for Study this topic.
+    var course: StudyCourse?
     @EnvironmentObject private var env: AppEnvironment
     @State private var page: TopicPage?
     @State private var error: String?
+    @State private var studying: StudyTarget?
 
     var body: some View {
         NoteScroll(headings: headings) {
@@ -565,6 +568,12 @@ struct TopicPageView: View {
                 Text(topic.title).font(.largeTitle.bold())
                 if let summary = page?.summary ?? topic.summary {
                     Text(summary.markdown).font(.title3).foregroundStyle(.secondary)
+                }
+                if let course, (topic.questions ?? 0) + (topic.cards ?? 0) > 0 || page?.cardsList?.isEmpty == false {
+                    Chip(title: "Study this topic", systemImage: "rectangle.on.rectangle.angled", style: .prominent,
+                         tint: Theme.study) {
+                        studying = StudyTarget(course: course.id, name: course.title, topics: [topic.id])
+                    }
                 }
                 if let page {
                     NoteText(markdown: page.body ?? "", anchored: true)
@@ -586,6 +595,9 @@ struct TopicPageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+        .fullScreenCover(item: $studying) { target in
+            StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+        }
     }
 
     private var headings: [NoteText.Heading] {

@@ -610,7 +610,7 @@ struct QuestionSource: View {
 }
 
 /// The topic, where the question comes from, and on the right what it's worth.
-private struct QuestionHeader: View {
+struct QuestionHeader: View {
     let question: QuizQuestion
     var trailing: String?
 
@@ -665,7 +665,7 @@ private struct QuestionPage: View {
 }
 
 /// A checked multiple-choice answer: right or not, and the explanation.
-private struct Verdict: View {
+struct Verdict: View {
     let question: QuizQuestion
 
     var body: some View {
@@ -859,7 +859,7 @@ private struct OpenQuestionPage: View {
     }
 }
 
-private struct OptionRow: View {
+struct OptionRow: View {
     enum Mark { case plain, chosen, key, wrong }
     let option: QuizOption
     let state: Mark
@@ -1136,11 +1136,12 @@ struct QuizResultSheet: View {
 }
 
 /// A review session starting, in the course chat (docs/API.md, Chat, `review`): the course, how long, the topics,
-/// and the quiz a tap away, typed or by voice.
+/// and the quiz a tap away: the Study page on its topics, or by voice.
 struct ReviewStartCard: View {
     let session: ReviewSession
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var voice: VoiceController
+    @State private var studying: StudyTarget?
 
     private var when: String? {
         Wire.parse(session.start)?.formatted(date: .omitted, time: .shortened)
@@ -1168,8 +1169,8 @@ struct ReviewStartCard: View {
                 }
             }
             HStack(spacing: 10) {
-                Button { Task { await chat.send("Quiz me") } } label: {
-                    Label("Quiz me", systemImage: "questionmark.bubble.fill")
+                Button { studying = StudyTarget(course: session.course, name: session.name, topics: session.topics) } label: {
+                    Label("Quiz me", systemImage: "rectangle.on.rectangle.angled")
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -1192,6 +1193,9 @@ struct ReviewStartCard: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .fullScreenCover(item: $studying) { target in
+            StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+        }
     }
 }
 

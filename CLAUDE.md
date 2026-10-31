@@ -291,8 +291,14 @@ result in the chat.
 Quizzes and review sessions (2026-10-27, closes #4; `reviews.py`, `tools/quiz.py`, contract "Quizzes and review
 sessions"): Professor quizzes in the course chat, one question at a time from the notebook's MCQs and flashcards (missed
 first, answers recorded as they come, shared with practice exams; `kind: "chat"` quizzes don't count for objectives).
-By voice: `voice` on `/v1/chat` makes replies speakable, and "Quiz me" (course page, course chat's ••• menu) opens the
-chat in voice mode with "Quiz me" said for you (`VoiceController.start(saying:)`). Review sessions: planned with the
+By voice: `voice` on `/v1/chat` makes replies speakable, and "Quiz me by voice" (the course chat's ••• menu, a review
+session's card) opens the chat in voice mode with "Quiz me" said for you (`VoiceController.start(saying:)`).
+The Study page (2026-10-31, `Views/StudySessionView.swift`, contract "Practice exams", study sessions): every other "Quiz
+me" (course page, Up next, a review session, a topic page's Study this topic) opens it. Flashcards (turn, swipe Know or
+Still learning), Learn (multiple choice, right or wrong at once), Write (a flashcard's front or a course exercise
+answered in words, marked by the fast model in ~2 s, "I was right" to override; if marking fails, you mark it) and Mix;
+in rounds until what was missed is known. A `kind: "study"` quiz: no timer, no score, nothing posted, answers count
+for mastery. The marker falls back to the Claude plan when OpenRouter refuses (the key's $5 limit, 2026-10-31). Review sessions: planned with the
 user from `free_time`, `study_progress` and the exam date, put in the timetable calendar as "Review: <course>" (never
 a lecture), followed when moved or deleted there; when one starts Professor offers the quiz in the chat, with a push.
 The course page lists them (swipe to cancel). Not yet tried on the phone.

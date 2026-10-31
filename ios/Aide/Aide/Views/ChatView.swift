@@ -15,6 +15,7 @@ struct ChatView: View {
     @State private var infoAction: AgentInfoSheet.Action?
     @State private var showInfo = false
     @State private var showPractice = false
+    @State private var studying: StudyTarget?
     @State private var justReplied = false
     /// Photos to go with the next message, shrunk and ready.
     @State private var photos: [PickedPhoto] = []
@@ -95,7 +96,8 @@ struct ChatView: View {
             case .starter(let text): Task { await chat.startChat(with: chat.agent); await chat.send(text) }
             case .pastChats: showPastChats = true
             case .routines: showRoutines = true
-            case .quiz: Task { await voice.start(saying: "Quiz me") }
+            case .quiz: if let course = chat.course { studying = StudyTarget(course: course.id, name: course.name) }
+            case .quizByVoice: Task { await voice.start(saying: "Quiz me") }
             case .practiceExam: showPractice = true
             case .activity: break
             }
@@ -110,6 +112,9 @@ struct ChatView: View {
             Task { await chat.loadHistory() } // Professor's note on the result
         }) {
             if let course = chat.course { PracticeExamView(course: course.id, courseName: course.name) }
+        }
+        .fullScreenCover(item: $studying) { target in
+            StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
         .sheet(isPresented: $showPastChats, onDismiss: {
             guard let picked = pastChoice else { return }

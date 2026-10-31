@@ -1877,7 +1877,8 @@ struct QuizScoring: Decodable, Hashable { let right: Double; let wrong: Double; 
 
 struct Quiz: Decodable, Identifiable, Hashable {
     let id: String
-    /// "exam" (a practice exam), "chat" (Professor quizzing in the course chat) or "mock" (a mock exam).
+    /// "exam" (a practice exam), "chat" (Professor quizzing in the course chat), "mock" (a mock exam) or "study"
+    /// (the Study page).
     var kind: String?
     /// "Practice exam", "Mock exam 1", "Quiz".
     var title: String?
@@ -2020,7 +2021,12 @@ struct QuizStartBody: Encodable {
     var cards: Int?
     var exercises: Int?
     var minutes: Int?
+    var topics: [String]?
     var mock: String?
+    /// "study": a study session (the Study page), untimed, each answer marked as it's checked.
+    var kind: String?
+    /// A study session's flashcards answered in words, marked by the model.
+    var write: Int?
 }
 
 /// An answer as handed in: a letter, or an open question's words and photos (`p_…` ids).
@@ -2043,6 +2049,7 @@ enum QuizAnswer: Encodable, Equatable {
 
 struct QuizFinishBody: Encodable { let answers: [String: QuizAnswer] }
 struct QuizCheckBody: Encodable { let n: Int; let answer: QuizAnswer? }
+struct QuizMarkBody: Encodable { let n: Int; let correct: Bool }
 
 // MARK: Moodle and the Obsidian vault (docs/API.md, "Moodle", "Obsidian vault")
 

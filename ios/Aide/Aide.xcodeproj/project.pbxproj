@@ -30,6 +30,7 @@
 		2ACA1996D7D76EC5A67A34F0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DFEF5446D771554DAAA7229 /* AppSettings.swift */; };
 		2EDDCFAB410A8C5BAE1EFA88 /* AideShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9FFC7D2BBFEF73430F661C02 /* AideShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		313DDC3B1BB41035C1030689 /* WakeUpIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */; };
+		3188423C527C210BBADFEFBC /* StudySessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F052E49EFFBA77932E41460B /* StudySessionView.swift */; };
 		32929000119CE3BE2D9FD69A /* TramLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA0AF3C34ADA2A7F1F3492E /* TramLiveActivity.swift */; };
 		3B94BC79A60AEAD6626F4EEA /* LockShield.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ACCD638FA0D9F230CF15238B /* LockShield.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3CA6E37A3296746227026CF7 /* ShieldConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21264FA61ED8665DC82B517 /* ShieldConfig.swift */; };
@@ -289,6 +290,7 @@
 		E8BFC1DAA6E43241677C8730 /* Health.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Health.entitlements; sourceTree = "<group>"; };
 		E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSettingsView.swift; sourceTree = "<group>"; };
 		EBA213D456FF8A690E35B36F /* ScreenTimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeService.swift; sourceTree = "<group>"; };
+		F052E49EFFBA77932E41460B /* StudySessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudySessionView.swift; sourceTree = "<group>"; };
 		F32DFE4D7AD03B872AE8A96C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		F4B434BFB9F5B347D240B333 /* ErrandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrandViews.swift; sourceTree = "<group>"; };
 		F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSheet.swift; sourceTree = "<group>"; };
@@ -350,6 +352,7 @@
 				415C01E53630052EF49DC680 /* ScreenTimeView.swift */,
 				DBB893CFE71A535E6990CADF /* SettingsView.swift */,
 				031232FED72D4C9A787D8843 /* StudyCards.swift */,
+				F052E49EFFBA77932E41460B /* StudySessionView.swift */,
 				24233F28207417C05A177C18 /* StudyView.swift */,
 				0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */,
 				DA08F1D7D45CEF403CEF6E48 /* TodayView.swift */,
@@ -886,6 +889,7 @@
 				F889CC6C37E9D4CC8806D49B /* SleepSummary.swift in Sources */,
 				DF67394A3A18D94603A30688 /* SpeechDetector.swift in Sources */,
 				5BEBECF00427BD19FF404E60 /* StudyCards.swift in Sources */,
+				3188423C527C210BBADFEFBC /* StudySessionView.swift in Sources */,
 				9391CA921BA0BA9BC5E1E6BA /* StudyView.swift in Sources */,
 				D70DECEDF4E4EC132639432C /* TeamChatView.swift in Sources */,
 				B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */,
