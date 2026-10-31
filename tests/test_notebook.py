@@ -9,7 +9,8 @@ from aide.agent import CONVERSATION, Agent
 from aide.channels.api import create_app
 from aide.db import Database
 from aide.material import visual_pages
-from aide.notebook import DATES_PROMPT, SCAN_PROMPT, NotebookStore, NotebookWorker, date_line, parse_page, sections
+from aide.notebook import (DATES_PROMPT, SCAN_PROMPT, NotebookStore, NotebookWorker, _name_parts, _row_with, date_line,
+                           parse_page, sections)
 from aide.photos import PhotoStore
 from aide.plans import PlanStore
 from aide.reminders import ReminderStore
@@ -319,6 +320,32 @@ async def test_an_exam_notice_is_read_for_dates_with_the_users_name_and_checked_
     card = chat_messages(nb)[-1]
     assert f"your Exam calendar has it on {exam:%a %d %b}" in card["text"]
     assert [e["change"] for e in card["attachments"][0]["events"]] == ["proposed", "found"]
+
+
+def test_the_users_row_is_found_in_a_list_read_column_by_column():
+    columns = "\n\n".join("\n".join(col) for col in [
+        ["141", "142", "143", "144", "145"], ["Ada Rossi", "filippo cappa", "Bo Li", "Cy Wu", "Di Ma"],
+        ["1231599", "1206993", "1206994", "1206995", "1206996"], ["Round C: 12-12:30"] * 5,
+        ["Group 5", "Group 6", "Group 6", "Group 7", "Group 7"], ["Laboratorio Informatico A"] * 5])
+    assert _row_with(columns, _name_parts("Filippo Cappa")) == \
+        "142 | filippo cappa | 1206993 | Round C: 12-12:30 | Group 6 | Laboratorio Informatico A"
+    assert _row_with("12 Cappa Filippo  Aula 5  09:00\n13 Rossi Ada  Aula 7", _name_parts("Filippo Cappa")) == \
+        "12 Cappa Filippo  Aula 5  09:00"
+    assert _row_with("Filippo Rossi\nAda Cappa", _name_parts("Filippo Cappa")) is None
+
+
+async def test_a_list_with_the_users_name_has_the_dates_read_with_their_row(nb):
+    cid = nb.macro["id"]
+    nb.db.conn.execute("INSERT INTO moodle_state (key, value) VALUES ('user', ?)",
+                       (json.dumps({"id": 7, "name": "Filippo Cappa"}),))
+    await started(nb)
+    asked = len(nb.client.dated)
+    groups = make_pdf(None, ["Mid-term rounds", "141 Ada Rossi 1231599 Round A\n142 Filippo Cappa 1206993 Round C Lab A"])
+    assert add_pdf(nb.api, groups, course=cid, name="Students").status_code == 201
+    assert nb.notebook.dates_reading(cid)
+    await drain(nb)
+    request = sent(nb.client.dated[asked])
+    assert "[Students.pdf, p. 2] 142 Filippo Cappa 1206993 Round C Lab A" in request and "Ada Rossi" not in request
 
 
 async def test_the_user_edits_a_courses_dates_and_professors_reads_keep_them(nb):
