@@ -25,8 +25,10 @@ struct AideMacApp: App {
         .defaultSize(width: 1180, height: 780)
         .commands { MacCommands() }
 
-        MenuBarExtra("Aide", image: "Pebble", isInserted: $menuBarItem) {
+        MenuBarExtra(isInserted: $menuBarItem) {
             MacMenuBarMenu()
+        } label: {
+            Image(nsImage: MacMenuBarIcon.image).accessibilityLabel("Aide")
         }
 
         Settings {
@@ -52,6 +54,8 @@ extension View {
             .environmentObject(env.screenTime)
             // The phone's grouped forms, not the Mac's two-column ones.
             .formStyle(.grouped)
+            // The phone's switches, not the Mac's checkboxes.
+            .toggleStyle(.switch)
             .tint(Theme.accent)
     }
 }
@@ -64,6 +68,20 @@ enum MacWindow {
         MacNavigation.shared.section = .team
         Task { await env.chat.newChat(with: env.chat.orchestrator) }
     }
+}
+
+/// Pebble's small cut (`brand/logo/pebble-small.svg`: heavier eyes, for 16–32 px), a template image so it takes the
+/// menu bar's colour, about as tall as the menu bar's own symbols.
+enum MacMenuBarIcon {
+    static let image: NSImage = {
+        let size = NSSize(width: 15, height: 15)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSImage(named: "MenuBarPebble")?.draw(in: rect)
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }()
 }
 
 /// The Pebble in the menu bar: Aide's window, a new chat and the sections, with the window closed too.

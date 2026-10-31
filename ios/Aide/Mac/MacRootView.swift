@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The sidebar's sections: the phone's tabs, with Today and Activity as places of their own (on the phone they
-/// open over the Team tab).
+/// The sidebar's sections: the phone's tabs, with Today, Habits, Objectives and Activity as places of their own (on
+/// the phone they open from Today or over the Team tab).
 enum MacSection: String, CaseIterable, Identifiable, Hashable {
-    case team, today, study, health, food, settings
+    case team, today, habits, objectives, activity, study, health, food, settings
 
     var id: String { rawValue }
 
@@ -11,6 +11,9 @@ enum MacSection: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .team: "Team"
         case .today: "Today"
+        case .habits: "Habits"
+        case .objectives: "Objectives"
+        case .activity: "Activity"
         case .study: "Study"
         case .health: "Health"
         case .food: "Food"
@@ -22,6 +25,9 @@ enum MacSection: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .team: "person.3"
         case .today: "sun.max"
+        case .habits: "flame"
+        case .objectives: "scope"
+        case .activity: "bell"
         case .study: "book"
         case .health: "heart.text.square"
         case .food: "fork.knife"
@@ -51,6 +57,7 @@ struct MacRootView: View {
     /// Things waiting for your OK, on the Team row's badge.
     @State private var waiting = 0
     @AppStorage("macSidebarCollapsed") private var collapsed = false
+    @ObservedObject private var glance = MacGlance.shared
 
     var body: some View {
         // No system sidebar: its flat slab cuts the page in two. The page runs the full width of the window, its
@@ -59,9 +66,11 @@ struct MacRootView: View {
             .id(nav.section)
             .safeAreaPadding(.leading, MacSidebar.inset(collapsed: collapsed))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The page's glow runs up under the title; no band of the toolbar's own with a hard edge under it.
+            .modifier(SoftTitleBar())
             .overlay(alignment: .leading) {
                 MacSidebar(section: Binding(get: { nav.section ?? .team }, set: { nav.section = $0 }),
-                           waiting: waiting, collapsed: $collapsed)
+                           waiting: waiting, collapsed: $collapsed, glance: glance)
                     .ignoresSafeArea()
             }
             // The window's title goes right of the sidebar, not over it.
@@ -81,12 +90,21 @@ struct MacRootView: View {
         .task(id: settings.isConfigured) {
             if settings.isConfigured, let a = try? await env.api.approvals() { waiting = a.waiting }
         }
+        // The sidebar's glance: now, then every 5 minutes, and on each change of section (a meal or a habit logged).
+        .task(id: settings.isConfigured) {
+            while !Task.isCancelled {
+                await glance.load(env)
+                try? await Task.sleep(for: .seconds(300))
+            }
+        }
+        .onChange(of: nav.section) { _, _ in Task { await glance.load(env) } }
         // As on the phone (`ContentView`): links and, later, notifications open their place.
         .onReceive(push.$route.compactMap { $0 }) { route in
             push.route = nil
             guard settings.isConfigured else { return }
             switch route {
-            case .today, .digest, .note, .objectives: nav.section = .today
+            case .objectives: nav.section = .objectives; return
+            case .today, .digest, .note: nav.section = .today
             case .health: nav.section = .health; return
             case .food, .meal: nav.section = .food; return
             case .chats: nav.section = .team; return
@@ -116,6 +134,9 @@ struct MacRootView: View {
         switch nav.section ?? .team {
         case .team: ChatsView(waiting: $waiting)
         case .today: TodayView(waiting: $waiting)
+        case .habits: MacHabitsPage()
+        case .objectives: TodayView(waiting: $waiting, objectivesOnly: true)
+        case .activity: MacActivityPage()
         case .study: StudyView()
         case .health: HealthView()
         case .food: FoodView()
@@ -126,7 +147,7 @@ struct MacRootView: View {
 
 /// The sections on the left, floating over the page in glass: a sidebar with each section's name, or folded into a
 /// rail of icons (the button at the bottom, ⌃⌘S, or View → Show Section Names). The names are on hover too, and in
-/// the Go menu (⌘1–6).
+/// the Go menu (⌘1–9). Above Settings, the day at a glance (`MacGlance`).
 struct MacSidebar: View {
     static let railWidth: CGFloat = 52
     static let fullWidth: CGFloat = 196
@@ -140,6 +161,7 @@ struct MacSidebar: View {
     @Binding var section: MacSection
     var waiting: Int
     @Binding var collapsed: Bool
+    @ObservedObject var glance: MacGlance
     @Namespace private var selection
 
     var body: some View {
@@ -157,11 +179,19 @@ struct MacSidebar: View {
             Color.clear.frame(height: 34)
             row(.team)
             row(.today)
+            row(.habits)
+            row(.objectives)
+            row(.activity)
             header("Me")
             row(.study)
             row(.health)
             row(.food)
             Spacer(minLength: 12)
+            if glance.scores != nil || glance.kcal != nil {
+                MacGlanceCard(glance: glance) { section = $0 }
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
+            }
             HStack {
                 row(.settings)
                 toggle
@@ -194,7 +224,7 @@ struct MacSidebar: View {
                 Text(item.title)
                     .font(.system(size: 13, weight: selected ? .semibold : .medium))
                 Spacer(minLength: 0)
-                if item == .team, waiting > 0 { badge }
+                if item == .activity, waiting > 0 { badge }
             }
             .foregroundStyle(selected ? Color.primary : Color.secondary)
             .padding(.horizontal, 10)
@@ -239,11 +269,20 @@ struct MacSidebar: View {
         VStack(spacing: 4) {
             icon(.team)
             icon(.today)
+            icon(.habits)
+            icon(.objectives)
+            icon(.activity)
             divider
             icon(.study)
             icon(.health)
             icon(.food)
             divider
+            if glance.scores != nil {
+                Button { section = .health } label: { MacGlanceRings(glance: glance) }
+                    .buttonStyle(.plain)
+                    .help("Recovery, strain and sleep")
+                divider
+            }
             icon(.settings)
             toggle.frame(width: 40, height: 36)
         }
@@ -272,7 +311,7 @@ struct MacSidebar: View {
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    if item == .team, waiting > 0 { badge.scaleEffect(0.85).offset(x: 4, y: -2) }
+                    if item == .activity, waiting > 0 { badge.scaleEffect(0.85).offset(x: 4, y: -2) }
                 }
                 .contentShape(Circle())
         }
@@ -295,6 +334,22 @@ private struct GlassPanel<S: Shape>: ViewModifier {
                 .background(.regularMaterial, in: shape)
                 .overlay(shape.stroke(.white.opacity(0.08)))
                 .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+        }
+    }
+}
+
+/// The window toolbar over the page: no background of its own, and the page fading out softly under it instead of a
+/// band with a line at its bottom.
+private struct SoftTitleBar: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                .scrollEdgeEffectStyle(.soft, for: .top)
+        } else if #available(macOS 15, *) {
+            content.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        } else {
+            content
         }
     }
 }

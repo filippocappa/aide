@@ -19,6 +19,8 @@ struct TodayView: View {
     @Environment(\.dismiss) private var dismiss
     /// Things waiting for your OK, for the tab's badge.
     @Binding var waiting: Int
+    /// Only the objectives (Today / Week / Month): the Mac's Objectives section. Nil: the whole page.
+    var objectivesOnly = false
 
     @State private var approvals: Approvals?
     @State private var habits: [Habit] = []
@@ -47,16 +49,18 @@ struct TodayView: View {
                     if !settings.isConfigured {
                         Section { Text("Add your server token in Settings to start.").foregroundStyle(.secondary) }
                     }
-                    digestSection.id(TodayFocus.digest)
-                    WaitingSection(approvals: approvals, agent: nil, reload: { await loadApprovals() }) { open($0) }
+                    if !objectivesOnly {
+                        digestSection.id(TodayFocus.digest)
+                        WaitingSection(approvals: approvals, agent: nil, reload: { await loadApprovals() }) { open($0) }
+                    }
                     planSection.id(TodayFocus.habits)
-                    if period == "day" { habitsSection }
+                    if period == "day" && !objectivesOnly { habitsSection }
                     objectivesSection
-                    notesSection.id(TodayFocus.notes)
+                    if !objectivesOnly { notesSection.id(TodayFocus.notes) }
                 }
                 .scrollContentBackground(.hidden)
                 .pageGlow(Theme.accent)
-                .navigationTitle("Today")
+                .navigationTitle(objectivesOnly ? "Objectives" : "Today")
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) { addMenu }
                     #if os(iOS)
@@ -159,7 +163,7 @@ struct TodayView: View {
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
         } header: {
-            Text("Habits and objectives")
+            if !objectivesOnly { Text("Habits and objectives") }
         } footer: {
             if let block { Text(ObjectiveDates.span(block)).font(.subheadline) }
         }
@@ -198,13 +202,23 @@ struct TodayView: View {
             Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
         }
         if let block {
-            let shown = block.objectives.filter { !$0.isProposed }
+            // On their own page the proposals are here too, with Accept (on Today they're in Waiting for you).
+            let shown = block.objectives.filter { objectivesOnly || !$0.isProposed }
             Section {
                 ForEach(shown) { o in
                     let agent = chat.agent(o.agent)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(agent.name.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(agent.tint)
                         ObjectiveRow(objective: o, tint: agent.tint, tick: { Task { await tick(o) } }, open: { opened = o })
+                        if o.isProposed {
+                            HStack {
+                                Button("Accept") { Task { await accept(o) } }.tint(agent.tint)
+                                Button("Drop", role: .destructive) { Task { await drop(o) } }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .padding(.leading, 34)
+                        }
                     }
                     .swipeActions(edge: .trailing) {
                         if !o.isLapsed { Button("Drop", role: .destructive) { Task { await drop(o) } } }
@@ -371,6 +385,14 @@ struct TodayView: View {
             replace(updated); error = nil
             return updated
         } catch { self.error = describe(error); return nil }
+    }
+
+    private func accept(_ o: Objective) async {
+        do {
+            _ = try await env.api.acceptObjectives(period: o.period, date: o.start, ids: [o.id])
+            await loadObjectives()
+            error = nil
+        } catch { self.error = describe(error) }
     }
 
     private func drop(_ o: Objective) async {

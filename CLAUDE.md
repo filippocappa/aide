@@ -101,16 +101,19 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 ### The Mac app (same project, target `AideMac`)
 
-The phone's views in a Mac window, the sections (Team, Today, Study, Health, Food, Settings) in a glass sidebar
-with their names floating on the left over the page (`MacSidebar`; no system sidebar), folding to a rail of icons
-(its button, ⌃⌘S, View → Show Section Names), macOS 14+, bundle
+The phone's views in a Mac window, the sections (Team, Today, Habits, Objectives, Activity, Study, Health, Food,
+Settings) in a glass sidebar with their names floating on the left over the page (`MacSidebar`; no system sidebar),
+folding to a rail of icons (its button, ⌃⌘S, View → Show Section Names), with the day at a glance above Settings
+(`Mac/MacGlance.swift`: the three score rings filling as they load, kcal and habits as bars; concentric rings in the
+rail; reloaded every 5 min and on each change of section), macOS 14+, bundle
 `$(AIDE_BUNDLE_ID).mac`, its own server URL and token in the Mac's keychain. Same server, same API, no contract of its
 own except `app: "mac"` on `POST /v1/devices`. What only the phone has stays on the phone: Apple Health uploads, Live
 Activities, Screen Time, location, the meal camera, the Apple Reminders sync, the silent pushes (the Mac reads what
 the phone sent; a reminder ticked on the Mac goes through the server and the phone's next sync).
 
 - `Mac/AideMacApp.swift`, `Mac/MacRootView.swift`: the app, one window (a second would share the one
-  `AppEnvironment`), the rail, the menus (⌘N new chat, ⌘1–6, Show in Menu Bar) and the Pebble in the menu bar.
+  `AppEnvironment`), the rail, the menus (⌘N new chat, ⌘1–9, Show in Menu Bar) and the Pebble in the menu bar (the
+  small cut, `MenuBarPebble`, a 15 pt template). The window toolbar has no background of its own (no hard line).
   Closing the window leaves Aide running.
 - On the Mac, Return sends in a chat (`MessageBox`'s `onReturn`; Option-Return is a new line), images dropped on a
   chat are added like picked photos (`photoDrop` in `Support/Photos.swift`), and PDFs or recordings dropped on a
@@ -125,6 +128,11 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   lines; buttons in rows are accent text), lighter dark colours in `Theme.swift` under `#if os(macOS)`, and
   `Mac/MacNavigationStack.swift` makes `NavigationStack` give a sheet a glass close button (Esc) in its top-left
   corner, since phone sheets often close only by swiping. Both shadow SwiftUI's types for `AideMac` only.
+- Sheets: a sheet's `NavigationStack` is at least 620×560 (ideal 760), its title shown by the close button through
+  `.macSheetTitle(_:)` (the Mac shows no navigation title in a sheet); `fullScreenCover` and `.macCoverSize()` (a no-op on
+  the phone) make the big ones (slides, a video's page). `.pageColumn()` keeps a ScrollView page's column at 860 pt;
+  `List` (a `Form`) is 820 pt wide in the middle. On the Mac, `Theme.toggle` is the accent (ivory), not green.
+  `.toolbar(.hidden, for: .navigationBar)` hides the back chevron there (`MacPhoneBar`).
 - `Mac/iOSCompat.swift`: lets the shared views build unchanged: `UIColor`/`UIImage`/`UIPasteboard` as their AppKit
   twins, `navigationBarTitleDisplayMode`, `topBarTrailing`, `keyboardType`, `fullScreenCover` (a sheet) and the like.
 

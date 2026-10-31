@@ -23,10 +23,17 @@ struct List<Content: View>: View {
         content = ForEach(data, content: rowContent)
     }
 
+    /// The widest the sections get.
+    private static var width: CGFloat { 820 }
+
     var body: some View {
-        Form { content }
-            .formStyle(.grouped)
-            // A button in a row is the accent's text, as on the phone, not a push button or a glass pill.
-            .buttonStyle(.borderless)
+        GeometryReader { window in
+            Form { content }
+                .formStyle(.grouped)
+                // A button in a row is the accent's text, as on the phone, not a push button or a glass pill.
+                .buttonStyle(.borderless)
+                // The Mac keeps a grouped form to a narrow column; a page of cards gets a wider one, in the middle.
+                .contentMargins(.horizontal, max(20, (window.size.width - Self.width) / 2), for: .scrollContent)
+        }
     }
 }

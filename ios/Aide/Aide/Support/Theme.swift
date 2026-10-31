@@ -64,7 +64,12 @@ enum Theme {
     }
 
     /// Switch colour: Sand-on-white switches vanish in dark mode, so switches get a sage green.
+    #if os(macOS)
+    /// On the Mac the switches are Aide's ivory (slate in light mode), not the phone's green.
+    static let toggle = accent
+    #else
     static let toggle = Color(red: 0.15, green: 0.68, blue: 0.36)
+    #endif
     /// Soft halo behind Pebble.
     static let glow = color(light: 0x5FA88A, dark: 0xECE5D8)
     static let userBubbleText = color(light: 0x111111, dark: 0xF2F2F2)
@@ -396,4 +401,23 @@ extension ToolbarItemPlacement {
         .topBarTrailing
         #endif
     }
+}
+
+extension View {
+    /// On the Mac, a page's column in a wide window: at most `width` wide, in the middle, so cards and rows don't run
+    /// from one edge of the screen to the other. On the phone, the screen.
+    @ViewBuilder func pageColumn(_ width: CGFloat = 860) -> some View {
+        #if os(macOS)
+        frame(maxWidth: width).frame(maxWidth: .infinity)
+        #else
+        self
+        #endif
+    }
+
+    #if os(iOS)
+    /// The Mac's sheet title (`Mac/MacNavigationStack.swift`); the phone shows the navigation title.
+    func macSheetTitle(_ title: String) -> some View { self }
+    /// The Mac's large sheet (`Mac/iOSCompat.swift`); phone sheets are big already.
+    func macCoverSize() -> some View { self }
+    #endif
 }

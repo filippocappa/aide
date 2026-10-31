@@ -12,6 +12,7 @@
 		024F2D8A495A2AAA4CCB1A65 /* SleepSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */; };
 		03B01F505920F1FA05E66BCA /* ErrandViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4B434BFB9F5B347D240B333 /* ErrandViews.swift */; };
 		058C1D6DDCF73028E25DB202 /* WeightViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7DDCAD5B02A385C9E492CEB /* WeightViews.swift */; };
+		089CB209C2B169E594A84579 /* MacGlance.swift in Sources */ = {isa = PBXBuildFile; fileRef = D22CC0EC44582B201436684C /* MacGlance.swift */; };
 		08A5571E8EB41AB9C395DF84 /* LineBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2712472C5856CDCD16C4FAB /* LineBadge.swift */; };
 		08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5F1E3C560D08D523718D2F /* DigestView.swift */; };
 		097F7BCA07F7A5285EB983E7 /* AideTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0E327019026782069A1BA0 /* AideTests.swift */; };
@@ -358,6 +359,7 @@
 		CC57D10E5C0CD2E06529692F /* VideoViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoViews.swift; sourceTree = "<group>"; };
 		CEA0AF3C34ADA2A7F1F3492E /* TramLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TramLiveActivity.swift; sourceTree = "<group>"; };
 		CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D22CC0EC44582B201436684C /* MacGlance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacGlance.swift; sourceTree = "<group>"; };
 		D7DDCAD5B02A385C9E492CEB /* WeightViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeightViews.swift; sourceTree = "<group>"; };
 		DA08F1D7D45CEF403CEF6E48 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
 		DBB893CFE71A535E6990CADF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -593,6 +595,7 @@
 				1A9F5F8A8D6464DACCB6EB02 /* iOSCompat.swift */,
 				38F0E0A30B4DF8F0F6F9D585 /* MacAppDelegate.swift */,
 				5E3809ACCFFA12ABB54F30E6 /* MacAssets.xcassets */,
+				D22CC0EC44582B201436684C /* MacGlance.swift */,
 				3D3CFB8E6C336BE4768DB561 /* MacList.swift */,
 				E82E2D2F31C60F70DB974B92 /* MacNavigationStack.swift */,
 				6EF10BCDADB734A13BDB47BE /* MacRootView.swift */,
@@ -1003,6 +1006,7 @@
 				08A5571E8EB41AB9C395DF84 /* LineBadge.swift in Sources */,
 				4C000D653119BA082E8C4B3A /* LivePebble.swift in Sources */,
 				CACCC83A44CB8718FB4A36C7 /* MacAppDelegate.swift in Sources */,
+				089CB209C2B169E594A84579 /* MacGlance.swift in Sources */,
 				560B7380C6D9D3882D360581 /* MacList.swift in Sources */,
 				48987567C6B9D6E88B770CC3 /* MacNavigationStack.swift in Sources */,
 				4F8E671544A9ABE370D492F4 /* MacRootView.swift in Sources */,

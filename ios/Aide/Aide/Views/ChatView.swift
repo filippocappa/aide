@@ -215,7 +215,9 @@ struct ChatView: View {
     }
 
     private func headerButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { headerIcon(icon) }.accessibilityLabel(label)
+        Button(action: action) { headerIcon(icon) }
+            .buttonStyle(.plain) // the Mac's default is a push button's bezel around the glass
+            .accessibilityLabel(label)
     }
 
     private func headerIcon(_ name: String) -> some View { HeaderIcon(name: name) }
@@ -399,6 +401,12 @@ struct ChatView: View {
                 .frame(width: 34, height: 34)
                 .background(MessageBoxGlass.isOn ? Color.clear : Theme.chip, in: Circle())
         }
+        #if os(macOS)
+        .menuStyle(.button)
+        .buttonStyle(.plain) // no pull-down box or arrow around the plus
+        .menuIndicator(.hidden)
+        .fixedSize()
+        #endif
         .disabled(!settings.isConfigured || chat.isSending || photos.count >= Self.maxPhotos)
         .accessibilityLabel("Add photos")
     }
@@ -493,6 +501,7 @@ struct MessageBox<Buttons: View>: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField(placeholder, text: $text, axis: .vertical)
+                .textFieldStyle(.plain) // the box is the field; no bezel of its own inside it on the Mac
                 .lineLimit(1...6)
                 .focused(focused)
                 #if os(macOS)

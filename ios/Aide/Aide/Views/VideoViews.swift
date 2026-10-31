@@ -39,7 +39,7 @@ struct VideoCardView: View {
         }
         .buttonStyle(.plain)
         .task(id: video.id) { await follow() }
-        .sheet(item: $page) { v in VideoPage(id: v.id) }
+        .sheet(item: $page) { v in VideoPage(id: v.id).macCoverSize() }
         .contextMenu {
             if let url = URL(string: video.url) {
                 Link(destination: url) { Label("Open in YouTube", systemImage: "play.rectangle") }
@@ -733,7 +733,7 @@ struct VideosView: View {
             await load()
         }
         .refreshable { await load() }
-        .sheet(item: $page, onDismiss: { Task { await load() } }) { v in VideoPage(id: v.id, showsChat: true) }
+        .sheet(item: $page, onDismiss: { Task { await load() } }) { v in VideoPage(id: v.id, showsChat: true).macCoverSize() }
     }
 
     #if DEBUG

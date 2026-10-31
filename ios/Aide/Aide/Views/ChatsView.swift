@@ -422,6 +422,7 @@ struct PastChatsSheet: View {
             .background(Theme.grouped)
             .navigationTitle(agent.name)
             .navigationBarTitleDisplayMode(.inline)
+            #if os(iOS)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close", systemImage: "xmark") { dismiss() }
@@ -433,6 +434,12 @@ struct PastChatsSheet: View {
             }
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "Search chats with \(agent.name)")
+            #else
+            // A Mac sheet shows no title, toolbar or search drawer: the title sits by the close button, and the search
+            // and New chat in a row of their own, in the middle.
+            .macSheetTitle(agent.name)
+            .safeAreaInset(edge: .top, spacing: 0) { macSearchRow }
+            #endif
             .task(id: query) { await search() }
             #if DEBUG
             .onAppear { if let words = UserDefaults.standard.string(forKey: "previewSearch") { query = words } }
@@ -441,6 +448,39 @@ struct PastChatsSheet: View {
         .presentationDetents([.large])
         .presentationBackground(Theme.grouped)
     }
+
+    #if os(macOS)
+    private var macSearchRow: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search chats with \(agent.name)", text: $query)
+                    .textFieldStyle(.plain)
+                if searching {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear")
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(Theme.chip, in: Capsule())
+            Button { choose(.new(agent)) } label: {
+                Label("New chat", systemImage: "square.and.pencil")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .foregroundStyle(agent.orchestrator ? Theme.onAccent : .white)
+                    .background(agent.tint, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: 560)
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+    }
+    #endif
 
     @ViewBuilder private var found: some View {
         if let error = searchError {

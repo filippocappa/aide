@@ -62,6 +62,7 @@ struct HealthView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 32)
+                .pageColumn()
             }
             .previewAnchor()
             .pageGlow(glow, reach: 900)

@@ -175,15 +175,22 @@ extension View {
     /// The phone's full-screen pages come up as sheets.
     func fullScreenCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil,
                                         @ViewBuilder content: @escaping () -> Content) -> some View {
-        sheet(isPresented: isPresented, onDismiss: onDismiss) { content().frame(minWidth: 520, minHeight: 600) }
+        sheet(isPresented: isPresented, onDismiss: onDismiss) { content().macCoverSize() }
     }
 
     func fullScreenCover<Item: Identifiable, Content: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil,
                                                             @ViewBuilder content: @escaping (Item) -> Content) -> some View {
-        sheet(item: item, onDismiss: onDismiss) { content($0).frame(minWidth: 520, minHeight: 600) }
+        sheet(item: item, onDismiss: onDismiss) { content($0).macCoverSize() }
     }
 
     func statusBarHidden(_ hidden: Bool = true) -> some View { self }
+
+    /// What the phone shows over everything (slides, a practice exam, a photo) opens as a large sheet: the most of
+    /// the window a sheet can take.
+    func macCoverSize() -> some View {
+        frame(minWidth: 760, idealWidth: 1080, maxWidth: .infinity, minHeight: 560, idealHeight: 740, maxHeight: .infinity)
+            .macSheet()
+    }
 }
 
 extension ToolbarItemPlacement {
@@ -194,11 +201,18 @@ extension ToolbarItemPlacement {
     static var navigationBarTrailing: ToolbarItemPlacement { .primaryAction }
 }
 
-extension ToolbarPlacement {
-    /// The phone hides its navigation and tab bars on pages that draw their own header. The Mac's window toolbar
-    /// stays: hiding it takes the traffic lights with it. So these are a bar the window doesn't have.
-    static var navigationBar: ToolbarPlacement { .accessoryBar(id: "aide.none") }
-    static var tabBar: ToolbarPlacement { .accessoryBar(id: "aide.none") }
+/// The phone's navigation and tab bars, which the Mac doesn't have. The window toolbar stays whatever a page asks:
+/// hiding it takes the traffic lights with it.
+enum MacPhoneBar { case navigationBar, tabBar }
+
+extension View {
+    /// A page that hides the phone's navigation bar draws its own header, with its own back button (a chat), so the
+    /// window's back button goes. Nothing else changes.
+    @ViewBuilder func toolbar(_ visibility: Visibility, for bar: MacPhoneBar) -> some View {
+        if visibility == .hidden, bar == .navigationBar { navigationBarBackButtonHidden(true) } else { self }
+    }
+
+    func toolbarBackground(_ visibility: Visibility, for bar: MacPhoneBar) -> some View { self }
 }
 
 enum MacSectionSpacing { case `default`, compact }

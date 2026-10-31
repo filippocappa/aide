@@ -53,6 +53,7 @@ struct ActivitySheet: View {
                         ForEach(group.items) { item in
                             Button { go(item.conversationId) } label: {
                                 ActivityRow(item: item, agent: chat.agent(item.agent), showsAgent: agent == nil)
+                                    .multilineTextAlignment(.leading) // the Mac centres a button's lines
                             }
                             .disabled(item.conversationId == nil)
                             .listRowBackground(Theme.row)

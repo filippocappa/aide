@@ -27,21 +27,38 @@ struct NavigationStack<Root: View>: View {
         stack = AnyView(SwiftUI.NavigationStack(path: path, root: root))
     }
 
+    @State private var title: String?
+
     var body: some View {
-        stack
-            .environment(\.macInStack, true)
-            .safeAreaInset(edge: .top, spacing: 0) {
-            if inSheet {
-                HStack {
-                    SheetCloseButton { dismiss() }
-                    Spacer()
+        if inSheet {
+            stack
+                .environment(\.macInStack, true)
+                .onPreferenceChange(MacSheetTitleKey.self) { title = $0 }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    HStack {
+                        SheetCloseButton { dismiss() }
+                        Spacer()
+                    }
+                    .overlay {
+                        if let title { Text(title).font(.headline).lineLimit(1).padding(.horizontal, 56) }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 4)
-            }
+                // Phone sheets fill the screen; on the Mac a sheet would shrink to its content. Most of the window.
+                .frame(minWidth: 620, idealWidth: 760, maxWidth: .infinity,
+                       minHeight: 560, idealHeight: 760, maxHeight: .infinity)
+        } else {
+            stack.environment(\.macInStack, true)
         }
     }
+}
+
+/// A sheet's title, in the middle of the row with the close button (the Mac shows no navigation title in a sheet).
+struct MacSheetTitleKey: PreferenceKey {
+    static let defaultValue: String? = nil
+    static func reduce(value: inout String?, nextValue: () -> String?) { value = value ?? nextValue() }
 }
 
 extension EnvironmentValues {
@@ -51,6 +68,9 @@ extension EnvironmentValues {
 extension View {
     /// For a sheet whose stack isn't inside another: give it the close button.
     func macSheet() -> some View { environment(\.macInStack, true) }
+
+    /// The title shown next to a sheet's close button.
+    func macSheetTitle(_ title: String) -> some View { preference(key: MacSheetTitleKey.self, value: title) }
 }
 
 private struct SheetCloseButton: View {

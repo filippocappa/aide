@@ -199,6 +199,10 @@ struct ScoresCard: View {
             }
         }
         .padding(.top, 6)
+        #if os(macOS)
+        .frame(maxWidth: 540) // the three together in the middle, not at the window's two edges
+        .frame(maxWidth: .infinity)
+        #endif
     }
 }
 
