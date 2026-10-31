@@ -110,7 +110,7 @@ folding to a rail of icons (its button, ⌃⌘S, View → Show Section Names), w
 rail; reloaded every 5 min and on each change of section), macOS 14+, bundle
 `$(AIDE_BUNDLE_ID).mac`, its own server URL and token in the Mac's keychain. Same server, same API, no contract of its
 own except `app: "mac"` on `POST /v1/devices`. What only the phone has stays on the phone: Apple Health uploads, Live
-Activities, Screen Time, location, the meal camera, the Apple Reminders sync, the silent pushes (the Mac reads what
+Activities, location, the meal camera, the Apple Reminders sync, the silent pushes (the Mac reads what
 the phone sent; a reminder ticked on the Mac goes through the server and the phone's next sync).
 
 - `Mac/AideMacApp.swift`, `Mac/MacRootView.swift`: the app, one window (a second would share the one
@@ -124,6 +124,11 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   `Signing.local.xcconfig` sets `AIDE_MAC_ENTITLEMENTS = Mac/AideMacPush.entitlements`, which needs the Mac registered
   on the team (`xcodebuild -scheme AideMac -allowProvisioningUpdates -allowProvisioningDeviceRegistration build`
   once). Without it the app doesn't ask APNs (`UIApplication.canPush`).
+- Screen Time on the Mac (#30, in progress): Apple's Screen Time API is iOS-only, so Aide enforces the phone's locks
+  itself. `Mac/MacScreenTime.swift` reads `/v1/locks` (on open, after a chat turn, every minute, on wake) and works out
+  when each holds with `ScreenTime/LockClock.swift` (shared with the phone and its extensions), waking at the next
+  start or end; the glance says "Locked until 07:00". Not yet: the app picker, the shield window, the settings page,
+  refusing Quit during a strict lock, the login item.
 - `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
   `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
 - The Mac look (2026-10-31): `Mac/MacList.swift` makes `List` a grouped `Form` (rounded inset sections, no heavy

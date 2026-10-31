@@ -35,16 +35,16 @@ final class ScreenTimeService: ObservableObject {
 
     /// The lock on now that ends last.
     var current: (lock: ScreenLock, until: Date)? {
-        locks.compactMap { lock in LockBook.until(lock).map { (lock, $0) } }.max { $0.1 < $1.1 }
+        locks.compactMap { lock in LockClock.until(lock).map { (lock, $0) } }.max { $0.1 < $1.1 }
     }
 
     /// A strict lock on now: the Screen Time page is locked until it ends, but for an emergency pass.
     var strictOn: (lock: ScreenLock, until: Date)? {
-        locks.filter(\.isStrict).compactMap { lock in LockBook.until(lock).map { (lock, $0) } }.max { $0.1 < $1.1 }
+        locks.filter(\.isStrict).compactMap { lock in LockClock.until(lock).map { (lock, $0) } }.max { $0.1 < $1.1 }
     }
 
     /// A lock on now uses the usual apps: they can't change until it's over (that would be unlocking early).
-    var usualInUse: Bool { locks.contains { apps[$0.id] == nil && LockBook.until($0) != nil } }
+    var usualInUse: Bool { locks.contains { apps[$0.id] == nil && LockClock.until($0) != nil } }
 
     func apps(for lock: ScreenLock) -> LockApps { apps[lock.id] ?? LockApps(only: false, selection: allowed) }
 
@@ -120,7 +120,7 @@ final class ScreenTimeService: ObservableObject {
             LockBook.apps = apps
         }
         for lock in locks {
-            if LockBook.until(lock) != nil { LockBook.shield(lock.id) } else { LockBook.open(lock.id) }
+            if LockClock.until(lock) != nil { LockBook.shield(lock.id) } else { LockBook.open(lock.id) }
         }
     }
 

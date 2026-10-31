@@ -71,7 +71,7 @@ struct ScreenTimeView: View {
                 ForEach(used, id: \.self) { pass in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(pass.reason)
-                        Text("\(pass.title) · \(LockBook.date(pass.at).map { $0.formatted(.dateTime.day().month().hour().minute()) } ?? "")")
+                        Text("\(pass.title) · \(LockClock.date(pass.at).map { $0.formatted(.dateTime.day().month().hour().minute()) } ?? "")")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -224,9 +224,9 @@ private struct LockRow: View {
 
     private var note: String? {
         var parts: [String] = lock.isStrict ? ["Strict"] : []
-        if lock.locked, let until = LockBook.date(lock.until) {
+        if lock.locked, let until = LockClock.date(lock.until) {
             parts.append("On now, until \(ScreenTimeView.time(until))")
-        } else if let open = LockBook.date(lock.openUntil) {
+        } else if let open = LockClock.date(lock.openUntil) {
             parts.append("Ended early, back after \(ScreenTimeView.time(open))")
         }
         if let agent = lock.agent { parts.append("Set by \(agent.prefix(1).uppercased() + agent.dropFirst())") }

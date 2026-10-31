@@ -1447,18 +1447,40 @@ final class ScreenTimeTests: XCTestCase {
     func testOvernightScheduleHoldsOnItsDays() throws {
         // Sunday to Thursday nights: Tuesday's runs into Wednesday morning; Friday night has none.
         let bedtime = try lock(days: [7, 1, 2, 3, 4])
-        XCTAssertNil(LockBook.until(bedtime, at: local("22:59")))
-        XCTAssertEqual(LockBook.until(bedtime, at: local("23:30")), local("07:00", days: 1))
-        XCTAssertEqual(LockBook.until(bedtime, at: local("06:59", days: 1)), local("07:00", days: 1))
-        XCTAssertNil(LockBook.until(bedtime, at: local("07:00", days: 1)))
-        XCTAssertNil(LockBook.until(bedtime, at: local("23:30", days: 3))) // Friday
-        XCTAssertNil(LockBook.until(try lock(days: [], enabled: false), at: local("23:30")))
+        XCTAssertNil(LockClock.until(bedtime, at: local("22:59")))
+        XCTAssertEqual(LockClock.until(bedtime, at: local("23:30")), local("07:00", days: 1))
+        XCTAssertEqual(LockClock.until(bedtime, at: local("06:59", days: 1)), local("07:00", days: 1))
+        XCTAssertNil(LockClock.until(bedtime, at: local("07:00", days: 1)))
+        XCTAssertNil(LockClock.until(bedtime, at: local("23:30", days: 3))) // Friday
+        XCTAssertNil(LockClock.until(try lock(days: [], enabled: false), at: local("23:30")))
     }
 
     func testEndedEarlyStaysOpenUntilItsEnd() throws {
         let opened = try lock(openUntil: local("07:00", days: 1))
-        XCTAssertNil(LockBook.until(opened, at: local("23:30")))
-        XCTAssertNotNil(LockBook.until(opened, at: local("23:30", days: 1))) // the next night it's back
+        XCTAssertNil(LockClock.until(opened, at: local("23:30")))
+        XCTAssertNotNil(LockClock.until(opened, at: local("23:30", days: 1))) // the next night it's back
+    }
+
+    func testNextChangeIsTheNextStartOrEnd() throws {
+        let bedtime = try lock(days: [7, 1, 2, 3, 4]) // Sunday to Thursday nights
+        XCTAssertEqual(LockClock.nextChange([bedtime], after: local("12:00")), local("23:00"))
+        XCTAssertEqual(LockClock.nextChange([bedtime], after: local("23:30")), local("07:00", days: 1))
+        // Thursday morning's end, then nothing until Sunday night.
+        XCTAssertEqual(LockClock.nextChange([bedtime], after: local("07:00", days: 2)), local("23:00", days: 2))
+        XCTAssertEqual(LockClock.nextChange([bedtime], after: local("07:00", days: 3)), local("23:00", days: 5))
+        let focus = try lock(once: true, start: nil, end: nil, days: nil, startsAt: local("15:00"), endsAt: local("16:00"))
+        XCTAssertEqual(LockClock.nextChange([bedtime, focus], after: local("12:00")), local("15:00"))
+        XCTAssertEqual(LockClock.nextChange([focus], after: local("15:30")), local("16:00"))
+        XCTAssertNil(LockClock.nextChange([focus], after: local("16:00")))
+        XCTAssertNil(LockClock.nextChange([try lock(enabled: false)], after: local("12:00")))
+    }
+
+    func testCurrentIsTheOneThatEndsLast() throws {
+        let bedtime = try lock()
+        let focus = try lock(once: true, start: nil, end: nil, days: nil, startsAt: local("22:00"), endsAt: local("23:30"))
+        XCTAssertEqual(LockClock.current([bedtime, focus], at: local("22:30"))?.until, local("23:30"))
+        XCTAssertEqual(LockClock.current([bedtime, focus], at: local("23:15"))?.until, local("07:00", days: 1))
+        XCTAssertNil(LockClock.current([bedtime, focus], at: local("21:00")))
     }
 
     func testStrictAndPassesDecode() throws {
@@ -1477,8 +1499,8 @@ final class ScreenTimeTests: XCTestCase {
 
     func testOneOffAndItsSchedule() throws {
         let focus = try lock(once: true, start: nil, end: nil, days: nil, startsAt: local("15:00"), endsAt: local("16:00"))
-        XCTAssertEqual(LockBook.until(focus, at: local("15:30")), local("16:00"))
-        XCTAssertNil(LockBook.until(focus, at: local("16:00")))
+        XCTAssertEqual(LockClock.until(focus, at: local("15:30")), local("16:00"))
+        XCTAssertNil(LockClock.until(focus, at: local("16:00")))
         let schedule = try XCTUnwrap(LockBook.schedule(for: focus, now: local("15:30")))
         XCTAssertFalse(schedule.repeats)
         XCTAssertEqual(schedule.intervalStart.minute, 30) // from now, not from its start

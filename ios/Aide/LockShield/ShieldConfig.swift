@@ -26,7 +26,7 @@ final class ShieldConfig: ShieldConfigurationDataSource {
         } else {
             title = "Locked for now"
         }
-        let strict = LockBook.locks.contains { $0.isStrict && LockBook.until($0) != nil }
+        let strict = LockBook.locks.contains { $0.isStrict && LockClock.until($0) != nil }
         lines.append(strict ? "It's strict: only an emergency pass in Aide ends it early."
                      : "To end it early, open Aide and give a reason.")
         // Aide's slate, the app's accent in light mode (Theme.accent).

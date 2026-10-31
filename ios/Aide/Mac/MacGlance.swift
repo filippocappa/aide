@@ -30,6 +30,7 @@ final class MacGlance: ObservableObject {
 /// The glance in the sidebar: three rings that fill as they load, then food and habits as bars. Each opens its page.
 struct MacGlanceCard: View {
     @ObservedObject var glance: MacGlance
+    @EnvironmentObject private var screenTime: ScreenTimeService
     var open: (MacSection) -> Void
     /// The rings start empty and fill once the card is on screen.
     @State private var shown = false
@@ -50,6 +51,11 @@ struct MacGlanceCard: View {
             .buttonStyle(.plain)
             .help("Health")
 
+            if let (lock, until) = screenTime.strictOn ?? screenTime.current {
+                GlanceBar(icon: "hourglass", tint: .indigo,
+                          text: "\(lock.isStrict ? "Strict" : "Locked") until \(Self.time(until))", part: nil)
+                    .help(lock.title)
+            }
             if let kcal = glance.kcal {
                 Button { open(.food) } label: {
                     GlanceBar(icon: "fork.knife", tint: .orange,
@@ -75,6 +81,12 @@ struct MacGlanceCard: View {
             withAnimation(.spring(duration: 1.2, bounce: 0.2).delay(0.15)) { shown = true }
         }
         .onDisappear { shown = false }
+    }
+
+    /// "07:00" today, else "Sat 07:00" (as the phone's Screen Time page says it).
+    static func time(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
 }
 

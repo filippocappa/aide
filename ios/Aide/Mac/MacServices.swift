@@ -4,7 +4,7 @@ import SwiftUI
 import UserNotifications
 
 // What only the phone does, standing in on the Mac with the same names the shared views use: Apple Health, location,
-// Live Activities, Screen Time and the Apple Reminders sync stay the phone's (it keeps uploading and syncing, and the
+// Live Activities and the Apple Reminders sync stay the phone's (it keeps uploading and syncing, and the
 // Mac reads the same server). Each one here does nothing and says it's off.
 
 /// Apple Health lives on the phone; the Mac shows what the phone uploaded.
@@ -68,20 +68,6 @@ final class LiveActivities {
     func agentFinished(conversation: String, reply: String, failed: Bool = false) {}
     func appBecameActive() {}
     func chatOpened(conversation: String) {}
-}
-
-/// Screen Time locks are set on the phone.
-@MainActor
-final class ScreenTimeService: ObservableObject {
-    @Published private(set) var locks: [ScreenLock] = []
-    @Published private(set) var lastError: String?
-
-    init(api: APIClient) {}
-
-    var isAuthorized: Bool { false }
-    var current: (lock: ScreenLock, until: Date)? { nil }
-    var strictOn: (lock: ScreenLock, until: Date)? { nil }
-    func sync() async {}
 }
 
 struct ReminderList: Identifiable, Hashable {

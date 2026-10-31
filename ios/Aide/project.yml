@@ -173,7 +173,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
   # The Mac app: the same views as the phone, in a sidebar window. What only a phone has (Apple Health, Live
-  # Activities, Screen Time, location, the meal camera, Apple Reminders sync) stays on the phone: Mac/MacServices.swift
+  # Activities, location, the meal camera, Apple Reminders sync) stays on the phone: Mac/MacServices.swift
   # stands in for those services, and Mac/iOSCompat.swift lets the shared views' UIKit and iOS-only modifiers build.
   AideMac:
     type: application
@@ -198,6 +198,7 @@ targets:
       - Shared/LineBadge.swift
       - Shared/MealIntents.swift
       - ScreenTime/ScreenLock.swift
+      - ScreenTime/LockClock.swift
     dependencies:
       - package: SwiftMath
     info:

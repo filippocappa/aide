@@ -8,7 +8,7 @@ final class LockMonitor: DeviceActivityMonitor {
         super.intervalDidStart(for: activity)
         guard let id = LockBook.id(of: activity), let lock = LockBook.locks.first(where: { $0.id == id }) else { return }
         // A moment ahead: the call can come a little before the minute it's for.
-        if LockBook.until(lock, at: Date().addingTimeInterval(60)) != nil { LockBook.shield(id) }
+        if LockClock.until(lock, at: Date().addingTimeInterval(60)) != nil { LockBook.shield(id) }
     }
 
     override func intervalDidEnd(for activity: DeviceActivityName) {

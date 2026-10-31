@@ -92,56 +92,21 @@ enum LockBook {
         store(id).clearAllSettings()
     }
 
-    // MARK: When
-
-    static func date(_ iso: String?) -> Date? {
-        guard let iso else { return nil }
-        return ISO8601DateFormatter().date(from: iso)
-    }
-
-    static func minutes(_ hhmm: String?) -> Int? {
-        let parts = (hhmm ?? "").split(separator: ":").compactMap { Int($0) }
-        return parts.count == 2 ? parts[0] * 60 + parts[1] : nil
-    }
-
-    /// When the lock opens, if it holds at `now`: on, in its time, and not unlocked early this time.
-    static func until(_ lock: ScreenLock, at now: Date = Date()) -> Date? {
-        if lock.once {
-            guard let start = date(lock.startsAt), let end = date(lock.endsAt), start <= now, now < end else { return nil }
-            return end
-        }
-        guard lock.enabled, let start = minutes(lock.start), let end = minutes(lock.end) else { return nil }
-        let calendar = Calendar.current
-        let length = ((end - start) % 1440 + 1440) % 1440
-        let today = calendar.startOfDay(for: now)
-        for back in [1, 0] {
-            guard let day = calendar.date(byAdding: .day, value: -back, to: today),
-                  let from = calendar.date(byAdding: .minute, value: start, to: day),
-                  let to = calendar.date(byAdding: .minute, value: length, to: from) else { continue }
-            // Calendar's weekday is 1 = Sunday; the server's is ISO, 1 = Monday.
-            let weekday = (calendar.component(.weekday, from: day) + 5) % 7 + 1
-            guard from <= now, now < to, lock.days?.isEmpty != false || lock.days!.contains(weekday) else { continue }
-            if let opened = date(lock.openUntil), opened >= to { return nil }
-            return to
-        }
-        return nil
-    }
+    // MARK: When (the maths is LockClock's, shared with the Mac)
 
     /// The lock that holds now and ends last: the one the shield names.
-    static func current(at now: Date = Date()) -> (lock: ScreenLock, until: Date)? {
-        locks.compactMap { lock in until(lock, at: now).map { (lock, $0) } }.max { $0.1 < $1.1 }
-    }
+    static func current(at now: Date = Date()) -> (lock: ScreenLock, until: Date)? { LockClock.current(locks, at: now) }
 
     /// The schedule DeviceActivity watches for a lock: daily for a schedule (the monitor checks the day), the exact
     /// times for a one-off. nil: nothing to watch (a schedule that's off, a one-off that's over).
     static func schedule(for lock: ScreenLock, now: Date = Date()) -> DeviceActivitySchedule? {
         if lock.once {
-            guard let start = date(lock.startsAt), let end = date(lock.endsAt), end > now else { return nil }
+            guard let start = LockClock.date(lock.startsAt), let end = LockClock.date(lock.endsAt), end > now else { return nil }
             let fields: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
             return DeviceActivitySchedule(intervalStart: Calendar.current.dateComponents(fields, from: max(start, now)),
                                           intervalEnd: Calendar.current.dateComponents(fields, from: end), repeats: false)
         }
-        guard lock.enabled, let start = minutes(lock.start), let end = minutes(lock.end) else { return nil }
+        guard lock.enabled, let start = LockClock.minutes(lock.start), let end = LockClock.minutes(lock.end) else { return nil }
         return DeviceActivitySchedule(intervalStart: DateComponents(hour: start / 60, minute: start % 60),
                                       intervalEnd: DateComponents(hour: end / 60, minute: end % 60), repeats: true)
     }
