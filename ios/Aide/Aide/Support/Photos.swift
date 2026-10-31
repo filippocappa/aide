@@ -1,7 +1,9 @@
 import ImageIO
 import PhotosUI
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 import Vision
 
 /// A photo picked to send, already shrunk to the JPEG the server gets.
@@ -36,6 +38,7 @@ enum PhotoPrep {
         return CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
     }
 
+    #if os(iOS)
     /// A camera photo: drawn upright at the smaller size.
     static func jpeg(_ image: UIImage) -> Data? {
         let pixels = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
@@ -47,6 +50,7 @@ enum PhotoPrep {
             image.draw(in: CGRect(origin: .zero, size: target))
         }
     }
+    #endif
 
     /// A library photo (HEIC, JPEG, PNG…): decoded straight at the smaller size and turned upright, so a 48 MP
     /// photo never sits in memory at full size.
@@ -101,6 +105,7 @@ private struct PhotoSources: ViewModifier {
                     if !photos.isEmpty { onPick(photos) }
                 }
             }
+            #if os(iOS)
             .fullScreenCover(isPresented: $camera) {
                 CameraPicker { image in
                     Task {
@@ -115,6 +120,7 @@ private struct PhotoSources: ViewModifier {
                 }
                 .ignoresSafeArea()
             }
+            #endif
     }
 }
 
@@ -135,11 +141,13 @@ enum BarcodeReader {
         return codes(in: image)
     }
 
+    #if os(iOS)
     /// A camera photo, as it was taken.
     static func codes(in image: UIImage) -> [String] {
         guard let cg = image.cgImage else { return [] }
         return codes(in: cg, orientation: CGImagePropertyOrientation(image.imageOrientation))
     }
+    #endif
 
     static let symbologies: [VNBarcodeSymbology] = [.ean13, .ean8, .upce]
 
@@ -167,6 +175,7 @@ enum BarcodeReader {
     }
 }
 
+#if os(iOS)
 private extension CGImagePropertyOrientation {
     init(_ orientation: UIImage.Orientation) {
         switch orientation {
@@ -215,6 +224,7 @@ struct CameraPicker: UIViewControllerRepresentable {
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
     }
 }
+#endif
 
 /// A photo on the server, fetched with the API token (AsyncImage can't send it) and kept in memory. `local` shows
 /// one still on its way up. `fit` keeps its shape; otherwise it fills the frame it's given.

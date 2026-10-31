@@ -257,7 +257,9 @@ struct MathFormula: View {
             let label = MTMathUILabel()
             label.labelMode = .display
             label.textAlignment = .left
+            #if os(iOS)
             label.backgroundColor = .clear
+            #endif
             return label
         }
 
@@ -344,6 +346,7 @@ enum MathText {
         let fit = label.intrinsicContentSize
         guard fit.width > 0, fit.height > 0 else { return nil }
         label.frame = CGRect(origin: .zero, size: fit)
+        #if os(iOS)
         label.layoutSubviews()
         guard let display = label.displayList else { return nil }
         let image = UIGraphicsImageRenderer(size: fit).image { context in
@@ -351,8 +354,18 @@ enum MathText {
             cg.translateBy(x: 0, y: fit.height)
             cg.scaleBy(x: 1, y: -1)  // SwiftMath draws with the origin at the bottom
             display.draw(cg)
+        }.withRenderingMode(.alwaysTemplate)
+        #else
+        label.layout()
+        guard let display = label.displayList else { return nil }
+        let image = NSImage(size: fit, flipped: false) { _ in // AppKit's origin is at the bottom, as SwiftMath's
+            guard let cg = NSGraphicsContext.current?.cgContext else { return false }
+            display.draw(cg)
+            return true
         }
-        let done = Drawn(image: image.withRenderingMode(.alwaysTemplate), descent: display.descent)
+        image.isTemplate = true
+        #endif
+        let done = Drawn(image: image, descent: display.descent)
         drawn.setObject(done, forKey: key)
         return done
     }

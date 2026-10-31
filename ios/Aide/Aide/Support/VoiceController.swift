@@ -453,9 +453,11 @@ final class VoiceController: ObservableObject {
                 MainActor.assumeIsolated { self?.engineChanged() }
             }
         }
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+        #endif
 
         let input = engine.inputNode
         try input.setVoiceProcessingEnabled(true) // echo cancellation: it can hear you over its own voice
@@ -480,9 +482,14 @@ final class VoiceController: ObservableObject {
         engine.prepare()
         try engine.start()
         detector.reset()
+        #if os(iOS)
         let route = session.currentRoute.inputs.map { "\($0.portType.rawValue) \($0.portName)" }.joined(separator: ", ")
-        VoiceLog.note("microphone on: \(input.outputFormat(forBus: 0)), input \(route.isEmpty ? "none" : route), "
-                      + "\(session.category.rawValue) \(session.mode.rawValue), \(Int(session.sampleRate)) Hz, "
+        let setup = "input \(route.isEmpty ? "none" : route), "
+            + "\(session.category.rawValue) \(session.mode.rawValue), \(Int(session.sampleRate)) Hz, "
+        #else
+        let setup = "" // the Mac has no audio session to describe
+        #endif
+        VoiceLog.note("microphone on: \(input.outputFormat(forBus: 0)), " + setup
                       + "voice processing \(input.isVoiceProcessingEnabled), muted \(input.isVoiceProcessingInputMuted), "
                       + "permission \(AVAudioApplication.shared.recordPermission.rawValue)")
     }
@@ -503,7 +510,9 @@ final class VoiceController: ObservableObject {
         feed.recorder = nil
         if engine.isRunning { engine.stop() }
         engine.inputNode.removeTap(onBus: 0)
+        #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
     }
 
     // MARK: Speaking

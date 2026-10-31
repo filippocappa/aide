@@ -99,6 +99,32 @@ What the app does, v1:
 
 The app reaches the server over Tailscale (the phone needs the Tailscale app). Everything is in `docs/API.md`.
 
+### The Mac app (same project, target `AideMac`)
+
+The phone's views in a Mac window with a sidebar (Team, Today, Study, Health, Food, Settings), macOS 14+, bundle
+`$(AIDE_BUNDLE_ID).mac`, its own server URL and token in the Mac's keychain. Same server, same API, no contract of its
+own. What only the phone has stays on the phone: Apple Health uploads, Live Activities, Screen Time, location, the
+meal camera, the Apple Reminders sync, push (the Mac reads what the phone sent; a reminder ticked on the Mac goes
+through the server and the phone's next sync).
+
+- `Mac/AideMacApp.swift`, `Mac/MacRootView.swift`: the app, the sidebar, the menu bar (⌘N new chat, ⌘1–6).
+- `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
+  `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
+- `Mac/iOSCompat.swift`: lets the shared views build unchanged: `UIColor`/`UIImage`/`UIPasteboard` as their AppKit
+  twins, `navigationBarTitleDisplayMode`, `topBarTrailing`, `keyboardType`, `fullScreenCover` (a sheet) and the like.
+
+Keeping both working:
+- **Build both before pushing a change to `ios/Aide/Aide/`.** When the Mac build breaks on something new from iOS:
+  add it to `Mac/iOSCompat.swift` if it has a Mac meaning (or none: a no-op), else wrap it in `#if os(iOS)`.
+- A new file that only makes sense on the phone (HealthKit, ActivityKit, a camera…) goes in `AideMac`'s `excludes` in
+  `project.yml`, with a stand-in in `Mac/MacServices.swift` if shared code calls it.
+- `#available(iOS 26, *)` needs `macOS 26` too: `#available(iOS 26, macOS 26, *)`.
+
+```bash
+cd ios/Aide
+xcodebuild -scheme AideMac -destination 'platform=macOS' build    # the Mac app
+```
+
 ## Roadmap
 
 Where things stand (2026-10-20):

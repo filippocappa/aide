@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // YouTube videos Aide reads (docs/API.md, "Videos"): the card in chat, the page with the brief, the brief as slides,
 // and the list in Settings.

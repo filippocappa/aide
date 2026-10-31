@@ -502,14 +502,14 @@ struct MessageBox<Buttons: View>: View {
 enum MessageBoxGlass {
     /// Liquid Glass where the system has it: the messages show through as they scroll under the box.
     static var isOn: Bool {
-        if #available(iOS 26, *) { return true } else { return false }
+        if #available(iOS 26, macOS 26, *) { return true } else { return false }
     }
 }
 
 private extension View {
     @ViewBuilder func messageBoxSurface() -> some View {
         let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
             glassEffect(.regular, in: shape)
         } else {
             background(Theme.card, in: shape).overlay(shape.stroke(Theme.line, lineWidth: 0.5))
@@ -846,6 +846,7 @@ private struct HeaderPebble: View {
     }
 }
 
+#if os(iOS)
 /// With the navigation bar hidden, UIKit turns off the swipe from the left edge that goes back. This keeps it.
 extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     override open func viewDidLoad() {
@@ -857,6 +858,7 @@ extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
         viewControllers.count > 1
     }
 }
+#endif
 
 /// The page fading in from the top, over a blur, so messages dissolve as they slide under Pebble and the buttons.
 /// A round glass header button's face.

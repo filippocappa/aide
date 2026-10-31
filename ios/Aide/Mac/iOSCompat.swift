@@ -1,0 +1,216 @@
+import AppKit
+import SwiftUI
+
+// The shared views are written for the phone. This file lets them build on the Mac without changing them: the UIKit
+// types they use stand for their AppKit twins, and the iOS-only modifiers turn into the Mac's nearest (or nothing).
+// When a phone change uses something new from UIKit or an iOS-only modifier and the Mac build breaks, add it here, or
+// wrap that bit in `#if os(iOS)` when there's no sensible Mac meaning.
+
+// MARK: - Colours, fonts, images
+
+typealias UIColor = NSColor
+typealias UIFont = NSFont
+typealias UIImage = NSImage
+
+enum UIUserInterfaceStyle { case unspecified, light, dark }
+
+struct UITraitCollection {
+    var userInterfaceStyle: UIUserInterfaceStyle = .unspecified
+
+    init(userInterfaceStyle: UIUserInterfaceStyle) { self.userInterfaceStyle = userInterfaceStyle }
+
+    init(_ appearance: NSAppearance) {
+        userInterfaceStyle = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+    }
+}
+
+extension NSColor {
+    /// `UIColor { traits in … }`: a colour that follows light and dark mode.
+    convenience init(_ provider: @escaping (UITraitCollection) -> NSColor) {
+        self.init(name: nil) { provider(UITraitCollection($0)) }
+    }
+
+    static var label: NSColor { .labelColor }
+    static var secondaryLabel: NSColor { .secondaryLabelColor }
+    static var systemBackground: NSColor { .windowBackgroundColor }
+
+    func resolvedColor(with traits: UITraitCollection) -> NSColor {
+        let name: NSAppearance.Name = traits.userInterfaceStyle == .dark ? .darkAqua : .aqua
+        var resolved = self
+        NSAppearance(named: name)?.performAsCurrentDrawingAppearance {
+            resolved = self.usingColorSpace(.sRGB) ?? self
+        }
+        return resolved
+    }
+}
+
+extension Color {
+    init(uiColor: NSColor) { self.init(nsColor: uiColor) }
+}
+
+extension NSImage {
+    convenience init(cgImage: CGImage) {
+        self.init(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+
+    var cgImage: CGImage? { cgImage(forProposedRect: nil, context: nil, hints: nil) }
+
+    /// Points and pixels are the same here: images come from data, not from a screen of a given scale.
+    var scale: CGFloat { 1 }
+
+    func jpegData(compressionQuality: CGFloat) -> Data? {
+        guard let cgImage else { return nil }
+        return NSBitmapImageRep(cgImage: cgImage)
+            .representation(using: .jpeg, properties: [.compressionFactor: compressionQuality])
+    }
+
+    /// UIKit decodes ahead of drawing; AppKit decodes when it draws.
+    func preparingForDisplay() -> NSImage? { self }
+
+    func pngData() -> Data? {
+        guard let cgImage else { return nil }
+        return NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:])
+    }
+}
+
+extension Image {
+    init(uiImage: NSImage) { self.init(nsImage: uiImage) }
+}
+
+// MARK: - The app, the device, the clipboard, haptics
+
+@MainActor
+final class UIApplication {
+    static let shared = UIApplication()
+    static let openSettingsURLString = "x-apple.systempreferences:"
+    /// The Mac doesn't lock on a timer the app can hold off; nothing to do.
+    var isIdleTimerDisabled = false
+    func registerForRemoteNotifications() {}
+    func open(_ url: URL) { NSWorkspace.shared.open(url) }
+}
+
+@MainActor
+struct UIDevice {
+    static let current = UIDevice()
+    var name: String { Host.current().localizedName ?? "Mac" }
+}
+
+final class UIPasteboard {
+    static let general = UIPasteboard()
+
+    var string: String? {
+        get { NSPasteboard.general.string(forType: .string) }
+        set {
+            NSPasteboard.general.clearContents()
+            if let newValue { NSPasteboard.general.setString(newValue, forType: .string) }
+        }
+    }
+}
+
+struct UIImpactFeedbackGenerator {
+    enum FeedbackStyle { case light, medium, heavy, soft, rigid }
+    init(style: FeedbackStyle) {}
+    func impactOccurred() {}
+    func prepare() {}
+}
+
+struct UINotificationFeedbackGenerator {
+    enum FeedbackType { case success, warning, error }
+    func notificationOccurred(_ type: FeedbackType) {}
+    func prepare() {}
+}
+
+struct UISelectionFeedbackGenerator {
+    func selectionChanged() {}
+    func prepare() {}
+}
+
+// MARK: - Views from UIKit
+
+/// A `UIViewRepresentable` written for the phone, drawn with the same code here: the views it makes (PDFKit's
+/// `PDFView`, SwiftMath's label) exist on both.
+protocol UIViewRepresentable: NSViewRepresentable where NSViewType == UIViewType {
+    associatedtype UIViewType: NSView
+    @MainActor func makeUIView(context: Context) -> UIViewType
+    @MainActor func updateUIView(_ uiView: UIViewType, context: Context)
+    @MainActor func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIViewType, context: Context) -> CGSize?
+}
+
+extension UIViewRepresentable {
+    @MainActor func makeNSView(context: Context) -> UIViewType { makeUIView(context: context) }
+    @MainActor func updateNSView(_ nsView: UIViewType, context: Context) { updateUIView(nsView, context: context) }
+    @MainActor func sizeThatFits(_ proposal: ProposedViewSize, nsView: UIViewType, context: Context) -> CGSize? {
+        sizeThatFits(proposal, uiView: nsView, context: context)
+    }
+    @MainActor func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIViewType, context: Context) -> CGSize? { nil }
+}
+
+// MARK: - iOS-only modifiers
+
+enum MacTitleDisplayMode { case automatic, inline, large }
+
+enum UIKeyboardType { case `default`, asciiCapable, numbersAndPunctuation, URL, numberPad, phonePad, namePhonePad,
+                      emailAddress, decimalPad, twitter, webSearch, asciiCapableNumberPad }
+
+enum MacAutocapitalization { case never, words, sentences, characters }
+
+extension View {
+    /// Mac windows have one title style.
+    func navigationBarTitleDisplayMode(_ mode: MacTitleDisplayMode) -> some View { self }
+
+    /// Mac keyboards have every key.
+    func keyboardType(_ type: UIKeyboardType) -> some View { self }
+
+    func textInputAutocapitalization(_ style: MacAutocapitalization?) -> some View { self }
+
+    /// The phone's full-screen pages come up as sheets.
+    func fullScreenCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil,
+                                        @ViewBuilder content: @escaping () -> Content) -> some View {
+        sheet(isPresented: isPresented, onDismiss: onDismiss) { content().frame(minWidth: 520, minHeight: 600) }
+    }
+
+    func fullScreenCover<Item: Identifiable, Content: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil,
+                                                            @ViewBuilder content: @escaping (Item) -> Content) -> some View {
+        sheet(item: item, onDismiss: onDismiss) { content($0).frame(minWidth: 520, minHeight: 600) }
+    }
+
+    func statusBarHidden(_ hidden: Bool = true) -> some View { self }
+}
+
+extension ToolbarItemPlacement {
+    static var topBarLeading: ToolbarItemPlacement { .navigation }
+    static var topBarTrailing: ToolbarItemPlacement { .primaryAction }
+    static var bottomBar: ToolbarItemPlacement { .automatic }
+    static var navigationBarLeading: ToolbarItemPlacement { .navigation }
+    static var navigationBarTrailing: ToolbarItemPlacement { .primaryAction }
+}
+
+extension ToolbarPlacement {
+    /// The phone's navigation bar is the window's toolbar here.
+    static var navigationBar: ToolbarPlacement { .windowToolbar }
+    static var tabBar: ToolbarPlacement { .windowToolbar }
+}
+
+enum MacSectionSpacing { case `default`, compact }
+
+enum MacDrawerDisplayMode { case automatic, always }
+
+extension SearchFieldPlacement {
+    static func navigationBarDrawer(displayMode: MacDrawerDisplayMode = .automatic) -> SearchFieldPlacement { .automatic }
+    static var navigationBarDrawer: SearchFieldPlacement { .automatic }
+}
+
+extension View {
+    func listSectionSpacing(_ spacing: MacSectionSpacing) -> some View { self }
+    func listSectionSpacing(_ spacing: CGFloat) -> some View { self }
+}
+
+/// Lists reorder by dragging on the Mac, with no edit mode to switch on.
+struct EditButton: View {
+    var body: some View { EmptyView() }
+}
+
+/// The Shortcuts app's link button is the phone's.
+struct ShortcutsLink: View {
+    var body: some View { EmptyView() }
+}

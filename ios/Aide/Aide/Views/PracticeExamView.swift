@@ -383,6 +383,7 @@ private struct PracticeTaking: View {
     var body: some View {
         VStack(spacing: 0) {
             progress
+            #if os(iOS)
             TabView(selection: $page) {
                 ForEach(Array(quiz.questions.enumerated()), id: \.element.id) { index, question in
                     ScrollView {
@@ -395,6 +396,17 @@ private struct PracticeTaking: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            #else
+            // No swiping between pages on the Mac: the current question, moved on with the buttons.
+            ScrollView {
+                if quiz.questions.indices.contains(page) {
+                    pageView(quiz.questions[page])
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                }
+            }
+            .id(page)
+            #endif
             if let message = checkError ?? error {
                 Label(message, systemImage: "exclamationmark.triangle")
                     .font(.footnote).foregroundStyle(.red).padding(.horizontal, 16).padding(.bottom, 6)

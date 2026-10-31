@@ -1,4 +1,6 @@
+#if canImport(UIKit)
 import UIKit
+#endif
 import UserNotifications
 
 /// What a tapped notification asks the app to show (docs/API.md, Push).
@@ -104,12 +106,17 @@ final class PushService: ObservableObject {
     /// Launch and return-to-foreground. Silent pushes need no permission, so the app always registers;
     /// the permission prompt only matters for visible ones, and iOS shows it once.
     func refresh() async {
+        #if os(iOS)
         if authorization == .notDetermined {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
         }
         authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         UIApplication.shared.registerForRemoteNotifications()
         if !isRegistered { await sendToken() }
+        #else
+        // No pushes to the Mac yet: the server sends with the phone's topic, so the Mac doesn't register.
+        authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        #endif
     }
 
     func didRegister(token data: Data) {

@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 /// Pebble's palette: Slate #34413F and Sand #ECE5D8 (brand/README.md) for ink and buttons, on plain white or
 /// black. The pages stay neutral so the only colour on screen is the agents' figures.
@@ -106,7 +108,7 @@ extension View {
 
     /// Pinned at the bottom with the page scrolling under it, softly faded out where the system can.
     @ViewBuilder func bottomBar<V: View>(@ViewBuilder _ content: () -> V) -> some View {
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
             safeAreaBar(edge: .bottom, spacing: 0, content: content)
         } else {
             safeAreaInset(edge: .bottom, spacing: 0, content: content)
@@ -115,7 +117,7 @@ extension View {
 
     /// A floating control: Liquid Glass where the system has it, else a frosted material with a soft shadow.
     @ViewBuilder func glass<S: Shape>(in shape: S) -> some View {
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
             glassEffect(.regular.interactive(), in: shape)
         } else {
             background(.regularMaterial, in: shape).shadow(color: .black.opacity(0.08), radius: 8, y: 2)

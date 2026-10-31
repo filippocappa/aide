@@ -172,6 +172,54 @@ targets:
         CODE_SIGN_ENTITLEMENTS: LockShield/LockShield.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
+  # The Mac app: the same views as the phone, in a sidebar window. What only a phone has (Apple Health, Live
+  # Activities, Screen Time, location, the meal camera, Apple Reminders sync) stays on the phone: Mac/MacServices.swift
+  # stands in for those services, and Mac/iOSCompat.swift lets the shared views' UIKit and iOS-only modifiers build.
+  AideMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Aide
+        excludes:
+          - AideApp.swift
+          - Info.plist
+          - "*.entitlements"
+          - Health/HealthService.swift
+          - Health/WakeUpIntent.swift
+          - Support/LiveActivities.swift
+          - Support/LocationService.swift
+          - Support/ScreenTimeService.swift
+          - Support/TouchTracker.swift
+          - Sync/ReminderSyncService.swift
+          - Views/MealCameraView.swift
+          - Views/ScreenTimeView.swift
+      - Mac
+      - Shared/LineBadge.swift
+      - Shared/MealIntents.swift
+      - ScreenTime/ScreenLock.swift
+    dependencies:
+      - package: SwiftMath
+    info:
+      path: Mac/Info.plist
+      properties:
+        CFBundleDisplayName: Aide
+        AideKeychainService: $(AIDE_BUNDLE_ID).mac
+        LSApplicationCategoryType: public.app-category.productivity
+        CFBundleURLTypes:
+          - CFBundleURLName: $(AIDE_BUNDLE_ID).mac
+            CFBundleURLSchemes: [aide]
+        NSMicrophoneUsageDescription: Aide listens when you click the microphone, so you can talk instead of type.
+        NSSpeechRecognitionUsageDescription: Aide turns what you say into text to send to your assistant.
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).mac
+        PRODUCT_NAME: Aide
+        CODE_SIGN_ENTITLEMENTS: Mac/AideMac.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: MacIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_HARDENED_RUNTIME: YES
   AideTests:
     type: bundle.unit-test
     platform: iOS
@@ -194,3 +242,9 @@ schemes:
       config: Debug
       targets:
         - AideTests
+  AideMac:
+    build:
+      targets:
+        AideMac: all
+    run:
+      config: Debug

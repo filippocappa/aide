@@ -233,8 +233,12 @@ final class WebLogin: NSObject, ASWebAuthenticationPresentationContextProviding 
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         MainActor.assumeIsolated {
+            #if os(iOS)
             UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                 .flatMap(\.windows).first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+            #else
+            NSApplication.shared.keyWindow ?? ASPresentationAnchor()
+            #endif
         }
     }
 }
@@ -299,8 +303,12 @@ struct ObsidianView: View {
         Button {
             guard let value else { return }
             // The password stays on this phone and leaves the clipboard after a few minutes.
+            #if os(iOS)
             UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic: value]], options: secret
                 ? [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)] : [:])
+            #else
+            UIPasteboard.general.string = value
+            #endif
             copied = label
         } label: {
             LabeledContent(label) {

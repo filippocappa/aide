@@ -31,6 +31,7 @@ struct SettingsView: View {
                     row("Nutrition targets", "fork.knife", .green) { NutritionTargetsView() }
                     row("Videos", "play.rectangle.fill", .red) { VideosView() }
                 }
+                #if os(iOS)
                 Section("This iPhone") {
                     row("Notifications", "bell.badge.fill", .red, value: notificationsValue, off: push.authorization != .authorized && push.authorization != .provisional) {
                         NotificationSettingsView()
@@ -44,6 +45,7 @@ struct SettingsView: View {
                         ScreenTimeView()
                     }
                 }
+                #endif
                 Section {
                     row("Moodle", "graduationcap.fill", .orange) { MoodleView() }
                     row("Obsidian", "doc.richtext.fill", .indigo) { ObsidianView() }
@@ -86,7 +88,9 @@ struct SettingsView: View {
                 case "reminders": ReminderSettingsView()
                 case "health": HealthSettingsView()
                 case "location": LocationSettingsView()
+                #if os(iOS)
                 case "screentime": ScreenTimeView()
+                #endif
                 case "nutrition": NutritionTargetsView()
                 case "videos": VideosView()
                 default: ConnectionSettingsView(connection: connection)
@@ -112,6 +116,7 @@ struct SettingsView: View {
         }
     }
 
+    #if os(iOS)
     private var screenTimeValue: String {
         guard screenTime.isAuthorized else { return "Not set up" }
         if let (_, until) = screenTime.strictOn { return "Strict until \(ScreenTimeView.time(until))" }
@@ -119,6 +124,7 @@ struct SettingsView: View {
         let weekly = screenTime.locks.filter { !$0.once && $0.enabled }.count
         return weekly == 0 ? "On" : "\(weekly) lock\(weekly == 1 ? "" : "s")"
     }
+    #endif
 
     private var notificationsValue: String {
         switch push.authorization {
