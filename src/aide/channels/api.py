@@ -164,6 +164,18 @@ class ProposalApply(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class CourseDateIn(BaseModel):
+    """A course date the user adds or changes; on a change, only the fields sent."""
+    what: str | None = Field(default=None, max_length=200)
+    kind: str | None = None  # exam, mid-term, deadline, other
+    date: str | None = None  # YYYY-MM-DD
+    time: str | None = None  # HH:MM, null: all day
+    end: str | None = None
+    room: str | None = Field(default=None, max_length=200)
+    you: str | None = Field(default=None, max_length=400)
+    details: str | None = Field(default=None, max_length=600)
+
+
 class Exercises(BaseModel):
     topics: list[str] | None = Field(default=None, max_length=60)  # t_… ids; null: every written topic
 
@@ -1283,11 +1295,78 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 return None
             return summary | {"mastery": quizzes.mastery(cid)}
 
-        return {"courses": [study.course_json(c) | {"notebook": brief(c["id"])} for c in courses],
+        def exam(c: dict) -> dict:
+            """The calendar's next exam, else the earliest exam or mid-term the course's own dates say is coming."""
+            out = study.course_json(c)
+            if out["next_exam"] is not None:
+                return out | {"next_exam": out["next_exam"] | {"from": "calendar", "all_day": False}}
+            today = datetime.now(tz).date()
+            if notebook is not None and (d := next((d for d in notebook.dates(c["id"], since=today)
+                                                    if d["kind"] in ("exam", "mid-term")), None)):
+                at = datetime.fromisoformat(f"{d['date']}T{d['time'] or '00:00'}").replace(tzinfo=tz)
+                return out | {"next_exam": {"date": at.isoformat(), "title": f"{c['name']} {d['what']}",
+                                            "from": "course", "all_day": d["time"] is None}}
+            return out
+
+        return {"courses": [exam(c) | {"notebook": brief(c["id"])} for c in courses],
                 "unfiled": study.unfiled(),
                 "now": {"course": on[0]["id"], "name": on[0]["name"], "ends": on[1].astimezone(tz).isoformat()}
                 if on else None,
                 "transcription": worker is not None and worker.transcribe is not None}
+
+    def dates_json(course_id: int) -> dict:
+        today = datetime.now(tz).date().isoformat()
+        return {"course": course_id, "items": [d | {"past": d["date"] < today} for d in notebook.dates(course_id)],
+                "read_at": notebook.dates_read_at(course_id), "reading": notebook.dates_reading(course_id)}
+
+    def dates_or_404(course_id: int) -> int:
+        if study.course(course_id) is None:
+            raise HTTPException(404, f"no course {course_id}")
+        if notebook is None:
+            raise HTTPException(404, "no notebooks on this server")
+        return course_id
+
+    async def dates_changed(course_id: int) -> dict:
+        """After the user's change: the calendar checked again now, and a missing exam proposed in the chat."""
+        await notebook.calendar_check(course_id)
+        notebook.reread_dates(course_id)  # no model call when nothing it reads changed: only the proposal
+        return dates_json(course_id)
+
+    @app.get("/v1/study/courses/{course_id}/dates", dependencies=[Depends(auth)])
+    async def course_dates(course_id: int):
+        return dates_json(dates_or_404(course_id))
+
+    @app.post("/v1/study/courses/{course_id}/dates", dependencies=[Depends(auth)])
+    async def add_course_date(course_id: int, body: CourseDateIn):
+        try:
+            item = notebook.add_date(dates_or_404(course_id), body.model_dump(exclude_none=True))
+        except ValueError as e:
+            raise HTTPException(400, f"a date needs what it is and a real date: {e}")
+        return JSONResponse(await dates_changed(course_id) | {"item": item["id"]}, status_code=201)
+
+    @app.patch("/v1/study/courses/{course_id}/dates/{date_id}", dependencies=[Depends(auth)])
+    async def edit_course_date(course_id: int, date_id: str, body: CourseDateIn):
+        try:
+            notebook.edit_date(dates_or_404(course_id), date_id, body.model_dump(exclude_unset=True))
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'\""))
+        except ValueError as e:
+            raise HTTPException(400, f"a date needs what it is and a real date: {e}")
+        return await dates_changed(course_id)
+
+    @app.delete("/v1/study/courses/{course_id}/dates/{date_id}", dependencies=[Depends(auth)])
+    async def hide_course_date(course_id: int, date_id: str):
+        try:
+            notebook.hide_date(dates_or_404(course_id), date_id)
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'\""))
+        return dates_json(course_id)
+
+    @app.post("/v1/study/courses/{course_id}/dates/read", dependencies=[Depends(auth)])
+    async def read_course_dates(course_id: int):
+        """Professor reads the course's page and files for its dates again, even when nothing changed."""
+        notebook.reread_dates(dates_or_404(course_id), force=True)
+        return JSONResponse(dates_json(course_id), status_code=202)
 
     @app.post("/v1/study/courses/{course_id}/chat", dependencies=[Depends(auth)])
     async def course_chat(course_id: int):
@@ -1432,6 +1511,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             study.rewrite(target["id"])
             if worker is not None:
                 worker.kick()
+        if notebook is not None and course_id is not None:
+            notebook.maybe_dates(course_id, [f])
         return JSONResponse(file_json(f), status_code=201)
 
     @app.get("/v1/files", dependencies=[Depends(auth)])

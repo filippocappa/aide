@@ -814,6 +814,41 @@ row per written topic in the notebook's order: its multiple-choice questions and
 (`known`), wrong or blank (`learning`), never (`unseen`), from every practice exam, mock and quiz. The app draws a dot
 per topic from it.
 `chat` is null until the course has a chat; then the app opens it, else asks for one with the POST above.
+Since 2026-10-31 `next_exam` also has `"from": "calendar" | "course"` and `all_day`: without an exam in the Exam
+calendar, it's the earliest coming exam or mid-term from the course's dates (below), titled "<course> <what>", with
+`all_day` true (at local midnight) when the course gives no time.
+
+### Course dates
+
+What the course's Moodle page and files say is coming (since 2026-10-22 on the server; in the API since 2026-10-31):
+exams, mid-terms, sign-up deadlines, read by Professor and editable by the user.
+
+Professor reads them again when the Moodle page changes, when the Introduction is rewritten, and when a new or changed
+file looks like it may say when or where an exam is: by its name (exam, appello, avviso, aule, calendario, results…)
+or its first 3 pages (exam words, or an exam word and a written date). A lecture's slides aren't read for it. The model
+is asked only when what it would read (the page, the files' pages on the exam, the user's name) has changed.
+
+Date: `{"id": "d_…", "what": "1st mid-term", "kind": "exam" | "mid-term" | "deadline" | "other", "date": "2026-11-12",
+"time": "11:00" or null, "end": "13:00" or null, "room": "Aula 5" or null, "you": "Aula 5: surnames A–L" or null,
+"details": "…", "source": "Avviso.pdf, p. 1" or "Moodle", "by": "professor" | "you", "differs": null or {"date",
+"time", "source"}, "calendar": null or {"state": "in" | "moved" | "missing", "on": "2026-11-10", "event": "…", "plan":
+"ep_…-1"}, "past": false}`.
+- `you`: what the page sets for the user alone (their room, group, turn, a list with their name), by their name on
+  Moodle; nothing about anyone else.
+- `by: "you"`: the user's edit or their own; Professor's later reads don't change it. `differs`: Professor has since
+  read the same date differently (the app offers "The course now says…"; sending those back takes it).
+- `calendar` (exams and mid-terms still to come): `in` when the course has an event that day in the Exam calendar,
+  `moved` when its event is on another day within 3 weeks (`on`, `event`), else `missing`. A missing or moved one is
+  proposed once (for that date) in the course chat as an events card with a push; `plan` is the proposed item, added on
+  Add (Events and plans).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/study/courses/{id}/dates` | | `{"course": 5, "items": [Date], "read_at": "…" or null, "reading": false}`, by date, past ones too. `reading`: a read is queued or running. |
+| `POST /v1/study/courses/{id}/dates` | `{"what", "kind", "date", "time"?, "end"?, "room"?, "you"?, "details"?}` | `201`, the same as GET plus `"item": "d_…"` |
+| `PATCH /v1/study/courses/{id}/dates/{date_id}` | any of those | the same as GET. `404` unknown, `400` no `what` or a bad date |
+| `DELETE /v1/study/courses/{id}/dates/{date_id}` | | the same as GET: Professor's stays hidden through new reads, the user's own is deleted |
+| `POST /v1/study/courses/{id}/dates/read` | | `202`, the same as GET with `reading` true: read again even when nothing changed |
 
 The ready message in the course chat comes from Professor ("Notes from Tuesday's macroeconomics lecture…"); the
 model's note before it is hidden from `/v1/history`. A lecture with no course gets the push but no chat message.

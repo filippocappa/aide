@@ -231,6 +231,7 @@ def main() -> None:
     worker.notebook = notebook
     notes = NotebookWorker(notebook, agent, push)
     notes.quizzes = quizzes
+    notes.plans = plans
     review_watcher = ReviewWatcher(reviews, agent, push)
     reader = PageReader(study.files, agent)  # scans, read once with the model
     worker.engine = notes.engine = reader.engine = engine

@@ -356,12 +356,13 @@ class MoodleSync:
                 await self._refresh_courses(client, user["id"])
                 new: dict[int, list[dict]] = {}
                 updated = 0
-                changed: set[int] = set()  # courses whose page or files changed: their dates are read again
+                changed: set[int] = set()  # courses whose page changed: their dates are read again
+                touched: dict[int, list[dict]] = {}  # new or changed files: read again if one looks like it says when
                 for row in self.courses():
                     if row["course_id"] is None:
                         continue
                     for f, was_new in await self._sync_course(client, row):
-                        changed.add(row["course_id"])
+                        touched.setdefault(row["course_id"], []).append(f)
                         if was_new:
                             new.setdefault(row["course_id"], []).append(f)
                         else:
@@ -382,6 +383,9 @@ class MoodleSync:
             if self.notebook is not None:
                 for course_id in changed:
                     self.notebook.reread_dates(course_id)
+                for course_id, files in touched.items():
+                    if course_id not in changed:
+                        self.notebook.maybe_dates(course_id, files)
             count = sum(len(fs) for fs in new.values())
             if count:
                 await self._announce(new)

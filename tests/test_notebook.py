@@ -11,6 +11,7 @@ from aide.db import Database
 from aide.material import visual_pages
 from aide.notebook import DATES_PROMPT, SCAN_PROMPT, NotebookStore, NotebookWorker, date_line, parse_page, sections
 from aide.photos import PhotoStore
+from aide.plans import PlanStore
 from aide.reminders import ReminderStore
 from aide.study import StudyStore, tidy_math
 from aide.tools import ToolRegistry
@@ -252,6 +253,127 @@ async def test_a_courses_dates_are_read_from_its_page_and_files(nb):
     before_chat = len(chat_messages(nb))
     await drain(nb)
     assert len(nb.notebook.dates(cid)) == 3 and len(chat_messages(nb)) == before_chat
+
+
+async def test_an_exam_notice_is_read_for_dates_with_the_users_name_and_checked_against_the_calendar(nb):
+    cid = nb.macro["id"]
+    nb.db.conn.execute("INSERT INTO moodle_state (key, value) VALUES ('user', ?)",
+                       (json.dumps({"id": 7, "name": "Filippo Cappa", "site": "UniTo"}),))
+    nb.worker.plans = PlanStore(nb.db.conn, ROME, None)
+    await started(nb)
+    asked = len(nb.client.dated)
+    today = datetime.now(ROME).date()
+    mid, exam = today + timedelta(days=9), (datetime.now(ROME) + timedelta(days=20)).date()
+
+    # A lecture's slides that mention the exam only far in, or "0.25" and a test, aren't read for dates.
+    lecture = make_pdf(None, ["The IS curve", "A test of the model: a 0.25 rise in 3 markets", "Money demand",
+                              "More slides", "On the exam: 12/01, a written test"])
+    assert add_pdf(nb.api, lecture, course=cid, name="Lecture 7").status_code == 201
+    assert not nb.notebook.dates_reading(cid)
+
+    # An exam notice is: by its name here (an "Avviso"), or by its first pages.
+    assert nb.notebook.looks_like_dates({"name": "Rooms.pdf", "id": 0, "pages": 0})
+    nb.client.dates = [
+        {"what": "1st mid-term", "kind": "mid-term", "date": mid.isoformat(), "time": "11:00", "end": "13:00",
+         "room": "Aula 5", "you": "Aula 5: surnames A–L", "details": "Chapters 1-6.", "source": "Avviso.pdf, p. 1"},
+        {"what": "Final exam", "kind": "exam", "date": exam.isoformat(), "time": "09:00", "room": None,
+         "you": None, "details": "", "source": "Moodle"}]
+    notice = make_pdf(None, [f"Prova intermedia {mid:%d/%m}: aula 5 cognomi A-L, aula 7 cognomi M-Z"])
+    assert add_pdf(nb.api, notice, course=cid, name="Avviso").status_code == 201
+    assert nb.notebook.dates_reading(cid)
+    await drain(nb)
+    assert len(nb.client.dated) == asked + 1
+    request = sent(nb.client.dated[-1])
+    assert "The student: Filippo Cappa" in request and "[Avviso.pdf, p. 1]" in request
+    first, final = nb.notebook.dates(cid)
+    assert (first["room"], first["you"], first["by"]) == ("Aula 5", "Aula 5: surnames A–L", "professor")
+    assert first["id"].startswith("d_") and "For you: Aula 5: surnames A–L." in date_line(first, today)
+
+    # The final exam is in the Exam calendar; the mid-term isn't, so Professor proposes it, once.
+    assert final["calendar"]["state"] == "in" and first["calendar"]["state"] == "missing"
+    card = chat_messages(nb)[-1]
+    assert "**1st mid-term**" in card["text"] and "isn't in your Exam calendar" in card["text"]
+    [event] = card["attachments"][0]["events"]
+    assert (event["title"], event["calendar"], event["location"], event["change"]) == \
+        ("macroeconomics: 1st mid-term", "Exam", "Aula 5", "proposed")
+    assert event["start"].startswith(f"{mid.isoformat()}T11:00") and "For you: Aula 5" in event["notes"]
+    assert nb.push.messages[-1][1] == "Professor · macroeconomics"
+    posts = len(chat_messages(nb))
+
+    # The same pages again: no model call, nothing proposed again. Read again on purpose: the model is asked.
+    nb.notebook.reread_dates(cid)
+    await drain(nb)
+    assert len(nb.client.dated) == asked + 1 and len(chat_messages(nb)) == posts
+    r = nb.api.post(f"/v1/study/courses/{cid}/dates/read", headers=AUTH)
+    assert r.status_code == 202 and r.json()["reading"]
+    await drain(nb)
+    assert len(nb.client.dated) == asked + 2 and len(chat_messages(nb)) == posts
+
+    # Professor reads the final exam a few days off what the calendar has: it's flagged as moved.
+    late = exam + timedelta(days=4)
+    nb.client.dates[1]["date"] = late.isoformat()
+    nb.api.post(f"/v1/study/courses/{cid}/dates/read", headers=AUTH)
+    await drain(nb)
+    final = nb.notebook.dates(cid)[1]
+    assert final["calendar"]["state"] == "moved" and final["calendar"]["on"] == exam.isoformat()
+    card = chat_messages(nb)[-1]
+    assert f"your Exam calendar has it on {exam:%a %d %b}" in card["text"]
+    assert [e["change"] for e in card["attachments"][0]["events"]] == ["proposed", "found"]
+
+
+async def test_the_user_edits_a_courses_dates_and_professors_reads_keep_them(nb):
+    cid, law = nb.macro["id"], nb.study.course_by_name("business law")["id"]
+    nb.worker.plans = PlanStore(nb.db.conn, ROME, None)
+    today = datetime.now(ROME).date()
+    mid = today + timedelta(days=9)
+    nb.client.dates = [{"what": "1st mid-term", "kind": "mid-term", "date": mid.isoformat(), "time": "11:00",
+                        "source": "Moodle"},
+                       {"what": "Sign-up closes", "kind": "deadline", "date": (mid - timedelta(days=3)).isoformat()}]
+    await started(nb)
+    url = f"/v1/study/courses/{cid}/dates"
+    got = nb.api.get(url, headers=AUTH).json()
+    assert [d["what"] for d in got["items"]] == ["Sign-up closes", "1st mid-term"] and not got["reading"]
+    first = got["items"][1]["id"]
+
+    # Moved by the user: theirs, through Professor's next reads of the same date.
+    moved = mid + timedelta(days=1)
+    r = nb.api.patch(f"{url}/{first}", json={"date": moved.isoformat(), "room": "Aula 2"}, headers=AUTH)
+    item = next(d for d in r.json()["items"] if d["id"] == first)
+    assert (item["date"], item["time"], item["room"], item["by"], item["differs"]) == \
+        (moved.isoformat(), "11:00", "Aula 2", "you", None)
+    await drain(nb)
+    nb.api.post(f"{url}/read", headers=AUTH)
+    await drain(nb)
+    assert nb.notebook.find_date(cid, first)["date"] == moved.isoformat()
+    # Professor now reads another date for it: the user's stays, and says what the course says now.
+    later = mid + timedelta(days=5)
+    nb.client.dates[0]["date"] = later.isoformat()
+    nb.api.post(f"{url}/read", headers=AUTH)
+    await drain(nb)
+    item = nb.notebook.find_date(cid, first)
+    assert item["date"] == moved.isoformat() and item["differs"]["date"] == later.isoformat()
+    nb.api.patch(f"{url}/{first}", json={"date": later.isoformat()}, headers=AUTH)  # Use it
+    assert nb.notebook.find_date(cid, first)["differs"] is None
+
+    # Hidden stays hidden; the user's own are added and deleted.
+    deadline = got["items"][0]["id"]
+    assert [d["id"] for d in nb.api.delete(f"{url}/{deadline}", headers=AUTH).json()["items"]] == [first]
+    nb.api.post(f"{url}/read", headers=AUTH)
+    await drain(nb)
+    assert [d["id"] for d in nb.notebook.dates(cid)] == [first]
+    r = nb.api.post(url, json={"what": "Oral exam", "kind": "exam", "date": (today + timedelta(days=40)).isoformat(),
+                               "room": "Room 3"}, headers=AUTH)
+    assert r.status_code == 201 and next(d for d in r.json()["items"] if d["id"] == r.json()["item"])["by"] == "you"
+    assert nb.api.delete(f"{url}/{r.json()['item']}", headers=AUTH).json()["items"][-1]["id"] == first
+    assert nb.api.post(url, json={"what": "x", "date": "soon"}, headers=AUTH).status_code == 400
+    assert nb.api.patch(f"{url}/d_000000000000", json={"what": "x"}, headers=AUTH).status_code == 404
+
+    # The course card's exam: the calendar's, else the course's own next exam or mid-term.
+    nb.notebook.set_dates(law, [{"what": "Written exam", "kind": "exam", "date": (today + timedelta(days=30)).isoformat()}])
+    courses = {c["id"]: c for c in nb.api.get("/v1/study", headers=AUTH).json()["courses"]}
+    assert courses[cid]["next_exam"]["from"] == "calendar"
+    assert courses[law]["next_exam"] | {"date": None} == {"date": None, "title": "business law Written exam",
+                                                          "from": "course", "all_day": True}
 
 
 async def test_the_app_sees_what_professor_is_doing(nb):
