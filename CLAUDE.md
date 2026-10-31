@@ -101,8 +101,9 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 ### The Mac app (same project, target `AideMac`)
 
-The phone's views in a Mac window, the sections (Team, Today, Study, Health, Food, Settings) on a glass rail
-floating on the left over the page (`MacRail`; no system sidebar), macOS 14+, bundle
+The phone's views in a Mac window, the sections (Team, Today, Study, Health, Food, Settings) in a glass sidebar
+with their names floating on the left over the page (`MacSidebar`; no system sidebar), folding to a rail of icons
+(its button, ⌃⌘S, View → Show Section Names), macOS 14+, bundle
 `$(AIDE_BUNDLE_ID).mac`, its own server URL and token in the Mac's keychain. Same server, same API, no contract of its
 own except `app: "mac"` on `POST /v1/devices`. What only the phone has stays on the phone: Apple Health uploads, Live
 Activities, Screen Time, location, the meal camera, the Apple Reminders sync, the silent pushes (the Mac reads what
@@ -120,6 +121,10 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   once). Without it the app doesn't ask APNs (`UIApplication.canPush`).
 - `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
   `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
+- The Mac look (2026-10-31): `Mac/MacList.swift` makes `List` a grouped `Form` (rounded inset sections, no heavy
+  lines; buttons in rows are accent text), lighter dark colours in `Theme.swift` under `#if os(macOS)`, and
+  `Mac/MacNavigationStack.swift` makes `NavigationStack` give a sheet a glass close button (Esc) in its top-left
+  corner, since phone sheets often close only by swiping. Both shadow SwiftUI's types for `AideMac` only.
 - `Mac/iOSCompat.swift`: lets the shared views build unchanged: `UIColor`/`UIImage`/`UIPasteboard` as their AppKit
   twins, `navigationBarTitleDisplayMode`, `topBarTrailing`, `keyboardType`, `fullScreenCover` (a sheet) and the like.
 

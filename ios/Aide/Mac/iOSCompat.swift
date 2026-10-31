@@ -195,9 +195,10 @@ extension ToolbarItemPlacement {
 }
 
 extension ToolbarPlacement {
-    /// The phone's navigation bar is the window's toolbar here.
-    static var navigationBar: ToolbarPlacement { .windowToolbar }
-    static var tabBar: ToolbarPlacement { .windowToolbar }
+    /// The phone hides its navigation and tab bars on pages that draw their own header. The Mac's window toolbar
+    /// stays: hiding it takes the traffic lights with it. So these are a bar the window doesn't have.
+    static var navigationBar: ToolbarPlacement { .accessoryBar(id: "aide.none") }
+    static var tabBar: ToolbarPlacement { .accessoryBar(id: "aide.none") }
 }
 
 enum MacSectionSpacing { case `default`, compact }

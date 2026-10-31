@@ -90,11 +90,17 @@ struct MacMenuBarMenu: View {
 /// The menu bar: a new chat with Aide, and each section of the sidebar on ⌘1…⌘6.
 struct MacCommands: Commands {
     @AppStorage("menuBarItem") private var menuBarItem = true
+    @AppStorage("macSidebarCollapsed") private var sidebarCollapsed = false
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Chat with Aide") { MacWindow.newChat() }
                 .keyboardShortcut("n")
+        }
+        CommandGroup(before: .toolbar) {
+            Toggle("Show Section Names", isOn: Binding(get: { !sidebarCollapsed }, set: { sidebarCollapsed = !$0 }))
+                .keyboardShortcut("s", modifiers: [.control, .command])
+            Divider()
         }
         CommandGroup(after: .appSettings) {
             Toggle("Show in Menu Bar", isOn: $menuBarItem)

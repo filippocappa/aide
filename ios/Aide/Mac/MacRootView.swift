@@ -38,7 +38,8 @@ enum MacSection: String, CaseIterable, Identifiable, Hashable {
 @MainActor
 final class MacNavigation: ObservableObject {
     static let shared = MacNavigation()
-    @Published var section: MacSection? = .team
+    /// `-macSection study` at launch opens there (screenshots of each page).
+    @Published var section: MacSection? = UserDefaults.standard.string(forKey: "macSection").flatMap(MacSection.init) ?? .team
 }
 
 struct MacRootView: View {
@@ -49,18 +50,30 @@ struct MacRootView: View {
     @ObservedObject private var nav = MacNavigation.shared
     /// Things waiting for your OK, on the Team row's badge.
     @State private var waiting = 0
+    @AppStorage("macSidebarCollapsed") private var collapsed = false
 
     var body: some View {
         // No system sidebar: its flat slab cuts the page in two. The page runs the full width of the window, its
-        // glow behind everything, and the sections float over it on the left as a glass rail.
+        // glow behind everything, and the sections float over it on the left in glass.
         detail
             .id(nav.section)
-            // The rail, with as much room again on its right: the Mac's lists run their rows to the edge.
-            .safeAreaPadding(.leading, MacRail.width + 2 * MacRail.margin)
+            .safeAreaPadding(.leading, MacSidebar.inset(collapsed: collapsed))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .leading) {
-                MacRail(section: Binding(get: { nav.section ?? .team }, set: { nav.section = $0 }), waiting: waiting)
-                    .padding(.leading, MacRail.margin)
+                MacSidebar(section: Binding(get: { nav.section ?? .team }, set: { nav.section = $0 }),
+                           waiting: waiting, collapsed: $collapsed)
+                    .ignoresSafeArea()
+            }
+            // The window's title goes right of the sidebar, not over it.
+            .toolbar {
+                if !collapsed {
+                    if #available(macOS 26, *) {
+                        ToolbarItem(placement: .navigation) {
+                            Color.clear.frame(width: MacSidebar.fullWidth - 70, height: 1)
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    }
+                }
             }
         .onAppear {
             if !settings.isConfigured { nav.section = .settings }
@@ -88,9 +101,10 @@ struct MacRootView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { env.showMoodle = false } } }
             }
             .frame(minWidth: 520, minHeight: 560)
+            .macSheet()
         }
-        .sheet(item: $env.newFiles) { NewFilesSheet(ids: $0.ids).frame(minWidth: 480, minHeight: 480) }
-        .sheet(isPresented: $digest.isPresented) { DigestSheet().frame(minWidth: 560, minHeight: 640) }
+        .sheet(item: $env.newFiles) { NewFilesSheet(ids: $0.ids).frame(minWidth: 480, minHeight: 480).macSheet() }
+        .sheet(isPresented: $digest.isPresented) { DigestSheet().frame(minWidth: 560, minHeight: 640).macSheet() }
         // On the phone Today is a sheet over the Team tab; here it's a section of its own.
         .onChange(of: env.showToday) { _, show in
             if show { nav.section = .today; env.showToday = false }
@@ -110,37 +124,141 @@ struct MacRootView: View {
     }
 }
 
-/// The sections as a floating glass capsule on the left: icons only, the name on hover and in the Go menu (⌘1–6).
-struct MacRail: View {
-    static let width: CGFloat = 52
-    static let margin: CGFloat = 12
+/// The sections on the left, floating over the page in glass: a sidebar with each section's name, or folded into a
+/// rail of icons (the button at the bottom, ⌃⌘S, or View → Show Section Names). The names are on hover too, and in
+/// the Go menu (⌘1–6).
+struct MacSidebar: View {
+    static let railWidth: CGFloat = 52
+    static let fullWidth: CGFloat = 196
+    static let margin: CGFloat = 10
+
+    /// The room the page leaves on its left.
+    static func inset(collapsed: Bool) -> CGFloat {
+        collapsed ? railWidth + 2 * margin + 8 : fullWidth + 2 * margin
+    }
 
     @Binding var section: MacSection
     var waiting: Int
+    @Binding var collapsed: Bool
     @Namespace private var selection
 
     var body: some View {
+        Group {
+            if collapsed { rail } else { sidebar }
+        }
+        .animation(.snappy(duration: 0.25), value: section)
+    }
+
+    // MARK: The sidebar
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // The window's traffic lights sit in the sidebar's top corner, as in the Mac's own apps.
+            Color.clear.frame(height: 34)
+            row(.team)
+            row(.today)
+            header("Me")
+            row(.study)
+            row(.health)
+            row(.food)
+            Spacer(minLength: 12)
+            HStack {
+                row(.settings)
+                toggle
+            }
+        }
+        .padding(8)
+        .frame(width: Self.fullWidth)
+        .frame(maxHeight: .infinity)
+        .modifier(GlassPanel(shape: RoundedRectangle(cornerRadius: 18, style: .continuous)))
+        .padding(Self.margin)
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 10)
+            .padding(.top, 14)
+            .padding(.bottom, 2)
+    }
+
+    private func row(_ item: MacSection) -> some View {
+        let selected = item == section
+        return Button { section = item } label: {
+            HStack(spacing: 10) {
+                Image(systemName: item.icon)
+                    .symbolVariant(selected ? .fill : .none)
+                    .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                    .frame(width: 22)
+                Text(item.title)
+                    .font(.system(size: 13, weight: selected ? .semibold : .medium))
+                Spacer(minLength: 0)
+                if item == .team, waiting > 0 { badge }
+            }
+            .foregroundStyle(selected ? Color.primary : Color.secondary)
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(.primary.opacity(0.1))
+                        .matchedGeometryEffect(id: "selected", in: selection)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .help("\(item.title) (⌘\(String(item.shortcut.character)))")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var badge: some View {
+        Text("\(waiting)")
+            .font(.system(size: 10, weight: .bold)).monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18)
+            .background(Capsule().fill(.red))
+    }
+
+    private var toggle: some View {
+        Button { withAnimation(.snappy(duration: 0.3)) { collapsed.toggle() } } label: {
+            Image(systemName: collapsed ? "sidebar.left" : "sidebar.squares.left")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(collapsed ? "Show section names (⌃⌘S)" : "Icons only (⌃⌘S)")
+    }
+
+    // MARK: The rail
+
+    private var rail: some View {
         VStack(spacing: 4) {
-            button(.team)
-            button(.today)
+            icon(.team)
+            icon(.today)
             divider
-            button(.study)
-            button(.health)
-            button(.food)
+            icon(.study)
+            icon(.health)
+            icon(.food)
             divider
-            button(.settings)
+            icon(.settings)
+            toggle.frame(width: 40, height: 36)
         }
         .padding(.vertical, 8)
-        .frame(width: Self.width)
-        .modifier(RailBackground())
-        .animation(.snappy(duration: 0.25), value: section)
+        .frame(width: Self.railWidth)
+        .modifier(GlassPanel(shape: Capsule()))
+        .padding(.leading, Self.margin)
+        .frame(maxHeight: .infinity)
     }
 
     private var divider: some View {
         Capsule().fill(.secondary.opacity(0.25)).frame(width: 20, height: 1).padding(.vertical, 4)
     }
 
-    private func button(_ item: MacSection) -> some View {
+    private func icon(_ item: MacSection) -> some View {
         let selected = item == section
         return Button { section = item } label: {
             Image(systemName: item.icon)
@@ -154,14 +272,7 @@ struct MacRail: View {
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    if item == .team, waiting > 0 {
-                        Text("\(waiting)")
-                            .font(.system(size: 9, weight: .bold)).monospacedDigit()
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15)
-                            .background(Capsule().fill(.red))
-                            .offset(x: 2, y: -1)
-                    }
+                    if item == .team, waiting > 0 { badge.scaleEffect(0.85).offset(x: 4, y: -2) }
                 }
                 .contentShape(Circle())
         }
@@ -172,15 +283,17 @@ struct MacRail: View {
     }
 }
 
-/// Liquid Glass where the system has it, else a material capsule with a hairline and a soft shadow.
-private struct RailBackground: ViewModifier {
+/// Liquid Glass where the system has it, else a material panel with a hairline and a soft shadow.
+private struct GlassPanel<S: Shape>: ViewModifier {
+    var shape: S
+
     func body(content: Content) -> some View {
         if #available(macOS 26, *) {
-            content.glassEffect(.regular, in: Capsule())
+            content.glassEffect(.regular, in: shape)
         } else {
             content
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(.white.opacity(0.08)))
+                .background(.regularMaterial, in: shape)
+                .overlay(shape.stroke(.white.opacity(0.08)))
                 .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
         }
     }

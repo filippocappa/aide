@@ -13,10 +13,19 @@ enum Theme {
     static let slate = Color(uiColor: UIColor(hex: 0x34413F))
     static let sand = Color(uiColor: UIColor(hex: 0xECE5D8))
 
+    #if os(macOS)
+    /// On the Mac, dark mode is the window's dark grey, not the phone's OLED black: on black the cards, rows and
+    /// buttons sink in, and a window of it next to others looks like a hole.
+    static let background = color(light: 0xFFFFFF, dark: 0x1E1E20)
+    static let card = color(light: 0xF4F4F3, dark: 0x2A2A2D)
+    static let userBubble = color(light: 0xF0F0EF, dark: 0x333336)
+    static let chip = color(light: 0xEBEBEA, dark: 0x3A3A3D)
+    static let grouped = color(light: 0xF2F2F7, dark: 0x1E1E20)
+    static let row = color(light: 0xFFFFFF, dark: 0x2A2A2D)
+    static let line = color(light: 0xE4E4E2, dark: 0x3A3A3D)
+    #else
     static let background = color(light: 0xFFFFFF, dark: 0x000000)
     static let card = color(light: 0xF4F4F3, dark: 0x1C1C1E)
-    static let accent = color(light: 0x34413F, dark: 0xECE5D8)
-    static let onAccent = color(light: 0xECE5D8, dark: 0x34413F)
     static let userBubble = color(light: 0xF0F0EF, dark: 0x262628)
     static let chip = color(light: 0xEBEBEA, dark: 0x2C2C2E)
     /// Lists and forms: the system's grouped look, white rows on light grey (dark rows on black).
@@ -24,6 +33,9 @@ enum Theme {
     static let row = color(light: 0xFFFFFF, dark: 0x1C1C1E)
     /// Hairline around the message box.
     static let line = color(light: 0xE4E4E2, dark: 0x2C2C2E)
+    #endif
+    static let accent = color(light: 0x34413F, dark: 0xECE5D8)
+    static let onAccent = color(light: 0xECE5D8, dark: 0x34413F)
     private static let palette: [Color] = [
         Color(red: 0.24, green: 0.49, blue: 0.69), // ocean
         Color(red: 0.42, green: 0.56, blue: 0.44), // sage
