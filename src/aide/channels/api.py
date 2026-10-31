@@ -1818,9 +1818,17 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return a
 
     async def ask_fast(system: str, content: list[dict], max_tokens: int) -> str:
-        """Straight to the fast model: the user is waiting on the Study page (the plan's Claude Code takes longer)."""
-        response = await agent.client.beta.messages.create(
-            model=agent.model, max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": content}])
+        """Straight to the fast model: the user is waiting on the Study page (the plan's Claude Code takes longer, so
+        it's only the fallback, when OpenRouter says no)."""
+        try:
+            response = await agent.client.beta.messages.create(
+                model=agent.model, max_tokens=max_tokens, system=system,
+                messages=[{"role": "user", "content": content}])
+        except anthropic.APIError:
+            if engine is None or not engine.plan_now():
+                raise
+            log.warning("OpenRouter refused a study mark; asking the plan")
+            return await engine.ask(system, content, max_tokens, fast=True, wait=False)
         return "".join(b.text for b in response.content if b.type == "text").strip()
 
     @app.post("/v1/quizzes/{quiz_id}/check", dependencies=[Depends(auth)])
