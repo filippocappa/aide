@@ -5,6 +5,7 @@ Plain HTTP with an API key. Field masks keep each request to the fields shown, w
 
 import hashlib
 import re
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -12,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from .. import usage
 from . import Tool, ToolOutput
 
 PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
@@ -46,7 +48,10 @@ class GoogleMaps:
         self._http = http or httpx.AsyncClient(timeout=30)
 
     async def _post(self, url: str, fields: str, body: dict) -> dict:
+        started = time.monotonic()
         r = await self._http.post(url, json=body, headers={"X-Goog-Api-Key": self._key, "X-Goog-FieldMask": fields})
+        usage.record("google_maps", url.rsplit("/", 1)[-1], ms=round((time.monotonic() - started) * 1000),
+                     ok=r.status_code < 400)
         if r.status_code >= 400:
             try:
                 message = r.json()["error"]["message"]

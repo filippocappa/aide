@@ -2,9 +2,11 @@
 Italian and English (and both in one sentence) without being told which. The contract is docs/API.md, "Voice"."""
 
 import base64
+import time
 
 import httpx
 
+from . import usage
 from .config import OPENROUTER_BASE_URL, TRANSCRIBE_MODEL
 
 MAX_BYTES = 10 * 1024 * 1024  # about five minutes of 16 kHz mono WAV
@@ -29,9 +31,16 @@ class Transcriber:
         body = {"model": self.model, "temperature": 0, "messages": [{"role": "user", "content": [
             {"type": "text", "text": PROMPT + hint},
             {"type": "input_audio", "input_audio": {"data": base64.b64encode(audio).decode(), "format": fmt}},
-        ]}]}
+        ]}], "usage": {"include": True}}  # the cost comes back with the answer
+        started = time.monotonic()
         r = await self.http.post(f"{OPENROUTER_BASE_URL}/v1/chat/completions", json=body,
                                  headers={"Authorization": f"Bearer {self.api_key}"})
+        ms = round((time.monotonic() - started) * 1000)
+        if r.is_error:
+            usage.record("openrouter", self.model, ms=ms, ok=False, purpose="transcribe")
         r.raise_for_status()
+        u = r.json().get("usage") or {}
+        usage.record("openrouter", self.model, input=u.get("prompt_tokens") or 0, output=u.get("completion_tokens") or 0,
+                     cost=u.get("cost"), ms=ms, purpose="transcribe")
         text = (r.json()["choices"][0]["message"].get("content") or "").strip()
         return text.strip('"\u201c\u201d').strip()

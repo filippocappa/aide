@@ -20,10 +20,13 @@ import logging
 import os
 import re
 import shutil
+import time
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
+
+from . import usage
 
 if TYPE_CHECKING:
     from .tools import Tool
@@ -202,6 +205,8 @@ class Engine:
         async def prompt_stream():  # in-process tools need the streaming input mode
             yield {"type": "user", "message": {"role": "user", "content": prompt}}
 
+        started = time.monotonic()
+
         async def loop() -> str:
             texts: list[str] = []
             result, limit = None, None
@@ -215,6 +220,8 @@ class Engine:
                             texts.append(text)
                     elif isinstance(m, ResultMessage):
                         result = m
+                        usage.from_claude_code({"usage": m.usage, "total_cost_usd": m.total_cost_usd,
+                                                "is_error": m.is_error}, options.model, started)
             except Exception as e:  # the CLI exits non-zero at the limit
                 if limit and limit.get("status") == "rejected":
                     raise PlanLimit(_resets(limit, ""), limit.get("rateLimitType"), str(e)) from e
@@ -303,6 +310,7 @@ class Engine:
         env |= {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(max(max_tokens, PLAN_MIN_OUTPUT)), "MAX_THINKING_TOKENS": "0",
                 "DISABLE_AUTOUPDATER": "1", "DISABLE_TELEMETRY": "1"}
         message = json.dumps({"type": "user", "message": {"role": "user", "content": content}})
+        started = time.monotonic()
         proc = await asyncio.create_subprocess_exec(
             self.claude, "-p", "--model", CLAUDE_MODELS[tier], "--input-format", "stream-json",
             "--output-format", "stream-json", "--verbose", "--system-prompt", system, "--tools", "",
@@ -332,6 +340,7 @@ class Engine:
                           if isinstance(b, dict) and b.get("type") == "text"]
             elif event.get("type") == "result":
                 result = event
+        usage.from_claude_code(result, CLAUDE_MODELS[tier], started)
         text = (result or {}).get("result") or ""
         # A long answer that reaches the output limit goes on in another message, and `result` is only the last
         # one: the whole answer is all of them, in order.

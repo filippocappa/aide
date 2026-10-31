@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
+from . import usage
 from .db import Database, utcnow
 from .engine import course_var
 from .icloud import CalendarBackend, CalEvent
@@ -97,6 +98,7 @@ async def whisper_transcribe(path: Path) -> tuple[str, str | None, int | None]:
     env = dict(os.environ)
     if libs := cuda_libs():
         env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, [libs, env.get("LD_LIBRARY_PATH")]))
+    started = clock.monotonic()
     proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "aide.whisper", str(path), env=env,
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
@@ -104,9 +106,13 @@ async def whisper_transcribe(path: Path) -> tuple[str, str | None, int | None]:
     except asyncio.TimeoutError:
         proc.kill()
         raise RuntimeError("transcription took over an hour")
+    ms = round((clock.monotonic() - started) * 1000)
     if proc.returncode != 0:
         log.error("whisper failed: %s", err.decode(errors="replace")[-2000:])
+        usage.record("gpu", "whisper", ms=ms, ok=False)
         raise RuntimeError("transcription failed")
+    info = next((json.loads(line) for line in reversed(out.decode().splitlines()) if line.startswith("{")), {})
+    usage.record("gpu", info.get("model") or "whisper", ms=ms)
     return paragraphs(out.decode())
 
 

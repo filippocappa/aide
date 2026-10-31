@@ -7,6 +7,7 @@ import asyncio
 import base64
 import logging
 import re
+import time
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable, NamedTuple
@@ -14,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 
-from . import activity
+from . import activity, usage
 from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WRITES, check_agent, mentions
 from .db import Database, utcnow
 from .engine import Engine, ask_text
@@ -40,7 +41,11 @@ MAX_PHOTOS = 4  # per message
 OLD_RESULT = 1500  # a tool result from an earlier turn longer than this is replayed cut short
 OLD_RESULT_KEPT = 300  # characters of it kept
 PLAN_CONTEXT = 20  # earlier messages a routine on the Claude plan reads, as text
-SEEN_PHOTOS = 3  # the model sees a chat's latest photos as images; older ones only as their [Photo id] line
+SEEN_PHOTOS = 3  # the model sees the turn's photos as images, up to this many; earlier ones only as [Photo id] lines
+# How much of a chat the model reads: at least the first number of turns, and fewer than that plus the second.
+# Old turns go in steps, not one a turn, so the history sent stays the same bytes (cached) between steps.
+CHAT_TURNS = (20, 10)
+SHORT_TURNS = (3, 3)  # the Food log: a meal is a turn, and the meals themselves are in list_meals
 TEAM = "team"  # the Team chat: recipient of what's said there, and the queue's tag for actions queued from it
 calling_agent: ContextVar[str] = ContextVar("calling_agent", default=ORCHESTRATOR)  # whose tool is running
 TEAM_CONTEXT = 30  # team messages an agent answering in the Team chat sees
@@ -97,6 +102,8 @@ class Agent:
         # Routines, watches and chat titles go through it, on the Claude plan when the user chose that for
         # background work (engine.py). None: OpenRouter, through `client`.
         self.engine: Engine | None = None
+        # Chats that read only their last few turns (SHORT_TURNS): the Food log. Set by the app.
+        self.short_chat: Callable[[str], bool] | None = None
         # Where the phone is, in words, for the stamp (transit.Whereabouts.describe); None leaves it out.
         self.whereabouts: Callable[[], Awaitable[str | None]] | None = None
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued, and
@@ -329,7 +336,7 @@ class Agent:
         """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
 
         `photos` are ids from the photo store, sent with the text (which may then be empty). The message stores a
-        [Photo id] line for each, and the model sees the latest ones as images (_with_photos).
+        [Photo id] line for each, and the model sees them as images in this turn only (_with_photos).
 
         `on_team` gets each team message as it happens: an ask when Aide sends it, the answer when it's back.
         `on_text` gets the reply as it's written, piece by piece, and True with the first piece of a model round
@@ -349,7 +356,8 @@ class Agent:
             body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
             turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice)}]
             try:
-                reply = await self._run(agent, channel, model, history, turn, on_text)
+                with usage.labels(purpose="photo chat" if photos else "chat", conversation=conversation or channel):
+                    reply = await self._run(agent, channel, model, history, turn, on_text)
             finally:
                 self._on_team = None
             attachments, consulted, team = _merge(self._attachments), list(self._consulted), list(self._team)
@@ -408,15 +416,16 @@ class Agent:
                         "the chat right now: write the message they'll read here.]\n" + routine["prompt"])
             turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note)}]
             self._plan = self.engine is not None and self.engine.plan_for_background()
-            try:
-                reply = await self._run(routine["agent"], channel, model, history, turn)
-            except Exception as e:
-                if not self._plan or self._plan_calls:
-                    raise  # nothing ran on the plan yet, or it can't be run again safely
-                log.warning("routine %s: the Claude plan failed (%s); on OpenRouter instead", routine["id"], e)
-                self._plan = False
-                del turn[1:]
-                reply = await self._run(routine["agent"], channel, model, history, turn)
+            with usage.labels(purpose="watch" if routine.get("watch") else "routine", conversation=conversation):
+                try:
+                    reply = await self._run(routine["agent"], channel, model, history, turn)
+                except Exception as e:
+                    if not self._plan or self._plan_calls:
+                        raise  # nothing ran on the plan yet, or it can't be run again safely
+                    log.warning("routine %s: the Claude plan failed (%s); on OpenRouter instead", routine["id"], e)
+                    self._plan = False
+                    del turn[1:]
+                    reply = await self._run(routine["agent"], channel, model, history, turn)
             if self._watching and _nothing(reply):
                 self.routines.mark_run(routine["id"])
                 activity.record(self.db.conn, routine["agent"], "quiet", routine["title"],
@@ -479,7 +488,8 @@ class Agent:
                     "Answer the user's last message as yourself, for the group: short, only what you add, "
                     "without repeating what the others said. Don't bring the others in by mentioning them.]")
             turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note)}]
-            reply = await self._run(agent, channel, self.model, [], turn)
+            with usage.labels(purpose="team chat", conversation=TEAM):
+                reply = await self._run(agent, channel, self.model, [], turn)
             said({"from": agent, "to": TEAM, "text": reply, "ts": utcnow().isoformat()})
 
     def _say(self, sender: str, recipient: str, text: str) -> None:
@@ -512,7 +522,8 @@ class Agent:
             turn = [{"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] [Asked by {name}] {request}{photos}"}]
             self._asked.append(agent)
             try:
-                answer = await self._run(agent, self._channel, self._model, [], turn)
+                with usage.labels(purpose="ask"):
+                    answer = await self._run(agent, self._channel, self._model, [], turn)
             finally:
                 self._asked.remove(agent)
             self._say(agent, sender, answer)
@@ -537,8 +548,9 @@ class Agent:
         text = text or "(sent a photo)"
         fallback = "Photo" if text == "(sent a photo)" else text if len(text) <= 40 else text[:40].rsplit(" ", 1)[0] + "…"
         try:
-            answer = await ask_text(self.engine, self.client, self.model, TITLE_PROMPT,
-                                    f"User: {text[:1000]}\n\nAssistant: {reply[:1000]}", 1000)
+            with usage.labels(purpose="title"):
+                answer = await ask_text(self.engine, self.client, self.model, TITLE_PROMPT,
+                                        f"User: {text[:1000]}\n\nAssistant: {reply[:1000]}", 1000)
             title = " ".join(answer.split()).strip("\"'.")
         except Exception:
             log.warning("could not title a chat", exc_info=True)
@@ -547,15 +559,21 @@ class Agent:
 
     async def _run(self, agent: str, channel: str, model: str, history: list[dict], turn: list[dict],
                    on_text: Callable[[str, bool], None] | None = None) -> str:
+        with usage.labels(agent=agent):
+            return await self._loop(agent, channel, model, history, turn, on_text)
+
+    async def _loop(self, agent: str, channel: str, model: str, history: list[dict], turn: list[dict],
+                    on_text: Callable[[str, bool], None] | None = None) -> str:
+        history = _window(history, *self._keeps(self._conversation))
         if self._plan:
             return await self._run_on_plan(agent, channel, model, history, turn)
         restart = False  # the text so far came before a tool call: the draft starts over
         history = _cut_old_results(history)
         for _ in range(MAX_TOOL_ROUNDS):
             if on_text:
-                response = await self._stream(agent, model, history + turn, on_text, restart)
+                response = await self._stream(agent, model, history, turn, on_text, restart)
             else:
-                response = await self._create(agent, model, history + turn)
+                response = await self._create(agent, model, history, turn)
             # Store blocks exactly as returned (thinking blocks included, even when empty).
             turn.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
             text = "\n\n".join(b.text for b in response.content if b.type == "text").strip()
@@ -606,15 +624,32 @@ class Agent:
         turn.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
         return reply
 
-    async def _create(self, agent: str, model: str, messages: list[dict]):
-        return await self.client.beta.messages.create(**self._request(agent, model, messages))
+    def _keeps(self, conversation: str | None) -> tuple[int, int]:
+        """How many turns of this chat the model reads: (at least, and up to that plus) — see _window."""
+        if conversation and self.short_chat and self.short_chat(conversation):
+            return SHORT_TURNS
+        return CHAT_TURNS
 
-    async def _stream(self, agent: str, model: str, messages: list[dict], on_text: Callable[[str, bool], None],
-                      restart: bool):
+    async def _create(self, agent: str, model: str, history: list[dict], turn: list[dict]):
+        return await self.client.beta.messages.create(**self._request(agent, model, history, turn))
+
+    async def _stream(self, agent: str, model: str, history: list[dict], turn: list[dict],
+                      on_text: Callable[[str, bool], None], restart: bool):
         """Like _create, telling `on_text` the text as it comes. Text blocks in one response are joined
-        with a blank line, as in _run."""
+        with a blank line, as in _run. Recorded in usage here: the client's create is watched, its stream isn't."""
+        started = time.monotonic()
+        try:
+            final = await self._streamed(agent, model, history, turn, on_text, restart)
+        except Exception:
+            usage.record("openrouter", model, ms=round((time.monotonic() - started) * 1000), ok=False)
+            raise
+        usage.from_response(final, started=started, model=model)
+        return final
+
+    async def _streamed(self, agent: str, model: str, history: list[dict], turn: list[dict],
+                        on_text: Callable[[str, bool], None], restart: bool):
         written = False
-        async with self.client.beta.messages.stream(**self._request(agent, model, messages)) as stream:
+        async with self.client.beta.messages.stream(**self._request(agent, model, history, turn)) as stream:
             async for event in stream:
                 if event.type == "content_block_start" and event.content_block.type == "text" and written:
                     on_text("\n\n", False)
@@ -629,7 +664,7 @@ class Agent:
         """The agent's tools for this run: without ask_agent while it answers an ask (it can't ask in turn)."""
         return [t for t in self.registries[agent] if not (t.name == "ask_agent" and agent in self._asked)]
 
-    def _request(self, agent: str, model: str, messages: list[dict]) -> dict:
+    def _request(self, agent: str, model: str, history: list[dict], turn: list[dict]) -> dict:
         extra = {}
         if self.server_fallback and "haiku" not in model:  # Haiku has no server-side fallback
             # On a safety decline, retry server-side on Anthropic's recommended model.
@@ -640,14 +675,15 @@ class Agent:
             # Two cache breakpoints: tools + system, and the conversation so far.
             system=self._system(agent),
             tools=[t.definition() for t in self._offered(agent)],
-            messages=_with_cache_breakpoint(self._with_photos(messages)),
+            messages=_with_cache_breakpoint(history + self._with_photos(turn)),
             output_config={"effort": self.effort},
             **extra,
         )
 
     def _with_photos(self, messages: list[dict]) -> list[dict]:
-        """Copy of messages where the latest SEEN_PHOTOS photos are images, next to the [Photo id] lines that
-        name them. Stored history keeps only the lines."""
+        """Copy of the turn's messages where its latest SEEN_PHOTOS photos are images, next to the [Photo id] lines
+        that name them. Only the turn's own: earlier photos stay [Photo id] lines, so the history sent is the same
+        bytes every time (cached) and old meals aren't paid for again. Stored history keeps only the lines."""
         out, left = list(messages), SEEN_PHOTOS
         for i in range(len(out) - 1, -1, -1):
             if left == 0 or self.photos is None:
@@ -818,6 +854,20 @@ def _cut_old_results(history: list[dict]) -> list[dict]:
             m = {**m, "content": blocks}
         out.append(m)
     return out
+
+
+def _window(history: list[dict], keep: int, step: int) -> list[dict]:
+    """The chat's latest turns: at least `keep`, fewer than `keep + step`, cut only at the start of a turn (a user
+    message that isn't tool results). The cut moves `step` turns at a time, so between moves every request starts
+    with the same messages and reads them from the cache. A note says where it starts."""
+    starts = [i for i, m in enumerate(history) if m["role"] == "user" and not (
+        isinstance(m["content"], list) and any(b.get("type") == "tool_result" for b in m["content"]))]
+    drop = (len(starts) - keep) // step * step
+    if drop <= 0:
+        return history
+    return [{"role": "user", "content": f"[{drop} earlier turns of this chat are left out here. Your tools have "
+                                        "what was done in them (the meals logged, events, reminders…).]"},
+            *history[starts[drop]:]]
 
 
 def _with_cache_breakpoint(messages: list[dict]) -> list[dict]:

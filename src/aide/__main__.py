@@ -10,6 +10,7 @@ from pathlib import Path
 import anthropic
 import uvicorn
 
+from . import usage
 from .agent import CONVERSATION, TEAM, Agent, calling_agent
 from .browser import Browser
 from .channels.api import create_app
@@ -89,6 +90,8 @@ def main() -> None:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     db = Database(settings.db_path)
+    usage.setup(db.conn)  # every model and paid API call from here on gets a row
+    usage.watch(client)
     reminders = ReminderStore(db.conn)
     health = HealthStore(db.conn, settings.timezone)
     food = FoodStore(db.conn, settings.timezone)
@@ -211,6 +214,7 @@ def main() -> None:
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
+    agent.short_chat = lambda conversation: conversation == food.chat()  # the Food log reads its last few meals
     if errands:
         errands.agent = agent
     videos.agent = agent

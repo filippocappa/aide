@@ -17,8 +17,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import activity
-from ..agent import CONVERSATION, PENDING_TTL, SCANNED, Agent, Turn, UnknownConversation
+from .. import activity, usage
+from ..agent import CONVERSATION, PENDING_TTL, SCANNED, TEAM, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, ORCHESTRATOR, check_agent, connectors, mentions
 from ..db import Database
 from ..digest import DigestService, check_kind
@@ -1782,6 +1782,16 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         except LookupError as err:
             raise HTTPException(409, str(err))
         return e.status()
+
+    # -- usage -----------------------------------------------------------------------------
+
+    @app.get("/v1/usage", dependencies=[Depends(auth)])
+    async def get_usage(days: int = Query(7, ge=1, le=180)):
+        out = usage.summary(days)
+        for c in out["conversations"]:  # a chat's name, where it has one
+            row = db.app_conversation(c["key"]) if c["key"] and c["key"] != TEAM else None
+            c["title"] = "Team chat" if c["key"] == TEAM else row["title"] if row else None
+        return out
 
     # -- practice exams ----------------------------------------------------------------
 

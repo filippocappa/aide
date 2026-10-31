@@ -646,3 +646,28 @@ def test_connectors_mark_what_can_only_read():
         {"id": "mail", "name": "Gmail", "read_only": True, "tools": ["search_mail", "read_mail"]}]
     assert connectors(["send_mail"])[0]["read_only"] is False
     assert connectors(["get_current_time", "cancel_queued"]) == []
+
+
+def test_photos_are_images_only_in_their_own_turn(env, tmp_path):
+    from aide.photos import PhotoStore
+    client, agent, _ = env([done("Pasta, about 650 kcal."), done("Noted.")])
+    agent.photos = PhotoStore(tmp_path)
+    photo = agent.photos.save(b"\xff\xd8jpeg", "image/jpeg")
+    chat = new_chat(client, "coach")
+    client.post("/v1/chat", json={"text": "lunch", "photos": [photo], "conversation_id": chat}, headers=AUTH)
+    assert agent.client.requests[0]["messages"][-1]["content"][0]["type"] == "image"
+    client.post("/v1/chat", json={"text": "it was a big plate", "conversation_id": chat}, headers=AUTH)
+    sent = agent.client.requests[1]["messages"]
+    assert not any(b.get("type") == "image" for m in sent if isinstance(m["content"], list) for b in m["content"])
+    assert f"[Photo {photo}]" in str(sent[0]["content"])  # still named, as text
+
+
+def test_a_short_chat_reads_only_its_last_turns(env):
+    client, agent, _ = env([done(f"ok {i}") for i in range(7)])
+    chat = new_chat(client, "coach")
+    agent.short_chat = lambda conversation: conversation == chat
+    for i in range(7):
+        client.post("/v1/chat", json={"text": f"meal {i}", "conversation_id": chat}, headers=AUTH)
+    sent = agent.client.requests[-1]["messages"]  # 6 turns before this one: 3 left out, 3 read
+    assert "3 earlier turns" in sent[0]["content"]
+    assert "meal 3" in str(sent[1]["content"]) and "meal 2" not in str(sent)

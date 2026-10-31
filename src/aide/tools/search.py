@@ -1,11 +1,13 @@
 """Web search and page reading through Tavily. Both are read-only and run immediately."""
 
+import time
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 import httpx
 
+from .. import usage
 from . import Tool
 
 API = "https://api.tavily.com"
@@ -33,7 +35,9 @@ class Tavily:
         self._http = http or httpx.AsyncClient(timeout=30)
 
     async def _post(self, path: str, body: dict) -> dict:
+        started = time.monotonic()
         r = await self._http.post(API + path, json=body, headers={"Authorization": f"Bearer {self._key}"})
+        usage.record("tavily", path.strip("/"), ms=round((time.monotonic() - started) * 1000), ok=not r.is_error)
         if r.status_code in (401, 403):
             raise RuntimeError("Tavily rejected the API key (TAVILY_API_KEY).")
         if r.status_code in (429, 432):  # 432: plan's monthly credits used up
