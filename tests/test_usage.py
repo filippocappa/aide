@@ -74,9 +74,10 @@ def turn(i, tools=False):
 
 
 def test_the_window_moves_in_steps_at_turn_starts():
-    history = [m for i in range(12) for m in turn(i, tools=i % 2 == 0)]
-    assert _window(history[:16], 10, 5) == history[:16]  # under 15 turns: all of it
-    cut = _window(history, 5, 5)  # 12 turns: 5 left out, 7 read
-    assert "5 earlier turns" in cut[0]["content"] and cut[1] == {"role": "user", "content": "q5"}
-    assert len([m for m in cut[1:] if isinstance(m["content"], str) and m["role"] == "user"]) == 7
-    assert _window(history[:-4], 5, 5)[1:] == history[20:-4]  # 10 turns: the same cut, same bytes
+    turns = [turn(i, tools=i % 2 == 0) for i in range(12)]
+    flat = lambda ts: [m for t in ts for m in t]  # noqa: E731
+    assert _window(flat(turns[:5]), 10, 5) == flat(turns[:5])  # fewer than keep: all of it
+    cut = _window(flat(turns), 5, 5)  # 12 turns: 5 left out, 7 read, from a turn's start
+    assert "5 earlier turns" in cut[0]["content"] and cut[1:] == flat(turns[5:])
+    assert _window(flat(turns[:10]), 5, 5)[1:] == flat(turns[5:10])  # 10 turns: the same cut, so the cache holds
+    assert "10 earlier turns" in _window(flat(turns + [turn(12), turn(13), turn(14)]), 5, 5)[0]["content"]

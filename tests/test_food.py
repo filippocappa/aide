@@ -109,7 +109,7 @@ def test_chat_with_a_photo_logs_the_meal(env):
     assert client.requests[0]["model"] == "m"
 
 
-def test_only_the_last_three_photos_are_images(env):
+def test_only_the_turns_own_photos_are_images(env):
     api, *_ = env()
     ids = [upload(api, JPEG + bytes([i])).json()["id"] for i in range(5)]
     for i in range(4):
@@ -118,7 +118,7 @@ def test_only_the_last_three_photos_are_images(env):
     api, _, _, _, client = env([done("ok")])
     api.post("/v1/chat", json={"text": "and this", "photos": [ids[4]]}, headers=AUTH)
     seen = [base64.b64decode(d) for d in images(client.requests[0])]
-    assert seen == [JPEG + bytes([i]) for i in (2, 3, 4)]
+    assert seen == [JPEG + bytes([4])]  # the earlier ones are [Photo id] lines
 
 
 def test_unknown_or_too_many_photos_are_400(env):
