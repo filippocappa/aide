@@ -42,7 +42,7 @@ OLD_RESULT = 1500  # a tool result from an earlier turn longer than this is repl
 OLD_RESULT_KEPT = 300  # characters of it kept
 PLAN_CONTEXT = 20  # earlier messages a routine on the Claude plan reads, as text
 SEEN_PHOTOS = 3  # the model sees the turn's photos as images, up to this many; earlier ones only as [Photo id] lines
-READ_TOKENS = 1000  # what the photo reader writes for an agent that reads photos (AgentDef.reads_photos)
+READ_TOKENS = 1500  # what the photo reader writes for an agent that reads photos (AgentDef.reads_photos)
 # How much of a chat the model reads: at least the first number of turns, and fewer than that plus the second.
 # Old turns go in steps, not one a turn, so the history sent stays the same bytes (cached) between steps.
 CHAT_TURNS = (20, 10)
@@ -103,6 +103,9 @@ class Agent:
         # Routines, watches and chat titles go through it, on the Claude plan when the user chose that for
         # background work (engine.py). None: OpenRouter, through `client`.
         self.engine: Engine | None = None
+        # Reads the photos for an agent that reads photos (reader.PhotoReader). None, or when it fails: the smart
+        # model, through `client`.
+        self.reader: Callable[[str, list[tuple[bytes, str]], str, int], Awaitable[str]] | None = None
         # Chats that read only their last few turns (SHORT_TURNS): the Food log. Set by the app.
         self.short_chat: Callable[[str], bool] | None = None
         # Where the phone is, in words, for the stamp (transit.Whereabouts.describe); None leaves it out.
@@ -694,16 +697,24 @@ class Agent:
         )
 
     async def _describe(self, text: str) -> str:
-        """What the turn's photos show, written by the smart model in one small call (its own short prompt, the
-        images and the user's words), for an agent that reads photos: the lines that follow the [Photo id] lines.
-        Once per turn; an ask with the same photos reuses it."""
+        """What the turn's photos show, written by the photo reader (else the smart model) in one small call (its
+        own short prompt, the images and the user's words), for an agent that reads photos: the lines that follow
+        the [Photo id] lines. Once per turn; an ask with the same photos reuses it."""
         if self._read is None:
             lines = "\n".join([text or "(no words)", *(f"[Photo {p}]" for p in self._photos)])
-            content = self._with_photos([{"role": "user", "content": lines}])[0]["content"]
-            response = await self.client.beta.messages.create(
-                model=self.smart_model, max_tokens=READ_TOKENS, system=READ_PROMPT,
-                messages=[{"role": "user", "content": content}])
-            seen = "\n".join(b.text for b in response.content if b.type == "text").strip()
+            seen = None
+            if self.reader is not None and self.photos is not None:
+                images = [loaded for p in self._photos[-SEEN_PHOTOS:] if (loaded := self.photos.load(p))]
+                try:
+                    seen = await self.reader(READ_PROMPT, images, lines, READ_TOKENS)
+                except Exception:
+                    log.warning("the photo reader failed; the smart model reads the photos", exc_info=True)
+            if not seen:
+                content = self._with_photos([{"role": "user", "content": lines}])[0]["content"]
+                response = await self.client.beta.messages.create(
+                    model=self.smart_model, max_tokens=READ_TOKENS, system=READ_PROMPT,
+                    messages=[{"role": "user", "content": content}])
+                seen = "\n".join(b.text for b in response.content if b.type == "text").strip()
             self._read = f"{_READ_MARK}\n{seen or '(the photo reader saw nothing it could describe)'}\n[End of what the photos show]"
         return self._read
 
@@ -828,7 +839,8 @@ and training, and can't see images. Write what the photos show so Coach can act 
 - Food: each dish and item on its own line: what it is, what it's made of (sauce, cheese, oil or butter you can \
 see or that a dish like this usually has), how it was cooked, and how much there is, in grams or ml, with what you \
 judged it from (the plate or cutlery for scale, how full, the packet). Pasta, rice and grains: give the dry weight \
-too. If it's partly eaten, say how much is left.
+too. If it's partly eaten, say how much is left. Only what's served to the user counts: packets, drinks, other \
+plates and bowls around it go on one last line, "Around it, not on the plate: …", unless the user says they had them.
 - Packets and labels: brand and product name as printed, the pack size, and any nutrition table copied in full \
 with its units (per 100 g, per serving). A barcode's digits only if you can read every one.
 - Anything else (a screen, a document, a workout summary, a scale): what it is, with its text and numbers copied \

@@ -1,7 +1,9 @@
 import base64
+import json
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -136,6 +138,49 @@ def test_coach_reads_what_the_smart_model_saw(env):
     assert f"[Photo {photo}]" in said and "[What the photos show" in said and "26 cm plate" in said
     shown = api.get(f"/v1/history?conversation_id={body['conversation_id']}", headers=AUTH).json()["messages"][0]
     assert shown["text"] == "dinner" and shown["photos"] == [photo]
+
+
+def test_the_photo_reader_reads_for_coach_and_sonnet_steps_in_when_it_fails(env):
+    api, *_ = env()
+    photo = upload(api).json()["id"]
+    api, agent, _, _, client = env([done("Pasta, 560 kcal."), done("Pasta al pesto, 100 g dry."), done("Pasta again.")])
+    asked = []
+
+    async def reader(system, images, text, max_tokens):
+        asked.append((system, images, text))
+        return "Pasta al pesto: 90 g dry, judged from the plate"
+    agent.reader = reader
+    api.post("/v1/food/log", json={"text": "dinner", "photos": [photo]}, headers=AUTH)
+    [(system, images, text)] = asked
+    assert "photos for Coach" in system and images == [(JPEG, "image/jpeg")] and f"[Photo {photo}]" in text
+    [coach] = client.requests
+    assert coach["model"] == "m" and "90 g dry, judged" in coach["messages"][-1]["content"][0]["text"]
+
+    async def broken(*_):
+        raise httpx.ConnectError("down")
+    agent.reader = broken
+    api.post("/v1/food/log", json={"text": "and again", "photos": [photo]}, headers=AUTH)
+    look, coach = client.requests[1:]
+    assert look["model"] == "smart" and "100 g dry" in coach["messages"][-1]["content"][0]["text"]
+
+
+async def test_the_photo_reader_asks_openrouter_with_the_images():
+    from aide.reader import PhotoReader
+    sent = []
+
+    def answer(request):
+        sent.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": " Pasta: 90 g dry "}}],
+                                         "usage": {"prompt_tokens": 1300, "completion_tokens": 40, "cost": 0.0013}})
+    read = PhotoReader("k", "google/gemini-test", httpx.AsyncClient(transport=httpx.MockTransport(answer)))
+    assert await read("Look.", [(JPEG, "image/jpeg")], "dinner", 1500) == "Pasta: 90 g dry"
+    body = json.loads(sent[0].content)
+    assert body["model"] == "google/gemini-test" and body["max_tokens"] == 1500
+    system, user = body["messages"]
+    assert system == {"role": "system", "content": "Look."}
+    assert user["content"][0]["image_url"]["url"] == "data:image/jpeg;base64," + base64.b64encode(JPEG).decode()
+    assert user["content"][1] == {"type": "text", "text": "dinner"}
+    assert sent[0].headers["authorization"] == "Bearer k"
 
 
 def test_unknown_or_too_many_photos_are_400(env):
