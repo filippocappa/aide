@@ -161,7 +161,7 @@ def test_a_lesson_written_from_the_notes_then_gone_through(ls):
                     headers=AUTH)
     assert r.json()["answer"] == "Because each euro is spent again."
     sent = ls.ask.calls[-1]
-    assert sent["live"] and not sent["fast"] and "Their question: why above 1?" in sent["text"]
+    assert sent["live"] and sent["fast"] and "Their question: why above 1?" in sent["text"]
     assert "They asked: and c1?\nYou answered: the MPC" in sent["text"] and '"The multiplier"' in sent["text"]
 
     assert ls.api.post(f"/v1/lessons/{lesson['id']}/progress", json={"at": 1}, headers=AUTH).json()["at"] == 1
@@ -177,6 +177,7 @@ def test_a_lesson_written_from_the_notes_then_gone_through(ls):
     assert done["finished_at"] and done["at"] == 2 and done["verdict"] == "partly"
     assert done["explained"]["review"] == [2] and done["explained"]["missing"] == ["the multiplier's formula"]
     assert "1. Demand makes output: Output follows demand" in ls.ask.calls[-1]["text"]
+    assert ls.ask.calls[-1]["fast"] and ls.ask.calls[-1]["live"]
     assert done["next"] == {"id": ls.topics[1]["public_id"], "title": "The multiplier"}
     # the next one is being written already
     assert ls.store.for_topic(ls.topics[1]["id"])["status"] == "building"

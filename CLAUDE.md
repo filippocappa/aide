@@ -366,11 +366,13 @@ Professor turns the topic's notes into a lesson the first time it's opened (a ho
 a key idea, the same idea told another way, a multiple-choice or written check and a second one if the first is
 missed), on the Claude plan first (smart model; at its limit it waits, as notes do). A step: read or listen (`say`, the
 maths in words), Got it or Not quite (another way, then Ask), the check (choices checked with no model call, written
-answers marked by the fast model), Ask Professor about the step. At the end the user explains the topic back and
+answers marked by the fast model), Ask Professor about the step (the fast model, as is the explanation back). At the end the user explains the topic back and
 Professor says what stuck and which steps to look at again; then the next topic's lesson is written ahead. Lessons are
 kept, marked stale when the notes change. App: "Learn this topic" on a topic page, "Learn" on the course page (the path:
 up next, every topic with how far its lesson got). On OpenRouter it would be ~$0.10 to write a lesson (Sonnet) and
-~$0.05 of live calls to go through one. Not yet tried on the phone.
+~$0.005 of live calls to go through one. Writers compared (2026-10-31, `~/lesson-bench` on cappa, three courses judged
+blind by Opus): Sonnet left nothing important out; Haiku, GPT-6 Luna and Gemini Flash got every key right but each
+skipped exam material, so Sonnet writes and Haiku answers. Not yet tried on the phone.
 Since 2026-10-22 (`engine.py`, contract "Who writes the notes"): lecture notes and notebook jobs can run on the
 user's Claude plan through Claude Code on `cappa` (`claude -p`, Sonnet writes, Haiku reads; set in Settings → Claude
 plan; on now). At the plan's limit a job pauses and Professor asks: wait, or finish on OpenRouter.

@@ -9,9 +9,10 @@ the notes change and the lesson hasn't been started. The model writes it as tagg
 backslashes (\\frac, \\theta) turn into JSON escapes without a word.
 
 While the user goes through it, three things call the model, each while they wait, so never paused at the plan's
-limit (OpenRouter then): Ask (a question about the step, the smart model), a written check's mark (the fast model)
-and, at the end, the topic explained back in their own words (the smart model), which says what they got and which
-steps to look at again. Finishing one writes the next topic's lesson in the background.
+limit (OpenRouter then), all on the fast model: Ask (a question about the step), a written check's mark and, at the
+end, the topic explained back in their own words, which says what they got and which steps to look at again (Haiku
+was as good as Sonnet at these in a test on three courses, 2026-10-31, at a tenth of the price; Sonnet stays for
+writing the lesson, where it left out the least). Finishing one writes the next topic's lesson in the background.
 
 The checks don't count for mastery (that's the notebook's questions and flashcards, quiz.py): a lesson is learning,
 the Study page is practice.
@@ -328,7 +329,7 @@ class LessonStore:
                 f"({step} of {len(steps)}), \"{s['title']}\":\n\n{s['body']}\n\n"
                 + (f"Earlier on this step:\n\n{earlier}" if earlier else "") + f"Their question: {question}")
         with usage.labels(purpose="lesson ask"):
-            return (await self.ask(ASK_PROMPT, [{"type": "text", "text": text}], ASK_TOKENS, False, True)).strip()
+            return (await self.ask(ASK_PROMPT, [{"type": "text", "text": text}], ASK_TOKENS, True, True)).strip()
 
     async def finish(self, public_id: str, explanation: str | None) -> dict:
         """The lesson done; with an explanation back, what Professor made of it. Then the next topic's lesson is
@@ -343,7 +344,7 @@ class LessonStore:
                     + f"\n\nTheir explanation:\n{explanation}")
             with usage.labels(purpose="lesson explain"):
                 got = parse_json(await self.ask(EXPLAIN_PROMPT, [{"type": "text", "text": text}], EXPLAIN_TOKENS,
-                                                False, True))
+                                                True, True))
             if not isinstance(got, dict):
                 raise RuntimeError("the answer couldn't be read")
             explained = {

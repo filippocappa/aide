@@ -1197,8 +1197,8 @@ Claude plan when it's on, where a lesson waits at the plan's limit like notes do
 hook and goals, then 4–10 steps, each one idea in a short read, the same idea told another way ("Not quite"), and two
 checks, a multiple choice and a question answered in words (asked when the first is missed). A lesson is kept; it's
 written again when the notes changed and it isn't started (a started one is `stale` until asked `again`). While the
-user goes through it, Ask, a written check's mark and the explanation back call the model while they wait: the plan
-first, OpenRouter at its limit, never a wait. Finishing a lesson writes the next topic's in the background. Lesson
+user goes through it, Ask, a written check's mark and the explanation back call the fast model while they wait: the
+plan first, OpenRouter at its limit, never a wait. Finishing a lesson writes the next topic's in the background. Lesson
 checks don't count for mastery or objectives.
 
 | Endpoint | Body | Response |
