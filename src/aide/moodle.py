@@ -66,7 +66,8 @@ FORUM_POSTS = 8  # newest discussions read per forum
 FORUM_POST = 2000  # characters of each
 ANNOUNCE = 178  # characters of the push saying which files came
 ANNOUNCE_FILES = 20  # file ids it carries, for the app to list
-_FORUMS = re.compile(r"announce|annunc|avvis|news|notizi|textbook|book|libr|testi|exam|esam", re.I)
+_FORUMS = re.compile(r"announce|annunc|avvis|news|notizi|textbook|book|libr|testi|exam|esam|mid-?term|appell|"
+                     r"registration|iscrizion|info|aul[ae]\b|rooms?\b|calendar|date", re.I)
 
 
 class MoodleError(Exception):
