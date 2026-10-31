@@ -2115,13 +2115,16 @@ The server notifies the phone through APNs. It sends only when it has a key (`AP
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/devices` | `{"token": "a1b2…", "environment": "sandbox" \| "production", "name": "My iPhone"}` | `{"ok": true}`. Adds or updates the device (keyed by `token`). |
-| `GET /v1/devices` | | `{"devices": [{"token": "a1b2…", "environment": "sandbox", "name": "…", "registered_at": "…", "last_push_at": "…" \| null}]}` |
+| `POST /v1/devices` | `{"token": "a1b2…", "environment": "sandbox" \| "production", "name": "My iPhone", "app": "ios" \| "mac"}` | `{"ok": true}`. Adds or updates the device (keyed by `token`). `app` defaults to `ios`. |
+| `GET /v1/devices` | | `{"devices": [{"token": "a1b2…", "environment": "sandbox", "name": "…", "app": "ios", "registered_at": "…", "last_push_at": "…" \| null}]}` |
 | `DELETE /v1/devices/{token}` | | `{"ok": true}`, also for an unknown token. |
 | `POST /v1/devices/test` | `{}` | `{"sent": 1, "failed": 0}`. Sends a visible test push to every device. |
 
 - `token` is the APNs device token as lowercase hex. `environment` is `sandbox` for Debug builds from Xcode and
   `production` for TestFlight and App Store builds. The server must send each token to the matching APNs host.
+- `app` (since 2026-10-31): `mac` is the Mac app, whose bundle ID is the phone's plus `.mac`; the server sends it
+  with that topic. The Mac gets the alert pushes but not the silent ones (`sync`, `location`: the phone's jobs) nor
+  `transit` (a tram to catch is the phone's).
 - The app registers on every launch (the token can change), and when notifications are turned on in Settings.
   A `404` means an older server: the app ignores it.
 - When APNs answers that a token is no longer valid (`410 Unregistered`), the server deletes the device. A `400

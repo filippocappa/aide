@@ -28,9 +28,13 @@ CREATE TABLE IF NOT EXISTS devices (
     environment   TEXT NOT NULL,     -- sandbox or production: which APNs host
     name          TEXT NOT NULL DEFAULT '',
     registered_at TEXT NOT NULL,     -- UTC
-    last_push_at  TEXT               -- UTC, last push APNs accepted
+    last_push_at  TEXT,              -- UTC, last push APNs accepted
+    app           TEXT NOT NULL DEFAULT 'ios'  -- ios or mac: the Mac app has its own bundle ID (the topic)
 );
 """
+APPS = ("ios", "mac")
+# Alerts only the phone needs: a tram to catch is the phone's (silent pushes are the phone's too).
+PHONE_ONLY = {"transit"}
 
 
 def _now() -> str:
@@ -50,6 +54,9 @@ class Push:
                  transport: httpx.AsyncBaseTransport | None = None):
         self.conn = conn
         self.conn.executescript(SCHEMA)
+        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(devices)")}
+        if "app" not in columns:  # a database from before the Mac app
+            self.conn.execute("ALTER TABLE devices ADD COLUMN app TEXT NOT NULL DEFAULT 'ios'")
         self.key_id, self.team_id, self.bundle_id = key_id, team_id, bundle_id
         self._key: str | None = None
         if key_path and key_id and team_id and bundle_id:
@@ -75,13 +82,16 @@ class Push:
 
     # -- devices -----------------------------------------------------------
 
-    def register(self, token: str, environment: str, name: str = "") -> None:
+    def register(self, token: str, environment: str, name: str = "", app: str = "ios") -> None:
         if environment not in HOSTS:
             raise ValueError("environment must be sandbox or production")
+        if app not in APPS:
+            raise ValueError("app must be ios or mac")
         self.conn.execute(
-            "INSERT INTO devices (token, environment, name, registered_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(token) DO UPDATE SET environment = excluded.environment, name = excluded.name",
-            (check_token(token), environment, name, _now()))
+            "INSERT INTO devices (token, environment, name, registered_at, app) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(token) DO UPDATE SET environment = excluded.environment, name = excluded.name, "
+            "app = excluded.app",
+            (check_token(token), environment, name, _now(), app))
 
     def devices(self) -> list[dict]:
         rows = self.conn.execute("SELECT * FROM devices ORDER BY registered_at").fetchall()
@@ -110,10 +120,11 @@ class Push:
         """(sent, failed, retry): `retry` when nothing went out but every failure can pass, so a later try may.
         `collapse`: a newer push with the same id replaces the older one in Notification Center."""
         devices = self.devices()
+        if background or payload.get("aide", {}).get("kind") in PHONE_ONLY:
+            devices = [d for d in devices if d["app"] == "ios"]
         if not self.enabled or not devices:
             return 0, len(devices), False
         headers = {
-            "apns-topic": self.bundle_id,
             "apns-push-type": "background" if background else "alert",
             "apns-priority": "5" if background else "10",
         }
@@ -121,7 +132,8 @@ class Push:
             headers["apns-collapse-id"] = collapse[:64]
         sent, retry = 0, True
         for d in devices:
-            status, reason = await self._send_one(d, payload, headers)
+            topic = f"{self.bundle_id}.mac" if d["app"] == "mac" else self.bundle_id
+            status, reason = await self._send_one(d, payload, {"apns-topic": topic, **headers})
             if status == 200:
                 sent += 1
             else:

@@ -798,7 +798,7 @@ final class PushTests: XCTestCase {
     func testDeviceRegistrationIsSnakeCase() throws {
         let data = try JSONEncoder.api.encode(DeviceRegistration(token: "ab", environment: "sandbox", name: "iPhone"))
         let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: String])
-        XCTAssertEqual(obj, ["token": "ab", "environment": "sandbox", "name": "iPhone"])
+        XCTAssertEqual(obj, ["token": "ab", "environment": "sandbox", "name": "iPhone", "app": "ios"])
     }
 }
 

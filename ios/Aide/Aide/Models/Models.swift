@@ -128,7 +128,17 @@ struct ConversationBody: Encodable { var conversationId: String? }
 /// `agent` nil: shared by every agent.
 struct MemoryRequest: Encodable { let text: String; var agent: String? }
 /// `environment` is "sandbox" for Xcode builds, "production" for TestFlight and the App Store.
-struct DeviceRegistration: Encodable { let token: String; let environment: String; let name: String }
+struct DeviceRegistration: Encodable {
+    let token: String
+    let environment: String
+    let name: String
+    /// The Mac app has its own bundle ID, so the server pushes to it with that topic (docs/API.md, Push).
+    #if os(macOS)
+    var app = "mac"
+    #else
+    var app = "ios"
+    #endif
+}
 struct PushTestResult: Decodable { let sent: Int; let failed: Int }
 struct LiveToken: Encodable { let kind: String; let token: String; let environment: String }
 struct LiveActivityToken: Encodable { let key: String; let token: String; let environment: String }

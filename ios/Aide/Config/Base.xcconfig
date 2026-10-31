@@ -4,6 +4,8 @@
 // the aps-environment entitlement. So push is off unless Signing.local.xcconfig switches to Aide.entitlements,
 // which has both (see the .example file).
 AIDE_ENTITLEMENTS = Aide/Health.entitlements
+// The Mac app the same way: no push unless Signing.local.xcconfig picks Mac/AideMacPush.entitlements.
+AIDE_MAC_ENTITLEMENTS = Mac/AideMac.entitlements
 
 // The bundle ID. Someone else's build needs its own (a bundle ID belongs to one team): set it in
 // Signing.local.xcconfig, and APNS_BUNDLE_ID in the server's .env to match.

@@ -456,6 +456,7 @@ class DeviceIn(BaseModel):
     token: str
     environment: str
     name: str = ""
+    app: str = "ios"
 
 
 class LiveTokenIn(BaseModel):
@@ -2262,12 +2263,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.post("/v1/devices", dependencies=[Depends(auth)])
     async def register_device(body: DeviceIn):
-        push.register(body.token, body.environment, body.name.strip())
+        push.register(body.token, body.environment, body.name.strip(), body.app)
         return {"ok": True}
 
     @app.get("/v1/devices", dependencies=[Depends(auth)])
     async def devices():
-        return {"devices": [{"token": d["token"], "environment": d["environment"], "name": d["name"],
+        return {"devices": [{"token": d["token"], "environment": d["environment"], "name": d["name"], "app": d["app"],
                              "registered_at": local(d["registered_at"]),
                              "last_push_at": local(d["last_push_at"]) if d["last_push_at"] else None}
                             for d in push.devices()]}

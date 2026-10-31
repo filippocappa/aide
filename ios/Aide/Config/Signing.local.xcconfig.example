@@ -9,3 +9,6 @@ DEVELOPMENT_TEAM = XXXXXXXXXX
 // Push notifications (docs/API.md, Push), plus Apple Health. Only with the paid team; leave it out for a
 // Personal Team. (If a Personal Team won't sign Apple Health either, set AIDE_ENTITLEMENTS = to turn it off.)
 AIDE_ENTITLEMENTS = Aide/Aide.entitlements
+
+// Push to the Mac app too (docs/API.md, Push: `app` "mac"). Same rule: only with the paid team.
+AIDE_MAC_ENTITLEMENTS = Mac/AideMacPush.entitlements

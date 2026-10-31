@@ -100,6 +100,29 @@ async def test_host_follows_each_devices_environment(env):
     assert [r.url.path for r in apns.requests if r.url.host == "api.push.apple.com"] == [f"/3/device/{PROD}"]
 
 
+async def test_the_mac_gets_alerts_with_its_own_topic(env):
+    _, push, apns = env
+    push.register(SANDBOX, "sandbox", "Phone")
+    push.register(PROD, "sandbox", "Mac", app="mac")
+    assert await push.send_test() == (2, 0)
+    assert {r.url.path.rsplit("/", 1)[1]: r.headers["apns-topic"] for r in apns.requests} == {
+        SANDBOX: "com.filippocappa.aide", PROD: "com.filippocappa.aide.mac"}
+    # silent pushes and tram alerts are the phone's
+    apns.requests.clear()
+    await push.send({"aps": {"content-available": 1}, "aide": {"kind": "sync"}}, background=True)
+    assert await push.send_transit(1, "Tram 4 in 7 min", "Leave now")
+    assert [r.url.path for r in apns.requests] == [f"/3/device/{SANDBOX}"] * 2
+
+
+async def test_an_older_devices_table_gets_the_app_column():
+    db = Database(":memory:")
+    db.conn.execute("CREATE TABLE devices (token TEXT PRIMARY KEY, environment TEXT NOT NULL, name TEXT NOT NULL "
+                    "DEFAULT '', registered_at TEXT NOT NULL, last_push_at TEXT)")
+    db.conn.execute("INSERT INTO devices VALUES (?, 'sandbox', 'Phone', '2026-10-20T08:00:00+00:00', NULL)", (SANDBOX,))
+    assert [d["app"] for d in Push(db.conn).devices()] == ["ios"]
+    db.close()
+
+
 async def test_invalid_tokens_are_removed(env):
     _, push, apns = env
     for t in (SANDBOX, PROD, "c3" * 32):
@@ -302,7 +325,13 @@ def test_devices_api(env):
     assert client.post("/v1/devices/test", json={}, headers=AUTH).json() == {"sent": 1, "failed": 0}
     assert apns.payloads()[0]["aide"] == {"kind": "test"}
     assert client.get("/v1/devices", headers=AUTH).json()["devices"][0]["last_push_at"] is not None
-    for bad in ({**body, "environment": "dev"}, {**body, "token": "xyz"}, {"environment": "sandbox"}):
+    assert d["app"] == "ios"
+    assert client.post("/v1/devices", json={**body, "token": PROD, "name": "MacBook", "app": "mac"},
+                       headers=AUTH).json() == {"ok": True}
+    assert [d["app"] for d in client.get("/v1/devices", headers=AUTH).json()["devices"]] == ["ios", "mac"]
+    assert client.delete(f"/v1/devices/{PROD}", headers=AUTH).json() == {"ok": True}
+    for bad in ({**body, "environment": "dev"}, {**body, "token": "xyz"}, {"environment": "sandbox"},
+                {**body, "app": "watch"}):
         assert client.post("/v1/devices", json=bad, headers=AUTH).status_code == 400
     assert client.delete(f"/v1/devices/{SANDBOX}", headers=AUTH).json() == {"ok": True}
     assert client.delete(f"/v1/devices/{SANDBOX}", headers=AUTH).json() == {"ok": True}

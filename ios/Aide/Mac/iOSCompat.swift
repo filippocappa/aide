@@ -1,4 +1,5 @@
 import AppKit
+import Security
 import SwiftUI
 
 // The shared views are written for the phone. This file lets them build on the Mac without changing them: the UIKit
@@ -85,7 +86,15 @@ final class UIApplication {
     static let openSettingsURLString = "x-apple.systempreferences:"
     /// The Mac doesn't lock on a timer the app can hold off; nothing to do.
     var isIdleTimerDisabled = false
-    func registerForRemoteNotifications() {}
+    /// Only a build signed for push asks APNs (Mac/AideMacPush.entitlements); without it there's no token to get.
+    func registerForRemoteNotifications() {
+        if Self.canPush { NSApplication.shared.registerForRemoteNotifications() }
+    }
+
+    static let canPush: Bool = {
+        guard let task = SecTaskCreateFromSelf(nil) else { return false }
+        return SecTaskCopyValueForEntitlement(task, "com.apple.developer.aps-environment" as CFString, nil) != nil
+    }()
     func open(_ url: URL) { NSWorkspace.shared.open(url) }
 }
 
