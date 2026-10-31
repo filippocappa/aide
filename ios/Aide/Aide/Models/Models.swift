@@ -2113,7 +2113,85 @@ struct StudyCourse: Decodable, Identifiable, Hashable {
     var title: String { name.prefix(1).uppercased() + name.dropFirst() }
 }
 
-struct StudyExam: Decodable, Hashable { let date: String; let title: String }
+struct StudyExam: Decodable, Hashable {
+    let date: String
+    let title: String
+    /// "calendar": the Exam calendar's event; "course": the course's own dates (no event yet).
+    var from: String?
+    /// A course date with no time: the day alone.
+    var allDay: Bool?
+}
+
+/// A course's dates: exams, mid-terms, deadlines, read by Professor or the user's own (docs/API.md, "Course dates").
+struct CourseDates: Decodable, Hashable {
+    let course: Int
+    let items: [CourseDate]
+    var readAt: String?
+    /// A read is queued or running.
+    var reading: Bool?
+    /// The new date's id, after adding one.
+    var item: String?
+}
+
+struct CourseDate: Decodable, Identifiable, Hashable {
+    let id: String
+    let what: String
+    let kind: String
+    /// "2026-11-04"; `time` and `end` "11:00", nil all day.
+    let date: String
+    var time: String?
+    var end: String?
+    var room: String?
+    /// What applies to the user alone: their room, group, turn ("Group 7, Round D 12:30–13, Lab A").
+    var you: String?
+    var details: String?
+    var source: String?
+    /// "professor", or "you": the user's edit or their own.
+    var by: String?
+    /// Professor has since read it differently.
+    var differs: Differs?
+    var calendar: InCalendar?
+    var past: Bool?
+
+    struct Differs: Decodable, Hashable { let date: String; var time: String?; var source: String? }
+
+    struct InCalendar: Decodable, Hashable {
+        /// "in", "moved" (the event is on `on`), "missing".
+        let state: String
+        var on: String?
+        var event: String?
+        var plan: String?
+    }
+
+    var day: Date? { Wire.day(date) }
+    var mine: Bool { by == "you" }
+}
+
+/// A course date as the user writes it; every field sent, nulls too, so a time can be taken off.
+struct CourseDateBody: Encodable, Equatable {
+    var what: String
+    var kind: String
+    var date: String
+    var time: String?
+    var end: String?
+    var room: String?
+    var you: String?
+    var details: String?
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(what, forKey: .what)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(date, forKey: .date)
+        try c.encode(time, forKey: .time)
+        try c.encode(time == nil ? nil : end, forKey: .end)
+        try c.encode(room, forKey: .room)
+        try c.encode(you, forKey: .you)
+        try c.encode(details, forKey: .details)
+    }
+
+    private enum CodingKeys: String, CodingKey { case what, kind, date, time, end, room, you, details }
+}
 
 /// A course's notebook in brief; nil when it has none.
 struct CourseNotebook: Decodable, Hashable {

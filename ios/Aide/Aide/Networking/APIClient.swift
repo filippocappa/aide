@@ -897,6 +897,29 @@ final class APIClient {
         return list.sessions
     }
 
+    func courseDates(course: Int) async throws -> CourseDates {
+        try await send("GET", "/v1/study/courses/\(course)/dates")
+    }
+
+    func addCourseDate(course: Int, _ date: CourseDateBody) async throws -> CourseDates {
+        try await send("POST", "/v1/study/courses/\(course)/dates", body: date)
+    }
+
+    /// The user's version, kept through Professor's later reads.
+    func updateCourseDate(course: Int, id: String, _ date: CourseDateBody) async throws -> CourseDates {
+        try await send("PATCH", "/v1/study/courses/\(course)/dates/\(id)", body: date)
+    }
+
+    /// Professor's stays hidden; the user's own is deleted.
+    func deleteCourseDate(course: Int, id: String) async throws -> CourseDates {
+        try await send("DELETE", "/v1/study/courses/\(course)/dates/\(id)")
+    }
+
+    /// Professor reads the course's page and files for its dates again.
+    func readCourseDates(course: Int) async throws -> CourseDates {
+        try await send("POST", "/v1/study/courses/\(course)/dates/read", body: EmptyBody())
+    }
+
     /// Takes it off the calendar.
     func cancelReviewSession(_ id: String) async throws {
         let _: OKResponse = try await send("DELETE", "/v1/reviews/\(id)", body: EmptyBody())

@@ -112,6 +112,7 @@
 		DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B4431689B0F772EB8EDA27 /* LivePebble.swift */; };
 		DFBDF3B9BAA93D0DEB902233 /* HabitControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FF2F172DF24BB3119602573 /* HabitControl.swift */; };
 		E0244E5AF24BFFC84C55D2A4 /* VoicePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */; };
+		E42D1D100C72EAD253601644 /* CourseDateViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A67EFF0F10261D9FC6C908E /* CourseDateViews.swift */; };
 		E47EE6025736130472E920C5 /* FoodView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9660896769986933FF90EE0B /* FoodView.swift */; };
 		E4BACF93150EA9F47597B833 /* DeparturesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F534E81CB6CBAEDF422485 /* DeparturesWidget.swift */; };
 		E9AD83EC0DE21B2EC59BFC73 /* MealCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3FB4B94DD1D7FF3EEAFB454 /* MealCameraView.swift */; };
@@ -235,6 +236,7 @@
 		77E5D11C27686D088BF88108 /* Figure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Figure.swift; sourceTree = "<group>"; };
 		78FD630BFAF2C84AC4AF0659 /* DigestViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestViewModel.swift; sourceTree = "<group>"; };
 		7934D306980F7BA0DBBD8E3D /* Aide.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Aide.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A67EFF0F10261D9FC6C908E /* CourseDateViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDateViews.swift; sourceTree = "<group>"; };
 		802C85723F931456FE9FA77B /* AideShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AideShare.entitlements; sourceTree = "<group>"; };
 		81B15B4A9C146D208E461D58 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		87320B5BA6327928E4CC8A7D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -318,6 +320,7 @@
 				9AEB482052BA9CB53D3B8410 /* ChatsView.swift */,
 				44C5DADD1850C6A342CB0F42 /* ChatView.swift */,
 				58AE8C76701A110B13945027 /* ChatViewModel.swift */,
+				7A67EFF0F10261D9FC6C908E /* CourseDateViews.swift */,
 				8F38E82A30132956316CD8AC /* DeparturesCard.swift */,
 				E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */,
 				F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */,
@@ -833,6 +836,7 @@
 				7A1944AB03B3DAB2D824A08E /* ChatView.swift in Sources */,
 				DCEC0F33C64ACC4F4D889BCE /* ChatViewModel.swift in Sources */,
 				AAEBF323BEFFB372CAD82193 /* ChatsView.swift in Sources */,
+				E42D1D100C72EAD253601644 /* CourseDateViews.swift in Sources */,
 				491F45628A791B6298C0076C /* DeparturesCard.swift in Sources */,
 				6050EEA9BDAD57AB18630D2E /* DigestSettingsView.swift in Sources */,
 				DD8C7BFE0F07FFAABDD8DC63 /* DigestSheet.swift in Sources */,

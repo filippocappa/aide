@@ -43,6 +43,28 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(c["modified_at"] as? String, "2026-10-18T11:26:10Z")
     }
 
+    func testCourseDatesDecodeAndAnEditSendsNulls() throws {
+        let json = """
+        {"course": 4, "items": [{"id": "d_1", "what": "1st mid-term", "kind": "mid-term", "date": "2026-11-02",
+         "time": "12:30", "end": "13:00", "room": "Lab A", "you": "Group 7, Round D", "details": "", "source": "Moodle",
+         "by": "professor", "differs": {"date": "2026-11-03", "time": null, "source": "Avviso.pdf, p. 1"},
+         "calendar": {"state": "moved", "on": "2026-11-01", "event": "3", "plan": null}, "past": false}],
+         "read_at": null, "reading": true}
+        """
+        let d = try JSONDecoder.api.decode(CourseDates.self, from: Data(json.utf8))
+        let item = try XCTUnwrap(d.items.first)
+        XCTAssertEqual(item.you, "Group 7, Round D")
+        XCTAssertEqual(item.calendar?.on, "2026-11-01")
+        XCTAssertEqual(item.differs?.date, "2026-11-03")
+        XCTAssertFalse(item.mine)
+        XCTAssertEqual(d.reading, true)
+        let body = CourseDateBody(what: "Oral exam", kind: "exam", date: "2026-12-01", time: nil, end: "13:00")
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(body)) as? [String: Any])
+        XCTAssertTrue(obj["time"] is NSNull)
+        XCTAssertTrue(obj["end"] is NSNull)  // no end without a time
+        XCTAssertTrue(obj["room"] is NSNull)
+    }
+
     func testSyncSendsListsAndEachReminderItsList() throws {
         let change = ReminderChange(id: nil, appleId: "x-apple", title: "Milk", notes: "", dueAt: nil, completed: false,
                                     modifiedAt: "2026-10-18T11:26:10Z", deleted: false, list: "Groceries")

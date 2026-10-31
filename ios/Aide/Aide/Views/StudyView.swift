@@ -133,7 +133,8 @@ struct StudyView: View {
         }
     }
 
-    /// Simulator screenshots: `-previewOpen course:5` opens that course, `practice:5` its practice exam (with
+    /// Simulator screenshots: `-previewOpen course:5` opens that course, `date:5` its first date's editor,
+    /// `practice:5` its practice exam (with
     /// `-previewExam start`, already started), `result:x_…` a finished one.
     private func openPreview() {
         #if DEBUG
@@ -142,7 +143,7 @@ struct StudyView: View {
         guard parts.count == 2 else { return }
         if parts[0] == "result" { result = parts[1]; return }
         guard let course = courses.first(where: { String($0.id) == parts[1] }) else { return }
-        if parts[0] == "course" { path = [course] }
+        if parts[0] == "course" || parts[0] == "date" { path = [course] }
         if parts[0] == "practice" { practice = course }
         #endif
     }
@@ -333,10 +334,12 @@ struct ExamTag: View {
     let date: Date
     /// "Macroeconomics exam": the whole line, on the course's page.
     var title: String?
+    /// A course date with no time: the day alone.
+    var allDay = false
 
     var body: some View {
         let soon = StudyDay.days(to: date) < 7
-        Label(title.map { "\($0.prefix(1).uppercased() + $0.dropFirst()) · \(StudyDay.when(date))" }
+        Label(title.map { "\($0.prefix(1).uppercased() + $0.dropFirst()) · \(allDay ? StudyDay.word(date) : StudyDay.when(date))" }
                 ?? "Exam \(StudyDay.phrase(date).replacingOccurrences(of: "on ", with: ""))",
               systemImage: "calendar")
             .font(.caption.weight(.semibold))
@@ -396,6 +399,14 @@ struct CourseView: View {
     @State private var openFile: StudyFile?
     @State private var page: Page?
     @State private var allReviews = false
+    @State private var dates: CourseDates?
+    @State private var editing: DateEdit?
+
+    /// The date editor: a new date, or one of the course's.
+    enum DateEdit: Identifiable {
+        case new, item(CourseDate)
+        var id: String { if case .item(let d) = self { d.id } else { "new" } }
+    }
 
     enum Import: Identifiable {
         case pdf, recording
@@ -414,7 +425,9 @@ struct CourseView: View {
             VStack(alignment: .leading, spacing: 12) {
                 TopBlock(course.title) {
                     Text(summary).foregroundStyle(.secondary)
-                    if let exam = course.nextExam, let date = Wire.parse(exam.date) { ExamTag(date: date, title: exam.title) }
+                    if let exam = course.nextExam, let date = Wire.parse(exam.date) {
+                        ExamTag(date: date, title: exam.title, allDay: exam.allDay == true)
+                    }
                 }
                 if let error { ErrorCard(text: error) }
                 if let busy {
@@ -424,6 +437,10 @@ struct CourseView: View {
                     Label(note.text, systemImage: note.symbol).font(.footnote).foregroundStyle(.secondary).card()
                 }
                 if notebook?.started == true, !written.isEmpty { practiceChips }
+                if dates != nil {
+                    CourseDatesCard(dates: dates, add: { editing = .new }, read: { Task { await readDates() } },
+                                    open: { editing = .item($0) }, chat: { Task { await openChat() } })
+                }
                 ForEach(notebook?.proposals ?? []) { ProposalCard(proposal: $0, act: act).card() }
                 if let pause = writer?.paused, pause.course == nil || pause.course == course.id {
                     WriterPauseCard(pause: pause) { writer = $0 }.card()
@@ -469,6 +486,19 @@ struct CourseView: View {
             Task { await upload(url, kind: kind) }
         }
         .sheet(item: $openFile) { PDFSheet(file: $0) }
+        .sheet(item: $editing) { edit in
+            switch edit {
+            case .new: CourseDateEditor(course: course.id, item: nil) { dates = $0 }
+            case .item(let item): CourseDateEditor(course: course.id, item: item) { dates = $0 }
+            }
+        }
+        .task(id: dates?.reading == true) {
+            // While Professor reads the dates again, follow it.
+            while !Task.isCancelled, dates?.reading == true {
+                try? await Task.sleep(for: .seconds(4))
+                if let fresh = try? await env.api.courseDates(course: course.id) { dates = fresh }
+            }
+        }
         .fullScreenCover(isPresented: $showPractice, onDismiss: { Task { await load() } }) {
             PracticeExamView(course: course.id, courseName: course.name)
         }
@@ -652,6 +682,13 @@ struct CourseView: View {
             async let fs = env.api.files(course: course.id)
             (notebook, lectures, files) = try await (nb, ls, fs)
             reviews = (try? await env.api.reviewSessions(course: course.id)) ?? [] // an older server has none
+            dates = try? await env.api.courseDates(course: course.id)
+            #if DEBUG
+            if env.settings.isPreview, UserDefaults.standard.string(forKey: "previewOpen") == "date:\(course.id)",
+               editing == nil, let first = dates?.items.first(where: { $0.past != true }) {
+                editing = .item(first)
+            }
+            #endif
             if notebook?.started == true { bank = try? await env.api.quizBank(course: course.id) }
             writer = try? await env.api.notesWriter()
             error = nil
@@ -668,6 +705,15 @@ struct CourseView: View {
                 _ = try await env.api.declineProposal(proposal.id)
             }
             await load()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func readDates() async {
+        do {
+            dates = try await env.api.readCourseDates(course: course.id)
+            error = nil
         } catch {
             self.error = error.localizedDescription
         }
