@@ -248,15 +248,23 @@ class FoodStore:
                           "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(clean),))
         return self.goals()
 
-    # -- a setting the API keeps: Coach's food-log chat -----------------------
+    # -- a setting the API keeps: Coach's food-log chat, a new one each day ----
 
     def chat(self) -> str | None:
-        row = self.conn.execute("SELECT value FROM settings WHERE key = 'food_chat'").fetchone()
-        return json.loads(row["value"]) if row else None
+        return self.chat_day()[0]
 
-    def set_chat(self, public_id: str) -> None:
+    def chat_day(self) -> tuple[str | None, date | None]:
+        """The Food log chat and the day it's for (None for one made before chats were daily)."""
+        row = self.conn.execute("SELECT value FROM settings WHERE key = 'food_chat'").fetchone()
+        value = json.loads(row["value"]) if row else None
+        if isinstance(value, dict):
+            return value["id"], date.fromisoformat(value["day"])
+        return value, None
+
+    def set_chat(self, public_id: str, day: date) -> None:
         self.conn.execute("INSERT INTO settings (key, value) VALUES ('food_chat', ?) "
-                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(public_id),))
+                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                          (json.dumps({"id": public_id, "day": day.isoformat()}),))
 
 
 def totals(meals: list[dict]) -> dict:

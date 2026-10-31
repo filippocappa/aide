@@ -1120,12 +1120,18 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"meals": [food.as_json(m) for m in food.between(start, end)]}
 
     def food_chat() -> str:
-        """Coach's "Food log" chat, made once; made again if it was deleted."""
-        if (public_id := food.chat()) and db.app_conversation(public_id) is not None:
+        """Coach's "Food log" chat: a new one each day (or when it was deleted), so a turn carries only the day's
+        meals. The day before's is renamed "Food log, Thu 30 Oct"; the app finds today's by its title."""
+        today = food.today()
+        public_id, day = food.chat_day()
+        old = db.app_conversation(public_id) if public_id else None
+        if old is not None and day == today:
             return public_id
+        if old is not None and old["title"] == "Food log":
+            db.set_conversation_title(old["id"], f"Food log, {day or today - timedelta(days=1):%a %-d %b}")
         row = db.new_app_conversation("coach")
         db.set_conversation_title(row["id"], "Food log")
-        food.set_chat(row["public_id"])
+        food.set_chat(row["public_id"], today)
         return row["public_id"]
 
     @app.post("/v1/food/log", dependencies=[Depends(auth)])

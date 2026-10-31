@@ -147,7 +147,15 @@ def test_food_log_goes_to_coachs_food_chat(env):
     assert again["conversation_id"] == body["conversation_id"] and again["meals"] == []
     agent.delete_conversation(CONVERSATION, body["conversation_id"])
     api, *_ = env([done("ok")])
-    assert api.post("/v1/food/log", json={"text": "a snack"}, headers=AUTH).json()["conversation_id"] != body["conversation_id"]
+    remade = api.post("/v1/food/log", json={"text": "a snack"}, headers=AUTH).json()["conversation_id"]
+    assert remade != body["conversation_id"]
+    # A new day, a new chat; the day before's keeps its date in the title.
+    today = food.today()
+    food.today = lambda: today + timedelta(days=1)
+    api, *_ = env([done("ok")])
+    tomorrow = api.post("/v1/food/log", json={"text": "breakfast"}, headers=AUTH).json()["conversation_id"]
+    assert tomorrow != remade and agent.db.app_conversation(tomorrow)["title"] == "Food log"
+    assert agent.db.app_conversation(remade)["title"] == f"Food log, {today:%a %-d %b}"
     assert api.post("/v1/food/log", json={}, headers=AUTH).status_code == 400
 
 
