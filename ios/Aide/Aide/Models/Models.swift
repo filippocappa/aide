@@ -1853,12 +1853,24 @@ struct QuizBank: Decodable {
     var questions = 0
     var unseen = 0
     var toReview = 0
+    /// Flashcards and the course's own exercises a practice exam can add (since 2026-10-31).
+    var cards = 0
+    var exercises = 0
     var topics: [QuizBankTopic] = []
     var scoring: QuizScoring?
     var past: [Quiz] = []
 }
 
-struct QuizBankTopic: Decodable, Identifiable, Hashable { let id: String; let title: String; let questions: Int }
+struct QuizBankTopic: Decodable, Identifiable, Hashable {
+    let id: String
+    let title: String
+    let questions: Int
+    var cards: Int?
+    var exercises: Int?
+    var known: Int?
+    var learning: Int?
+    var unseen: Int?
+}
 struct QuizScoring: Decodable, Hashable { let right: Double; let wrong: Double; var blank: Double? }
 
 struct Quiz: Decodable, Identifiable, Hashable {
@@ -1878,6 +1890,8 @@ struct Quiz: Decodable, Identifiable, Hashable {
     var score: QuizScore?
     /// None in the bank's `past`, a mock's `last` and the chat's card.
     var questions: [QuizQuestion] = []
+    /// The questions answered one at a time while taking it (`check`): they came back with their key.
+    var checked: [Int] = []
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1893,9 +1907,10 @@ struct Quiz: Decodable, Identifiable, Hashable {
         finishedAt = try c.decodeIfPresent(String.self, forKey: .finishedAt)
         score = try c.decodeIfPresent(QuizScore.self, forKey: .score)
         questions = try c.decodeIfPresent([QuizQuestion].self, forKey: .questions) ?? []
+        checked = try c.decodeIfPresent([Int].self, forKey: .checked) ?? []
     }
     private enum CodingKeys: String, CodingKey {
-        case id, kind, title, mock, scoring, course, minutes, count, startedAt, finishedAt, score, questions
+        case id, kind, title, mock, scoring, course, minutes, count, startedAt, finishedAt, score, questions, checked
     }
 }
 
@@ -1904,9 +1919,12 @@ struct QuizQuestion: Decodable, Identifiable, Hashable {
     let topic: QuizTopicRef
     let text: String
     var options: [QuizOption] = []
-    /// "open" for a mock exam's open question (answered in words or photos, marked after); nil for multiple choice.
+    /// "open" for an open question (a mock's, or the course's exercise; answered in words or photos, marked after),
+    /// "card" for a flashcard (turned, then marked right or wrong by you); nil for multiple choice.
     var type: String?
     var points: Double?
+    /// Where it comes from: the course's own material, or written by Professor. Nil on quizzes from before.
+    var source: QuizSource?
     // Once finished:
     var answer: String?
     var key: String?
@@ -1920,6 +1938,15 @@ struct QuizQuestion: Decodable, Identifiable, Hashable {
     var rubric: String?
     var id: Int { n }
     var isOpen: Bool { type == "open" }
+    var isCard: Bool { type == "card" }
+}
+
+struct QuizSource: Decodable, Hashable {
+    /// "course" or "professor".
+    let kind: String
+    /// The course's file and page: "Sheet of 28 Sep, p. 1".
+    var name: String?
+    var fromCourse: Bool { kind == "course" }
 }
 
 struct QuizResponse: Decodable, Hashable { var text: String?; var photos: [String]? }
@@ -1985,7 +2012,14 @@ struct MockSource: Decodable { let id: String; let name: String }
 
 struct MockExamList: Decodable { let mocks: [MockExam] }
 
-struct QuizStartBody: Encodable { let course: Int; var count: Int?; var minutes: Int?; var mock: String? }
+struct QuizStartBody: Encodable {
+    let course: Int
+    var count: Int?
+    var cards: Int?
+    var exercises: Int?
+    var minutes: Int?
+    var mock: String?
+}
 
 /// An answer as handed in: a letter, or an open question's words and photos (`p_…` ids).
 enum QuizAnswer: Encodable, Equatable {
@@ -2006,6 +2040,7 @@ enum QuizAnswer: Encodable, Equatable {
 }
 
 struct QuizFinishBody: Encodable { let answers: [String: QuizAnswer] }
+struct QuizCheckBody: Encodable { let n: Int; let answer: QuizAnswer? }
 
 // MARK: Moodle and the Obsidian vault (docs/API.md, "Moodle", "Obsidian vault")
 
@@ -2086,6 +2121,24 @@ struct CourseNotebook: Decodable, Hashable {
     var questions: Int?
     var proposals: Int?
     var writing: Bool?
+    /// A row per written topic, in order (since 2026-10-31).
+    var mastery: [TopicMastery]?
+}
+
+/// A topic's questions and flashcards by how its last answer went: right, wrong or blank, never answered.
+struct TopicMastery: Decodable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    var known = 0
+    var learning = 0
+    var unseen = 0
+    var total: Int { known + learning + unseen }
+    /// One word for its dot: known when most are, learning when any were tried, else unseen.
+    var level: Level {
+        if total > 0, known * 2 >= total { return .known }
+        return known + learning > 0 ? .learning : .unseen
+    }
+    enum Level { case known, learning, unseen }
 }
 
 struct Lecture: Decodable, Identifiable, Hashable {

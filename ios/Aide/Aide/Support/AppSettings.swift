@@ -18,6 +18,7 @@ final class AppSettings: ObservableObject {
         static let token = "apiToken"
         static let voiceLanguage = "voiceLanguage"
         static let speakReplies = "speakReplies"
+        static let studyRevealNow = "studyRevealNow"
     }
 
     @Published var serverURL: String {
@@ -37,6 +38,10 @@ final class AppSettings: ObservableObject {
     }
     @Published var speakReplies: Bool {
         didSet { Keychain.set(speakReplies ? "1" : "0", for: Keys.speakReplies) }
+    }
+    /// Practice exams: each answer shown as you go (Check), or all of them at the end.
+    @Published var studyRevealNow: Bool {
+        didSet { Keychain.set(studyRevealNow ? "1" : "0", for: Keys.studyRevealNow) }
     }
 
     #if DEBUG
@@ -59,6 +64,7 @@ final class AppSettings: ObservableObject {
         reminderListID = Keychain.get(Keys.reminderListID) ?? ""
         voiceLanguage = Keychain.get(Keys.voiceLanguage) ?? "en-US"
         speakReplies = Keychain.get(Keys.speakReplies).map { $0 == "1" } ?? true
+        studyRevealNow = Keychain.get(Keys.studyRevealNow).map { $0 == "1" } ?? true
     }
 
     /// Settings saved in UserDefaults by older builds, into the Keychain (once; the Keychain wins).

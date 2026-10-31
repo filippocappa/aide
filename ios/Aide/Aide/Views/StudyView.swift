@@ -1,93 +1,387 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The Study tab: the courses, each with its notebook, lectures and files (docs/API.md, "Study", "Notebook").
+extension Theme {
+    /// Professor's colour: the Study tab's one hue.
+    static let study = Theme.readable(0x7A4FD0)
+}
+
+/// The Study tab: what's up next, what to review, and the courses, each with its notebook, lectures and files
+/// (docs/API.md, "Study", "Notebook", "Quizzes and review sessions").
 struct StudyView: View {
     @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var push: PushService
     @State private var overview: StudyOverview?
+    @State private var reviews: [ReviewSession] = []
     @State private var error: String?
+    @State private var path: [StudyCourse] = []
+    @State private var practice: StudyCourse?
+    @State private var result: String?
+
+    private var courses: [StudyCourse] { overview?.courses ?? [] }
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
-                }
-                if let now = overview?.now {
-                    Section {
-                        Label("\(now.name.prefix(1).uppercased() + now.name.dropFirst()) is on now", systemImage: "dot.radiowaves.left.and.right")
-                            .foregroundStyle(Theme.toggle)
+        NavigationStack(path: $path) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    TopBlock("Study", overline: Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
+                        if overview != nil { Text(line).foregroundStyle(.secondary) }
                     }
-                }
-                if let courses = overview?.courses {
-                    Section {
-                        ForEach(courses) { course in
-                            NavigationLink(value: course) { CourseRow(course: course) }
+                    if let error { ErrorCard(text: error) }
+                    if let now = overview?.now {
+                        Label("\(now.name.prefix(1).uppercased() + now.name.dropFirst()) is on now",
+                              systemImage: "dot.radiowaves.left.and.right")
+                            .font(.subheadline.weight(.medium)).foregroundStyle(Theme.toggle).card()
+                    }
+                    if !reviews.isEmpty {
+                        UpNextCard(sessions: Array(reviews.prefix(3)), name: name) { session in
+                            Task { await quiz(session.course) }
+                        } open: { session in
+                            if let course = courses.first(where: { $0.id == session.course }) { path = [course] }
                         }
-                    } footer: {
-                        if courses.isEmpty { Text("Courses come from the timetable calendar.") }
                     }
-                } else if error == nil {
-                    SkeletonSections(sections: 1, rows: 3, mark: false)
+                    if let due = toReview {
+                        ToReviewCard(course: due.course, count: due.count, topic: due.topic) { practice = due.course }
+                    }
+                    if overview == nil, error == nil {
+                        ForEach(0..<3, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.row).frame(height: 116)
+                        }
+                    } else if !courses.isEmpty {
+                        Text("Courses").font(.title3.weight(.bold)).padding(.horizontal, 4).padding(.top, 8)
+                        ForEach(courses) { course in
+                            NavigationLink(value: course) {
+                                CourseCard(course: course, next: reviews.first { $0.course == course.id })
+                            }
+                            .buttonStyle(CardPress())
+                        }
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
             }
-            .navigationTitle("Study")
+            .previewAnchor()
+            .pageGlow(Theme.study)
             .navigationDestination(for: StudyCourse.self) { CourseView(course: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Moodle", systemImage: "building.columns") { env.showMoodle = true }
                 }
             }
-            .task { await load() }
+            .fullScreenCover(item: $practice, onDismiss: { Task { await load() } }) { course in
+                PracticeExamView(course: course.id, courseName: course.name)
+            }
+            .sheet(item: Binding(get: { result.map(QuizID.init) }, set: { result = $0?.id })) { QuizResultSheet(id: $0.id) }
+            .task {
+                await load()
+                openPreview()
+            }
             .refreshable { await load() }
         }
+    }
+
+    private struct QuizID: Identifiable { let id: String }
+
+    /// The page's one line: the next review sessions and the next exam.
+    private var line: String {
+        var parts: [String] = []
+        if let start = reviews.first.flatMap({ Wire.parse($0.start) }) {
+            let same = reviews.filter { Wire.parse($0.start).map { Calendar.current.isDate($0, inSameDayAs: start) } ?? false }.count
+            parts.append("\(same == 1 ? "A review session" : "\(same) review sessions") \(StudyDay.phrase(start)).")
+        }
+        let exams = courses.compactMap { c in c.nextExam.flatMap { e in Wire.parse(e.date).map { (e.title, $0) } } }
+        if let (title, date) = exams.min(by: { $0.1 < $1.1 }), StudyDay.days(to: date) < 14 {
+            parts.append("\(title.prefix(1).uppercased() + title.dropFirst()) \(StudyDay.phrase(date)).")
+        }
+        if parts.isEmpty {
+            parts.append(courses.isEmpty ? "Courses come from the timetable calendar." : "Nothing planned. Practise whenever you like.")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// The course with the most questions last answered wrong or blank, and its most missed topic.
+    private var toReview: (course: StudyCourse, count: Int, topic: TopicMastery?)? {
+        courses.compactMap { course -> (StudyCourse, Int, TopicMastery?)? in
+            let mastery = course.notebook?.mastery ?? []
+            let count = mastery.reduce(0) { $0 + $1.learning }
+            return count > 0 ? (course, count, mastery.max { $0.learning < $1.learning }) : nil
+        }
+        .max { $0.1 < $1.1 }
+    }
+
+    private func name(_ course: Int) -> String {
+        courses.first { $0.id == course }?.title ?? reviews.first { $0.course == course }?.name ?? "Course"
     }
 
     private func load() async {
         do {
             overview = try await env.api.study()
+            reviews = (try? await env.api.reviewSessions()) ?? []
             error = nil
         } catch {
             self.error = error.localizedDescription
         }
     }
+
+    /// The course's chat, with Professor quizzing out loud.
+    private func quiz(_ id: Int) async {
+        guard let course = courses.first(where: { $0.id == id }) else { return }
+        do {
+            push.route = .quiz(try await CourseView.chat(for: course, api: env.api))
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Simulator screenshots: `-previewOpen course:5` opens that course, `practice:5` its practice exam (with
+    /// `-previewExam start`, already started), `result:x_…` a finished one.
+    private func openPreview() {
+        #if DEBUG
+        guard env.settings.isPreview, let target = UserDefaults.standard.string(forKey: "previewOpen") else { return }
+        let parts = target.split(separator: ":").map(String.init)
+        guard parts.count == 2 else { return }
+        if parts[0] == "result" { result = parts[1]; return }
+        guard let course = courses.first(where: { String($0.id) == parts[1] }) else { return }
+        if parts[0] == "course" { path = [course] }
+        if parts[0] == "practice" { practice = course }
+        #endif
+    }
 }
 
-private struct CourseRow: View {
-    let course: StudyCourse
+/// Days as the Study pages say them.
+enum StudyDay {
+    private static var calendar: Calendar { .current }
+
+    static func days(to date: Date) -> Int {
+        calendar.dateComponents([.day], from: calendar.startOfDay(for: .now), to: calendar.startOfDay(for: date)).day ?? 0
+    }
+
+    /// "Today", "Tomorrow", "Monday" within the week, else "Tue 10 Nov".
+    static func word(_ date: Date) -> String {
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInTomorrow(date) { return "Tomorrow" }
+        let days = days(to: date)
+        if days > 0, days < 7 { return date.formatted(.dateTime.weekday(.wide)) }
+        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    }
+
+    private static func relative(_ date: Date) -> Bool { calendar.isDateInToday(date) || calendar.isDateInTomorrow(date) }
+
+    /// "today", "tomorrow", "on Monday".
+    static func phrase(_ date: Date) -> String { relative(date) ? word(date).lowercased() : "on \(word(date))" }
+
+    /// "Tomorrow, 09:00"; lowercased within a sentence.
+    static func when(_ date: Date, inSentence: Bool = false) -> String {
+        let day = inSentence && relative(date) ? word(date).lowercased() : word(date)
+        return "\(day), \(date.formatted(date: .omitted, time: .shortened))"
+    }
+}
+
+struct ErrorCard: View {
+    let text: String
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red).card()
+    }
+}
+
+/// The next review sessions as a timeline; the first one a tap from its quiz or its course.
+private struct UpNextCard: View {
+    let sessions: [ReviewSession]
+    let name: (Int) -> String
+    let quiz: (ReviewSession) -> Void
+    let open: (ReviewSession) -> Void
+
+    private var first: Date? { sessions.first.flatMap { Wire.parse($0.start) } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(course.title).font(.headline)
-            Text(detail).font(.subheadline).foregroundStyle(.secondary)
-            if let exam = course.nextExam, let date = Wire.parse(exam.date) {
-                Label("Exam \(date.formatted(.relative(presentation: .named)))", systemImage: "calendar")
-                    .font(.footnote).foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Up next · \(first.map(StudyDay.word) ?? "")".uppercased())
+                .font(.caption.weight(.semibold)).tracking(0.4).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                    row(session, index: index)
+                }
+            }
+            if let session = sessions.first {
+                HStack(spacing: 10) {
+                    Button { quiz(session) } label: {
+                        Label("Quiz me", systemImage: "waveform")
+                            .frame(maxWidth: .infinity).padding(.vertical, 11)
+                            .foregroundStyle(.white).background(Theme.study, in: Capsule())
+                    }
+                    Button { open(session) } label: {
+                        Text("Open course")
+                            .frame(maxWidth: .infinity).padding(.vertical, 11)
+                            .foregroundStyle(.primary).background(Theme.chip, in: Capsule())
+                    }
+                }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(CardPress())
             }
         }
-        .padding(.vertical, 2)
+        .card()
+    }
+
+    private func row(_ session: ReviewSession, index: Int) -> some View {
+        let start = Wire.parse(session.start)
+        let otherDay = start.map { s in first.map { !Calendar.current.isDate(s, inSameDayAs: $0) } ?? false } ?? false
+        let last = index == sessions.count - 1
+        return HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(start?.formatted(date: .omitted, time: .shortened) ?? "").font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                if otherDay, let start {
+                    Text(start.formatted(.dateTime.weekday(.abbreviated))).font(.caption2)
+                }
+            }
+            .foregroundStyle(index == 0 ? Theme.study : .secondary)
+            .frame(width: 50, alignment: .trailing)
+            VStack(spacing: 0) {
+                Circle().fill(index == 0 ? Theme.study : Theme.line).frame(width: 10, height: 10).padding(.top, 5)
+                if !last { Rectangle().fill(Theme.line).frame(width: 2).frame(maxHeight: .infinity) }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Review: \(name(session.course))").font(.body.weight(index == 0 ? .semibold : .regular))
+                Text(([ "\(session.minutes) min"] + session.topics).joined(separator: " · "))
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            }
+            .padding(.bottom, last ? 0 : 16)
+            Spacer(minLength: 0)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// What was last answered wrong or blank, in the course with the most of it.
+private struct ToReviewCard: View {
+    let course: StudyCourse
+    let count: Int
+    let topic: TopicMastery?
+    let review: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "arrow.counterclockwise")
+                .font(.title3.weight(.semibold)).foregroundStyle(Theme.study)
+                .frame(width: 44, height: 44).background(Theme.study.opacity(0.14), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(count) to review").font(.headline)
+                Text([topic.map { "Most missed: \($0.title)" }, course.title].compactMap { $0 }.joined(separator: " · "))
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            Chip(title: "Review now", style: .prominent, tint: Theme.study, action: review)
+        }
+        .card()
+    }
+}
+
+/// A course on the Study tab: its exam, a dot per topic for how well it's known, and its next review.
+private struct CourseCard: View {
+    let course: StudyCourse
+    let next: ReviewSession?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(course.title).font(.headline).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                Spacer(minLength: 4)
+                if let exam = course.nextExam, let date = Wire.parse(exam.date) { ExamTag(date: date) }
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            if let mastery = course.notebook?.mastery, !mastery.isEmpty { MasteryDots(topics: mastery) }
+            Text(detail).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+            if let start = next.flatMap({ Wire.parse($0.start) }) {
+                Label("Next review \(StudyDay.when(start, inSentence: true))", systemImage: "calendar")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .card()
     }
 
     private var detail: String {
         var parts: [String] = []
         if let nb = course.notebook {
-            // Started with nothing to show or answer yet: the outline is being drafted.
-            let drafting = nb.topics == 0 && (nb.proposals ?? 0) == 0
-            parts.append(nb.writing == true ? "Notes being written" : drafting ? "Topics being drafted" : "\(nb.topics) topics")
+            let mastery = nb.mastery ?? []
+            let known = mastery.reduce(0) { $0 + $1.known }, learning = mastery.reduce(0) { $0 + $1.learning }
+            let unseen = mastery.reduce(0) { $0 + $1.unseen }
+            if nb.writing == true {
+                parts.append("Notes being written")
+            } else if nb.topics == 0 && (nb.proposals ?? 0) == 0 {
+                parts.append("Topics being drafted") // started, with nothing to show or answer yet
+            } else {
+                parts.append(nb.topics == 1 ? "1 topic" : "\(nb.topics) topics")
+                if known + learning > 0 {
+                    parts += ["\(known) known", "\(learning) learning", "\(unseen) not tried"]
+                } else if let q = nb.questions, q > 0 {
+                    parts.append("\(q) questions, none tried yet")
+                }
+            }
             if let p = nb.proposals, p > 0 { parts.append(p == 1 ? "1 to answer" : "\(p) to answer") }
+        } else {
+            if let n = course.lectures, n > 0 { parts.append(n == 1 ? "1 lecture" : "\(n) lectures") }
+            if let n = course.files, n > 0 { parts.append(n == 1 ? "1 file" : "\(n) files") }
+            parts.append("no notebook yet")
         }
-        if let n = course.lectures, n > 0 { parts.append(n == 1 ? "1 lecture" : "\(n) lectures") }
-        if let n = course.files, n > 0 { parts.append(n == 1 ? "1 file" : "\(n) files") }
-        return parts.isEmpty ? "Nothing yet" : parts.joined(separator: " · ")
+        let text = parts.joined(separator: " · ")
+        return text.prefix(1).uppercased() + text.dropFirst()
     }
 }
 
-/// A course: what's waiting for an answer, the notebook, practice, lectures and files.
+/// The exam's day as a small capsule: orange within the week.
+struct ExamTag: View {
+    let date: Date
+    /// "Macroeconomics exam": the whole line, on the course's page.
+    var title: String?
+
+    var body: some View {
+        let soon = StudyDay.days(to: date) < 7
+        Label(title.map { "\($0.prefix(1).uppercased() + $0.dropFirst()) · \(StudyDay.when(date))" }
+                ?? "Exam \(StudyDay.phrase(date).replacingOccurrences(of: "on ", with: ""))",
+              systemImage: "calendar")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(soon ? Color.orange : .secondary)
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(soon ? Color.orange.opacity(0.15) : Theme.chip, in: Capsule())
+            .fixedSize()
+    }
+}
+
+extension TopicMastery.Level {
+    var color: Color {
+        switch self {
+        case .known: Theme.study
+        case .learning: Theme.study.opacity(0.42)
+        case .unseen: Color.primary.opacity(0.12)
+        }
+    }
+}
+
+/// A dot per topic: known, being learnt, not tried.
+struct MasteryDots: View {
+    let topics: [TopicMastery]
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 12, maximum: 12), spacing: 6)], alignment: .leading, spacing: 6) {
+            ForEach(topics) { Circle().fill($0.level.color).frame(width: 12, height: 12) }
+        }
+        .accessibilityElement()
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        let known = topics.filter { $0.level == .known }.count, learning = topics.filter { $0.level == .learning }.count
+        return "\(known) topics known, \(learning) being learnt, \(topics.count - known - learning) not tried"
+    }
+}
+
+/// A course: what's waiting for an answer, practice, how well each topic is known, review sessions, lectures and files.
 struct CourseView: View {
     let course: StudyCourse
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
     @State private var notebook: NotebookStatus?
+    @State private var bank: QuizBank?
     @State private var writer: NotesWriter?
     /// What was just set going, with its symbol: figures being looked for, exercises being written.
     @State private var note: (text: String, symbol: String)?
@@ -100,102 +394,64 @@ struct CourseView: View {
     @State private var confirmStart = false
     @State private var importing: Import?
     @State private var openFile: StudyFile?
+    @State private var page: Page?
+    @State private var allReviews = false
 
     enum Import: Identifiable {
         case pdf, recording
         var id: Self { self }
     }
 
+    enum Page: Hashable {
+        case introduction(String), topic(NotebookTopic), formulas, exercises, mocks, lectures, files
+    }
+
+    private var topics: [NotebookTopic] { notebook?.topics ?? [] }
+    private var written: [NotebookTopic] { topics.filter { $0.written == true } }
+
     var body: some View {
-        List {
-            if let error {
-                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
-            }
-            if let busy {
-                HStack(spacing: 10) { ProgressView(); Text(busy).foregroundStyle(.secondary) }
-            }
-            if let note {
-                Label(note.text, systemImage: note.symbol).font(.footnote).foregroundStyle(.secondary)
-            }
-            ForEach(notebook?.proposals ?? []) { proposal in
-                Section { ProposalCard(proposal: proposal, act: act) }
-            }
-            if let pause = writer?.paused, pause.course == nil || pause.course == course.id {
-                Section { WriterPauseCard(pause: pause) { writer = $0 } }
-            }
-            if let writing = notebook?.writing {
-                Section { WritingRow(progress: writing.progress, step: notebook?.step) }
-            } else if notebook?.busy == true {
-                // A job with no proposal yet: the outline at the start, or new material and figures later.
-                Section {
-                    WritingRow(title: (notebook?.topics ?? []).isEmpty ? "Reading the course's files"
-                                                                        : "Working on the notebook",
-                               systemImage: "books.vertical", progress: nil, step: notebook?.step)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                TopBlock(course.title) {
+                    Text(summary).foregroundStyle(.secondary)
+                    if let exam = course.nextExam, let date = Wire.parse(exam.date) { ExamTag(date: date, title: exam.title) }
                 }
-            }
-            notebookSection
-            practiceSection
-            Section {
-                Button { Task { await openChat() } } label: {
-                    Label("Ask Professor", systemImage: "bubble.left.and.text.bubble.right")
+                if let error { ErrorCard(text: error) }
+                if let busy {
+                    HStack(spacing: 10) { ProgressView(); Text(busy).foregroundStyle(.secondary) }.card()
                 }
-            }
-            if !reviews.isEmpty {
-                Section {
-                    ForEach(reviews) { session in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(reviewTime(session))
-                            if !session.topics.isEmpty {
-                                Text(session.topics.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .swipeActions {
-                            Button("Cancel", role: .destructive) { Task { await cancel(session) } }
-                        }
-                    }
-                } header: {
-                    Text("Review sessions")
-                } footer: {
-                    Text("In your calendar. Professor offers a quiz on the topics when one starts.")
+                if let note {
+                    Label(note.text, systemImage: note.symbol).font(.footnote).foregroundStyle(.secondary).card()
                 }
-            }
-            if !lectures.isEmpty {
-                Section("Lectures") {
-                    ForEach(lectures) { lecture in
-                        NavigationLink {
-                            LectureView(lecture: lecture)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(lecture.title ?? "Lecture").lineLimit(2)
-                                Text(lecture.subtitle).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                if notebook?.started == true, !written.isEmpty { practiceChips }
+                ForEach(notebook?.proposals ?? []) { ProposalCard(proposal: $0, act: act).card() }
+                if let pause = writer?.paused, pause.course == nil || pause.course == course.id {
+                    WriterPauseCard(pause: pause) { writer = $0 }.card()
                 }
-            }
-            if !files.isEmpty {
-                Section("Files") {
-                    ForEach(files) { file in
-                        Button { openFile = file } label: {
-                            HStack {
-                                Image(systemName: "doc.richtext").foregroundStyle(.secondary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(file.name).foregroundStyle(.primary).lineLimit(2)
-                                    Text(fileDetail(file)).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
+                if let writing = notebook?.writing {
+                    WritingRow(progress: writing.progress, step: notebook?.step).card()
+                } else if notebook?.busy == true {
+                    // A job with no proposal yet: the outline at the start, or new material and figures later.
+                    WritingRow(title: topics.isEmpty ? "Reading the course's files" : "Working on the notebook",
+                               systemImage: "books.vertical", progress: nil, step: notebook?.step).card()
                 }
+                knowledge
+                if !reviews.isEmpty { reviewsCard }
+                moreCard
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .navigationTitle(course.title)
+        .previewAnchor()
+        .pageGlow(Theme.study)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $page) { destination($0) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button("Add a PDF", systemImage: "doc.badge.plus") { importing = .pdf }
                     Button("Add a recording", systemImage: "waveform.badge.plus") { importing = .recording }
-                    if !(notebook?.topics ?? []).isEmpty {
+                    if !topics.isEmpty {
                         Button("Find figures in the slides", systemImage: "photo.on.rectangle") {
                             Task { await findFigures() }
                         }
@@ -236,99 +492,158 @@ struct CourseView: View {
         }
     }
 
-    @ViewBuilder private var notebookSection: some View {
-        if let notebook, notebook.started == true {
-            Section {
-                if let intro = notebook.introduction, !intro.isEmpty {
-                    NavigationLink {
-                        NotePage(title: "Introduction", markdown: intro)
-                    } label: {
-                        Label("Introduction", systemImage: "graduationcap")
-                    }
-                }
-                ForEach(notebook.topics ?? []) { topic in
-                    if topic.written == true {
-                        NavigationLink { TopicPageView(topic: topic) } label: { TopicRow(topic: topic) }
-                    } else {
-                        TopicRow(topic: topic).foregroundStyle(.secondary)
-                    }
-                }
-            } header: {
-                Text("Notebook")
-            } footer: {
-                if let exam = notebook.exam { Text(exam) }
-            }
-        } else if notebook != nil {
-            Section {
-                Button { confirmStart = true } label: { Label("Start the notebook", systemImage: "book") }
-                    .disabled(files.isEmpty && lectures.isEmpty)
-            } footer: {
-                Text("Notes by topic, built from this course's files and lectures, with exam-style questions and flashcards.")
-            }
-        }
+    /// "11 topics · 59 questions · 33 files".
+    private var summary: String {
+        var parts: [String] = []
+        if !written.isEmpty { parts.append(written.count == 1 ? "1 topic" : "\(written.count) topics") }
+        let questions = bank?.questions ?? written.reduce(0) { $0 + ($1.questions ?? 0) }
+        if questions > 0 { parts.append("\(questions) questions") }
+        if !lectures.isEmpty { parts.append(lectures.count == 1 ? "1 lecture" : "\(lectures.count) lectures") }
+        if !files.isEmpty { parts.append(files.count == 1 ? "1 file" : "\(files.count) files") }
+        return parts.isEmpty ? (notebook == nil ? " " : "Nothing here yet") : parts.joined(separator: " · ")
     }
 
-    /// The formula sheet, the exercises, quizzes and practice exams: once some topic is written.
-    @ViewBuilder private var practiceSection: some View {
-        if let notebook, notebook.started == true, (notebook.topics ?? []).contains(where: { $0.written == true }) {
-            let exercises = notebook.exercises ?? 0
-            Section {
-                if (notebook.formulas ?? 0) > 0 {
-                    NavigationLink {
-                        LoadedNotePage(title: "Formulas", subtitle: "Every topic's formulas, in the notebook's order") {
-                            try await env.api.formulas(course: course.id)
-                        }
-                    } label: {
-                        Label("Formulas", systemImage: "function")
+    // MARK: Practice
+
+    /// Quiz me, the practice exam, the formula sheet, the exercises and the mock exams, in a row.
+    private var practiceChips: some View {
+        let exercises = notebook?.exercises ?? 0, mocks = notebook?.mocks ?? 0
+        let questions = written.contains { ($0.questions ?? 0) > 0 }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if questions {
+                    Chip(title: "Quiz me", systemImage: "waveform", style: .prominent, tint: Theme.study) {
+                        Task { await openChat(quiz: true) }
                     }
+                    Chip(title: "Practice exam", systemImage: "checklist") { showPractice = true }
+                }
+                if (notebook?.formulas ?? 0) > 0 {
+                    Chip(title: "Formulas", systemImage: "function") { page = .formulas }
                 }
                 if exercises > 0 {
-                    NavigationLink {
-                        ExercisesView(course: course, topics: notebook.topics ?? [])
-                    } label: {
-                        Label("Exercises", systemImage: "pencil.and.ruler")
-                    }
-                    .badge(exercises)
+                    Chip(title: "Exercises", systemImage: "pencil.and.ruler") { page = .exercises }
                 } else {
-                    Button { Task { await writeExercises() } } label: {
-                        Label("Write exercises", systemImage: "pencil.and.ruler")
-                    }
-                    .disabled(notebook.busy == true)
+                    Chip(title: "Write exercises", systemImage: "pencil.and.ruler") { Task { await writeExercises() } }
+                        .disabled(notebook?.busy == true)
                 }
-                if (notebook.topics ?? []).contains(where: { ($0.questions ?? 0) > 0 }) {
-                    Button { Task { await openChat(quiz: true) } } label: { Label("Quiz me", systemImage: "waveform") }
-                    Button { showPractice = true } label: { Label("Practice exam", systemImage: "checklist") }
-                }
-                if (notebook.mocks ?? 0) > 0 {
-                    NavigationLink {
-                        MockExamsView(course: course)
-                    } label: {
-                        Label("Mock exams", systemImage: "doc.text.magnifyingglass")
-                    }
-                    .badge(notebook.mocks ?? 0)
+                if mocks > 0 {
+                    Chip(title: "Mock exams", systemImage: "doc.text.magnifyingglass") { page = .mocks }
                 } else {
-                    Button { Task { await writeMock() } } label: {
-                        Label("Write a mock exam", systemImage: "doc.text.magnifyingglass")
+                    Chip(title: "Write a mock exam", systemImage: "doc.text.magnifyingglass") { Task { await writeMock() } }
+                        .disabled(notebook?.busy == true)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.horizontal, -16)
+    }
+
+    // MARK: How well you know it
+
+    /// Each topic's questions and flashcards by how their last answer went, from the bank or the Study brief.
+    private func mastery(_ topic: NotebookTopic) -> TopicMastery? {
+        if let t = bank?.topics.first(where: { $0.id == topic.id }) {
+            return TopicMastery(id: t.id, title: t.title, known: t.known ?? 0, learning: t.learning ?? 0, unseen: t.unseen ?? 0)
+        }
+        return course.notebook?.mastery?.first { $0.id == topic.id }
+    }
+
+    @ViewBuilder private var knowledge: some View {
+        if let notebook, notebook.started == true {
+            let rows = written.compactMap(mastery)
+            DetailCard(written.isEmpty ? "Notebook" : "How well you know it", note: notebook.exam, padding: 0) {
+                if !rows.isEmpty {
+                    MasteryBar(topics: rows).padding(16)
+                    RowDivider(leading: 16)
+                }
+                if let intro = notebook.introduction, !intro.isEmpty {
+                    Button { page = .introduction(intro) } label: {
+                        LinkRow(title: "Introduction", detail: "The exam, how it's marked, the dates", icon: "graduationcap")
                     }
-                    .disabled(notebook.busy == true)
+                    .buttonStyle(RowPress())
                 }
-            } header: {
-                Text("Practice")
-            } footer: {
-                if exercises == 0 {
-                    Text("Professor copies the course's own exercise sheets and past exams and solves them step by "
-                         + "step, following the course's solutions where it has them.")
-                } else if (notebook.mocks ?? 0) == 0 {
-                    Text("A mock exam is a paper like the real one, open questions included, timed and marked.")
+                ForEach(topics) { topic in
+                    RowDivider(leading: 16)
+                    if topic.written == true {
+                        Button { page = .topic(topic) } label: { CourseTopicRow(topic: topic, mastery: mastery(topic)) }
+                            .buttonStyle(RowPress())
+                    } else {
+                        CourseTopicRow(topic: topic, mastery: nil)
+                    }
                 }
+            }
+        } else if notebook != nil {
+            DetailCard("Notebook", note: "Notes by topic, built from this course's files and lectures, with exam-style "
+                       + "questions and flashcards.") {
+                Chip(title: "Start the notebook", systemImage: "book", style: .prominent, tint: Theme.study) { confirmStart = true }
+                    .disabled(files.isEmpty && lectures.isEmpty)
             }
         }
     }
 
-    private func fileDetail(_ file: StudyFile) -> String {
-        [file.section.flatMap { $0.isEmpty ? nil : $0 }, file.pages.map { "\($0) pages" }, file.scanned == true ? "scan" : nil]
-            .compactMap { $0 }.joined(separator: " · ")
+    private var reviewsCard: some View {
+        DetailCard("Review sessions", note: "In your calendar. Professor offers a quiz on the topics when one starts. "
+                   + "Press and hold one to cancel it.", padding: 0) {
+            ForEach(Array((allReviews ? reviews : Array(reviews.prefix(3))).enumerated()), id: \.element.id) { index, session in
+                if index > 0 { RowDivider() }
+                StatusRow(Wire.parse(session.start).map { StudyDay.when($0) } ?? "Review",
+                          detail: (["\(session.minutes) min"] + session.topics).joined(separator: " · ")) {
+                    Image(systemName: "calendar").font(.title3).foregroundStyle(Theme.study)
+                }
+                .contextMenu {
+                    Button("Cancel the session", systemImage: "calendar.badge.minus", role: .destructive) {
+                        Task { await cancel(session) }
+                    }
+                }
+            }
+            if reviews.count > 3, !allReviews {
+                RowDivider()
+                Button { withAnimation { allReviews = true } } label: {
+                    Text("\(reviews.count - 3) more").font(.subheadline.weight(.medium)).foregroundStyle(Theme.study)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 13)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(RowPress())
+            }
+        }
     }
+
+    private var moreCard: some View {
+        VStack(spacing: 0) {
+            Button { Task { await openChat() } } label: {
+                LinkRow(title: "Ask Professor", icon: "bubble.left.and.text.bubble.right")
+            }
+            .buttonStyle(RowPress())
+            if !lectures.isEmpty {
+                RowDivider(leading: 56)
+                Button { page = .lectures } label: { LinkRow(title: "Lectures", value: "\(lectures.count)", icon: "waveform") }
+                    .buttonStyle(RowPress())
+            }
+            if !files.isEmpty {
+                RowDivider(leading: 56)
+                Button { page = .files } label: { LinkRow(title: "Files", value: "\(files.count)", icon: "doc.richtext") }
+                    .buttonStyle(RowPress())
+            }
+        }
+        .card(padding: 0)
+    }
+
+    @ViewBuilder private func destination(_ page: Page) -> some View {
+        switch page {
+        case .introduction(let markdown): NotePage(title: "Introduction", markdown: markdown)
+        case .topic(let topic): TopicPageView(topic: topic)
+        case .formulas:
+            LoadedNotePage(title: "Formulas", subtitle: "Every topic's formulas, in the notebook's order") {
+                try await env.api.formulas(course: course.id)
+            }
+        case .exercises: ExercisesView(course: course, topics: topics)
+        case .mocks: MockExamsView(course: course)
+        case .lectures: CourseLecturesView(lectures: lectures)
+        case .files: CourseFilesView(files: files)
+        }
+    }
+
+    // MARK: Actions
 
     private func load() async {
         do {
@@ -337,6 +652,7 @@ struct CourseView: View {
             async let fs = env.api.files(course: course.id)
             (notebook, lectures, files) = try await (nb, ls, fs)
             reviews = (try? await env.api.reviewSessions(course: course.id)) ?? [] // an older server has none
+            if notebook?.started == true { bank = try? await env.api.quizBank(course: course.id) }
             writer = try? await env.api.notesWriter()
             error = nil
         } catch {
@@ -398,26 +714,26 @@ struct CourseView: View {
         }
     }
 
+    /// The course's chat, asked for when it has none yet.
+    static func chat(for course: StudyCourse, api: APIClient) async throws -> String {
+        if let chat = course.chat { return chat }
+        return try await api.courseChat(course.id)
+    }
+
     /// The course chat; `quiz`: with Professor quizzing out loud.
     private func openChat(quiz: Bool = false) async {
         do {
-            let id: String
-            if let chat = course.chat { id = chat } else { id = try await env.api.courseChat(course.id) }
+            let id = try await Self.chat(for: course, api: env.api)
             push.route = quiz ? .quiz(id) : .conversation(id)
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func reviewTime(_ session: ReviewSession) -> String {
-        guard let start = Wire.parse(session.start) else { return "\(session.minutes) min" }
-        return "\(start.formatted(.dateTime.weekday(.wide).day().month().hour().minute())), \(session.minutes) min"
-    }
-
     private func cancel(_ session: ReviewSession) async {
         do {
             try await env.api.cancelReviewSession(session.id)
-            reviews.removeAll { $0.id == session.id }
+            withAnimation { reviews.removeAll { $0.id == session.id } }
         } catch {
             self.error = error.localizedDescription
         }
@@ -451,6 +767,145 @@ struct CourseView: View {
         case "mp4": "audio/mp4"
         default: "audio/m4a"
         }
+    }
+}
+
+/// A row in a card that opens something: an icon in Professor's colour, the title, a count, the chevron.
+private struct LinkRow: View {
+    let title: String
+    var detail: String?
+    var value: String?
+    let icon: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon).font(.body.weight(.medium)).foregroundStyle(Theme.study).frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundStyle(.primary)
+                if let detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 4)
+            if let value { Text(value).foregroundStyle(.secondary) }
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .contentShape(Rectangle())
+    }
+}
+
+/// The course's questions and flashcards in one bar, known, being learnt and not tried, with the counts under it.
+private struct MasteryBar: View {
+    let topics: [TopicMastery]
+
+    var body: some View {
+        let known = topics.reduce(0) { $0 + $1.known }, learning = topics.reduce(0) { $0 + $1.learning }
+        let unseen = topics.reduce(0) { $0 + $1.unseen }, total = max(1, known + learning + unseen)
+        VStack(alignment: .leading, spacing: 10) {
+            GeometryReader { g in
+                HStack(spacing: 2) {
+                    ForEach([(known, TopicMastery.Level.known), (learning, .learning), (unseen, .unseen)], id: \.1) { count, level in
+                        if count > 0 {
+                            Rectangle().fill(level.color).frame(width: max(4, g.size.width * Double(count) / Double(total) - 2))
+                        }
+                    }
+                }
+                .clipShape(Capsule())
+            }
+            .frame(height: 10)
+            HStack(spacing: 14) {
+                legend(known, "known", .known)
+                legend(learning, "learning", .learning)
+                legend(unseen, "not tried", .unseen)
+            }
+            .font(.footnote)
+        }
+    }
+
+    private func legend(_ count: Int, _ label: String, _ level: TopicMastery.Level) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(level.color).frame(width: 8, height: 8)
+            Text("\(count)").fontWeight(.semibold).monospacedDigit()
+            Text(label).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct CourseTopicRow: View {
+    let topic: NotebookTopic
+    let mastery: TopicMastery?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle().fill(mastery?.level.color ?? Color.primary.opacity(0.12)).frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(topic.title).foregroundStyle(topic.written == true ? .primary : .secondary)
+                    .multilineTextAlignment(.leading)
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            if topic.written == true {
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+
+    private var detail: String {
+        guard topic.written == true else { return "Not written yet" }
+        var parts: [String] = []
+        if let q = topic.questions, q > 0 { parts.append(q == 1 ? "1 question" : "\(q) questions") }
+        if let c = topic.cards, c > 0 { parts.append(c == 1 ? "1 flashcard" : "\(c) flashcards") }
+        if let m = mastery, m.known + m.learning > 0 { parts.append("\(m.known) of \(m.total) known") }
+        return parts.isEmpty ? "Notes" : parts.joined(separator: " · ")
+    }
+}
+
+/// A course's lectures, each opening its notes.
+private struct CourseLecturesView: View {
+    let lectures: [Lecture]
+
+    var body: some View {
+        List(lectures) { lecture in
+            NavigationLink {
+                LectureView(lecture: lecture)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(lecture.title ?? "Lecture").lineLimit(2)
+                    Text(lecture.subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Lectures")
+    }
+}
+
+/// A course's files, each opening as a PDF.
+private struct CourseFilesView: View {
+    let files: [StudyFile]
+    @State private var open: StudyFile?
+
+    var body: some View {
+        List(files) { file in
+            Button { open = file } label: {
+                HStack {
+                    Image(systemName: "doc.richtext").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(file.name).foregroundStyle(.primary).lineLimit(2)
+                        Text(detail(file)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Files")
+        .sheet(item: $open) { PDFSheet(file: $0) }
+    }
+
+    private func detail(_ file: StudyFile) -> String {
+        [file.section.flatMap { $0.isEmpty ? nil : $0 }, file.pages.map { "\($0) pages" }, file.scanned == true ? "scan" : nil]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 }
 

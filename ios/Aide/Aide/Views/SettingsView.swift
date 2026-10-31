@@ -47,8 +47,16 @@ struct SettingsView: View {
                 Section {
                     row("Moodle", "graduationcap.fill", .orange) { MoodleView() }
                     row("Obsidian", "doc.richtext.fill", .indigo) { ObsidianView() }
+                    Picker(selection: $settings.studyRevealNow) {
+                        Text("Right away").tag(true)
+                        Text("At the end").tag(false)
+                    } label: {
+                        Label { Text("Practice answers") } icon: { SettingsIcon(systemName: "checkmark.circle.fill", color: .purple) }
+                    }
                 } header: {
                     Text("Study")
+                } footer: {
+                    Text("In a practice exam: each answer shown as you check it, or all of them when you finish.")
                 }
                 Section {
                 } footer: {

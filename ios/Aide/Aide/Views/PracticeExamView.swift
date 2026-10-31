@@ -1,33 +1,39 @@
 import SwiftUI
 
-/// A practice exam from a course's notebook (docs/API.md, "Practice exams"): how many questions and whether it's
-/// timed, then a question a page, then the score the exam would give and every explanation. Professor posts the
-/// result in the course's chat. With `mock`, that mock exam ("Mock exams"): its time and scoring, open questions
-/// answered in words or photos of the work, and marked after.
+/// A practice exam from a course's notebook (docs/API.md, "Practice exams"): how many questions, flashcards and the
+/// course's exercises, whether it's timed, then a question a page, each answer shown as it's checked (or all at the
+/// end, as Settings says), then the score the exam would give. Professor posts the result in the course's chat. With
+/// `mock`, that mock exam ("Mock exams"): its time and scoring, open questions answered in words or photos of the
+/// work, nothing shown before it's handed in, and marked after.
 struct PracticeExamView: View {
     let course: Int
     var courseName: String?
     var mock: MockExam?
     @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     @State private var bank: QuizBank?
     @State private var quiz: Quiz?
     @State private var result: Quiz?
     @State private var error: String?
     @State private var starting = false
-    @State private var count = 30
+    @State private var count = 20
+    @State private var cards = 0
+    @State private var exercises = 0
     @State private var timed = true
-    @State private var minutes = 45
+    @State private var minutes = 30
 
     var body: some View {
         NavigationStack {
             Group {
                 if let result {
-                    PracticeResults(quiz: result)
+                    PracticeResults(quiz: result, again: mock == nil ? { again() } : nil)
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
                         .task(id: result.id) { await followMarking() }
                 } else if let quiz {
-                    PracticeTaking(quiz: quiz, error: error, finish: finish, quit: { dismiss() })
+                    PracticeTaking(quiz: quiz, revealNow: settings.studyRevealNow && quiz.kind != "mock", error: error,
+                                   check: { n, answer in try await env.api.checkQuiz(quiz.id, n: n, answer: answer) },
+                                   finish: finish, quit: { dismiss() })
                 } else {
                     setup
                 }
@@ -35,68 +41,78 @@ struct PracticeExamView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .interactiveDismissDisabled(quiz != nil && result == nil)
+        .task { previewStart() }
     }
 
     // MARK: Setup
 
+    private var total: Int { count + cards + exercises }
+
     private var setup: some View {
-        Form {
-            if let mock {
-                mockSection(mock)
-            } else if let bank {
-                if bank.questions == 0 {
-                    Section {
-                        Text("No questions yet. They come with the notebook's topic pages.").foregroundStyle(.secondary)
-                    }
-                } else {
-                    startSection(bank)
-                    Section {
-                        LabeledContent("In the notes", value: "\(bank.questions)")
-                        LabeledContent("Not seen yet", value: "\(bank.unseen)")
-                        LabeledContent("To review", value: "\(bank.toReview)")
-                    } footer: {
-                        Text("Questions you got wrong or left blank come back first, then new ones.")
-                    }
-                    if !bank.past.isEmpty { pastSection(bank.past) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                TopBlock(mock?.title ?? "Practice exam", overline: courseName) {
+                    Text(mock.map(Self.rules) ?? bank.map(rules) ?? " ").foregroundStyle(.secondary)
                 }
-            } else if error == nil {
-                Section { HStack { Spacer(); ProgressView(); Spacer() } }
-            }
-            if let error {
-                Section {
-                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+                if let error { ErrorCard(text: error) }
+                if let mock {
+                    mockCard(mock)
+                } else if let bank {
+                    if bank.questions + bank.cards + bank.exercises == 0 {
+                        Text("No questions yet. They come with the notebook's topic pages.").foregroundStyle(.secondary).card()
+                    } else {
+                        contentsCard(bank)
+                        optionsCard
+                        if !bank.past.isEmpty { pastCard(bank.past) }
+                    }
+                } else if error == nil {
+                    ProgressView().frame(maxWidth: .infinity).card()
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .scrollContentBackground(.hidden)
-        .background(Theme.grouped)
-        .navigationTitle(mock?.title ?? courseName.map { "Practice · \($0)" } ?? "Practice exam")
+        .pageGlow(Theme.study)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-        .task { if mock == nil { await load() } }
-    }
-
-    private func mockSection(_ mock: MockExam) -> some View {
-        Section {
-            LabeledContent("Questions", value: "\(mock.count)")
-            if mock.mcq > 0 { LabeledContent("Multiple choice", value: "\(mock.mcq)") }
-            if mock.open > 0 { LabeledContent("Open", value: "\(mock.open)") }
-            LabeledContent("Points", value: mock.points.points)
-            LabeledContent("Time", value: mock.minutes.map { "\($0) min" } ?? "Untimed")
-            Button {
-                Task { await start() }
-            } label: {
-                HStack {
-                    Text("Start").fontWeight(.semibold)
-                    if starting { Spacer(); ProgressView() }
+        .bottomBar {
+            if mock != nil || (bank.map { $0.questions + $0.cards + $0.exercises } ?? 0) > 0 {
+                Button { Task { await start() } } label: {
+                    HStack(spacing: 8) {
+                        if starting { ProgressView().tint(.white) }
+                        Text(mock != nil ? "Start" : total == 1 ? "Start · 1 question" : "Start · \(total) questions")
+                    }
+                    .font(.body.weight(.semibold)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).frame(height: 52)
+                    .background(Theme.study, in: Capsule())
                 }
+                .buttonStyle(CardPress())
+                .disabled(starting || (mock == nil && total == 0))
+                .padding(.horizontal, 16).padding(.vertical, 8)
             }
-            .disabled(starting)
-        } footer: {
-            Text(Self.rules(mock))
         }
+        .task { if mock == nil { await load() } }
+        .onChange(of: total) { minutes = Self.minutes(count: count, cards: cards, exercises: exercises) }
     }
 
-    /// How a mock is scored and marked, for its setup's footer.
+    private func rules(_ bank: QuizBank) -> String {
+        "Scored like the exam: right +1, wrong −0.25, blank 0. Flashcards you mark yourself, with no penalty. "
+            + "Exercises are marked by Professor against the course's solution."
+    }
+
+    private func mockCard(_ mock: MockExam) -> some View {
+        VStack(spacing: 0) {
+            ValueRow(title: "Questions", value: "\(mock.count)")
+            if mock.mcq > 0 { RowDivider(); ValueRow(title: "Multiple choice", value: "\(mock.mcq)") }
+            if mock.open > 0 { RowDivider(); ValueRow(title: "Open", value: "\(mock.open)") }
+            RowDivider()
+            ValueRow(title: "Points", value: mock.points.points)
+            RowDivider()
+            ValueRow(title: "Time", value: mock.minutes.map { "\($0) min" } ?? "Untimed")
+        }
+        .card(padding: 0)
+    }
+
+    /// How a mock is scored and marked.
     static func rules(_ mock: MockExam) -> String {
         var lines = ["Like the real exam: the clock runs from Start and hands it in when time's up."]
         if mock.mcq > 0, let s = mock.scoring {
@@ -107,51 +123,75 @@ struct PracticeExamView: View {
             lines.append("Open questions: type your answer or photograph your work on paper. Professor marks them "
                          + "after, against a model answer.")
         }
-        return lines.joined(separator: "\n")
+        return lines.joined(separator: " ")
     }
 
-    private func startSection(_ bank: QuizBank) -> some View {
-        Section {
-            Stepper(value: $count, in: 1...min(60, bank.questions), step: bank.questions >= 10 ? 5 : 1) {
-                LabeledContent("Questions", value: "\(count)")
+    private func contentsCard(_ bank: QuizBank) -> some View {
+        DetailCard("In it", note: "Questions you got wrong or left blank come back first, then new ones.", padding: 0) {
+            VStack(spacing: 0) {
+                if bank.questions > 0 {
+                    CountRow(title: "Questions", detail: questionsDetail(bank), value: $count,
+                             range: 0...min(60, bank.questions), step: bank.questions >= 10 ? 5 : 1)
+                }
+                if bank.cards > 0 {
+                    RowDivider()
+                    CountRow(title: "Flashcards", detail: "\(bank.cards) in the notes", value: $cards,
+                             range: 0...min(30, bank.cards), step: bank.cards >= 10 ? 5 : 1)
+                }
+                if bank.exercises > 0 {
+                    RowDivider()
+                    CountRow(title: "Exercises", detail: "\(bank.exercises) from the course's sheets", value: $exercises,
+                             range: 0...min(10, bank.exercises), step: 1)
+                }
             }
-            Toggle("Timed", isOn: $timed).tint(Theme.toggle)
+        }
+    }
+
+    private func questionsDetail(_ bank: QuizBank) -> String {
+        var parts = ["\(bank.questions) in the notes"]
+        if bank.toReview > 0 { parts.append("\(bank.toReview) to review") }
+        if bank.unseen > 0 { parts.append("\(bank.unseen) not seen") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var optionsCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Toggle("Timed", isOn: $timed.animation()).tint(Theme.study).padding(.horizontal, 16).padding(.vertical, 11)
             if timed {
-                Stepper(value: $minutes, in: 5...240, step: 5) {
-                    LabeledContent("Time", value: "\(minutes) min")
-                }
+                RowDivider()
+                CountRow(title: "Time", unit: "min", value: $minutes, range: 5...240, step: 5)
             }
-            Button {
-                Task { await start() }
-            } label: {
-                HStack {
-                    Text("Start").fontWeight(.semibold)
-                    if starting { Spacer(); ProgressView() }
+            RowDivider()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Show the answers")
+                Picker("Show the answers", selection: $settings.studyRevealNow) {
+                    Text("After each question").tag(true)
+                    Text("At the end").tag(false)
                 }
+                .pickerStyle(.segmented)
             }
-            .disabled(starting)
-        } footer: {
-            Text([bank.exam, "Scored like the exam: right +1, wrong −0.25, blank 0."].compactMap { $0 }.joined(separator: "\n"))
+            .padding(16)
         }
-        .onChange(of: count) { _, new in minutes = Self.minutes(for: new) }
+        .card(padding: 0)
     }
 
-    private func pastSection(_ past: [Quiz]) -> some View {
-        Section("Past") {
-            ForEach(past) { quiz in
-                HStack {
-                    Text(quiz.finishedAt.flatMap(Wire.parse)?.formatted(date: .abbreviated, time: .shortened) ?? "–")
-                    Spacer()
-                    if let score = quiz.score {
-                        Text("\(score.points.points) / \(score.max.points)").monospacedDigit().foregroundStyle(.secondary)
-                    }
+    private func pastCard(_ past: [Quiz]) -> some View {
+        DetailCard("Past scores", padding: 0) {
+            VStack(spacing: 0) {
+                ForEach(Array(past.enumerated()), id: \.element.id) { index, quiz in
+                    if index > 0 { RowDivider() }
+                    ValueRow(title: quiz.finishedAt.flatMap(Wire.parse)?.formatted(date: .abbreviated, time: .shortened) ?? "–",
+                             value: quiz.score.map { "\($0.points.points) / \($0.max.points)" } ?? "")
                 }
             }
         }
     }
 
-    /// A minute and a half a question, rounded to 5.
-    private static func minutes(for count: Int) -> Int { max(5, Int((Double(count) * 1.5 / 5).rounded()) * 5) }
+    /// A minute and a half a question, half a minute a flashcard, six an exercise, rounded to 5.
+    private static func minutes(count: Int, cards: Int, exercises: Int) -> Int {
+        let raw = Double(count) * 1.5 + Double(cards) * 0.5 + Double(exercises) * 6
+        return max(5, Int((raw / 5).rounded()) * 5)
+    }
 
     // MARK: Actions
 
@@ -159,8 +199,10 @@ struct PracticeExamView: View {
         do {
             let loaded = try await env.api.quizBank(course: course)
             bank = loaded
-            count = min(30, loaded.questions)
-            minutes = Self.minutes(for: count)
+            count = min(20, loaded.questions)
+            cards = min(5, loaded.cards)
+            exercises = min(2, loaded.exercises)
+            minutes = Self.minutes(count: count, cards: cards, exercises: exercises)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -174,7 +216,8 @@ struct PracticeExamView: View {
             if let mock {
                 quiz = try await env.api.startMock(course: course, mock: mock.id)
             } else {
-                quiz = try await env.api.startQuiz(course: course, count: count, minutes: timed ? minutes : nil)
+                quiz = try await env.api.startQuiz(course: course, count: count, cards: cards, exercises: exercises,
+                                                   minutes: timed ? minutes : nil)
             }
             error = nil
         } catch {
@@ -182,7 +225,17 @@ struct PracticeExamView: View {
         }
     }
 
-    /// A mock's open answers are marked in the background: the result is fetched again until they are.
+    /// Back to the setup for another one.
+    private func again() {
+        withAnimation {
+            result = nil
+            quiz = nil
+            bank = nil
+        }
+        Task { await load() }
+    }
+
+    /// Open answers are marked in the background: the result is fetched again until they are.
     private func followMarking() async {
         while let current = result, current.score?.grading == true, !Task.isCancelled {
             try? await Task.sleep(for: .seconds(4))
@@ -203,30 +256,128 @@ struct PracticeExamView: View {
             self.error = error.localizedDescription
         }
     }
+
+    /// Simulator screenshots: `-previewExam start` starts one straight away (with every kind of question in it),
+    /// `-previewExam result:x_…` shows a finished one.
+    private func previewStart() {
+        #if DEBUG
+        guard env.settings.isPreview, let what = UserDefaults.standard.string(forKey: "previewExam") else { return }
+        Task {
+            if what.hasPrefix("result:") {
+                result = try? await env.api.quiz(String(what.dropFirst(7)))
+            } else if what == "start" {
+                quiz = try? await env.api.startQuiz(course: course, count: 2, cards: 1, exercises: 1, minutes: 30)
+            }
+        }
+        #endif
+    }
+}
+
+/// A label and its value, in a card.
+private struct ValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value).foregroundStyle(.secondary).monospacedDigit()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+    }
+}
+
+/// How many of something, with − and +.
+private struct CountRow: View {
+    let title: String
+    var detail: String?
+    var unit: String?
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let step: Int
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 4)
+            Text(unit.map { "\(value) \($0)" } ?? "\(value)").font(.body.weight(.semibold)).monospacedDigit()
+                .contentTransition(.numericText())
+            HStack(spacing: 0) {
+                button("minus", to: value - step).disabled(value <= range.lowerBound)
+                Rectangle().fill(Theme.line).frame(width: 1, height: 18)
+                button("plus", to: value + step).disabled(value >= range.upperBound)
+            }
+            .background(Theme.chip, in: Capsule())
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func button(_ symbol: String, to new: Int) -> some View {
+        Button {
+            withAnimation(.snappy) { value = min(max(new, range.lowerBound), range.upperBound) }
+        } label: {
+            Image(systemName: symbol).font(.subheadline.weight(.semibold)).frame(width: 40, height: 32)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(symbol == "plus" ? "More \(title.lowercased())" : "Fewer \(title.lowercased())")
+    }
 }
 
 // MARK: Taking it
 
 private struct PracticeTaking: View {
     let quiz: Quiz
+    /// Each answer shown as it's checked; else all of them at the end.
+    let revealNow: Bool
     let error: String?
+    let check: (Int, QuizAnswer?) async throws -> QuizQuestion
     let finish: ([Int: QuizAnswer]) async -> Void
     let quit: () -> Void
     @State private var page = 0
+    /// A multiple-choice question's letter, a flashcard's "right" or "wrong".
     @State private var answers: [Int: String] = [:]
     /// Open questions' answers, kept as they're written.
     @State private var drafts: [Int: OpenDraft] = [:]
+    /// Questions checked while taking it, as they came back: with their key, or the course's solution.
+    @State private var revealed: [Int: QuizQuestion] = [:]
+    /// Flashcards turned over.
+    @State private var turned: Set<Int> = []
+    @State private var checking = false
+    @State private var checkError: String?
     @State private var deadline: Date?
     @State private var finishing = false
     @State private var confirmFinish = false
     @State private var confirmQuit = false
 
     private var isLast: Bool { page == quiz.questions.count - 1 }
+    private var current: QuizQuestion? { quiz.questions.indices.contains(page) ? quiz.questions[page] : nil }
     private var blanks: Int { quiz.questions.filter { !answered($0) }.count }
     private var uploading: Bool { drafts.values.contains { $0.uploading > 0 } }
 
     private func answered(_ question: QuizQuestion) -> Bool {
-        question.isOpen ? drafts[question.n]?.isEmpty == false : answers[question.n] != nil
+        if revealed[question.n] != nil { return true }
+        return question.isOpen ? drafts[question.n]?.isEmpty == false : answers[question.n] != nil
+    }
+
+    /// What the answer is now, for checking it.
+    private func answer(_ question: QuizQuestion) -> QuizAnswer? {
+        if question.isOpen {
+            guard let draft = drafts[question.n], !draft.isEmpty else { return nil }
+            return .open(text: draft.text, photos: draft.photos.compactMap(\.id))
+        }
+        return answers[question.n].map(QuizAnswer.letter)
+    }
+
+    /// The question can be checked now: answered, not checked yet, and not a flashcard (it marks itself).
+    private var canCheck: Bool {
+        guard revealNow, let q = current, !q.isCard, revealed[q.n] == nil else { return false }
+        return answer(q) != nil
     }
 
     var body: some View {
@@ -235,32 +386,22 @@ private struct PracticeTaking: View {
             TabView(selection: $page) {
                 ForEach(Array(quiz.questions.enumerated()), id: \.element.id) { index, question in
                     ScrollView {
-                        if question.isOpen {
-                            OpenQuestionPage(question: question,
-                                             draft: Binding(get: { drafts[question.n] ?? OpenDraft() },
-                                                            set: { drafts[question.n] = $0 }))
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
-                        } else {
-                            QuestionPage(question: question, chosen: answers[question.n]) { letter in
-                                answers[question.n] = answers[question.n] == letter ? nil : letter
-                            }
+                        pageView(question)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
-                        }
                     }
                     .scrollDismissesKeyboard(.interactively)
                     .tag(index)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            if let error {
-                Label(error, systemImage: "exclamationmark.triangle")
+            if let message = checkError ?? error {
+                Label(message, systemImage: "exclamationmark.triangle")
                     .font(.footnote).foregroundStyle(.red).padding(.horizontal, 16).padding(.bottom, 6)
             }
             controls
         }
-        .background(Theme.background)
+        .pageGlow(Theme.study)
         .navigationTitle("\(page + 1) of \(quiz.questions.count)")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Quit") { confirmQuit = true } }
@@ -281,6 +422,8 @@ private struct PracticeTaking: View {
         } message: {
             Text("Your answers aren't kept.")
         }
+        .onChange(of: page) { checkError = nil }
+        .task { await previewFill() }
         .onAppear {
             if deadline == nil, let minutes = quiz.minutes { deadline = Date().addingTimeInterval(Double(minutes) * 60) }
         }
@@ -292,11 +435,29 @@ private struct PracticeTaking: View {
         }
     }
 
+    @ViewBuilder private func pageView(_ question: QuizQuestion) -> some View {
+        if question.isCard {
+            CardPage(question: question, turned: turned.contains(question.n), mark: answers[question.n]) {
+                withAnimation(.snappy) { _ = turned.insert(question.n) }
+            } judge: { verdict in
+                withAnimation(.snappy) { answers[question.n] = answers[question.n] == verdict ? nil : verdict }
+            }
+        } else if question.isOpen {
+            OpenQuestionPage(question: question, solution: revealed[question.n],
+                             draft: Binding(get: { drafts[question.n] ?? OpenDraft() }, set: { drafts[question.n] = $0 }))
+        } else {
+            QuestionPage(question: question, chosen: answers[question.n], checked: revealed[question.n],
+                         revealNow: revealNow) { letter in
+                answers[question.n] = answers[question.n] == letter ? nil : letter
+            }
+        }
+    }
+
     private var progress: some View {
         HStack(spacing: 3) {
             ForEach(Array(quiz.questions.enumerated()), id: \.element.id) { index, question in
                 Capsule()
-                    .fill(answered(question) ? Theme.accent : Theme.chip)
+                    .fill(color(question))
                     .frame(height: index == page ? 6 : 4)
                     .onTapGesture { withAnimation { page = index } }
             }
@@ -305,6 +466,13 @@ private struct PracticeTaking: View {
         .padding(.horizontal, 16)
         .padding(.top, 6)
         .animation(.easeInOut(duration: 0.2), value: page)
+    }
+
+    /// Checked: right in Professor's colour, wrong in orange; answered but not checked, half of it.
+    private func color(_ question: QuizQuestion) -> Color {
+        if let checked = revealed[question.n], !question.isOpen { return checked.correct == true ? Theme.study : .orange }
+        if question.isCard, let mark = answers[question.n] { return mark == "right" ? Theme.study : .orange }
+        return answered(question) ? Theme.study.opacity(0.5) : Theme.chip
     }
 
     private var controls: some View {
@@ -318,27 +486,77 @@ private struct PracticeTaking: View {
             .accessibilityLabel("Previous question")
             Spacer()
             Button {
-                if isLast { confirmFinish = true } else { withAnimation { page += 1 } }
+                if canCheck {
+                    Task { await checkCurrent() }
+                } else if isLast {
+                    confirmFinish = true
+                } else {
+                    withAnimation { page += 1 }
+                }
             } label: {
                 HStack {
-                    if finishing { ProgressView().tint(Theme.onAccent) }
-                    Text(isLast ? "Finish" : "Next").fontWeight(.semibold)
+                    if finishing || checking { ProgressView().tint(.white) }
+                    Text(canCheck ? "Check" : isLast ? "Finish" : "Next").fontWeight(.semibold)
                 }
-                .foregroundStyle(Theme.onAccent)
-                .padding(.horizontal, 28)
-                .frame(height: 44)
-                .background(Theme.accent, in: Capsule())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 32)
+                .frame(height: 48)
+                .background(Theme.study, in: Capsule())
             }
-            .disabled(finishing)
+            .buttonStyle(CardPress())
+            .disabled(finishing || checking || (current.map { uploadingPhotos($0) } ?? false))
             Spacer()
             Button("Finish") { confirmFinish = true }
                 .font(.subheadline)
                 .frame(width: 60, height: 44)
-                .opacity(isLast ? 0 : 1)
-                .disabled(finishing || isLast)
+                .opacity(isLast && !canCheck ? 0 : 1)
+                .disabled(finishing || (isLast && !canCheck))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+
+    private func uploadingPhotos(_ question: QuizQuestion) -> Bool {
+        canCheck && question.isOpen && (drafts[question.n]?.uploading ?? 0) > 0
+    }
+
+    /// Hands in this one answer: it's final, and comes back with its key (or the course's solution).
+    private func checkCurrent() async {
+        guard let question = current else { return }
+        checking = true
+        defer { checking = false }
+        do {
+            let back = try await check(question.n, answer(question))
+            withAnimation(.snappy) { revealed[question.n] = back }
+            checkError = nil
+        } catch {
+            checkError = error.localizedDescription
+        }
+    }
+
+    /// Simulator screenshots: `-previewFill YES` answers every question (and checks them, when answers show as
+    /// they go), `-previewPage 2` opens that page, `-previewFinish YES` hands it in. These are real practice exams on
+    /// the server: a handed-in one counts in the course's mastery and is posted in its chat, so delete it after.
+    private func previewFill() async {
+        #if DEBUG
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "previewFill") else { return }
+        for question in quiz.questions {
+            if question.isCard {
+                turned.insert(question.n)
+                answers[question.n] = question.n % 2 == 0 ? "right" : "wrong"
+                continue
+            }
+            if question.isOpen {
+                drafts[question.n] = OpenDraft(text: "The marginal product falls as capital grows, so growth slows.")
+            } else {
+                answers[question.n] = question.options.first?.letter
+            }
+            if revealNow, let back = try? await check(question.n, answer(question)) { revealed[question.n] = back }
+        }
+        page = min(defaults.integer(forKey: "previewPage"), quiz.questions.count - 1)
+        if defaults.bool(forKey: "previewFinish") { submit() }
+        #endif
     }
 
     private func submit() {
@@ -371,27 +589,155 @@ private struct Clock: View {
     }
 }
 
+/// Where a question comes from: the course's own material (its file and page), or written by Professor.
+struct QuestionSource: View {
+    let source: QuizSource?
+
+    var body: some View {
+        if let source {
+            Label {
+                Text(source.fromCourse ? ["From the course", source.name].compactMap { $0 }.joined(separator: " · ")
+                     : "Written by Professor")
+            } icon: {
+                Image(systemName: source.fromCourse ? "checkmark.seal.fill" : "sparkles")
+                    .foregroundStyle(Theme.study)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+    }
+}
+
+/// The topic, where the question comes from, and on the right what it's worth.
+private struct QuestionHeader: View {
+    let question: QuizQuestion
+    var trailing: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(question.topic.title).font(.caption.weight(.semibold)).foregroundStyle(Theme.study)
+                Spacer()
+                if let trailing { Text(trailing).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+            }
+            QuestionSource(source: question.source)
+        }
+    }
+}
+
 private struct QuestionPage: View {
     let question: QuizQuestion
     let chosen: String?
+    /// Came back from `check`: its key, whether it was right, why.
+    let checked: QuizQuestion?
+    let revealNow: Bool
     let choose: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(question.topic.title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            QuestionHeader(question: question)
             Text(question.text.markdown).font(.title3.weight(.medium)).lineSpacing(3)
             VStack(spacing: 10) {
                 ForEach(question.options, id: \.letter) { option in
-                    Button { choose(option.letter) } label: {
-                        OptionRow(option: option, state: chosen == option.letter ? .chosen : .plain)
-                    }
-                    .buttonStyle(.plain)
+                    Button { choose(option.letter) } label: { OptionRow(option: option, state: state(option)) }
+                        .buttonStyle(.plain)
+                        .disabled(checked != nil)
                 }
             }
-            Text(chosen == nil ? "Leave it blank if you'd rather not guess." : "Tap your answer again to leave it blank.")
-                .font(.footnote).foregroundStyle(.secondary)
+            if let checked {
+                Verdict(question: checked)
+            } else {
+                Text(chosen == nil ? "Leave it blank if you'd rather not guess."
+                     : revealNow ? "Check it to see if it's right. Tap your answer again to leave it blank."
+                     : "Tap your answer again to leave it blank.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func state(_ option: QuizOption) -> OptionRow.Mark {
+        guard let checked else { return chosen == option.letter ? .chosen : .plain }
+        if option.letter == checked.key { return .key }
+        return option.letter == checked.answer ? .wrong : .plain
+    }
+}
+
+/// A checked multiple-choice answer: right or not, and the explanation.
+private struct Verdict: View {
+    let question: QuizQuestion
+
+    var body: some View {
+        let right = question.correct == true, blank = question.answer == nil
+        VStack(alignment: .leading, spacing: 8) {
+            Label(right ? "Right" : blank ? "Left blank · the answer is \(question.key ?? "–")"
+                  : "Not quite · the answer is \(question.key ?? "–")",
+                  systemImage: right ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(right ? Theme.study : .orange)
+            if let explanation = question.explanation, !explanation.isEmpty {
+                Text(explanation.markdown).font(.subheadline).foregroundStyle(.secondary).lineSpacing(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+}
+
+/// A flashcard: the front, then its back once turned, then Got it or Missed it (no penalty either way).
+private struct CardPage: View {
+    let question: QuizQuestion
+    let turned: Bool
+    let mark: String?
+    let turn: () -> Void
+    let judge: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            QuestionHeader(question: question, trailing: "Flashcard")
+            VStack(alignment: .leading, spacing: 16) {
+                Text(question.text.markdown).font(.title3.weight(.medium)).lineSpacing(3)
+                if turned {
+                    Rectangle().fill(Theme.line).frame(height: 1)
+                    Text((question.key ?? "").markdown).font(.body).lineSpacing(3)
+                        .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
+            .card(padding: 20)
+            if turned {
+                HStack(spacing: 10) {
+                    choice("Missed it", "xmark", "wrong", .orange)
+                    choice("Got it", "checkmark", "right", Theme.study)
+                }
+                Text("Be honest: a missed card comes back sooner. No points are taken off.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else {
+                Button(action: turn) {
+                    Label("Show the answer", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                        .font(.body.weight(.semibold)).foregroundStyle(Theme.study)
+                        .frame(maxWidth: .infinity).frame(height: 48)
+                        .background(Theme.study.opacity(0.14), in: Capsule())
+                }
+                .buttonStyle(CardPress())
+                Text("Say the answer to yourself first, then turn it.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func choice(_ title: String, _ symbol: String, _ verdict: String, _ color: Color) -> some View {
+        let on = mark == verdict
+        return Button { judge(verdict) } label: {
+            Label(title, systemImage: symbol)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(on ? .white : color)
+                .frame(maxWidth: .infinity).frame(height: 48)
+                .background(on ? color : color.opacity(0.14), in: Capsule())
+        }
+        .buttonStyle(CardPress())
     }
 }
 
@@ -413,6 +759,8 @@ struct OpenDraft: Equatable {
 private struct OpenQuestionPage: View {
     @EnvironmentObject private var env: AppEnvironment
     let question: QuizQuestion
+    /// Checked while taking it: the course's solution, and the answer is final.
+    let solution: QuizQuestion?
     @Binding var draft: OpenDraft
     @State private var camera = false
     @State private var library = false
@@ -422,38 +770,45 @@ private struct OpenQuestionPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(question.topic.title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                Spacer()
-                if let points = question.points {
-                    Text("\(points.points) points").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                }
-            }
+            QuestionHeader(question: question, trailing: question.points.map { $0 == 1 ? "1 point" : "\($0.points) points" })
             Text(question.text.markdown).font(.title3.weight(.medium)).lineSpacing(3)
             TextEditor(text: $draft.text)
                 .focused($writing)
-                .frame(minHeight: 180)
+                .frame(minHeight: solution == nil ? 180 : 80)
                 .padding(8)
                 .scrollContentBackground(.hidden)
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(Theme.row, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(alignment: .topLeading) {
                     if draft.text.isEmpty {
-                        Text("Your answer").foregroundStyle(.tertiary).padding(.horizontal, 13).padding(.vertical, 16)
+                        Text(solution == nil ? "Your answer" : "No words, only photos")
+                            .foregroundStyle(.tertiary).padding(.horizontal, 13).padding(.vertical, 16)
                             .allowsHitTesting(false)
                     }
                 }
+                .disabled(solution != nil)
             if !draft.photos.isEmpty { photoStrip }
-            HStack(spacing: 12) {
-                if CameraPicker.isAvailable {
-                    Button { writing = false; camera = true } label: { Label("Camera", systemImage: "camera") }
+            if let solution {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("The course's solution", systemImage: "checkmark.seal.fill")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.study)
+                    Text((solution.modelAnswer ?? "").markdown).font(.subheadline).lineSpacing(2)
+                    Text("Professor marks your answer when you finish.").font(.footnote).foregroundStyle(.secondary)
                 }
-                Button { writing = false; library = true } label: { Label("Photos", systemImage: "photo.on.rectangle") }
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card()
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else {
+                HStack(spacing: 8) {
+                    if CameraPicker.isAvailable {
+                        Chip(title: "Camera", systemImage: "camera") { writing = false; camera = true }
+                    }
+                    Chip(title: "Photos", systemImage: "photo.on.rectangle") { writing = false; library = true }
+                    Spacer()
+                }
+                .disabled(draft.photos.count >= most)
+                Text("Write it here, or work on paper and photograph it: Professor reads both.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
-            .buttonStyle(.bordered)
-            .disabled(draft.photos.count >= most)
-            Text("Write it here, or work on paper and photograph it: Professor reads both.")
-                .font(.footnote).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .photoSources(camera: $camera, library: $library, limit: most - draft.photos.count) { picked in
@@ -477,14 +832,16 @@ private struct OpenQuestionPage: View {
                             }
                         }
                         .overlay(alignment: .topTrailing) {
-                            Button {
-                                draft.photos.removeAll { $0.key == photo.key }
-                            } label: {
-                                Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
-                                    .foregroundStyle(.white, .black.opacity(0.6))
+                            if solution == nil {
+                                Button {
+                                    draft.photos.removeAll { $0.key == photo.key }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                                        .foregroundStyle(.white, .black.opacity(0.6))
+                                }
+                                .padding(4)
+                                .accessibilityLabel("Remove the photo")
                             }
-                            .padding(4)
-                            .accessibilityLabel("Remove the photo")
                         }
                 }
             }
@@ -515,14 +872,14 @@ private struct OptionRow: View {
                 .frame(width: 28, height: 28)
                 .background(badge, in: Circle())
             Text(option.text.markdown).frame(maxWidth: .infinity, alignment: .leading).lineSpacing(2)
-            if state == .key { Image(systemName: "checkmark").foregroundStyle(.green) }
-            if state == .wrong { Image(systemName: "xmark").foregroundStyle(.red) }
+            if state == .key { Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(Theme.study) }
+            if state == .wrong { Image(systemName: "xmark").fontWeight(.semibold).foregroundStyle(.orange) }
         }
-        .padding(12)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(14)
+        .background(state == .plain ? Theme.row : badge.opacity(0.1), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(state == .plain ? Color.clear : badge, lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(state == .plain ? Theme.line : badge, lineWidth: state == .plain ? 1 : 1.5)
         }
         .contentShape(Rectangle())
     }
@@ -530,9 +887,8 @@ private struct OptionRow: View {
     private var badge: Color {
         switch state {
         case .plain: Theme.chip
-        case .chosen: Theme.accent
-        case .key: .green
-        case .wrong: .red
+        case .chosen, .key: Theme.study
+        case .wrong: .orange
         }
     }
 }
@@ -543,69 +899,105 @@ private struct PracticeResults: View {
     let quiz: Quiz
     /// Opened from the result's card in the course chat: no pointer back to it.
     var fromChat = false
+    /// Another practice exam, back on the setup page.
+    var again: (() -> Void)?
     @State private var onlyMissed = true
 
-    private var shown: [QuizQuestion] { onlyMissed ? quiz.questions.filter { $0.correct != true } : quiz.questions }
+    private var missed: [QuizQuestion] { quiz.questions.filter { $0.correct != true } }
+    private var shown: [QuizQuestion] { onlyMissed ? missed : quiz.questions }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
                 if let score = quiz.score {
                     header(score)
                     if let topics = score.topics, topics.count > 1 { byTopic(topics) }
                 }
-                Picker("Show", selection: $onlyMissed) {
-                    Text("Missed").tag(true)
-                    Text("All").tag(false)
+                HStack {
+                    Text("Answers").font(.title3.weight(.bold))
+                    Spacer()
+                    Picker("Show", selection: $onlyMissed) {
+                        Text("Missed · \(missed.count)").tag(true)
+                        Text("All").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
                 }
-                .pickerStyle(.segmented)
+                .padding(.horizontal, 4)
+                .padding(.top, 8)
                 if shown.isEmpty {
-                    Text("Nothing missed.").foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                    Label("Nothing missed", systemImage: "star.fill").foregroundStyle(Theme.study)
+                        .frame(maxWidth: .infinity).card()
                 }
-                ForEach(shown) { ReviewCard(question: $0, grading: quiz.score?.grading == true) }
+                ForEach(shown) { ReviewCard(question: $0, grading: quiz.score?.grading == true).card() }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .background(Theme.background)
-        .navigationTitle("Result")
+        .pageGlow(Theme.study)
+        .navigationTitle(quiz.title ?? "Result")
+    }
+
+    /// Of the most the paper scores, 0–100 (wrong answers can take points below 0).
+    private func percent(_ score: QuizScore) -> Int {
+        score.max > 0 ? Int((min(max(score.points / score.max, 0), 1) * 100).rounded()) : 0
     }
 
     private func header(_ score: QuizScore) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 14) {
+            ScoreRing(score: percent(score), tint: Theme.study, size: 108)
             Text("\(score.points.points) / \(score.max.points)")
-                .font(.system(size: 44, weight: .bold, design: .rounded))
+                .font(.system(size: 30, weight: .bold, design: .rounded))
                 .monospacedDigit()
             Text("\(score.right) right · \(score.wrong) wrong · \(score.blank) blank")
                 .font(.subheadline).foregroundStyle(.secondary)
             if score.grading == true {
                 Label {
-                    Text("Professor is marking the open answers; the score counts them as 0 until then.")
+                    Text("Professor is marking the open answers; they count as 0 until then.")
                 } icon: {
                     ProgressView().controlSize(.small)
                 }
-                .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 16)
+                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             } else if !fromChat {
                 Text("Professor has the result in the course's chat.").font(.footnote).foregroundStyle(.secondary)
             }
+            if let again {
+                Button(action: again) {
+                    Label("New practice exam", systemImage: "arrow.clockwise")
+                        .font(.body.weight(.semibold)).foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).frame(height: 48)
+                        .background(Theme.study, in: Capsule())
+                }
+                .buttonStyle(CardPress())
+                .padding(.top, 4)
+            }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 18)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .card(padding: 20)
+        .padding(.top, 8)
     }
 
     private func byTopic(_ topics: [QuizTopicScore]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("By topic").font(.headline)
-            ForEach(topics) { topic in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(topic.title).font(.subheadline)
-                        Spacer()
-                        Text("\(topic.right) of \(topic.total)").font(.subheadline).monospacedDigit()
-                            .foregroundStyle(.secondary)
+        DetailCard("By topic") {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(topics) { topic in
+                    let share = Double(topic.right) / Double(max(1, topic.total))
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text(topic.title).font(.subheadline)
+                            Spacer()
+                            Text("\(topic.right) of \(topic.total)").font(.subheadline).monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        Capsule().fill(Theme.chip)
+                            .overlay(alignment: .leading) {
+                                GeometryReader { g in
+                                    Capsule().fill(share < 0.5 ? Color.orange : Theme.study)
+                                        .frame(width: max(6, g.size.width * share))
+                                }
+                            }
+                            .frame(height: 6)
                     }
-                    ProgressView(value: Double(topic.right), total: Double(max(1, topic.total)))
-                        .tint(topic.right == topic.total ? Theme.toggle : Theme.accent)
                 }
             }
         }
@@ -810,18 +1202,37 @@ private struct ReviewCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("\(question.n). \(question.topic.title)").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Text("\(question.n). \(question.topic.title)").font(.caption.weight(.semibold)).foregroundStyle(Theme.study)
                 Spacer()
                 if question.isOpen {
                     marks
+                } else if question.isCard {
+                    cardMark
                 } else if question.answer == nil {
                     Text("Blank").font(.caption.weight(.semibold)).foregroundStyle(.orange)
                 }
             }
+            QuestionSource(source: question.source)
             Text(question.text.markdown).font(.body.weight(.medium))
-            if question.isOpen { open } else { choice }
+            if question.isOpen { open } else if question.isCard { back } else { choice }
         }
-        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder private var cardMark: some View {
+        switch question.answer {
+        case "right": Text("Got it").font(.caption.weight(.semibold)).foregroundStyle(Theme.study)
+        case "wrong": Text("Missed it").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+        default: Text("Not marked").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+        }
+    }
+
+    @ViewBuilder private var back: some View {
+        if let key = question.key, !key.isEmpty {
+            Text(key.markdown).font(.subheadline).lineSpacing(2)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.chip, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
     }
 
     @ViewBuilder private var marks: some View {
@@ -830,9 +1241,11 @@ private struct ReviewCard: View {
             Text("Blank · 0 / \(points.points)").font(.caption.weight(.semibold)).foregroundStyle(.orange)
         } else if let awarded = question.awarded {
             Text("\(awarded.points) / \(points.points)").font(.caption.weight(.semibold)).monospacedDigit()
-                .foregroundStyle(question.correct == true ? .green : .orange)
+                .foregroundStyle(question.correct == true ? Theme.study : .orange)
+        } else if grading {
+            Label("Marking…", systemImage: "hourglass").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         } else {
-            Text(grading ? "Being marked" : "Not marked").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text("Not marked").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         }
     }
 
@@ -855,13 +1268,13 @@ private struct ReviewCard: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Theme.chip, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         if let feedback = question.feedback, !feedback.isEmpty {
             Text(feedback.markdown).font(.subheadline).lineSpacing(2)
         }
         if let answer = question.modelAnswer, !answer.isEmpty {
-            DisclosureGroup("Model answer") {
+            DisclosureGroup(question.source?.fromCourse == true ? "The course's solution" : "Model answer") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(answer.markdown).font(.subheadline).foregroundStyle(.secondary).lineSpacing(2)
                     if let rubric = question.rubric, !rubric.isEmpty {
@@ -873,7 +1286,7 @@ private struct ReviewCard: View {
                 .padding(.top, 6)
             }
             .font(.subheadline)
-            .tint(Theme.accent)
+            .tint(Theme.study)
         }
     }
 

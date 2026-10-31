@@ -175,11 +175,13 @@ extension Agent {
 }
 
 extension String {
-    /// Inline markdown (bold, italics, links) from the model's replies, keeping line breaks.
+    /// Inline markdown (bold, italics, links) from the model's replies, keeping line breaks. The vault's
+    /// `[[Page]]` and `[[Page|words]]` links (in the notebook's text) read as their words.
     var markdown: AttributedString {
-        (try? AttributedString(
-            markdown: self,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(self)
+        let text = replacing(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/) { String($0.output.1) }
+        return (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
     }
 }
 
@@ -262,6 +264,8 @@ struct Chip: View {
     /// The icon's own colour on a plain chip (a green tick).
     var iconColor: Color?
     var style: Style = .plain
+    /// A prominent chip's colour, when the page has its own (Professor's on Study); the app's otherwise.
+    var tint: Color?
     var action: () -> Void
 
     var body: some View {
@@ -285,7 +289,7 @@ struct Chip: View {
     private var foreground: Color {
         switch style {
         case .plain: .primary
-        case .prominent: Theme.onAccent
+        case .prominent: tint == nil ? Theme.onAccent : .white
         case .warning: .white
         }
     }
@@ -293,7 +297,7 @@ struct Chip: View {
     private var background: Color {
         switch style {
         case .plain: Theme.chip
-        case .prominent: Theme.accent
+        case .prominent: tint ?? Theme.accent
         case .warning: .orange
         }
     }

@@ -890,9 +890,10 @@ final class APIClient {
     }
 
     /// Review sessions not yet over, soonest first.
-    func reviewSessions(course: Int) async throws -> [ReviewSession] {
+    /// Not yet over, soonest first; every course's without one.
+    func reviewSessions(course: Int? = nil) async throws -> [ReviewSession] {
         let list: ReviewSessionList = try await send("GET", "/v1/reviews",
-                                                     query: [URLQueryItem(name: "course", value: String(course))])
+                                                     query: course.map { [URLQueryItem(name: "course", value: String($0))] } ?? [])
         return list.sessions
     }
 
@@ -905,8 +906,15 @@ final class APIClient {
         try await send("GET", "/v1/quizzes", query: [URLQueryItem(name: "course", value: String(course))])
     }
 
-    func startQuiz(course: Int, count: Int, minutes: Int?) async throws -> Quiz {
-        try await send("POST", "/v1/quizzes", body: QuizStartBody(course: course, count: count, minutes: minutes))
+    /// `count` multiple-choice questions, then `cards` flashcards and `exercises` of the course's own.
+    func startQuiz(course: Int, count: Int, cards: Int = 0, exercises: Int = 0, minutes: Int?) async throws -> Quiz {
+        try await send("POST", "/v1/quizzes", body: QuizStartBody(course: course, count: count, cards: cards,
+                                                                  exercises: exercises, minutes: minutes))
+    }
+
+    /// One question answered while taking it: it comes back with its key, and the answer is final.
+    func checkQuiz(_ id: String, n: Int, answer: QuizAnswer?) async throws -> QuizQuestion {
+        try await send("POST", "/v1/quizzes/\(id)/check", body: QuizCheckBody(n: n, answer: answer))
     }
 
     /// A mock exam, with its own time and scoring.
