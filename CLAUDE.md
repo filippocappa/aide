@@ -181,7 +181,9 @@ before, worked out the same way), D · W · M · 6M (D a gauge, 6M weekly averag
 against your usual, the average night for sleep, About, day by day; today's steps, energy and exercise are "so far",
 never judged. Weight (`WeightView`, `WeightMath`) the same way: the changes over 7, 14 and 28 days (the server's
 rule, so the 28-day rate is `rate_kg_week`), W · M · 6M with the goal's pace as a band, the days (long-press to delete
-one logged in Aide). Scores come from the server
+one logged in Aide). After the first look (2026-10-31): Recovery large between Strain and Sleep, flat rings with a soft glow
+of their colour; Coach's line of the day as a message from Coach below the card; the glow reaches past Last night;
+Activity is four tiles (Total energy: resting plus active, from `resting_kcal`). Scores come from the server
 (`scores.py`, contract "Scores"); the app sends heart rate as `hr_minutes`, `hr_hourly` and `max_hr`. Second pass
 (2026-10-30, after the first look on the phone): sleep need learnt from his own nights (trimmed mean of up to 90, plus
 the day before's strain and half the 3 nights' net shortfall, at most 45 min), deep and REM scored apart, stricter
@@ -315,8 +317,14 @@ result in the chat.
 Quizzes and review sessions (2026-10-27, closes #4; `reviews.py`, `tools/quiz.py`, contract "Quizzes and review
 sessions"): Professor quizzes in the course chat, one question at a time from the notebook's MCQs and flashcards (missed
 first, answers recorded as they come, shared with practice exams; `kind: "chat"` quizzes don't count for objectives).
-By voice: `voice` on `/v1/chat` makes replies speakable, and "Quiz me" (course page, course chat's ••• menu) opens the
-chat in voice mode with "Quiz me" said for you (`VoiceController.start(saying:)`). Review sessions: planned with the
+By voice: `voice` on `/v1/chat` makes replies speakable, and "Quiz me by voice" (the course chat's ••• menu, a review
+session's card) opens the chat in voice mode with "Quiz me" said for you (`VoiceController.start(saying:)`).
+The Study page (2026-10-31, `Views/StudySessionView.swift`, contract "Practice exams", study sessions): every other "Quiz
+me" (course page, Up next, a review session, a topic page's Study this topic) opens it. Flashcards (turn, swipe Know or
+Still learning), Learn (multiple choice, right or wrong at once), Write (a flashcard's front or a course exercise
+answered in words, marked by the fast model in ~2 s, "I was right" to override; if marking fails, you mark it) and Mix;
+in rounds until what was missed is known. A `kind: "study"` quiz: no timer, no score, nothing posted, answers count
+for mastery. The marker falls back to the Claude plan when OpenRouter refuses (the key's $5 limit, 2026-10-31). Review sessions: planned with the
 user from `free_time`, `study_progress` and the exam date, put in the timetable calendar as "Review: <course>" (never
 a lecture), followed when moved or deleted there; when one starts Professor offers the quiz in the chat, with a push.
 The course page lists them (swipe to cancel). Not yet tried on the phone.

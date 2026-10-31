@@ -935,9 +935,23 @@ final class APIClient {
                                                                   exercises: exercises, minutes: minutes))
     }
 
-    /// One question answered while taking it: it comes back with its key, and the answer is final.
+    /// One question answered while taking it: it comes back with its key, and the answer is final (in a study
+    /// session it can be checked again, and an open answer comes back marked).
     func checkQuiz(_ id: String, n: Int, answer: QuizAnswer?) async throws -> QuizQuestion {
         try await send("POST", "/v1/quizzes/\(id)/check", body: QuizCheckBody(n: n, answer: answer))
+    }
+
+    /// A study session: untimed, in a shuffled order, `write` flashcards answered in words.
+    func startStudy(course: Int, count: Int, cards: Int, write: Int, exercises: Int,
+                    topics: [String]?) async throws -> Quiz {
+        try await send("POST", "/v1/quizzes", body: QuizStartBody(course: course, count: count, cards: cards,
+                                                                  exercises: exercises, topics: topics, kind: "study",
+                                                                  write: write))
+    }
+
+    /// A study session's open answer: right or not, as the user says, over the model's mark.
+    func markQuiz(_ id: String, n: Int, correct: Bool) async throws -> QuizQuestion {
+        try await send("POST", "/v1/quizzes/\(id)/mark", body: QuizMarkBody(n: n, correct: correct))
     }
 
     /// A mock exam, with its own time and scoring.

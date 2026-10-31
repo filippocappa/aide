@@ -1174,6 +1174,21 @@ seconds. Professor posts the result in the course's chat once they're marked. On
 the marking failed; it counts 0), "feedback": "…" or null, "correct": true (awarded at least half its points),
 "model_answer": "…", "rubric": "…"` (no `key` or `explanation`). Objectives count mock exams as practice exams.
 
+Study sessions (since 2026-10-31): the app's Study page, Quizlet's way. `POST /v1/quizzes` with `"kind": "study"`
+(default `"exam"`) and, next to `count`, `cards` and `exercises`, `"write": 3`: flashcards answered in words, as open
+questions (`"type": "open"`, `"points": 1`, the card's back as `model_answer`, `rubric` null). One card is never both
+turned and written. A study session is untimed (`minutes` ignored, null), its questions shuffled together, `title`
+"Study". In it:
+- `check` can be sent again for the same question (the app asks a missed one again in the next round); the latest
+  answer stands, and each is recorded at once for how well each topic is known.
+- An open answer is marked during `check` by the fast model (a couple of seconds): the Question comes back with
+  `awarded` (0, half or full points), `feedback` (a line or two) and `correct`. `502` when the marking failed: the
+  answer is kept, and the user says whether it was right with `mark`.
+- `POST /v1/quizzes/{id}/mark` `{"n": 3, "correct": true}`: the user's own mark for an open answer ("I was right"),
+  full points or 0, over the model's. `409` not an answered open question; `404` not a study session.
+- `finish` closes it: only the checked answers count, nothing is posted in the chat, no marking job. Study sessions
+  aren't in the bank's `past` and don't count for objectives.
+
 ### Quizzes and review sessions
 
 Since 2026-10-27 (`quiz.py`, `reviews.py`, `tools/quiz.py`; #4).

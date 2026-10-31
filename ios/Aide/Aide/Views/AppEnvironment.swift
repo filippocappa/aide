@@ -139,10 +139,6 @@ final class AppEnvironment: ObservableObject {
         case .voice:
             await chat.newChat(with: chat.orchestrator)
             if !voice.isActive { await voice.toggle() }
-        case .quiz(let id):
-            await chat.open(id: id)
-            if voice.isActive { voice.stopAll() }
-            await voice.start(saying: "Quiz me")
         case .errand(let id):
             guard let errand = try? await api.errand(id) else { return }
             if errand.needsLiveView {

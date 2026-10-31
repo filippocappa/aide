@@ -4,7 +4,7 @@ import SwiftUI
 /// eye on (its routines and watches), the connectors it reaches, and the instructions it's given before every chat
 /// behind a row. The buttons leave the sheet: whoever shows it runs `act` once it's gone.
 struct AgentInfoSheet: View {
-    enum Action { case newChat, starter(String), pastChats, routines, activity, quiz, practiceExam }
+    enum Action { case newChat, starter(String), pastChats, routines, activity, quiz, quizByVoice, practiceExam }
 
     @EnvironmentObject private var chat: ChatViewModel
     let agent: Agent
@@ -147,7 +147,11 @@ struct AgentInfoSheet: View {
             }
             if course {
                 RowDivider(leading: 52)
-                Button { act(.quiz) } label: { linkRow("Quiz me", icon: "waveform", detail: "By voice, from the notebook") }
+                Button { act(.quiz) } label: {
+                    linkRow("Quiz me", icon: "rectangle.on.rectangle.angled", detail: "Flashcards, questions, answers in your words")
+                }
+                RowDivider(leading: 52)
+                Button { act(.quizByVoice) } label: { linkRow("Quiz me by voice", icon: "waveform", detail: "Professor asks out loud") }
                 RowDivider(leading: 52)
                 Button { act(.practiceExam) } label: { linkRow("Practice exam", icon: "checklist") }
             }

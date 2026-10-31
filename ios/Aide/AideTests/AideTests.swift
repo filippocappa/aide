@@ -2187,6 +2187,18 @@ final class NutritionTests: XCTestCase {
         XCTAssertTrue(MetricMath.isOff(.hrv, value: 40, band: 50...70))
         XCTAssertFalse(MetricMath.isOff(.hrv, value: 80, band: 50...70)) // above is the good side
         XCTAssertTrue(MetricMath.isOff(.wristTemp, value: 36.9, band: 36.2...36.6))
+        // The average and the range disagree: "but", not "and".
+        let r = MetricMath.sentence(.restingHr, value: 51, on: earlier, average: 50, band: 42...49)
+        XCTAssertTrue(r.hasSuffix("close to your 30-day average but above your usual range."), r)
+    }
+
+    func testTotalEnergyIsRestingPlusActive() {
+        var d = healthDay(Date())
+        XCTAssertNil(HealthMetric.totalKcal.value(d))
+        d = HealthDayReading(date: d.date, sleep: nil, restingHr: nil, hrvMs: nil, respiratoryRate: nil, wristTempC: nil,
+                             steps: nil, activeKcal: 450, restingKcal: 1_650, exerciseMin: nil, workouts: nil)
+        XCTAssertEqual(HealthMetric.totalKcal.value(d), 2_100)
+        XCTAssertEqual(HealthMetric.totalKcal.format(2_100), 2_100.formatted() + " kcal")
     }
 
     func testTheHeartRateShadesSleepFromTheRealBedtimeNapsAndTonight() {

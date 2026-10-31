@@ -16,6 +16,7 @@ struct StudyView: View {
     @State private var error: String?
     @State private var path: [StudyCourse] = []
     @State private var practice: StudyCourse?
+    @State private var studying: StudyTarget?
     @State private var result: String?
 
     private var courses: [StudyCourse] { overview?.courses ?? [] }
@@ -35,7 +36,7 @@ struct StudyView: View {
                     }
                     if !reviews.isEmpty {
                         UpNextCard(sessions: Array(reviews.prefix(3)), name: name) { session in
-                            Task { await quiz(session.course) }
+                            studying = StudyTarget(course: session.course, name: name(session.course), topics: session.topics)
                         } open: { session in
                             if let course = courses.first(where: { $0.id == session.course }) { path = [course] }
                         }
@@ -70,6 +71,9 @@ struct StudyView: View {
             }
             .fullScreenCover(item: $practice, onDismiss: { Task { await load() } }) { course in
                 PracticeExamView(course: course.id, courseName: course.name)
+            }
+            .fullScreenCover(item: $studying, onDismiss: { Task { await load() } }) { target in
+                StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
             }
             .sheet(item: Binding(get: { result.map(QuizID.init) }, set: { result = $0?.id })) { QuizResultSheet(id: $0.id) }
             .task {
@@ -123,15 +127,6 @@ struct StudyView: View {
         }
     }
 
-    /// The course's chat, with Professor quizzing out loud.
-    private func quiz(_ id: Int) async {
-        guard let course = courses.first(where: { $0.id == id }) else { return }
-        do {
-            push.route = .quiz(try await CourseView.chat(for: course, api: env.api))
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
 
     /// Simulator screenshots: `-previewOpen course:5` opens that course, `date:5` its first date's editor,
     /// `practice:5` its practice exam (with
@@ -145,6 +140,7 @@ struct StudyView: View {
         guard let course = courses.first(where: { String($0.id) == parts[1] }) else { return }
         if parts[0] == "course" || parts[0] == "date" { path = [course] }
         if parts[0] == "practice" { practice = course }
+        if parts[0] == "study" { studying = StudyTarget(course: course.id, name: course.title) }
         #endif
     }
 }
@@ -178,6 +174,14 @@ enum StudyDay {
     }
 }
 
+/// A study session to open: the course, and the topics to start on (none: all).
+struct StudyTarget: Identifiable {
+    let id = UUID()
+    let course: Int
+    var name: String?
+    var topics: [String] = []
+}
+
 struct ErrorCard: View {
     let text: String
     var body: some View {
@@ -206,7 +210,7 @@ private struct UpNextCard: View {
             if let session = sessions.first {
                 HStack(spacing: 10) {
                     Button { quiz(session) } label: {
-                        Label("Quiz me", systemImage: "waveform")
+                        Label("Quiz me", systemImage: "rectangle.on.rectangle.angled")
                             .frame(maxWidth: .infinity).padding(.vertical, 11)
                             .foregroundStyle(.white).background(Theme.study, in: Capsule())
                     }
@@ -394,6 +398,7 @@ struct CourseView: View {
     @State private var error: String?
     @State private var busy: String?
     @State private var showPractice = false
+    @State private var studying: StudyTarget?
     @State private var confirmStart = false
     @State private var importing: Import?
     @State private var openFile: StudyFile?
@@ -502,6 +507,9 @@ struct CourseView: View {
         .fullScreenCover(isPresented: $showPractice, onDismiss: { Task { await load() } }) {
             PracticeExamView(course: course.id, courseName: course.name)
         }
+        .fullScreenCover(item: $studying, onDismiss: { Task { await load() } }) { target in
+            StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+        }
         .confirmationDialog("Start the notebook?", isPresented: $confirmStart, titleVisibility: .visible) {
             Button("Start") { Task { await start() } }
         } message: {
@@ -542,8 +550,8 @@ struct CourseView: View {
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 if questions {
-                    Chip(title: "Quiz me", systemImage: "waveform", style: .prominent, tint: Theme.study) {
-                        Task { await openChat(quiz: true) }
+                    Chip(title: "Quiz me", systemImage: "rectangle.on.rectangle.angled", style: .prominent, tint: Theme.study) {
+                        studying = StudyTarget(course: course.id, name: course.title)
                     }
                     Chip(title: "Practice exam", systemImage: "checklist") { showPractice = true }
                 }
@@ -661,7 +669,7 @@ struct CourseView: View {
     @ViewBuilder private func destination(_ page: Page) -> some View {
         switch page {
         case .introduction(let markdown): NotePage(title: "Introduction", markdown: markdown)
-        case .topic(let topic): TopicPageView(topic: topic)
+        case .topic(let topic): TopicPageView(topic: topic, course: course)
         case .formulas:
             LoadedNotePage(title: "Formulas", subtitle: "Every topic's formulas, in the notebook's order") {
                 try await env.api.formulas(course: course.id)
@@ -766,11 +774,10 @@ struct CourseView: View {
         return try await api.courseChat(course.id)
     }
 
-    /// The course chat; `quiz`: with Professor quizzing out loud.
-    private func openChat(quiz: Bool = false) async {
+    /// The course chat.
+    private func openChat() async {
         do {
-            let id = try await Self.chat(for: course, api: env.api)
-            push.route = quiz ? .quiz(id) : .conversation(id)
+            push.route = .conversation(try await Self.chat(for: course, api: env.api))
         } catch {
             self.error = error.localizedDescription
         }

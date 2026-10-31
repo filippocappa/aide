@@ -19,8 +19,6 @@ enum PushRoute: Equatable {
     case team
     case agent(String)
     case voice
-    /// A course chat (its id), with Professor quizzing out loud: "Quiz me" on the course page.
-    case quiz(String)
     /// Today's habits and objectives, the Health tab and the Food tab.
     case objectives
     case health

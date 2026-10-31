@@ -64,7 +64,7 @@ struct HealthView: View {
                 .padding(.bottom, 32)
             }
             .previewAnchor()
-            .pageGlow(glow)
+            .pageGlow(glow, reach: 900)
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $metric) { m in
@@ -102,7 +102,6 @@ struct HealthView: View {
         if scoresLoaded || scores != nil {
             ScoresCard(scores: scores, coach: coach, open: { kind in if scores != nil { scoreKind = kind } },
                        ask: { push.route = .agent(coach.id) })
-                .card()
         } else if bodyError == nil {
             ForEach(0..<3, id: \.self) { _ in
                 RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.row).frame(height: 116)
@@ -149,7 +148,7 @@ struct HealthView: View {
                 }
             }
         }
-        let activity: [HealthMetric] = [.steps, .activeKcal, .exercise].filter { m in reading.flatMap(m.value) != nil }
+        let activity: [HealthMetric] = [.steps, .exercise, .activeKcal, .totalKcal].filter { m in reading.flatMap(m.value) != nil }
         if !activity.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Activity").font(.title3.weight(.bold)).padding(.horizontal, 4)
