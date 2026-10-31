@@ -99,13 +99,14 @@ def record(engine: str, model: str | None = None, *, input: int = 0, cache_read:
 
 def from_response(response, engine: str = "openrouter", started: float | None = None, **kw) -> None:
     """Record an Anthropic-format response (OpenRouter's, through the SDK)."""
+    model = kw.pop("model", None) or getattr(response, "model", None)
     u = getattr(response, "usage", None)
     if u is None:
-        return record(engine, getattr(response, "model", None), ms=_ms(started), **kw)
+        return record(engine, model, ms=_ms(started), **kw)
     cost = getattr(u, "cost", None)  # OpenRouter's own figure, when it sends one
-    record(engine, kw.pop("model", None) or getattr(response, "model", None),
-           input=u.input_tokens or 0, cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
-           cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0, output=u.output_tokens or 0,
+    record(engine, model, input=getattr(u, "input_tokens", 0) or 0,
+           cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
+           cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0, output=getattr(u, "output_tokens", 0) or 0,
            cost=cost if isinstance(cost, (int, float)) else None, ms=_ms(started), **kw)
 
 
