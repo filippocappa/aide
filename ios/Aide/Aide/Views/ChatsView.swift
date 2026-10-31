@@ -280,7 +280,7 @@ private struct AgentText: View {
                 .padding(.vertical, 3)
                 .shimmering()
             } else {
-                Text(working ?? preview)
+                Text(working.map { AttributedString($0) } ?? preview.markdown)
                     .font(.subheadline)
                     .foregroundStyle(working == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(agent.tint))
                     .lineLimit(lines, reservesSpace: lines > 1)

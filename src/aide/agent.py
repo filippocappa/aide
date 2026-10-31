@@ -231,8 +231,8 @@ class Agent:
                 if not isinstance(content, str) or content.startswith(("[The user replied", "[The user tapped", _OPENED)):
                     continue  # tool results, confirm/cancel and plan notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
-                if text.startswith((_ROUTINE, _LECTURE, _NOTEBOOK, _ERRAND, _VIDEO, SCANNED, _REVIEW, *_QUIZ)):
-                    continue  # a routine's prompt, the note before new lecture notes, a notebook proposal, a quiz
+                if _NOTE.match(text):
+                    continue  # a note for the model: a routine's prompt, the one before a post, a quiz's result
                 if photos := _PHOTO.findall(text):
                     out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
                                 "attachments": attachments, "consulted": consulted, "team": team})
@@ -759,14 +759,11 @@ _CHANGES = (None, "found", "created", "proposed")  # an event card item's change
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
 _QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
+# Every note the server writes for the model starts with a bracket ("[Course dates: …]", "[Scheduled routine …"),
+# the routine's and the digest's below among them; a photo, a Markdown link or "[1] milk" isn't one.
+_NOTE = re.compile(r"\[(?!Photo p_)[A-Z][^\]]*(\]|$)(?!\()")
 _OPENED = "[The user opened a new chat in the app"
 _ROUTINE = "[Scheduled routine"
-_LECTURE = "[Lecture notes ready"
-_NOTEBOOK = "[Notebook"
-_ERRAND = "[Errand #"
-_VIDEO = "[Video #"  # videos.NOTE
-_REVIEW = "[Review session"  # reviews.ReviewWatcher
-_QUIZ = ("[Practice exam", "[Mock exam")  # quiz.QuizStore.note
 SCANNED = "[Scanned in the app"
 
 

@@ -120,6 +120,16 @@ def test_the_first_chat_is_the_default(env):
     assert [m["text"] for m in agent.visible_history(CONVERSATION)] == ["hello", "hi"]
 
 
+async def test_notes_before_a_post_never_show_whatever_they_say(env):
+    client, agent, _ = env([done("hi"), done("hi")])
+    client.post("/v1/chat", json={"text": "[see this](https://example.com) please"}, headers=AUTH)
+    client.post("/v1/chat", json={"text": "[1] milk"}, headers=AUTH)
+    await agent.post(CONVERSATION, "[Course dates: checked against the calendar]", "**Midterm** isn't in your calendar.")
+    await agent.post(CONVERSATION, "[Something new, written later]\nwith more lines", "Done.")
+    texts = [m["text"] for m in agent.visible_history(CONVERSATION)]
+    assert texts == ["[see this](https://example.com) please", "hi", "[1] milk", "hi", "**Midterm** isn't in your calendar.", "Done."]
+
+
 # -- conversations -------------------------------------------------------------
 
 
