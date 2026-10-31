@@ -267,11 +267,66 @@ struct RangeGauge: View {
     }
 }
 
+/// The value on a wide gauge: the usual range in the middle third with its ends written under it, the 30-day average
+/// as a tick, the value's dot (orange only when it's off on the bad side).
+struct WideGauge: View {
+    let value: Double?
+    let low: Double?
+    let high: Double?
+    var average: Double? = nil
+    let color: Color
+    let format: (Double) -> String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            GeometryReader { geo in
+                let w = geo.size.width, h = geo.size.height
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.08))
+                    if low != nil {
+                        Capsule().fill(Color.primary.opacity(0.14)).frame(width: w / 3).offset(x: w / 3)
+                    }
+                    if let a = average.flatMap(position) {
+                        RoundedRectangle(cornerRadius: 1).fill(Color.secondary)
+                            .frame(width: 2, height: h + 8).offset(x: a * w - 1)
+                    }
+                    if let x = value.flatMap(position) {
+                        Circle().fill(color)
+                            .overlay(Circle().stroke(Theme.row, lineWidth: 3))
+                            .frame(width: h + 8, height: h + 8)
+                            .offset(x: x * w - (h + 8) / 2)
+                    }
+                }
+            }
+            .frame(height: 12)
+            if let low, let high {
+                GeometryReader { geo in
+                    let w = geo.size.width
+                    Text(format(low)).position(x: w / 3, y: 7)
+                    Text(format(high)).position(x: 2 * w / 3, y: 7)
+                }
+                .frame(height: 14)
+                .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// As `RangeGauge`: the range is 1/3…2/3, a range's width either side fills the rest.
+    private func position(_ v: Double) -> Double {
+        guard let low, let high, high > low else { return 0.5 }
+        return min(0.97, max(0.03, (v - low) / (high - low) / 3 + 1.0 / 3))
+    }
+}
+
 // MARK: - The day's heart rate
 
-/// Hourly heart rate over the day, the night's sleep shaded, workouts marked.
+/// Hourly heart rate over the day in grey: sleep shaded in sleep's purple (last night from midnight, naps, and tonight
+/// from the next day's bedtime), workouts in orange.
 struct DayHeartChart: View {
     let day: HealthDayReading
+    /// The next date's reading: its night may start this evening.
+    var next: HealthDayReading? = nil
 
     private var start: Date? { Wire.day(day.date) }
 
@@ -282,7 +337,22 @@ struct DayHeartChart: View {
         }
     }
 
-    private var workouts: [(Date, Date)] {
+    /// Asleep in the day: last night's end clipped to midnight, each nap, tonight's start up to midnight.
+    static func sleepSpans(day: HealthDayReading, next: HealthDayReading?) -> [(Date, Date)] {
+        guard let midnight = Wire.day(day.date) else { return [] }
+        let end = midnight.addingTimeInterval(86_400)
+        var spans: [(Date, Date)] = []
+        if let night = day.sleep, let wake = night.wakeDate, wake > midnight {
+            spans.append((max(night.bedtimeDate ?? midnight, midnight), min(wake, end)))
+        }
+        for nap in day.naps ?? [] {
+            if let s = Wire.parse(nap.start), let e = Wire.parse(nap.end), e > s { spans.append((s, e)) }
+        }
+        if let bed = next?.sleep?.bedtimeDate, bed >= midnight, bed < end { spans.append((bed, end)) }
+        return spans
+    }
+
+    static func workoutSpans(_ day: HealthDayReading) -> [(Date, Date)] {
         (day.workouts ?? []).compactMap { w in
             guard let s = w.start.flatMap(Wire.parse) else { return nil }
             let e = w.end.flatMap(Wire.parse) ?? s.addingTimeInterval(Double((w.minutes ?? 30) * 60))
@@ -290,36 +360,66 @@ struct DayHeartChart: View {
         }
     }
 
+    /// The hourly points whose hour overlaps each workout.
+    private func during(_ workouts: [(Date, Date)]) -> [[(Date, Int)]] {
+        workouts.map { w in
+            points.filter { p in p.0.addingTimeInterval(1800) > w.0 && p.0.addingTimeInterval(-1800) < w.1 }
+        }
+        .filter { !$0.isEmpty }
+    }
+
+    private var header: String? {
+        switch (day.restingHr, day.maxHr) {
+        case let (r?, m?): "Resting \(r) · up to \(m) bpm"
+        case let (r?, nil): "Resting \(r) bpm"
+        case let (nil, m?): "Up to \(m) bpm"
+        default: nil
+        }
+    }
+
     var body: some View {
-        let red = Color(uiColor: UIColor(hex: 0xFF453A))
+        let sleeps = Self.sleepSpans(day: day, next: next)
+        let workouts = Self.workoutSpans(day)
+        let orange = ScoreColors.strain[1]
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                if let top = day.maxHr {
-                    Text("Up to \(top) bpm").font(.subheadline.weight(.semibold)).monospacedDigit()
+                if let header {
+                    Text(header).font(.subheadline.weight(.semibold)).monospacedDigit()
                 }
                 Spacer()
                 HStack(spacing: 12) {
-                    legend(.indigo, "Asleep")
-                    if !workouts.isEmpty { legend(ScoreColors.strain[1], "Workout") }
+                    if !sleeps.isEmpty { legend(ScoreColors.sleep[1], "Asleep") }
+                    if !workouts.isEmpty { legend(orange, "Workout") }
                 }
             }
             Chart {
-                if let start, let wake = day.sleep?.wakeDate, wake > start {
-                    RectangleMark(xStart: .value("From", start), xEnd: .value("To", wake))
-                        .foregroundStyle(Color.indigo.opacity(0.10))
+                ForEach(Array(sleeps.enumerated()), id: \.offset) { _, s in
+                    RectangleMark(xStart: .value("From", s.0), xEnd: .value("To", s.1))
+                        .foregroundStyle(ScoreColors.sleep[1].opacity(0.14))
                 }
                 ForEach(Array(workouts.enumerated()), id: \.offset) { _, w in
                     RectangleMark(xStart: .value("From", w.0), xEnd: .value("To", w.1))
-                        .foregroundStyle(ScoreColors.strain[1].opacity(0.18))
+                        .foregroundStyle(orange.opacity(0.18))
                 }
                 ForEach(points, id: \.0) { time, bpm in
                     AreaMark(x: .value("Time", time), y: .value("bpm", bpm))
-                        .foregroundStyle(LinearGradient(colors: [red.opacity(0.25), red.opacity(0)],
+                        .foregroundStyle(LinearGradient(colors: [Color.secondary.opacity(0.18), Color.secondary.opacity(0)],
                                                         startPoint: .top, endPoint: .bottom))
                         .interpolationMethod(.monotone)
-                    LineMark(x: .value("Time", time), y: .value("bpm", bpm))
-                        .foregroundStyle(red)
+                    LineMark(x: .value("Time", time), y: .value("bpm", bpm), series: .value("Line", "day"))
+                        .foregroundStyle(Color.secondary)
                         .interpolationMethod(.monotone)
+                }
+                ForEach(Array(during(workouts).enumerated()), id: \.offset) { i, run in
+                    ForEach(run, id: \.0) { time, bpm in
+                        LineMark(x: .value("Time", time), y: .value("bpm", bpm), series: .value("Line", "workout \(i)"))
+                            .foregroundStyle(orange)
+                            .lineStyle(StrokeStyle(lineWidth: 2.5))
+                            .interpolationMethod(.monotone)
+                        if run.count == 1 { // a short workout has one hour: a dot, as a line needs two
+                            PointMark(x: .value("Time", time), y: .value("bpm", bpm)).foregroundStyle(orange).symbolSize(30)
+                        }
+                    }
                 }
             }
             .chartXScale(domain: (start ?? Date())...((start ?? Date()).addingTimeInterval(86_400)))
@@ -332,14 +432,13 @@ struct DayHeartChart: View {
             }
             .frame(height: 140)
         }
-        .padding(.vertical, 6)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Heart rate through the day" + (day.maxHr.map { ", up to \($0) beats a minute" } ?? ""))
     }
 
     private func legend(_ color: Color, _ text: String) -> some View {
         HStack(spacing: 4) {
-            RoundedRectangle(cornerRadius: 2).fill(color.opacity(0.5)).frame(width: 10, height: 10)
+            Circle().fill(color).frame(width: 7, height: 7)
             Text(text)
         }
         .font(.caption).foregroundStyle(.secondary)

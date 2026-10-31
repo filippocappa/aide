@@ -2122,4 +2122,118 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual((obj["hr_hourly"] as? [Any])?.count, 24)
         XCTAssertTrue((obj["hr_hourly"] as? [Any])?[0] is NSNull)
     }
+
+
+    // MARK: Health redesign (#28)
+
+    private func healthDay(_ date: Date, steps: Int? = nil, hrv: Double? = nil, sleep: SleepNight? = nil,
+                           naps: [SleepNap]? = nil) -> HealthDayReading {
+        var d = HealthDayReading(date: Wire.dayString(date), sleep: sleep, restingHr: nil, hrvMs: hrv,
+                                 respiratoryRate: nil, wristTempC: nil, steps: steps, activeKcal: nil,
+                                 exerciseMin: nil, workouts: nil)
+        d.naps = naps
+        return d
+    }
+
+    func testTheUsualRangeIsTheMedianAndARobustSpread() {
+        XCTAssertNil(MetricMath.band(Array(repeating: 60, count: 13), floor: 3))
+        // Steady: the floor holds the range open.
+        XCTAssertEqual(MetricMath.band(Array(repeating: 60, count: 14), floor: 3), 57...63)
+        // 1...20: median 10.5, absolute deviations' median 5, × 1.4826.
+        let band = MetricMath.band((1...20).map(Double.init), floor: 1)!
+        XCTAssertEqual(band.lowerBound, 10.5 - 7.413, accuracy: 0.001)
+        XCTAssertEqual(band.upperBound, 10.5 + 7.413, accuracy: 0.001)
+        XCTAssertEqual(MetricMath.median([3, 1, 2, 10]), 2.5)
+    }
+
+    func testSixMonthsAreWeeklyAveragesUpToTheChosenDay() {
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: Date())
+        // Every day for 100 days, steps = how many days back; a gap of three weeks in the middle.
+        let days = (0..<100).compactMap { back -> HealthDayReading? in
+            guard !(40..<61).contains(back), let d = cal.date(byAdding: .day, value: -back, to: day) else { return nil }
+            return healthDay(d, steps: back)
+        }
+        let weeks = MetricMath.weekly(days, metric: .steps, end: day)
+        XCTAssertEqual(weeks.last?.date, cal.dateInterval(of: .weekOfYear, for: day)?.start)
+        XCTAssertTrue(weeks.count < 26 && weeks.count >= 11, "\(weeks.count)") // empty weeks left out
+        XCTAssertEqual(weeks, weeks.sorted { $0.date < $1.date })
+        // This week counts only up to the chosen day.
+        let thisWeek = cal.dateComponents([.day], from: weeks.last!.date, to: day).day!
+        XCTAssertEqual(weeks.last!.value, Double(thisWeek) / 2, accuracy: 0.001)
+        // A window ends on the chosen day and leaves out what's after it.
+        let earlier = cal.date(byAdding: .day, value: -10, to: day)!
+        let window = MetricMath.window(days, metric: .steps, end: earlier, count: 7)
+        XCTAssertEqual(window.map(\.value), [16, 15, 14, 13, 12, 11, 10])
+    }
+
+    func testTheMetricSentence() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        XCTAssertEqual(MetricMath.sentence(.hrv, value: 64, on: today, average: 57.1, band: 50...70),
+                       "Last night's HRV was 64 ms, 12% above your 30-day average and in your usual range.")
+        let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
+        XCTAssertEqual(MetricMath.sentence(.exercise, value: 20, on: yesterday, average: 40, band: 30...50),
+                       "Yesterday's exercise was 20 min, 50% below your 30-day average and below your usual range.")
+        // Today's totals are still adding up: no judgement.
+        XCTAssertEqual(MetricMath.sentence(.exercise, value: 5, on: today, average: 40, band: 30...50),
+                       "Today's exercise so far: 5 min. Your 30-day average is 40 min.")
+        XCTAssertTrue(MetricMath.partial(.steps, on: today))
+        XCTAssertFalse(MetricMath.partial(.hrv, on: today))
+        let earlier = cal.date(byAdding: .day, value: -5, to: today)!
+        let s = MetricMath.sentence(.hrv, value: 58, on: earlier, average: 57.5, band: nil)
+        XCTAssertTrue(s.hasPrefix("On "), s)
+        XCTAssertTrue(s.hasSuffix(", HRV was 58 ms, close to your 30-day average."), s)
+        XCTAssertTrue(MetricMath.isOff(.hrv, value: 40, band: 50...70))
+        XCTAssertFalse(MetricMath.isOff(.hrv, value: 80, band: 50...70)) // above is the good side
+        XCTAssertTrue(MetricMath.isOff(.wristTemp, value: 36.9, band: 36.2...36.6))
+    }
+
+    func testTheHeartRateShadesSleepFromTheRealBedtimeNapsAndTonight() {
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: cal.date(byAdding: .day, value: -1, to: Date())!)
+        let at = { (h: Double) in day.addingTimeInterval(h * 3600) }
+        let night = SleepNight(bedtime: Wire.utc(at(-1.5)), wake: Wire.utc(at(7)), asleepMin: 480, inBedMin: 510)
+        let nap = SleepNap(start: Wire.utc(at(14)), end: Wire.utc(at(14.5)), asleepMin: 25)
+        let tonight = SleepNight(bedtime: Wire.utc(at(23.25)), wake: Wire.utc(at(31)), asleepMin: 420, inBedMin: 460)
+        let spans = DayHeartChart.sleepSpans(day: healthDay(day, sleep: night, naps: [nap]),
+                                             next: healthDay(at(24), sleep: tonight))
+        XCTAssertEqual(spans.count, 3)
+        XCTAssertEqual(spans[0].0, day) // the night before is cut at midnight
+        XCTAssertEqual(spans[0].1, at(7))
+        XCTAssertEqual(spans[1].0, at(14))
+        XCTAssertEqual(spans[2].0, at(23.25))
+        XCTAssertEqual(spans[2].1, at(24))
+        // Bed after midnight: shaded from then, not from midnight.
+        let late = SleepNight(bedtime: Wire.utc(at(1)), wake: Wire.utc(at(8)), asleepMin: 400, inBedMin: 420)
+        XCTAssertEqual(DayHeartChart.sleepSpans(day: healthDay(day, sleep: late), next: nil).first?.0, at(1))
+    }
+
+    func testWeightChangesFollowTheServersRules() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        // Numbers from weight.py's summary on the same readings: the 28-day rate is its rate_kg_week.
+        let kgs: [Int: Double] = [-30: 70.4, -27: 70.6, -22: 70.3, -20: 70.9, -15: 71.0, -13: 70.8, -9: 71.2,
+                                  -6: 71.1, -3: 71.5, -1: 71.3, 0: 71.6]
+        let readings = kgs.keys.sorted().map { back in
+            WeightReading(date: Wire.dayString(cal.date(byAdding: .day, value: back, to: today)!), kg: kgs[back]!,
+                          source: "health")
+        }
+        let week = WeightMath.change(readings, days: 7, today: today)
+        XCTAssertEqual(week.kg!, 0.375, accuracy: 0.0001)
+        XCTAssertEqual(week.rateKgWeek, 0.45)
+        let two = WeightMath.change(readings, days: 14, today: today)
+        XCTAssertEqual(two.kg!, 0.425, accuracy: 0.0001)
+        XCTAssertEqual(two.rateKgWeek, 0.36)
+        let four = WeightMath.change(readings, days: 28, today: today)
+        XCTAssertEqual(four.kg!, 0.975, accuracy: 0.0001)
+        XCTAssertEqual(four.rateKgWeek, 0.27)
+        // Under 3 readings, or bunched in a few days: no rate.
+        XCTAssertNil(WeightMath.rate(Array(readings.suffix(2)), days: 28, today: today))
+        XCTAssertNil(WeightMath.rate(Array(readings.suffix(3)), days: 28, today: today))
+        XCTAssertTrue(WeightMath.against(-0.3, goal: "gain"))
+        XCTAssertFalse(WeightMath.against(0.3, goal: "gain"))
+        XCTAssertTrue(WeightMath.against(0.3, goal: "lose"))
+        XCTAssertFalse(WeightMath.against(-0.3, goal: nil))
+    }
 }

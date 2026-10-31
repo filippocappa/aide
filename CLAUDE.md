@@ -147,7 +147,15 @@ habits. The app's Health tab (redesigned 2026-10-30, Bevel-style) is one page fo
 Strain, Recovery and Sleep as gradient rings with the server's line of the day (tap: Coach's chat), each ring opening
 its page (what it's made of, flags, sleep need, zones, workouts' strain, cardio load, 30 days); last night's numbers
 on gauges against the usual range, the day's heart rate, workouts with their strain, activity tiles and weight, then
-Food (`Views/ScoreViews.swift`; the metric charts in `Views/BodyViews.swift`). Scores come from the server
+Food (`Views/ScoreViews.swift`; the metric charts in `Views/BodyViews.swift`). Redesigned again (#28, 2026-10-31): the page is cards, not a list;
+the day's heart rate in grey with the sleep (from the real bedtime, naps, the evening's) in purple and workouts in
+orange, tapping it opens Resting HR; each metric's page (`HealthMetricView`, `MetricMath`) follows the chosen day:
+the number and a sentence against the 30-day average and the usual range (the server's `vitals`, else the 60 days
+before, worked out the same way), D · W · M · 6M (D a gauge, 6M weekly averages over ~8 months fetched on open),
+against your usual, the average night for sleep, About, day by day; today's steps, energy and exercise are "so far",
+never judged. Weight (`WeightView`, `WeightMath`) the same way: the changes over 7, 14 and 28 days (the server's
+rule, so the 28-day rate is `rate_kg_week`), W · M · 6M with the goal's pace as a band, the days (long-press to delete
+one logged in Aide). Scores come from the server
 (`scores.py`, contract "Scores"); the app sends heart rate as `hr_minutes`, `hr_hourly` and `max_hr`. Second pass
 (2026-10-30, after the first look on the phone): sleep need learnt from his own nights (trimmed mean of up to 90, plus
 the day before's strain and half the 3 nights' net shortfall, at most 45 min), deep and REM scored apart, stricter

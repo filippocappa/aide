@@ -44,19 +44,32 @@ struct HealthView: View {
         return (bodyDays ?? []).filter { $0.date <= shown }
     }
 
+    /// The day after the chosen one, for the evening's sleep on the heart rate.
+    private var nextReading: HealthDayReading? {
+        Calendar.current.date(byAdding: .day, value: 1, to: day).flatMap { next in
+            bodyDays?.first { $0.date == Wire.dayString(next) }
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                Section { DayHeader(day: $day) }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
-                scoreSections
-                weightSection
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    TopBlock("Health")
+                    DayHeader(day: $day)
+                    scoreSections
+                    weightSection
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 32)
             }
-            .scrollContentBackground(.hidden)
+            .previewAnchor()
             .pageGlow(glow)
-            .navigationTitle("Health")
-            .navigationDestination(item: $metric) { m in HealthMetricView(metric: m, days: bodyDays ?? []) }
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $metric) { m in
+                HealthMetricView(metric: m, days: bodyDays ?? [], day: day, vitals: scores?.vitals)
+            }
             .navigationDestination(item: $scoreKind) { kind in
                 if let scores { ScoreDetailView(kind: kind, scores: scores, day: reading, date: day) }
             }
@@ -70,7 +83,7 @@ struct HealthView: View {
                 await loadBody()
                 #if DEBUG
                 if settings.isPreview, let m = UserDefaults.standard.string(forKey: "previewMetric") {
-                    metric = HealthMetric(rawValue: m)
+                    if m == "weight" { showWeight = true } else { metric = HealthMetric(rawValue: m) }
                 }
                 if settings.isPreview, case let back = UserDefaults.standard.integer(forKey: "previewDaysBack"), back > 0,
                    let earlier = Calendar.current.date(byAdding: .day, value: -back, to: day) {
@@ -87,71 +100,71 @@ struct HealthView: View {
 
     @ViewBuilder private var scoreSections: some View {
         if scoresLoaded || scores != nil {
-            Section {
-                ScoresCard(scores: scores, coach: coach, open: { kind in if scores != nil { scoreKind = kind } },
-                           ask: { push.route = .agent(coach.id) })
-            }
-            .listRowBackground(Theme.row)
+            ScoresCard(scores: scores, coach: coach, open: { kind in if scores != nil { scoreKind = kind } },
+                       ask: { push.route = .agent(coach.id) })
+                .card()
         } else if bodyError == nil {
-            SkeletonSections(sections: 1, rows: 2, mark: false)
+            ForEach(0..<3, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.row).frame(height: 116)
+            }
         }
         if let bodyError {
-            Section { Label(bodyError, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
+            ErrorCard(text: bodyError)
         } else if bodyDays?.isEmpty == true {
-            Section {
-                Text("Nothing from Apple Health yet. Turn it on in Settings → Apple Health, and wear your Watch to bed for sleep and recovery.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
+            Text("Nothing from Apple Health yet. Turn it on in Settings → Apple Health, and wear your Watch to bed for sleep and recovery.")
+                .font(.subheadline).foregroundStyle(.secondary)
+                .card()
         }
         let vitals = vitalRows
         if !vitals.isEmpty {
-            Section {
-                ForEach(vitals, id: \.0) { m, v in
-                    Button { metric = m } label: { VitalRow(metric: m, vital: v).contentShape(Rectangle()) }
-                        .buttonStyle(.plain)
-                        .accessibilityHint("Shows the chart")
+            DetailCard("Last night", note: "The middle of each gauge is your usual range, from the 60 days before.", padding: 0) {
+                ForEach(Array(vitals.enumerated()), id: \.element.0) { i, item in
+                    if i > 0 { RowDivider(leading: 58) }
+                    Button { metric = item.0 } label: {
+                        VitalRow(metric: item.0, vital: item.1)
+                            .padding(.horizontal, 16).padding(.vertical, 11)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(RowPress())
+                    .accessibilityHint("Shows the chart")
                 }
-            } header: {
-                sectionHeader("Last night", icon: "moon.zzz.fill")
-            } footer: {
-                Text("The middle of each gauge is your usual range, from the 60 days before.")
             }
-            .listRowBackground(Theme.row)
         }
         if let reading, reading.hrHourly?.contains(where: { $0 != nil }) == true {
-            Section {
-                DayHeartChart(day: reading)
-            } header: {
-                sectionHeader("Heart rate", icon: "heart.fill")
+            DetailCard("Heart rate") {
+                Button { metric = .restingHr } label: {
+                    DayHeartChart(day: reading, next: nextReading).contentShape(Rectangle())
+                }
+                .buttonStyle(CardPress())
+                .accessibilityHint("Shows resting heart rate")
             }
-            .listRowBackground(Theme.row)
         }
         if let workouts = reading?.workouts, !workouts.isEmpty {
-            Section {
-                ForEach(Array(workouts.enumerated()), id: \.offset) { _, w in
+            DetailCard("Workouts", padding: 0) {
+                ForEach(Array(workouts.enumerated()), id: \.offset) { i, w in
+                    if i > 0 { RowDivider(leading: 62) }
                     WorkoutRow(date: reading?.date ?? "", workout: w,
                                strain: scores?.strain?.workouts.first { $0.id == w.id }?.strain)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
                 }
-            } header: {
-                sectionHeader("Workouts", icon: "figure.run")
             }
-            .listRowBackground(Theme.row)
         }
         let activity: [HealthMetric] = [.steps, .activeKcal, .exercise].filter { m in reading.flatMap(m.value) != nil }
         if !activity.isEmpty {
-            Section {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                    ForEach(activity) { m in
-                        Button { metric = m } label: { MetricTile(metric: m, days: daysUpTo) }
-                            .buttonStyle(CardPress())
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Activity").font(.title3.weight(.bold)).padding(.horizontal, 4)
+                Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+                    ForEach(Array(stride(from: 0, to: activity.count, by: 2)), id: \.self) { i in
+                        GridRow {
+                            ForEach(activity[i..<min(i + 2, activity.count)]) { m in
+                                Button { metric = m } label: { MetricTile(metric: m, days: daysUpTo) }
+                                    .buttonStyle(CardPress())
+                            }
+                            if i + 1 == activity.count { Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
+                        }
                     }
                 }
-                .padding(.vertical, 2)
-            } header: {
-                sectionHeader("Activity", icon: "figure.walk")
             }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
         }
     }
 
@@ -167,17 +180,10 @@ struct HealthView: View {
 
     @ViewBuilder private var weightSection: some View {
         if let weight, isToday {
-            Section {
+            DetailCard("Weight", padding: 0) {
                 WeightCard(weight: weight, open: { showWeight = true }, log: { loggingWeight = true })
-            } header: {
-                sectionHeader("Weight", icon: "scalemass.fill")
             }
-            .listRowBackground(Theme.row)
         }
-    }
-
-    private func sectionHeader(_ title: String, icon: String) -> some View {
-        Label(title, systemImage: icon)
     }
 
     private func loadScores() async {
@@ -210,11 +216,10 @@ struct HealthView: View {
         await weightLoad
     }
 
+    /// 35 days: the week's change needs the week before it too.
     private func loadWeight() async {
-        weight = try? await env.api.weight(days: 30) // nil from a server without weights: no card
+        weight = try? await env.api.weight(days: 35) // nil from a server without weights: no card
     }
-
-
 }
 
 /// "‹ Today, 30 October ›", for Health and Food: everything below follows it. Tapping the date opens a calendar.
