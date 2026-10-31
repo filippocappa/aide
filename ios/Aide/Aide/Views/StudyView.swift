@@ -490,6 +490,18 @@ struct CourseView: View {
             guard case .success(let url) = result, let kind else { return }
             Task { await upload(url, kind: kind) }
         }
+        // PDFs and recordings dragged in from Finder (or Files on an iPad) go up the same way, one after another.
+        .dropDestination(for: URL.self) { urls, _ in
+            let picked = urls.compactMap { url -> (URL, Import)? in
+                let type = UTType(filenameExtension: url.pathExtension)
+                if type?.conforms(to: .pdf) == true { return (url, .pdf) }
+                if type?.conforms(to: .audio) == true { return (url, .recording) }
+                return nil
+            }
+            guard busy == nil, !picked.isEmpty else { return false }
+            Task { for (url, kind) in picked { await upload(url, kind: kind) } }
+            return true
+        }
         .sheet(item: $openFile) { PDFSheet(file: $0) }
         .sheet(item: $editing) { edit in
             switch edit {

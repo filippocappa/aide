@@ -4,11 +4,15 @@ import SwiftUI
 /// URL and token (Settings), kept in this Mac's keychain.
 @main
 struct AideMacApp: App {
+    @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("menuBarItem") private var menuBarItem = true
     private var env: AppEnvironment { .shared }
 
     var body: some Scene {
-        WindowGroup("Aide") {
+        // One window: the chats, the sidebar and what's on screen are one `AppEnvironment`, which a second window
+        // would share and fight over. Closing it leaves Aide in the menu bar.
+        Window("Aide", id: MacWindow.main) {
             MacRootView()
                 .withAideEnvironment(env)
                 .frame(minWidth: 820, minHeight: 560)
@@ -20,6 +24,10 @@ struct AideMacApp: App {
         }
         .defaultSize(width: 1180, height: 780)
         .commands { MacCommands() }
+
+        MenuBarExtra("Aide", image: "Pebble", isInserted: $menuBarItem) {
+            MacMenuBarMenu()
+        }
 
         Settings {
             SettingsView()
@@ -48,18 +56,48 @@ extension View {
     }
 }
 
+enum MacWindow {
+    static let main = "main"
+
+    @MainActor static func newChat() {
+        let env = AppEnvironment.shared
+        MacNavigation.shared.section = .team
+        Task { await env.chat.newChat(with: env.chat.orchestrator) }
+    }
+}
+
+/// The Pebble in the menu bar: Aide's window, a new chat and the sections, with the window closed too.
+struct MacMenuBarMenu: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Open Aide") { show() }
+        Button("New Chat with Aide") { show(); MacWindow.newChat() }
+        Divider()
+        ForEach(MacSection.allCases.filter { $0 != .settings }) { section in
+            Button(section.title) { show(); MacNavigation.shared.section = section }
+        }
+        Divider()
+        Button("Quit Aide") { NSApplication.shared.terminate(nil) }
+    }
+
+    private func show() {
+        openWindow(id: MacWindow.main)
+        NSApplication.shared.activate()
+    }
+}
+
 /// The menu bar: a new chat with Aide, and each section of the sidebar on ⌘1…⌘6.
 struct MacCommands: Commands {
+    @AppStorage("menuBarItem") private var menuBarItem = true
+
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Chat with Aide") {
-                Task { @MainActor in
-                    let env = AppEnvironment.shared
-                    MacNavigation.shared.section = .team
-                    await env.chat.newChat(with: env.chat.orchestrator)
-                }
-            }
-            .keyboardShortcut("n")
+            Button("New Chat with Aide") { MacWindow.newChat() }
+                .keyboardShortcut("n")
+        }
+        CommandGroup(after: .appSettings) {
+            Toggle("Show in Menu Bar", isOn: $menuBarItem)
         }
         CommandMenu("Go") {
             ForEach(MacSection.allCases) { section in

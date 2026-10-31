@@ -129,18 +129,25 @@ struct TeamChatView: View {
             if !suggestions.isEmpty {
                 mentionSuggestions.transition(.opacity.combined(with: .offset(y: 10)))
             }
-            MessageBox("Message the team, @ to mention", text: $draft, focused: $focused, reset: sent) {
-                SendButton(enabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.isPostingTeam) {
-                    let text = draft
-                    $draft.clearMessage()
-                    sent += 1
-                    Task { await chat.postTeam(text) }
-                }
+            MessageBox("Message the team, @ to mention", text: $draft, focused: $focused, reset: sent,
+                       onReturn: { if canPost { post() } }) {
+                SendButton(enabled: canPost, action: post)
             }
         }
         .padding(.top, 8)
         .animation(.easeInOut(duration: 0.15), value: suggestions.map(\.id))
         .disabled(!settings.isConfigured)
+    }
+
+    private var canPost: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.isPostingTeam
+    }
+
+    private func post() {
+        let text = draft
+        $draft.clearMessage()
+        sent += 1
+        Task { await chat.postTeam(text) }
     }
 
     private var mentionSuggestions: some View {

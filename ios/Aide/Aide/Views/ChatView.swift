@@ -153,14 +153,9 @@ struct ChatView: View {
             UIApplication.shared.isIdleTimerDisabled = false
         }
         .photoSources(camera: $showCamera, library: $showLibrary, limit: Self.maxPhotos - photos.count,
-                      barcodes: chat.agent.id == "coach") { picked in
-            // A packet on its own in Coach's chat: say how much and it's logged, no model call.
-            if picked.count == 1, photos.isEmpty, let code = picked[0].barcodes.first {
-                scanned = ScannedCode(code: code, photo: picked[0])
-            } else {
-                photos = Array((photos + picked).prefix(Self.maxPhotos))
-            }
-        }
+                      barcodes: chat.agent.id == "coach", onPick: add)
+        .photoDrop(enabled: settings.isConfigured && !chat.isSending, limit: Self.maxPhotos - photos.count,
+                   barcodes: chat.agent.id == "coach", onPick: add)
         .fullScreenCover(isPresented: $showMealCamera, onDismiss: afterMealCamera) {
             MealCameraView(tint: chat.agent.tint, conversation: chat.conversationID) { mealCameraResult = $0 }
         }
@@ -356,12 +351,23 @@ struct ChatView: View {
     private var composer: some View {
         VStack(spacing: 0) {
             if !photos.isEmpty { photoStrip }
-            MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused, reset: sent) {
+            MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused, reset: sent,
+                       onReturn: { if canSend { sendDraft() } }) {
                 attachMenu
                 sendOrTalk
             }
         }
         .animation(.easeOut(duration: 0.2), value: photos)
+    }
+
+    /// Photos picked, taken or dropped on the chat. A packet on its own in Coach's chat: say how much and it's
+    /// logged, no model call.
+    private func add(_ picked: [PickedPhoto]) {
+        if picked.count == 1, photos.isEmpty, let code = picked[0].barcodes.first {
+            scanned = ScannedCode(code: code, photo: picked[0])
+        } else {
+            photos = Array((photos + picked).prefix(Self.maxPhotos))
+        }
     }
 
     /// What the meal camera ended with, once it's gone: shots go into the message, a logged packet's card is in the
@@ -438,14 +444,16 @@ struct ChatView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(voice.isActive ? "Stop voice chat" : "Talk to \(chat.agent.name)")
             } else {
-                SendButton(enabled: canSend) {
-                    let text = draft, sending = photos
-                    $draft.clearMessage()
-                    sent += 1
-                    photos = []
-                    Task { await chat.send(text, photos: sending) }
-                }
+                SendButton(enabled: canSend, action: sendDraft)
             }
+    }
+
+    private func sendDraft() {
+        let text = draft, sending = photos
+        $draft.clearMessage()
+        sent += 1
+        photos = []
+        Task { await chat.send(text, photos: sending) }
     }
 
     /// An empty message box offers the microphone instead of send.
@@ -468,14 +476,17 @@ struct MessageBox<Buttons: View>: View {
     /// Changed by the chat on every send: the text field is made anew, so the keyboard has nothing left to write a
     /// pending prediction or autocorrection back into (it put the sent message back in the box).
     var reset = 0
+    /// Return on the Mac sends (Option-Return starts a new line); on the phone Return is a new line.
+    var onReturn: (() -> Void)?
     let buttons: Buttons
 
     init(_ placeholder: String, text: Binding<String>, focused: FocusState<Bool>.Binding, reset: Int = 0,
-         @ViewBuilder buttons: () -> Buttons) {
+         onReturn: (() -> Void)? = nil, @ViewBuilder buttons: () -> Buttons) {
         self.placeholder = placeholder
         _text = text
         self.focused = focused
         self.reset = reset
+        self.onReturn = onReturn
         self.buttons = buttons()
     }
 
@@ -484,6 +495,9 @@ struct MessageBox<Buttons: View>: View {
             TextField(placeholder, text: $text, axis: .vertical)
                 .lineLimit(1...6)
                 .focused(focused)
+                #if os(macOS)
+                .onSubmit { onReturn?() }
+                #endif
                 .id(reset)
                 .padding(.leading, 8)
                 .padding(.vertical, 7)

@@ -1,5 +1,6 @@
 import ImageIO
 import PhotosUI
+import UniformTypeIdentifiers
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -73,6 +74,62 @@ extension View {
     func photoSources(camera: Binding<Bool>, library: Binding<Bool>, limit: Int, barcodes: Bool = false,
                       onPick: @escaping ([PickedPhoto]) -> Void) -> some View {
         modifier(PhotoSources(camera: camera, library: library, limit: limit, barcodes: barcodes, onPick: onPick))
+    }
+}
+
+extension View {
+    /// Images dropped on the view (from Finder, Photos or another app), shrunk and read like library photos.
+    func photoDrop(enabled: Bool = true, limit: Int, barcodes: Bool = false,
+                   onPick: @escaping ([PickedPhoto]) -> Void) -> some View {
+        modifier(PhotoDrop(enabled: enabled, limit: limit, barcodes: barcodes, onPick: onPick))
+    }
+}
+
+private struct PhotoDrop: ViewModifier {
+    let enabled: Bool
+    let limit: Int
+    let barcodes: Bool
+    let onPick: ([PickedPhoto]) -> Void
+    @State private var targeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if targeted {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Theme.accent, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
+                        .padding(6)
+                        .allowsHitTesting(false)
+                }
+            }
+            .onDrop(of: [.image], isTargeted: $targeted) { providers in
+                guard enabled, limit > 0 else { return false }
+                let images = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }
+                guard !images.isEmpty else { return false }
+                Task { @MainActor in
+                    var photos: [PickedPhoto] = []
+                    for provider in images.prefix(limit) {
+                        guard let data = await Self.data(provider) else { continue }
+                        let (jpeg, codes) = await Task.detached { [barcodes] in
+                            (PhotoPrep.jpeg(data), barcodes ? BarcodeReader.codes(in: data) : [])
+                        }.value
+                        if var photo = jpeg.flatMap(PickedPhoto.init(jpeg:)) {
+                            photo.barcodes = codes
+                            photos.append(photo)
+                        }
+                    }
+                    if !photos.isEmpty { onPick(photos) }
+                }
+                return true
+            }
+    }
+
+    private static func data(_ provider: NSItemProvider) async -> Data? {
+        await withCheckedContinuation { done in
+            _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                done.resume(returning: data)
+            }
+        }
     }
 }
 
