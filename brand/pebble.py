@@ -12,6 +12,8 @@ import math
 from pathlib import Path
 
 OUT = Path(__file__).parent / "logo"
+# The app icon is an Icon Composer document: its colours per appearance live in its icon.json.
+APP_ICON = Path(__file__).parent.parent / "ios" / "Aide" / "Aide" / "AppIcon.icon" / "Assets"
 
 SLATE = "#34413F"  # Pebble
 SAND = "#ECE5D8"   # background tile
@@ -91,6 +93,11 @@ def write_svgs() -> None:
     (OUT / "avatar.svg").write_text(svg(EXPRESSIONS["calm"], fill=SLATE, tile=SAND, scale=1.2))
     for name, eyes in EXPRESSIONS.items():
         (OUT / "expressions" / f"{name}.svg").write_text(svg(eyes, fill=SLATE, tile=SAND, scale=1.2))
+    # The app icon's one layer: Pebble alone on Icon Composer's 1024 canvas, no tile.
+    APP_ICON.mkdir(parents=True, exist_ok=True)
+    (APP_ICON / "pebble.svg").write_text(
+        svg(EXPRESSIONS["calm"], fill=SLATE, scale=1.2).replace("<svg ", '<svg width="1024" height="1024" ', 1)
+    )
 
 
 # -- idle animation: slow breathing, a blink every few seconds ------------------

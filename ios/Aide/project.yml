@@ -217,7 +217,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).mac
         PRODUCT_NAME: Aide
         CODE_SIGN_ENTITLEMENTS: $(AIDE_MAC_ENTITLEMENTS)  # Config/Base.xcconfig; push in Signing.local.xcconfig
-        ASSETCATALOG_COMPILER_APPICON_NAME: MacIcon
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon  # Aide/AppIcon.icon, shared with the phone
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ENABLE_HARDENED_RUNTIME: YES
   AideTests:

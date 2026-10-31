@@ -31,6 +31,10 @@ Pebble also works in plain black or white (`logo/web/pebble-black.svg`, `pebble-
 - `logo/pebble.svg`: black master. `pebble-slate.svg`: colour master.
 - `logo/pebble-small.svg`: heavier cut for 16 to 32 px. The favicons are built from it.
 - `logo/web/`: favicon.ico, PNG icons, app icon, webmanifest and a `<head>` snippet.
+- `ios/Aide/Aide/AppIcon.icon`: the iPhone and Mac app icon, an Icon Composer document (open it in Icon Composer,
+  in Xcode's Applications). One layer, Pebble, from `pebble.py`; the colours per appearance are in its `icon.json`:
+  Slate on Sand in light, sage (`#94ADA8`) on near-black in dark, white Pebble when tinted. iOS and macOS draw the
+  glass, the clear and tinted looks themselves, and Xcode makes flat PNGs for older systems.
 
 ## Rules
 
