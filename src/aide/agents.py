@@ -49,6 +49,9 @@ class AgentDef:
     tools: tuple[str, ...]  # its share of the server's tools, besides COMMON_TOOLS
     orchestrator: bool = False
     routine_ideas: tuple[dict, ...] = ()  # one-tap starting points in the app: {title, prompt, time, days}
+    # Its photo turns run on the everyday model, which reads what the smart one saw in the photos (Agent._describe)
+    # instead of the images: the smart model's call stays small, not the agent's whole prompt and tools.
+    reads_photos: bool = False
 
     def as_json(self) -> dict:
         return {"id": self.id, "name": self.name, "role": self.role, "color": self.color,
@@ -209,6 +212,11 @@ talk about the average and the trend, not a day's number."""
 _PHOTOS = """- Photos: the user can send photos. Their message then has a [Photo p_…] line for each, and you see the \
 latest photos as images; an older one is only that line. Look at what the photo shows and answer what they ask, \
 or say briefly what you see and what you can do with it."""
+
+_PHOTOS_READ = """- Photos: the user can send photos. Their message then has a [Photo p_…] line for each, and below them what \
+the photos show, written for you by a photo reader that looked at them closely (you don't see the images). Go by \
+its items, label text and amounts; what the user says, or what you know about them (their usual portions), wins \
+over its guesses."""
 
 _FOOD = """- Food: when a photo shows food the user is eating or ate, or they tell you what they had, log it with \
 log_meal (photo_id from the photo's line) unless they say otherwise. One meal is one log_meal, with every item in it.
@@ -387,7 +395,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day; to put a session in it, ask Secretary.",
-    _BASICS, _QUEUE, _HEALTH, _HABITS, _LOCKS, _CARDS, _PHOTOS, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _HEALTH, _HABITS, _LOCKS, _CARDS, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 FINANCE_PROMPT = _prompt(
@@ -454,7 +462,8 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
              routine_ideas=(_idea("Weekly recap", "Recap my sleep, training and habits for the week, and suggest one "
                                   "thing for next week.", "18:00", (7,)),
                             *(i for a, i in _STARTING_WATCHES if a == "coach"),
-                            *(i for _, a, i in _LATER_WATCHES if a == "coach"))),
+                            *(i for _, a, i in _LATER_WATCHES if a == "coach")),
+             reads_photos=True),
     AgentDef("finance", "Finance", "Money and budgets", "#B8921C",
              ("Help me set a monthly budget", "I spent "), FINANCE_PROMPT, (*PURCHASES, *WEB),
              routine_ideas=(_idea("Week's spending", "Ask me what I spent this week, then compare it with my budget "

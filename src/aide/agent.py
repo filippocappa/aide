@@ -42,6 +42,7 @@ OLD_RESULT = 1500  # a tool result from an earlier turn longer than this is repl
 OLD_RESULT_KEPT = 300  # characters of it kept
 PLAN_CONTEXT = 20  # earlier messages a routine on the Claude plan reads, as text
 SEEN_PHOTOS = 3  # the model sees the turn's photos as images, up to this many; earlier ones only as [Photo id] lines
+READ_TOKENS = 1000  # what the photo reader writes for an agent that reads photos (AgentDef.reads_photos)
 # How much of a chat the model reads: at least the first number of turns, and fewer than that plus the second.
 # Old turns go in steps, not one a turn, so the history sent stays the same bytes (cached) between steps.
 CHAT_TURNS = (20, 10)
@@ -132,6 +133,7 @@ class Agent:
         self._asked: list[str] = []  # agents answering an ask right now: they can't ask in turn
         self._team: list[dict] = []  # its team messages
         self._photos: tuple[str, ...] = ()  # photos the user sent with the turn in progress; asked agents see them
+        self._read: str | None = None  # what the smart model saw in them, once per turn (_describe)
         self._on_team: Callable[[dict], None] | None = None  # told about each one as it happens
         self._watching = False  # the turn in progress is a watch: tools that change something are refused
         self._plan = False  # the turn in progress runs on the Claude plan (Engine.run), asks included
@@ -237,7 +239,7 @@ class Agent:
             if role == "user":
                 if not isinstance(content, str) or content.startswith(("[The user replied", "[The user tapped", _OPENED)):
                     continue  # tool results, confirm/cancel and plan notes, the note before a digest greeting
-                text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0]
+                text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0].split(_READ_MARK, 1)[0]
                 if _NOTE.match(text):
                     continue  # a note for the model: a routine's prompt, the one before a post, a quiz's result
                 if photos := _PHOTO.findall(text):
@@ -346,14 +348,20 @@ class Agent:
         conversation = self._key(channel, conversation)
         async with self._lock:
             conversation_id = self._resolve(channel, conversation)
+            agent = self.db.conversation_agent(conversation_id)
             # A photo turn gets the smart model: judging a portion from a photo needs it. Asked agents use it too.
-            model = self.smart_model if photos else self.db.conversation_model(conversation_id) or self.model
+            # An agent that reads photos stays on its model, with what the smart one saw written in the message.
+            reads = bool(photos) and AGENTS[agent].reads_photos
+            model = self.smart_model if photos and not reads else \
+                self.db.conversation_model(conversation_id) or self.model
             history = self.db.history(conversation_id)
             self._start(channel, conversation, model, on_team)
             self._photos = tuple(photos)
-            agent = self.db.conversation_agent(conversation_id)
             self.check_photos(photos)
             body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
+            if reads:
+                with usage.labels(purpose="photo read", agent=agent, conversation=conversation or channel):
+                    body += await self._describe(text)
             turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice)}]
             try:
                 with usage.labels(purpose="photo chat" if photos else "chat", conversation=conversation or channel):
@@ -393,7 +401,7 @@ class Agent:
         """Reset the per-turn state. Called under the lock."""
         self._channel, self._conversation, self._model = channel, conversation, model
         self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
-        self._watching, self._photos = False, ()
+        self._watching, self._photos, self._read = False, (), None
         self._plan, self._plan_calls = False, 0
 
     async def run_routine(self, channel: str, routine: dict) -> tuple[str | None, int]:
@@ -519,11 +527,16 @@ class Agent:
             # One stateless turn: the specialist sees only the request (and the turn's photos), and nothing is
             # stored in its chats.
             photos = "".join(f"\n[Photo {p}]" for p in self._photos)
+            model = self._model
+            if self._photos and AGENTS[agent].reads_photos:
+                with usage.labels(purpose="photo read", agent=agent):
+                    photos += await self._describe(request)
+                model = self.model
             turn = [{"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] [Asked by {name}] {request}{photos}"}]
             self._asked.append(agent)
             try:
                 with usage.labels(purpose="ask"):
-                    answer = await self._run(agent, self._channel, self._model, [], turn)
+                    answer = await self._run(agent, self._channel, model, [], turn)
             finally:
                 self._asked.remove(agent)
             self._say(agent, sender, answer)
@@ -675,10 +688,24 @@ class Agent:
             # Two cache breakpoints: tools + system, and the conversation so far.
             system=self._system(agent),
             tools=[t.definition() for t in self._offered(agent)],
-            messages=_with_cache_breakpoint(history + self._with_photos(turn)),
+            messages=_with_cache_breakpoint(history + (turn if AGENTS[agent].reads_photos else self._with_photos(turn))),
             output_config={"effort": self.effort},
             **extra,
         )
+
+    async def _describe(self, text: str) -> str:
+        """What the turn's photos show, written by the smart model in one small call (its own short prompt, the
+        images and the user's words), for an agent that reads photos: the lines that follow the [Photo id] lines.
+        Once per turn; an ask with the same photos reuses it."""
+        if self._read is None:
+            lines = "\n".join([text or "(no words)", *(f"[Photo {p}]" for p in self._photos)])
+            content = self._with_photos([{"role": "user", "content": lines}])[0]["content"]
+            response = await self.client.beta.messages.create(
+                model=self.smart_model, max_tokens=READ_TOKENS, system=READ_PROMPT,
+                messages=[{"role": "user", "content": content}])
+            seen = "\n".join(b.text for b in response.content if b.type == "text").strip()
+            self._read = f"{_READ_MARK}\n{seen or '(the photo reader saw nothing it could describe)'}\n[End of what the photos show]"
+        return self._read
 
     def _with_photos(self, messages: list[dict]) -> list[dict]:
         """Copy of the turn's messages where its latest SEEN_PHOTOS photos are images, next to the [Photo id] lines
@@ -795,6 +822,21 @@ _CHANGES = (None, "found", "created", "proposed")  # an event card item's change
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
 _QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
+_READ_MARK = "\n[What the photos show, read by the photo reader]"
+READ_PROMPT = """You look at photos for Coach, an assistant that logs the user's meals and talks about their health \
+and training, and can't see images. Write what the photos show so Coach can act without them.
+- Food: each dish and item on its own line: what it is, what it's made of (sauce, cheese, oil or butter you can \
+see or that a dish like this usually has), how it was cooked, and how much there is, in grams or ml, with what you \
+judged it from (the plate or cutlery for scale, how full, the packet). Pasta, rice and grains: give the dry weight \
+too. If it's partly eaten, say how much is left.
+- Packets and labels: brand and product name as printed, the pack size, and any nutrition table copied in full \
+with its units (per 100 g, per serving). A barcode's digits only if you can read every one.
+- Anything else (a screen, a document, a workout summary, a scale): what it is, with its text and numbers copied \
+exactly.
+Terse: one line per item, a few words each ("Mezze maniche al pesto, creamy: 90 g dry (~260 g cooked), judged \
+from the 26 cm plate"), at most 12 lines; a label's table can take more. No preamble, no advice, no calorie totals \
+unless printed. The user's words come after the photos: use them for context (which meal, how much they had); \
+they're not asking you."""
 # Every note the server writes for the model starts with a bracket ("[Course dates: …]", "[Scheduled routine …"),
 # the routine's and the digest's below among them; a photo, a Markdown link or "[1] milk" isn't one.
 _NOTE = re.compile(r"\[(?!Photo p_)[A-Z][^\]]*(\]|$)(?!\()")
