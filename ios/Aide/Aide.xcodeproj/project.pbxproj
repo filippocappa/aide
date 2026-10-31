@@ -52,9 +52,11 @@
 		3175C7034C85CC1ECD2A322F /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58AE8C76701A110B13945027 /* ChatViewModel.swift */; };
 		3188423C527C210BBADFEFBC /* StudySessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F052E49EFFBA77932E41460B /* StudySessionView.swift */; };
 		32929000119CE3BE2D9FD69A /* TramLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA0AF3C34ADA2A7F1F3492E /* TramLiveActivity.swift */; };
+		37C256159F3B5D5EBF6B2A03 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 6E1B259BBCE24A81EE5735B1 /* AppIcon.icon */; };
 		37E7FDC4F3AD9DD0671521BB /* HabitsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */; };
 		3A5B21289142C95A31CC24F3 /* StudySessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F052E49EFFBA77932E41460B /* StudySessionView.swift */; };
 		3B94BC79A60AEAD6626F4EEA /* LockShield.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ACCD638FA0D9F230CF15238B /* LockShield.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3BE23AEE883E0ABB508D9B38 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 6E1B259BBCE24A81EE5735B1 /* AppIcon.icon */; };
 		3C0ACD19CCAFE22FFC075630 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AEB482052BA9CB53D3B8410 /* ChatsView.swift */; };
 		3CA6E37A3296746227026CF7 /* ShieldConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = B21264FA61ED8665DC82B517 /* ShieldConfig.swift */; };
 		3D0111BD8AD5B12BEFAD16CF /* ScanViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC045FC4847C746FA98D8C55 /* ScanViews.swift */; };
@@ -309,6 +311,7 @@
 		67BBAA4A50EA4E94D5CE2C49 /* VoiceLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLog.swift; sourceTree = "<group>"; };
 		68C4CE2352B9DD9BE976A094 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepSummary.swift; sourceTree = "<group>"; };
+		6E1B259BBCE24A81EE5735B1 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		6EF10BCDADB734A13BDB47BE /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
 		7386B4E42939B32072754CC0 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		75A4AEC9022A036D36BF776D /* NotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesView.swift; sourceTree = "<group>"; };
@@ -628,6 +631,7 @@
 			children = (
 				605B384AB6649D33C15F6172 /* Aide.entitlements */,
 				9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */,
+				6E1B259BBCE24A81EE5735B1 /* AppIcon.icon */,
 				CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */,
 				E8BFC1DAA6E43241677C8730 /* Health.entitlements */,
 				87320B5BA6327928E4CC8A7D /* Info.plist */,
@@ -872,6 +876,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				37C256159F3B5D5EBF6B2A03 /* AppIcon.icon in Resources */,
 				D198E2CA55D8BE7674A29EB2 /* Assets.xcassets in Resources */,
 				A810148E5F35372A84D2D920 /* MacAssets.xcassets in Resources */,
 			);
@@ -889,6 +894,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3BE23AEE883E0ABB508D9B38 /* AppIcon.icon in Resources */,
 				EA7898D2B9F95FC9F72530FD /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1296,7 +1302,7 @@
 		4C808D000B54539007EC7696 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = MacIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "$(AIDE_MAC_ENTITLEMENTS)";
 				COMBINE_HIDPI_IMAGES = YES;
@@ -1392,7 +1398,7 @@
 		79FB145673ED16FEABCE1DBE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = MacIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "$(AIDE_MAC_ENTITLEMENTS)";
 				COMBINE_HIDPI_IMAGES = YES;
