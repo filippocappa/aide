@@ -14,6 +14,7 @@ from . import usage
 from .agent import CONVERSATION, TEAM, Agent, calling_agent
 from .browser import Browser
 from .channels.api import create_app
+from .reader import PhotoReader
 from .transcribe import Transcriber
 from .config import OPENROUTER_BASE_URL, load_settings, save_env
 from .db import Database
@@ -215,6 +216,8 @@ def main() -> None:
     )
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
     agent.short_chat = lambda conversation: conversation == food.chat()  # the Food log reads its last few meals
+    if settings.openrouter_api_key:
+        agent.reader = PhotoReader(settings.openrouter_api_key, settings.photo_read_model)  # Coach's photos
     if errands:
         errands.agent = agent
     videos.agent = agent

@@ -49,8 +49,8 @@ class AgentDef:
     tools: tuple[str, ...]  # its share of the server's tools, besides COMMON_TOOLS
     orchestrator: bool = False
     routine_ideas: tuple[dict, ...] = ()  # one-tap starting points in the app: {title, prompt, time, days}
-    # Its photo turns run on the everyday model, which reads what the smart one saw in the photos (Agent._describe)
-    # instead of the images: the smart model's call stays small, not the agent's whole prompt and tools.
+    # Its photo turns run on the everyday model, which reads what the photo reader saw in the photos (reader.py,
+    # Agent._describe) instead of the images: the reader's call stays small, not the agent's whole prompt and tools.
     reads_photos: bool = False
 
     def as_json(self) -> dict:
