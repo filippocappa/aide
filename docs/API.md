@@ -2107,6 +2107,42 @@ Each ready video is also a page in the Obsidian vault, `Aide/Videos/<title>.md`:
 question and its answer, the TL;DR, what to know, the moments with their times (links to YouTube) and frames
 (`Aide/Videos/Frames/`), the takeaway, and the transcript folded.
 
+## Usage
+
+Since 2026-10-31 (`usage.py`): every model call and paid API call is a row: OpenRouter (chat turns, asks, routines
+and watches, notes, titles, digests, drafts, the planner, transcription…), the Claude plan through Claude Code,
+Whisper on the server's GPU, Tavily and Google Maps. Kept 180 days. Read-only.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/usage?days=7` | `days` 1–180 | Usage |
+
+Usage: `{"days": 7, "total": Sum, "engines": [Sum], "purposes": [Sum], "models": [Sum], "agents": [Sum],
+"conversations": [Sum + "title"], "by_day": [Sum], "recent": [Call]}`.
+
+- Sum: `{"key": "…" or null, "calls": 12, "input": 30120, "cache_read": 210000, "cache_write": 8000, "output": 2400,
+  "cost": 0.0123, "failed": 0}`. Each list is grouped by its `key` and sorted by cost, then calls. Tokens: `input` is
+  the uncached part, `cache_read` and `cache_write` the cached ones.
+- `total`: OpenRouter only, the money actually spent. The other engines are in `engines`.
+- `engines` keys: `openrouter`; `plan` (the Claude plan: not billed per token, `cost` is what Claude Code reckons the
+  run would have cost on the API); `gpu` (Whisper, no tokens, no cost, only time); `tavily` and `google_maps` (one
+  call each, no tokens; `cost` 0, their own plans bill them).
+- `purposes` keys are `engine:purpose`: `openrouter:chat`, `openrouter:photo chat`, `openrouter:team chat`,
+  `openrouter:ask`, `openrouter:routine`, `openrouter:watch`, `openrouter:title`, `openrouter:transcribe`; anything
+  else is named after the server function that made the call (`openrouter:videos.brief`, `plan:notebook.write`,
+  `tavily:tools.search.search`). Names may change; show them as they are.
+- `models` keys are the model id (`anthropic/claude-haiku-5.5`, `sonnet` on the plan, `parakeet` or `whisper` on the GPU, Tavily's `search` or
+  `extract`, Maps' `places:searchText`, `v2:computeRoutes`…). `agents`: the agent id, null for work no agent
+  did. `conversations`: the chat id (`team` for the Team chat), with its `title` when it has one. `by_day`: the UTC
+  date (`2026-10-31`).
+- Call: `{"at": "…Z", "engine": "openrouter", "model": "…", "purpose": "chat", "agent": "coach",
+  "conversation": "c_…" or null, "input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "cost": 0.0004 or null,
+  "ms": 2100 or null, "ok": true}`, the latest 100, newest first. `cost` null: a model with no known price.
+
+Since the same day, to keep turns small (#29): a chat's model sees the turn's photos as images, earlier photos only as
+their `[Photo id]` lines; and a long chat sends its last 20–30 turns (moving 10 at a time, so the cache holds), Coach's
+Food log its last 3–6, with a note that the earlier ones are left out (the tools still have what was done in them).
+
 ## Push
 
 The server notifies the phone through APNs. It sends only when it has a key (`APNS_*` in `.env`) and at least one registered device; otherwise nothing is sent and everything is still in the app.
