@@ -44,7 +44,7 @@ from ..material import MAX_FILE, PdfError, page_image
 from ..moodle import MoodleError, MoodleSync
 from ..notebook import NotebookStore
 from ..objectives import ObjectivePlanner, ObjectiveStore
-from ..quiz import MOST as MOST_QUESTIONS, QuizStore, plain_math
+from ..quiz import MOST as MOST_QUESTIONS, QuizStore, mark as mark_answer, plain_math
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..leave import LeaveWatcher
@@ -198,6 +198,8 @@ class QuizStart(BaseModel):
     minutes: int | None = Field(default=None, ge=1, le=600)  # null: untimed
     topics: list[str] | None = None  # topic ids; null: all
     mock: str | None = None  # a mock exam's id (m_…): that paper, its time and scoring; count, minutes, topics unused
+    kind: Literal["exam", "study"] = "exam"  # study: the Study page, untimed, each answer shown and marked as it comes
+    write: int = Field(default=0, ge=0, le=MOST_QUESTIONS)  # study: flashcards answered in words, marked by the model
 
 
 class WriterIn(BaseModel):
@@ -217,6 +219,11 @@ class OpenAnswer(BaseModel):  # a mock exam's open question: typed, or photos of
 class QuizCheck(BaseModel):
     n: int
     answer: str | OpenAnswer | None = None  # as in QuizFinish; null: blank
+
+
+class QuizMark(BaseModel):  # a study session's open answer: "I was right" (or not), over the model's mark
+    n: int
+    correct: bool
 
 
 class QuizFinish(BaseModel):
@@ -1795,7 +1802,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     raise HTTPException(404, f"no mock exam {body.mock} in this course")
                 quiz = quizzes.start_mock(body.mock)
             else:
-                quiz = quizzes.start(cid, body.count, body.minutes, body.topics, body.cards, body.exercises)
+                quiz = quizzes.start(cid, body.count, body.minutes, body.topics, body.cards, body.exercises,
+                                     body.kind, body.write)
         except ValueError as e:
             raise HTTPException(409, str(e))
         return JSONResponse(quizzes.quiz_json(quiz), status_code=201)
@@ -1809,12 +1817,38 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return {"text": a.text, "photos": [p for p in a.photos if photos is not None and photos.exists(p)]}
         return a
 
+    async def ask_fast(system: str, content: list[dict], max_tokens: int) -> str:
+        """Straight to the fast model: the user is waiting on the Study page (the plan's Claude Code takes longer)."""
+        response = await agent.client.beta.messages.create(
+            model=agent.model, max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": content}])
+        return "".join(b.text for b in response.content if b.type == "text").strip()
+
     @app.post("/v1/quizzes/{quiz_id}/check", dependencies=[Depends(auth)])
     async def check_quiz(quiz_id: str, body: QuizCheck):
         quiz_or_404(quiz_id)
         try:
-            return quizzes.check(quiz_id, body.n, open_answer(body.answer))
+            checked = quizzes.check(quiz_id, body.n, open_answer(body.answer))
         except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        if (waiting := quizzes.to_mark(quiz_id, body.n)) is None:
+            return checked
+        try:  # a study session's open answer, marked while the user waits
+            points, feedback = await mark_answer(ask_fast, *waiting, photos.load if photos is not None else None)
+        except Exception:
+            log.exception("couldn't mark a study answer")
+            raise HTTPException(502, "couldn't mark it: say yourself whether it was right") from None
+        return quizzes.set_mark(quiz_id, body.n, points, feedback)
+
+    @app.post("/v1/quizzes/{quiz_id}/mark", dependencies=[Depends(auth)])
+    async def mark_quiz(quiz_id: str, body: QuizMark):
+        quiz_or_404(quiz_id)
+        try:
+            q = quizzes.quiz(quiz_id)["questions"][body.n - 1] if body.n >= 1 else None
+            points = (q or {}).get("points", 1.0) if body.correct else 0.0
+            return quizzes.set_mark(quiz_id, body.n, points, None)
+        except (LookupError, IndexError) as e:
             raise HTTPException(404, str(e))
         except ValueError as e:
             raise HTTPException(409, str(e))
@@ -1827,6 +1861,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             quiz = quizzes.finish(quiz_id, answers)
         except ValueError as e:
             raise HTTPException(409, str(e))
+        if quiz["kind"] == "study":  # the Study page shows how it went: nothing to post
+            return quizzes.quiz_json(quiz)
         if quizzes.grading(quiz):  # the open answers are marked in the background, and the result posted then
             notebook.enqueue(quiz["course_id"], "grade", quiz=quiz_id)
             return quizzes.quiz_json(quiz)

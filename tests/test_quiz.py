@@ -523,3 +523,64 @@ def test_a_mock_exams_questions_read_from_its_paper():
     assert (mcq["type"], mcq["key"], mcq["explanation"], mcq["topic_title"]) == \
         ("mcq", "A", "G is part of demand.", "The IS-LM model")
     assert (open_["type"], open_["points"], open_["rubric"].splitlines()[0]) == ("open", 15.0, "- 5 points: IS shifts right")
+
+
+async def test_a_study_session_marks_as_it_goes_and_asks_the_missed_again(nb):
+    t = notebook_with_questions(nb)
+    with_cards(nb, t)
+    cid = nb.macro["id"]
+    posted = len(chat_messages(nb))
+    quiz = nb.api.post("/v1/quizzes", json={"course": cid, "kind": "study", "count": 2, "cards": 1, "write": 1,
+                                            "minutes": 30}, headers=AUTH).json()
+    assert (quiz["kind"], quiz["title"], quiz["minutes"], quiz["count"]) == ("study", "Study", None, 4)
+    by_type = {q.get("type", "mcq"): q for q in quiz["questions"]}
+    assert sorted(by_type) == ["card", "mcq", "open"]
+    written, card = by_type["open"], by_type["card"]
+    assert written["text"] != card["text"] and written["points"] == 1  # one card isn't both turned and written
+    stored = QuizStore(nb.notebook).quiz(quiz["id"])["questions"][written["n"] - 1]
+    assert stored["model_answer"] in ("Investment = saving", "The money supply")
+
+    # Multiple choice: shown at once, and asked again in the next round.
+    mcq = by_type["mcq"]
+    key = QuizStore(nb.notebook).quiz(quiz["id"])["questions"][mcq["n"] - 1]["key"]
+    wrong = "A" if key != "A" else "B"
+    first = nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": mcq["n"], "answer": wrong}, headers=AUTH).json()
+    assert first["correct"] is False and first["key"] == key
+    again = nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": mcq["n"], "answer": key}, headers=AUTH).json()
+    assert again["correct"] is True
+    nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": card["n"], "answer": "right"}, headers=AUTH)
+
+    # Written: marked now by the fast model, with a line on what was missing.
+    before = len(nb.client.requests)
+    nb.client.responses.append(done('{"points": 0.5, "feedback": "Half there: say what shifts it."}'))
+    marked = nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": written["n"], "answer": {"text": "Money"}},
+                         headers=AUTH).json()
+    [ask] = nb.client.requests[before:]
+    assert ask["model"] == "m" and "The student's answer:\nMoney" in ask["messages"][0]["content"][0]["text"]
+    assert (marked["awarded"], marked["correct"], marked["feedback"]) == (0.5, True, "Half there: say what shifts it.")
+    assert marked["model_answer"] == stored["model_answer"] and marked["rubric"] is None
+
+    # The model fails: 502, and the user says whether it was right.
+    nb.client.responses.append(done("no idea"))
+    r = nb.api.post(f"/v1/quizzes/{quiz['id']}/check", json={"n": written["n"], "answer": {"text": "M"}}, headers=AUTH)
+    assert r.status_code == 502
+    mine = nb.api.post(f"/v1/quizzes/{quiz['id']}/mark", json={"n": written["n"], "correct": True}, headers=AUTH).json()
+    assert (mine["awarded"], mine["correct"]) == (1.0, True)
+    assert nb.api.post(f"/v1/quizzes/{quiz['id']}/mark", json={"n": mcq["n"], "correct": True},
+                       headers=AUTH).status_code == 409
+
+    # Finished: nothing posted, not a practice exam, and every answer counted for how well it's known.
+    finished = nb.api.post(f"/v1/quizzes/{quiz['id']}/finish", json={"answers": {}}, headers=AUTH).json()
+    assert finished["finished_at"] and finished["score"]["grading"] is False
+    assert len(chat_messages(nb)) == posted
+    bank = nb.api.get(f"/v1/quizzes?course={cid}", headers=AUTH).json()
+    assert bank["past"] == []
+    seen = QuizStore(nb.notebook)._last(cid)
+    assert sum(r["seen"] for r in seen.values()) == 5  # the question twice, the card, the written card twice
+    assert all(r["correct"] for r in seen.values())  # the latest answer counts: all right now
+
+    # A practice exam's check is still final, and has no marking.
+    exam = nb.api.post("/v1/quizzes", json={"course": cid, "count": 1}, headers=AUTH).json()
+    nb.api.post(f"/v1/quizzes/{exam['id']}/check", json={"n": 1, "answer": "A"}, headers=AUTH)
+    assert nb.api.post(f"/v1/quizzes/{exam['id']}/check", json={"n": 1, "answer": "B"}, headers=AUTH).status_code == 409
+    assert nb.api.post(f"/v1/quizzes/{exam['id']}/mark", json={"n": 1, "correct": True}, headers=AUTH).status_code == 404
