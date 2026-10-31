@@ -420,9 +420,9 @@ struct PastChatsSheet: View {
             .contentMargins(.top, 4, for: .scrollContent)
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
+            #if os(iOS)
             .navigationTitle(agent.name)
             .navigationBarTitleDisplayMode(.inline)
-            #if os(iOS)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close", systemImage: "xmark") { dismiss() }
@@ -556,6 +556,7 @@ struct ConversationRow: View {
             }
         }
         .padding(.vertical, 3)
+        .multilineTextAlignment(.leading) // a Mac button centres its label's lines
         .accessibilityElement(children: .combine)
     }
 

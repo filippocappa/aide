@@ -58,6 +58,8 @@ struct MacRootView: View {
     @State private var waiting = 0
     @AppStorage("macSidebarCollapsed") private var collapsed = false
     @ObservedObject private var glance = MacGlance.shared
+    /// The window's size: a Mac sheet comes up at its smallest, so sheets take theirs from the window (`MacSheetSize`).
+    @State private var windowSize = CGSize(width: 1180, height: 780)
 
     var body: some View {
         // No system sidebar: its flat slab cuts the page in two. The page runs the full width of the window, its
@@ -68,6 +70,8 @@ struct MacRootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // The page's glow runs up under the title; no band of the toolbar's own with a hard edge under it.
             .modifier(SoftTitleBar())
+            .environment(\.macWindowSize, windowSize)
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
             .overlay(alignment: .leading) {
                 MacSidebar(section: Binding(get: { nav.section ?? .team }, set: { nav.section = $0 }),
                            waiting: waiting, collapsed: $collapsed, glance: glance)

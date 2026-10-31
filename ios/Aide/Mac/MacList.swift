@@ -32,6 +32,7 @@ struct List<Content: View>: View {
                 .formStyle(.grouped)
                 // A button in a row is the accent's text, as on the phone, not a push button or a glass pill.
                 .buttonStyle(.borderless)
+                .multilineTextAlignment(.leading)
                 // The Mac keeps a grouped form to a narrow column; a page of cards gets a wider one, in the middle.
                 .contentMargins(.horizontal, max(20, (window.size.width - Self.width) / 2), for: .scrollContent)
         }

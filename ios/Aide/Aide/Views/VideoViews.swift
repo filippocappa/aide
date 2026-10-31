@@ -183,7 +183,9 @@ struct VideoPage: View {
             .background(Theme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if os(iOS)
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                #endif
                 if let video, let url = video.watchURL {
                     ToolbarItem(placement: .topBarLeading) {
                         ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
@@ -547,8 +549,10 @@ struct VideoSlides: View {
                 }
                 Spacer(minLength: 8)
                 Button { dismiss() } label: {
-                    Image(systemName: "xmark").font(.headline).frame(width: 36, height: 36)
+                    Image(systemName: "xmark").font(.headline).frame(width: 36, height: 36).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Close")
             }
             .foregroundStyle(.white)

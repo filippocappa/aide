@@ -188,8 +188,7 @@ extension View {
     /// What the phone shows over everything (slides, a practice exam, a photo) opens as a large sheet: the most of
     /// the window a sheet can take.
     func macCoverSize() -> some View {
-        frame(minWidth: 760, idealWidth: 1080, maxWidth: .infinity, minHeight: 560, idealHeight: 740, maxHeight: .infinity)
-            .macSheet()
+        modifier(MacCoverFrame()).macSheet()
     }
 }
 
@@ -237,4 +236,19 @@ struct EditButton: View {
 /// The Shortcuts app's link button is the phone's.
 struct ShortcutsLink: View {
     var body: some View { EmptyView() }
+}
+
+/// The phone's switch row: the label on the left and the switch at the end of the row. The Mac's `.switch` puts the
+/// switch right after its label, which in a card leaves it in the middle.
+struct MacSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label.frame(maxWidth: .infinity, alignment: .leading)
+            Toggle("", isOn: configuration.$isOn).labelsHidden().toggleStyle(.switch)
+        }
+    }
+}
+
+extension ToggleStyle where Self == MacSwitchStyle {
+    static var phoneSwitch: MacSwitchStyle { MacSwitchStyle() }
 }

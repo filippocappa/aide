@@ -12,6 +12,7 @@ struct NavigationStack<Root: View>: View {
     private let stack: AnyView
     @Environment(\.macInStack) private var inSheet
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.macWindowSize) private var window
 
     init(@ViewBuilder root: () -> Root) {
         stack = AnyView(SwiftUI.NavigationStack(root: root))
@@ -33,6 +34,8 @@ struct NavigationStack<Root: View>: View {
         if inSheet {
             stack
                 .environment(\.macInStack, true)
+                .toggleStyle(.phoneSwitch)
+                .formStyle(.grouped)
                 .onPreferenceChange(MacSheetTitleKey.self) { title = $0 }
                 .safeAreaInset(edge: .top, spacing: 0) {
                     HStack {
@@ -46,9 +49,9 @@ struct NavigationStack<Root: View>: View {
                     .padding(.top, 12)
                     .padding(.bottom, 4)
                 }
-                // Phone sheets fill the screen; on the Mac a sheet would shrink to its content. Most of the window.
-                .frame(minWidth: 620, idealWidth: 760, maxWidth: .infinity,
-                       minHeight: 560, idealHeight: 760, maxHeight: .infinity)
+                // Phone sheets fill the screen; on the Mac a sheet comes up at its smallest size. Most of the window.
+                .frame(minWidth: MacSheetSize.sheet(window).width, maxWidth: .infinity,
+                       minHeight: MacSheetSize.sheet(window).height, maxHeight: .infinity)
         } else {
             stack.environment(\.macInStack, true)
         }
@@ -63,6 +66,30 @@ struct MacSheetTitleKey: PreferenceKey {
 
 extension EnvironmentValues {
     @Entry var macInStack = false
+    /// The main window's size (`MacRootView`); sheets carry it from the page that opened them.
+    @Entry var macWindowSize = CGSize(width: 1180, height: 780)
+}
+
+/// How big a sheet comes up. macOS opens a sheet at its minimum size (an ideal size is ignored), so the minimum is
+/// worked out from the window: a sheet most of it, a cover (slides, a video) nearly all of it.
+enum MacSheetSize {
+    static func sheet(_ window: CGSize) -> CGSize {
+        CGSize(width: min(max(620, window.width * 0.66), 860), height: max(520, window.height - 120))
+    }
+
+    static func cover(_ window: CGSize) -> CGSize {
+        CGSize(width: max(720, window.width - 100), height: max(540, window.height - 70))
+    }
+}
+
+/// A cover's size, from the window.
+struct MacCoverFrame: ViewModifier {
+    @Environment(\.macWindowSize) private var window
+
+    func body(content: Content) -> some View {
+        content.frame(minWidth: MacSheetSize.cover(window).width, maxWidth: .infinity,
+                      minHeight: MacSheetSize.cover(window).height, maxHeight: .infinity)
+    }
 }
 
 extension View {

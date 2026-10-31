@@ -88,6 +88,9 @@ struct ChatView: View {
         .background(Theme.background)
         .toolbar(.hidden, for: .navigationBar) // Pebble and its buttons are the header
         .toolbar(.hidden, for: .tabBar) // a chat has the whole screen
+        #if DEBUG
+        .task { if settings.isPreview, UserDefaults.standard.bool(forKey: "previewChatInfo") { showInfo = true } }
+        #endif
         .sheet(isPresented: $showInfo, onDismiss: {
             guard let action = infoAction else { return }
             infoAction = nil

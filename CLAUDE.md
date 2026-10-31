@@ -128,9 +128,12 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   lines; buttons in rows are accent text), lighter dark colours in `Theme.swift` under `#if os(macOS)`, and
   `Mac/MacNavigationStack.swift` makes `NavigationStack` give a sheet a glass close button (Esc) in its top-left
   corner, since phone sheets often close only by swiping. Both shadow SwiftUI's types for `AideMac` only.
-- Sheets: a sheet's `NavigationStack` is at least 620×560 (ideal 760), its title shown by the close button through
-  `.macSheetTitle(_:)` (the Mac shows no navigation title in a sheet); `fullScreenCover` and `.macCoverSize()` (a no-op on
-  the phone) make the big ones (slides, a video's page). `.pageColumn()` keeps a ScrollView page's column at 860 pt;
+- Sheets: macOS opens a sheet at its *minimum* size (an ideal size is ignored), so `MacSheetSize` works the minimum
+  out from the window (`macWindowSize` in the environment, set by `MacRootView`): a sheet about two thirds of it, a
+  cover (`fullScreenCover`, `.macCoverSize()`, a no-op on the phone: slides, a video's page) nearly all of it. A centred
+  title by the close button is `.macSheetTitle(_:)`; then keep `navigationTitle` to iOS (the Mac shows it too). Sheets
+  don't inherit the window's styles, so each gets `.toggleStyle(.phoneSwitch)` (the switch at the row's end) and the
+  grouped form again. A Mac `Button` centres its label's lines: give multi-line rows `.multilineTextAlignment(.leading)`. `.pageColumn()` keeps a ScrollView page's column at 860 pt;
   `List` (a `Form`) is 820 pt wide in the middle. On the Mac, `Theme.toggle` is the accent (ivory), not green.
   `.toolbar(.hidden, for: .navigationBar)` hides the back chevron there (`MacPhoneBar`).
 - `Mac/iOSCompat.swift`: lets the shared views build unchanged: `UIColor`/`UIImage`/`UIPasteboard` as their AppKit

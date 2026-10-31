@@ -55,7 +55,7 @@ extension View {
             // The phone's grouped forms, not the Mac's two-column ones.
             .formStyle(.grouped)
             // The phone's switches, not the Mac's checkboxes.
-            .toggleStyle(.switch)
+            .toggleStyle(.phoneSwitch)
             .tint(Theme.accent)
     }
 }
