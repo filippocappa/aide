@@ -101,14 +101,15 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 ### The Mac app (same project, target `AideMac`)
 
-The phone's views in a Mac window with a sidebar (Team, Today, Study, Health, Food, Settings), macOS 14+, bundle
+The phone's views in a Mac window, the sections (Team, Today, Study, Health, Food, Settings) on a glass rail
+floating on the left over the page (`MacRail`; no system sidebar), macOS 14+, bundle
 `$(AIDE_BUNDLE_ID).mac`, its own server URL and token in the Mac's keychain. Same server, same API, no contract of its
 own except `app: "mac"` on `POST /v1/devices`. What only the phone has stays on the phone: Apple Health uploads, Live
 Activities, Screen Time, location, the meal camera, the Apple Reminders sync, the silent pushes (the Mac reads what
 the phone sent; a reminder ticked on the Mac goes through the server and the phone's next sync).
 
 - `Mac/AideMacApp.swift`, `Mac/MacRootView.swift`: the app, one window (a second would share the one
-  `AppEnvironment`), the sidebar, the menus (⌘N new chat, ⌘1–6, Show in Menu Bar) and the Pebble in the menu bar.
+  `AppEnvironment`), the rail, the menus (⌘N new chat, ⌘1–6, Show in Menu Bar) and the Pebble in the menu bar.
   Closing the window leaves Aide running.
 - On the Mac, Return sends in a chat (`MessageBox`'s `onReturn`; Option-Return is a new line), images dropped on a
   chat are added like picked photos (`photoDrop` in `Support/Photos.swift`), and PDFs or recordings dropped on a

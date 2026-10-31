@@ -51,23 +51,17 @@ struct MacRootView: View {
     @State private var waiting = 0
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $nav.section) {
-                Section {
-                    ForEach([MacSection.team, .today]) { row($0) }
-                }
-                Section {
-                    ForEach([MacSection.study, .health, .food]) { row($0) }
-                }
-                Section {
-                    row(.settings)
-                }
+        // No system sidebar: its flat slab cuts the page in two. The page runs the full width of the window, its
+        // glow behind everything, and the sections float over it on the left as a glass rail.
+        detail
+            .id(nav.section)
+            // The rail, with as much room again on its right: the Mac's lists run their rows to the edge.
+            .safeAreaPadding(.leading, MacRail.width + 2 * MacRail.margin)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .leading) {
+                MacRail(section: Binding(get: { nav.section ?? .team }, set: { nav.section = $0 }), waiting: waiting)
+                    .padding(.leading, MacRail.margin)
             }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
-        } detail: {
-            detail
-                .id(nav.section)
-        }
         .onAppear {
             if !settings.isConfigured { nav.section = .settings }
         }
@@ -104,12 +98,6 @@ struct MacRootView: View {
         .stage(item: $env.browser)
     }
 
-    private func row(_ section: MacSection) -> some View {
-        Label(section.title, systemImage: section.icon)
-            .badge(section == .team ? waiting : 0)
-            .tag(section)
-    }
-
     @ViewBuilder private var detail: some View {
         switch nav.section ?? .team {
         case .team: ChatsView(waiting: $waiting)
@@ -118,6 +106,82 @@ struct MacRootView: View {
         case .health: HealthView()
         case .food: FoodView()
         case .settings: SettingsView()
+        }
+    }
+}
+
+/// The sections as a floating glass capsule on the left: icons only, the name on hover and in the Go menu (⌘1–6).
+struct MacRail: View {
+    static let width: CGFloat = 52
+    static let margin: CGFloat = 12
+
+    @Binding var section: MacSection
+    var waiting: Int
+    @Namespace private var selection
+
+    var body: some View {
+        VStack(spacing: 4) {
+            button(.team)
+            button(.today)
+            divider
+            button(.study)
+            button(.health)
+            button(.food)
+            divider
+            button(.settings)
+        }
+        .padding(.vertical, 8)
+        .frame(width: Self.width)
+        .modifier(RailBackground())
+        .animation(.snappy(duration: 0.25), value: section)
+    }
+
+    private var divider: some View {
+        Capsule().fill(.secondary.opacity(0.25)).frame(width: 20, height: 1).padding(.vertical, 4)
+    }
+
+    private func button(_ item: MacSection) -> some View {
+        let selected = item == section
+        return Button { section = item } label: {
+            Image(systemName: item.icon)
+                .symbolVariant(selected ? .fill : .none)
+                .font(.system(size: 16, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.primary : Color.secondary)
+                .frame(width: 40, height: 40)
+                .background {
+                    if selected {
+                        Circle().fill(.primary.opacity(0.12)).matchedGeometryEffect(id: "selected", in: selection)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if item == .team, waiting > 0 {
+                        Text("\(waiting)")
+                            .font(.system(size: 9, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15)
+                            .background(Capsule().fill(.red))
+                            .offset(x: 2, y: -1)
+                    }
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("\(item.title) (⌘\(String(item.shortcut.character)))")
+        .accessibilityLabel(item.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Liquid Glass where the system has it, else a material capsule with a hairline and a soft shadow.
+private struct RailBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content.glassEffect(.regular, in: Capsule())
+        } else {
+            content
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(.white.opacity(0.08)))
+                .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
         }
     }
 }

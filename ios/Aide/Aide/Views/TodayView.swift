@@ -59,7 +59,10 @@ struct TodayView: View {
                 .navigationTitle("Today")
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) { addMenu }
+                    #if os(iOS)
+                    // A sheet over Team on the phone; a section of the window on the Mac, with nothing to close.
                     ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
+                    #endif
                 }
                 .navigationDestination(isPresented: $showHabits) { HabitsScreen(habits: $habits) }
                 .onChange(of: env.todayFocus, initial: true) { _, focus in

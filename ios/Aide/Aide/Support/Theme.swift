@@ -94,7 +94,8 @@ extension View {
             }
             .frame(height: reach, alignment: .top)
             .frame(maxWidth: .infinity)
-            .ignoresSafeArea(edges: .top)
+            // Sideways too: on the Mac it runs on under the rail of sections floating on the left.
+            .ignoresSafeArea(edges: [.top, .horizontal])
             .animation(.easeInOut(duration: 0.6), value: color == nil)
         }
         .background(Theme.grouped)
@@ -370,5 +371,17 @@ struct CardPress: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .opacity(configuration.isPressed ? 0.85 : 1)
             .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+extension ToolbarItemPlacement {
+    /// A sheet's Done: top right on the phone. A sheet on the Mac has no toolbar of its own and shows only its
+    /// confirmation and cancellation buttons, so there it's the confirmation one.
+    static var sheetDone: ToolbarItemPlacement {
+        #if os(macOS)
+        .confirmationAction
+        #else
+        .topBarTrailing
+        #endif
     }
 }

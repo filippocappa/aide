@@ -36,7 +36,7 @@ struct DigestSheet: View {
                             .accessibilityLabel("Write it again")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .sheetDone) { Button("Done") { dismiss() } }
             }
             .onChange(of: digest.kind) { _, _ in digest.refreshError = nil; Task { await digest.load() } }
             .task { await digest.load() }

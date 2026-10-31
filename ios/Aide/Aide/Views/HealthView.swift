@@ -297,7 +297,7 @@ private struct DayCalendar: View {
                         dismiss()
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .sheetDone) { Button("Done") { dismiss() } }
             }
         }
     }
