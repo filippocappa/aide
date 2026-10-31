@@ -396,6 +396,7 @@ class MoodleSync:
     async def _sync_course(self, client: MoodleClient, row: dict) -> list[tuple[dict, bool]]:
         out = []
         page: list[str] = []  # the course page's text
+        intros = await self._forum_intros(client, row["moodle_id"])
         for section in await client.call("core_course_get_contents", courseid=row["moodle_id"]):
             section["name"] = html.unescape(section.get("name") or "")
             page.append(f"## {section['name']}" + (f"\n{summary}" if (summary := _text(section.get("summary"))) else ""))
@@ -403,7 +404,7 @@ class MoodleSync:
                 if module.get("uservisible") is False:
                     continue
                 module["name"] = html.unescape(module.get("name") or "")
-                page.append(await self._module_text(client, module))
+                page.append(await self._module_text(client, module, intros))
                 pdfs = [c for c in module.get("contents") or [] if _pdf(c)]
                 for c in pdfs:
                     key = f"{row['moodle_id']}/{module['id']}{c.get('filepath') or '/'}{c['filename']}"
@@ -422,15 +423,30 @@ class MoodleSync:
         self.conn.execute("UPDATE moodle_courses SET text = ? WHERE moodle_id = ?", (text, row["moodle_id"]))
         return out
 
-    async def _module_text(self, client: MoodleClient, module: dict) -> str:
-        """A module on the course page as text: a label's text, a forum's latest posts when it's one for notices
-        or textbooks, else its name and kind."""
+    async def _forum_intros(self, client: MoodleClient, moodle_id: int) -> dict[int, str]:
+        """Each forum's description by its instance. Some courses write a notice there and post nothing
+        (macroeconomics' MIDTERM INFO)."""
+        try:
+            forums = await client.call("mod_forum_get_forums_by_courses", **{"courseids[0]": moodle_id})
+        except LoginNeeded:
+            raise
+        except MoodleError as e:
+            log.info("Moodle forums of course %s not read: %s", moodle_id, e)
+            return {}
+        return {f["id"]: text for f in forums if isinstance(f, dict) and "id" in f
+                if (text := _text(f.get("intro"))[:FORUM_POST])} if isinstance(forums, list) else {}
+
+    async def _module_text(self, client: MoodleClient, module: dict, intros: dict[int, str] | None = None) -> str:
+        """A module on the course page as text: a label's text, a forum's description and latest posts when it's
+        one for notices, textbooks or the exam, else its name and kind."""
         kind = module.get("modname") or ""
         if kind == "label":
             return _text(module.get("description"))
         line = f"- {module['name']}" + (f" ({kind})" if kind else "") + (f": {d}" if (d := _text(module.get("description"))) else "")
         if kind != "forum" or not _FORUMS.search(module["name"]) or not module.get("instance"):
             return line
+        if intro := (intros or {}).get(module["instance"]):
+            line += f"\n{intro}"
         try:
             found = await client.call("mod_forum_get_forum_discussions", forumid=module["instance"],
                                       sortorder=1, perpage=FORUM_POSTS)

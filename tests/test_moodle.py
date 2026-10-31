@@ -58,6 +58,7 @@ class FakeMoodle:
             102: [{"name": "Materiale", "modules": [{"id": 9, "name": "Codice civile", "contents": [pdf(9, "cc.pdf")]}]}],
         }
         self.downloads: list[str] = []
+        self.notice = "<p>The midterm is on <b>4 November</b>, in the usual room.</p>"
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/webservice/rest/server.php"):
@@ -73,7 +74,11 @@ class FakeMoodle:
                 return httpx.Response(200, json=self.courses)
             if fn == "core_course_get_contents":
                 return httpx.Response(200, json=self.contents[int(form["courseid"])])
+            if fn == "mod_forum_get_forums_by_courses":
+                return httpx.Response(200, json=[{"id": 80, "intro": ""}, {"id": 82, "intro": self.notice}])
             if fn == "mod_forum_get_forum_discussions":
+                if form["forumid"] == "82":
+                    return httpx.Response(200, json={"discussions": [], "warnings": []})
                 assert form["forumid"] == "80"
                 return httpx.Response(200, json={"discussions": [
                     {"subject": "Textbook &amp; slides", "message": "<p>Blanchard, <b>Macroeconomics</b>, 8th ed.</p>"}]})
@@ -208,6 +213,7 @@ async def test_the_course_page_is_kept_as_text_for_the_notebook(env):
         {"name": "Notices", "modules": [
             {"id": 12, "name": "Announcements", "modname": "forum", "instance": 80, "description": ""},
             {"id": 13, "name": "Questions", "modname": "forum", "instance": 81},
+            {"id": 15, "name": "MIDTERM INFO", "modname": "forum", "instance": 82},
             {"id": 14, "name": "Hidden quiz", "modname": "quiz", "uservisible": False}]}]
     await moodle.sync()
     assert [f["name"] for f in moodle.files.files()] == ["Consumption & Investment.pdf"]
@@ -215,6 +221,8 @@ async def test_the_course_page_is_kept_as_text_for_the_notebook(env):
     assert text.startswith("## EXAM\n20 to 35 multiple-choice questions,\n−0.25 for a wrong one.")
     assert "Office hours: Thu 11:30" in text and "- Questions (forum)" in text and "Hidden quiz" not in text
     assert "- Announcements (forum)\n\n### Textbook & slides\nBlanchard, Macroeconomics, 8th ed." in text
+    # A notice written as the forum's description, with no posts, is kept too.
+    assert "- MIDTERM INFO (forum)\nThe midterm is on 4 November, in the usual room." in text
 
 
 async def test_a_change_on_the_course_page_has_its_dates_read_again(env):
