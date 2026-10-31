@@ -1913,6 +1913,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if added:
             activity.record(db.conn, plan["agent"], "confirmed", f"Added {len(added)} proposed event(s)",
                             "; ".join(plans.line(i) for i in added), plan["conversation"] or CONVERSATION)
+            if notebook and study and plan["conversation"] and (course_id := study.chat_course(plan["conversation"])):
+                await notebook.calendar_check(course_id)  # a course's exam: its dates stop saying "not in your calendar"
         return {"events": plans.card_items(plan)}
 
     @app.post("/v1/plans/{plan_id}/drop", dependencies=[Depends(auth)])

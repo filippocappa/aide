@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from aide.agent import CONVERSATION, Agent
 from aide.channels.api import create_app
 from aide.db import Database
+from aide.icloud import CalEvent
 from aide.material import visual_pages
 from aide.notebook import (DATES_PROMPT, SCAN_PROMPT, NotebookStore, NotebookWorker, _name_parts, _row_with, date_line,
                            parse_page, sections)
@@ -100,7 +101,8 @@ def sent(request: dict) -> str:
 def nb(tmp_path):
     db = Database(":memory:")
     client = ByTopic([])
-    study = StudyStore(db, ROME, FakeCalendar(list(EVENTS)), files_dir=tmp_path / "files")
+    calendar = FakeCalendar(list(EVENTS))
+    study = StudyStore(db, ROME, calendar, files_dir=tmp_path / "files")
     notebook = NotebookStore(study)
     agent = Agent(client, db, ToolRegistry(study_tools(study, ROME, tmp_path / "audio", notebook)), model="m",
                   smart_model="smart", tz=ROME, photos=PhotoStore(tmp_path / "photos"), delegate=False)
@@ -112,7 +114,7 @@ def nb(tmp_path):
         return True
     push.send_message = send_message
     worker = NotebookWorker(notebook, agent, push)
-    api = TestClient(create_app(agent, ReminderStore(db.conn), FakeCalendar(list(EVENTS)), ROME, TOKEN, push=push,
+    api = TestClient(create_app(agent, ReminderStore(db.conn), calendar, ROME, TOKEN, push=push,
                                 study=study, notebook=notebook))
     api.get("/v1/study", headers=AUTH)  # the calendar's courses into the table
     macro = study.course_by_name("macroeconomics")
@@ -300,6 +302,14 @@ async def test_an_exam_notice_is_read_for_dates_with_the_users_name_and_checked_
     assert event["start"].startswith(f"{mid.isoformat()}T11:00") and "For you: Aula 5" in event["notes"]
     assert nb.push.messages[-1][1] == "Professor · macroeconomics"
     posts = len(chat_messages(nb))
+
+    # Add on the card puts it in the calendar, and the dates say so straight away.
+    cal = nb.study.calendar
+    cal.create = lambda calendar, title, start, end, location, notes: \
+        cal._events.append(CalEvent("new", calendar, title, start, end, location, notes)) or cal._events[-1]
+    assert nb.api.post(f"/v1/plans/{event['plan']}/add", headers=AUTH).json()["events"][0]["status"] == "added"
+    assert nb.notebook.dates(cid)[0]["calendar"]["state"] == "in"
+    cal._events.pop()
 
     # The same pages again: no model call, nothing proposed again. Read again on purpose: the model is asked.
     nb.notebook.reread_dates(cid)
