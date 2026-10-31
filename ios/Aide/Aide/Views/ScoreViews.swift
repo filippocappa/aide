@@ -90,12 +90,14 @@ private func hm(_ minutes: Int) -> String { "\(minutes / 60)h\(String(format: "%
 /// "+9 min", "+1h05"
 private func plus(_ minutes: Int) -> String { minutes < 60 ? "+\(minutes) min" : "+" + hm(minutes) }
 
-/// A score in a gradient ring, with the strain target as a faint arc on the track.
+/// A score in a gradient ring with a soft glow of its colour, and the strain target as a faint arc on the track.
 struct ScoreDial: View {
     let kind: ScoreKind
     let score: Int?
     var band: [Int]? = nil
     var size: CGFloat = 88
+
+    @Environment(\.colorScheme) private var scheme
 
     private var width: CGFloat { size * 0.11 }
 
@@ -117,6 +119,7 @@ struct ScoreDial: View {
                                             startAngle: .zero, endAngle: .degrees(360 * part)),
                             style: StrokeStyle(lineWidth: width, lineCap: .round))
                     .rotationEffect(.degrees(-90))
+                    .shadow(color: colors[1].opacity(scheme == .dark ? 0.5 : 0.3), radius: size * 0.06)
             }
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(score.map(String.init) ?? "–")
@@ -136,7 +139,8 @@ struct ScoreDial: View {
     }
 }
 
-/// On top of Health: the three rings, each opening its page, and the day in a sentence (tap: Coach).
+/// On top of Health: Recovery large between Strain and Sleep, each opening its page, and below the card Coach's line
+/// of the day as a message from Coach (tap: Coach's chat).
 struct ScoresCard: View {
     let scores: HealthScores?
     let coach: Agent
@@ -144,43 +148,57 @@ struct ScoresCard: View {
     let ask: () -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
-            HStack(alignment: .top, spacing: 0) {
-                ForEach(ScoreKind.allCases) { kind in
-                    Button { open(kind) } label: {
-                        VStack(spacing: 8) {
-                            ScoreDial(kind: kind, score: kind.score(scores),
-                                      band: kind == .strain ? scores?.strain?.target : nil)
-                            VStack(spacing: 1) {
-                                Text(kind.name).font(.subheadline.weight(.semibold))
-                                Text(kind.caption(scores)).font(.caption).foregroundStyle(.secondary)
-                                    .lineLimit(1).minimumScaleFactor(0.8).monospacedDigit()
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(CardPress())
-                    .accessibilityHint("Shows what it's made of")
-                }
-            }
+        VStack(spacing: 12) {
+            rings
+                .padding(.vertical, 8)
+                .card()
             if let line = scores?.line {
-                Divider()
                 Button(action: ask) {
-                    HStack(alignment: .top, spacing: 10) {
-                        AgentMark(agent: coach, size: 24)
-                        Text(line).font(.subheadline).multilineTextAlignment(.leading)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-                            .padding(.top, 3)
+                    HStack(alignment: .bottom, spacing: 8) {
+                        AgentMark(agent: coach, size: 28)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(coach.name).font(.caption.weight(.semibold)).foregroundStyle(coach.tint)
+                            Text(line).font(.subheadline).multilineTextAlignment(.leading)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(coach.tint.opacity(0.14),
+                                    in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 6,
+                                                               bottomTrailingRadius: 18, topTrailingRadius: 18,
+                                                               style: .continuous))
+                        Spacer(minLength: 24)
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CardPress())
                 .accessibilityHint("Opens your chat with \(coach.name)")
             }
         }
-        .padding(.vertical, 8)
+    }
+
+    private var rings: some View {
+        HStack(alignment: .center, spacing: 0) {
+            ForEach(ScoreKind.allCases) { kind in
+                let big = kind == .recovery
+                Button { open(kind) } label: {
+                    VStack(spacing: 8) {
+                        ScoreDial(kind: kind, score: kind.score(scores),
+                                  band: kind == .strain ? scores?.strain?.target : nil,
+                                  size: big ? 128 : 76)
+                        VStack(spacing: 1) {
+                            Text(kind.name).font(big ? .headline : .subheadline.weight(.semibold))
+                            Text(kind.caption(scores)).font(.caption).foregroundStyle(.secondary)
+                                .lineLimit(1).minimumScaleFactor(0.8).monospacedDigit()
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(CardPress())
+                .layoutPriority(big ? 1 : 0)
+                .accessibilityHint("Shows what it's made of")
+            }
+        }
+        .padding(.top, 6)
     }
 }
 

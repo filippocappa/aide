@@ -1138,6 +1138,8 @@ struct HealthDayReading: Decodable, Hashable {
     let wristTempC: Double?
     let steps: Int?
     let activeKcal: Int?
+    /// Health's Resting Energy; with the active, the day's total.
+    var restingKcal: Int? = nil
     let exerciseMin: Int?
     let workouts: [Workout]?
     var naps: [SleepNap]? = nil

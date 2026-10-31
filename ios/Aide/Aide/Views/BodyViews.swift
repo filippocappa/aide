@@ -4,7 +4,7 @@ import SwiftUI
 /// What Apple Health says, as the server has it (docs/API.md, "Apple Health"): one number per day and measure.
 /// Each is compared with your own usual, the average of the days before (not Apple's baseline, which apps can't see).
 enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
-    case sleep, sleepHr, restingHr, hrv, breathing, wristTemp, steps, activeKcal, exercise
+    case sleep, sleepHr, restingHr, hrv, breathing, wristTemp, steps, activeKcal, totalKcal, exercise
 
     var id: String { rawValue }
 
@@ -18,6 +18,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         case .wristTemp: "Wrist temperature"
         case .steps: "Steps"
         case .activeKcal: "Active energy"
+        case .totalKcal: "Total energy"
         case .exercise: "Exercise"
         }
     }
@@ -43,6 +44,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         case .wristTemp: "thermometer.medium"
         case .steps: "figure.walk"
         case .activeKcal: "flame.fill"
+        case .totalKcal: "bolt.fill"
         case .exercise: "figure.run"
         }
     }
@@ -51,7 +53,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     var color: Color {
         switch self {
         case .sleep, .sleepHr, .restingHr, .hrv, .breathing, .wristTemp: ScoreColors.sleep[1]
-        case .steps, .activeKcal, .exercise: ScoreColors.strain[1]
+        case .steps, .activeKcal, .totalKcal, .exercise: ScoreColors.strain[1]
         }
     }
 
@@ -66,6 +68,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         case .wristTemp: "Averaged over the night. Up more than half a degree on usual, with resting heart rate up and HRV down, can mean you're getting sick."
         case .steps: "Every step from 00:00 to 24:00."
         case .activeKcal: "Calories burned moving, on top of what your body burns at rest."
+        case .totalKcal: "Everything you burned: what your body uses at rest plus what you burned moving, from Apple Health."
         case .exercise: "Minutes of brisk activity: Apple's green ring."
         }
     }
@@ -74,12 +77,12 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
     var nightly: Bool { [.sleep, .sleepHr, .hrv, .breathing, .wristTemp].contains(self) }
 
     /// Daily totals are bars; nightly averages are a line.
-    var bars: Bool { [.sleep, .steps, .activeKcal, .exercise].contains(self) }
+    var bars: Bool { [.sleep, .steps, .activeKcal, .totalKcal, .exercise].contains(self) }
 
     /// Up is good (+1), down is good (-1), or neither (0).
     var better: Int {
         switch self {
-        case .sleep, .hrv, .steps, .activeKcal, .exercise: 1
+        case .sleep, .hrv, .steps, .activeKcal, .totalKcal, .exercise: 1
         case .sleepHr, .restingHr: -1
         case .breathing, .wristTemp: 0
         }
@@ -98,6 +101,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         case .wristTemp: day.wristTempC
         case .steps: day.steps.map(Double.init)
         case .activeKcal: day.activeKcal.map(Double.init)
+        case .totalKcal: day.activeKcal.flatMap { a in day.restingKcal.map { Double(a + $0) } }
         case .exercise: day.exerciseMin.map(Double.init)
         }
     }
@@ -110,7 +114,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         case .breathing: "\(v.formatted(.number.precision(.fractionLength(1)))) /min"
         case .wristTemp: "\(v.formatted(.number.precision(.fractionLength(2)))) °C"
         case .steps: Int(v.rounded()).formatted()
-        case .activeKcal: "\(Int(v.rounded())) kcal"
+        case .activeKcal, .totalKcal: "\(Int(v.rounded()).formatted()) kcal"
         case .exercise: "\(Int(v.rounded())) min"
         }
     }
@@ -124,7 +128,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         case .wristTemp: return sign + "\(a.formatted(.number.precision(.fractionLength(1)))) °C"
         case .breathing: return sign + a.formatted(.number.precision(.fractionLength(1)))
         case .steps: return sign + Int(a.rounded()).formatted()
-        default: return sign + "\(Int(a.rounded()))" + (self == .hrv ? " ms" : self == .restingHr || self == .sleepHr ? " bpm" : self == .activeKcal ? " kcal" : " min")
+        default: return sign + Int(a.rounded()).formatted() + (self == .hrv ? " ms" : self == .restingHr || self == .sleepHr ? " bpm" : self == .activeKcal || self == .totalKcal ? " kcal" : " min")
         }
     }
 
@@ -138,6 +142,7 @@ enum HealthMetric: String, CaseIterable, Identifiable, Hashable {
         case .wristTemp: abs(d) < 0.2
         case .steps: abs(d) < 1000
         case .activeKcal: abs(d) < 60
+        case .totalKcal: abs(d) < 100
         case .exercise: abs(d) < 8
         }
     }
@@ -200,13 +205,15 @@ struct MetricTile: View {
     private func compare(_ l: (day: HealthDayReading, value: Double, usual: Double?)) -> String {
         var when = HealthDayName.of(l.day.date)
         if metric.nightly && when == "Today" { when = "Last night" }
+        if !metric.nightly && when == "Today" { return "Today so far" } // half a day, never judged
         guard let usual = l.usual else { return when }
         let d = l.value - usual
         return metric.isUsual(d) ? "\(when) · usual" : "\(when) · \(metric.difference(d))"
     }
 
     private func tone(_ l: (day: HealthDayReading, value: Double, usual: Double?)) -> Color {
-        guard let usual = l.usual, metric.better != 0, !metric.isUsual(l.value - usual) else { return .secondary }
+        guard let usual = l.usual, metric.better != 0, !metric.isUsual(l.value - usual),
+              metric.nightly || HealthDayName.of(l.day.date) != "Today" else { return .secondary }
         return (l.value - usual) * Double(metric.better) > 0 ? .green : .orange
     }
 }
@@ -342,6 +349,7 @@ extension HealthMetric {
         case .wristTemp: 0.15
         case .steps: 800
         case .activeKcal: 40
+        case .totalKcal: 60
         case .exercise: 5
         }
     }
@@ -356,7 +364,7 @@ extension HealthMetric {
         case .hrv: vitals.hrvMs
         case .breathing: vitals.respiratoryRate
         case .wristTemp: vitals.wristTempC
-        case .steps, .activeKcal, .exercise: nil
+        case .steps, .activeKcal, .totalKcal, .exercise: nil
         }
         guard let low = v?.low, let high = v?.high, high >= low else { return nil }
         let scale = self == .sleep ? 1.0 / 60 : 1
@@ -372,7 +380,7 @@ extension HealthMetric {
         case .breathing: (v.formatted(.number.precision(.fractionLength(1))), "/min")
         case .wristTemp: (v.formatted(.number.precision(.fractionLength(2))), "°C")
         case .steps: (Int(v.rounded()).formatted(), "steps")
-        case .activeKcal: ("\(Int(v.rounded()))", "kcal")
+        case .activeKcal, .totalKcal: (Int(v.rounded()).formatted(), "kcal")
         case .exercise: ("\(Int(v.rounded()))", "min")
         }
     }
@@ -481,8 +489,10 @@ enum MetricMath {
             subject = "On " + day.formatted(.dateTime.weekday(.wide).day().month(.abbreviated)) + ", " + metric.inSentence
         }
         var parts: [String] = []
+        var side = 0 // where the average part put it: -1 below, 0 close, 1 above
         if let average, average != 0 {
             let d = value - average
+            side = metric.isUsual(d) ? 0 : d > 0 ? 1 : -1
             if metric.isUsual(d) {
                 parts.append("close to your 30-day average")
             } else if metric == .wristTemp || metric == .breathing {
@@ -491,11 +501,14 @@ enum MetricMath {
                 parts.append("\(Int((abs(d) / average * 100).rounded()))% \(d > 0 ? "above" : "below") your 30-day average")
             }
         }
+        var join = " and "
         if let band {
-            parts.append(["below your usual range", "in your usual range", "above your usual range"][place(value, in: band) + 1])
+            let p = place(value, in: band)
+            if !parts.isEmpty && p != side && p != 0 { join = " but " } // "close to your average but above your usual range"
+            parts.append(["below your usual range", "in your usual range", "above your usual range"][p + 1])
         }
         let head = "\(subject) \(plural ? "were" : "was") \(shown)"
-        return parts.isEmpty ? head + "." : head + ", " + parts.joined(separator: " and ") + "."
+        return parts.isEmpty ? head + "." : head + ", " + parts.joined(separator: join) + "."
     }
 }
 
@@ -676,9 +689,9 @@ struct HealthMetricView: View {
 
     private var averageLabel: String {
         switch period {
-        case .week: "AVERAGE, 7 DAYS"
-        case .month: "AVERAGE, 30 DAYS"
-        default: "AVERAGE, 6 MONTHS"
+        case .week: "AVERAGE OF THESE 7 DAYS"
+        case .month: "AVERAGE OF THESE 30 DAYS"
+        default: "AVERAGE OF THESE 6 MONTHS"
         }
     }
 
@@ -772,7 +785,7 @@ struct HealthMetricView: View {
 
     @ViewBuilder private var againstUsual: some View {
         if value != nil || average30 != nil {
-            DetailCard("\(dayWord) against your usual", padding: 0) {
+            DetailCard("Against your usual", padding: 0) {
                 if let value {
                     let d = average30.map { value - $0 }
                     let warn = !MetricMath.partial(metric, on: day)
@@ -782,7 +795,7 @@ struct HealthMetricView: View {
                 }
                 if value != nil, average30 != nil { RowDivider(leading: 16) }
                 if let average30 {
-                    row("30-day average", detail: band.map { "Usual range \(metric.format($0.lowerBound))–\(metric.format($0.upperBound))" },
+                    row("The 30 days before", detail: band.map { "Usual range \(metric.format($0.lowerBound))–\(metric.format($0.upperBound))" },
                         value: metric.format(average30), warn: false)
                 }
             }

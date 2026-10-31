@@ -72,17 +72,25 @@ enum ScoreColors {
 
 extension View {
     /// A soft glow of a colour at the top of the page, on the grouped background: the page's one hue. Nil: none yet
-    /// (it fades in when the colour comes).
-    func pageGlow(_ color: Color?) -> some View {
+    /// (it fades in when the colour comes). `reach`: how far down it fades out; a longer one eases out more slowly,
+    /// so a card sitting where it ends doesn't leave a hard edge under it.
+    func pageGlow(_ color: Color?, reach: CGFloat = 460) -> some View {
         background(alignment: .top) {
             ZStack {
                 if let color {
-                    LinearGradient(colors: [color.opacity(0.38), color.opacity(0.12), color.opacity(0)],
+                    LinearGradient(stops: reach > 460
+                                       ? [.init(color: color.opacity(0.38), location: 0),
+                                          .init(color: color.opacity(0.2), location: 0.3),
+                                          .init(color: color.opacity(0.08), location: 0.62),
+                                          .init(color: color.opacity(0), location: 1)]
+                                       : [.init(color: color.opacity(0.38), location: 0),
+                                          .init(color: color.opacity(0.12), location: 0.5),
+                                          .init(color: color.opacity(0), location: 1)],
                                    startPoint: .top, endPoint: .bottom)
                         .transition(.opacity)
                 }
             }
-            .frame(height: 460, alignment: .top)
+            .frame(height: reach, alignment: .top)
             .frame(maxWidth: .infinity)
             .ignoresSafeArea(edges: .top)
             .animation(.easeInOut(duration: 0.6), value: color == nil)

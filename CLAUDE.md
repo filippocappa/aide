@@ -155,7 +155,9 @@ before, worked out the same way), D · W · M · 6M (D a gauge, 6M weekly averag
 against your usual, the average night for sleep, About, day by day; today's steps, energy and exercise are "so far",
 never judged. Weight (`WeightView`, `WeightMath`) the same way: the changes over 7, 14 and 28 days (the server's
 rule, so the 28-day rate is `rate_kg_week`), W · M · 6M with the goal's pace as a band, the days (long-press to delete
-one logged in Aide). Scores come from the server
+one logged in Aide). After the first look (2026-10-31): Recovery large between Strain and Sleep, flat rings with a soft glow
+of their colour; Coach's line of the day as a message from Coach below the card; the glow reaches past Last night;
+Activity is four tiles (Total energy: resting plus active, from `resting_kcal`). Scores come from the server
 (`scores.py`, contract "Scores"); the app sends heart rate as `hr_minutes`, `hr_hourly` and `max_hr`. Second pass
 (2026-10-30, after the first look on the phone): sleep need learnt from his own nights (trimmed mean of up to 90, plus
 the day before's strain and half the 3 nights' net shortfall, at most 45 min), deep and REM scored apart, stricter
