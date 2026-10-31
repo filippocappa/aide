@@ -329,14 +329,34 @@ def test_the_users_photos_go_along_to_the_asked_agent(env, tmp_path):
     agent.photos = PhotoStore(tmp_path)
     photo = agent.photos.save(b"\xff\xd8jpeg", "image/jpeg")
     agent.client.responses = [
+        calls(("ask_agent", {"agent": "professor", "request": "Solve the exercise in the photo"})),
+        done("It's 42."),
+        done("Professor says 42."),
+    ]
+    client = TestClient(create_app(agent, ReminderStore(agent.db.conn), None, ROME, "t"))
+    client.post("/v1/chat", json={"text": "this one", "photos": [photo]}, headers=AUTH)
+    asked = agent.client.requests[1]["messages"][-1]["content"]
+    assert asked[0]["type"] == "image" and f"[Photo {photo}]" in asked[1]["text"]
+
+
+def test_an_asked_coach_reads_what_the_photo_reader_saw(env, tmp_path):
+    from aide.photos import PhotoStore
+    _, agent, _ = env()
+    agent.smart_model = "smart"
+    agent.photos = PhotoStore(tmp_path)
+    photo = agent.photos.save(b"\xff\xd8jpeg", "image/jpeg")
+    agent.client.responses = [
         calls(("ask_agent", {"agent": "coach", "request": "Log the meal in the photo"})),
+        done("Pasta al pomodoro, about 120 g dry."),
         done("Pasta, about 650 kcal."),
         done("Coach logged it: pasta, about 650 kcal."),
     ]
     client = TestClient(create_app(agent, ReminderStore(agent.db.conn), None, ROME, "t"))
     client.post("/v1/chat", json={"text": "lunch", "photos": [photo]}, headers=AUTH)
-    asked = agent.client.requests[1]["messages"][-1]["content"]
-    assert asked[0]["type"] == "image" and f"[Photo {photo}]" in asked[1]["text"]
+    aide, look, coach, _ = agent.client.requests
+    assert (aide["model"], look["model"], coach["model"]) == ("smart", "smart", "m")
+    [asked] = coach["messages"][-1]["content"]
+    assert asked["type"] == "text" and f"[Photo {photo}]" in asked["text"] and "120 g dry" in asked["text"]
 
 
 def test_at_most_three_asks_per_turn(env):
@@ -653,7 +673,7 @@ def test_photos_are_images_only_in_their_own_turn(env, tmp_path):
     client, agent, _ = env([done("Pasta, about 650 kcal."), done("Lunch"), done("Noted.")])  # reply, title, reply
     agent.photos = PhotoStore(tmp_path)
     photo = agent.photos.save(b"\xff\xd8jpeg", "image/jpeg")
-    chat = new_chat(client, "coach")
+    chat = new_chat(client, "professor")
     client.post("/v1/chat", json={"text": "lunch", "photos": [photo], "conversation_id": chat}, headers=AUTH)
     assert agent.client.requests[0]["messages"][-1]["content"][0]["type"] == "image"
     client.post("/v1/chat", json={"text": "it was a big plate", "conversation_id": chat}, headers=AUTH)

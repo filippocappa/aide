@@ -121,6 +121,23 @@ def test_only_the_turns_own_photos_are_images(env):
     assert seen == [JPEG + bytes([4])]  # the earlier ones are [Photo id] lines
 
 
+def test_coach_reads_what_the_smart_model_saw(env):
+    """Coach's photo turn: the smart model looks at the photo in one small call, and Coach, on the everyday model,
+    gets what it saw in the message instead of the image. The chat shows only what the user wrote."""
+    api, *_ = env()
+    photo = upload(api).json()["id"]
+    api, _, _, _, client = env([done("Pasta al pesto, about 100 g dry, on a 26 cm plate."), done("Pasta, 560 kcal.")])
+    body = api.post("/v1/food/log", json={"text": "dinner", "photos": [photo]}, headers=AUTH).json()
+    look, coach = client.requests
+    assert look["model"] == "smart" and "photos for Coach" in look["system"] and "tools" not in look
+    assert base64.b64decode(images(look)[0]) == JPEG
+    assert coach["model"] == "m" and images(coach) == []
+    said = coach["messages"][-1]["content"][0]["text"]
+    assert f"[Photo {photo}]" in said and "[What the photos show" in said and "26 cm plate" in said
+    shown = api.get(f"/v1/history?conversation_id={body['conversation_id']}", headers=AUTH).json()["messages"][0]
+    assert shown["text"] == "dinner" and shown["photos"] == [photo]
+
+
 def test_unknown_or_too_many_photos_are_400(env):
     api, *_ = env()
     assert api.post("/v1/chat", json={"text": "hi", "photos": ["p_0000000000000000"]}, headers=AUTH).status_code == 400
@@ -133,7 +150,7 @@ def test_food_log_goes_to_coachs_food_chat(env):
     api, agent, food, *_ = env()
     photo = upload(api).json()["id"]
     yesterday = food.today() - timedelta(days=1)
-    api, *_ = env([log_meal(name="Pizza", items=[PIZZA], photo_id=photo,
+    api, *_ = env([done("A margherita pizza, whole."), log_meal(name="Pizza", items=[PIZZA], photo_id=photo,
                         eaten_at=f"{yesterday}T20:00"), done("Pizza, about 900 kcal.")])
     body = api.post("/v1/food/log", json={"photos": [photo], "date": yesterday.isoformat()}, headers=AUTH).json()
     assert body["reply"] == "Pizza, about 900 kcal." and body["meals"][0]["name"] == "Pizza"
@@ -162,7 +179,7 @@ def test_food_log_goes_to_coachs_food_chat(env):
 def test_barcodes_the_app_read_go_to_coach(env):
     api, agent, *_ = env()
     photo = upload(api).json()["id"]
-    api, *_ = env([done("Logged.")])
+    api, *_ = env([done("A packet of biscuits."), done("Logged.")])
     body = api.post("/v1/food/log", json={"photos": [photo], "barcodes": ["8001505005707", "8001505005707", "x1"]},
                     headers=AUTH).json()
     said = api.get(f"/v1/history?conversation_id={body['conversation_id']}", headers=AUTH).json()["messages"][0]
