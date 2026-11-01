@@ -12,11 +12,21 @@ struct MacScreenTimeView: View {
     @State private var strict = false
     @State private var unlocking: Unlocking?
     @State private var editing: Editing?
+    @State private var editingLimit: EditingLimit?
 
     struct Unlocking: Identifiable {
-        let lock: ScreenLock
+        let hold: MacHold
         let pass: Bool
-        var id: Int { lock.id }
+        var id: String { hold.lock.map { "lock\($0.id)" } ?? "limit\(hold.limit?.id ?? 0)" }
+
+        init(lock: ScreenLock, pass: Bool) { hold = MacHold(lock: lock, until: Date()); self.pass = pass }
+        init(limit: ScreenLimit, pass: Bool) { hold = MacHold(limit: limit, until: Date()); self.pass = pass }
+    }
+
+    /// A limit to change, or a new one (nil).
+    struct EditingLimit: Identifiable {
+        let limit: ScreenLimit?
+        var id: Int { limit?.id ?? 0 }
     }
 
     /// A lock to change, or a new one (nil).
@@ -37,7 +47,12 @@ struct MacScreenTimeView: View {
             }
         }
         .navigationTitle("Screen Time")
-        .sheet(item: $unlocking) { item in MacUnlockSheet(lock: item.lock, pass: item.pass) }
+        .sheet(item: $unlocking) { item in MacUnlockSheet(hold: item.hold, pass: item.pass) }
+        .sheet(item: $editingLimit) { item in
+            NavigationStack {
+                MacLimitEditor(limit: item.limit, apps: item.limit.flatMap { screenTime.limitApps[$0.id] } ?? [])
+            }
+        }
         .sheet(item: $editing) { item in
             NavigationStack {
                 MacLockEditor(lock: item.lock, apps: item.lock.map { screenTime.lockApps[$0.id] } ?? nil)
@@ -154,6 +169,22 @@ struct MacScreenTimeView: View {
         } footer: {
             Text("The phone's locks: each holds on both, over the apps each picked. Coach sets these in chat too: "
                  + "\"no Mac or phone after 23:00\".")
+        }
+        Section {
+            ForEach(screenTime.limits) { limit in
+                Button { editingLimit = EditingLimit(limit: limit) } label: {
+                    MacLimitRow(limit: limit) {
+                        unlocking = Unlocking(limit: limit, pass: limit.strict)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            Button { editingLimit = EditingLimit(limit: nil) } label: { Label("Add a limit", systemImage: "plus") }
+        } header: {
+            Text("Daily limits")
+        } footer: {
+            Text("So many minutes a day in some apps, then they're closed until midnight. Each device counts its own "
+                 + "time: here, this Mac's time in the apps picked here; on the phone, the phone's.")
         }
     }
 
@@ -385,11 +416,12 @@ private struct MacLockEditor: View {
     }
 }
 
-/// Ending a lock early from the page: say why, then wait 10 s (a strict one: an emergency pass). Coach sees the reason.
+/// Ending a lock or a limit early from the page: say why, then wait 10 s (a strict one: an emergency pass). Coach sees
+/// the reason.
 private struct MacUnlockSheet: View {
     @EnvironmentObject private var screenTime: ScreenTimeService
     @Environment(\.dismiss) private var dismiss
-    let lock: ScreenLock
+    let hold: MacHold
     var pass = false
 
     @State private var reason = ""
@@ -404,20 +436,20 @@ private struct MacUnlockSheet: View {
                         .lineLimit(2...4)
                 } footer: {
                     Text((pass ? "Uses one of your \(screenTime.passes?.left ?? 0) passes left this month. " : "")
-                         + (lock.once ? "It ends for good." : "It's back next time, as usual.") + " Coach sees the reason.")
+                         + hold.afterUnlock + " Coach sees the reason.")
                 }
                 if let error = screenTime.lastError {
                     Text(error).foregroundStyle(.red)
                 }
             }
-            .macSheetTitle(pass ? "Emergency pass" : "End \(lock.title) early")
+            .macSheetTitle(pass ? "Emergency pass" : "End \(hold.title) early")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     if isBusy { ProgressView().controlSize(.small) } else {
                         Button(left > 0 ? "Unlock (\(left))" : "Unlock") {
                             Task {
                                 isBusy = true
-                                if await screenTime.unlock(lock, reason: reason.trimmingCharacters(in: .whitespacesAndNewlines),
+                                if await screenTime.unlock(hold, reason: reason.trimmingCharacters(in: .whitespacesAndNewlines),
                                                            pass: pass) {
                                     dismiss()
                                 }
@@ -434,6 +466,157 @@ private struct MacUnlockSheet: View {
                     left -= 1
                 }
             }
+        }
+    }
+}
+
+/// A daily limit: its minutes and days, this Mac's time in its apps today, and whether it holds.
+private struct MacLimitRow: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    let limit: ScreenLimit
+    let endEarly: () -> Void
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(limit.title)
+                Text(limit.summary).font(.subheadline).foregroundStyle(.secondary)
+                Text(appsLine).font(.caption).foregroundStyle(.secondary)
+                if let note {
+                    Text(note).font(.caption).foregroundStyle(screenTime.holds(limit) ? Theme.accent : .secondary)
+                }
+            }
+            Spacer()
+            if screenTime.holds(limit) {
+                Button(limit.strict ? "Use a pass…" : "End early…", action: endEarly)
+                    .disabled(limit.strict && screenTime.passes?.left == 0)
+            } else {
+                Toggle(limit.title, isOn: Binding(get: { limit.enabled },
+                                                  set: { on in Task { await screenTime.setEnabled(limit, on) } }))
+                    .labelsHidden()
+            }
+        }
+        .contentShape(Rectangle())
+        .opacity(limit.enabled ? 1 : 0.6)
+    }
+
+    private var appsLine: String {
+        let apps = MacApp.sorted(screenTime.limitApps[limit.id] ?? []).map(\.name)
+        if apps.isEmpty { return "No apps on this Mac yet: it counts only on the phone" }
+        let names = apps.count <= 3 ? apps.formatted(.list(type: .and)) : "\(apps.prefix(2).joined(separator: ", ")) and \(apps.count - 2) more"
+        return "Counts " + names
+    }
+
+    private var note: String? {
+        var parts: [String] = limit.strict ? ["Strict"] : []
+        if screenTime.holds(limit) {
+            let at = screenTime.reachedHere(limit).map { " at \($0.formatted(date: .omitted, time: .shortened))" } ?? ""
+            parts.append("Used up\(at), closed until midnight")
+        } else if limit.openToday {
+            parts.append("Ended early for today")
+        } else if limit.enabled, limit.counts(on: Date()), screenTime.limitApps[limit.id] != nil {
+            let used = Int(screenTime.usedToday(limit) / 60)
+            parts.append("\(used) of \(limit.minutes) min today on this Mac")
+        } else if limit.enabled, !limit.counts(on: Date()) {
+            parts.append("Not today")
+        }
+        if limit.reachedToday, screenTime.reachedHere(limit) == nil, !limit.openToday {
+            parts.append("Used up on the phone")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
+/// A daily limit: its name, minutes, days, the Mac apps it counts, Strict. A strict one used up today can only be
+/// tightened (the server says no otherwise).
+private struct MacLimitEditor: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    @Environment(\.dismiss) private var dismiss
+    let limit: ScreenLimit?
+
+    @State private var title: String
+    @State private var minutes: Int
+    @State private var days: Set<Int>
+    @State private var enabled: Bool
+    @State private var strict: Bool
+    @State private var apps: Set<String>
+    @State private var isBusy = false
+
+    private static let choices = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360]
+
+    init(limit: ScreenLimit?, apps: Set<String>) {
+        self.limit = limit
+        _title = State(initialValue: limit?.title ?? "Social")
+        _minutes = State(initialValue: limit?.minutes ?? 30)
+        _days = State(initialValue: Set(limit?.days ?? []))
+        _enabled = State(initialValue: limit?.enabled ?? true)
+        _strict = State(initialValue: limit?.strict ?? false)
+        _apps = State(initialValue: apps)
+    }
+
+    private var held: Bool { limit.map { screenTime.holds($0) } ?? false }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Name", text: $title)
+            }
+            Section {
+                Picker("A day", selection: $minutes) {
+                    ForEach(Set(Self.choices + [minutes]).sorted(), id: \.self) { Text(MacScreenTimeView.length($0)).tag($0) }
+                }
+                DayPicker(days: $days, tint: Theme.accent)
+                if limit != nil { Toggle("On", isOn: $enabled) }
+            } footer: {
+                Text("None of the days picked is every day. The same limit counts on the phone, over the phone's own apps.")
+            }
+            Section {
+                AppList(apps: apps, locked: held) { apps = $0 }
+            } header: {
+                Text("Apps on this Mac")
+            } footer: {
+                Text(held ? "Used up today: its apps change tomorrow, or end it early."
+                     : "This Mac's time in these, added up. Once it reaches the limit they're closed until midnight.")
+            }
+            Section {
+                Toggle("Strict", isOn: $strict)
+            } footer: {
+                Text("Once it's used up, it ends early only with an emergency pass (3 a month), and it can't be "
+                     + "loosened or deleted until tomorrow.")
+            }
+            if let limit {
+                Section {
+                    Button("Delete limit", role: .destructive) {
+                        Task {
+                            isBusy = true
+                            if await screenTime.delete(limit) { dismiss() }
+                            isBusy = false
+                        }
+                    }
+                }
+                .disabled(isBusy)
+            }
+            if let error = screenTime.lastError {
+                Text(error).foregroundStyle(.red)
+            }
+        }
+        .macSheetTitle(limit?.title ?? "New limit")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if isBusy { ProgressView().controlSize(.small) } else {
+                    Button("Save") { Task { await save() } }
+                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        isBusy = true
+        defer { isBusy = false }
+        if await screenTime.saveLimit(limit, title: title.trimmingCharacters(in: .whitespaces), minutes: minutes,
+                                      days: days.sorted(), enabled: enabled, strict: strict, apps: apps) {
+            dismiss()
         }
     }
 }

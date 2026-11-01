@@ -3,7 +3,7 @@ import SwiftUI
 /// The sidebar's sections: the phone's tabs, with Today, Habits, Objectives and Activity as places of their own (on
 /// the phone they open from Today or over the Team tab).
 enum MacSection: String, CaseIterable, Identifiable, Hashable {
-    case team, today, habits, objectives, activity, study, health, food, settings
+    case team, today, habits, objectives, activity, study, health, food, screen, settings
 
     var id: String { rawValue }
 
@@ -17,6 +17,7 @@ enum MacSection: String, CaseIterable, Identifiable, Hashable {
         case .study: "Study"
         case .health: "Health"
         case .food: "Food"
+        case .screen: "Screen"
         case .settings: "Settings"
         }
     }
@@ -31,12 +32,15 @@ enum MacSection: String, CaseIterable, Identifiable, Hashable {
         case .study: "book"
         case .health: "heart.text.square"
         case .food: "fork.knife"
+        case .screen: "hourglass"
         case .settings: "gearshape"
         }
     }
 
+    /// ⌘1–⌘9 for the first nine, ⌘0 for the tenth, Settings also on ⌘, (the app's Settings).
     var shortcut: KeyEquivalent {
-        KeyEquivalent(Character(String((MacSection.allCases.firstIndex(of: self) ?? 0) + 1)))
+        let index = (MacSection.allCases.firstIndex(of: self) ?? 0) + 1
+        return KeyEquivalent(Character(String(index % 10)))
     }
 }
 
@@ -111,6 +115,7 @@ struct MacRootView: View {
             case .today, .digest, .note: nav.section = .today
             case .health: nav.section = .health; return
             case .food, .meal: nav.section = .food; return
+            case .screen: nav.section = .screen; return
             case .chats: nav.section = .team; return
             case .moodle: break
             default: nav.section = .team
@@ -144,6 +149,7 @@ struct MacRootView: View {
         case .study: StudyView()
         case .health: HealthView()
         case .food: FoodView()
+        case .screen: MacScreenPage()
         case .settings: SettingsView()
         }
     }

@@ -21,10 +21,20 @@ final class ScreenTimeService: ObservableObject {
     @Published private(set) var usualApps: Set<String> = MacLockApps.usual
     /// The apps each lock picked for itself, by lock id.
     @Published private(set) var lockApps: [Int: Set<String>] = MacLockApps.perLock
+    /// Daily app limits (docs/API.md, "Daily app limits"), the same as the phone's. Each device counts its own time:
+    /// here, the time this Mac spent in the limit's Mac apps (`MacUsage`).
+    @Published private(set) var limits: [ScreenLimit] = []
+    /// The Mac apps each limit counts, by limit id. None: the limit does nothing on this Mac.
+    @Published private(set) var limitApps: [Int: Set<String>] = MacLockApps.perLimit
+    /// The limits holding now on this Mac: reached here today, not ended early.
+    @Published private(set) var heldLimits: Set<Int> = []
+    private var limitHits: [Int: MacLimitHit] = MacLockApps.limitHits
+    private var limitOpened: [Int: String] = [:]
 
     private let api: APIClient
     private var poll: Task<Void, Never>?
     private var nextTick: Task<Void, Never>?
+    private var limitCheck: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
 
     init(api: APIClient) {
@@ -39,6 +49,13 @@ final class ScreenTimeService: ObservableObject {
         observers.append(workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             Task { @MainActor [weak self] in await self?.sync() }
         })
+        MacUsage.shared.start()
+        limitCheck = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.checkLimits()
+                try? await Task.sleep(for: .seconds(20))
+            }
+        }
         if !testLocks.isEmpty {
             locks = testLocks
             tick()
@@ -62,13 +79,16 @@ final class ScreenTimeService: ObservableObject {
         return lockApps[lock.id] ?? usualApps
     }
 
-    /// The lock that covers an app now (the one that ends last), or nil: the app is free.
-    func covering(_ bundleID: String?) -> (lock: ScreenLock, until: Date)? {
+    /// The lock or limit that covers an app now (the one that ends last), or nil: the app is free.
+    func covering(_ bundleID: String?) -> MacHold? {
         guard let bundleID, !MacLockApps.never.contains(bundleID) else { return nil }
         let now = Date()
-        return locks.filter { apps(for: $0).contains(bundleID) }
-            .compactMap { lock in LockClock.until(lock, at: now).map { (lock, $0) } }
-            .max { $0.1 < $1.1 }
+        let byLocks = locks.filter { apps(for: $0).contains(bundleID) }
+            .compactMap { lock in LockClock.until(lock, at: now).map { MacHold(lock: lock, until: $0) } }
+        let midnight = Calendar.current.startOfDay(for: now).addingTimeInterval(86400 + 3600)
+        let byLimits = limits.filter { heldLimits.contains($0.id) && limitApps[$0.id]?.contains(bundleID) == true }
+            .map { MacHold(limit: $0, until: Calendar.current.startOfDay(for: midnight)) }
+        return (byLocks + byLimits).max { $0.until < $1.until }
     }
 
     /// The usual apps. Not while a lock that uses them is on: that would be unlocking early.
@@ -92,6 +112,15 @@ final class ScreenTimeService: ObservableObject {
             locks = list.locks + testLocks
             passes = list.passes
             lastError = nil
+            limits = list.limits ?? []
+            let today = MacUsage.key(Date())
+            for limit in limits where limit.openToday { limitOpened[limit.id] = today }
+            let knownLimits = Set(limits.map(\.id))
+            if limitApps.keys.contains(where: { !knownLimits.contains($0) }) {
+                limitApps = limitApps.filter { knownLimits.contains($0.key) }
+                MacLockApps.perLimit = limitApps
+            }
+            checkLimits()
             // A lock gone from the server takes its apps with it.
             let known = Set(list.locks.map(\.id))
             if lockApps.keys.contains(where: { !known.contains($0) }) {
@@ -196,6 +225,93 @@ final class ScreenTimeService: ObservableObject {
         await change { try await self.api.deleteLock(lock.id) }
     }
 
+    // MARK: Daily limits on this Mac
+
+    /// The time this Mac spent today in a limit's apps.
+    func usedToday(_ limit: ScreenLimit) -> TimeInterval {
+        MacUsage.shared.seconds(on: Date(), apps: limitApps[limit.id] ?? [])
+    }
+
+    /// Reached here today (when), or nil.
+    func reachedHere(_ limit: ScreenLimit) -> Date? {
+        guard let hit = limitHits[limit.id], hit.date == MacUsage.key(Date()) else { return nil }
+        return hit.at
+    }
+
+    func holds(_ limit: ScreenLimit) -> Bool { heldLimits.contains(limit.id) }
+
+    /// A limit whose apps have had their minutes today is reached: told to the server (so the phone and Coach see
+    /// it) and held until midnight, unless it's been ended early for today.
+    private func checkLimits() {
+        let now = Date()
+        let today = MacUsage.key(now)
+        var reached: [UsageUpload.Hit] = []
+        for limit in limits where limit.enabled && limit.counts(on: now) && limitHits[limit.id]?.date != today {
+            guard let apps = limitApps[limit.id], !apps.isEmpty,
+                  MacUsage.shared.seconds(on: now, apps: apps) >= Double(limit.minutes) * 60 else { continue }
+            limitHits[limit.id] = MacLimitHit(date: today, at: now)
+            reached.append(.init(id: limit.id, date: today, at: now.formatted(.iso8601)))
+        }
+        if !reached.isEmpty {
+            limitHits = limitHits.filter { $0.value.date >= MacUsage.key(now.addingTimeInterval(-7 * 86400)) }
+            MacLockApps.limitHits = limitHits
+            Task { try? await api.uploadUsage(UsageUpload(days: [], limits: reached)) }
+        }
+        let held = Set(limits.filter { limit in
+            limit.enabled && limit.counts(on: now) && limitHits[limit.id]?.date == today && limitOpened[limit.id] != today
+        }.map(\.id))
+        if held != heldLimits { heldLimits = held }
+    }
+
+    /// A limit's Mac apps. Not while it holds: that would be ending it early.
+    func setApps(_ apps: Set<String>, for limit: ScreenLimit) {
+        guard !holds(limit) else { return }
+        limitApps[limit.id] = apps.isEmpty ? nil : apps
+        MacLockApps.perLimit = limitApps
+        checkLimits()
+    }
+
+    /// A limit, new or changed, with its Mac apps.
+    func saveLimit(_ limit: ScreenLimit?, title: String, minutes: Int, days: [Int], enabled: Bool, strict: Bool,
+                   apps: Set<String>) async -> Bool {
+        await change {
+            if let limit {
+                _ = try await self.api.updateLimit(limit.id, LimitPatch(title: title, minutes: minutes, days: days,
+                                                                        enabled: enabled, strict: strict))
+                self.setApps(apps, for: limit)
+            } else {
+                let made = try await self.api.createLimit(NewLimit(title: title, minutes: minutes, days: days, strict: strict))
+                self.limitApps[made.id] = apps.isEmpty ? nil : apps
+                MacLockApps.perLimit = self.limitApps
+            }
+        }
+    }
+
+    func setEnabled(_ limit: ScreenLimit, _ on: Bool) async {
+        await change { _ = try await self.api.updateLimit(limit.id, LimitPatch(enabled: on)) }
+    }
+
+    func delete(_ limit: ScreenLimit) async -> Bool {
+        await change { try await self.api.deleteLimit(limit.id) }
+    }
+
+    /// Ends a lock early, or a limit reached today until midnight (on the phone too).
+    func unlock(_ hold: MacHold, reason: String, pass: Bool = false) async -> Bool {
+        if let lock = hold.lock { return await unlock(lock, reason: reason, pass: pass) }
+        guard let limit = hold.limit else { return false }
+        // Reached here but the server hasn't heard yet: tell it first, or it refuses to end what isn't reached.
+        if !limit.reachedToday, let at = reachedHere(limit) {
+            try? await api.uploadUsage(UsageUpload(days: [], limits: [.init(id: limit.id, date: MacUsage.key(at),
+                                                                              at: at.formatted(.iso8601))]))
+        }
+        let ok = await change { _ = try await self.api.unlockLimit(limit.id, reason: reason, pass: pass) }
+        if ok {
+            limitOpened[limit.id] = MacUsage.key(Date())
+            checkLimits()
+        }
+        return ok
+    }
+
     /// One change on the server, then the list again. False (with `lastError`) if the server said no.
     @discardableResult
     private func change(_ work: () async throws -> Void) async -> Bool {
@@ -210,6 +326,31 @@ final class ScreenTimeService: ObservableObject {
     }
 }
 
+/// What a lock or a limit holding now is, for the shield and the unlock sheet.
+struct MacHold: Equatable {
+    var lock: ScreenLock?
+    var limit: ScreenLimit?
+    let until: Date
+
+    init(lock: ScreenLock, until: Date) { self.lock = lock; self.until = until }
+    init(limit: ScreenLimit, until: Date) { self.limit = limit; self.until = until }
+
+    var title: String { lock?.title ?? limit?.title ?? "" }
+    var isStrict: Bool { lock?.isStrict ?? limit?.strict ?? false }
+    var agent: String? { lock?.agent }
+    /// What ending it early does.
+    var afterUnlock: String {
+        if limit != nil { return "Open until midnight; it counts again tomorrow." }
+        return lock?.once == true ? "Ends the lock for good." : "It's back next time."
+    }
+}
+
+/// A limit reached on this Mac: the local day, and when.
+struct MacLimitHit: Codable {
+    let date: String
+    let at: Date
+}
+
 /// What the Mac's locks cover, kept in this Mac's defaults: the phone's picks are tokens that mean nothing here.
 enum MacLockApps {
     /// Never covered: Aide (the shield and unlocking live here), Finder and System Settings.
@@ -220,6 +361,32 @@ enum MacLockApps {
     static var usual: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: "macLockUsual") ?? ["com.apple.Safari"]) }
         set { UserDefaults.standard.set(newValue.sorted(), forKey: "macLockUsual") }
+    }
+
+    static var perLimit: [Int: Set<String>] {
+        get { ids(UserDefaults.standard.dictionary(forKey: "macLimitApps")) }
+        set { UserDefaults.standard.set(strings(newValue), forKey: "macLimitApps") }
+    }
+
+    static var limitHits: [Int: MacLimitHit] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: "macLimitHits"),
+                  let hits = try? JSONDecoder().decode([String: MacLimitHit].self, from: data) else { return [:] }
+            return Dictionary(uniqueKeysWithValues: hits.compactMap { key, value in Int(key).map { ($0, value) } })
+        }
+        set {
+            let hits = Dictionary(uniqueKeysWithValues: newValue.map { (String($0.key), $0.value) })
+            UserDefaults.standard.set(try? JSONEncoder().encode(hits), forKey: "macLimitHits")
+        }
+    }
+
+    private static func ids(_ stored: [String: Any]?) -> [Int: Set<String>] {
+        let stored = stored as? [String: [String]] ?? [:]
+        return Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in Int(key).map { ($0, Set(value)) } })
+    }
+
+    private static func strings(_ value: [Int: Set<String>]) -> [String: [String]] {
+        Dictionary(uniqueKeysWithValues: value.map { (String($0.key), $0.value.sorted()) })
     }
 
     static var perLock: [Int: Set<String>] {

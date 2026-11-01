@@ -108,6 +108,7 @@
 		6708C50E1250EA8C57D751E3 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
 		675F91B6CB1A789947F3463E /* TouchTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48D3B662149E81DAF5A28319 /* TouchTracker.swift */; };
 		6A8A6B60D44134404B6B202A /* NutritionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C667A9215ADB1783C8AC6E2C /* NutritionViews.swift */; };
+		6B0EE1E926DFB5FD01E80199 /* UsageReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F41469809377FE5BEAF0871 /* UsageReportView.swift */; };
 		6B4364FB23EAD3E5E23039BE /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87678035748931339F27CC91 /* Photos.swift */; };
 		6DA7ACDE971323C214D45600 /* TeamWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0183C66CE418FFB138873C0E /* TeamWidget.swift */; };
 		6E94285E1C458FD526D2A8D9 /* UsageContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC54B732BF73C2DF581C78C3 /* UsageContext.swift */; };
@@ -119,6 +120,7 @@
 		717B9649EF5B1FF87668F918 /* ErrandStageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31033B32F4A37807EB1A7190 /* ErrandStageViews.swift */; };
 		72C49417699FB469145362D1 /* EventWeekView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF6CCC9091F2A82B831A7E3A /* EventWeekView.swift */; };
 		731F6A69DA90B3592DCAF24B /* HabitIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FA885056211A769DEA36F2 /* HabitIntents.swift */; };
+		73C1C5BA25A61BF41E535655 /* MacScreenPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 652B42830EE1741307D153A1 /* MacScreenPage.swift */; };
 		74C5766DA6E89237B0FBC0F7 /* LockBook.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938D864748A9931323F00F20 /* LockBook.swift */; };
 		752F5BB073188BB0D91E11DD /* TeamChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */; };
 		7688764763680AE215A25A25 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB893CFE71A535E6990CADF /* SettingsView.swift */; };
@@ -145,6 +147,7 @@
 		9391CA921BA0BA9BC5E1E6BA /* StudyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24233F28207417C05A177C18 /* StudyView.swift */; };
 		93C91AA0FC22D5E3A9EDF839 /* BodyViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD7E67230FC828BB66C66EC /* BodyViews.swift */; };
 		9458E33FE7340C8EDED1D46F /* LineBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2712472C5856CDCD16C4FAB /* LineBadge.swift */; };
+		9639A748EFB51BC856C3E26E /* UsageMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0907972D2ED227BDE1E5A9 /* UsageMath.swift */; };
 		9867ADB7B8A59A4EF1B55448 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FBBFAA140586D1B2AF141D34 /* Assets.xcassets */; };
 		9A5EC9E4AB9A77C8A2AF2FF6 /* RouteCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 390203A3696FD54CC8786945 /* RouteCard.swift */; };
 		9A7C4BA815F2DE7DCDDA6883 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32DFE4D7AD03B872AE8A96C /* Models.swift */; };
@@ -162,6 +165,7 @@
 		AA3A37D30E4DCE329F1D78A5 /* RichText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31E717ACC950E43DC53B945E /* RichText.swift */; };
 		AAEBF323BEFFB372CAD82193 /* ChatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AEB482052BA9CB53D3B8410 /* ChatsView.swift */; };
 		AE0859B5C95E576736CFC536 /* UsageMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0907972D2ED227BDE1E5A9 /* UsageMath.swift */; };
+		AE18902BD0E8216C3EAD480D /* MacUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B681840D8379B92E739C78A /* MacUsage.swift */; };
 		AE4481965DD74DA5C291F29E /* LockMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1292B0F4A4E45229FB6C10E0 /* LockMonitor.swift */; };
 		AEEA7D4B2EB40173AC263CF1 /* PracticeExamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */; };
 		B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */; };
@@ -344,6 +348,7 @@
 		5E3809ACCFFA12ABB54F30E6 /* MacAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = MacAssets.xcassets; sourceTree = "<group>"; };
 		605B384AB6649D33C15F6172 /* Aide.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Aide.entitlements; sourceTree = "<group>"; };
 		63500D066A75FEEDD7B682E9 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		652B42830EE1741307D153A1 /* MacScreenPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScreenPage.swift; sourceTree = "<group>"; };
 		67BBAA4A50EA4E94D5CE2C49 /* VoiceLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLog.swift; sourceTree = "<group>"; };
 		68C4CE2352B9DD9BE976A094 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepSummary.swift; sourceTree = "<group>"; };
@@ -363,6 +368,7 @@
 		81B15B4A9C146D208E461D58 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		87320B5BA6327928E4CC8A7D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		87678035748931339F27CC91 /* Photos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photos.swift; sourceTree = "<group>"; };
+		8B681840D8379B92E739C78A /* MacUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUsage.swift; sourceTree = "<group>"; };
 		8BD448611F6C2528A4B7C49A /* EventLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventLiveActivity.swift; sourceTree = "<group>"; };
 		8F38E82A30132956316CD8AC /* DeparturesCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeparturesCard.swift; sourceTree = "<group>"; };
 		91B4431689B0F772EB8EDA27 /* LivePebble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePebble.swift; sourceTree = "<group>"; };
@@ -653,10 +659,12 @@
 				0A8D813CE0493DAE81AB8566 /* MacMenuBarPanel.swift */,
 				E82E2D2F31C60F70DB974B92 /* MacNavigationStack.swift */,
 				6EF10BCDADB734A13BDB47BE /* MacRootView.swift */,
+				652B42830EE1741307D153A1 /* MacScreenPage.swift */,
 				9883DFA94F62FDEC76F14602 /* MacScreenTime.swift */,
 				582BAE089C17E030C634DB60 /* MacScreenTimeView.swift */,
 				7EE4431CF529BAD1BA4486C7 /* MacServices.swift */,
 				B7510E58A67A58DB9D0E7725 /* MacShield.swift */,
+				8B681840D8379B92E739C78A /* MacUsage.swift */,
 			);
 			path = Mac;
 			sourceTree = "<group>";
@@ -1122,10 +1130,12 @@
 				18FD927E56D5759F9BF2BFA6 /* MacMenuBarPanel.swift in Sources */,
 				48987567C6B9D6E88B770CC3 /* MacNavigationStack.swift in Sources */,
 				4F8E671544A9ABE370D492F4 /* MacRootView.swift in Sources */,
+				73C1C5BA25A61BF41E535655 /* MacScreenPage.swift in Sources */,
 				0FC6E8696B392B7469604CB9 /* MacScreenTime.swift in Sources */,
 				D96AE9A8C21393E5189CCF29 /* MacScreenTimeView.swift in Sources */,
 				CC59E982D38033B55B1A7B86 /* MacServices.swift in Sources */,
 				707C5701257FFAC221CAF2EC /* MacShield.swift in Sources */,
+				AE18902BD0E8216C3EAD480D /* MacUsage.swift in Sources */,
 				79450FD6866BA5F4644FD323 /* MealIntents.swift in Sources */,
 				3E02268A67EFC449A249DF39 /* MemoryView.swift in Sources */,
 				9A7C4BA815F2DE7DCDDA6883 /* Models.swift in Sources */,
@@ -1153,6 +1163,8 @@
 				9B8791810EE9DED24ECBA53A /* Theme.swift in Sources */,
 				30CC7E1DB71BAEB5398FBA2D /* TodayView.swift in Sources */,
 				1DBEECC5B0EF66AE05F8EE3C /* TransitAlertsView.swift in Sources */,
+				9639A748EFB51BC856C3E26E /* UsageMath.swift in Sources */,
+				6B0EE1E926DFB5FD01E80199 /* UsageReportView.swift in Sources */,
 				813D1521C5F166FBC81F7B23 /* VideoViews.swift in Sources */,
 				AA3680675B432D6D50CD97E9 /* VoiceController.swift in Sources */,
 				CB0EE634A585D77AA9BC3B87 /* VoiceLog.swift in Sources */,

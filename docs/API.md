@@ -1916,6 +1916,12 @@ midnight. The user makes limits in the app's Screen tab and picks the apps there
 (one DeviceActivity a day with a threshold event) and locks the apps when it fires, with the app closed, then tells
 the server it was reached (`PUT /v1/screen/usage`).
 
+**Each device counts its own time** (since 2026-11-01): the phone its apps' time, the Mac app (which can't read
+Apple's Screen Time) the time it records itself in the Mac apps picked for the limit on that Mac. Each locks only its
+own apps when its own count runs out, and tells the server with `PUT /v1/screen/usage` (the Mac with `"days": []`,
+so it never touches the phone's estimate). `reached_today` is whichever reached it first; ending it early
+(`open_today`) opens it on both until midnight.
+
 - `days`: the ISO weekdays it counts on, `[]` every day. `minutes`: 5 to 720.
 - **Ending it early** for today takes a reason (`POST …/unlock`), like a lock; it's open until midnight
   (`open_today`) and counts again tomorrow. Only a limit reached today can be ended.
@@ -1951,7 +1957,8 @@ with `screen_usage`.
 | `GET /v1/screen/usage?days=30` | | `{"days": [{"date": "2026-11-01", "minutes": 135, "updated_at": "…"}]}` |
 
 - A day's `minutes` only goes up (an older count doesn't lower it). Dates are local, from 400 days back to tomorrow.
-- `limits`: limits reached, by id, with when; ids since deleted are ignored.
+- `limits`: limits reached, by id, with when (from the phone or the Mac); ids since deleted are ignored, and a later
+  hit the same day doesn't move the first.
 - The app sends the last 7 days when it syncs the locks (opening, after a chat turn, a silent `sync` push).
 
 ## Browser errands

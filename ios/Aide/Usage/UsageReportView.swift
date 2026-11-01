@@ -1,5 +1,9 @@
+#if os(iOS)
 import FamilyControls
 import ManagedSettings
+#else
+import AppKit
+#endif
 import SwiftUI
 
 /// What the report hands its view: the days read (the period and what it's compared with) and the period itself.
@@ -261,8 +265,13 @@ struct UsageReportView: View {
 /// the grouped page.
 enum UsageColors {
     static let cyan = [Color(red: 0.39, green: 0.82, blue: 1.0), Color(red: 0.11, green: 0.65, blue: 0.79)]
+    #if os(iOS)
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
     static let line = Color(uiColor: .separator).opacity(0.6)
+    #else
+    static let card = Theme.row
+    static let line = Color(nsColor: .separatorColor).opacity(0.6)
+    #endif
     static let good = Color(red: 0.2, green: 0.75, blue: 0.4)
     static let over = Color(red: 1.0, green: 0.55, blue: 0.3)
 }
@@ -376,7 +385,7 @@ struct UsageBars: View {
     }
 }
 
-/// An app in Most used: its icon (Apple's, from the token; a letter in sample data), name, time and a bar against the
+/// An app in Most used: its icon (Apple's, from the token; on the Mac, the app's own; a letter in sample data), name, time and a bar against the
 /// most used one.
 private struct AppRow: View {
     let app: UsageApp
@@ -416,16 +425,29 @@ private struct AppIcon: View {
 
     var body: some View {
         Group {
+            #if os(iOS)
             if let data = app.token, let token = try? JSONDecoder().decode(ApplicationToken.self, from: data) {
                 Label(token).labelStyle(.iconOnly).scaleEffect(1.6)
             } else {
-                Text(String(app.name.prefix(1)))
-                    .font(.headline).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(hue, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                letter
             }
+            #else
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.id) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable()
+            } else {
+                letter
+            }
+            #endif
         }
         .frame(width: 32, height: 32)
+    }
+
+    /// Sample data, or an app that's gone: its first letter.
+    private var letter: some View {
+        Text(String(app.name.prefix(1)))
+            .font(.headline).foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(hue, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var hue: Color {

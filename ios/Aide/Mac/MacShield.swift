@@ -70,7 +70,7 @@ final class MacShield {
 
     /// Close whatever a lock covers now; bring back what's free again.
     private func check() {
-        var first: (app: NSRunningApplication, hold: (lock: ScreenLock, until: Date), icon: NSPoint?)?
+        var first: (app: NSRunningApplication, hold: MacHold, icon: NSPoint?)?
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular
             && app.processIdentifier != Self.me && !app.isTerminated && hidden[app.processIdentifier] == nil {
             guard let hold = screenTime.covering(app.bundleIdentifier) else { continue }
@@ -170,7 +170,7 @@ enum DockIcon {
 private final class LockNudgeModel: ObservableObject {
     @Published var appName = ""
     @Published var bundleID: String?
-    @Published var hold: (lock: ScreenLock, until: Date)?
+    @Published var hold: MacHold?
     @Published var shown = false
     @Published var expanded = false
     /// The pointer is on Pebble or the bubble.
@@ -216,7 +216,7 @@ private final class LockNudge {
     /// The app being opened anyway: brought back once its lock is gone.
     var opening: String? { model.expanded ? model.bundleID : nil }
 
-    func show(app: String, bundleID: String, hold: (lock: ScreenLock, until: Date), above icon: NSPoint?) {
+    func show(app: String, bundleID: String, hold: MacHold, above icon: NSPoint?) {
         if model.bundleID != bundleID { model.expanded = false; model.typing = false }
         model.appName = app
         model.bundleID = bundleID
@@ -411,8 +411,8 @@ private struct LockNudgeView: View {
     @State private var isBusy = false
     @FocusState private var reasonFocused: Bool
 
-    private var lock: ScreenLock? { model.hold?.lock }
-    private var isStrict: Bool { lock?.isStrict == true }
+    private var hold: MacHold? { model.hold }
+    private var isStrict: Bool { hold?.isStrict == true }
     private var noPasses: Bool { isStrict && screenTime.passes?.left == 0 }
     /// The content moves with the icon only as far as the panel lets it; Pebble goes the rest of the way.
     private var slide: CGFloat { max(-20, min(20, model.shift)) }
@@ -439,13 +439,16 @@ private struct LockNudgeView: View {
 
     private var headline: String {
         if model.happy { return "Go on then" }
-        return model.hold.map { "\(model.appName)'s asleep till \(MacGlanceCard.time($0.until))" } ?? "\(model.appName)'s asleep"
+        guard let hold = model.hold else { return "\(model.appName)'s asleep" }
+        if hold.limit != nil { return "\(model.appName)'s used up for today" }
+        return "\(model.appName)'s asleep till \(MacGlanceCard.time(hold.until))"
     }
 
     private var detail: String? {
-        guard let lock, !model.happy else { return nil }
+        guard let hold, !model.happy else { return nil }
         if noPasses { return "No emergency passes left this month" }
-        return lock.agent.map { "\(lock.title) · set by \($0.prefix(1).uppercased() + $0.dropFirst())" } ?? lock.title
+        let title = hold.limit.map { "\($0.title) · \($0.summary), used up" } ?? hold.title
+        return hold.agent.map { "\(title) · set by \($0.prefix(1).uppercased() + $0.dropFirst())" } ?? title
     }
 
     /// Folded: the words and Open anyway on one line. Open: the reason under them, then Unlock.
@@ -462,7 +465,7 @@ private struct LockNudgeView: View {
                     }
                 }
                 .contentTransition(.opacity)
-                if !model.expanded && !model.happy && !noPasses && lock != nil {
+                if !model.expanded && !model.happy && !noPasses && hold != nil {
                     NudgeButton(isStrict ? "Use a pass" : "Open anyway", prominent: true, action: start)
                         .transition(.opacity)
                 }
@@ -483,8 +486,8 @@ private struct LockNudgeView: View {
             }
             // Open, as wide as the form, so the × sits at its right edge.
             .frame(width: model.expanded ? 300 : nil, alignment: .leading)
-            if model.expanded, let lock {
-                form(lock).transition(.opacity)
+            if model.expanded, let hold {
+                form(hold).transition(.opacity)
             }
         }
         .fixedSize()
@@ -523,14 +526,14 @@ private struct LockNudgeView: View {
     }
 
     private func start() {
-        guard !noPasses, lock != nil else { return }
+        guard !noPasses, hold != nil else { return }
         reason = ""
         left = 10
         open()
         reasonFocused = true
     }
 
-    private func form(_ lock: ScreenLock) -> some View {
+    private func form(_ hold: MacHold) -> some View {
         let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
         let ready = left == 0 && !trimmed.isEmpty && !isBusy
         return VStack(alignment: .leading, spacing: 8) {
@@ -538,7 +541,7 @@ private struct LockNudgeView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, design: .rounded))
                 .focused($reasonFocused)
-                .onSubmit { if ready { unlock(lock, trimmed) } }
+                .onSubmit { if ready { unlock(hold, trimmed) } }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(Color.primary.opacity(0.07), in: Capsule())
@@ -548,7 +551,7 @@ private struct LockNudgeView: View {
                         Text(error).foregroundStyle(.red)
                     } else {
                         Text((isStrict ? "Uses 1 of \(screenTime.passes?.left ?? 0) passes left. " : "")
-                             + (lock.once ? "Ends the lock for good." : "It's back next time.") + " Coach sees why.")
+                             + hold.afterUnlock + " Coach sees why.")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -558,7 +561,7 @@ private struct LockNudgeView: View {
                     ProgressView().controlSize(.small).frame(width: 100)
                 } else {
                     NudgeButton(left > 0 ? "Unlock in \(left)" : "Unlock", prominent: true, enabled: ready) {
-                        unlock(lock, trimmed)
+                        unlock(hold, trimmed)
                     }
                 }
             }
@@ -572,11 +575,11 @@ private struct LockNudgeView: View {
         }
     }
 
-    private func unlock(_ lock: ScreenLock, _ reason: String) {
+    private func unlock(_ hold: MacHold, _ reason: String) {
         Task {
             isBusy = true
             // Once the lock is gone, MacShield opens the app again and Pebble hops off.
-            _ = await screenTime.unlock(lock, reason: reason, pass: isStrict)
+            _ = await screenTime.unlock(hold, reason: reason, pass: isStrict)
             isBusy = false
         }
     }

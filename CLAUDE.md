@@ -104,7 +104,7 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 ### The Mac app (same project, target `AideMac`)
 
 The phone's views in a Mac window, the sections (Team, Today, Habits, Objectives, Activity, Study, Health, Food,
-Settings) in a glass sidebar with their names floating on the left over the page (`MacSidebar`; no system sidebar),
+Screen, Settings) in a glass sidebar with their names floating on the left over the page (`MacSidebar`; no system sidebar),
 folding to a rail of icons (its button, ⌃⌘S, View → Show Section Names), with the day at a glance above Settings
 (`Mac/MacGlance.swift`: the three score rings filling as they load, kcal and habits as bars; concentric rings in the
 rail; reloaded every 5 min and on each change of section), macOS 14+, bundle
@@ -114,7 +114,7 @@ Activities, location, the meal camera, the Apple Reminders sync, the silent push
 the phone sent; a reminder ticked on the Mac goes through the server and the phone's next sync).
 
 - `Mac/AideMacApp.swift`, `Mac/MacRootView.swift`: the app, one window (a second would share the one
-  `AppEnvironment`), the rail, the menus (⌘N new chat, ⌘1–9, Show in Menu Bar) and the Pebble in the menu bar (the
+  `AppEnvironment`), the rail, the menus (⌘N new chat, ⌘1–9 and ⌘0, Show in Menu Bar) and the Pebble in the menu bar (the
   small cut, `MenuBarPebble`, cropped to the Pebble, 15 pt tall, a template). The Pebble opens a panel, not a menu
   (`Mac/MacMenuBarPanel.swift`): Pebble breathing with the greeting, Ask Aide (a new chat in the window), the glance,
   a week strip with a dot per calendar and the chosen day's events (today: what's left and its reminders), what's
@@ -136,6 +136,14 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   won't quit) and Pebble pops up asleep over its Dock icon with Open anyway. Settings → This Mac → Screen Time
   (`Mac/MacScreenTimeView.swift`): Lock now, the usual apps, weekly locks with their own apps. Debug builds:
   `-shieldTest 2` adds a local 2-minute lock. Not yet: refusing Quit during a strict lock, the login item.
+  Daily limits on the Mac (2026-11-01): the phone's limits, each with its own Mac apps (`MacLockApps.perLimit`),
+  counted from this Mac's own time (`Mac/MacUsage.swift`) and held until midnight when used up (`MacHold` is a lock
+  or a limit holding now, what the shield and the unlock sheet show); a hit goes to the server with `days: []`.
+- The Screen section (`Mac/MacScreenPage.swift`): the phone's Screen tab for this Mac, Day · Week · Month, Lock now in
+  the corner, Locks and limits under the date, the report drawn by the phone's `Usage/UsageReportView.swift` (shared;
+  on the Mac app icons come from the bundle ID). `MacUsage` records it: every 5 s the app in front gets the time while
+  someone's there (awake, unlocked, input in the last 2 min, or 30 while that app holds the display awake), a pickup
+  after 5 min away, a JSON file a day in Application Support/Aide/usage (120 days), never sent to the server.
 - `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
   `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
 - The Mac look (2026-10-31): `Mac/MacList.swift` makes `List` a grouped `Form` (rounded inset sections, no heavy

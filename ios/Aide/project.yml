@@ -223,6 +223,8 @@ targets:
       - Shared/MealIntents.swift
       - ScreenTime/ScreenLock.swift
       - ScreenTime/LockClock.swift
+      - Usage/UsageMath.swift
+      - Usage/UsageReportView.swift
     dependencies:
       - package: SwiftMath
     info:
