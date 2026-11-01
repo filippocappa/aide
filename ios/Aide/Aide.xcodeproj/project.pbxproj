@@ -219,6 +219,7 @@
 		EE7CC3F0646FABF4F63B420B /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */; };
 		F05817427F823787D3F94ABF /* ScreenLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5A6ADA18164E31DD49CD71 /* ScreenLock.swift */; };
 		F149A3F3DB1C3F471EACE643 /* AgentInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105404D7A7140F4B8B3BBAF8 /* AgentInfoView.swift */; };
+		F2942EA09BFC19DE9E840178 /* MacLoginItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED75A40C75D31819393889F1 /* MacLoginItem.swift */; };
 		F4C31F271C54C45FDD7148AD /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = F17C4D12EC034EF14E41E00C /* SwiftMath */; };
 		F4CBC49331862920D6DD3CC7 /* HabitIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FA885056211A769DEA36F2 /* HabitIntents.swift */; };
 		F54C21D9A83154F5BFC44430 /* Figure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E5D11C27686D088BF88108 /* Figure.swift */; };
@@ -429,6 +430,7 @@
 		E8BFC1DAA6E43241677C8730 /* Health.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Health.entitlements; sourceTree = "<group>"; };
 		E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSettingsView.swift; sourceTree = "<group>"; };
 		EBA213D456FF8A690E35B36F /* ScreenTimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeService.swift; sourceTree = "<group>"; };
+		ED75A40C75D31819393889F1 /* MacLoginItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLoginItem.swift; sourceTree = "<group>"; };
 		F052E49EFFBA77932E41460B /* StudySessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudySessionView.swift; sourceTree = "<group>"; };
 		F32DFE4D7AD03B872AE8A96C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		F4B434BFB9F5B347D240B333 /* ErrandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrandViews.swift; sourceTree = "<group>"; };
@@ -656,6 +658,7 @@
 				5E3809ACCFFA12ABB54F30E6 /* MacAssets.xcassets */,
 				D22CC0EC44582B201436684C /* MacGlance.swift */,
 				3D3CFB8E6C336BE4768DB561 /* MacList.swift */,
+				ED75A40C75D31819393889F1 /* MacLoginItem.swift */,
 				0A8D813CE0493DAE81AB8566 /* MacMenuBarPanel.swift */,
 				E82E2D2F31C60F70DB974B92 /* MacNavigationStack.swift */,
 				6EF10BCDADB734A13BDB47BE /* MacRootView.swift */,
@@ -1127,6 +1130,7 @@
 				CACCC83A44CB8718FB4A36C7 /* MacAppDelegate.swift in Sources */,
 				089CB209C2B169E594A84579 /* MacGlance.swift in Sources */,
 				560B7380C6D9D3882D360581 /* MacList.swift in Sources */,
+				F2942EA09BFC19DE9E840178 /* MacLoginItem.swift in Sources */,
 				18FD927E56D5759F9BF2BFA6 /* MacMenuBarPanel.swift in Sources */,
 				48987567C6B9D6E88B770CC3 /* MacNavigationStack.swift in Sources */,
 				4F8E671544A9ABE370D492F4 /* MacRootView.swift in Sources */,

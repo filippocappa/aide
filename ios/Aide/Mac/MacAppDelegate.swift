@@ -11,6 +11,7 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
     @MainActor func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         shield = MacShield(screenTime: env.screenTime)
+        MacLoginItem.setUpOnce()
         Task { await env.screenTime.sync() }
     }
 

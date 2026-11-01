@@ -141,9 +141,13 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   or a limit holding now, what the shield and the unlock sheet show); a hit goes to the server with `days: []`.
 - The Screen section (`Mac/MacScreenPage.swift`): the phone's Screen tab for this Mac, Day · Week · Month, Lock now in
   the corner, Locks and limits under the date, the report drawn by the phone's `Usage/UsageReportView.swift` (shared;
-  on the Mac app icons come from the bundle ID). `MacUsage` records it: every 5 s the app in front gets the time while
-  someone's there (awake, unlocked, input in the last 2 min, or 30 while that app holds the display awake), a pickup
-  after 5 min away, a JSON file a day in Application Support/Aide/usage (120 days), never sent to the server.
+  on the Mac app icons come from the bundle ID). `MacUsage` records it while Aide runs (it opens at login,
+  `Mac/MacLoginItem.swift`, Settings → This Mac): every 5 s one app gets the time, so it's never doubled: the app in
+  front if touched in the last minute; else an app playing a video (it holds the display awake; `runningboardd` holds it
+  for Safari's WebKit) up to 30 min, in front or on the other screen; else, still up to 5 min (reading), the app in
+  front once you touch something again (dropped after 5 min). A video on the side also counts for the limits covering it
+  (`limits` in the day's file), not for the total. A pickup after 5 min away, a JSON file a day in Application
+  Support/Aide/usage (120 days), never sent to the server.
 - `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
   `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
 - The Mac look (2026-10-31): `Mac/MacList.swift` makes `List` a grouped `Form` (rounded inset sections, no heavy

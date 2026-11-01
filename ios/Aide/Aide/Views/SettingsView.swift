@@ -13,6 +13,9 @@ struct SettingsView: View {
     @EnvironmentObject private var env: AppEnvironment
     @StateObject private var connection = ConnectionCheck()
     @State private var path = NavigationPath()
+    #if os(macOS)
+    @State private var openAtLogin = false
+    #endif
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -46,8 +49,19 @@ struct SettingsView: View {
                     }
                 }
                 #else
-                Section("This Mac") {
+                Section {
                     row("Screen Time", "hourglass", .indigo, value: macScreenTimeValue) { MacScreenTimeView() }
+                    Toggle(isOn: Binding(get: { openAtLogin }, set: { on in
+                        MacLoginItem.set(on)
+                        openAtLogin = MacLoginItem.isOn
+                    })) {
+                        Label { Text("Open at login") } icon: { SettingsIcon(systemName: "power", color: .gray) }
+                    }
+                    .onAppear { openAtLogin = MacLoginItem.isOn }
+                } header: {
+                    Text("This Mac")
+                } footer: {
+                    Text("Aide counts this Mac's screen time and holds its limits only while it runs.")
                 }
                 #endif
                 Section {

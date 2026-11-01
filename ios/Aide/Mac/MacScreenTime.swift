@@ -25,7 +25,9 @@ final class ScreenTimeService: ObservableObject {
     /// here, the time this Mac spent in the limit's Mac apps (`MacUsage`).
     @Published private(set) var limits: [ScreenLimit] = []
     /// The Mac apps each limit counts, by limit id. None: the limit does nothing on this Mac.
-    @Published private(set) var limitApps: [Int: Set<String>] = MacLockApps.perLimit
+    @Published private(set) var limitApps: [Int: Set<String>] = MacLockApps.perLimit {
+        didSet { MacUsage.shared.limitApps = limitApps }
+    }
     /// The limits holding now on this Mac: reached here today, not ended early.
     @Published private(set) var heldLimits: Set<Int> = []
     private var limitHits: [Int: MacLimitHit] = MacLockApps.limitHits
@@ -49,6 +51,7 @@ final class ScreenTimeService: ObservableObject {
         observers.append(workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             Task { @MainActor [weak self] in await self?.sync() }
         })
+        MacUsage.shared.limitApps = limitApps
         MacUsage.shared.start()
         limitCheck = Task { [weak self] in
             while !Task.isCancelled {
@@ -229,7 +232,7 @@ final class ScreenTimeService: ObservableObject {
 
     /// The time this Mac spent today in a limit's apps.
     func usedToday(_ limit: ScreenLimit) -> TimeInterval {
-        MacUsage.shared.seconds(on: Date(), apps: limitApps[limit.id] ?? [])
+        MacUsage.shared.limitSeconds(limit.id, apps: limitApps[limit.id] ?? [])
     }
 
     /// Reached here today (when), or nil.
@@ -248,7 +251,7 @@ final class ScreenTimeService: ObservableObject {
         var reached: [UsageUpload.Hit] = []
         for limit in limits where limit.enabled && limit.counts(on: now) && limitHits[limit.id]?.date != today {
             guard let apps = limitApps[limit.id], !apps.isEmpty,
-                  MacUsage.shared.seconds(on: now, apps: apps) >= Double(limit.minutes) * 60 else { continue }
+                  MacUsage.shared.limitSeconds(limit.id, apps: apps, on: now) >= Double(limit.minutes) * 60 else { continue }
             limitHits[limit.id] = MacLimitHit(date: today, at: now)
             reached.append(.init(id: limit.id, date: today, at: now.formatted(.iso8601)))
         }

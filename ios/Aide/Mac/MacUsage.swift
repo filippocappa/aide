@@ -2,11 +2,17 @@ import AppKit
 import IOKit.pwr_mgt
 
 /// Where this Mac's time goes, for the Screen page and the daily limits. Apple's Screen Time can't be read on the Mac,
-/// so Aide counts its own: every few seconds the app in front gets the time since the last look, while someone is
-/// there (the screen awake and unlocked, a key or the pointer touched in the last 2 minutes, or up to 30 while the app
-/// in front keeps the display awake, as a video does). A pickup is coming back after 5 minutes or more away, put on the
-/// first app used. Kept on this Mac only, a file a day in Application Support (120 days); nothing goes to the server
-/// but the limits reached.
+/// so Aide counts its own (while Aide runs; it opens at login). Every few seconds the time since the last look goes to
+/// one app, so the total is real time, never doubled by two screens:
+/// - touched in the last minute (a key, the pointer, a scroll): the app in front, where the focus is;
+/// - a video playing (an app keeping the display awake, as Safari does for a video, not for music), up to 30 minutes
+///   with no input: that app, in front or not (watching on the other screen);
+/// - otherwise still for up to 5 minutes (reading): the app in front, but only once you touch something again; after 5
+///   minutes without, nobody was there and that stretch isn't counted.
+/// Asleep, locked or away: nothing. A video playing beside the app in front also counts for the daily limits that
+/// cover it (a YouTube limit catches a video on the side while you work) without adding to the total.
+/// A pickup is coming back after 5 minutes or more away, put on the first app used. Kept on this Mac only, a file a day
+/// in Application Support (120 days); nothing goes to the server but the limits reached.
 @MainActor
 final class MacUsage: ObservableObject {
     static let shared = MacUsage()
@@ -23,10 +29,25 @@ final class MacUsage: ObservableObject {
     private struct StoredDay: Codable {
         var apps: [String: StoredApp] = [:]
         var firstPickup: Date?
+        /// Each daily limit's time today, by limit id: its apps in front or playing on the side, real time once.
+        var limits: [String: Double]?
+    }
+
+    /// Time held back while nobody touches anything (reading, or gone): counted once they do, dropped after 5 minutes.
+    private struct Pending {
+        let key: String
+        let app: String
+        let name: String
+        let hour: Int
+        var seconds: Double
+        var limits: Set<Int>
     }
 
     private static let interval: TimeInterval = 5
-    private static let idleLimit: TimeInterval = 120
+    /// Touched this recently: there, focused on the app in front.
+    private static let activeLimit: TimeInterval = 60
+    /// Still for longer than this without a video: gone (the still stretch isn't counted).
+    private static let readingLimit: TimeInterval = 5 * 60
     private static let watchingLimit: TimeInterval = 30 * 60
     private static let awayForPickup: TimeInterval = 5 * 60
     private static let kept = 120
@@ -42,6 +63,9 @@ final class MacUsage: ObservableObject {
     private var screenAsleep = false
     private var screenLocked = false
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    private var pending: [Pending] = []
+    /// The Mac apps of each daily limit, by limit id (from `ScreenTimeService`).
+    var limitApps: [Int: Set<String>] = [:]
 
     private init() {
         folder = URL.applicationSupportDirectory.appending(path: "Aide/usage", directoryHint: .isDirectory)
@@ -85,19 +109,43 @@ final class MacUsage: ObservableObject {
         let now = Date()
         let elapsed = min(now.timeIntervalSince(lastTick), Self.interval * 2)
         lastTick = now
+        defer { saveIfDue(now) }
+        guard !screenAsleep, !screenLocked else { return away(now, since: now) }
         let front = NSWorkspace.shared.frontmostApplication
-        guard let front, let id = front.bundleIdentifier, isHere(front) else {
-            if awaySince == nil { awaySince = now }
-            saveIfDue(now)
-            return
+        let frontID = front?.bundleIdentifier.flatMap { Self.ignored.contains($0) ? nil : $0 }
+        let idle = Self.idleSeconds()
+        let playing = idle < Self.watchingLimit ? Self.playing() : [:]
+        if let front, let frontID, idle < Self.activeLimit {
+            commitPending()
+            credit(frontID, name: front.localizedName, alongside: playing, now: now, elapsed: elapsed)
+        } else if let frontID, let front, playing[frontID] != nil {
+            commitPending()
+            credit(frontID, name: front.localizedName, alongside: playing, now: now, elapsed: elapsed)
+        } else if let (id, name) = playing.sorted(by: { $0.key < $1.key }).first {
+            // Watching on the other screen, the focus left where it was.
+            commitPending()
+            credit(id, name: name, alongside: playing, now: now, elapsed: elapsed)
+        } else if let front, let frontID, idle < Self.readingLimit {
+            hold(frontID, name: front.localizedName ?? frontID, now: now, elapsed: elapsed)
+        } else {
+            away(now, since: now.addingTimeInterval(-idle))
         }
-        guard id != "com.apple.loginwindow", id != "com.apple.ScreenSaver.Engine" else { return }
+    }
+
+    /// Nobody here: what was held back is dropped, and the time away runs from `since` (the last touch).
+    private func away(_ now: Date, since: Date) {
+        pending = []
+        if awaySince == nil { awaySince = since }
+    }
+
+    /// The tick's time to an app (and the limits covering it or a video playing beside it).
+    private func credit(_ id: String, name: String?, alongside playing: [String: String], now: Date,
+                        elapsed: TimeInterval) {
         let key = Self.key(now)
         var day = days[key] ?? load(key)
-        var app = day.apps[id] ?? StoredApp(name: front.localizedName ?? id)
-        if let name = front.localizedName { app.name = name }
-        let hour = Calendar.current.component(.hour, from: now)
-        app.hourly[hour] += elapsed
+        var app = day.apps[id] ?? StoredApp(name: name ?? id)
+        if let name { app.name = name }
+        app.hourly[Calendar.current.component(.hour, from: now)] += elapsed
         // Back after a while away, or the first use of the day: a pickup.
         if day.firstPickup == nil || awaySince.map({ now.timeIntervalSince($0) >= Self.awayForPickup }) == true {
             app.pickups += 1
@@ -105,18 +153,48 @@ final class MacUsage: ObservableObject {
         }
         awaySince = nil
         day.apps[id] = app
+        var limits = day.limits ?? [:]
+        for limit in covering(id, alongside: Set(playing.keys)) { limits[String(limit), default: 0] += elapsed }
+        day.limits = limits
         days[key] = day
         dirty = true
-        saveIfDue(now)
     }
 
-    /// Someone is using the Mac, with this app in front.
-    private func isHere(_ front: NSRunningApplication) -> Bool {
-        guard !screenAsleep, !screenLocked else { return false }
-        let idle = Self.idleSeconds()
-        if idle < Self.idleLimit { return true }
-        return idle < Self.watchingLimit && Self.keepsDisplayAwake(front)
+    /// Still, no video: the app in front's time waits for the next touch.
+    private func hold(_ id: String, name: String, now: Date, elapsed: TimeInterval) {
+        let key = Self.key(now)
+        let hour = Calendar.current.component(.hour, from: now)
+        if let last = pending.last, last.key == key, last.app == id, last.hour == hour {
+            pending[pending.count - 1].seconds += elapsed
+        } else {
+            pending.append(Pending(key: key, app: id, name: name, hour: hour, seconds: elapsed,
+                                   limits: covering(id, alongside: [])))
+        }
     }
+
+    /// Touched again: the still stretch was reading, and counts.
+    private func commitPending() {
+        guard !pending.isEmpty else { return }
+        for item in pending {
+            var day = days[item.key] ?? load(item.key)
+            var app = day.apps[item.app] ?? StoredApp(name: item.name)
+            app.hourly[item.hour] += item.seconds
+            day.apps[item.app] = app
+            var limits = day.limits ?? [:]
+            for limit in item.limits { limits[String(limit), default: 0] += item.seconds }
+            day.limits = limits
+            days[item.key] = day
+        }
+        pending = []
+        dirty = true
+    }
+
+    /// The limits whose apps are this one or a video playing beside it.
+    private func covering(_ id: String, alongside playing: Set<String>) -> Set<Int> {
+        Set(limitApps.filter { $0.value.contains(id) || !$0.value.isDisjoint(with: playing) }.keys)
+    }
+
+    private static let ignored: Set<String> = ["com.apple.loginwindow", "com.apple.ScreenSaver.Engine"]
 
     /// Seconds since a key, the pointer, a click or a scroll.
     private static func idleSeconds() -> TimeInterval {
@@ -125,31 +203,51 @@ final class MacUsage: ObservableObject {
         return kinds.map { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0) }.min() ?? 0
     }
 
-    /// The app (or a helper inside its bundle) is holding the display awake: a video playing, a call.
-    private static func keepsDisplayAwake(_ app: NSRunningApplication) -> Bool {
+    /// The apps keeping the display awake now (a video playing, a call), by bundle ID with their names. A helper
+    /// inside an app's bundle (Chrome's) counts as the app; music only keeps the system awake, so it isn't here.
+    private static func playing() -> [String: String] {
         var unmanaged: Unmanaged<CFDictionary>?
         guard IOPMCopyAssertionsByProcess(&unmanaged) == kIOReturnSuccess,
-              let byPID = unmanaged?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return false }
-        let bundle = app.bundleURL?.path
+              let byPID = unmanaged?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return [:] }
+        let display: Set<String> = [kIOPMAssertionTypePreventUserIdleDisplaySleep as String,
+                                    kIOPMAssertionTypeNoDisplaySleep as String]
+        var pids: Set<pid_t> = []
         for (pid, assertions) in byPID {
-            guard assertions.contains(where: {
-                let type = $0[kIOPMAssertionTypeKey] as? String
-                return type == kIOPMAssertionTypePreventUserIdleDisplaySleep as String
-                    || type == kIOPMAssertionTypeNoDisplaySleep as String
-            }) else { continue }
-            if pid.int32Value == app.processIdentifier { return true }
-            if let bundle, let other = NSRunningApplication(processIdentifier: pid.int32Value)?.bundleURL?.path,
-               other.hasPrefix(bundle + "/") { return true }
+            for assertion in assertions where display.contains(assertion[kIOPMAssertionTypeKey] as? String ?? "") {
+                pids.insert((assertion["AssertionOnBehalfOfPID"] as? NSNumber)?.int32Value ?? pid.int32Value)
+            }
         }
-        return false
+        guard !pids.isEmpty else { return [:] }
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+        var found: [String: String] = [:]
+        for pid in pids {
+            let app: NSRunningApplication?
+            if let own = apps.first(where: { $0.processIdentifier == pid }) {
+                app = own
+            } else if let path = NSRunningApplication(processIdentifier: pid)?.bundleURL?.path {
+                app = apps.first { $0.bundleURL.map { path.hasPrefix($0.path + "/") } == true }
+            } else {
+                app = nil
+            }
+            guard let app, let id = app.bundleIdentifier, !ignored.contains(id),
+                  app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { continue }
+            found[id] = app.localizedName ?? id
+        }
+        return found
     }
 
     // MARK: Reading
 
-    /// The time this Mac spent in these apps on a day.
+    /// The time this Mac spent in these apps on a day (with the focus on them).
     func seconds(on date: Date, apps: Set<String>) -> TimeInterval {
         let day = stored(Self.key(date))
         return apps.reduce(0) { sum, id in sum + (day.apps[id]?.hourly.reduce(0, +) ?? 0) }
+    }
+
+    /// A daily limit's time today: its apps in front, or a video of theirs playing on the side. Never less than the
+    /// focus time alone (apps added to the limit during the day count from the morning).
+    func limitSeconds(_ id: Int, apps: Set<String>, on date: Date = Date()) -> TimeInterval {
+        max(stored(Self.key(date)).limits?[String(id)] ?? 0, seconds(on: date, apps: apps))
     }
 
     /// A day as the Screen page reads it.
