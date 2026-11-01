@@ -73,6 +73,7 @@ from .tools.videos import video_tools
 from .leave import LeaveWatcher
 from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts
 from .upcoming import EventWatcher
+from .lockwatch import LockWatcher
 from .wake import WakeService
 from .whisper import available as whisper_available
 
@@ -265,6 +266,8 @@ def main() -> None:
     worker.engine = notes.engine = reader.engine = engine
     worker.live = notes.live = live
     events = EventWatcher(db.conn, settings.timezone, cal, live) if cal else None
+    lock_watch = LockWatcher(db.conn, settings.timezone, locks, live)
+    locks.on_change.append(lock_watch.poke)
 
     async def plan_limit(paused: dict) -> None:
         """The plan's limit, mid-job: asked in the job's course chat (Professor), with a push."""
@@ -313,6 +316,7 @@ def main() -> None:
             *([transit.timetable.run(), watcher.run()] if transit else []),
             *([leave.run()] if leave else []),
             *([events.run()] if events else []),
+            lock_watch.run(),
             *([errands.run()] if errands else []),
             videos.run(),
             lessons.run(),

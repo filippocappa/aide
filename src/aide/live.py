@@ -1,7 +1,8 @@
 """Live Activities (docs/API.md, "Live Activities"): the tokens the app hands over, and the pushes that start,
-update and end them. Three kinds: `tram` (a tram alert's countdown, kept by transit.AlertWatcher), `agent` (an
-agent at work: a chat turn the app started, a scheduled routine or a notes job the server starts) and `event` (the
-next calendar event's countdown, kept by upcoming.EventWatcher).
+update and end them. Four kinds: `tram` (a tram alert's countdown, kept by transit.AlertWatcher), `agent` (an
+agent at work: a chat turn the app started, a scheduled routine or a notes job the server starts), `event` (the
+next calendar event's countdown, kept by upcoming.EventWatcher) and `lock` (a Screen Time lock's countdown, kept by
+lockwatch.LockWatcher).
 
 Push-to-start tokens are kept per kind until the app deletes one or APNs refuses it. An activity's update token is
 kept under the key in its attributes, for TOKEN_AGE at most. A start asks iOS for that token (`input-push-token`):
@@ -26,7 +27,8 @@ from .routines import first_line
 
 log = logging.getLogger(__name__)
 
-KINDS = {"tram": "TramActivityAttributes", "agent": "AgentActivityAttributes", "event": "EventActivityAttributes"}
+KINDS = {"tram": "TramActivityAttributes", "agent": "AgentActivityAttributes", "event": "EventActivityAttributes",
+         "lock": "LockActivityAttributes"}
 TOKEN_AGE = timedelta(hours=12)
 THROTTLE = 2.0  # seconds between an agent activity's updates
 SETTLE = 3.0  # seconds after a turn before its last update: the app, if open, ends the activity itself first
@@ -44,7 +46,7 @@ CREATE TABLE IF NOT EXISTS live_tokens (
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
-SETTINGS = {"events": True}
+SETTINGS = {"events": True, "locks": True}
 
 
 def unix(dt: datetime) -> int:
@@ -189,10 +191,10 @@ class LiveActivities:
 
     async def sweep(self) -> int:
         """At startup: the activities of jobs the restart cut off (chat turns, notes jobs, errands) are ended now, so
-        none stays on "working" for hours. Trams and events are picked up again from their own tables."""
+        none stays on "working" for hours. Trams, events and locks are picked up again from their own tables."""
         keys = [r["key"] for r in self.conn.execute(
             "SELECT key FROM live_tokens WHERE key NOT LIKE 'start:%' AND key NOT LIKE 'tram:%' "
-            "AND key NOT LIKE 'event:%'")]
+            "AND key NOT LIKE 'event:%' AND key NOT LIKE 'lock:%'")]
         state = {"status": "failed", "detail": "Interrupted", "text": "", "since": int(time.time())}
         for key in keys:
             try:

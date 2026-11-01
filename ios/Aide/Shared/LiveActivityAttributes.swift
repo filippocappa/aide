@@ -1,7 +1,7 @@
 import ActivityKit
 import Foundation
 
-// The three Live Activities (docs/API.md, "Live Activities"). The server sends these fields in its pushes, so the
+// The four Live Activities (docs/API.md, "Live Activities"). The server sends these fields in its pushes, so the
 // names are the contract's, and times are Unix seconds: ActivityKit decodes the JSON with no date strategy.
 
 /// A tram alert's countdown, started by the server when the alert fires.
@@ -162,4 +162,26 @@ struct EventActivityAttributes: ActivityAttributes {
     var key: String
     var title: String
     var calendar: String
+}
+
+/// A Screen Time lock's countdown, started by the server when the lock comes on (a schedule's start, Lock now,
+/// Coach's one-off) and ended when it opens or is unlocked early.
+struct LockActivityAttributes: ActivityAttributes {
+    struct ContentState: Codable, Hashable {
+        /// When the lock opens.
+        var until: Double
+        /// When it came on: the bar fills from here to `until`.
+        var since: Double
+        /// Only an emergency pass ends it early.
+        var strict: Bool
+        /// It has opened (the last update, sent with the end).
+        var over: Bool
+
+        var untilDate: Date { Date(timeIntervalSince1970: until) }
+        var sinceDate: Date { Date(timeIntervalSince1970: since) }
+    }
+
+    /// `lock:<lock id>:<start>`
+    var key: String
+    var title: String
 }

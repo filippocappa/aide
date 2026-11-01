@@ -580,10 +580,11 @@ def test_live_settings(env):
     db, push, live, _ = env
     agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", delegate=False, tz=ROME)
     c = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN, push=push, live=live))
-    assert c.get("/v1/live/settings", headers=AUTH).json() == {"events": True}
-    assert c.patch("/v1/live/settings", json={"events": False}, headers=AUTH).json() == {"events": False}
-    assert c.patch("/v1/live/settings", json={}, headers=AUTH).json() == {"events": False}
-    assert live.settings() == {"events": False}
+    assert c.get("/v1/live/settings", headers=AUTH).json() == {"events": True, "locks": True}
+    assert c.patch("/v1/live/settings", json={"events": False}, headers=AUTH).json() == {"events": False, "locks": True}
+    assert c.patch("/v1/live/settings", json={}, headers=AUTH).json() == {"events": False, "locks": True}
+    assert c.patch("/v1/live/settings", json={"locks": False}, headers=AUTH).json()["locks"] is False
+    assert live.settings() == {"events": False, "locks": False}
 
 
 # -- the next event ----------------------------------------------------------------------------------
@@ -673,3 +674,85 @@ async def test_no_event_countdown_with_a_tram_or_turned_off(env):
 
 def utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
+
+
+# -- Screen Time locks ---------------------------------------------------------------------------
+
+
+async def test_a_lock_counts_down_to_when_it_opens(env):
+    from aide.lockwatch import LockWatcher
+    from aide.locks import LockStore
+    db, _, live, apns = env
+    locks = LockStore(db.conn, ROME)
+    watcher = LockWatcher(db.conn, ROME, locks, live)
+    live.set_start_token("lock", START, "sandbox")
+    eleven = datetime(2026, 10, 27, 23, 0, tzinfo=ROME)  # a Tuesday
+    bedtime = locks.schedule("Bedtime", "23:00", "07:00", [], strict=True, now=utc(eleven - timedelta(hours=1)))
+    await watcher.tick(utc(eleven - timedelta(minutes=1)))
+    assert apns.requests == []  # not yet
+    await watcher.tick(utc(eleven + timedelta(seconds=20)))
+    [start] = aps(apns)
+    seven = int((eleven + timedelta(hours=8)).timestamp())
+    assert start["attributes-type"] == "LockActivityAttributes" and start["input-push-token"] == 1
+    assert start["attributes"] == {"key": f"lock:{bedtime['id']}:{int(eleven.timestamp())}", "title": "Bedtime"}
+    assert start["content-state"] == {"until": seven, "since": int(eleven.timestamp()), "strict": True, "over": False}
+    assert start["alert"] == {"title": "Bedtime", "body": "Locked until 07:00, strict"}
+    assert start["stale-date"] == seven
+    key = start["attributes"]["key"]
+    live.register(key, ACTIVITY, "sandbox")
+    await watcher.tick(utc(eleven + timedelta(minutes=5)))
+    assert len(apns.requests) == 1  # nothing changed, no second start
+    locks.update(bedtime["id"], end_time="07:30", now=utc(eleven - timedelta(hours=1)))  # (refused while on)
+    await watcher.tick(utc(eleven + timedelta(minutes=6)))
+    assert aps(apns)[-1]["event"] == "update" and aps(apns)[-1]["content-state"]["until"] == seven + 1800
+    await watcher.tick(utc(eleven + timedelta(hours=8, minutes=31)))
+    end = aps(apns)[-1]
+    assert end["event"] == "end" and end["content-state"]["over"] is True
+    assert end["dismissal-date"] == int((eleven + timedelta(hours=8, minutes=33)).timestamp())  # open, a moment longer
+    await watcher.tick(utc(eleven + timedelta(hours=8, minutes=32)))
+    assert len(apns.requests) == 3
+
+
+async def test_lock_now_shows_at_once_and_unlocking_ends_it(env):
+    from aide.lockwatch import LockWatcher
+    from aide.locks import LockStore
+    db, _, live, apns = env
+    locks = LockStore(db.conn, ROME)
+    watcher = LockWatcher(db.conn, ROME, locks, live)
+    locks.on_change.append(watcher.poke)
+    live.set_start_token("lock", START, "sandbox")
+    task = asyncio.create_task(watcher.run())
+    await asyncio.sleep(0)
+    lock = locks.lock_for("Focus", minutes=45)
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if apns.requests:
+            break
+    task.cancel()
+    [start] = aps(apns)
+    assert start["alert"]["body"].startswith("Locked until ") and start["content-state"]["strict"] is False
+    live.register(start["attributes"]["key"], ACTIVITY, "sandbox")
+    locks.unlock(lock["id"], "Need the maps")
+    await watcher.tick(datetime.now(timezone.utc))
+    end = aps(apns)[-1]
+    assert end["event"] == "end" and end["content-state"]["over"] is True
+    assert end["dismissal-date"] <= int(time.time()) + 1  # unlocked early: gone at once
+
+
+async def test_no_lock_countdown_when_turned_off_or_nearly_over(env):
+    from aide.lockwatch import LockWatcher
+    from aide.locks import LockStore
+    db, _, live, apns = env
+    locks = LockStore(db.conn, ROME)
+    watcher = LockWatcher(db.conn, ROME, locks, live)
+    live.set_start_token("lock", START, "sandbox")
+    eleven = datetime(2026, 10, 27, 23, 0, tzinfo=ROME)
+    locks.schedule("Bedtime", "23:00", "07:00", [], now=utc(eleven - timedelta(hours=1)))
+    live.update_settings(locks=False)
+    await watcher.tick(utc(eleven + timedelta(minutes=1)))
+    assert apns.requests == []
+    live.update_settings(locks=True)
+    await watcher.tick(utc(eleven + timedelta(hours=7, minutes=59)))
+    assert apns.requests == []  # a minute left
+    await watcher.tick(utc(eleven + timedelta(minutes=2)))
+    assert len(apns.requests) == 1

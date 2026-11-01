@@ -798,7 +798,7 @@ final class APIClient {
         try await send("PATCH", "/v1/live/settings", body: settings)
     }
 
-    /// A push-to-start token for one kind of Live Activity (`tram`, `agent`, `event`).
+    /// A push-to-start token for one kind of Live Activity (`tram`, `agent`, `event`, `lock`).
     func registerLiveToken(kind: String, token: String, environment: String) async throws {
         let _: OKResponse = try await send("POST", "/v1/live/tokens",
                                            body: LiveToken(kind: kind, token: token, environment: environment))

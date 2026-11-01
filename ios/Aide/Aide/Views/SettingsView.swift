@@ -447,13 +447,18 @@ private struct NotificationSettingsView: View {
             }
             if let live {
                 Section {
-                    Toggle("Next event", isOn: Binding(get: { live.events }, set: { on in Task { await setEvents(on) } }))
+                    Toggle("Next event", isOn: Binding(get: { live.events }, set: { on in Task { await set(events: on) } }))
                         .tint(Theme.toggle)
+                    if let locks = live.locks {
+                        Toggle("Screen Time locks", isOn: Binding(get: { locks }, set: { on in Task { await set(locks: on) } }))
+                            .tint(Theme.toggle)
+                    }
                 } header: {
                     Text("Lock Screen")
                 } footer: {
                     Text("10 minutes before an event on your Work calendar, a countdown to it on the Lock Screen and in "
-                         + "the Dynamic Island, with where it is. Not when a tram alert is taking you there: the tram's shows then.")
+                         + "the Dynamic Island, with where it is. Not when a tram alert is taking you there: the tram's shows then."
+                         + (live.locks == nil ? "" : " While a lock holds, the time left until it opens."))
                 }
             }
         }
@@ -464,12 +469,15 @@ private struct NotificationSettingsView: View {
         .task { live = try? await env.api.liveSettings() }
     }
 
-    private func setEvents(_ on: Bool) async {
-        live?.events = on
+    /// One switch at a time; the other is left out, so the server keeps it.
+    private func set(events: Bool? = nil, locks: Bool? = nil) async {
+        guard let before = live else { return }
+        live?.events = events ?? before.events
+        live?.locks = locks ?? before.locks
         do {
-            live = try await env.api.updateLiveSettings(LiveSettings(events: on))
+            live = try await env.api.updateLiveSettings(LiveSettings(events: events ?? before.events, locks: locks))
         } catch {
-            live?.events = !on
+            live = before
         }
     }
 }

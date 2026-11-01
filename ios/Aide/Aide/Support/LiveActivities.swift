@@ -32,6 +32,7 @@ final class LiveActivities {
         watch(TramActivityAttributes.self, kind: "tram", key: \.key)
         watch(AgentActivityAttributes.self, kind: "agent", key: \.key)
         watch(EventActivityAttributes.self, kind: "event", key: \.key)
+        watch(LockActivityAttributes.self, kind: "lock", key: \.key)
         checkTrams()
         Task {
             for await on in ActivityAuthorizationInfo().activityEnablementUpdates where !on {
@@ -39,6 +40,7 @@ final class LiveActivities {
                 try? await api.deleteLiveToken(kind: "tram")
                 try? await api.deleteLiveToken(kind: "agent")
                 try? await api.deleteLiveToken(kind: "event")
+                try? await api.deleteLiveToken(kind: "lock")
             }
         }
     }
@@ -87,6 +89,7 @@ final class LiveActivities {
         resend(TramActivityAttributes.self, key: \.key)
         resend(AgentActivityAttributes.self, key: \.key)
         resend(EventActivityAttributes.self, key: \.key)
+        resend(LockActivityAttributes.self, key: \.key)
     }
 
     private func resend<A: ActivityAttributes>(_: A.Type, key: KeyPath<A, String>) {
@@ -165,6 +168,10 @@ final class LiveActivities {
             end(activity, key: activity.attributes.key)
         }
         for activity in Activity<EventActivityAttributes>.activities where activity.activityState == .stale {
+            end(activity, key: activity.attributes.key)
+        }
+        for activity in Activity<LockActivityAttributes>.activities
+        where activity.content.state.over || activity.activityState == .stale {
             end(activity, key: activity.attributes.key)
         }
     }
