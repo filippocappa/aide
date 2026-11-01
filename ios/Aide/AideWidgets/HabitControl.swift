@@ -9,7 +9,7 @@ struct HabitControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         AppIntentControlConfiguration(kind: "LogHabit", intent: HabitControlConfiguration.self) { config in
             ControlWidgetButton(action: LogHabitIntent(habit: config.habit ?? HabitEntity(id: 0, name: "Habit"))) {
-                Label(config.habit?.name ?? "Log one", systemImage: "plus.circle")
+                Label(config.habit?.name ?? "Log one", systemImage: "plus")
             }
         }
         .displayName("Log one")

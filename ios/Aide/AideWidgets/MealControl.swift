@@ -9,7 +9,7 @@ struct MealPhotoControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "MealPhoto") {
             ControlWidgetButton(action: LogMealIntent(way: .photo)) {
-                Label("Snap a meal", systemImage: "fork.knife.circle.fill")
+                Label("Snap a meal", systemImage: "fork.knife")
             }
         }
         .displayName("Snap a meal")
