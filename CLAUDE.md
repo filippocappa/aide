@@ -484,7 +484,7 @@ Activity's "Waiting for you" (Send, Edit, Dismiss), an editor sheet, and "Replie
 `docs/API.md`, "Live Activities" and "Widgets"). Server (live, `live.py`): push-to-start and update tokens
 (`/v1/live/tokens`, `/v1/live/activities`), the `liveactivity` sender; a tram alert starts a countdown instead of
 the plain push when there's a start token, updated as the live feed moves; chat and team turns update the agent's
-activity (asking, writing, then done with an alert ~3 s after, unless the app ended it); scheduled routines start one
+activity (asking, writing, then done with an alert ~3 s after, unless the app ended it: the island pops open with the reply and stays 15 min to be tapped, the push quiet, since 2026-11-02); scheduled routines start one
 quietly. `POST /v1/reminders/{id}/complete` and `GET /v1/transit/nearby` for the widgets. App: `AideWidgets`
 extension (App Group `group.<bundle id>` shares the keychain items and a cache of the last answers): Today, Food and
 habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departures; tick boxes through App Intents;

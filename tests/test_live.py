@@ -301,6 +301,7 @@ async def test_without_a_start_token_the_plain_push_goes(env, timetable):  # noq
 def quick(monkeypatch):
     monkeypatch.setattr(live_mod, "SETTLE", 0)
     monkeypatch.setattr(live_mod, "THROTTLE", 0)
+    monkeypatch.setattr(live_mod, "DONE_FOR", 0)
 
 
 async def test_an_agent_turn_asks_writes_and_finishes(env, quick):
@@ -316,18 +317,45 @@ async def test_an_agent_turn_asks_writes_and_finishes(env, quick):
     await settle()
     turn.finished("You slept well.\n\nMore below.")
     await settle()
-    asking, writing, end, message = apns.payloads()
+    asking, writing, popped, message, end = apns.payloads()
     assert asking["aps"]["content-state"] == {"status": "asking", "detail": "Asking Coach", "text": "",
                                               "since": turn.since}
     assert writing["aps"]["content-state"]["status"] == "writing"
-    # Over: the activity goes at once, with no alert, and the reply is one plain push that stays.
-    assert end["aps"]["event"] == "end" and "alert" not in end["aps"]
-    assert end["aps"]["content-state"] == {"status": "done", "detail": "", "text": "You slept well.",
-                                           "since": turn.since}
-    assert end["aps"]["dismissal-date"] <= int(time.time())
+    # Over: the island pops open with the reply (an update with an alert), the push that goes with it is quiet...
+    done = {"status": "done", "detail": "", "text": "You slept well.", "since": turn.since}
+    assert popped["aps"]["event"] == "update" and popped["aps"]["content-state"] == done
+    assert popped["aps"]["alert"] == {"title": "Aide", "body": "You slept well."}
     assert message["aps"]["alert"] == {"title": "Aide", "body": "You slept well."}
+    assert message["aps"]["interruption-level"] == "passive" and "sound" not in message["aps"]
     assert message["aide"] == {"kind": "message", "conversation_id": "c1"}
+    # ...and after a while, untapped, it ends.
+    assert end["aps"]["event"] == "end" and end["aps"]["content-state"] == done and "alert" not in end["aps"]
+    assert end["aps"]["dismissal-date"] <= int(time.time())
     assert live.token("agent:c1") is None
+
+
+async def test_a_finished_reply_stays_until_the_app_opens(env, quick, monkeypatch):
+    db, _, live, apns = env
+    monkeypatch.setattr(live_mod, "DONE_FOR", 0.3)
+    live.register("agent:c1", ACTIVITY, "sandbox")
+    live.turn("c1", "coach").finished("Done.")
+    await asyncio.sleep(0.1)
+    assert [a["event"] for a in aps(apns)] == ["update"]
+    live.remove("agent:c1")  # the app opened and ended it itself
+    await settle()
+    assert [a["event"] for a in aps(apns)] == ["update"]
+    assert db.conn.execute("SELECT COUNT(*) FROM live_done").fetchone()[0] == 0
+    # A restart in the meantime ends it as it was, not "Interrupted".
+    done = {"status": "done", "detail": "", "text": "All set.", "since": 1}
+    live.register("agent:c2", ACTIVITY, "sandbox")
+    db.conn.execute("INSERT INTO live_done (key, state) VALUES (?, ?)", ("agent:c2", json.dumps(done)))
+    assert await live.sweep() == 1
+    assert aps(apns)[-1]["event"] == "end" and aps(apns)[-1]["content-state"] == done
+    task = asyncio.create_task(live.turn("c2", "coach")._finish("All set.", "coach"))
+    await settle()
+    task.cancel()
+    db.conn.execute("INSERT OR REPLACE INTO live_done (key, state) SELECT key, state FROM live_done")
+    live.register("agent:c2", ACTIVITY, "sandbox")
 
 
 async def test_updates_are_throttled_to_the_latest(env, quick, monkeypatch):
@@ -366,14 +394,16 @@ async def test_a_reply_after_the_app_hung_up_comes_as_a_push(env, quick):
     [p] = apns.payloads()
     assert p["aps"]["alert"] == {"title": "Professor", "body": "Here's the plan."}
     assert p["aide"] == {"kind": "message", "conversation_id": "c1"}
-    # With the activity still there, it ends at once and the push is the one notification.
+    # With the activity still there, it pops open with the reply and the push is quiet.
     live.register("agent:c1", ACTIVITY, "sandbox")
     turn = live.turn("c1", "professor")
     turn.listening = False
     turn.finished("Done.")
     await settle()
-    assert [r.url.path for r in apns.requests[1:]] == [f"/3/device/{ACTIVITY}", f"/3/device/{'e5' * 32}"]
-    assert "alert" not in apns.payloads()[1]["aps"]
+    assert [r.url.path for r in apns.requests[1:]] == [f"/3/device/{ACTIVITY}", f"/3/device/{'e5' * 32}",
+                                                       f"/3/device/{ACTIVITY}"]
+    assert apns.payloads()[1]["aps"]["alert"] == {"title": "Professor", "body": "Done."}
+    assert apns.payloads()[2]["aps"]["interruption-level"] == "passive"
 
 
 async def test_a_turn_that_started_an_errand_hands_over_quietly(env, quick):
@@ -383,17 +413,19 @@ async def test_a_turn_that_started_an_errand_hands_over_quietly(env, quick):
     live.register("agent:c1", ACTIVITY, "sandbox")
     live.turn("c1", "aide").finished("On it.")
     await settle()
-    assert [r.url.path for r in apns.requests] == [f"/3/device/{ACTIVITY}", f"/3/device/{'e5' * 32}"]
+    assert [r.url.path for r in apns.requests] == [f"/3/device/{ACTIVITY}", f"/3/device/{'e5' * 32}",
+                                                   f"/3/device/{ACTIVITY}"]
     live.set_start_token("agent", START, "sandbox")
     live.handed_over("c1")
     live.register("agent:c1", ACTIVITY, "sandbox")
     live.turn("c1", "aide").finished("On it: I'm opening Glovo.")
     await settle()
-    assert [a["event"] for a in aps(apns)[2:]] == ["end"]  # the errand's activity is what comes next
+    assert [a["event"] for a in aps(apns)[3:]] == ["end"]  # the errand's activity is what comes next, no pop
+    assert "alert" not in aps(apns)[-1]
     live.register("agent:c1", ACTIVITY, "sandbox")
     live.turn("c1", "aide").finished("Anything else?")  # once
     await settle()
-    assert len(apns.requests) == 5
+    assert len(apns.requests) == 7  # once more: pop, quiet push, end
 
 
 async def test_a_failed_turn_ends_without_an_alert(env, quick):
@@ -414,14 +446,14 @@ def test_chat_and_team_chat_push_to_the_registered_key(env, quick):
         assert c.post("/v1/live/activities", json={"key": "agent:main", "token": ACTIVITY,
                                                     "environment": "sandbox"}, headers=AUTH).json() == {"ok": True}
         assert c.post("/v1/chat", json={"text": "my day?"}, headers=AUTH).status_code == 200
-        wait_for(apns, 1)
-        assert [p["event"] for p in aps(apns)] == ["end"]
+        wait_for(apns, 2)
+        assert [p["event"] for p in aps(apns)] == ["update", "end"]  # popped open with the reply, then gone
         assert aps(apns)[0]["content-state"]["text"] == "Here's your day."
         c.post("/v1/live/activities", json={"key": "agent:team", "token": ACTIVITY, "environment": "sandbox"},
                headers=AUTH)
         assert c.post("/v1/team", json={"text": "@coach status?"}, headers=AUTH).status_code == 200
-        wait_for(apns, 2)
-        assert aps(apns)[1]["content-state"]["text"] == "All good from me."
+        wait_for(apns, 4)
+        assert aps(apns)[2]["content-state"]["text"] == "All good from me."
         # With the app open, it deletes the key first: nothing goes.
         c.post("/v1/live/activities", json={"key": "agent:main", "token": ACTIVITY, "environment": "sandbox"},
                headers=AUTH)

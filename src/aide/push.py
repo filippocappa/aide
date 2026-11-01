@@ -218,11 +218,17 @@ class Push:
         title = DIGEST_TITLES.get(kind) or f"{month or datetime.now():%B}"
         return await self._alert("digest", title, greeting, digest=kind)
 
-    async def send_message(self, conversation_id: str, title: str, body: str, routine: int | None = None) -> bool:
-        """`routine`: a routine's or watch's post, which the app shows as a note on Today."""
-        return await self._alert("message", title, body, collapse=f"message-{conversation_id}",
-                                 conversation_id=conversation_id,
-                                 **({"routine": routine} if routine is not None else {}))
+    async def send_message(self, conversation_id: str, title: str, body: str, routine: int | None = None,
+                           quiet: bool = False) -> bool:
+        """`routine`: a routine's or watch's post, which the app shows as a note on Today. `quiet`: no sound and no
+        banner (passive), only in Notification Center: the Dynamic Island already popped open with the reply."""
+        payload = self._alert_payload("message", title, body, "passive" if quiet else None,
+                                      conversation_id=conversation_id,
+                                      **({"routine": routine} if routine is not None else {}))
+        if quiet:
+            payload["aps"].pop("sound", None)
+        sent, _ = await self.send(payload, collapse=f"message-{conversation_id}")
+        return sent > 0
 
     async def send_lecture(self, lecture_id: str, title: str, body: str) -> bool:
         return await self._alert("lecture", title, body, lecture_id=lecture_id)
