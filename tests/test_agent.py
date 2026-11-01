@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from aide.agent import Agent
+from aide.agent import Agent, _drop_old_thinking
 from aide.db import Database
 from aide.tools import Tool, ToolRegistry
 
@@ -191,3 +191,39 @@ def test_a_search_match_is_cut_around_the_words():
     assert cut.startswith("…") and cut.endswith("…") and "The dentist is on Friday" in cut
     assert len(cut) < 130 and "\n" not in cut
     assert _snippet("dentist friday", "friday") == "dentist friday"
+
+
+def test_drop_old_thinking_keeps_everything_else():
+    history = [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "", "signature": "s"},
+                                          {"type": "tool_use", "id": "t1", "name": "echo", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "r"}]},
+        {"role": "assistant", "content": [{"type": "redacted_thinking", "data": "x"}]},
+        {"role": "user", "content": "q2"},
+        {"role": "assistant", "content": "plain"},
+    ]
+    before = repr(history)
+    out = _drop_old_thinking(history)
+    assert out[1]["content"] == [{"type": "tool_use", "id": "t1", "name": "echo", "input": {}}]
+    assert out[3]["content"] == [{"type": "text", "text": "(no reply)"}]  # thinking only: still a message
+    assert [out[i] for i in (0, 2, 4, 5)] == [history[i] for i in (0, 2, 4, 5)]
+    assert repr(history) == before  # a copy: stored history is untouched
+
+
+async def test_old_thinking_is_not_sent_on_later_turns(db):
+    thinking = Block(type="thinking", thinking="", signature="sig")
+    agent, client = make_agent(db, [
+        ("tool_use", [thinking, tool_use("t1", "echo", {"word": "a"})]),
+        ("end_turn", [text("done")]),
+        ("end_turn", [text("again")]),
+    ])
+    await agent.reply("discord", "first")
+    await agent.reply("discord", "second")
+    kinds = lambda request: [b.get("type") for m in request["messages"] if isinstance(m["content"], list)  # noqa: E731
+                             for b in m["content"]]
+    assert "thinking" in kinds(client.requests[1])  # within the turn it goes back
+    assert "thinking" not in kinds(client.requests[2])  # the next turn leaves it out
+    assert "tool_use" in kinds(client.requests[2])
+    conv = db.current_conversation("discord", timedelta(hours=1))
+    assert db.history(conv)[1]["content"][0]["type"] == "thinking"  # stored whole
