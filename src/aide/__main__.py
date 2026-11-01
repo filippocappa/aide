@@ -47,6 +47,7 @@ from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
 from .videos import VideoStore, VideoWorker
 from .weight import WeightStore
+from .finance import FinanceStore
 from .webdav import USER as WEBDAV_USER
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
@@ -58,6 +59,7 @@ from .tools.habits import habit_tools
 from .tools.locks import lock_tools
 from .tools.health import health_tools
 from .tools.weight import weight_tools
+from .tools.finance import finance_tools
 from .tools.mail import draft_tools, mail_tools
 from .tools.maps import GoogleMaps, maps_tools
 from .tools.reminders import reminder_tools
@@ -133,6 +135,11 @@ def main() -> None:
     if not engine.available:
         log.info("Claude Code not found: notes are written through OpenRouter only")
     tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
+
+    async def finance_ask(system, text):  # sorting new merchants: the fast model, never waiting at the plan's limit
+        return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, background=True)
+    finance = FinanceStore(db.conn, settings.timezone, finance_ask)
+    tools += finance_tools(finance)
     quizzes = QuizStore(notebook)
 
     async def lesson_ask(system, content, max_tokens, fast, live):  # the plan first; live calls never wait at its limit
@@ -309,7 +316,7 @@ def main() -> None:
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off,
-                             weights=weights, videos=videos, lessons=lessons)
+                             weights=weights, videos=videos, lessons=lessons, finance=finance)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

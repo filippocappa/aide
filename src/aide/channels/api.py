@@ -6,7 +6,7 @@ import hmac
 import json
 import logging
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Awaitable, Callable, Literal
 from zoneinfo import ZoneInfo
 
@@ -55,6 +55,7 @@ from ..transit import AlertStore, Boards, Location
 from ..videos import VideoWorker, find_link
 from ..wake import WakeService
 from ..weight import WeightStore
+from ..finance import CATEGORIES as FINANCE_CATEGORIES, NOT_SPENDING, FinanceStore, parse_amount
 
 log = logging.getLogger(__name__)
 
@@ -391,6 +392,32 @@ class WeightIn(BaseModel):
     at: datetime | None = None  # UTC offset required; omit for now
 
 
+class PaymentIn(BaseModel):
+    amount: str | float  # money out, as Wallet gives it ("€4.50", "4,50 €") or a number; `income` for money in
+    merchant: str = Field(min_length=1, max_length=200)
+    card: str | None = Field(None, max_length=100)  # the card or pass Wallet names
+    at: datetime | None = None  # UTC offset required; omit for now
+    source: Literal["wallet", "manual"] = "wallet"
+    income: bool = False
+    category: str | None = None
+    place: str | None = Field(None, max_length=200)
+    lat: float | None = None
+    lon: float | None = None
+    note: str | None = Field(None, max_length=500)
+
+
+class PaymentPatch(BaseModel):
+    category: str | None = None
+    merchant: str | None = Field(None, max_length=200)
+    note: str | None = Field(None, max_length=500)
+    remember: bool = True  # a new category becomes the merchant's rule
+
+
+class BudgetIn(BaseModel):
+    monthly: float | None = None  # absent: unchanged; null: no monthly budget
+    categories: dict[str, float | None] = {}  # null removes a category's budget
+
+
 class InsightIn(BaseModel):
     kind: Literal["sleep", "recovery", "strain"]
     day: date | None = Field(None, alias="date")  # local date; omit for today
@@ -584,7 +611,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                errand_store: ErrandStore | None = None, plans: PlanStore | None = None,
                foods: FoodDB | None = None, off: OpenFoodFacts | None = None,
                weights: WeightStore | None = None, videos: VideoWorker | None = None,
-               lessons: LessonStore | None = None) -> FastAPI:
+               lessons: LessonStore | None = None, finance: FinanceStore | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -598,6 +625,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     nutrition = Nutrition(food, health)
     health.age = lambda: nutrition.targets()["profile"].get("age")
     weights = weights or WeightStore(db.conn, tz, health)
+    finance = finance or FinanceStore(db.conn, tz)
     if habits.health_days is None:  # limit habits count from Apple Health
         habits.health_days = health
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
@@ -2318,6 +2346,99 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if not weights.delete(weight_id):
             raise HTTPException(404, "no such weight")
         return {"ok": True, "summary": weights.summary()}
+
+    # -- Finance (docs/API.md, "Finance") ------------------------------------------------------------
+
+    sorting: set[asyncio.Task] = set()
+
+    def sort_soon() -> None:  # new merchants go to the model in the background; the Shortcut doesn't wait
+        task = asyncio.create_task(finance.sort_pending())
+        sorting.add(task)
+        task.add_done_callback(sorting.discard)
+
+    def payment(tx_id: int) -> dict:
+        try:
+            return finance.find(tx_id)
+        except KeyError:
+            raise HTTPException(404, "no such payment") from None
+
+    @app.get("/v1/finance/categories", dependencies=[Depends(auth)])
+    async def finance_categories():
+        return {"categories": [{"id": k, "name": v[0], "spending": k not in NOT_SPENDING}
+                               for k, v in FINANCE_CATEGORIES.items()]}
+
+    @app.post("/v1/finance/payments", dependencies=[Depends(auth)])
+    async def log_payment(body: PaymentIn):
+        if body.at is not None and body.at.tzinfo is None:
+            raise HTTPException(400, "at needs a UTC offset")
+        try:
+            amount = abs(parse_amount(body.amount) if isinstance(body.amount, str) else body.amount)
+            tx, new = finance.add(amount if body.income else -amount, body.merchant, account=body.card, at=body.at,
+                                  source=body.source, category=body.category or ("income" if body.income else None),
+                                  place=body.place, lat=body.lat, lon=body.lon,
+                                  raw=body.amount if isinstance(body.amount, str) else None, note=body.note)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        if new and tx["sorted_by"] == "none":
+            sort_soon()
+        return {"payment": tx, "new": new}
+
+    @app.get("/v1/finance/payments", dependencies=[Depends(auth)])
+    async def list_payments(limit: int = Query(50, ge=1, le=500), before: datetime | None = None,
+                            category: str | None = None):
+        if category is not None and category not in FINANCE_CATEGORIES:
+            raise HTTPException(400, "unknown category")
+        rows = finance.recent(limit + 1, before.astimezone(timezone.utc).isoformat() if before else None, category)
+        return {"payments": rows[:limit], "more": len(rows) > limit}
+
+    @app.get("/v1/finance/payments/{tx_id}", dependencies=[Depends(auth)])
+    async def get_payment(tx_id: int):
+        tx = payment(tx_id)
+        return {"payment": tx, "merchant": finance.merchant_history(tx)}
+
+    @app.patch("/v1/finance/payments/{tx_id}", dependencies=[Depends(auth)])
+    async def patch_payment(tx_id: int, body: PaymentPatch):
+        payment(tx_id)
+        try:
+            tx = finance.update(tx_id, category=body.category, merchant=body.merchant, note=body.note,
+                                remember=body.remember)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"payment": tx}
+
+    @app.delete("/v1/finance/payments/{tx_id}", dependencies=[Depends(auth)])
+    async def delete_payment(tx_id: int):
+        if not finance.delete(tx_id):
+            raise HTTPException(404, "no such payment")
+        return {"ok": True}
+
+    @app.get("/v1/finance/month", dependencies=[Depends(auth)])
+    async def finance_month(month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$")):
+        try:
+            return finance.month(month)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.get("/v1/finance/accounts", dependencies=[Depends(auth)])
+    async def finance_accounts():
+        return {"accounts": finance.accounts()}
+
+    @app.get("/v1/finance/subscriptions", dependencies=[Depends(auth)])
+    async def finance_subscriptions():
+        return finance.subscriptions()
+
+    @app.get("/v1/finance/budget", dependencies=[Depends(auth)])
+    async def get_budget():
+        return finance.budget()
+
+    @app.put("/v1/finance/budget", dependencies=[Depends(auth)])
+    async def put_budget(body: BudgetIn):
+        try:
+            if "monthly" in body.model_fields_set:
+                return finance.set_budget(body.monthly, body.categories)
+            return finance.set_budget(categories=body.categories)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
 
     @app.post("/v1/wake", dependencies=[Depends(auth)])
     async def wake_up(body: WakeIn | None = None):

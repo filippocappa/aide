@@ -80,6 +80,8 @@ from the tools the assistant used in that turn, not parsed from its text:
   own: the first one follows the errand to its end.
 - `purchases`: an order an errand placed (since 2026-10-27; see Browser errands), `{"type": "purchases",
   "purchases": [Purchase]}`, on the errand's last message and when Finance lists them.
+- `payments`: payments Finance logged, listed or re-sorted (since 2026-11-01; see Finance), `{"type": "payments",
+  "payments": [Payment]}`, at most 12, newest first.
 - `products`: what an errand found, best first (since 2026-10-28; see Browser errands), `{"type": "products",
   "errand_id": 7, "site": "amazon.it", "products": [Product]}`, on the errand's closing message. The text above it
   is short (which one and why); the cards carry names, prices and links.
@@ -2206,6 +2208,82 @@ and videos over 4 hours. A restart puts a video being read back in the queue.
 Each ready video is also a page in the Obsidian vault, `Aide/Videos/<title>.md`: the link, channel and date, your
 question and its answer, the TL;DR, what to know, the moments with their times (links to YouTube) and frames
 (`Aide/Videos/Frames/`), the takeaway, and the transcript folded.
+
+## Finance
+
+Since 2026-11-01 (#31, step 1). The user's payments, sorted into categories, for Finance and the Money tab. They come
+from the Wallet: a Shortcuts automation (Transaction: when I tap any card) runs the app's **Log payment** App Intent
+with the card, the merchant and the amount, and the app posts it here. Bank sync (PSD2) and statements come later
+(`source` `bank` and `statement`). Aide never moves money; nothing here does.
+
+Amounts are euros, **negative when money goes out**. Spending is every payment except `income` and `transfer` (between
+the user's own accounts); a refund (positive, not income) takes from its category.
+
+| Endpoint | Body / query | Response |
+|---|---|---|
+| `POST /v1/finance/payments` | PaymentIn | `{"payment": Payment, "new": true}`; 400 for no amount, no merchant, a future time or an unknown category |
+| `GET /v1/finance/payments` | `?limit=50` (1–500), `?before=` (a payment's `at`, for the next page), `?category=` | `{"payments": [Payment], "more": false}`, newest first |
+| `GET /v1/finance/payments/{id}` | | `{"payment": Payment, "merchant": {"count": 4, "month_total": 31.5, "recent": [Payment]}}` (the merchant's other payments: how many, this month's total spent, the last 5); 404 |
+| `PATCH /v1/finance/payments/{id}` | `{"category": "eating_out", "merchant": "…", "note": "…", "remember": true}`, each optional | `{"payment": Payment}`; 400 for an unknown category, 404 |
+| `DELETE /v1/finance/payments/{id}` | | `{"ok": true}`; 404 |
+| `GET /v1/finance/month` | `?month=2026-10` (default this month) | Month; 400 for a month not yet started |
+| `GET /v1/finance/accounts` | | `{"accounts": [Account]}` |
+| `GET /v1/finance/subscriptions` | | `{"subscriptions": [Subscription], "monthly_total": 24.3}`, next charge first |
+| `GET /v1/finance/budget` | | Budget |
+| `PUT /v1/finance/budget` | `{"monthly": 600, "categories": {"eating_out": 80, "fun": null}}` | Budget; `monthly` absent leaves it, `null` removes it; a category's `null` removes its budget; 400 for ≤ 0 or `income`/`transfer` |
+| `GET /v1/finance/categories` | | `{"categories": [{"id": "groceries", "name": "Groceries", "spending": true}]}` |
+
+- **PaymentIn:** `{"amount": "€4,50", "merchant": "Bar Roma", "card": "Revolut", "at": "2026-11-01T08:12:00+01:00",
+  "source": "wallet", "income": false, "category": null, "place": null, "lat": null, "lon": null, "note": null}`.
+  Only `amount` and `merchant` are needed. `amount` is money out, as Wallet writes it (`"€4.50"`, `"4,50 €"`,
+  `"1.234,56"`) or a number; `income: true` for money in. `card` is the card or pass Wallet names; the first payment
+  with a new one makes its Account. `at` needs a UTC offset (default now). `source` is `wallet` (the default) or
+  `manual`. `category` only when the user picked it (it becomes the merchant's rule). **The same card, merchant and
+  amount within 3 minutes is one tap told twice:** the answer is the first one with `"new": false`.
+- **Payment:** `{"id": 12, "at": "2026-11-01T07:12:00+00:00", "amount": -4.5, "currency": "EUR", "merchant": "Bar
+  Roma", "category": "eating_out", "sorted_by": "rule", "source": "wallet", "account": "Revolut", "account_id": 1,
+  "place": null, "lat": null, "lon": null, "note": null}`. `sorted_by` is `user` (picked or corrected), `rule` (the
+  merchant's rule), `model` (the model's first answer for it) or `none` (not sorted yet: `category` is `other` for now).
+- **Categories:** `groceries`, `eating_out`, `transport`, `shopping`, `subscriptions`, `bills`, `health`, `study`,
+  `travel`, `fun`, `cash`, `income`, `transfer`, `other`. Their icons are the app's.
+- **Sorting.** A merchant's rule first: the user's correction, else the model's earlier answer for it (a rule also
+  covers the same merchant at another shop: "esselunga" for "ESSELUNGA via Nizza 12"). A new merchant goes to the fast
+  model in the background (one call for every merchant waiting), so a payment can come back `none` and be sorted a
+  few seconds later. A new `category` on PATCH is the user's rule from then on and moves the merchant's other payments
+  that the user didn't sort by hand; `"remember": false` changes that one alone.
+- **Month:**
+  ```json
+  {"month": "2026-11", "current": true, "day": 10, "days": 30, "days_left": 21, "spent": 412.3, "income": 300,
+   "count": 38, "budget": 600, "left": 187.7, "per_day": 8.94, "pace": 200, "ahead": true,
+   "last_month": {"month": "2026-10", "by_now": 380.1, "total": 902.4},
+   "categories": [Category], "line": "€187.70 left for 21 days, about €8.94 a day."}
+  ```
+  The current month counts to today (`day`); a past one is whole (`days_left` 0). `budget`, `left`, `per_day` and
+  `pace` (the budget's share by today) are `null` without a monthly budget; `per_day` is also `null` once over.
+  `ahead`: spent is more than 10% over `pace`. `last_month.by_now` is the month before up to the same day (`null`
+  with no payments before this month), the comparison when there's no budget. `line` is Finance's line over the page
+  (no model call).
+- **Category** (spending only, most spent first): `{"id": "eating_out", "name": "Eating out", "spent": 50,
+  "budget": 60, "pace": 19.35, "ahead": true, "over": false, "last_by_now": 22, "last_total": 75}`. Every category
+  with spending this month or last, or a budget. `budget`, `pace` (its share by today) are `null` without one;
+  `ahead` is more than 10% and €5 past the pace; `over` is past the budget.
+- **Budget:** `{"monthly": 600, "categories": {"eating_out": 80}}`, `monthly` `null` when there's none. **A budget is
+  optional:** without one the Money page compares with last month by the same day, and being over is said once in
+  words, never louder.
+- **Account:** `{"id": 1, "name": "Revolut", "kind": "card", "source": "wallet", "currency": "EUR", "balance": null,
+  "balance_at": null, "consent_until": null, "status": "wallet", "last_at": "…", "count": 41, "spent_month":
+  210.4}`. `status` is where its payments come from (`wallet` now; `bank` with a consent date later). `balance` comes
+  with bank sync.
+- **Subscription:** `{"merchant": "Spotify", "amount": 11.99, "period": "month", "category": "subscriptions",
+  "account": "Hype", "last": "2026-11-03", "next": "2026-12-03", "count": 4, "monthly": 11.99, "price_was": 10.99}`.
+  Charges that repeat each week, month or year at about the same price (within 20%), or a single charge sorted as a
+  subscription (monthly until it shows otherwise); dropped when one is 1.5 periods late. `price_was` is the charge
+  before when it was different, else `null`.
+- **Finance** has `log_payment` (cash, a transfer; Apple Pay taps come in by themselves), `list_payments` (a
+  `payments` card), `spending`, `recategorize`, `set_budget` (only when asked), `subscriptions` and `delete_payment`
+  (queued). Its starters: "How much have I spent this month?", "What subscriptions do I have?", "I spent ".
+- **Privacy.** Payments stay on `cappa` (and its backups) and never go in the logs. The model sees only merchant names
+  when sorting, and what Finance reads in chat.
 
 ## Usage
 

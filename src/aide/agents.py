@@ -26,6 +26,7 @@ WEB = ("web_search", "fetch_page")
 BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
 VIDEO = ("summarize_video", "read_video", "list_videos")
 PURCHASES = ("list_purchases",)
+FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budget", "subscriptions", "delete_payment")
 HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
 HEALTH = ("health",)
 WEIGHT = ("log_weight", "weight_trend", "delete_weight")
@@ -403,13 +404,17 @@ COACH_PROMPT = _prompt(
 )
 
 FINANCE_PROMPT = _prompt(
-    "You are Finance, one of the user's assistants: money and budgets. You are practical and careful. There is "
-    "no bank data: you know what the user tells you (income, spending, goals), so save what matters with "
-    "remember (your own scope) and keep the numbers straight; when they're missing, ask. What Aide ordered for "
-    "them on websites (Amazon, delivery, trains) is in list_purchases, with the totals: count it as spending. "
-    "Budgets are simple and "
-    "concrete. You give no investment advice beyond general principles (an emergency fund, diversification, "
-    "low fees, not betting money you need), and you never recommend specific securities.",
+    "You are Finance, one of the user's assistants: money and budgets. You are practical and careful, and the user "
+    "is a university student. Every Apple Pay tap comes in by itself (a Shortcuts automation on the phone) and is "
+    "sorted into a category; bank sync comes later. Read them with list_payments and spending, log what the user "
+    "tells you (cash, a transfer) with log_payment, and when they correct a category use recategorize, which "
+    "teaches the merchant for next time. What Aide ordered for them on websites (Amazon, delivery, trains) is in "
+    "list_purchases: those are paid by card, so they are usually already among the payments; don't add them twice. "
+    "A budget is optional and the user's choice: set one only when asked, and when they're over it say so once, "
+    "plainly, with what's left to do about it, never as a scolding. Without a budget, compare with last month by "
+    "the same day. Subscriptions shows what repeats. You give no investment advice beyond general principles (an "
+    "emergency fund, diversification, low fees, not betting money you need), you never recommend specific "
+    "securities, and you can never move money.",
     _BASICS, _QUEUE, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
@@ -469,9 +474,11 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                             *(i for _, a, i in _LATER_WATCHES if a == "coach")),
              reads_photos=True),
     AgentDef("finance", "Finance", "Money and budgets", "#B8921C",
-             ("Help me set a monthly budget", "I spent "), FINANCE_PROMPT, (*PURCHASES, *WEB),
-             routine_ideas=(_idea("Week's spending", "Ask me what I spent this week, then compare it with my budget "
-                                  "and say where I stand.", "19:00", (7,)),)),
+             ("How much have I spent this month?", "What subscriptions do I have?", "I spent "), FINANCE_PROMPT,
+             (*FINANCE, *PURCHASES, *WEB),
+             routine_ideas=(_idea("Week's spending", "Look at this week's payments and the month so far: where the "
+                                  "money went, anything unusual, and where I stand against last month (and my budget "
+                                  "if I have one).", "19:00", (7,)),)),
 )}
 
 SPECIALISTS = tuple(a for a in AGENTS if not AGENTS[a].orchestrator)
@@ -495,6 +502,7 @@ _CONNECTORS = (
     ("maps", "Google Maps", MAPS, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
     ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand"}),
+    ("payments", "Payments", FINANCE, {"log_payment", "recategorize", "set_budget", "delete_payment"}),
     ("purchases", "Purchases", PURCHASES, set()),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),
     ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
