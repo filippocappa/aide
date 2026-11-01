@@ -2,7 +2,8 @@ import SwiftUI
 
 /// The Screen section: where this Mac's time went, for a day, a week or a month, as the phone's Screen tab shows the
 /// phone's. The phone reads Apple's Screen Time; the Mac counts its own (`MacUsage`), so the page under the date is the
-/// phone's `UsageReportView` drawn from this Mac's days. Lock now in the corner, Locks and limits under the date.
+/// phone's `UsageReportView` drawn from this Mac's days. In the corner Lock now and the gear (Locks and limits, the
+/// page's settings); under the date a line only while a lock or a limit holds.
 struct MacScreenPage: View {
     @EnvironmentObject private var screenTime: ScreenTimeService
     @ObservedObject private var usage = MacUsage.shared
@@ -50,9 +51,15 @@ struct MacScreenPage: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             dateRow
-            locksRow
+            if let holding { holdingRow(holding) }
         } trailing: {
-            lockMenu
+            HStack(spacing: 10) {
+                lockMenu
+                Button { showLocks = true } label: { CornerIcon(systemImage: "gearshape") }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(",", modifiers: [.command, .shift])
+                    .help("Locks and limits (⇧⌘,)")
+            }
         }
     }
 
@@ -101,14 +108,20 @@ struct MacScreenPage: View {
         withAnimation(.snappy) { date = min(next, Calendar.current.startOfDay(for: Date())) }
     }
 
-    private var locksRow: some View {
+    /// What holds now: a lock until a time, or the limits used up today. Nothing when nothing does.
+    private var holding: String? {
+        if let (lock, until) = screenTime.current { return "\(lock.title): locked until \(MacScreenTimeView.time(until))" }
+        let used = screenTime.limits.filter { screenTime.holds($0) }
+        guard let first = used.first else { return nil }
+        return used.count == 1 ? "\(first.title) used up for today" : "\(used.count) limits used up for today"
+    }
+
+    private func holdingRow(_ text: String) -> some View {
         Button { showLocks = true } label: {
             HStack(spacing: 10) {
-                Image(systemName: screenTime.current == nil && screenTime.heldLimits.isEmpty ? "lock" : "lock.fill")
-                    .foregroundStyle(UsageColors.cyan[1])
-                Text("Locks and limits")
+                Image(systemName: "lock.fill").foregroundStyle(UsageColors.cyan[1])
+                Text(text).lineLimit(1)
                 Spacer()
-                Text(locksValue).foregroundStyle(.secondary).lineLimit(1)
                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 14)
@@ -117,29 +130,14 @@ struct MacScreenPage: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    private var locksValue: String {
-        if let (_, until) = screenTime.current { return "Locked until \(MacScreenTimeView.time(until))" }
-        let used = screenTime.limits.filter { screenTime.holds($0) }
-        if let first = used.first {
-            return used.count == 1 ? "\(first.title) used up today" : "\(used.count) limits used up today"
-        }
-        let next = screenTime.locks.compactMap { lock in LockClock.date(lock.next).map { (lock, $0) } }
-            .filter { $0.1 > Date() }.min { $0.1 < $1.1 }
-        if let (lock, at) = next { return "\(lock.title) at \(MacScreenTimeView.time(at))" }
-        let locks = screenTime.locks.filter { !$0.once && $0.id >= 0 }.count
-        let limits = screenTime.limits.count
-        if locks + limits == 0 { return "None yet" }
-        return [locks > 0 ? "\(locks) lock\(locks == 1 ? "" : "s")" : nil,
-                limits > 0 ? "\(limits) limit\(limits == 1 ? "" : "s")" : nil].compactMap { $0 }.joined(separator: ", ")
+        .transition(.opacity)
     }
 
     private var lockMenu: some View {
         Menu {
             if let (lock, until) = screenTime.current {
                 Section("\(lock.title): locked until \(MacScreenTimeView.time(until))") {
-                    Button("Locks and limits") { showLocks = true }
+                    Button("Locks and limits…") { showLocks = true }
                 }
             } else {
                 Section("Lock now: \(usualNames)") {

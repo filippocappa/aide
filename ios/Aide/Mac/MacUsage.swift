@@ -194,7 +194,8 @@ final class MacUsage: ObservableObject {
         Set(limitApps.filter { $0.value.contains(id) || !$0.value.isDisjoint(with: playing) }.keys)
     }
 
-    private static let ignored: Set<String> = ["com.apple.loginwindow", "com.apple.ScreenSaver.Engine"]
+    private static let ignored: Set<String> = ["com.apple.loginwindow", "com.apple.ScreenSaver.Engine",
+                                                         "com.apple.SecurityAgent"]
 
     /// Seconds since a key, the pointer, a click or a scroll.
     private static func idleSeconds() -> TimeInterval {
@@ -256,7 +257,7 @@ final class MacUsage: ObservableObject {
         let stored = stored(Self.key(start))
         var day = UsageDay(date: start)
         day.firstPickup = stored.firstPickup
-        day.apps = stored.apps.map { id, app in
+        day.apps = stored.apps.filter { !Self.ignored.contains($0.key) }.map { id, app in
             UsageApp(id: id, name: app.name, seconds: app.hourly.reduce(0, +), pickups: app.pickups, hourly: app.hourly)
         }
         return day

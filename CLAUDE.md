@@ -139,8 +139,8 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   Daily limits on the Mac (2026-11-01): the phone's limits, each with its own Mac apps (`MacLockApps.perLimit`),
   counted from this Mac's own time (`Mac/MacUsage.swift`) and held until midnight when used up (`MacHold` is a lock
   or a limit holding now, what the shield and the unlock sheet show); a hit goes to the server with `days: []`.
-- The Screen section (`Mac/MacScreenPage.swift`): the phone's Screen tab for this Mac, Day · Week · Month, Lock now in
-  the corner, Locks and limits under the date, the report drawn by the phone's `Usage/UsageReportView.swift` (shared;
+- The Screen section (`Mac/MacScreenPage.swift`): the phone's Screen tab for this Mac, Day · Week · Month, Lock now and
+  a gear (Locks and limits, ⇧⌘,) in the corner, a line under the date only while a lock or limit holds, the report drawn by the phone's `Usage/UsageReportView.swift` (shared;
   on the Mac app icons come from the bundle ID). `MacUsage` records it while Aide runs (it opens at login,
   `Mac/MacLoginItem.swift`, Settings → This Mac): every 5 s one app gets the time, so it's never doubled: the app in
   front if touched in the last minute; else an app playing a video (it holds the display awake; `runningboardd` holds it
