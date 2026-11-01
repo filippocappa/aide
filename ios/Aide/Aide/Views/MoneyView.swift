@@ -224,7 +224,7 @@ struct MoneyView: View {
         }
         subscriptions = try? await s
         if let list = try? await a {
-            accounts = list.accounts
+            accounts = list.accounts.filter { !$0.hidden }
             total = list.total
         }
         banksOn = (try? await env.api.banks())?.enabled ?? banksOn

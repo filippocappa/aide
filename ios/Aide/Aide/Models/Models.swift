@@ -3064,9 +3064,13 @@ struct FinanceAccount: Decodable, Identifiable, Hashable {
     var lastAt: String?
     var count: Int = 0
     var spentMonth: Double = 0
+    /// Kept out of Money's accounts and total by the user (a credit line always below zero); its payments still count.
+    var hidden: Bool = false
 }
 
-/// `total`: the linked bank accounts' balances added up (cards left out), nil with none.
+struct AccountResponse: Decodable { let account: FinanceAccount }
+
+/// `total`: the linked bank accounts' balances added up (cards and hidden accounts left out), nil with none.
 struct AccountList: Decodable {
     let accounts: [FinanceAccount]
     var total: Double?
@@ -3166,7 +3170,7 @@ struct FinanceCategory: Hashable, Identifiable {
 
     static let notSpending: Set<String> = ["income", "transfer"]
     static let all = ["groceries", "eating_out", "transport", "shopping", "subscriptions", "bills", "health", "study",
-                      "travel", "fun", "cash", "other", "income", "transfer"].map(FinanceCategory.init)
+                      "travel", "fun", "cash", "card", "other", "income", "transfer"].map(FinanceCategory.init)
     static let spending = all.filter { !notSpending.contains($0.id) }
 
     var name: String {
@@ -3182,6 +3186,7 @@ struct FinanceCategory: Hashable, Identifiable {
         case "travel": "Travel"
         case "fun": "Fun"
         case "cash": "Cash"
+        case "card": "Credit card"
         case "income": "Income"
         case "transfer": "Transfer"
         default: "Other"
@@ -3201,6 +3206,7 @@ struct FinanceCategory: Hashable, Identifiable {
         case "travel": "airplane"
         case "fun": "ticket.fill"
         case "cash": "banknote.fill"
+        case "card": "creditcard.and.123"
         case "income": "arrow.down.left"
         case "transfer": "arrow.left.arrow.right"
         default: "creditcard.fill"
