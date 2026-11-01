@@ -260,8 +260,8 @@ struct MoneyView: View {
 /// Settings → Payments: how to make the Wallet automation that runs Log payment.
 struct PaymentSetupView: View {
     private static let steps: [(String, String)] = [
-        ("1", "Open Shortcuts, then Automation, and tap +."),
-        ("2", "Choose Transaction. Pick your cards (or all), leave every category on, and choose Run Immediately."),
+        ("1", "Open Shortcuts, go to the Automation tab at the bottom, and tap + (or New Automation)."),
+        ("2", "Scroll the list to Wallet (its icon; on some iOS versions it's called Transaction). Pick your cards (or all), leave every category on, and choose Run Immediately."),
         ("3", "New Blank Automation, then add Aide's Log payment."),
         ("4", "Tap Amount and pick Shortcut Input → Amount. Do the same for Merchant (Merchant) and Card (Card or Pass)."),
         ("5", "Done. The next tap shows up in Money within a few seconds, sorted."),
