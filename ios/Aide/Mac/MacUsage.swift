@@ -11,6 +11,8 @@ import IOKit.pwr_mgt
 ///   minutes without, nobody was there and that stretch isn't counted.
 /// Asleep, locked or away: nothing. A video playing beside the app in front also counts for the daily limits that
 /// cover it (a YouTube limit catches a video on the side while you work) without adding to the total.
+/// In Safari and the Chromium browsers the site in the front tab gets the same time too (youtube.com, only the site),
+/// for the Websites list and for limits on sites; a browser Aide may not ask (or Firefox) is the app alone.
 /// A pickup is coming back after 5 minutes or more away, put on the first app used. Kept on this Mac only, a file a day
 /// in Application Support (120 days); nothing goes to the server but the limits reached.
 @MainActor
@@ -31,6 +33,14 @@ final class MacUsage: ObservableObject {
         var firstPickup: Date?
         /// Each daily limit's time today, by limit id: its apps in front or playing on the side, real time once.
         var limits: [String: Double]?
+        /// Each website's time, by site: part of its browsers' time.
+        var sites: [String: StoredSite]?
+    }
+
+    private struct StoredSite: Codable {
+        var hourly: [Double] = Array(repeating: 0, count: 24)
+        /// By browser bundle ID.
+        var browsers: [String: Double] = [:]
     }
 
     /// Time held back while nobody touches anything (reading, or gone): counted once they do, dropped after 5 minutes.
@@ -38,6 +48,7 @@ final class MacUsage: ObservableObject {
         let key: String
         let app: String
         let name: String
+        let site: String?
         let hour: Int
         var seconds: Double
         var limits: Set<Int>
@@ -66,6 +77,8 @@ final class MacUsage: ObservableObject {
     private var pending: [Pending] = []
     /// The Mac apps of each daily limit, by limit id (from `ScreenTimeService`).
     var limitApps: [Int: Set<String>] = [:]
+    /// Each tick, the browsers' tabs seen (the one in front, those playing a video), for the shield.
+    var onTabs: (([MacBrowser.Tab]) -> Void)?
 
     private init() {
         folder = URL.applicationSupportDirectory.appending(path: "Aide/usage", directoryHint: .isDirectory)
@@ -115,18 +128,24 @@ final class MacUsage: ObservableObject {
         let frontID = front?.bundleIdentifier.flatMap { Self.ignored.contains($0) ? nil : $0 }
         let idle = Self.idleSeconds()
         let playing = idle < Self.watchingLimit ? Self.playing() : [:]
+        let tabs = idle < Self.watchingLimit ? Self.tabs(front: front, playing: Set(playing.keys)) : [:]
+        onTabs?(Array(tabs.values))
+        // What plays on the side, for the limits: the apps and their sites.
+        let alongside = Set(playing.keys).union(playing.keys.compactMap { tabs[$0].map { MacSites.entry($0.site) } })
         if let front, let frontID, idle < Self.activeLimit {
             commitPending()
-            credit(frontID, name: front.localizedName, alongside: playing, now: now, elapsed: elapsed)
+            credit(frontID, name: front.localizedName, site: tabs[frontID]?.site, alongside: alongside, now: now,
+                   elapsed: elapsed)
         } else if let frontID, let front, playing[frontID] != nil {
             commitPending()
-            credit(frontID, name: front.localizedName, alongside: playing, now: now, elapsed: elapsed)
+            credit(frontID, name: front.localizedName, site: tabs[frontID]?.site, alongside: alongside, now: now,
+                   elapsed: elapsed)
         } else if let (id, name) = playing.sorted(by: { $0.key < $1.key }).first {
             // Watching on the other screen, the focus left where it was.
             commitPending()
-            credit(id, name: name, alongside: playing, now: now, elapsed: elapsed)
+            credit(id, name: name, site: tabs[id]?.site, alongside: alongside, now: now, elapsed: elapsed)
         } else if let front, let frontID, idle < Self.readingLimit {
-            hold(frontID, name: front.localizedName ?? frontID, now: now, elapsed: elapsed)
+            hold(frontID, name: front.localizedName ?? frontID, site: tabs[frontID]?.site, now: now, elapsed: elapsed)
         } else {
             away(now, since: now.addingTimeInterval(-idle))
         }
@@ -138,14 +157,29 @@ final class MacUsage: ObservableObject {
         if awaySince == nil { awaySince = since }
     }
 
-    /// The tick's time to an app (and the limits covering it or a video playing beside it).
-    private func credit(_ id: String, name: String?, alongside playing: [String: String], now: Date,
+    /// The browsers' front tabs: the app in front's, and those of the apps playing a video.
+    private static func tabs(front: NSRunningApplication?, playing: Set<String>) -> [String: MacBrowser.Tab] {
+        var apps = NSWorkspace.shared.runningApplications.filter { app in
+            app.bundleIdentifier.map { playing.contains($0) && MacBrowser.isBrowser($0) } == true
+        }
+        if let front, front.bundleIdentifier.map(MacBrowser.isBrowser) == true, !apps.contains(front) {
+            apps.append(front)
+        }
+        var tabs: [String: MacBrowser.Tab] = [:]
+        for app in apps { if let tab = MacBrowser.tab(of: app) { tabs[tab.app] = tab } }
+        return tabs
+    }
+
+    /// The tick's time to an app and its site (and the limits covering them or a video playing beside them).
+    private func credit(_ id: String, name: String?, site: String?, alongside: Set<String>, now: Date,
                         elapsed: TimeInterval) {
         let key = Self.key(now)
+        let hour = Calendar.current.component(.hour, from: now)
         var day = days[key] ?? load(key)
         var app = day.apps[id] ?? StoredApp(name: name ?? id)
         if let name { app.name = name }
-        app.hourly[Calendar.current.component(.hour, from: now)] += elapsed
+        app.hourly[hour] += elapsed
+        if let site { add(site, browser: id, hour: hour, seconds: elapsed, to: &day) }
         // Back after a while away, or the first use of the day: a pickup.
         if day.firstPickup == nil || awaySince.map({ now.timeIntervalSince($0) >= Self.awayForPickup }) == true {
             app.pickups += 1
@@ -154,21 +188,23 @@ final class MacUsage: ObservableObject {
         awaySince = nil
         day.apps[id] = app
         var limits = day.limits ?? [:]
-        for limit in covering(id, alongside: Set(playing.keys)) { limits[String(limit), default: 0] += elapsed }
+        for limit in covering(Self.entries(id, site), alongside: alongside) {
+            limits[String(limit), default: 0] += elapsed
+        }
         day.limits = limits
         days[key] = day
         dirty = true
     }
 
     /// Still, no video: the app in front's time waits for the next touch.
-    private func hold(_ id: String, name: String, now: Date, elapsed: TimeInterval) {
+    private func hold(_ id: String, name: String, site: String?, now: Date, elapsed: TimeInterval) {
         let key = Self.key(now)
         let hour = Calendar.current.component(.hour, from: now)
-        if let last = pending.last, last.key == key, last.app == id, last.hour == hour {
+        if let last = pending.last, last.key == key, last.app == id, last.site == site, last.hour == hour {
             pending[pending.count - 1].seconds += elapsed
         } else {
-            pending.append(Pending(key: key, app: id, name: name, hour: hour, seconds: elapsed,
-                                   limits: covering(id, alongside: [])))
+            pending.append(Pending(key: key, app: id, name: name, site: site, hour: hour, seconds: elapsed,
+                                   limits: covering(Self.entries(id, site), alongside: [])))
         }
     }
 
@@ -180,6 +216,7 @@ final class MacUsage: ObservableObject {
             var app = day.apps[item.app] ?? StoredApp(name: item.name)
             app.hourly[item.hour] += item.seconds
             day.apps[item.app] = app
+            if let site = item.site { add(site, browser: item.app, hour: item.hour, seconds: item.seconds, to: &day) }
             var limits = day.limits ?? [:]
             for limit in item.limits { limits[String(limit), default: 0] += item.seconds }
             day.limits = limits
@@ -189,9 +226,24 @@ final class MacUsage: ObservableObject {
         dirty = true
     }
 
-    /// The limits whose apps are this one or a video playing beside it.
-    private func covering(_ id: String, alongside playing: Set<String>) -> Set<Int> {
-        Set(limitApps.filter { $0.value.contains(id) || !$0.value.isDisjoint(with: playing) }.keys)
+    private func add(_ site: String, browser: String, hour: Int, seconds: Double, to day: inout StoredDay) {
+        var sites = day.sites ?? [:]
+        var stored = sites[site] ?? StoredSite()
+        stored.hourly[hour] += seconds
+        stored.browsers[browser, default: 0] += seconds
+        sites[site] = stored
+        day.sites = sites
+    }
+
+    /// An app and its site, as limits list them.
+    private static func entries(_ id: String, _ site: String?) -> Set<String> {
+        Set([id] + [site.map(MacSites.entry)].compactMap { $0 })
+    }
+
+    /// The limits covering these apps or sites, or a video playing beside them (its app or site).
+    private func covering(_ entries: Set<String>, alongside: Set<String>) -> Set<Int> {
+        let all = entries.union(alongside)
+        return Set(limitApps.filter { limit in all.contains { MacSites.covers(limit.value, $0) } }.keys)
     }
 
     private static let ignored: Set<String> = ["com.apple.loginwindow", "com.apple.ScreenSaver.Engine",
@@ -239,10 +291,14 @@ final class MacUsage: ObservableObject {
 
     // MARK: Reading
 
-    /// The time this Mac spent in these apps on a day (with the focus on them).
+    /// The time this Mac spent in these apps and sites on a day (with the focus on them); a site's time in a browser
+    /// that's on the list too is counted once.
     func seconds(on date: Date, apps: Set<String>) -> TimeInterval {
         let day = stored(Self.key(date))
-        return apps.reduce(0) { sum, id in sum + (day.apps[id]?.hourly.reduce(0, +) ?? 0) }
+        let inApps = apps.reduce(0) { sum, id in sum + (day.apps[id]?.hourly.reduce(0, +) ?? 0) }
+        let inSites = (day.sites ?? [:]).filter { MacSites.covers(apps, MacSites.entry($0.key)) }.values
+            .reduce(0) { sum, site in sum + site.browsers.filter { !apps.contains($0.key) }.values.reduce(0, +) }
+        return inApps + inSites
     }
 
     /// A daily limit's time today: its apps in front, or a video of theirs playing on the side. Never less than the
@@ -260,6 +316,9 @@ final class MacUsage: ObservableObject {
         day.apps = stored.apps.filter { !Self.ignored.contains($0.key) }.map { id, app in
             UsageApp(id: id, name: app.name, seconds: app.hourly.reduce(0, +), pickups: app.pickups, hourly: app.hourly)
         }
+        day.sites = (stored.sites ?? [:]).map { site, stored in
+            UsageSite(id: site, seconds: stored.hourly.reduce(0, +), hourly: stored.hourly, browsers: stored.browsers)
+        }.filter { $0.seconds >= 1 }.sorted { $0.seconds > $1.seconds }
         return day
     }
 

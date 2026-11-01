@@ -6,8 +6,9 @@ import SwiftUI
 /// Screen Time on the Mac (#30): while a lock holds, the apps it covers can't be used. Aide quits one whenever it
 /// opens or comes forward (Dock, Finder, Raycast, ⌘-Tab) and when the lock starts, and Pebble pops up asleep above
 /// that app's Dock icon to say so, with Open anyway (a reason and a 10 s wait, or an emergency pass on a strict lock).
-/// An app that won't quit (an unsaved document asking) is hidden instead and comes back when the lock ends. It's a
-/// commitment device, not a real lock.
+/// An app that won't quit (an unsaved document asking) is hidden instead and comes back when the lock ends. A website
+/// on the list is closed as a tab (the browser stays open) when it's in front or playing, seen at each of `MacUsage`'s
+/// ticks, and opened again after Open anyway. It's a commitment device, not a real lock.
 @MainActor
 final class MacShield {
     private let screenTime: ScreenTimeService
@@ -17,6 +18,8 @@ final class MacShield {
     private var hidden: [pid_t: NSRunningApplication] = [:]
     /// Where each app Aide closed lives, to open it again after Open anyway.
     private var closed: [String: URL] = [:]
+    /// The tabs Aide closed, by site entry ("site:youtube.com"), to open again after Open anyway.
+    private var closedTabs: [String: MacBrowser.Tab] = [:]
     /// The same app opening and coming forward fires twice: one nudge.
     private var lastTry: (bundleID: String, at: Date)?
     private var observers: [NSObjectProtocol] = []
@@ -37,7 +40,23 @@ final class MacShield {
         changes = screenTime.objectWillChange
             .debounce(for: .milliseconds(50), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.check() }
+        MacUsage.shared.onTabs = { [weak self] tabs in self?.saw(tabs) }
         check()
+    }
+
+    /// The browsers' tabs at a tick: close one showing a site that's covered, and say so above its browser.
+    private func saw(_ tabs: [MacBrowser.Tab]) {
+        for tab in tabs {
+            let entry = MacSites.entry(tab.site)
+            guard let hold = screenTime.covering(entry) else { continue }
+            let browser = NSRunningApplication.runningApplications(withBundleIdentifier: tab.app).first
+            let icon = browser.flatMap(DockIcon.top(of:))
+            MacBrowser.closeTab(tab)
+            closedTabs[entry] = tab
+            if let lastTry, lastTry.bundleID == entry, Date().timeIntervalSince(lastTry.at) < 1.5 { continue }
+            lastTry = (entry, Date())
+            nudge.show(app: tab.site, bundleID: entry, hold: hold, above: icon)
+        }
     }
 
     private static let me = ProcessInfo.processInfo.processIdentifier
@@ -83,7 +102,13 @@ final class MacShield {
         }
         // Opened anyway: the app comes back.
         if let id = nudge.opening, screenTime.covering(id) == nil {
-            if let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first {
+            if MacSites.site(of: id) != nil {
+                if let tab = closedTabs.removeValue(forKey: id),
+                   let browser = NSWorkspace.shared.urlForApplication(withBundleIdentifier: tab.app) {
+                    NSWorkspace.shared.open([tab.url], withApplicationAt: browser,
+                                            configuration: NSWorkspace.OpenConfiguration())
+                }
+            } else if let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first {
                 app.unhide()
                 app.activate()
             } else if let url = closed[id] {

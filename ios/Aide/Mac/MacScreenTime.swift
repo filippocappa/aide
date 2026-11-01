@@ -86,10 +86,10 @@ final class ScreenTimeService: ObservableObject {
     func covering(_ bundleID: String?) -> MacHold? {
         guard let bundleID, !MacLockApps.never.contains(bundleID) else { return nil }
         let now = Date()
-        let byLocks = locks.filter { apps(for: $0).contains(bundleID) }
+        let byLocks = locks.filter { MacSites.covers(apps(for: $0), bundleID) }
             .compactMap { lock in LockClock.until(lock, at: now).map { MacHold(lock: lock, until: $0) } }
         let midnight = Calendar.current.startOfDay(for: now).addingTimeInterval(86400 + 3600)
-        let byLimits = limits.filter { heldLimits.contains($0.id) && limitApps[$0.id]?.contains(bundleID) == true }
+        let byLimits = limits.filter { heldLimits.contains($0.id) && MacSites.covers(limitApps[$0.id] ?? [], bundleID) }
             .map { MacHold(limit: $0, until: Calendar.current.startOfDay(for: midnight)) }
         return (byLocks + byLimits).max { $0.until < $1.until }
     }

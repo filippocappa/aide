@@ -15,6 +15,18 @@ struct UsageApp: Identifiable, Hashable {
     var token: Data?
 }
 
+/// A website's time (the Mac only: the phone's report can't see sites), part of its browser's time, not added to the
+/// total again.
+struct UsageSite: Identifiable, Hashable {
+    /// The site, "youtube.com".
+    let id: String
+    var seconds: TimeInterval = 0
+    /// 24 hours, on a day; empty otherwise.
+    var hourly: [TimeInterval] = []
+    /// Its time in each browser, by bundle ID.
+    var browsers: [String: TimeInterval] = [:]
+}
+
 /// What the Screen tab shows: a day, a week (Monday to Sunday) or a month.
 enum UsageKind: String, CaseIterable, Identifiable {
     case day, week, month
@@ -27,6 +39,8 @@ struct UsageDay: Identifiable, Hashable {
     /// Midnight, local.
     let date: Date
     var apps: [UsageApp] = []
+    /// The websites seen in browsers (the Mac only).
+    var sites: [UsageSite] = []
     /// When the phone was first picked up that day.
     var firstPickup: Date?
 
@@ -208,6 +222,20 @@ enum UsageMath {
             }
         }
         return apps.values.filter { $0.seconds >= 1 }.sorted { $0.seconds > $1.seconds }
+    }
+
+    /// The websites of some days added up, most used first.
+    static func mergedSites(_ days: [UsageDay]) -> [UsageSite] {
+        var sites: [String: UsageSite] = [:]
+        for day in days {
+            for site in day.sites {
+                var sum = sites[site.id] ?? UsageSite(id: site.id)
+                sum.seconds += site.seconds
+                for (browser, seconds) in site.browsers { sum.browsers[browser, default: 0] += seconds }
+                sites[site.id] = sum
+            }
+        }
+        return sites.values.filter { $0.seconds >= 1 }.sorted { $0.seconds > $1.seconds }
     }
 
     /// The days an average is taken over: the whole days that are over, or today alone while it's the only one

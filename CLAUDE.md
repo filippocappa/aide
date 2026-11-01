@@ -148,6 +148,13 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   front once you touch something again (dropped after 5 min). A video on the side also counts for the limits covering it
   (`limits` in the day's file), not for the total. A pickup after 5 min away, a JSON file a day in Application
   Support/Aide/usage (120 days), never sent to the server.
+  Websites (2026-11-01, `Mac/MacBrowser.swift`): in Safari and the Chromium browsers (Chrome, Arc, Brave, Edge,
+  Vivaldi, Opera) each tick asks the front tab (AppleScript, 1 s timeout; macOS asks once per browser, a "no" or
+  Firefox is just the app) and keeps only the site (youtube.com), never the URL: `sites` in the day's file, part of the
+  browser's time. The report shows a Websites card and a browser's sites when it's opened (`UsageSite`, Mac-only data
+  in the shared view). Locks and limits take sites beside apps ("site:youtube.com" in the same sets, `MacSites.covers`
+  matches subdomains), counted in any browser in front or playing on the side; when one holds `MacShield` closes the
+  tab (not the browser) at the next tick and Open anyway opens it again.
 - `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
   `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
 - The Mac look (2026-10-31): `Mac/MacList.swift` makes `List` a grouped `Form` (rounded inset sections, no heavy

@@ -152,8 +152,8 @@ struct MacScreenTimeView: View {
             Text("Usually locked")
         } footer: {
             Text(screenTime.usualInUse ? "A lock that uses these is on now: change them once it's over."
-                 : "For Lock now and the locks Coach sets. Only these are closed; everything else stays open. "
-                    + "Finder, System Settings and Aide never are.")
+                 : "For Lock now and the locks Coach sets. Only these are closed, and a website's tab in Safari, "
+                    + "Chrome, Arc, Brave or Edge; everything else stays open. Finder, System Settings and Aide never are.")
         }
         Section {
             ForEach(screenTime.locks.filter { !$0.once && $0.id >= 0 }) { lock in
@@ -203,6 +203,7 @@ private struct AppList: View {
     let apps: Set<String>
     var locked = false
     let set: (Set<String>) -> Void
+    @State private var site = ""
 
     var body: some View {
         ForEach(MacApp.sorted(apps)) { app in
@@ -222,6 +223,22 @@ private struct AppList: View {
         }
         Button { pick() } label: { Label("Add Apps…", systemImage: "plus") }
             .disabled(locked)
+        HStack(spacing: 10) {
+            Image(systemName: "globe").foregroundStyle(.secondary).frame(width: 22)
+            TextField("Add a website", text: $site, prompt: Text("Add a website, like youtube.com"))
+                .textFieldStyle(.plain)
+                .onSubmit(addSite)
+            if MacBrowser.site(typed: site) != nil {
+                Button("Add", action: addSite)
+            }
+        }
+        .disabled(locked)
+    }
+
+    private func addSite() {
+        guard let found = MacBrowser.site(typed: site) else { return }
+        set(apps.union([MacSites.entry(found)]))
+        site = ""
     }
 
     private func pick() {
@@ -247,7 +264,10 @@ private struct MacApp: Identifiable {
 
     init(_ id: String) {
         self.id = id
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+        if let site = MacSites.site(of: id) {
+            name = site
+            icon = NSImage(systemSymbolName: "globe", accessibilityDescription: site) ?? NSImage()
+        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
             name = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
             icon = NSWorkspace.shared.icon(forFile: url.path)
         } else {
@@ -573,10 +593,11 @@ private struct MacLimitEditor: View {
             Section {
                 AppList(apps: apps, locked: held) { apps = $0 }
             } header: {
-                Text("Apps on this Mac")
+                Text("Apps and websites on this Mac")
             } footer: {
                 Text(held ? "Used up today: its apps change tomorrow, or end it early."
-                     : "This Mac's time in these, added up. Once it reaches the limit they're closed until midnight.")
+                     : "This Mac's time in these, added up (a website in any browser, in front or playing on the side). "
+                        + "Once it reaches the limit the apps are closed and the website's tab too, until midnight.")
             }
             Section {
                 Toggle("Strict", isOn: $strict)

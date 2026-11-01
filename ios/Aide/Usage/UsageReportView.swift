@@ -26,6 +26,8 @@ struct UsageReportView: View {
     @State private var showFocus = false
     @State private var openApp: String?
     @State private var showAll = false
+    @State private var openSite: String?
+    @State private var showAllSites = false
 
     private var calendar: Calendar { .current }
     private var periodDays: [UsageDay] {
@@ -35,12 +37,15 @@ struct UsageReportView: View {
     private var day: UsageDay { periodDays.last ?? UsageDay(date: data.period.start) }
     private var apps: [UsageApp] { data.kind == .day ? day.ranked : UsageMath.merged(periodDays) }
     private var total: TimeInterval { apps.reduce(0) { $0 + $1.seconds } }
+    /// The websites (the Mac only), part of their browsers' time.
+    private var sites: [UsageSite] { data.kind == .day ? day.sites : UsageMath.mergedSites(periodDays) }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
                 summary
                 if total >= 60 { mostUsed }
+                if total >= 60, !sites.isEmpty { websites }
                 if let device = data.device, !data.leftOut.isEmpty {
                     Text("Only \(device). Screen Time from \(data.leftOut.joined(separator: ", ")) is left out.")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -247,6 +252,94 @@ struct UsageReportView: View {
                           height: 56, labelsUnder: data.kind == .week)
             }
             Text(appLine(app)).font(.footnote).foregroundStyle(.secondary)
+            let inBrowser = sites.compactMap { site in site.browsers[app.id].map { (site.id, $0) } }
+                .filter { $0.1 >= 30 }.sorted { $0.1 > $1.1 }.prefix(5)
+            if !inBrowser.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(inBrowser), id: \.0) { site, seconds in
+                        HStack {
+                            Image(systemName: "globe").font(.caption).foregroundStyle(.secondary)
+                            Text(site).lineLimit(1)
+                            Spacer()
+                            Text(UsageMath.duration(seconds)).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        .font(.subheadline)
+                    }
+                }
+            }
+        }
+        .padding(.leading, 44)
+        .padding(.bottom, 12)
+        .transition(.opacity)
+    }
+
+    // MARK: Websites
+
+    private var websites: some View {
+        let shown = showAllSites ? sites : Array(sites.prefix(6))
+        let rest = sites.dropFirst(6)
+        let top = sites.first?.seconds ?? 1
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Websites").font(.headline)
+                Spacer()
+                Text("in your browsers").font(.subheadline).foregroundStyle(.secondary)
+            }
+            .padding(.bottom, 6)
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, site in
+                VStack(spacing: 0) {
+                    if index > 0 { Rectangle().fill(UsageColors.line).frame(height: 1).padding(.leading, 44) }
+                    Button { withAnimation(.snappy) { openSite = openSite == site.id ? nil : site.id } } label: {
+                        SiteRow(site: site, share: site.seconds / top,
+                                average: data.kind == .day ? nil : site.seconds / Double(max(1, begun.count)))
+                    }
+                    .buttonStyle(.plain)
+                    if openSite == site.id { siteDetail(site) }
+                }
+            }
+            if !rest.isEmpty {
+                Rectangle().fill(UsageColors.line).frame(height: 1)
+                Button { withAnimation(.snappy) { showAllSites.toggle() } } label: {
+                    HStack {
+                        Text(showAllSites ? "Show fewer" : "\(rest.count) other website\(rest.count == 1 ? "" : "s")")
+                        Spacer()
+                        if !showAllSites {
+                            Text(UsageMath.duration(rest.reduce(0) { $0 + $1.seconds })).foregroundStyle(.secondary)
+                        }
+                        Image(systemName: showAllSites ? "chevron.up" : "chevron.down")
+                            .font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 13)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, rest.isEmpty ? 6 : 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(UsageColors.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    /// One website, opened: its hours or days, and which browsers it was in.
+    private func siteDetail(_ site: UsageSite) -> some View {
+        let values: [TimeInterval] = data.kind == .day ? (site.hourly.count == 24 ? site.hourly : [])
+            : periodDays.map { d in d.sites.first { $0.id == site.id }?.seconds ?? 0 }
+        let labels: [String] = switch data.kind {
+        case .day: ["00", "06", "12", "18", "24"]
+        case .week: periodDays.map { $0.date.formatted(.dateTime.weekday(.narrow)) }
+        case .month: ["1", "8", "15", "22", "29"]
+        }
+        let browsers = site.browsers.sorted { $0.value > $1.value }.map { id, seconds in
+            "\(apps.first { $0.id == id }?.name ?? id) \(UsageMath.duration(seconds))"
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            if !values.isEmpty, values.contains(where: { $0 > 0 }) {
+                UsageBars(values: values, now: data.kind == .day ? currentHour : currentDayIndex, labels: labels,
+                          height: 56, labelsUnder: data.kind == .week)
+            }
+            Text("In " + browsers.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
         }
         .padding(.leading, 44)
         .padding(.bottom, 12)
@@ -417,6 +510,47 @@ private struct AppRow: View {
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
+    }
+}
+
+/// A website in Websites: a globe, the site, its time and a bar against the most used one.
+private struct SiteRow: View {
+    let site: UsageSite
+    let share: Double
+    let average: TimeInterval?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "globe")
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(hue, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(site.id).lineLimit(1)
+                    Spacer()
+                    Text(UsageMath.duration(site.seconds)).foregroundStyle(.secondary).monospacedDigit()
+                }
+                .font(.body)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.08))
+                        Capsule().fill(UsageColors.cyan[0]).frame(width: max(4, geo.size.width * share))
+                    }
+                }
+                .frame(height: 5)
+                if let average {
+                    Text("\(UsageMath.duration(average)) a day").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+
+    private var hue: Color {
+        let h = site.id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+        return Color(hue: Double(h % 360) / 360, saturation: 0.5, brightness: 0.75)
     }
 }
 
