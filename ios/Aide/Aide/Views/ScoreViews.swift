@@ -846,7 +846,7 @@ private struct ScoreWeek: View {
 }
 
 /// A part's score in a word, as Oura says it; only the last one warns.
-private func standing(_ score: Int?) -> (word: String, warns: Bool) {
+func standing(_ score: Int?) -> (word: String, warns: Bool) {
     guard let score else { return ("No data", false) }
     if score >= 80 { return ("Optimal", false) }
     if score >= 60 { return ("Good", false) }

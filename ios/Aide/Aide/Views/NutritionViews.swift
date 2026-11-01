@@ -154,86 +154,62 @@ struct NutritionDayView: View {
     private var date: Date { Wire.day(day.date) ?? Date() }
 
     var body: some View {
-        List {
-            Section {
-                HStack(spacing: 16) {
-                    ScoreRing(score: day.score?.score, tint: tint, size: 88)
-                    VStack(alignment: .leading, spacing: 4) {
-                        if let score = day.score, score.numbers == nil {
-                            Text("Quality \(score.quality.map(String.init) ?? "–")").font(.subheadline.weight(.semibold))
-                            Text("No targets, so the score is how good the food was.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        } else if let score = day.score {
-                            Text("Numbers \(score.numbers.map(String.init) ?? "–") · Quality \(score.quality.map(String.init) ?? "–")")
-                                .font(.subheadline.weight(.semibold))
-                            Text(score.final ? "The day's final score." : "So far: only going over costs until the day's done.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        } else if !day.meals.isEmpty {
-                            Text("No score yet").font(.subheadline.weight(.semibold))
-                            Text("These meals were logged without their foods, so there's nothing to judge their quality by. Meals Coach logs now have them.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        } else {
-                            Text("Nothing logged yet.").font(.subheadline).foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                scoreCard
+                DetailCard(hasTargets ? "Targets" : "Eaten",
+                           note: hasTargets ? DayScoreCard.bonusLine(day.bonus).map { $0 + ", mostly as carbs." } : nil) {
+                    target("Calories", eaten: day.totals.calories, goal: day.goals.calories, base: day.base.calories, unit: "kcal")
+                    Divider().padding(.vertical, 10)
+                    target("Protein", eaten: day.totals.proteinG, goal: day.goals.proteinG, base: day.base.proteinG, unit: "g")
+                    Divider().padding(.vertical, 10)
+                    target("Carbs", eaten: day.totals.carbsG, goal: day.goals.carbsG, base: day.base.carbsG, unit: "g")
+                    Divider().padding(.vertical, 10)
+                    target("Fat", eaten: day.totals.fatG, goal: day.goals.fatG, base: day.base.fatG, unit: "g")
+                }
+                if let score = day.score {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Quality").font(.title3.weight(.bold)).padding(.horizontal, 4)
+                        if score.parts != nil {
+                            QualityPartCard(icon: "leaf.fill", name: "Nutrients", share: 50, score: score.parts?.nutrients,
+                                            value: nutrientsValue(score), tint: tint) {
+                                Divider().padding(.vertical, 4)
+                                ForEach(QualityLine.nutrients(score), id: \.name) { QualityLineRow(line: $0, tint: tint) }
+                            }
+                            QualityPartCard(icon: "shippingbox.fill", name: "Processing", share: 25,
+                                            score: score.parts?.processing,
+                                            value: score.processing.map { "\($0.upfPct)% ultra-processed" } ?? "Not enough data",
+                                            tint: tint) { EmptyView() }
                         }
+                        QualityPartCard(icon: "tag.fill", name: "Food grades", share: score.parts != nil ? 25 : nil,
+                                        score: score.parts?.grades, value: gradesValue(score), tint: tint) {
+                            GradeBar(grades: score.grades).padding(.top, 4)
+                        }
+                        Text(qualityNote).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
                     }
                 }
-                .padding(.vertical, 6)
-            }
-            Section {
-                target("Calories", eaten: day.totals.calories, goal: day.goals.calories, base: day.base.calories, unit: "kcal")
-                target("Protein", eaten: day.totals.proteinG, goal: day.goals.proteinG, base: day.base.proteinG, unit: "g")
-                target("Carbs", eaten: day.totals.carbsG, goal: day.goals.carbsG, base: day.base.carbsG, unit: "g")
-                target("Fat", eaten: day.totals.fatG, goal: day.goals.fatG, base: day.base.fatG, unit: "g")
-            } header: {
-                Text(hasTargets ? "Targets" : "Eaten")
-            } footer: {
-                if hasTargets, let bonus = DayScoreCard.bonusLine(day.bonus) {
-                    Text(bonus + ", mostly as carbs.")
+                DetailCard("Last 4 weeks") {
+                    ScoreStrip(days: weeks, tint: tint)
                 }
-            }
-            if let score = day.score, score.parts != nil {
-                Section {
-                    ForEach(QualityLine.nutrients(score), id: \.name) { QualityLineRow(line: $0, tint: tint) }
-                } header: {
-                    partHeader("Nutrients", score.parts?.nutrients)
-                } footer: {
-                    Text("Half the quality. Fibre and fruit & veg count once the day's over, the limits as soon as they're passed. Each needs data on half the day's calories; meals Coach logs from items have it.")
-                }
-                Section {
-                    QualityLineRow(line: QualityLine.processing(score), tint: tint)
-                } header: {
-                    partHeader("Processing", score.parts?.processing)
-                } footer: {
-                    Text("A quarter of the quality: the share of calories from ultra-processed foods (NOVA 4: packaged snacks, soft drinks, most sweets and ready meals). Full marks at 10% or less, none from 50%.")
-                }
-            }
-            if let score = day.score {
-                Section {
-                    QualityBars(grades: score.grades)
-                        .padding(.vertical, 4)
-                } header: {
-                    if score.parts != nil {
-                        partHeader("Food grades", score.parts?.grades)
-                    } else {
-                        Text("Quality")
+                Button { editing = true } label: {
+                    HStack {
+                        Image(systemName: "target").foregroundStyle(tint)
+                        Text(hasTargets ? "Targets" : "Set targets").font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                     }
-                } footer: {
-                    Text(qualityFooter)
+                    .foregroundStyle(.primary)
+                    .card(padding: 14)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(CardPress())
+                Text("Targets are optional: without them the score is the quality; with them it's 60% how close you came (calories within 10%, carbs and fat within 15%, protein at least the target) and 40% the quality.")
+                    .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
             }
-            Section {
-                ScoreStrip(days: weeks, tint: tint)
-                    .padding(.vertical, 4)
-            } header: {
-                Text("Last 4 weeks")
-            }
-            Section {
-                Button(hasTargets ? "Targets" : "Set targets") { editing = true }
-            } footer: {
-                Text("Quality comes from the foods in each meal: the day's fibre, fruit and veg, saturated fat, sugars and salt against health guidelines (half), how much was ultra-processed (a quarter) and each food's Nutri-Score (a quarter). Targets are optional: without them the score is the quality; with them it's 60% how close you came (calories within 10%, carbs and fat within 15%, protein at least the target) and 40% the quality.")
-            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
+            .pageColumn()
         }
-        .scrollContentBackground(.hidden)
         .background(Theme.grouped)
         .navigationTitle(Calendar.current.isDateInToday(date) ? "Today" : date.formatted(.dateTime.weekday(.wide).day().month(.wide)))
         .navigationBarTitleDisplayMode(.inline)
@@ -244,25 +220,56 @@ struct NutritionDayView: View {
         }
     }
 
+    /// The day's score in a ring, and what it's made of in a line.
+    private var scoreCard: some View {
+        HStack(spacing: 16) {
+            ScoreRing(score: day.score?.score, tint: tint, size: 80)
+            VStack(alignment: .leading, spacing: 4) {
+                if let score = day.score, score.numbers == nil {
+                    Text("Quality \(score.quality.map(String.init) ?? "–")").font(.subheadline.weight(.semibold))
+                    Text("No targets, so the score is how good the food was.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else if let score = day.score {
+                    Text("Numbers \(score.numbers.map(String.init) ?? "–") · Quality \(score.quality.map(String.init) ?? "–")")
+                        .font(.subheadline.weight(.semibold))
+                    Text(score.final ? "The day's final score." : "So far: only going over costs until the day's done.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else if !day.meals.isEmpty {
+                    Text("No score yet").font(.subheadline.weight(.semibold))
+                    Text("These meals were logged without their foods, so there's nothing to judge their quality by. Meals Coach logs now have them.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Text("Nothing logged yet.").font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .card()
+    }
+
+    /// "3 of 5 on track": the nutrient lines scoring 60 or more, of those with data.
+    private func nutrientsValue(_ score: DayScore) -> String {
+        let scored = QualityLine.nutrients(score).compactMap(\.score)
+        guard !scored.isEmpty else { return "Not enough data" }
+        return "\(scored.filter { $0 >= 60 }.count) of \(scored.count) on track"
+    }
+
+    /// "Mostly D": the grade with the most calories.
+    private func gradesValue(_ score: DayScore) -> String {
+        guard let top = score.grades.filter({ $0.value > 0 }).max(by: { $0.value < $1.value }) else { return "No grades yet" }
+        return "Mostly \(top.key.uppercased())"
+    }
+
+    private var qualityNote: String {
+        var note = "Quality comes from the foods in each meal. Nutrients: fibre and fruit & veg count once the day's over, the limits as soon as they're passed. Processing: the share of calories from ultra-processed foods (NOVA 4), full marks at 10% or less, none from 50%. Food grades: each food's Nutri-Score by calories; a grade rates a food per 100 g, not how much you had."
+        if let score = day.score, score.parts?.grades == nil {
+            note += " Grades aren't counted today: only \(Int(score.graded * 100))% of the calories have one (it counts from half)."
+        }
+        return note
+    }
+
     private var hasTargets: Bool {
         [day.goals.calories, day.goals.proteinG, day.goals.carbsG, day.goals.fatG].contains { $0 != nil }
-    }
-
-    private func partHeader(_ name: String, _ score: Int?) -> some View {
-        HStack {
-            Text(name)
-            Spacer()
-            Text(score.map(String.init) ?? "–").monospacedDigit()
-                .foregroundStyle(score.map { Grade.scoreColor($0, tint: tint) } ?? Color.secondary)
-        }
-    }
-
-    private var qualityFooter: String {
-        guard let score = day.score else { return "Each food's Nutri-Score, weighted by its calories." }
-        if score.parts?.grades == nil {
-            return "Not counted: only \(Int(score.graded * 100))% of the day's calories have a grade (it counts from half). Meals Coach logs from items get one."
-        }
-        return "Each food's Nutri-Score (Open Food Facts', or worked out from its numbers), weighted by its calories\(score.parts != nil ? ". A quarter of the quality: a grade rates a food per 100 g, not how much of it you had" : "")."
     }
 
     private func target(_ name: String, eaten: Int, goal: Int?, base: Int?, unit: String) -> some View {
@@ -287,7 +294,100 @@ struct NutritionDayView: View {
                 }
             }
         }
-        .padding(.vertical, 2)
+    }
+}
+
+/// One part of the day's quality as a card, as Recovery's contributors are on Health: an icon, the share, how it
+/// stands in a word (orange only when it needs attention), the value and a bar, then what's inside.
+struct QualityPartCard<Content: View>: View {
+    let icon: String
+    let name: String
+    /// Of the quality, in percent; nil when it's the whole of it (an older server).
+    let share: Int?
+    let score: Int?
+    let value: String
+    let tint: Color
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        let stand = standing(score)
+        let color = stand.warns ? Color.orange : tint
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 28, height: 28)
+                    .background(color.opacity(0.15), in: Circle())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name).font(.subheadline.weight(.semibold))
+                    if let share { Text("\(share)% of quality").font(.caption2).foregroundStyle(.secondary) }
+                }
+                Spacer(minLength: 6)
+                Text(stand.word).font(.caption.weight(.semibold))
+                    .foregroundStyle(stand.warns ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background((stand.warns ? Color.orange : Color.primary).opacity(stand.warns ? 0.14 : 0.07), in: Capsule())
+            }
+            .accessibilityElement(children: .combine)
+            HStack(alignment: .firstTextBaseline) {
+                Text(value).font(.title3.weight(.semibold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                Spacer(minLength: 8)
+                if let score { Text("\(score) / 100").font(.caption).monospacedDigit().foregroundStyle(.secondary) }
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.07))
+                    if let score {
+                        Capsule().fill(color.gradient).frame(width: max(6, geo.size.width * Double(score) / 100))
+                    }
+                }
+            }
+            .frame(height: 6)
+            content()
+        }
+        .card()
+    }
+}
+
+/// The day's calories by Nutri-Score grade as one bar, A to E, with the kcal of each under it.
+struct GradeBar: View {
+    let grades: [String: Int]
+
+    var body: some View {
+        let total = Grade.all.reduce(0) { $0 + (grades[$1] ?? 0) }
+        VStack(spacing: 8) {
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    if total == 0 {
+                        Capsule().fill(Color.primary.opacity(0.07))
+                    } else {
+                        let shown = Grade.all.filter { (grades[$0] ?? 0) > 0 }
+                        let width = geo.size.width - CGFloat(max(shown.count - 1, 0)) * 2
+                        ForEach(shown, id: \.self) { g in
+                            Rectangle().fill(Grade.color(g))
+                                .frame(width: max(2, width * Double(grades[g] ?? 0) / Double(total)))
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+            .frame(height: 10)
+            HStack {
+                ForEach(Grade.all, id: \.self) { g in
+                    HStack(spacing: 4) {
+                        Text(g.uppercased())
+                            .font(.caption2.weight(.heavy)).foregroundStyle(.white)
+                            .frame(width: 16, height: 16)
+                            .background(Grade.color(g), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        Text("\(grades[g] ?? 0)").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    if g != Grade.all.last { Spacer(minLength: 2) }
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Grade.all.map { "\($0.uppercased()) \(grades[$0] ?? 0) kcal" }.joined(separator: ", "))
     }
 }
 
@@ -384,36 +484,6 @@ struct QualityLineRow: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-    }
-}
-
-/// Calories by Nutri-Score grade, one bar each.
-struct QualityBars: View {
-    let grades: [String: Int]
-
-    var body: some View {
-        let top = max(grades.values.max() ?? 0, 1)
-        VStack(spacing: 7) {
-            ForEach(Grade.all, id: \.self) { g in
-                let kcal = grades[g] ?? 0
-                HStack(spacing: 10) {
-                    Text(g.uppercased())
-                        .font(.caption.weight(.heavy))
-                        .foregroundStyle(.white)
-                        .frame(width: 22, height: 22)
-                        .background(Grade.color(g), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    GeometryReader { geo in
-                        Capsule().fill(Grade.color(g).opacity(kcal > 0 ? 1 : 0.15))
-                            .frame(width: max(6, geo.size.width * Double(kcal) / Double(top)))
-                    }
-                    .frame(height: 8)
-                    Text("\(kcal) kcal").font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                        .frame(width: 70, alignment: .trailing)
-                }
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Grade.all.map { "\($0.uppercased()) \(grades[$0] ?? 0) kcal" }.joined(separator: ", "))
     }
 }
 

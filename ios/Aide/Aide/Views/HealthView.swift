@@ -63,7 +63,7 @@ struct HealthView: View {
             Group {
                 #if os(iOS)
                 if half == .food {
-                    FoodPage(day: $day) { header }
+                    FoodPage(day: $day)
                         .pageGlow(coach.tint, reach: 700)
                 } else {
                     bodyPage
@@ -345,7 +345,7 @@ struct DayHeader: View {
 }
 
 /// A month calendar to jump to a day (up to today); picking one closes it.
-private struct DayCalendar: View {
+struct DayCalendar: View {
     @Binding var day: Date
     @Environment(\.dismiss) private var dismiss
 
