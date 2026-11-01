@@ -111,6 +111,8 @@ def finance_tools(store: FinanceStore, banks=None) -> list[Tool]:
                 line = f"- {a['name']} ({a['kind']}): no balance (from {a['source']})"
             status = {"renew": "the bank link ends within a week: renew it in Money", "expired": "the bank link "
                       "ended: link it again in Money", "unlinked": "not linked any more"}.get(a["status"])
+            if a["hidden"]:
+                status = (f"{status}; " if status else "") + "hidden from Money's accounts and total by the user"
             lines.append(line + (f"; {status}" if status else ""))
         if not lines:
             return "No accounts yet. Banks are linked in the app: Money → Accounts → Link a bank."

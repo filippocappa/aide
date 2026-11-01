@@ -61,6 +61,12 @@ NOISE = [
     r"\babi\s*\d+\b", r"\bcab\s*\d+\b",
 ]
 CASH = re.compile(r"\b(prelievo|prelevamento|atm|bancomat|cash\s+withdrawal)\b", re.I)
+# The user's money moving between their own places, which isn't spending or income: a card topping up an account
+# (money in), Revolut's savings and investment pockets, paying off a credit card, an Italian "giroconto".
+TOP_UP = re.compile(r"\btop[- ]?up\b", re.I)
+OWN_TEXT = re.compile(r"\bgiroconto\b|\bto (investment|savings) account\b|\b(vault|pocket|salvadanaio)\b|"
+                      r"\badvanzia\b|\bcarta you\b", re.I)
+REFUND = re.compile(r"\b(refund|rimborso|storno)\b", re.I)
 
 
 def clean_merchant(text: str) -> str:
@@ -174,6 +180,17 @@ def pick_balance(balances: list[dict], card: bool = False) -> tuple[float, str] 
     return None
 
 
+def own_move(amount: float, party: str, raw: str, holders: set[frozenset[str]]) -> bool:
+    """Money between the user's own accounts or cards, by the bank's text: a top-up coming in, a pocket, a card payoff,
+    or the other side in the user's own name (any order of the words; a refund from a shop in their name isn't)."""
+    if REFUND.search(raw):
+        return False
+    if (amount > 0 and TOP_UP.search(raw)) or OWN_TEXT.search(raw):
+        return True
+    words = frozenset(normalise(party).split())
+    return len(words) >= 2 and words in holders
+
+
 def parse_tx(t: dict, uid: str, seen: dict[str, int]) -> dict | None:
     """A bank transaction in Finance's terms, or None for a cancelled, rejected or scheduled one."""
     status = t.get("status") or "BOOK"
@@ -206,7 +223,7 @@ def parse_tx(t: dict, uid: str, seen: dict[str, int]) -> dict | None:
     mcc = str(t.get("merchant_category_code") or "")
     return {"ref": f"{uid}:{ident}", "amount": round(amount, 2),
             "currency": (t.get("transaction_amount") or {}).get("currency") or "EUR",
-            "day": date.fromisoformat(str(day)[:10]), "merchant": merchant, "raw": raw[:300],
+            "day": date.fromisoformat(str(day)[:10]), "merchant": merchant, "raw": raw[:300], "party": name,
             "pending": status in ("PDNG", "HOLD"), "iban": party_account.get("iban"),
             "cash": mcc == "6011" or bool(CASH.search(raw))}
 
@@ -286,7 +303,8 @@ class Banks:
         ident = a.get("identification_hash") or ident
         iban = (a.get("account_id") or {}).get("iban")
         card = (a.get("cash_account_type") or "").upper() == "CARD"
-        name = a.get("name") or a.get("product") or a.get("details") or bank
+        holder = (a.get("name") or "").strip() or None  # Enable Banking's `name` is the account holder's
+        name = a.get("product") or a.get("details") or bank
         name = name if bank.lower() in name.lower() else f"{bank} {name}"
         if iban:
             name += f" ··{iban[-4:]}"
@@ -296,9 +314,9 @@ class Banks:
                 found = self.conn.execute(f"SELECT id FROM finance_accounts WHERE {col} = ?", (value,)).fetchone()
         acc_id = found["id"] if found else self.finance.account(name, "bank", "card" if card else "account")["id"]
         self.conn.execute("UPDATE finance_accounts SET source = 'bank', kind = ?, bank_id = ?, uid = ?, ident = ?, "
-                          "iban = ?, currency = ?, consent_until = ? WHERE id = ?",
+                          "iban = ?, currency = ?, consent_until = ?, holder = COALESCE(?, holder) WHERE id = ?",
                           ("card" if card else "account", bank_id, a["uid"], ident, iban, a.get("currency") or "EUR",
-                           until, acc_id))
+                           until, holder, acc_id))
 
     async def unlink(self, bank_id: int) -> bool:
         b = self.conn.execute("SELECT * FROM finance_banks WHERE id = ?", (bank_id,)).fetchone()
@@ -373,6 +391,7 @@ class Banks:
             self.conn.execute("UPDATE finance_banks SET last_sync_at = ?, error = NULL WHERE id = ?",
                               (utcnow().isoformat(), bank_id))
             self._mark_transfers()
+            self._mark_own()
         if new_rows:
             asyncio.create_task(self.finance.sort_pending())
             if psu is None and self.notify:  # the user isn't in the app: say when money comes in
@@ -384,6 +403,15 @@ class Banks:
 
     async def _sync_account(self, acc: dict, psu: dict | None, first: bool) -> list[dict]:
         uid = acc["uid"]
+        if not acc.get("holder"):  # linked before holders were kept: once
+            try:
+                holder = ((await self.client.details(uid)).get("name") or "").strip()
+                if holder:  # and out of the account's name, where it was put before
+                    name = " ".join(acc["name"].replace(holder, " ").split()) or acc["name"]
+                    self.conn.execute("UPDATE finance_accounts SET holder = ?, name = ? WHERE id = ?",
+                                      (holder, name, acc["id"]))
+            except BankError as e:
+                log.info("account details failed: %s", e.code)
         got = pick_balance(await self.client.balances(uid, psu), acc["kind"] == "card")
         if got:
             self.conn.execute("UPDATE finance_accounts SET balance = ?, currency = ?, balance_at = ? WHERE id = ?",
@@ -438,7 +466,7 @@ class Banks:
         own = p["iban"] and self.conn.execute("SELECT 1 FROM finance_accounts WHERE iban = ?",
                                               (p["iban"],)).fetchone()
         category, sorted_by = "other", "none"
-        if own:
+        if own or own_move(p["amount"], p.get("party") or "", p["raw"], self._holders()):
             category, sorted_by = "transfer", "rule"
         elif p["cash"] and p["amount"] < 0:
             category, sorted_by = "cash", "rule"
@@ -468,6 +496,21 @@ class Banks:
         if before and self.finance.local(before).date() == day:
             return before
         return datetime.combine(day, time(12), self.tz).astimezone(timezone.utc).isoformat()
+
+    def _holders(self) -> set[frozenset[str]]:
+        """The names on the user's own accounts, as sets of words ("CAPPA FILIPPO" is "Filippo Cappa")."""
+        return {frozenset(normalise(r["holder"]).split()) for r in self.conn.execute(
+            "SELECT DISTINCT holder FROM finance_accounts WHERE holder IS NOT NULL")}
+
+    def _mark_own(self) -> None:
+        """Bank records that are the user's own money moving (own_move) and aren't yet: transfers, unless the user
+        sorted them. Also catches what came in before the rule or before an account's holder was known."""
+        holders = self._holders()
+        for r in self.conn.execute("SELECT id, amount, raw FROM finance_transactions WHERE source = 'bank' AND "
+                                   "category != 'transfer' AND sorted_by != 'user'").fetchall():
+            if own_move(r["amount"], (r["raw"] or "").split(" · ")[0], r["raw"] or "", holders):
+                self.conn.execute("UPDATE finance_transactions SET category = 'transfer', sorted_by = 'rule' "
+                                  "WHERE id = ?", (r["id"],))
 
     def _mark_transfers(self) -> None:
         """Money out of one linked account and the same into another within 3 days: a transfer, not spending or

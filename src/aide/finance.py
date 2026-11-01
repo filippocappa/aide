@@ -151,7 +151,9 @@ class FinanceStore:
         for table, col, decl in (("finance_transactions", "ref", "TEXT"),
                                  ("finance_transactions", "pending", "INTEGER NOT NULL DEFAULT 0"),
                                  ("finance_accounts", "bank_id", "INTEGER"), ("finance_accounts", "uid", "TEXT"),
-                                 ("finance_accounts", "ident", "TEXT"), ("finance_accounts", "iban", "TEXT")):
+                                 ("finance_accounts", "ident", "TEXT"), ("finance_accounts", "iban", "TEXT"),
+                                 ("finance_accounts", "holder", "TEXT"),
+                                 ("finance_accounts", "hidden", "INTEGER NOT NULL DEFAULT 0")):
             if col not in cols[table]:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         self.conn.execute("CREATE INDEX IF NOT EXISTS finance_transactions_ref ON finance_transactions (ref)")
@@ -189,8 +191,17 @@ class FinanceStore:
             out.append({"id": a["id"], "name": a["name"], "kind": a["kind"], "source": a["source"],
                         "currency": a["currency"], "balance": a["balance"], "balance_at": a["balance_at"],
                         "consent_until": a["consent_until"], "status": self._status(a), "bank_id": a["bank_id"],
-                        "last_at": last["at"], "count": last["n"], "spent_month": round(-month, 2)})
+                        "last_at": last["at"], "count": last["n"], "spent_month": round(-month, 2),
+                        "hidden": bool(a["hidden"])})
         return out
+
+    def set_hidden(self, account_id: int, hidden: bool) -> dict | None:
+        """Leave an account out of Money's accounts and total (a credit line that's always below zero), or show it
+        again. Its payments still count."""
+        if not self.conn.execute("UPDATE finance_accounts SET hidden = ? WHERE id = ?",
+                                 (int(hidden), account_id)).rowcount:
+            return None
+        return next(a for a in self.accounts() if a["id"] == account_id)
 
     def _status(self, a) -> str:
         """Where an account's payments come from: wallet, manual, or its bank's link (bank, renew a week before the

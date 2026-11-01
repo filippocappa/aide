@@ -2229,7 +2229,8 @@ the user's own accounts); a refund (positive, not income) takes from its categor
 | `PATCH /v1/finance/payments/{id}` | `{"category": "eating_out", "merchant": "…", "note": "…", "remember": true}`, each optional | `{"payment": Payment}`; 400 for an unknown category, 404 |
 | `DELETE /v1/finance/payments/{id}` | | `{"ok": true}`; 404 |
 | `GET /v1/finance/month` | `?month=2026-10` (default this month) | Month; 400 for a month not yet started |
-| `GET /v1/finance/accounts` | | `{"accounts": [Account]}` |
+| `GET /v1/finance/accounts` | | `{"accounts": [Account], "total": 1180.5}` |
+| `PATCH /v1/finance/accounts/{id}` | `{"hidden": true}` | `{"account": Account}`; 404 |
 | `GET /v1/finance/subscriptions` | | `{"subscriptions": [Subscription], "monthly_total": 24.3}`, next charge first |
 | `GET /v1/finance/budget` | | Budget |
 | `PUT /v1/finance/budget` | `{"monthly": 600, "categories": {"eating_out": 80, "fun": null}}` | Budget; `monthly` absent leaves it, `null` removes it; a category's `null` removes its budget; 400 for ≤ 0 or `income`/`transfer` |
@@ -2274,11 +2275,12 @@ the user's own accounts); a refund (positive, not income) takes from its categor
   words, never louder.
 - **Account:** `{"id": 1, "name": "Revolut", "kind": "card", "source": "wallet", "currency": "EUR", "balance": null,
   "balance_at": null, "consent_until": null, "status": "wallet", "bank_id": null, "last_at": "…", "count": 41,
-  "spent_month": 210.4}`. `status` is where its payments come from: `wallet`, `manual`, or for a bank account `bank`
+  "spent_month": 210.4, "hidden": false}`. `hidden`: the user keeps it out of Money's accounts and `total` (a credit
+  line that's always below zero); its payments still count, and the app lists it under Money → Banks. `status` is where its payments come from: `wallet`, `manual`, or for a bank account `bank`
   (linked), `renew` (the consent ends within 7 days), `expired` (link it again) or `unlinked`. `balance` (the
   bank's available balance on an account, the booked one on a card) and `balance_at` come from bank sync, else
   `null`. `GET /v1/finance/accounts` also has `total`: the linked accounts' balances added up (`kind` `account`,
-  cards left out), `null` with none.
+  cards and hidden accounts left out), `null` with none.
 - **Payment** has two more fields since step 2: `pending` (the bank hasn't booked it yet; it becomes booked in place,
   or goes if the bank cancels it) and `bank` (the bank's record of it has come: `source` `bank`, or a tap matched to
   it).
@@ -2327,7 +2329,11 @@ private key on `cappa`) are in `.env`; `ENABLE_BANKING_REDIRECT` is the callback
 - **Sorting.** As for taps (a merchant's rule, else the model), with the merchant taken out of the bank's text
   ("PAGAMENTO POS … ESSELUNGA TORINO CARTA N.****1234" → "Esselunga Torino"). Money in is `income`; a cash machine is
   `cash`; money between two linked accounts (an own IBAN, or the same amount out of one and into another within 3
-  days) is `transfer` on both sides. The user's own correction always wins.
+  days) is `transfer` on both sides. So is the user's own money moving by the bank's text, linked or not: a card's
+  top-up coming in ("Apple Pay Top-Up by *5372"), Revolut's investment and savings pockets, a giroconto, paying off
+  Advanzia's Carta YOU, and money to or from the user's own name (the account holder Enable Banking gives, in any
+  word order; a refund in their name stays income). Records from before are sorted again on each read. The user's own
+  correction always wins.
 - **Privacy.** The private key and the bank data stay on `cappa`; nothing from a bank goes in the logs. Enable Banking
   sees what any account-information provider sees.
 

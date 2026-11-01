@@ -2433,8 +2433,18 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def finance_accounts():
         accounts = finance.accounts()
         held = [a["balance"] for a in accounts if a["balance"] is not None and a["kind"] == "account"
-                and a["status"] != "unlinked"]
+                and a["status"] != "unlinked" and not a["hidden"]]
         return {"accounts": accounts, "total": round(sum(held), 2) if held else None}
+
+    class AccountPatch(BaseModel):
+        hidden: bool
+
+    @app.patch("/v1/finance/accounts/{account_id}", dependencies=[Depends(auth)])
+    async def finance_account_patch(account_id: int, body: AccountPatch):
+        account = finance.set_hidden(account_id, body.hidden)
+        if account is None:
+            raise HTTPException(404, "no such account")
+        return {"account": account}
 
     @app.get("/v1/finance/subscriptions", dependencies=[Depends(auth)])
     async def finance_subscriptions():

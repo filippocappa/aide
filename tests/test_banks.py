@@ -36,8 +36,9 @@ class FakeBank:
     """Enable Banking as Aide uses it: one bank, accounts by uid, their balances and transactions."""
 
     def __init__(self):
-        self.accounts = {"u1": {"uid": "u1", "account_id": {"iban": "IT60X0542811101000000123456"}, "name": "Conto",
-                                "currency": "EUR", "cash_account_type": "CACC", "identification_hash": "h1"}}
+        self.accounts = {"u1": {"uid": "u1", "account_id": {"iban": "IT60X0542811101000000123456"}, "product": "Conto",
+                                "name": "Filippo Cappa", "currency": "EUR", "cash_account_type": "CACC",
+                                "identification_hash": "h1"}}
         self.bal = {"u1": [{"balance_type": "CLBD", "balance_amount": {"amount": "1200.00", "currency": "EUR"}},
                                 {"balance_type": "ITAV", "balance_amount": {"amount": "1180.50", "currency": "EUR"}}]}
         self.txs: dict[str, list[dict]] = {"u1": []}
@@ -315,6 +316,12 @@ def test_api_links_through_the_callback_and_lists_banks(setup):
     assert r.headers["location"] == "aide://money/banks?error=access_denied"
     accounts = c.get("/v1/finance/accounts", headers=AUTH).json()
     assert accounts["total"] == 1180.5 and accounts["accounts"][0]["status"] == "bank"
+    acc_id = accounts["accounts"][0]["id"]
+    r = c.patch(f"/v1/finance/accounts/{acc_id}", headers=AUTH, json={"hidden": True})
+    assert r.json()["account"]["hidden"] is True
+    assert c.get("/v1/finance/accounts", headers=AUTH).json()["total"] is None
+    assert c.patch("/v1/finance/accounts/999", headers=AUTH, json={"hidden": True}).status_code == 404
+    c.patch(f"/v1/finance/accounts/{acc_id}", headers=AUTH, json={"hidden": False})
     assert c.post("/v1/finance/banks/sync", headers=AUTH).json()["new"] == 0
     bank_id = c.get("/v1/finance/banks", headers=AUTH).json()["banks"][0]["id"]
     assert c.delete(f"/v1/finance/banks/{bank_id}", headers=AUTH).json() == {"ok": True}
@@ -339,3 +346,64 @@ def test_finance_reads_balances(setup):
     link(banks, fake)
     out = asyncio.run(tools["accounts"].handler())
     assert "Intesa Sanpaolo Conto ··3456 (account): €1,180.50" in out
+
+
+def test_own_money_moving_is_a_transfer_not_spending_or_income(setup):
+    finance, banks, fake, _ = setup
+    d = today(finance)
+    fake.txs["u1"] = [
+        tx(200, d, text="Apple Pay Top-Up by *5372", ident="t1"),           # a card topping the account up
+        tx(-1800, d, name="Filippo Cappa", text="Mastercard To Filippo Cappa", ident="t2"),  # to the user's own name
+        tx(-50, d, name="CAPPA FILIPPO", text="Giroconto", ident="t3"),
+        tx(-44.15, d, text="To investment account", ident="t4"),
+        tx(-300, d, name="Advanzia Bank S.A.", text="Carta YOU", ident="t5"),
+        tx(13.3, d, name="Filippo Cappa", text="Refund from Jcdecaux Espana Slu", ident="t6"),  # a refund: income
+        tx(100, d, name="Marco Cappa", text="Paghetta", ident="t7"),        # a parent, same surname: income
+        tx(-20, d, name="Vodafone", text="Ricarica top-up", ident="t8"),     # a phone top-up out: spending
+    ]
+    link(banks, fake)
+    cats = {r["raw"].split(" · ")[-1]: r["category"] for r in finance.conn.execute(
+        "SELECT raw, category FROM finance_transactions")}
+    assert [cats[k] for k in ("Apple Pay Top-Up by *5372", "Mastercard To Filippo Cappa", "Giroconto",
+                              "To investment account", "Carta YOU")] == ["transfer"] * 5
+    assert cats["Refund from Jcdecaux Espana Slu"] == "income" and cats["Paghetta"] == "income"
+    assert cats["Ricarica top-up"] != "transfer"
+
+
+def test_records_from_before_the_rule_are_sorted_again_but_not_the_users(setup):
+    finance, banks, fake, _ = setup
+    link(banks, fake)
+    acc = finance.accounts()[0]["id"]
+    d = today(finance)
+    banks.add(acc, parse_tx(tx(-500, d, name="Filippo Cappa", text="To Filippo Cappa", ident="x1"), "u1", {}))
+    banks.add(acc, parse_tx(tx(-60, d, name="Filippo Cappa", text="Cena", ident="x2"), "u1", {}))
+    finance.conn.execute("UPDATE finance_transactions SET category = 'other', sorted_by = 'model'")
+    mine = finance.recent()[0]["id"] if finance.recent()[0]["amount"] == -60 else finance.recent()[1]["id"]
+    finance.conn.execute("UPDATE finance_transactions SET sorted_by = 'user' WHERE id = ?", (mine,))
+    asyncio.run(banks.sync_all(force=True))
+    by_amount = {r["amount"]: r["category"] for r in finance.recent()}
+    assert by_amount == {-500: "transfer", -60: "other"}
+
+
+def test_an_account_linked_before_holders_learns_its_holder_and_drops_it_from_the_name(setup):
+    finance, banks, fake, _ = setup
+    fake.accounts["u1"].pop("product")
+    link(banks, fake)
+    finance.conn.execute("UPDATE finance_accounts SET holder = NULL, name = 'Intesa Sanpaolo Filippo Cappa ··3456'")
+    asyncio.run(banks.sync_all(force=True))
+    a = finance.accounts()[0]
+    assert a["name"] == "Intesa Sanpaolo ··3456"
+    assert banks._holders() == {frozenset({"filippo", "cappa"})}
+
+
+def test_a_hidden_account_stays_out_of_the_total_but_its_payments_count(setup):
+    finance, banks, fake, _ = setup
+    fake.accounts["u2"] = {"uid": "u2", "account_id": {"iban": "IT11Y0000000000000000999999"}, "product": "Per Merito",
+                           "name": "Filippo Cappa", "currency": "EUR", "cash_account_type": "CACC"}
+    fake.bal["u2"] = [{"balance_type": "ITAV", "balance_amount": {"amount": "-5400", "currency": "EUR"}}]
+    fake.txs["u2"] = [tx(-30, today(finance), name="Esselunga", ident="e1")]
+    link(banks, fake)
+    merito = next(a for a in finance.accounts() if "Merito" in a["name"])
+    assert finance.set_hidden(merito["id"], True)["hidden"] is True
+    assert finance.set_hidden(999, True) is None
+    assert finance.month()["spent"] == 30
