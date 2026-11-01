@@ -54,25 +54,25 @@ original plan, and [CLAUDE.md](CLAUDE.md) is where things stand.
 **iPhone:** Study, a course, Health (Body, Food, Screen) and Money.
 
 <p align="center">
-  <img src="docs/screenshots/iphone-study.jpg" width="32%" alt="Study: Professor's line, what's up next, the courses">
-  <img src="docs/screenshots/iphone-course.jpg" width="32%" alt="A course: Learn, Quiz me, Practice exam, the dates, how well you know it">
-  <img src="docs/screenshots/iphone-health.jpg" width="32%" alt="Health, Body: Strain, Recovery and Sleep, Coach's line, last night">
+  <img src="docs/screenshots/iphone-study.webp" width="32%" alt="Study: Professor's line, what's up next, the courses">
+  <img src="docs/screenshots/iphone-course.webp" width="32%" alt="A course: Learn, Quiz me, Practice exam, the dates, how well you know it">
+  <img src="docs/screenshots/iphone-health.webp" width="32%" alt="Health, Body: Strain, Recovery and Sleep, Coach's line, last night">
 </p>
 <p align="center">
-  <img src="docs/screenshots/iphone-food.jpg" width="32%" alt="Health, Food: the week, the day's score, macros, Log a meal">
-  <img src="docs/screenshots/iphone-screen.jpg" width="32%" alt="Health, Screen: time a day, focus, the apps">
-  <img src="docs/screenshots/iphone-money.jpg" width="32%" alt="Money: Finance's placeholder">
+  <img src="docs/screenshots/iphone-food.webp" width="32%" alt="Health, Food: the week, the day's score, macros, Log a meal">
+  <img src="docs/screenshots/iphone-screen.webp" width="32%" alt="Health, Screen: time a day, focus, the apps">
+  <img src="docs/screenshots/iphone-money.webp" width="32%" alt="Money: Finance's placeholder">
 </p>
 
 **Mac:** Study, Health, Food and Screen, with the sidebar and the day at a glance.
 
 <p align="center">
-  <img src="docs/screenshots/mac-study.jpg" width="49%" alt="Mac, Study">
-  <img src="docs/screenshots/mac-health.jpg" width="49%" alt="Mac, Health">
+  <img src="docs/screenshots/mac-study.webp" width="49%" alt="Mac, Study">
+  <img src="docs/screenshots/mac-health.webp" width="49%" alt="Mac, Health">
 </p>
 <p align="center">
-  <img src="docs/screenshots/mac-food.jpg" width="49%" alt="Mac, Food">
-  <img src="docs/screenshots/mac-screen.jpg" width="49%" alt="Mac, Screen: this Mac's apps and websites">
+  <img src="docs/screenshots/mac-food.webp" width="49%" alt="Mac, Food">
+  <img src="docs/screenshots/mac-screen.webp" width="49%" alt="Mac, Screen: this Mac's apps and websites">
 </p>
 
 ## How it fits together
