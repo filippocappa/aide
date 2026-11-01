@@ -4,6 +4,11 @@ subscriptions and an optional budget. Contract in docs/API.md, "Finance".
 Amounts are euros, negative when money goes out. Spending is every payment that isn't income or a transfer between
 the user's own accounts; a refund (positive, not income) takes from its category's spending.
 
+Carta YOU (Advanzia), which no bank link reads, is followed here (`kind` "credit"): what's owed from when the user
+says (`set_owed`), its Wallet taps as spending, and the payoffs and draws the banks show (`link_id`, banks.py) moving
+it. Before that, a payoff stands for the purchases it pays (`card`). Cash: a withdrawal is spending when it's taken
+out; a cash payment told to Finance (the "Cash" account) moves that much out of it into its own category.
+
 Sorting: a merchant's rule first (the user's correction, else the model's earlier answer), else the fast model, in
 one call for every merchant not yet known; its answer becomes the merchant's rule, so each merchant costs once.
 """
@@ -87,9 +92,9 @@ CATEGORIES: dict[str, tuple[str, str]] = {
     "study": ("Study", "university fees, books, stationery, courses"),
     "travel": ("Travel", "flights, long-distance trains, hotels, holidays"),
     "fun": ("Fun", "cinema, concerts, games, events, hobbies"),
-    "cash": ("Cash", "cash withdrawals"),
-    "card": ("Credit card", "paying off a credit card whose purchases Aide doesn't see (Advanzia's Carta YOU): the payoff "
-                            "stands for them"),
+    "cash": ("Cash", "cash withdrawals (a cash payment told to Finance takes its share out of them)"),
+    "card": ("Credit card", "paying off a credit card before Aide follows its purchases (Advanzia's Carta YOU): the "
+                            "payoff stands for them"),
     "income": ("Income", "salary, allowances, money received"),
     "transfer": ("Transfer", "moving money between the user's own accounts, a credit line drawn into them"),
     "other": ("Other", "anything else"),
@@ -97,6 +102,9 @@ CATEGORIES: dict[str, tuple[str, str]] = {
 NOT_SPENDING = {"income", "transfer"}
 RULE_ONLY = {"card"}  # set by the bank rules, never by the sorting model
 SOURCES = {"wallet", "bank", "statement", "manual"}
+CREDIT_NAME = re.compile(r"\badvanzia\b|\bcarta\s*you\b", re.I)  # the credit card Aide follows itself
+CREDIT_CARD = "Carta YOU"
+CASH_NAMES = {"cash", "contanti"}  # payments told on this "account" were paid in cash
 REPEAT_WINDOW = timedelta(minutes=3)  # a Shortcut that runs twice for one tap
 # A repeated charge: (period, its days, the gaps that count as it)
 PERIODS = (("week", 7, (6, 8)), ("month", 30, (26, 35)), ("year", 365, (350, 380)))
@@ -156,7 +164,10 @@ class FinanceStore:
                                  ("finance_accounts", "bank_id", "INTEGER"), ("finance_accounts", "uid", "TEXT"),
                                  ("finance_accounts", "ident", "TEXT"), ("finance_accounts", "iban", "TEXT"),
                                  ("finance_accounts", "holder", "TEXT"),
-                                 ("finance_accounts", "hidden", "INTEGER NOT NULL DEFAULT 0")):
+                                 ("finance_accounts", "hidden", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("finance_accounts", "last4", "TEXT"), ("finance_accounts", "opening", "REAL"),
+                                 ("finance_accounts", "opening_at", "TEXT"),
+                                 ("finance_transactions", "link_id", "INTEGER")):
             if col not in cols[table]:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         self.conn.execute("CREATE INDEX IF NOT EXISTS finance_transactions_ref ON finance_transactions (ref)")
@@ -173,8 +184,14 @@ class FinanceStore:
     # -- accounts --------------------------------------------------------------------------------
 
     def account(self, name: str, source: str = "wallet", kind: str = "card") -> dict:
-        """The account or card with this name, made the first time it's seen."""
+        """The account or card with this name, made the first time it's seen. Carta YOU (by its name or its last
+        digits, as Wallet may call it) is the followed credit card; "Cash" is cash."""
         name = " ".join(name.split()) or "Card"
+        credit = self.conn.execute("SELECT * FROM finance_accounts WHERE kind = 'credit'").fetchone()
+        if CREDIT_NAME.search(name) or credit and credit["last4"] and re.search(rf"\b{credit['last4']}\b", name):
+            return self.credit_card()
+        if normalise(name) in CASH_NAMES:
+            name, kind = "Cash", "cash"
         key = name.lower()
         row = self.conn.execute("SELECT * FROM finance_accounts WHERE key = ?", (key,)).fetchone()
         if not row:
@@ -182,6 +199,49 @@ class FinanceStore:
                               (key, name, kind, source, utcnow().isoformat()))
             row = self.conn.execute("SELECT * FROM finance_accounts WHERE key = ?", (key,)).fetchone()
         return dict(row)
+
+    def credit_card(self) -> dict:
+        """Carta YOU, made the first time it's needed."""
+        row = self.conn.execute("SELECT * FROM finance_accounts WHERE kind = 'credit'").fetchone()
+        if row:
+            return dict(row)
+        self.conn.execute("INSERT INTO finance_accounts (key, name, kind, source, created_at) VALUES (?, ?, 'credit', "
+                          "'manual', ?)", (CREDIT_CARD.lower(), CREDIT_CARD, utcnow().isoformat()))
+        return dict(self.conn.execute("SELECT * FROM finance_accounts WHERE kind = 'credit'").fetchone())
+
+    def followed_since(self, card) -> str | None:
+        """From when the card's purchases are its own payments (what's owed told, or its first Wallet tap), so a
+        payoff from then on is a transfer to it, not spending."""
+        first = self.conn.execute("SELECT MIN(at) AS at FROM finance_transactions WHERE account_id = ?",
+                                  (card["id"],)).fetchone()["at"]
+        return min(x for x in (card["opening_at"], first) if x) if card["opening_at"] or first else None
+
+    def owed(self, card) -> float | None:
+        """The card's balance (below zero: owed): what the user said, minus its purchases since, plus payoffs, minus
+        draws (a draw tops another account up from the card)."""
+        if card["opening"] is None:
+            return None
+        own = self.conn.execute("SELECT COALESCE(SUM(amount), 0) AS s FROM finance_transactions WHERE account_id = ? "
+                                "AND at >= ?", (card["id"], card["opening_at"])).fetchone()["s"]
+        moved = self.conn.execute("SELECT COALESCE(SUM(amount), 0) AS s FROM finance_transactions WHERE link_id = ? "
+                                  "AND at >= ?", (card["id"], card["opening_at"])).fetchone()["s"]
+        return round(card["opening"] + own - moved, 2)
+
+    def set_owed(self, owed: float | None, last4: str | None = None) -> dict:
+        """What's owed on Carta YOU now (None: unchanged), and its last 4 digits, which name its draws ("Top-Up by
+        *1234"). From then on its taps are the spending and payoffs move money to it; banks.Banks.mark_card sorts them
+        again."""
+        if owed is not None and not 0 <= owed <= 1_000_000:
+            raise ValueError("what's owed is 0 or more")
+        if last4 is not None and not re.fullmatch(r"\d{4}", last4):
+            raise ValueError("last4 is the card's last 4 digits")
+        card = self.credit_card()
+        if owed is not None:
+            self.conn.execute("UPDATE finance_accounts SET opening = ?, opening_at = ? WHERE id = ?",
+                              (-round(owed, 2), utcnow().isoformat(), card["id"]))
+        if last4 is not None:
+            self.conn.execute("UPDATE finance_accounts SET last4 = ? WHERE id = ?", (last4, card["id"]))
+        return next(a for a in self.accounts() if a["id"] == card["id"])
 
     def accounts(self) -> list[dict]:
         out = []
@@ -191,11 +251,16 @@ class FinanceStore:
             month = self.conn.execute("SELECT COALESCE(SUM(amount), 0) AS s FROM finance_transactions WHERE "
                                       "account_id = ? AND at >= ? AND category NOT IN ('income', 'transfer')",
                                       (a["id"], self._utc(self.today().replace(day=1)))).fetchone()["s"]
+            balance, balance_at = a["balance"], a["balance_at"]
+            if a["kind"] == "credit":
+                balance = self.owed(a)
+                balance_at = utcnow().isoformat() if balance is not None else None
             out.append({"id": a["id"], "name": a["name"], "kind": a["kind"], "source": a["source"],
-                        "currency": a["currency"], "balance": a["balance"], "balance_at": a["balance_at"],
+                        "currency": a["currency"], "balance": balance, "balance_at": balance_at,
                         "consent_until": a["consent_until"], "status": self._status(a), "bank_id": a["bank_id"],
                         "last_at": last["at"], "count": last["n"], "spent_month": round(-month, 2),
-                        "hidden": bool(a["hidden"])})
+                        "hidden": bool(a["hidden"]),
+                        **({"owed_since": a["opening_at"], "last4": a["last4"]} if a["kind"] == "credit" else {})})
         return out
 
     def set_hidden(self, account_id: int, hidden: bool) -> dict | None:
@@ -460,7 +525,40 @@ class FinanceStore:
                                    "at < ? AND category NOT IN ('income', 'transfer') GROUP BY category",
                                    (self._utc(start), self._utc(end + timedelta(days=1)))):
             out[r["category"]] = round(-r["s"], 2)
+        if out.get("card", 0) < 0:  # a month that only drew from the card: nothing spent on it yet
+            del out["card"]
+        if "cash" in out:
+            covered = self._cash_covered()
+            taken = sum(covered.get(r["id"], 0) for r in self.conn.execute(
+                "SELECT id FROM finance_transactions WHERE category = 'cash' AND amount < 0 AND at >= ? AND at < ?",
+                (self._utc(start), self._utc(end + timedelta(days=1)))))
+            out["cash"] = round(out["cash"] - taken, 2)
+            if out["cash"] <= 0.005:
+                del out["cash"]
         return out
+
+    def _cash_covered(self) -> dict[int, float]:
+        """How much of each withdrawal the cash payments told to Finance account for: each payment takes from the
+        oldest withdrawal before it with cash left, so it isn't counted twice (once taken out, once spent)."""
+        withdrawals = [{"id": r["id"], "at": r["at"], "left": -r["amount"]} for r in self.conn.execute(
+            "SELECT t.id, t.at, t.amount FROM finance_transactions t LEFT JOIN finance_accounts a ON a.id = t.account_id "
+            "WHERE t.category = 'cash' AND t.amount < 0 AND COALESCE(a.kind, '') != 'cash' ORDER BY t.at")]
+        covered: dict[int, float] = {}
+        if not withdrawals:
+            return covered
+        for t in self.conn.execute("SELECT t.at, t.amount FROM finance_transactions t JOIN finance_accounts a ON "
+                                   "a.id = t.account_id WHERE a.kind = 'cash' AND t.amount < 0 AND t.category NOT IN "
+                                   "('income', 'transfer', 'cash') ORDER BY t.at"):
+            need = -t["amount"]
+            for w in withdrawals:
+                if w["at"] > t["at"] or need <= 0:
+                    break
+                take = min(w["left"], need)
+                if take > 0:
+                    w["left"] -= take
+                    need -= take
+                    covered[w["id"]] = covered.get(w["id"], 0) + take
+        return covered
 
     def month(self, month: str | None = None, today: date | None = None) -> dict:
         """A month at a glance: spent, the budget and what's left, against last month by the same day, each

@@ -23,6 +23,7 @@ struct MoneyView: View {
     @State private var error: String?
     @State private var open: Payment?
     @State private var editingBudget = false
+    @State private var editingCard: FinanceAccount?
 
     private var finance: Agent { chat.agent("finance") }
     private var tint: Color { finance.tint }
@@ -76,7 +77,7 @@ struct MoneyView: View {
                         if accounts.isEmpty {
                             linkBank
                         } else {
-                            AccountsCard(accounts: accounts, tint: tint)
+                            AccountsCard(accounts: accounts, tint: tint) { editingCard = $0 }
                         }
                     }
                 }
@@ -97,6 +98,9 @@ struct MoneyView: View {
             }
             .sheet(item: $open) { p in
                 PaymentSheet(payment: p, tint: tint) { await load() }
+            }
+            .sheet(item: $editingCard) { card in
+                CardOwedSheet(card: card, tint: tint) { await load() }
             }
             .sheet(isPresented: $editingBudget) {
                 BudgetSheet(tint: tint) { await load() }

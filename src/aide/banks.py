@@ -417,6 +417,7 @@ class Banks:
             self.conn.execute("UPDATE finance_banks SET last_sync_at = ?, error = NULL WHERE id = ?",
                               (utcnow().isoformat(), bank_id))
             self._mark_own()
+            self.mark_card()
             self._mark_transfers()
             self._tidy_names()
         if new_rows:
@@ -534,7 +535,7 @@ class Banks:
         alone, before pairing left them out) goes back to income, or to its merchant's rule."""
         holders = self._holders()
         for r in self.conn.execute("SELECT id, amount, raw, merchant, category FROM finance_transactions WHERE "
-                                   "source = 'bank' AND sorted_by != 'user'").fetchall():
+                                   "source = 'bank' AND sorted_by != 'user' AND link_id IS NULL").fetchall():
             raw = r["raw"] or ""
             party = party_of(raw)
             kind = own_kind(r["amount"], party, raw, holders)
@@ -544,6 +545,35 @@ class Banks:
             if kind and kind != r["category"]:
                 self.conn.execute("UPDATE finance_transactions SET category = ?, sorted_by = 'rule' WHERE id = ?",
                                   (kind, r["id"]))
+
+    def mark_card(self) -> None:
+        """Carta YOU's payoffs (own_kind "card") and draws ("Top-Up by *<its last 4>") tied to it, so they move what's
+        owed. Until Aide follows the card, a payoff stands for what the card paid (`card`), and a draw, money taken
+        from the card and spent from the account it went to, takes its share back out (`card` too, positive: 1,800
+        drawn and paid back is nothing spent). From then on both only move money: transfers. The user's own sort
+        wins."""
+        holders = self._holders()
+        card = self.conn.execute("SELECT * FROM finance_accounts WHERE kind = 'credit'").fetchone()
+        draw = re.compile(rf"\btop[- ]?up\b.*\*{card['last4']}\b", re.I) if card and card["last4"] else None
+        found = []
+        for r in self.conn.execute("SELECT id, at, amount, raw, category, sorted_by, link_id FROM finance_transactions "
+                                   "WHERE source = 'bank' ORDER BY at").fetchall():
+            raw = r["raw"] or ""
+            if (r["amount"] < 0 and own_kind(r["amount"], party_of(raw), raw, holders) == "card") or (
+                    r["amount"] > 0 and draw and draw.search(raw)):
+                found.append(r)
+            elif card and r["link_id"] == card["id"]:
+                self.conn.execute("UPDATE finance_transactions SET link_id = NULL WHERE id = ?", (r["id"],))
+        if not found:
+            return
+        card = card or self.finance.credit_card()
+        since = self.finance.followed_since(card)
+        for r in found:
+            want = "transfer" if since and r["at"] >= since else "card"
+            self.conn.execute("UPDATE finance_transactions SET link_id = ? WHERE id = ?", (card["id"], r["id"]))
+            if r["sorted_by"] != "user" and r["category"] != want:
+                self.conn.execute("UPDATE finance_transactions SET category = ?, sorted_by = 'rule' WHERE id = ?",
+                                  (want, r["id"]))
 
     def _tidy_names(self) -> None:
         """The user's own name out of their accounts' names, where banks or an older Aide put it ("HYPE FILIPPO CAPPA
@@ -570,7 +600,8 @@ class Banks:
             "SELECT o.id AS o, i.id AS i, o.raw AS o_raw, i.raw AS i_raw FROM finance_transactions o "
             "JOIN finance_transactions i ON i.amount = -o.amount "
             "AND i.account_id != o.account_id AND julianday(i.at) BETWEEN julianday(o.at) - 3 AND julianday(o.at) + 3 "
-            "WHERE o.source = 'bank' AND i.source = 'bank' AND o.amount < 0 AND NOT (o.category = 'transfer' AND "
+            "WHERE o.source = 'bank' AND i.source = 'bank' AND o.link_id IS NULL AND i.link_id IS NULL AND o.amount < 0 "
+            "AND NOT (o.category = 'transfer' AND "
             "i.category = 'transfer') AND 'card' NOT IN (o.category, i.category) AND o.sorted_by != 'user' "
             "AND i.sorted_by != 'user' AND o.at >= ? ORDER BY abs(julianday(i.at) - julianday(o.at))",
             (f"{(utcnow() - timedelta(days=FIRST_DAYS + 5)).isoformat()}",)).fetchall()

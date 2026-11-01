@@ -700,6 +700,13 @@ final class APIClient {
         return r.account
     }
 
+    /// The credit card only: what's owed on it now (following starts from now) and its last 4 digits, each optional.
+    func setCardOwed(_ id: Int, owed: Double?, last4: String?) async throws -> FinanceAccount {
+        struct Patch: Encodable { let owed: Double?; let last4: String? }
+        let r: AccountResponse = try await send("PATCH", "/v1/finance/accounts/\(id)", body: Patch(owed: owed, last4: last4))
+        return r.account
+    }
+
     func unlinkBank(_ id: Int) async throws {
         let _: OKResponse = try await send("DELETE", "/v1/finance/banks/\(id)", body: EmptyBody())
     }

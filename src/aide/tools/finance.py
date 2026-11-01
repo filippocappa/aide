@@ -42,8 +42,11 @@ def describe_month(m: dict) -> str:
 
 def finance_tools(store: FinanceStore, banks=None) -> list[Tool]:
     async def log_payment(amount: float, merchant: str, income: bool = False, category: str | None = None,
-                          paid_at: str | None = None, account: str | None = None, note: str | None = None) -> str:
+                          paid_at: str | None = None, account: str | None = None, note: str | None = None,
+                          cash: bool = False) -> str:
         value = abs(amount) if income else -abs(amount)
+        if cash:
+            account = "Cash"
         tx, new = store.add(value, merchant, account=account, at=paid_at, source="manual",
                             category=category or ("income" if income else None), note=note)
         if new and tx["sorted_by"] == "none":
@@ -98,11 +101,27 @@ def finance_tools(store: FinanceStore, banks=None) -> list[Tool]:
                          f"last {x['last']} ({x['count']} charges)")
         return "\n".join(lines)
 
+    async def card_owed(owed: float, last4: str | None = None) -> str:
+        a = store.set_owed(owed, last4)
+        if banks is not None:
+            banks.mark_card()
+        a = next(x for x in store.accounts() if x["id"] == a["id"])
+        return (f"Following {a['name']} from now: {euros(-a['balance'])} owed. Its Apple Pay taps are the spending from "
+                f"here, and payoffs move money to it." + ("" if a.get("last4") else " Its last 4 digits aren't known, "
+                                                          "so top-ups drawn from it aren't counted against it yet."))
+
     async def accounts() -> str:
         if banks is not None and banks.enabled:
             await banks.sync_all()  # within 2 minutes of the last read this reads nothing
         lines = []
         for a in store.accounts():
+            if a["kind"] == "credit":
+                lines.append(f"- {a['name']} (credit card, followed by Aide): " + (
+                    f"{euros(-a['balance'])} owed" if a["balance"] is not None and a["balance"] <= 0 else
+                    f"{euros(a['balance'])} in credit" if a["balance"] is not None else
+                    "what's owed isn't known: ask the user, then card_owed") + (
+                    f"; ends in {a['last4']}" if a.get("last4") else ""))
+                continue
             if a["balance"] is not None:
                 when = store.local(a["balance_at"]).strftime("%a %d %b %H:%M") if a["balance_at"] else "?"
                 line = f"- {a['name']} ({a['kind']}): {'-' if a['balance'] < 0 else ''}{euros(a['balance'])}, " \
@@ -141,8 +160,17 @@ def finance_tools(store: FinanceStore, banks=None) -> list[Tool]:
                  "category": {**category, "description": "Only when the user says or it's obvious"},
                  "paid_at": {"type": "string", "description": "Local time as YYYY-MM-DDTHH:MM. Omit for now."},
                  "account": {"type": "string", "description": "The card or account, if said"},
+                 "cash": {"type": "boolean", "description": "Paid in cash: it takes its share out of the cash "
+                                                            "withdrawals, which already counted as spending"},
                  "note": {"type": "string"}},
               "required": ["amount", "merchant"], "additionalProperties": False}, log_payment),
+        Tool("card_owed", "Set what the user owes on Carta YOU (Advanzia's credit card, which no bank link reads) right "
+             "now, when they tell you, and its last 4 digits if said. From then on its Apple Pay taps are the spending "
+             "and payoffs only move money to it, so what's owed follows. Runs immediately.",
+             {"type": "object", "properties": {
+                 "owed": {"type": "number", "description": "Euros owed now (0 if nothing)"},
+                 "last4": {"type": "string", "description": "The card's last 4 digits"}},
+              "required": ["owed"], "additionalProperties": False}, card_owed),
         Tool("list_payments", "The user's payments, newest first, with category, card and place ([payment N]): the "
              "last `days`, or from start to end; filter by category or merchant. Shows them as a card.",
              {"type": "object", "properties": {
