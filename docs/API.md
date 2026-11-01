@@ -2460,13 +2460,14 @@ Four kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's 
   the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left,
   or, once the user is on it, until they get off.
 - **`agent`**: an agent at work. The app starts one when it sends a chat or Team chat message; the server keeps it
-  up to date (asking another agent, writing) and ends it at once when the reply is in, which then comes as a
-  `message` push. Since 2026-10-27 the server also starts one for Professor writing notes (a notebook proposal being
+  up to date (asking another agent, writing), and when the reply is in the island pops open with it (since
+  2026-11-02), to be tapped. Since 2026-10-27 the server also starts one for Professor writing notes (a notebook proposal being
   applied, a lecture's notes), and one for each browser errand.
 
 One notification for each thing (since 2026-10-30): while an agent works, its activity is quiet; when it needs you
 (a login, a question, a Confirm), the activity says so with an alert and no other push goes; when it's done or
-failed, the activity goes at once and one normal push takes its place.
+failed, the activity goes at once and one normal push takes its place. A chat reply is the exception (since
+2026-11-02): the activity pops open with it and its `message` push is quiet.
 - **`event`** (since 2026-10-27): the next calendar event's countdown, started by the server 10 minutes before a
   timed event on the Work calendar ("Macroeconomics in 10 min · Aula 5"), unless leave-now has set a tram alert for it.
 - **`lock`** (since 2026-11-01): a Screen Time lock while it holds, started by the server when the lock comes on
@@ -2573,9 +2574,14 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
 
 - A chat turn: the app starts the activity (status `working`) and registers its key; the server sends `update`s as
   the turn goes (each ask; `writing` once, when the reply starts), at most one per 2 seconds, priority 5. About 3 s
-  after the turn ends, if the key is still there, it sends an `end` with `done` (`text` the first line), dismissed at
-  once and with no alert, then the `message` push with the reply (since 2026-10-30; before: an alert on the activity
-  and an `end` dismissed after 30 minutes). A failed turn ends with `failed`, no alert, dismissed at once.
+  after the turn ends, if the key is still there (the app isn't in front), it sends an `update` with `done` (`text`
+  the first line) and an `alert` (title the agent's name, body the first line), so the Dynamic Island pops open with
+  the reply and stays on Done, tapped to open the chat; `stale-date` 16 minutes on. Then the `message` push, quiet
+  (`interruption-level` `passive`, no sound: only in Notification Center). 15 minutes later, unless the app has
+  ended it (it ends a `done` one when it comes to the front), an `end` dismissed at once. If the update doesn't go,
+  the `end` goes at once and the push is a normal one. A server restart meanwhile ends it with its `done` state
+  (since 2026-11-02; 2026-10-30 to 11-01: an `end` dismissed at once and a normal push; before: an alert on the
+  activity and an `end` dismissed after 30 minutes). A failed turn ends with `failed`, no alert, dismissed at once.
   A turn that started a browser errand hands over to the errand's activity: when the server has an `agent` start
   token, the turn's activity ends at once with no push, since the errand's is what comes next.
   An app that lost the stream leaves the activity to the server (no `failed` of its own, no delete) while the

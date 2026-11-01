@@ -34,6 +34,7 @@ THROTTLE = 2.0  # seconds between an agent activity's updates
 SETTLE = 3.0  # seconds after a turn before its last update: the app, if open, ends the activity itself first
 WAITING_FOR = timedelta(minutes=30)  # an errand waiting for the user keeps its activity this long
 TEXT_MAX = 140
+DONE_FOR = 15 * 60.0  # seconds a finished reply stays in the Dynamic Island, to be tapped, unless the app opens first
 ENDED_FOR = timedelta(hours=1)  # an end that went out before the token came is sent when it comes, this long
 _running: set[asyncio.Task] = set()  # the background pushes, held until they're done
 
@@ -45,6 +46,10 @@ CREATE TABLE IF NOT EXISTS live_tokens (
     created_at  TEXT NOT NULL      -- UTC
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS live_done (  -- agent activities showing a finished reply, ended after DONE_FOR
+    key   TEXT PRIMARY KEY,
+    state TEXT NOT NULL                 -- the done content-state, JSON
+);
 """
 SETTINGS = {"events": True, "locks": True}
 
@@ -195,15 +200,31 @@ class LiveActivities:
         keys = [r["key"] for r in self.conn.execute(
             "SELECT key FROM live_tokens WHERE key NOT LIKE 'start:%' AND key NOT LIKE 'tram:%' "
             "AND key NOT LIKE 'event:%' AND key NOT LIKE 'lock:%'")]
-        state = {"status": "failed", "detail": "Interrupted", "text": "", "since": int(time.time())}
+        interrupted = {"status": "failed", "detail": "Interrupted", "text": "", "since": int(time.time())}
+        done = {r["key"]: json.loads(r["state"]) for r in self.conn.execute("SELECT * FROM live_done")}
+        self.conn.execute("DELETE FROM live_done")
         for key in keys:
             try:
-                await self.end(key, state, datetime.now(timezone.utc))
+                # A finished reply waiting in the island ends as it was (its quiet push is in Notification Center).
+                await self.end(key, done.get(key, interrupted), datetime.now(timezone.utc))
             except Exception:
                 log.exception("%s: Live Activity didn't end", key)
         if keys:
             log.info("ended %d Live Activities left from before the restart", len(keys))
         return len(keys)
+
+    async def linger(self, key: str, state: dict) -> None:
+        """A finished reply stays in the island for DONE_FOR, then ends; sooner when the app opens and ends it (the
+        token goes) or another turn in the same chat takes the key (its `since` differs)."""
+        self.conn.execute("INSERT OR REPLACE INTO live_done (key, state) VALUES (?, ?)", (key, json.dumps(state)))
+        try:
+            await asyncio.sleep(DONE_FOR)
+        finally:
+            row = self.conn.execute("SELECT state FROM live_done WHERE key = ?", (key,)).fetchone()
+            if row and json.loads(row["state"]).get("since") == state.get("since"):
+                self.conn.execute("DELETE FROM live_done WHERE key = ?", (key,))
+                if self.token(key):
+                    await self.end(key, state, datetime.now(timezone.utc))
 
     async def registered(self, key: str) -> None:
         """The app handed over an activity's token: one that has ended meanwhile is ended now."""
@@ -313,7 +334,9 @@ class AgentTurn:
 
     async def _finish(self, reply: str, agent: str | None) -> None:
         """The reply is in. With the app open it has ended the activity itself (and read the reply). Otherwise the
-        activity goes now and the reply comes as a push; none when an errand the turn started took over."""
+        island pops open with the reply (an update with an alert: the sound and the buzz) and stays on Done for
+        DONE_FOR, to be tapped; the push that goes with it is quiet, for Notification Center. When an errand the
+        turn started took over, the activity ends at once with no push."""
         try:
             done = self._state_of("done", text=clip(reply))
             name = AGENTS.get(agent or ORCHESTRATOR, AGENTS[ORCHESTRATOR]).name
@@ -323,9 +346,17 @@ class AgentTurn:
                 if not self.listening and self._pushable() and not handed:
                     await self.live.push.send_message(self.conversation, name, done["text"])
                 return
-            await self.live.end(self.key, done, datetime.now(timezone.utc))
-            if self._pushable() and not handed:
-                await self.live.push.send_message(self.conversation, name, done["text"])
+            if handed:
+                await self.live.end(self.key, done, datetime.now(timezone.utc))
+                return
+            popped = await self.live.update(self.key, done, alert={"title": name, "body": done["text"]},
+                                            stale=datetime.now(timezone.utc) + timedelta(seconds=DONE_FOR + 60))
+            if not popped:
+                await self.live.end(self.key, done, datetime.now(timezone.utc))
+            if self._pushable():
+                await self.live.push.send_message(self.conversation, name, done["text"], quiet=popped)
+            if popped:
+                await self.live.linger(self.key, done)
         except Exception:
             log.exception("%s: Live Activity didn't finish", self.key)
 
