@@ -157,7 +157,8 @@ struct MacRootView: View {
 struct MacSidebar: View {
     static let railWidth: CGFloat = 52
     static let fullWidth: CGFloat = 196
-    static let margin: CGFloat = 10
+    /// Small, so the window's traffic lights have room inside the panel's corner (~13 pt each side).
+    static let margin: CGFloat = 6
 
     /// The room the page leaves on its left.
     static func inset(collapsed: Bool) -> CGFloat {
@@ -181,7 +182,7 @@ struct MacSidebar: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
             // The window's traffic lights sit in the sidebar's top corner, as in the Mac's own apps.
-            Color.clear.frame(height: 34)
+            Color.clear.frame(height: 38)
             row(.team)
             row(.today)
             row(.habits)
@@ -201,7 +202,7 @@ struct MacSidebar: View {
         .padding(8)
         .frame(width: Self.fullWidth)
         .frame(maxHeight: .infinity)
-        .modifier(GlassPanel(shape: RoundedRectangle(cornerRadius: 18, style: .continuous)))
+        .modifier(GlassPanel(shape: RoundedRectangle(cornerRadius: 14, style: .continuous)))
         .padding(Self.margin)
     }
 
