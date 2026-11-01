@@ -276,6 +276,7 @@ def test_coachs_screen_line_says_what_holds_or_comes_next(store):
     assert store.coach_line(now) == "Bedtime starts at 23:00."
     assert store.coach_line(at("2026-11-02T23:30")) == "Bedtime is on until 07:00 tomorrow."
     store.update(bedtime["id"], enabled=False, now=now)
+    assert store.coach_line(now) == "Bedtime is switched off, so nothing locks for now."
     social = store.add_limit("Social", 30, now=now)
     assert store.coach_line(now) == "Today's limits: Social, 30 min."
     store.limit_reached(social["id"], "2026-11-02", now)

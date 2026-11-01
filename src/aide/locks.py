@@ -533,13 +533,18 @@ class LockStore:
         used up, a lock starting within 12 hours, today's limits), then the week's screen time against the week
         before when the phone's estimates show a clear change. The report under it has the day's numbers."""
         now = now or utcnow()
-        locks = [lock for lock in self.all(now) if lock["enabled"]]
-        limits = [limit for limit in self.limits() if limit["enabled"]]
+        every, every_limit = self.all(now), self.limits()
+        locks = [lock for lock in every if lock["enabled"]]
+        limits = [limit for limit in every_limit if limit["enabled"]]
         device = self.device()
         if (locks or limits) and device["at"] and not device["authorized"]:
             return "Screen Time isn't allowed on the phone, so locks and limits can't hold. Allow it in Locks and limits."
-        if not locks and not limits:
+        if not every and not every_limit:
             out = "No locks or limits yet. Ask me for a bedtime lock, or give the apps that eat your time a daily limit."
+        elif not locks and not limits:
+            off = [x["title"] for x in every + every_limit]
+            names = " and ".join(off) if len(off) <= 2 else ", ".join(off[:-1]) + f" and {off[-1]}"
+            out = f"{names} {'is' if len(off) == 1 else 'are'} switched off, so nothing locks for now."
         elif on := next(((lock, until) for lock in locks if (until := self.locked_until(lock, now))), None):
             lock, until = on
             out = f"{lock['title']} is on until {self._when(until, now)}." + \
