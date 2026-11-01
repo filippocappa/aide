@@ -72,39 +72,55 @@ struct HealthView: View {
                 bodyPage
                 #endif
             }
+            #if os(iOS)
+            // The title, the camera and the switch stay put over both halves, so the switch doesn't jump between
+            // them; the day under it scrolls with the page.
+            .topBar { tabHeader }
+            .toolbar(.hidden, for: .navigationBar)
+            #else
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            #if os(iOS)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        withAnimation(.snappy) { half = .food }
-                        env.mealLog = .photo // the food page opens the meal camera
-                    } label: {
-                        Image(systemName: "camera.fill")
-                    }
-                    .accessibilityLabel("Snap a meal")
-                    .disabled(!settings.isConfigured)
-                }
-            }
             #endif
         }
     }
 
-    /// The title, the Body · Food switch and the day: the top of both halves.
-    @ViewBuilder private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TopBlock("Health")
-            #if os(iOS)
+    #if os(iOS)
+    /// The title with the camera on its line (it logs a meal from either half), and the Body · Food switch.
+    private var tabHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TopBlock("Health") { EmptyView() } trailing: {
+                Button {
+                    withAnimation(.snappy) { half = .food }
+                    env.mealLog = .photo // the food page opens the meal camera
+                } label: {
+                    CornerIcon(systemImage: "camera.fill")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Snap a meal")
+                .disabled(!settings.isConfigured)
+            }
             Picker("Show", selection: Binding(get: { half }, set: { h in withAnimation(.snappy) { half = h } })) {
                 Text("Body").tag(HealthHalf.body)
                 Text("Food").tag(HealthHalf.food)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 4)
-            #endif
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+    #endif
+
+    /// The top of both halves: the day (on the Mac, under the title).
+    @ViewBuilder private var header: some View {
+        #if os(iOS)
+        DayHeader(day: $day)
+        #else
+        VStack(alignment: .leading, spacing: 12) {
+            TopBlock("Health")
             DayHeader(day: $day)
         }
+        #endif
     }
 
     private var bodyPage: some View {

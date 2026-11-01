@@ -82,6 +82,9 @@ struct FoodPage<Header: View>: View {
             }
         }
         .scrollContentBackground(.hidden)
+        #if os(iOS)
+        .contentMargins(.top, 0, for: .scrollContent) // the day sits where it does on Body, under the switch
+        #endif
         .sheet(isPresented: $showGoals, onDismiss: { Task { await loadFood() } }) {
             NavigationStack { NutritionTargetsView(inSheet: true) }
         }

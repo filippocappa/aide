@@ -7,6 +7,9 @@ struct UsageReportData {
     let kind: UsageKind
     let days: [UsageDay]
     let period: DateInterval
+    /// The phone shown, when other devices sharing Screen Time were left out (`leftOut`).
+    var device: String? = nil
+    var leftOut: [String] = []
 }
 
 /// The Screen tab's page under the switch and the date: the total (every app's time added up), the focus score, the
@@ -34,6 +37,12 @@ struct UsageReportView: View {
             VStack(spacing: 12) {
                 summary
                 if total >= 60 { mostUsed }
+                if let device = data.device, !data.leftOut.isEmpty {
+                    Text("Only \(device). Screen Time from \(data.leftOut.joined(separator: ", ")) is left out.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 4)

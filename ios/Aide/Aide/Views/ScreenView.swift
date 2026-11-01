@@ -27,11 +27,7 @@ struct ScreenView: View {
             }
             .background(alignment: .top) { glow }
             .background(Theme.grouped)
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { lockMenu }
-            }
+            .toolbar(.hidden, for: .navigationBar) // Lock now sits on the title's line
             .navigationDestination(isPresented: $showLocks) { ScreenTimeView() }
             .task { await screenTime.sync() }
         }
@@ -55,6 +51,8 @@ struct ScreenView: View {
             .pickerStyle(.segmented)
             dateRow
             locksRow
+        } trailing: {
+            lockMenu
         }
     }
 
@@ -151,8 +149,9 @@ struct ScreenView: View {
                 }
             }
         } label: {
-            Image(systemName: screenTime.current == nil ? "lock" : "lock.fill")
+            CornerIcon(systemImage: screenTime.current == nil ? "lock" : "lock.fill")
         }
+        .buttonStyle(.plain)
         .disabled(!screenTime.isAuthorized)
         .accessibilityLabel("Lock now")
     }
