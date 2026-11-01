@@ -21,6 +21,8 @@ final class ScreenTimeService: ObservableObject {
     @Published private(set) var apps: [Int: LockApps] = LockBook.apps
     @Published private(set) var lastError: String?
     @Published private(set) var passes: EmergencyPasses?
+    /// Coach's line over the Screen half (what holds now or comes next), from the last sync.
+    @Published private(set) var line: String?
     /// Daily app limits (docs/API.md, "Daily app limits") and the apps each counts.
     @Published private(set) var limits: [ScreenLimit] = LockBook.limits
     @Published private(set) var limitApps: [Int: FamilyActivitySelection] = LockBook.limitApps
@@ -101,6 +103,7 @@ final class ScreenTimeService: ObservableObject {
             locks = list.locks
             LockBook.locks = list.locks
             passes = list.passes
+            line = list.line
             if let got = list.limits {
                 limits = got
                 LockBook.limits = got

@@ -527,3 +527,50 @@ class LockStore:
             text += f" · next {self._when(start, now)}"
         who = AGENTS[lock["agent"]].name if lock["agent"] in AGENTS else "the user"
         return text + f" · set by {who}"
+
+    def coach_line(self, now: datetime | None = None) -> str:
+        """Coach's line over the phone's Screen half (no model call): what holds now or comes next (a lock on, limits
+        used up, a lock starting within 12 hours, today's limits), then the week's screen time against the week
+        before when the phone's estimates show a clear change. The report under it has the day's numbers."""
+        now = now or utcnow()
+        locks = [lock for lock in self.all(now) if lock["enabled"]]
+        limits = [limit for limit in self.limits() if limit["enabled"]]
+        device = self.device()
+        if (locks or limits) and device["at"] and not device["authorized"]:
+            return "Screen Time isn't allowed on the phone, so locks and limits can't hold. Allow it in Locks and limits."
+        if not locks and not limits:
+            out = "No locks or limits yet. Ask me for a bedtime lock, or give the apps that eat your time a daily limit."
+        elif on := next(((lock, until) for lock in locks if (until := self.locked_until(lock, now))), None):
+            lock, until = on
+            out = f"{lock['title']} is on until {self._when(until, now)}." + \
+                (" It's strict: only an emergency pass ends it early." if lock["strict"] else "")
+        elif used := [limit["title"] for limit in limits if self.reached(limit, now)]:
+            names = " and ".join(used) if len(used) <= 2 else ", ".join(used[:-1]) + f" and {used[-1]}"
+            out = f"{names} {'is' if len(used) == 1 else 'are'} used up for today; " + \
+                f"{'it opens' if len(used) == 1 else 'they open'} again at midnight."
+        elif soon := min(((start, lock) for lock in locks if (start := self.next_start(lock, now))
+                          and start - now <= timedelta(hours=12)), key=lambda p: p[0], default=None):
+            start, lock = soon
+            out = f"{lock['title']} starts at {self._when(start, now)}."
+        elif today := [limit for limit in limits if self.counts_today(limit, now)]:
+            out = "Today's limits: " + "; ".join(f"{limit['title']}, {self.limit_summary(limit).removesuffix(' a day')}"
+                                                 for limit in today) + "."
+        else:
+            out = "No lock or limit today."
+        return out + self._week_change(now)
+
+    def _week_change(self, now: datetime) -> str:
+        """' This week's about 40 min a day more than the week before.', from the last 7 full days against the 7
+        before (each with at least 4 days sent), when they differ by 15 minutes a day or more; else ''."""
+        today = now.astimezone(self.tz).date()
+        rows = {r["date"]: r["minutes"] for r in self.usage(today - timedelta(days=14), today - timedelta(days=1))}
+        weeks = [[m for d, m in rows.items() if (today - date.fromisoformat(d)).days <= 7],
+                 [m for d, m in rows.items() if (today - date.fromisoformat(d)).days > 7]]
+        if any(len(w) < 4 for w in weeks):
+            return ""
+        diff = round(sum(weeks[0]) / len(weeks[0]) - sum(weeks[1]) / len(weeks[1]))
+        if abs(diff) < 15:
+            return ""
+        h, m = divmod(abs(diff), 60)
+        amount = f"{h}h{m:02d}" if h else f"{m} min"
+        return f" This week's about {amount} a day {'more' if diff > 0 else 'less'} than the week before."

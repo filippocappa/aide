@@ -10,6 +10,8 @@ import SwiftUI
 struct ScreenView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var screenTime: ScreenTimeService
+    @EnvironmentObject private var chat: ChatViewModel
+    @EnvironmentObject private var push: PushService
     @AppStorage("screenKind") private var kind = UsageKind.day
     @State private var date = Calendar.current.startOfDay(for: Date())
     /// Locks and limits; shared with the corner's menu.
@@ -51,6 +53,11 @@ struct ScreenView: View {
             .pickerStyle(.segmented)
             dateRow
             locksRow
+            // Coach's line, as on Body and Food: what holds now or comes next, so only on the period with today in it.
+            if isCurrent, let line = screenTime.line {
+                let coach = chat.agent("coach")
+                AgentLine(agent: coach, text: line) { push.route = .agent(coach.id) }
+            }
         }
         .padding(.horizontal, 4)
     }

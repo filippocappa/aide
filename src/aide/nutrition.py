@@ -266,6 +266,42 @@ def weakest(s: dict | None) -> str | None:
     return worst[1] if worst else None
 
 
+ON_TARGET_KCAL = 150  # within this of the day's kcal target is on it
+PROTEIN_SHORT_G = 20  # protein still to go worth saying
+
+
+def day_line(eaten: dict, targets: dict, s: dict | None, final: bool, logged: bool) -> str:
+    """Coach's line over Health → Food (no model call): while the day is on, what to do with the rest of it (the kcal
+    left, protein still to go, keeping it light once over); a finished day, what it came to. The day's card already
+    shows the score and the macros, so this says what to do with them."""
+    if not logged:
+        return "Nothing was logged that day." if final else "Nothing logged yet today. Snap a meal and I'll add it up."
+    kcal = round(eaten["calories"])
+    goal = targets.get("calories")
+    low = weakest(s)
+    if final:
+        out = f"{kcal:,} kcal"
+        if goal:
+            diff = kcal - goal
+            out += ", on target" if abs(diff) <= ON_TARGET_KCAL else \
+                f", {abs(diff):,} {'over' if diff > 0 else 'under'} the target"
+        if s:
+            out += f", a score of {s['score']}"
+        return out + (f". The weak spot was {low}." if low else ".")
+    protein = round(targets["protein_g"] - eaten["protein_g"]) if targets.get("protein_g") else 0
+    short = protein >= PROTEIN_SHORT_G
+    if not goal:
+        out = f"{kcal:,} kcal so far" + (f", {protein} g of protein to go." if short else ".")
+    elif (left := round(goal - kcal)) > ON_TARGET_KCAL:
+        out = f"{left:,} kcal left for today" + (f", with {protein} g of protein still to go." if short else ".")
+    elif left >= -ON_TARGET_KCAL:
+        out = "Right on today's target" + (f", but still {protein} g short on protein." if short else ".")
+    else:
+        out = f"{-left:,} kcal over today's target; if you eat again, " + \
+            (f"make it lean protein ({protein} g to go)." if short else "keep it light.")
+    return out + (f" Weak spot so far: {low}." if low else "")
+
+
 # -- targets ---------------------------------------------------------------------------------------------------------
 
 
@@ -429,8 +465,10 @@ class Nutrition:
         bonus = self.bonus(d)
         targets = self.day_targets(d, bonus)
         left = {k: targets[k] - eaten[k] if targets.get(k) else None for k in MACROS}
-        return {"targets": targets, "left": left, "bonus": bonus,
-                "score": score(eaten, targets, self.items(meals), final=d < self.food.today())}
+        final = d < self.food.today()
+        s = score(eaten, targets, self.items(meals), final=final)
+        return {"targets": targets, "left": left, "bonus": bonus, "score": s,
+                "line": day_line(eaten, targets, s, final, logged=bool(meals))}
 
     def scores(self, start: date, end: date) -> dict[str, int | None]:
         """Each day's score, start..end, by date."""
