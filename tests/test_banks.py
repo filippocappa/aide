@@ -348,7 +348,7 @@ def test_finance_reads_balances(setup):
     assert "Intesa Sanpaolo Conto ··3456 (account): €1,180.50" in out
 
 
-def test_own_money_moving_is_a_transfer_not_spending_or_income(setup):
+def test_own_money_moving_is_a_transfer_and_a_card_payoff_is_spending(setup):
     finance, banks, fake, _ = setup
     d = today(finance)
     fake.txs["u1"] = [
@@ -360,12 +360,16 @@ def test_own_money_moving_is_a_transfer_not_spending_or_income(setup):
         tx(13.3, d, name="Filippo Cappa", text="Refund from Jcdecaux Espana Slu", ident="t6"),  # a refund: income
         tx(100, d, name="Marco Cappa", text="Paghetta", ident="t7"),        # a parent, same surname: income
         tx(-20, d, name="Vodafone", text="Ricarica top-up", ident="t8"),     # a phone top-up out: spending
+        tx(-600, d, text="PAGAMENTO PRESSO REVOLUT**1234* VILNIUS", ident="t9"),  # this card topping up Revolut
     ]
     link(banks, fake)
     cats = {r["raw"].split(" · ")[-1]: r["category"] for r in finance.conn.execute(
         "SELECT raw, category FROM finance_transactions")}
-    assert [cats[k] for k in ("Apple Pay Top-Up by *5372", "Mastercard To Filippo Cappa", "Giroconto",
-                              "To investment account", "Carta YOU")] == ["transfer"] * 5
+    assert [cats[k] for k in ("Apple Pay Top-Up by *5372", "Giroconto", "To investment account",
+                              "PAGAMENTO PRESSO REVOLUT**1234* VILNIUS")] == ["transfer"] * 4
+    # Carta YOU's purchases aren't seen, so paying it off is the spending (Revolut: "Mastercard To" the user)
+    assert cats["Mastercard To Filippo Cappa"] == "card" and cats["Carta YOU"] == "card"
+    assert finance.month()["spent"] == 1800 + 300 + 20
     assert cats["Refund from Jcdecaux Espana Slu"] == "income" and cats["Paghetta"] == "income"
     assert cats["Ricarica top-up"] != "transfer"
 
@@ -383,6 +387,24 @@ def test_records_from_before_the_rule_are_sorted_again_but_not_the_users(setup):
     asyncio.run(banks.sync_all(force=True))
     by_amount = {r["amount"]: r["category"] for r in finance.recent()}
     assert by_amount == {-500: "transfer", -60: "other"}
+
+
+def test_the_allowance_isnt_paired_with_a_card_payoff_of_the_same_amount(setup):
+    finance, banks, fake, _ = setup
+    fake.accounts["u2"] = {"uid": "u2", "account_id": {"iban": "IT11Y0000000000000000999999"}, "name": "Filippo Cappa",
+                           "product": "HYPE", "currency": "EUR", "cash_account_type": "CACC"}
+    d = today(finance)
+    fake.txs["u1"] = [tx(-250, d, name="Filippo Cappa", text="Mastercard To Filippo Cappa", ident="o1"),
+                      tx(-100, d, name="Filippo Cappa", text="Sent from Revolut To Filippo Cappa", ident="o2")]
+    fake.txs["u2"] = [tx(250, d, name="Massimo Cappa", text="100 paghetta", ident="i1"),
+                      tx(100, d, text="BONIFICO A VOSTRO FAVORE", ident="i2")]
+    link(banks, fake)
+    cats = {r["amount"]: r["category"] for r in finance.recent()}
+    assert cats == {-250: "card", 250: "income", -100: "transfer", 100: "transfer"}
+    # one paired by amount alone before this rule goes back to income
+    finance.conn.execute("UPDATE finance_transactions SET category = 'transfer', sorted_by = 'rule' WHERE amount = 250")
+    asyncio.run(banks.sync_all(force=True))
+    assert {r["amount"]: r["category"] for r in finance.recent()}[250] == "income"
 
 
 def test_an_account_linked_before_holders_learns_its_holder_and_drops_it_from_the_name(setup):
@@ -407,3 +429,14 @@ def test_a_hidden_account_stays_out_of_the_total_but_its_payments_count(setup):
     assert finance.set_hidden(merito["id"], True)["hidden"] is True
     assert finance.set_hidden(999, True) is None
     assert finance.month()["spent"] == 30
+
+
+def test_a_bank_that_puts_the_holder_in_details_doesnt_put_it_in_the_name(setup):
+    finance, banks, fake, _ = setup
+    fake.accounts["u2"] = {"uid": "u2", "account_id": {"iban": "IT75X0000000000000000004225"}, "name": "",
+                           "details": "FILIPPO CAPPA", "currency": "EUR", "cash_account_type": "CACC"}
+    link(banks, fake)  # u1's holder is Filippo Cappa
+    assert {a["name"] for a in finance.accounts()} == {"Intesa Sanpaolo Conto ··3456", "Intesa Sanpaolo ··4225"}
+    finance.conn.execute("UPDATE finance_accounts SET name = 'HYPE CAPPA FILIPPO ··4225' WHERE iban LIKE '%4225'")
+    asyncio.run(banks.sync_all(force=True))
+    assert "HYPE ··4225" in {a["name"] for a in finance.accounts()}
