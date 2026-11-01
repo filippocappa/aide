@@ -170,8 +170,9 @@ async def test_a_plan_proposes_from_the_data_within_limits(env):
         {"what": "Sign-up for the mid-term closes", "kind": "deadline", "date": (TODAY + timedelta(days=3)).isoformat(),
          "time": "23:59"},
         {"what": "Last year's exam", "kind": "exam", "date": (TODAY - timedelta(days=300)).isoformat()}])
-    month = store.add("coach", "month", TODAY, "Build up to 12 runs", measure={"type": "habit", "habit": run.id},
-                      target=12)
+    # The month the week starts in (on a 1st, the week began last month).
+    month = store.add("coach", "month", TODAY - timedelta(days=TODAY.weekday()), "Build up to 12 runs",
+                      measure={"type": "habit", "habit": run.id}, target=12)
     engine.replies.append(json.dumps([
         {"agent": "coach", "title": "Run 3 times", "why": "the half marathon", "measure": {"type": "habit",
          "habit": run.id}, "target": 3, "parent": month["public_id"]},
