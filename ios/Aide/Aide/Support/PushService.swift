@@ -28,10 +28,12 @@ enum PushRoute: Equatable {
     case errand(Int)
     /// Logging a meal (the Control Center buttons): Health → Food with the camera up, or the describe box.
     case meal(MealLogWay)
+    /// The Money tab, on a payment (money came in) or, with none, on the accounts (a bank link to renew).
+    case money(payment: Int?)
 
     /// `aide://conversation/<id>`, `aide://team`, `aide://agent/<id>`, `aide://voice`, `aide://today`,
     /// `aide://objectives`, `aide://health`, `aide://food`, `aide://screen`, `aide://errand/<id>`, `aide://meal/photo`
-    /// (or `describe`).
+    /// (or `describe`), `aide://money` (or `aide://money/<payment id>`).
     init?(url: URL) {
         guard url.scheme == "aide" else { return nil }
         let id = url.pathComponents.dropFirst().first
@@ -47,6 +49,7 @@ enum PushRoute: Equatable {
         case "screen": self = .screen
         case "errand": guard let id = id.flatMap(Int.init) else { return nil }; self = .errand(id)
         case "meal": self = .meal(id.flatMap(MealLogWay.init(rawValue:)) ?? .photo)
+        case "money": self = .money(payment: id.flatMap(Int.init))
         default: return nil
         }
     }
@@ -64,6 +67,8 @@ enum PushRoute: Equatable {
         case "errand":
             guard let id = (aide["errand_id"] as? Int) ?? (aide["errand_id"] as? NSNumber)?.intValue else { return nil }
             self = .errand(id)
+        case "finance":
+            self = .money(payment: (aide["payment_id"] as? Int) ?? (aide["payment_id"] as? NSNumber)?.intValue)
         default: return nil
         }
     }

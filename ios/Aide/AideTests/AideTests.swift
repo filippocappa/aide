@@ -2290,4 +2290,24 @@ final class NutritionTests: XCTestCase {
         XCTAssertTrue(WeightMath.against(0.3, goal: "lose"))
         XCTAssertFalse(WeightMath.against(-0.3, goal: nil))
     }
+
+    func testBanksDecodeAndRoute() throws {
+        let banks = try JSONDecoder.api.decode(BankList.self, from: Data("""
+        {"enabled": true, "banks": [{"id": 2, "bank": "Intesa Sanpaolo", "country": "IT", "status": "renew",
+          "valid_until": "2026-11-06T10:00:00+00:00", "days_left": 5, "last_sync_at": null, "error": null,
+          "accounts": [3]}]}
+        """.utf8))
+        XCTAssertEqual(banks.banks.first?.daysLeft, 5)
+        let accounts = try JSONDecoder.api.decode(AccountList.self, from: Data("""
+        {"accounts": [{"id": 3, "name": "Intesa Sanpaolo Conto ··3456", "kind": "account", "source": "bank",
+          "currency": "EUR", "balance": 1180.5, "balance_at": "2026-11-01T10:00:00+00:00", "consent_until": null,
+          "status": "renew", "bank_id": 2, "last_at": null, "count": 0, "spent_month": 0}], "total": 1180.5}
+        """.utf8))
+        XCTAssertEqual(accounts.total, 1180.5)
+        XCTAssertEqual(accounts.accounts.first?.bankId, 2)
+        XCTAssertTrue(AccountsCard.status(accounts.accounts[0]).hasPrefix("From the bank · renew"))
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "finance", "payment_id": 41]]), .money(payment: 41))
+        XCTAssertEqual(PushRoute(userInfo: ["aide": ["kind": "finance", "bank_id": 2]]), .money(payment: nil))
+        XCTAssertEqual(PushRoute(url: try XCTUnwrap(URL(string: "aide://money"))), .money(payment: nil))
+    }
 }

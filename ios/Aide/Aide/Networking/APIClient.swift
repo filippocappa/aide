@@ -664,9 +664,37 @@ final class APIClient {
         try await send("GET", "/v1/finance/month", query: month.map { [URLQueryItem(name: "month", value: $0)] } ?? [])
     }
 
-    func financeAccounts() async throws -> [FinanceAccount] {
-        let r: AccountList = try await send("GET", "/v1/finance/accounts")
-        return r.accounts
+    func financeAccounts() async throws -> AccountList {
+        try await send("GET", "/v1/finance/accounts")
+    }
+
+    // Banks (docs/API.md, "Banks"): linked through Enable Banking, read-only.
+
+    func banks() async throws -> BankList {
+        try await send("GET", "/v1/finance/banks")
+    }
+
+    func availableBanks(country: String = "IT") async throws -> [AvailableBank] {
+        let r: AvailableBanks = try await send("GET", "/v1/finance/banks/available",
+                                               query: [URLQueryItem(name: "country", value: country)])
+        return r.banks
+    }
+
+    /// The bank's login page; it ends on `aide://money/banks?linked=<id>` (or `?error=`).
+    func linkBank(_ link: BankLinkIn) async throws -> URL {
+        let r: BankLinkStart = try await send("POST", "/v1/finance/banks/link", body: link)
+        guard let url = URL(string: r.url) else { throw APIError.badResponse }
+        return url
+    }
+
+    /// Reads the linked banks now (the user is here, so it doesn't use up the bank's 4 reads a day).
+    func syncBanks(force: Bool = false) async throws -> BankSync {
+        try await send("POST", "/v1/finance/banks/sync",
+                       query: force ? [URLQueryItem(name: "force", value: "true")] : [], body: EmptyBody(), timeout: 90)
+    }
+
+    func unlinkBank(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/finance/banks/\(id)", body: EmptyBody())
     }
 
     func subscriptions() async throws -> SubscriptionList {

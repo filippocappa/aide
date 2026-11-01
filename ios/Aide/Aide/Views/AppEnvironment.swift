@@ -34,6 +34,8 @@ final class AppEnvironment: ObservableObject {
     @Published var browser: BrowserTarget?
     /// Logging a meal from Control Center: the Health tab opens the camera or the describe box and clears this.
     @Published var mealLog: MealLogWay?
+    /// A payment to open on the Money page (a "Money in" push); Money clears it.
+    @Published var openPayment: Int?
 
     private init() {
         let settings = AppSettings()
@@ -148,7 +150,7 @@ final class AppEnvironment: ObservableObject {
             } else if let conversation = errand.conversationId {
                 await chat.open(id: conversation)
             }
-        case .health, .food, .screen, .chats, .meal:
+        case .health, .food, .screen, .chats, .meal, .money:
             break // tabs, switched by ContentView
         }
     }

@@ -5,7 +5,8 @@ import AppIntents
 
 /// The Money tab, Finance's area (#31, docs/API.md "Finance"): Finance's line, the month as a ring (what's left of
 /// the budget, or this month against last), the categories as bars, the latest payments by day, subscriptions by
-/// date, and the accounts. Pull to refresh; the month arrows go back through earlier months.
+/// date, and the accounts with their balances (linked banks, docs/API.md "Banks"). Opening it reads the banks; pull to
+/// refresh; the month arrows go back through earlier months.
 struct MoneyView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var chat: ChatViewModel
@@ -17,6 +18,8 @@ struct MoneyView: View {
     @State private var payments: [Payment] = []
     @State private var subscriptions: SubscriptionList?
     @State private var accounts: [FinanceAccount] = []
+    @State private var total: Double?
+    @State private var banksOn = false
     @State private var error: String?
     @State private var open: Payment?
     @State private var editingBudget = false
@@ -66,9 +69,15 @@ struct MoneyView: View {
                         header("Subscriptions", detail: "\(Euros.text(subscriptions.monthlyTotal)) a month")
                         SubscriptionsCard(list: subscriptions, tint: tint)
                     }
-                    if !accounts.isEmpty, isCurrent {
-                        header("Accounts")
-                        AccountsCard(accounts: accounts, tint: tint)
+                    if isCurrent, !accounts.isEmpty || banksOn {
+                        header("Accounts", detail: total.map { "\(Euros.text($0)) in all" }) {
+                            NavigationLink("Banks") { BanksView(tint: tint) { await load() } }
+                        }
+                        if accounts.isEmpty {
+                            linkBank
+                        } else {
+                            AccountsCard(accounts: accounts, tint: tint)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -77,8 +86,12 @@ struct MoneyView: View {
             }
             .pageGlow(tint)
             .toolbar(.hidden, for: .navigationBar)
-            .refreshable { await load() }
-            .task(id: monthKey + settings.serverURL + settings.token) { await load() }
+            .refreshable { await load(); await readBanks(force: true) }
+            .task(id: monthKey + settings.serverURL + settings.token) {
+                await load()
+                if isCurrent { await readBanks() }
+            }
+            .task(id: env.openPayment) { await openPayment() }
             .navigationDestination(item: $selectedCategory) { cat in
                 PaymentListView(category: cat, tint: tint)
             }
@@ -139,20 +152,50 @@ struct MoneyView: View {
         .padding(.top, 10)
     }
 
-    /// Before the first tap: how payments come in.
+    /// Before the first payment: how payments come in.
     private var setUp: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Every Apple Pay tap, sorted", systemImage: "wave.3.right")
+            Label("Your bank, read for you", systemImage: "building.columns")
                 .font(.headline)
-            Text("A Shortcuts automation sends each tap to Finance with Log payment: the amount, the shop and the card. Cash and transfers you can just tell \(finance.name).")
+            Text("Link your bank and \(finance.name) sees balances, money in and every payment, sorted. Apple Pay taps can come in the moment you pay, through a Shortcuts automation. Cash you can just tell \(finance.name).")
                 .font(.subheadline).foregroundStyle(.secondary)
-            NavigationLink { PaymentSetupView() } label: {
-                Text("Set up Log payment").font(.subheadline.weight(.semibold)).foregroundStyle(tint)
+            HStack(spacing: 18) {
+                if banksOn {
+                    NavigationLink { BanksView(tint: tint) { await load() } } label: {
+                        Text("Link a bank").font(.subheadline.weight(.semibold)).foregroundStyle(tint)
+                    }
+                    .buttonStyle(.plain)
+                }
+                NavigationLink { PaymentSetupView() } label: {
+                    Text("Set up Log payment").font(.subheadline.weight(.semibold)).foregroundStyle(tint)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    /// Accounts with no account yet: the way to link one.
+    private var linkBank: some View {
+        NavigationLink { BanksView(tint: tint) { await load() } } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "building.columns")
+                    .foregroundStyle(tint)
+                    .frame(width: 36, height: 36)
+                    .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Link a bank")
+                    Text("Balances, money in and every payment").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Simulator screenshots: `-previewMonth 2026-10` opens on that month.
@@ -180,7 +223,26 @@ struct MoneyView: View {
             if (error as? CancellationError) == nil { self.error = error.localizedDescription }
         }
         subscriptions = try? await s
-        accounts = (try? await a) ?? accounts
+        if let list = try? await a {
+            accounts = list.accounts
+            total = list.total
+        }
+        banksOn = (try? await env.api.banks())?.enabled ?? banksOn
+    }
+
+    /// The user is here, so the banks can be read now (the server skips it within 2 minutes of the last read);
+    /// then the page again, with what came.
+    private func readBanks(force: Bool = false) async {
+        guard settings.isConfigured, banksOn, accounts.contains(where: { $0.bankId != nil }) else { return }
+        guard let r = try? await env.api.syncBanks(force: force), !r.banks.isEmpty else { return }
+        await load()
+    }
+
+    /// A "Money in" push: that payment's page.
+    private func openPayment() async {
+        guard let id = env.openPayment, settings.isConfigured else { return }
+        env.openPayment = nil
+        if let p = try? await env.api.payment(id).payment { open = p }
     }
 
     /// The first instant of the next month, as `before` for that month's payments.
@@ -224,7 +286,7 @@ struct PaymentSetupView: View {
             }
             #endif
             Section {
-                Text("Cash, transfers and anything not paid with Apple Pay: tell Finance (\"8 euro for pizza\"). Bank accounts come later.")
+                Text("Link your bank on Money → Banks: balances, money in, transfers and direct debits come by themselves, and each tap is matched to the bank's record of it. Cash: tell Finance (\"8 euro for pizza\").")
                     .font(.subheadline).foregroundStyle(.secondary)
             } header: {
                 Text("Everything else")

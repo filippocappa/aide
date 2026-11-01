@@ -2971,6 +2971,9 @@ struct Payment: Decodable, Identifiable, Hashable {
     var accountId: Int?
     var place: String?
     var note: String?
+    /// The bank hasn't booked it yet; `bank`: the bank's record of it has come (docs/API.md, "Banks").
+    var pending: Bool = false
+    var bank: Bool = false
 
     var date: Date? { Wire.parse(at) }
     var isIncome: Bool { category == "income" }
@@ -3055,13 +3058,62 @@ struct FinanceAccount: Decodable, Identifiable, Hashable {
     var balance: Double?
     var balanceAt: String?
     var consentUntil: String?
+    /// wallet, manual, statement, or for a linked bank account bank, renew, expired, unlinked.
     var status: String = "wallet"
+    var bankId: Int?
     var lastAt: String?
     var count: Int = 0
     var spentMonth: Double = 0
 }
 
-struct AccountList: Decodable { let accounts: [FinanceAccount] }
+/// `total`: the linked bank accounts' balances added up (cards left out), nil with none.
+struct AccountList: Decodable {
+    let accounts: [FinanceAccount]
+    var total: Double?
+}
+
+/// A linked bank (docs/API.md, "Banks"). `status` is linked, renew (7 days or fewer left) or expired.
+struct BankLink: Decodable, Identifiable, Hashable {
+    let id: Int
+    let bank: String
+    var country: String = "IT"
+    var status: String = "linked"
+    var validUntil: String?
+    var daysLeft: Int?
+    var lastSyncAt: String?
+    var error: String?
+    var accounts: [Int] = []
+}
+
+struct BankList: Decodable {
+    var enabled: Bool = false
+    var banks: [BankLink] = []
+}
+
+struct BankSync: Decodable {
+    var new: Int = 0
+    var banks: [BankLink] = []
+}
+
+/// A bank Enable Banking can link; `days` is how long a link lasts.
+struct AvailableBank: Decodable, Identifiable, Hashable {
+    let name: String
+    var country: String = "IT"
+    var logo: String?
+    var beta: Bool = false
+    var days: Int?
+    var id: String { name }
+}
+
+struct AvailableBanks: Decodable { let banks: [AvailableBank] }
+
+struct BankLinkIn: Encodable {
+    let bank: String
+    var country = "IT"
+    var server: String?
+}
+
+struct BankLinkStart: Decodable { let url: String }
 
 struct Subscription: Decodable, Identifiable, Hashable {
     let merchant: String

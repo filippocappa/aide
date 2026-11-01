@@ -231,6 +231,7 @@ struct PaymentRow: View {
 
     private var caption: String {
         var parts = [payment.sortedBy == "none" ? "Sorting…" : payment.cat.name]
+        if payment.pending { parts.insert("Pending", at: 0) }
         if let account = payment.account { parts.append(account) }
         if showsTime, let d = payment.date { parts.append(d.formatted(date: .omitted, time: .shortened)) }
         return parts.joined(separator: " · ")
@@ -437,7 +438,7 @@ struct PaymentSheet: View {
             .confirmationDialog("Delete this payment?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete", role: .destructive) { Task { await delete() } }
             } message: {
-                Text("For one logged by mistake or twice. It won't come back from Wallet.")
+                Text(payment.bank ? "It's from the bank, so it won't come back from it." : "For one logged by mistake or twice. It won't come back from Wallet.")
             }
             .task { await loadDetail() }
         }
@@ -472,6 +473,8 @@ struct PaymentSheet: View {
         case "manual": parts.append(payment.account.map { "Told to Finance · \($0)" } ?? "Told to Finance")
         default: if let a = payment.account { parts.append(a) }
         }
+        if payment.pending { parts.append("pending at the bank") }
+        else if payment.bank && payment.source == "wallet" { parts.append("on the bank") }
         return parts.joined(separator: " · ")
     }
 
@@ -666,7 +669,9 @@ struct AccountsCard: View {
                         .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(a.name).lineLimit(1)
-                        Text(Self.status(a)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        Text(Self.status(a)).font(.caption)
+                            .foregroundStyle(a.status == "expired" || a.status == "renew" ? Color.orange : .secondary)
+                            .lineLimit(2)
                     }
                     Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 2) {
@@ -689,12 +694,29 @@ struct AccountsCard: View {
     static func status(_ a: FinanceAccount) -> String {
         let source = switch a.status {
         case "wallet": "Apple Pay taps"
-        case "bank": "Linked to the bank"
+        case "bank": "From the bank"
+        case "renew": "From the bank · renew the link soon"
+        case "expired": "The bank link ended · link it again"
+        case "unlinked": "Unlinked"
         case "statement": "From statements"
         default: "Told to Finance"
         }
+        if a.bankId != nil, a.status == "bank" || a.status == "renew", let at = a.balanceAt.flatMap(Wire.parse) {
+            return "\(source) · \(Self.ago(at))"
+        }
         guard let last = a.lastAt.flatMap(Wire.parse) else { return source }
         return "\(source) · last \(PaymentDays.dayTitle(Calendar.current.startOfDay(for: last)).lowercased())"
+    }
+
+    /// "read 2 h ago", for a balance.
+    static func ago(_ d: Date) -> String {
+        let minutes = Int(Date.now.timeIntervalSince(d) / 60)
+        switch minutes {
+        case ..<2: return "read just now"
+        case ..<60: return "read \(minutes) min ago"
+        case ..<(24 * 60): return "read \(minutes / 60) h ago"
+        default: return "read \(d.formatted(.dateTime.day().month(.abbreviated)))"
+        }
     }
 }
 

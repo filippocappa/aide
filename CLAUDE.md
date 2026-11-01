@@ -59,6 +59,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   the page listing the model reads, the live view's screencast and input. `errands.py`: browser errands (the store,
   the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
 - `videos.py`: YouTube videos (yt-dlp, captions or Whisper, the brief, frames), posted back in the chat it came from.
+- `finance.py`: payments, categories, the month, subscriptions, budget, accounts. `banks.py`: bank accounts through
+  Enable Banking (PSD2, read-only): linking, the reads (4 a day and when Money opens), matching taps to the bank's records.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -594,7 +596,17 @@ only when ahead or over), subscriptions found from repeats, accounts. App (`View
 `Views/FinanceViews.swift`): the Money tab and the Mac's Money section, the month as a ring of what's left (without a
 budget: this month against last), category bars with a tick for today, payments by day, a payment's page (the
 category as a row, kept for the merchant), subscriptions by date, accounts, the budget sheet, Settings → Payments (how
-to make the automation), `payments` cards in chat. Debug builds: `-previewMonth 2026-10`. No bank data source yet.
+to make the automation), `payments` cards in chat. Debug builds: `-previewMonth 2026-10`.
+Banks, step 2 of #31 (2026-11-01, contract "Banks"; `banks.py`): Enable Banking (GoCardless/Nordigen closed sign-ups
+in 2025; the others are enterprise), a JWT signed with the application's key (`ENABLE_BANKING_*` in `.env`, the key on
+`cappa`). Linking: the bank's page in an `ASWebAuthenticationSession`, the bank back to the server's callback (no
+token, a one-time state), then `aide://money/banks`. Reads at 07/12/17/22 and when Money opens (`POST
+/v1/finance/banks/sync`, PSU headers lift the 4-a-day limit), the first 90 days, then 10 days of overlap; a tap and
+its bank record are one payment (amount, 5 days before to 1 after), pending becomes booked in place, own-account moves
+are transfers, money in ≥ €10 is pushed (`finance`), a push a week before the consent ends. App
+(`Views/BankViews.swift`): Money → Banks (link, renew, unlink, Read now, the bank picker with logos), balances and
+the total under Accounts, Pending on rows. Off on the server until the Enable Banking application exists; not yet
+tried with a real bank.
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from

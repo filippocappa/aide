@@ -188,6 +188,7 @@ struct ContentView: View {
             case .food: tab = .health; healthHalf = .food; env.showToday = false; return
             case .meal(let way): tab = .health; healthHalf = .food; env.showToday = false; env.mealLog = way; return
             case .screen: tab = .health; healthHalf = .screen; env.showToday = false; return
+            case .money(let payment): tab = .money; env.showToday = false; env.openPayment = payment; return
             case .chats: tab = .chat; env.showToday = false; return
             case .moodle: onToday = false // a sheet over any tab, once Today is out of the way
             default: tab = .chat; onToday = false

@@ -223,6 +223,7 @@
 		EC4367366F1C80C9EE522308 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		EDEC57973F1B779661439B68 /* FinanceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CE86F8FED7A90934C84B6A /* FinanceViews.swift */; };
 		EE7CC3F0646FABF4F63B420B /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */; };
+		EF6EE2F4E8AB74004D48675C /* BankViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCC8A3B51912EF258E8FD9A4 /* BankViews.swift */; };
 		F05817427F823787D3F94ABF /* ScreenLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5A6ADA18164E31DD49CD71 /* ScreenLock.swift */; };
 		F149A3F3DB1C3F471EACE643 /* AgentInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105404D7A7140F4B8B3BBAF8 /* AgentInfoView.swift */; };
 		F2942EA09BFC19DE9E840178 /* MacLoginItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED75A40C75D31819393889F1 /* MacLoginItem.swift */; };
@@ -232,6 +233,7 @@
 		F6B00D2F77B7F975287A6827 /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18F809AD4D845567498CDA11 /* WidgetIntents.swift */; };
 		F78985137F02EFC1F9249F29 /* MealIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D42096136F2F92641EAC10 /* MealIntents.swift */; };
 		F889CC6C37E9D4CC8806D49B /* SleepSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */; };
+		FA3FEF8775B40F8FF1172CD9 /* BankViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCC8A3B51912EF258E8FD9A4 /* BankViews.swift */; };
 		FA49E57FDF31B7507D385EA8 /* DraftViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 772E51ADF548B97CFFD4C44D /* DraftViews.swift */; };
 		FB1CD644516DF31D443DDF99 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */; };
 		FE46F28F62F4190089B56275 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
@@ -449,6 +451,7 @@
 		F7399AF7109C6333CB3244BC /* AideWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideWidgets.swift; sourceTree = "<group>"; };
 		FBBFAA140586D1B2AF141D34 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceController.swift; sourceTree = "<group>"; };
+		FCC8A3B51912EF258E8FD9A4 /* BankViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankViews.swift; sourceTree = "<group>"; };
 		FE5A6ADA18164E31DD49CD71 /* ScreenLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenLock.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -478,6 +481,7 @@
 				81B15B4A9C146D208E461D58 /* ActivityView.swift */,
 				105404D7A7140F4B8B3BBAF8 /* AgentInfoView.swift */,
 				5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */,
+				FCC8A3B51912EF258E8FD9A4 /* BankViews.swift */,
 				CAD7E67230FC828BB66C66EC /* BodyViews.swift */,
 				9AEB482052BA9CB53D3B8410 /* ChatsView.swift */,
 				44C5DADD1850C6A342CB0F42 /* ChatView.swift */,
@@ -1116,6 +1120,7 @@
 				FB1CD644516DF31D443DDF99 /* AppEnvironment.swift in Sources */,
 				D00FE2AE1795496FD3D24903 /* AppSettings.swift in Sources */,
 				8E6271E4FB5511EB473AF67E /* Arithmetic.swift in Sources */,
+				EF6EE2F4E8AB74004D48675C /* BankViews.swift in Sources */,
 				93C91AA0FC22D5E3A9EDF839 /* BodyViews.swift in Sources */,
 				25C294088E5C4958EA4A069A /* ChatView.swift in Sources */,
 				3175C7034C85CC1ECD2A322F /* ChatViewModel.swift in Sources */,
@@ -1218,6 +1223,7 @@
 				0AC8B5D8AC5743C33B9BCBC3 /* AppEnvironment.swift in Sources */,
 				77F46E3BE8C9B9AF42649FB9 /* AppSettings.swift in Sources */,
 				1893AFF4B1D54A156C62BC0B /* Arithmetic.swift in Sources */,
+				FA3FEF8775B40F8FF1172CD9 /* BankViews.swift in Sources */,
 				9FB906D2A531CC060C95C877 /* BodyViews.swift in Sources */,
 				7A1944AB03B3DAB2D824A08E /* ChatView.swift in Sources */,
 				DCEC0F33C64ACC4F4D889BCE /* ChatViewModel.swift in Sources */,

@@ -23,7 +23,7 @@ Aide is a Python server that runs on a home machine and an app for iPhone and Ma
 | **Secretary** | calendar (iCloud), reminders (Apple Reminders), mail (Gmail), trams and buses (GTT, Turin) |
 | **Professor** | courses, lectures, study files, course notebooks, quizzes and practice exams |
 | **Coach** | Apple Health, sleep and recovery, habits, food, Screen Time locks |
-| **Finance** | money: the orders Aide placed (otherwise memory only, for now) |
+| **Finance** | money: linked bank accounts (balances, money in, every payment), Apple Pay taps, budget, subscriptions, the orders Aide placed |
 
 Anything destructive or outward-facing (sending mail, deleting an event, moving a reminder, placing an order) is
 queued in code and runs only after you tap **Confirm** in the app. The model never runs it directly.
@@ -36,7 +36,8 @@ On the phone the app has four tabs, one per area, each opening with a line from 
 - **Health:** Coach's Body, Food and Screen. Body has the Strain, Recovery and Sleep scores and last night's numbers
   against your usual (see [Health scores](#health-scores)). Food has meals from a photo, a description or a
   barcode. Screen has screen time and its locks and limits.
-- **Money:** Finance. For now it's a placeholder until the bank and card data comes in.
+- **Money:** Finance's month: what's left of the budget (or this month against last), categories, payments by day,
+  subscriptions, and the accounts with their balances from your bank (see [Banks](#banks)).
 
 Around them are routines and watches (an agent's scheduled job, or a check that posts only when something needs
 you), widgets, and Live Activities on the Lock Screen and in the Dynamic Island (the next tram, the next event, an
@@ -552,6 +553,30 @@ It reads the video's captions with [yt-dlp](https://github.com/yt-dlp/yt-dlp), o
 audio with Whisper (the `whisper` extra). Frames are taken with `ffmpeg`, so the server needs it. YouTube changes
 often and old yt-dlp versions stop working: when videos start failing to load, update it with
 `uv lock --upgrade-package yt-dlp && uv sync --extra whisper` and restart.
+
+## Banks
+
+Finance reads your bank accounts through [Enable Banking](https://enablebanking.com), a licensed PSD2
+account-information provider: balances, money in, transfers and direct debits, every transaction sorted into the
+month. It's read-only; nothing can move money. You log in on your bank's own page (Money → Banks → Link a bank), and
+the link lasts the bank's maximum, up to 180 days; a week before it ends Aide asks you to renew. Without you it reads
+four times a day (07:00, 12:00, 17:00, 22:00, PSD2's limit), and again whenever Money opens. Apple Pay taps sent by
+the Wallet automation (Settings → Payments) are there in seconds and are matched to the bank's record when it comes,
+so a payment is never counted twice. The bank data stays on the server.
+
+Setup, once:
+
+1. Sign up at [enablebanking.com](https://enablebanking.com) and create an application in the Control Panel
+   (production, for your own accounts: it's free; Enable Banking activates it once you link your own accounts).
+   Give it the redirect URL `https://<your server>/v1/finance/banks/callback` (the `tailscale serve` address).
+2. Keep the private key it generates on the server, e.g. `~/.config/aide/enablebanking.pem` (`chmod 600`).
+3. In `.env`:
+   ```
+   ENABLE_BANKING_APP_ID=<the application's id>
+   ENABLE_BANKING_KEY=~/.config/aide/enablebanking.pem
+   ENABLE_BANKING_REDIRECT=https://<your server>/v1/finance/banks/callback
+   ```
+4. Restart the service, then link a bank in the app.
 
 ## Trams and buses (Turin)
 
