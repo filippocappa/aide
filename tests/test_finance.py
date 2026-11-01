@@ -261,3 +261,33 @@ def test_the_api_gives_the_month_accounts_budget_and_subscriptions(api):
     assert c.get("/v1/finance/subscriptions", headers=AUTH).json()["subscriptions"][0]["merchant"] == "Spotify"
     cats = c.get("/v1/finance/categories", headers=AUTH).json()["categories"]
     assert {"id": "income", "name": "Income", "spending": False} in cats
+
+
+def test_the_users_word_on_subscriptions_wins(store):
+    today = date(2026, 11, 1)
+    for d in (date(2026, 9, 5), date(2026, 10, 5)):
+        store.add(-5, "Klarna* Cisalfa Sport", at=at(d), category="health")
+        store.add(-100, "Pagamento Revolut * Dublin", at=at(d), category="transfer")  # own money: never one
+    store.add(-17.06, "Openrouter, Inc", at=at(date(2026, 9, 24)), category="subscriptions")
+    s = store.subscriptions(today=today)
+    assert [x["merchant"] for x in s["subscriptions"]] == ["Openrouter, Inc", "Klarna* Cisalfa Sport"]
+    assert not any(x["mine"] for x in s["subscriptions"])
+
+    store.set_subscription("Klarna* Cisalfa Sport", False)
+    store.set_subscription("Openrouter, Inc", True, amount=20, period="month", next_charge=date(2026, 10, 24))
+    with pytest.raises(ValueError):  # nothing on record: it needs the price, the period and the next charge
+        store.set_subscription("Netflix", True, amount=13.99)
+    store.set_subscription("Netflix", True, amount=13.99, period="month", next_charge=date(2026, 11, 12))
+    store.set_subscription("iCloud+", True, amount=36, period="year", next_charge=date(2026, 3, 2))
+    s = store.subscriptions(today=today)
+    by = {x["merchant"]: x for x in s["subscriptions"]}
+    assert list(by) == ["Netflix", "Openrouter, Inc", "iCloud+"]
+    assert by["Openrouter, Inc"]["amount"] == 20 and by["Openrouter, Inc"]["next"] == "2026-11-24"  # moved on
+    assert by["Netflix"]["last"] is None and by["Netflix"]["mine"]
+    assert by["iCloud+"]["next"] == "2027-03-02" and by["iCloud+"]["monthly"] == 3
+    assert s["hidden"] == [{"merchant": "Klarna* Cisalfa Sport", "key": "klarna cisalfa sport"}]
+    assert s["monthly_total"] == round(20 + 13.99 + 3, 2)
+
+    store.set_subscription("Klarna* Cisalfa Sport", None)  # forgotten: back to what the charges show
+    assert "Klarna* Cisalfa Sport" in [x["merchant"] for x in store.subscriptions(today=today)["subscriptions"]]
+    assert store.subscriptions(today=today)["hidden"] == []

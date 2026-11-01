@@ -647,43 +647,115 @@ class FinanceStore:
 
     # -- subscriptions ----------------------------------------------------------------------------
 
+    def subscription_choices(self) -> dict[str, dict]:
+        """What the user said about subscriptions, by the merchant's key: `{"merchant", "is"}`, and for one that is,
+        any of `amount`, `period` and `next` they gave."""
+        row = self.conn.execute("SELECT value FROM settings WHERE key = 'finance_subscriptions'").fetchone()
+        return json.loads(row["value"]) if row else {}
+
+    def set_subscription(self, merchant: str, is_subscription: bool | None, amount: float | None = None,
+                         period: str | None = None, next_charge: date | None = None) -> dict:
+        """The user's word on a merchant: a subscription (with its price, period or next charge when given, which
+        win over what the charges show) or not one (never listed). None forgets it: back to what the charges show.
+        A subscription with no charges on record needs all three."""
+        key = normalise(merchant) or merchant.strip().lower()
+        if not key:
+            raise ValueError("a subscription needs a name")
+        if amount is not None and amount <= 0:
+            raise ValueError("a price must be more than 0")
+        if period is not None and period not in {p[0] for p in PERIODS}:
+            raise ValueError(f"a period is week, month or year, not {period!r}")
+        choices = self.subscription_choices()
+        if is_subscription is None:
+            choices.pop(key, None)
+        else:
+            old = choices.get(key, {})
+            choice = {"merchant": " ".join(merchant.split()), "is": is_subscription}
+            if is_subscription:
+                for k, v in (("amount", round(amount, 2) if amount else None), ("period", period),
+                             ("next", next_charge.isoformat() if next_charge else None)):
+                    if v is not None or old.get(k) is not None:
+                        choice[k] = v if v is not None else old[k]
+                if not self._charges(key) and not {"amount", "period", "next"} <= choice.keys():
+                    raise ValueError(f"no charges from {merchant} yet: give its price, how often and the next charge")
+            choices[key] = choice
+        self.conn.execute("INSERT INTO settings (key, value) VALUES ('finance_subscriptions', ?) "
+                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(choices),))
+        return choices.get(key, {"merchant": merchant, "is": None})
+
+    def _charges(self, key: str, since: date | None = None) -> list:
+        since = since or self.today() - timedelta(days=400)
+        rows = self.conn.execute("SELECT * FROM finance_transactions WHERE amount < 0 AND at >= ? ORDER BY at",
+                                 (self._utc(since),)).fetchall()
+        return [r for r in rows if (normalise(r["merchant"]) or r["merchant"]) == key]
+
     def subscriptions(self, today: date | None = None) -> dict:
-        """Charges that repeat (each week, month or year at about the same price), and anything sorted as a
-        subscription: the price, the period, the last and next charge, and the monthly total."""
+        """Charges that repeat (each week, month or year at about the same price), anything sorted as a subscription,
+        and what the user said (a subscription, with its price, period or next charge; or not one): the price, the
+        period, the last and next charge, and the monthly total. Money moving between the user's own accounts,
+        cash and card payoffs are never subscriptions unless the user says so. `hidden`: the ones the user said
+        aren't."""
         today = today or self.today()
+        choices = self.subscription_choices()
         rows = self.conn.execute("SELECT * FROM finance_transactions WHERE amount < 0 AND at >= ? ORDER BY at",
                                  (self._utc(today - timedelta(days=400)),)).fetchall()
         groups: dict[str, list] = {}
         for r in rows:
             groups.setdefault(normalise(r["merchant"]) or r["merchant"], []).append(r)
+        for key, c in choices.items():
+            if c.get("is"):
+                groups.setdefault(key, [])
         subs = []
-        for charges in groups.values():
-            last = charges[-1]
-            price = -last["amount"]
+        lengths = {p[0]: p for p in PERIODS}
+        for key, charges in groups.items():
+            choice = choices.get(key, {})
+            if choice.get("is") is False:
+                continue
+            mine = bool(choice.get("is"))
+            if not mine and charges[-1]["category"] in NOT_SPENDING | {"card", "cash"}:
+                continue
+            last = charges[-1] if charges else None
+            price = -last["amount"] if last else choice["amount"]
             same = [c for c in charges if abs(-c["amount"] - price) <= price * SAME_PRICE]
             dates = [self.local(c["at"]).date() for c in same]
             period = None
             if len(dates) >= 2:
                 gap = median((b - a).days for a, b in zip(dates, dates[1:]))
                 period = next((p for p in PERIODS if p[2][0] <= gap <= p[2][1]), None)
-            if period is None and last["category"] == "subscriptions":
+            if choice.get("period"):
+                period = lengths[choice["period"]]
+            if period is None and (mine or last["category"] == "subscriptions"):
                 period = PERIODS[1]  # one charge so far: monthly until it shows otherwise
             if period is None:
                 continue
             name, length, _ = period
-            last_day = dates[-1] if dates else self.local(last["at"]).date()
-            if (today - last_day).days > length * 1.5:
+            last_day = dates[-1] if dates else self.local(last["at"]).date() if last else None
+
+            def step(d: date, n: int = 1) -> date:
+                return (_add_months(d, n) if name == "month" else _add_months(d, 12 * n) if name == "year"
+                        else d + timedelta(days=7 * n))
+
+            nxt = step(last_day) if last_day else None
+            if choice.get("next"):
+                told = date.fromisoformat(choice["next"])
+                if nxt is None or told > nxt or last_day and told > last_day:
+                    nxt = told
+                while nxt < today:  # the user's date, moved on to the next one still to come
+                    nxt = step(nxt)
+            elif not mine and (today - last_day).days > length * 1.5:
                 continue  # stopped
-            nxt = (_add_months(last_day, 1) if name == "month" else
-                   _add_months(last_day, 12) if name == "year" else last_day + timedelta(days=7))
+            price = choice.get("amount") or price
             monthly = price if name == "month" else price / 12 if name == "year" else price * 52 / 12
-            subs.append({"merchant": last["merchant"], "amount": round(price, 2), "period": name,
-                         "category": last["category"], "account": self.as_json(last)["account"],
-                         "last": last_day.isoformat(), "next": nxt.isoformat(), "count": len(same),
-                         "monthly": round(monthly, 2), "price_was": round(-same[-2]["amount"], 2)
-                         if len(same) >= 2 and same[-2]["amount"] != last["amount"] else None})
+            subs.append({"merchant": choice.get("merchant") or last["merchant"], "key": key, "amount": round(price, 2),
+                         "period": name, "category": last["category"] if last else "subscriptions",
+                         "account": self.as_json(last)["account"] if last else None,
+                         "last": last_day.isoformat() if last_day else None, "next": nxt.isoformat(),
+                         "count": len(same), "monthly": round(monthly, 2), "mine": mine,
+                         "price_was": round(-same[-2]["amount"], 2)
+                         if len(same) >= 2 and same[-2]["amount"] != same[-1]["amount"] else None})
         subs.sort(key=lambda s: s["next"])
-        return {"subscriptions": subs, "monthly_total": round(sum(s["monthly"] for s in subs), 2)}
+        hidden = [{"merchant": c["merchant"], "key": k} for k, c in choices.items() if c.get("is") is False]
+        return {"subscriptions": subs, "monthly_total": round(sum(s["monthly"] for s in subs), 2), "hidden": hidden}
 
 
 def _add_months(d: date, n: int) -> date:

@@ -2460,6 +2460,21 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def finance_subscriptions():
         return finance.subscriptions()
 
+    class SubscriptionIn(BaseModel):
+        merchant: str = Field(min_length=1, max_length=200)
+        subscription: bool | None  # null: forget what the user said, back to what the charges show
+        amount: float | None = Field(None, gt=0, le=100_000)
+        period: Literal["week", "month", "year"] | None = None
+        next: date | None = None
+
+    @app.put("/v1/finance/subscriptions", dependencies=[Depends(auth)])
+    async def put_subscription(body: SubscriptionIn):
+        try:
+            finance.set_subscription(body.merchant, body.subscription, body.amount, body.period, body.next)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return finance.subscriptions()
+
     @app.get("/v1/finance/budget", dependencies=[Depends(auth)])
     async def get_budget():
         return finance.budget()

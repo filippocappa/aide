@@ -715,6 +715,10 @@ final class APIClient {
         try await send("GET", "/v1/finance/subscriptions")
     }
 
+    func setSubscription(_ body: SubscriptionIn) async throws -> SubscriptionList {
+        try await send("PUT", "/v1/finance/subscriptions", body: body)
+    }
+
     func budget() async throws -> FinanceBudget {
         try await send("GET", "/v1/finance/budget")
     }

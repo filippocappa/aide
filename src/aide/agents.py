@@ -26,8 +26,8 @@ WEB = ("web_search", "fetch_page")
 BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
 VIDEO = ("summarize_video", "read_video", "list_videos")
 PURCHASES = ("list_purchases",)
-FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budget", "subscriptions", "accounts",
-           "delete_payment")
+FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budget", "subscriptions",
+           "set_subscription", "accounts", "delete_payment")
 HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
 HEALTH = ("health",)
 WEIGHT = ("log_weight", "weight_trend", "delete_weight")
@@ -419,7 +419,8 @@ FINANCE_PROMPT = _prompt(
     "list_purchases: those are paid by card, so they are usually already among the payments; don't add them twice. "
     "A budget is optional and the user's choice: set one only when asked, and when they're over it say so once, "
     "plainly, with what's left to do about it, never as a scolding. Without a budget, compare with last month by "
-    "the same day. Subscriptions shows what repeats. You give no investment advice beyond general principles (an "
+    "the same day. Subscriptions shows what repeats; when the user says one isn't a subscription, or gives a price, "
+    "how often or the next charge, or tells you of one, use set_subscription. You give no investment advice beyond general principles (an "
     "emergency fund, diversification, low fees, not betting money you need), you never recommend specific "
     "securities, and you can never move money.",
     _BASICS, _QUEUE, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,

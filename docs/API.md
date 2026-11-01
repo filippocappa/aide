@@ -2231,7 +2231,8 @@ the user's own accounts); a refund (positive, not income) takes from its categor
 | `GET /v1/finance/month` | `?month=2026-10` (default this month) | Month; 400 for a month not yet started |
 | `GET /v1/finance/accounts` | | `{"accounts": [Account], "total": 1180.5}` |
 | `PATCH /v1/finance/accounts/{id}` | `{"hidden": true}`; on the credit card also `{"owed": 412.5, "last4": "1234"}` (since 2026-11-01), each optional | `{"account": Account}`; 404; 400 for `owed`/`last4` on another account. `owed` is what's owed now (≥ 0) and starts following from now |
-| `GET /v1/finance/subscriptions` | | `{"subscriptions": [Subscription], "monthly_total": 24.3}`, next charge first |
+| `GET /v1/finance/subscriptions` | | `{"subscriptions": [Subscription], "monthly_total": 24.3, "hidden": [{"merchant": "Klarna* Cisalfa Sport", "key": "klarna cisalfa sport"}]}`, next charge first; `hidden`: the ones the user said aren't |
+| `PUT /v1/finance/subscriptions` | `{"merchant": "Netflix", "subscription": true, "amount": 13.99, "period": "month", "next": "2026-11-12"}` (since 2026-11-01) | the list as above. `subscription` `false`: never listed; `null`: forget what the user said; `true` with any of `amount`, `period` (`week`, `month`, `year`) and `next`, which win over the charges (one with no charges on record needs all three); 400 otherwise |
 | `GET /v1/finance/budget` | | Budget |
 | `PUT /v1/finance/budget` | `{"monthly": 600, "categories": {"eating_out": 80, "fun": null}}` | Budget; `monthly` absent leaves it, `null` removes it; a category's `null` removes its budget; 400 for ≤ 0 or `income`/`transfer` |
 | `GET /v1/finance/categories` | | `{"categories": [{"id": "groceries", "name": "Groceries", "spending": true}]}` |
@@ -2302,9 +2303,12 @@ the user's own accounts); a refund (positive, not income) takes from its categor
   "account": "Hype", "last": "2026-11-03", "next": "2026-12-03", "count": 4, "monthly": 11.99, "price_was": 10.99}`.
   Charges that repeat each week, month or year at about the same price (within 20%), or a single charge sorted as a
   subscription (monthly until it shows otherwise); dropped when one is 1.5 periods late. `price_was` is the charge
-  before when it was different, else `null`.
+  before when it was different, else `null`. Since 2026-11-01: `key` (the merchant's), `mine` (the user said it is,
+  through the PUT), `last` `null` for one the user added before any charge; the user's own `next` moves on by the
+  period once past, and theirs aren't dropped when late. Transfers, income, cash and card payoffs are never found as
+  subscriptions.
 - **Finance** has `accounts` (balances and each link's state), `log_payment` (cash with `cash`, a transfer; Apple Pay taps come in by themselves), `card_owed` (what's owed on Carta YOU now, and its last 4), `list_payments` (a
-  `payments` card), `spending`, `recategorize`, `set_budget` (only when asked), `subscriptions` and `delete_payment`
+  `payments` card), `spending`, `recategorize`, `set_budget` (only when asked), `subscriptions`, `set_subscription` (the user's word on one) and `delete_payment`
   (queued). Its starters: "How much have I spent this month?", "What subscriptions do I have?", "I spent ".
 - **Privacy.** Payments stay on `cappa` (and its backups) and never go in the logs. The model sees only merchant names
   when sorting, and what Finance reads in chat.

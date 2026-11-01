@@ -2,7 +2,7 @@
 
 from datetime import date, datetime, timedelta
 
-from ..finance import CATEGORIES, NOT_SPENDING, FinanceStore, describe_tx, euros
+from ..finance import CATEGORIES, NOT_SPENDING, FinanceStore, describe_tx, euros, normalise
 from . import Tool, ToolOutput
 
 CARD_MAX = 12  # payments shown as a card under the reply
@@ -97,9 +97,28 @@ def finance_tools(store: FinanceStore, banks=None) -> list[Tool]:
         lines = [f"About {euros(s['monthly_total'])} a month in repeated charges, next first:"]
         for x in s["subscriptions"]:
             was = f", was {euros(x['price_was'])}" if x["price_was"] else ""
-            lines.append(f"- {x['merchant']}: {euros(x['amount'])} a {x['period']}{was}, next {x['next']}, "
-                         f"last {x['last']} ({x['count']} charges)")
+            last = f"last {x['last']} ({x['count']} charges)" if x["last"] else "no charge on record yet"
+            mine = ", set by the user" if x["mine"] else ""
+            lines.append(f"- {x['merchant']}: {euros(x['amount'])} a {x['period']}{was}, next {x['next']}, {last}{mine}")
+        if s["hidden"]:
+            lines.append("Not subscriptions (the user said): " + ", ".join(h["merchant"] for h in s["hidden"]))
         return "\n".join(lines)
+
+    async def set_subscription(merchant: str, is_subscription: bool | None = True, amount: float | None = None,
+                               period: str | None = None, next_charge: str | None = None) -> str:
+        try:
+            nxt = date.fromisoformat(next_charge) if next_charge else None
+            store.set_subscription(merchant, is_subscription, amount, period, nxt)
+        except ValueError as e:
+            return f"Not changed: {e}"
+        if is_subscription is False:
+            return f"{merchant} is no longer listed as a subscription."
+        if is_subscription is None:
+            return f"{merchant}: back to what the charges show."
+        key = normalise(merchant) or merchant.strip().lower()
+        x = next((x for x in store.subscriptions()["subscriptions"] if x["key"] == key), None)
+        return (f"{x['merchant']}: {euros(x['amount'])} a {x['period']}, next {x['next']}." if x
+                else f"{merchant} saved as a subscription.")
 
     async def card_owed(owed: float, last4: str | None = None) -> str:
         a = store.set_owed(owed, last4)
@@ -201,6 +220,17 @@ def finance_tools(store: FinanceStore, banks=None) -> list[Tool]:
         Tool("subscriptions", "Charges that repeat each week, month or year (and anything sorted as a subscription): "
              "the price, when the next one is, price changes, and the monthly total.",
              {"type": "object", "properties": {}, "additionalProperties": False}, subscriptions),
+        Tool("set_subscription", "What the user says about a subscription: one that is (add it, or fix its price, how "
+             "often or the next charge; one with no charges on record needs all three), one that isn't "
+             "(is_subscription false: never listed again), or null to go back to what the charges show. Use the "
+             "merchant's name as subscriptions lists it.",
+             {"type": "object", "properties": {
+                 "merchant": {"type": "string"},
+                 "is_subscription": {"type": ["boolean", "null"]},
+                 "amount": {"type": "number", "description": "The price each time, in euros"},
+                 "period": {"type": "string", "enum": ["week", "month", "year"]},
+                 "next_charge": {"type": "string", "description": "YYYY-MM-DD"}},
+              "required": ["merchant", "is_subscription"], "additionalProperties": False}, set_subscription),
         Tool("accounts", "The user's accounts and cards: each balance from the bank (read now if the last read is "
              "older than 2 minutes) and the bank link's state. Read-only: Aide can't move money.",
              {"type": "object", "properties": {}, "additionalProperties": False}, accounts),
