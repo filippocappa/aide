@@ -27,6 +27,9 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
         now = utcnow()
         device = store.device()
         lines = [store.line(lock, now) for lock in store.all(now)] or ["No locks yet."]
+        if limits := store.limits():
+            lines.append("Daily app limits (the user sets them in the app's Screen tab, with the apps they cover):")
+            lines += [f"- {store.limit_line(limit, now)}" for limit in limits]
         if not device["authorized"]:
             lines.append("The phone hasn't allowed Screen Time yet (Settings → Screen Time in the app), so locks "
                          "don't hold until it does.")
@@ -37,6 +40,9 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
         passes = store.passes(now)
         lines.append(f"Emergency passes: {passes['left']} of {PASSES} left this month.")
         return "\n".join(lines)
+
+    async def screen_usage(days: int = 14) -> str:
+        return store.usage_text(utcnow(), max(1, min(int(days), 90)))
 
     async def lock_now(title: str, minutes: int | None = None, until: str | None = None,
                        start: str | None = None, strict: bool = False) -> str:
@@ -98,8 +104,13 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
               f"from chat or with a reason, only with one of the {PASSES} emergency passes a month, in the app"}
     return [
         Tool("list_locks", "List the Screen Time locks: id in brackets, title, when, whether it's on now, who set it; "
-             "whether the phone allows Screen Time; and the times the user unlocked early this week, with reasons.",
+             "the daily app limits and whether they were reached today; whether the phone allows Screen Time; and "
+             "the times the user unlocked early this week, with reasons.",
              _obj({}, []), list_locks),
+        Tool("screen_usage", "How much the user was on their phone, day by day (at least so much, from the phone's "
+             "Screen Time in 15-minute steps), today so far and their usual. Per-app times stay on the phone; the "
+             "daily app limits and when they were reached are in list_locks.",
+             _obj({"days": {"type": "integer", "description": "how many days back, default 14"}}, []), screen_usage),
         Tool("lock_now", "Lock the phone's apps for a while (all but Phone and the ones the user allows): from now, "
              "or from `start`, for `minutes` or until `until`. 15 minutes to 24 hours. Runs immediately.",
              _obj({"title": {"type": "string", "description": "short, shown on the lock screen: Focus, Study, Dinner"},

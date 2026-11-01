@@ -464,6 +464,37 @@ class UnlockIn(BaseModel):
     use_pass: bool = Field(False, alias="pass")  # an emergency pass, for a strict lock
 
 
+class LimitIn(BaseModel):
+    title: str
+    minutes: int
+    days: list[int] = []
+    strict: bool = False
+
+
+class LimitPatch(BaseModel):
+    title: str | None = None
+    minutes: int | None = None
+    days: list[int] | None = None
+    enabled: bool | None = None
+    strict: bool | None = None
+
+
+class UsageDayIn(BaseModel):
+    date: str  # local
+    minutes: int  # at least
+
+
+class LimitHitIn(BaseModel):
+    id: int
+    date: str  # local
+    at: str | None = None  # ISO, when it was reached
+
+
+class UsageIn(BaseModel):
+    days: list[UsageDayIn] = []
+    limits: list[LimitHitIn] = []
+
+
 class ErrandReplyIn(BaseModel):
     answer: str
 
@@ -2383,7 +2414,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.get("/v1/locks", dependencies=[Depends(auth)])
     async def list_locks():
         return {"locks": [locks.as_json(lock) for lock in locks.all()], "device": locks.device(),
-                "passes": locks.passes()}
+                "passes": locks.passes(), "limits": [locks.limit_json(limit) for limit in locks.limits()]}
 
     @app.post("/v1/locks", dependencies=[Depends(auth)])
     async def create_lock(body: LockIn):
@@ -2413,6 +2444,53 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         lock_or_404(lock_id)
         locks.delete(lock_id)
         return {"ok": True}
+
+    def limit_or_404(limit_id: int) -> dict:
+        try:
+            return locks.get_limit(limit_id)
+        except ValueError:
+            raise HTTPException(404, f"no limit {limit_id}") from None
+
+    @app.post("/v1/limits", dependencies=[Depends(auth)])
+    async def create_limit(body: LimitIn):
+        return locks.limit_json(locks.add_limit(body.title, body.minutes, body.days, strict=body.strict))
+
+    @app.patch("/v1/limits/{limit_id}", dependencies=[Depends(auth)])
+    async def edit_limit(limit_id: int, body: LimitPatch):
+        limit_or_404(limit_id)
+        return locks.limit_json(locks.update_limit(limit_id, title=body.title, minutes=body.minutes, days=body.days,
+                                                   enabled=body.enabled, strict=body.strict))
+
+    @app.post("/v1/limits/{limit_id}/unlock", dependencies=[Depends(auth)])
+    async def unlock_limit(limit_id: int, body: UnlockIn):
+        limit = limit_or_404(limit_id)
+        after = locks.unlock_limit(limit_id, body.reason, use_pass=body.use_pass)
+        used = " with an emergency pass" if limit["strict"] else ""
+        activity.record(db.conn, "coach", "action", f"You ended the limit '{limit['title']}' for today{used}",
+                        body.reason)
+        return locks.limit_json(after)
+
+    @app.delete("/v1/limits/{limit_id}", dependencies=[Depends(auth)])
+    async def delete_limit(limit_id: int):
+        limit_or_404(limit_id)
+        locks.delete_limit(limit_id)
+        return {"ok": True}
+
+    @app.put("/v1/screen/usage", dependencies=[Depends(auth)])
+    async def screen_usage_in(body: UsageIn):
+        locks.record_usage([(d.date, d.minutes) for d in body.days])
+        for hit in body.limits:
+            try:
+                locks.limit_reached(hit.id, date.fromisoformat(hit.date).isoformat(),
+                                    datetime.fromisoformat(hit.at) if hit.at else None)
+            except ValueError:
+                continue  # a limit deleted since
+        return {"ok": True}
+
+    @app.get("/v1/screen/usage", dependencies=[Depends(auth)])
+    async def screen_usage_out(days: int = 30):
+        today = datetime.now(tz).date()
+        return {"days": locks.usage(today - timedelta(days=max(1, min(days, 400))), today)}
 
     @app.put("/v1/locks/device", dependencies=[Depends(auth)])
     async def screen_time_device(body: ScreenTimeDevice):

@@ -48,7 +48,27 @@ CREATE TABLE IF NOT EXISTS screen_unlocks (
     pass    INTEGER NOT NULL DEFAULT 0 -- an emergency pass was used
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS screen_limits (
+    id         INTEGER PRIMARY KEY,
+    title      TEXT NOT NULL,     -- typed by the user: the phone can't tell the server which apps
+    minutes    INTEGER NOT NULL,  -- a day, then the apps lock until midnight
+    days       TEXT NOT NULL,     -- JSON ISO weekdays it counts on, [] every day
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    strict     INTEGER NOT NULL DEFAULT 0, -- ends early only with an emergency pass, and can't be loosened once reached
+    reached_on TEXT,              -- local date it was last reached (the phone says so)
+    reached_at TEXT,              -- UTC, when
+    open_on    TEXT,              -- local date it was ended early, open until midnight
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS screen_days (
+    date       TEXT PRIMARY KEY,  -- local
+    minutes    INTEGER NOT NULL,  -- at least this much screen time (the phone's last 15-minute step reached)
+    updated_at TEXT NOT NULL
+);
 """
+
+LIMIT_SHORTEST, LIMIT_LONGEST = 5, 12 * 60  # minutes a day
+USAGE_KEPT = timedelta(days=400)
 
 
 def _title(value: str | None) -> str:
@@ -79,6 +99,8 @@ class LockStore:
             self.conn.execute("ALTER TABLE screen_locks ADD COLUMN strict INTEGER NOT NULL DEFAULT 0")
         if "pass" not in {r[1] for r in self.conn.execute("PRAGMA table_info(screen_unlocks)")}:
             self.conn.execute("ALTER TABLE screen_unlocks ADD COLUMN pass INTEGER NOT NULL DEFAULT 0")
+        if "limit_id" not in {r[1] for r in self.conn.execute("PRAGMA table_info(screen_unlocks)")}:
+            self.conn.execute("ALTER TABLE screen_unlocks ADD COLUMN limit_id INTEGER")  # lock_id 0 then
         self.on_change: list[Callable[[], None]] = []  # the sync push, so the phone picks the change up
 
     def _changed(self) -> None:
@@ -268,6 +290,181 @@ class LockStore:
             if start > now:
                 return start.astimezone(timezone.utc)
         return None
+
+    # -- limits ----------------------------------------------------------------
+
+    def _limit_row(self, row) -> dict:
+        limit = dict(row)
+        limit["days"] = json.loads(limit["days"])
+        limit["enabled"], limit["strict"] = bool(limit["enabled"]), bool(limit["strict"])
+        return limit
+
+    def _today(self, now: datetime) -> str:
+        return now.astimezone(self.tz).date().isoformat()
+
+    def limits(self) -> list[dict]:
+        return [self._limit_row(r) for r in self.conn.execute("SELECT * FROM screen_limits ORDER BY id")]
+
+    def get_limit(self, limit_id: int) -> dict:
+        row = self.conn.execute("SELECT * FROM screen_limits WHERE id = ?", (limit_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"no limit {limit_id}")
+        return self._limit_row(row)
+
+    @staticmethod
+    def _limit_minutes(minutes) -> int:
+        minutes = int(minutes)
+        if not LIMIT_SHORTEST <= minutes <= LIMIT_LONGEST:
+            raise ValueError(f"a limit is {LIMIT_SHORTEST} minutes to {LIMIT_LONGEST // 60} hours a day")
+        return minutes
+
+    def counts_today(self, limit: dict, now: datetime) -> bool:
+        return limit["enabled"] and (not limit["days"] or now.astimezone(self.tz).isoweekday() in limit["days"])
+
+    def reached(self, limit: dict, now: datetime) -> bool:
+        """Reached today and holding: its apps are locked until midnight."""
+        today = self._today(now)
+        return self.counts_today(limit, now) and limit["reached_on"] == today and limit["open_on"] != today
+
+    def add_limit(self, title: str, minutes: int, days: list[int] | None = None, strict: bool = False,
+                  now: datetime | None = None) -> dict:
+        cur = self.conn.execute(
+            "INSERT INTO screen_limits (title, minutes, days, strict, created_at) VALUES (?, ?, ?, ?, ?)",
+            (_title(title), self._limit_minutes(minutes), json.dumps(check_days(days or [])), int(strict),
+             (now or utcnow()).isoformat()))
+        self._changed()
+        return self.get_limit(cur.lastrowid)
+
+    def update_limit(self, limit_id: int, now: datetime | None = None, **changes) -> dict:
+        """Its title, minutes, days, enabled or strict. A strict limit reached today can't be loosened (more minutes,
+        off, not today, not strict) until tomorrow: that's ending it early, with an emergency pass."""
+        now = now or utcnow()
+        limit = self.get_limit(limit_id)
+        changes = {k: v for k, v in changes.items() if v is not None}
+        if "minutes" in changes:
+            changes["minutes"] = self._limit_minutes(changes["minutes"])
+        if "days" in changes:
+            changes["days"] = check_days(changes["days"])
+        after = {**limit, **changes}
+        looser = (after["minutes"] > limit["minutes"] or not after["enabled"] or not after["strict"]
+                  or not self.counts_today(after, now))
+        if limit["strict"] and self.reached(limit, now) and looser:
+            raise ValueError(f"'{limit['title']}' is strict and reached today: it can be loosened from tomorrow, or "
+                             "ended for today with an emergency pass")
+        self.conn.execute(
+            "UPDATE screen_limits SET title = ?, minutes = ?, days = ?, enabled = ?, strict = ? WHERE id = ?",
+            (_title(after["title"]), after["minutes"], json.dumps(after["days"]), int(bool(after["enabled"])),
+             int(bool(after["strict"])), limit_id))
+        self._changed()
+        return self.get_limit(limit_id)
+
+    def delete_limit(self, limit_id: int, now: datetime | None = None) -> None:
+        limit = self.get_limit(limit_id)
+        if limit["strict"] and self.reached(limit, now or utcnow()):
+            raise ValueError(f"'{limit['title']}' is strict and reached today: it can be deleted tomorrow")
+        self.conn.execute("DELETE FROM screen_limits WHERE id = ?", (limit_id,))
+        self._changed()
+
+    def limit_reached(self, limit_id: int, day: str, at: datetime | None) -> None:
+        """The phone says the limit was reached on `day` (local), at `at`."""
+        limit = self.get_limit(limit_id)
+        if limit["reached_on"] and limit["reached_on"] >= day:
+            return
+        self.conn.execute("UPDATE screen_limits SET reached_on = ?, reached_at = ? WHERE id = ?",
+                          (day, at.astimezone(timezone.utc).isoformat() if at else None, limit_id))
+
+    def unlock_limit(self, limit_id: int, reason: str, use_pass: bool = False, now: datetime | None = None) -> dict:
+        """Ends a limit reached today, until midnight, with the user's reason (and a pass if it's strict)."""
+        now = now or utcnow()
+        limit = self.get_limit(limit_id)
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError("ending a limit early needs a reason")
+        if not self.reached(limit, now):
+            raise ValueError(f"'{limit['title']}' isn't reached today")
+        if limit["strict"]:
+            if not use_pass:
+                raise ValueError(f"'{limit['title']}' is strict: only an emergency pass, used in the app, ends it early")
+            if self.passes(now)["left"] <= 0:
+                raise ValueError(f"no emergency passes left this month ({PASSES} a month); '{limit['title']}' opens "
+                                 "at midnight")
+        self.conn.execute(
+            "INSERT INTO screen_unlocks (lock_id, limit_id, title, reason, at, pass) VALUES (0, ?, ?, ?, ?, ?)",
+            (limit_id, limit["title"], reason[:280], now.isoformat(), int(limit["strict"])))
+        self.conn.execute("UPDATE screen_limits SET open_on = ? WHERE id = ?", (self._today(now), limit_id))
+        self._changed()
+        return self.get_limit(limit_id)
+
+    def limit_summary(self, limit: dict) -> str:
+        """'30 min a day', '1 h 30 min on Mon–Fri'."""
+        h, m = divmod(limit["minutes"], 60)
+        amount = " ".join(p for p in (f"{h} h" if h else "", f"{m} min" if m else "") if p)
+        return f"{amount} a day" if not limit["days"] else f"{amount} on {days_text(limit['days'])}"
+
+    def limit_json(self, limit: dict, now: datetime | None = None) -> dict:
+        now = now or utcnow()
+        today = self._today(now)
+        reached_today = limit["reached_on"] == today and self.counts_today(limit, now)
+        return {"id": limit["id"], "title": limit["title"], "minutes": limit["minutes"], "days": limit["days"],
+                "enabled": limit["enabled"], "strict": limit["strict"],
+                "reached": self._local(datetime.fromisoformat(limit["reached_at"]))
+                if reached_today and limit["reached_at"] else None,
+                "reached_today": reached_today, "open_today": limit["open_on"] == today,
+                "summary": self.limit_summary(limit)}
+
+    def limit_line(self, limit: dict, now: datetime) -> str:
+        """'[2] Social · 30 min a day · strict · reached at 14:20, locked until midnight', for the agents."""
+        text = f"[{limit['id']}] {limit['title']} · {self.limit_summary(limit)}" + (" · strict" if limit["strict"] else "")
+        j = self.limit_json(limit, now)
+        if not limit["enabled"]:
+            text += " · off"
+        elif j["reached_today"]:
+            at = f" at {datetime.fromisoformat(limit['reached_at']).astimezone(self.tz):%H:%M}" if limit["reached_at"] else ""
+            text += f" · reached{at}" + (", ended early for today" if j["open_today"] else ", locked until midnight")
+        elif not self.counts_today(limit, now):
+            text += " · not today"
+        return text
+
+    # -- usage: estimates from the phone -------------------------------------
+
+    def record_usage(self, days: list[tuple[str, int]], now: datetime | None = None) -> None:
+        """At least `minutes` of screen time on each local date; a day only goes up (the phone counts in steps)."""
+        now = now or utcnow()
+        today = now.astimezone(self.tz).date()
+        for day, minutes in days:
+            d = date.fromisoformat(day)
+            if not today - USAGE_KEPT <= d <= today + timedelta(days=1):
+                raise ValueError(f"{day} is out of range")
+            self.conn.execute(
+                "INSERT INTO screen_days (date, minutes, updated_at) VALUES (?, ?, ?) ON CONFLICT(date) DO UPDATE "
+                "SET minutes = MAX(minutes, excluded.minutes), updated_at = excluded.updated_at",
+                (d.isoformat(), max(0, min(int(minutes), 24 * 60)), now.isoformat()))
+
+    def usage(self, since: date, until: date | None = None) -> list[dict]:
+        rows = self.conn.execute("SELECT * FROM screen_days WHERE date >= ? AND date <= ? ORDER BY date",
+                                 (since.isoformat(), (until or date.max).isoformat()))
+        return [{"date": r["date"], "minutes": r["minutes"], "updated_at": self._local(datetime.fromisoformat(r["updated_at"]))}
+                for r in rows]
+
+    def usage_text(self, now: datetime, days: int = 14) -> str:
+        """The last `days` days of screen time, for the agents: at least so much a day, the usual and today so far."""
+        today = now.astimezone(self.tz).date()
+        rows = self.usage(today - timedelta(days=days), today)
+        if not rows:
+            return ("No screen time from the phone yet (it sends it once Screen Time is allowed and the Screen tab "
+                    "has been opened).")
+        past = [r for r in rows if r["date"] < today.isoformat()]
+
+        def hm(m: int) -> str:
+            return f"{m // 60} h {m % 60:02d} min" if m >= 60 else f"{m} min"
+
+        lines = ["Screen time from the phone, at least (counted in 15-minute steps, so the real time is up to 15 "
+                 "minutes more):"]
+        if past:
+            lines.append(f"- Usual (average of {len(past)} days): {hm(round(sum(r['minutes'] for r in past) / len(past)))}")
+        lines += [f"- {date.fromisoformat(r['date']):%a %d %b}: {hm(r['minutes'])}"
+                  + (" so far" if r["date"] == today.isoformat() else "") for r in rows[::-1]]
+        return "\n".join(lines)
 
     # -- the phone -----------------------------------------------------------
 

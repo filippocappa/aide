@@ -28,3 +28,28 @@ struct ScreenLock: Codable, Identifiable, Hashable {
 
     var isStrict: Bool { strict == true }
 }
+
+/// A daily app limit (docs/API.md, "Daily app limits"): its apps get `minutes` a day, then lock until midnight. Which
+/// apps lives on this phone only (`LockBook.limitApps`); the server has the title the user typed.
+struct ScreenLimit: Codable, Identifiable, Hashable {
+    let id: Int
+    let title: String
+    let minutes: Int
+    /// ISO weekdays it counts on; empty, every day.
+    let days: [Int]
+    let enabled: Bool
+    let strict: Bool
+    /// When it was reached today (ISO), from the phone's last upload.
+    let reached: String?
+    let reachedToday: Bool
+    /// Ended early for today: open until midnight.
+    let openToday: Bool
+    let summary: String
+
+    /// Whether it counts on the day of `date`.
+    func counts(on date: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard enabled else { return false }
+        let weekday = calendar.component(.weekday, from: date) // 1 = Sunday
+        return days.isEmpty || days.contains(weekday == 1 ? 7 : weekday - 1)
+    }
+}

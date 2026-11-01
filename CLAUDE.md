@@ -490,8 +490,15 @@ none of it reaches the server yet): the total is every app's time added up (not 
 by now (14 days) or last week/month, a focus score (how much against 3 h, your usual, pickups, at night; tap the ring
 for its parts), pickups, first pickup, offline, hourly or daily bars, Most used (tap an app for its bars).
 The maths is `Usage/UsageMath.swift` (tested); the views `Usage/UsageReportView.swift` are shared, so the
-Simulator shows them from `UsageSample` in preview mode. Not yet: per-app limits, estimates for Coach on the server. Usage thresholds and a countdown in the
-Dynamic Island are not done.
+Simulator shows them from `UsageSample` in preview mode.
+Daily limits and estimates (2026-11-01, contract "Daily app limits", "Screen time estimates"; `locks.py`): a limit gives
+some apps so many minutes a day, then locks them until midnight (`/v1/limits`; the title is typed, the apps stay on the
+phone in `LockBook.limitApps`). A `limit-<id>` DeviceActivity per limit with one threshold event; `LockMonitor` shields
+it and records the hit; ending one early takes a reason, a strict one a pass, and a strict one reached today can only be
+tightened. The estimate: one `usage` activity over what the user picks in "Share with Coach" (every category), events
+every 15 min to 8 h then hourly to 16 h; the monitor keeps the day's highest step, the app sends the last 7 days and the
+limit hits on sync (`PUT /v1/screen/usage`), and Coach reads them (`screen_usage`, as "at least"). Not yet tried on the
+phone. A countdown in the Dynamic Island is not done.
 
 **Done, both sides (2026-10-27), tried on the server, not yet on the phone:** browser errands (#22, contract in
 `docs/API.md`, "Browser errands"). Aide starts an errand (`start_errand`) for anything a shop or booking site shows now

@@ -30,7 +30,7 @@ HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_
 HEALTH = ("health",)
 WEIGHT = ("log_weight", "weight_trend", "delete_weight")
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal", "find_food", "save_food", "update_food")
-LOCKS = ("list_locks", "lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock")
+LOCKS = ("list_locks", "screen_usage", "lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
          "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
@@ -151,7 +151,11 @@ suggest one; never lock unasked. Ending one early (end_lock) is queued and needs
 don't argue, but if they unlock the same lock often (list_locks shows the week's unlocks), say so kindly and offer \
 a later start or a shorter lock. A strict lock (only when they ask for one, or agree to your suggestion) can't be \
 ended from chat at all: only with one of their 3 emergency passes a month, in the app; while it's on, the app's \
-Screen Time page is locked too. Offer strict when they keep unlocking a lock that matters to them."""
+Screen Time page is locked too. Offer strict when they keep unlocking a lock that matters to them. Daily app limits ("Social, 30 min a day, \
+then locked until midnight") are set by the user in the app's Screen tab, where they pick the apps; you see them and \
+whether they were reached in list_locks, and can suggest one. screen_usage has their phone time day by day (at least \
+so much: it comes in 15-minute steps) against their usual; bring it in when it matters (a late night on the phone, \
+a study day that went to the screen), not as a lecture."""
 
 _CARDS = """- In the app, the reminders, calendar events, meals, routes and videos your tools listed, created or changed this turn are \
 shown under your reply as cards (with tick boxes for reminders). So don't repeat them line \

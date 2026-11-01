@@ -319,6 +319,27 @@ final class APIClient {
         let _: ScreenTimeDevice = try await send("PUT", "/v1/locks/device", body: device)
     }
 
+    func createLimit(_ limit: NewLimit) async throws -> ScreenLimit {
+        try await send("POST", "/v1/limits", body: limit)
+    }
+
+    func updateLimit(_ id: Int, _ patch: LimitPatch) async throws -> ScreenLimit {
+        try await send("PATCH", "/v1/limits/\(id)", body: patch)
+    }
+
+    /// Ends a limit reached today, until midnight.
+    func unlockLimit(_ id: Int, reason: String, pass: Bool = false) async throws -> ScreenLimit {
+        try await send("POST", "/v1/limits/\(id)/unlock", body: UnlockReason(reason: reason, pass: pass ? true : nil))
+    }
+
+    func deleteLimit(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/limits/\(id)", body: EmptyBody())
+    }
+
+    func uploadUsage(_ usage: UsageUpload) async throws {
+        let _: OKResponse = try await send("PUT", "/v1/screen/usage", body: usage)
+    }
+
     // MARK: Browser errands (docs/API.md, "Browser errands")
 
     func errands(open: Bool = false, limit: Int = 30) async throws -> ErrandList {
