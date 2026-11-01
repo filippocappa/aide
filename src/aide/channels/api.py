@@ -1210,7 +1210,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"date": d.isoformat(), "meals": [food.as_json(m) | quality[m["id"]] for m in meals],
                 "totals": totals(meals),
                 "goals": day["targets"], "base": food.goals(), "left": day["left"], "bonus": day["bonus"],
-                "score": day["score"]}
+                "score": day["score"], "line": day["line"]}
 
     @app.get("/v1/food", dependencies=[Depends(auth)])
     async def food_today(day: date | None = Query(None, alias="date")):
@@ -2650,7 +2650,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.get("/v1/locks", dependencies=[Depends(auth)])
     async def list_locks():
         return {"locks": [locks.as_json(lock) for lock in locks.all()], "device": locks.device(),
-                "passes": locks.passes(), "limits": [locks.limit_json(limit) for limit in locks.limits()]}
+                "passes": locks.passes(), "limits": [locks.limit_json(limit) for limit in locks.limits()],
+                "line": locks.coach_line()}
 
     @app.post("/v1/locks", dependencies=[Depends(auth)])
     async def create_lock(body: LockIn):

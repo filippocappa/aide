@@ -11,7 +11,7 @@ from aide.db import Database
 from aide.food import FoodStore
 from aide.foods import FoodDB
 from aide.health import HealthStore
-from aide.nutrition import Nutrition, nutriscore, score, weakest
+from aide.nutrition import Nutrition, day_line, nutriscore, score, weakest
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
 from aide.tools.food import food_tools
@@ -285,3 +285,25 @@ def test_coach_gives_its_take_on_a_score_when_asked(api_env):
     assert len(asked["raw health days, last 14 (newest first)"]) == 14
     assert "hr_minutes" not in asked["raw health days, last 14 (newest first)"][0]
     assert api.post("/v1/health/insight", json={"kind": "mood"}, headers=AUTH).status_code in (400, 422)
+
+
+def test_coachs_food_line_says_what_to_do_with_the_rest_of_the_day():
+    targets = {"calories": 2450, "protein_g": 135, "carbs_g": 309, "fat_g": 75}
+
+    def eaten(kcal, protein):
+        return {"calories": kcal, "protein_g": protein, "carbs_g": 0, "fat_g": 0}
+
+    assert day_line(eaten(0, 0), targets, None, final=False, logged=False).startswith("Nothing logged yet today")
+    assert day_line(eaten(0, 0), targets, None, final=True, logged=False) == "Nothing was logged that day."
+    assert day_line(eaten(1200, 60), targets, None, False, True) == \
+        "1,250 kcal left for today, with 75 g of protein still to go."
+    assert day_line(eaten(1200, 130), targets, None, False, True) == "1,250 kcal left for today."
+    assert day_line(eaten(2400, 100), targets, None, False, True) == \
+        "Right on today's target, but still 35 g short on protein."
+    upf = {"score": 68, "nutrients": {}, "processing": {"score": 40, "upf_pct": 39}}
+    assert day_line(eaten(2940, 185), targets, upf, False, True) == \
+        "490 kcal over today's target; if you eat again, keep it light. Weak spot so far: 39% of kcal ultra-processed."
+    assert day_line(eaten(2940, 100), targets, None, False, True).endswith("make it lean protein (35 g to go).")
+    assert day_line(eaten(2940, 185), targets, upf, True, True) == \
+        "2,940 kcal, 490 over the target, a score of 68. The weak spot was 39% of kcal ultra-processed."
+    assert day_line(eaten(900, 40), {}, None, False, True) == "900 kcal so far."

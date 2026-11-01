@@ -2301,7 +2301,7 @@ final class NutritionTests: XCTestCase {
         let accounts = try JSONDecoder.api.decode(AccountList.self, from: Data("""
         {"accounts": [{"id": 3, "name": "Intesa Sanpaolo Conto ··3456", "kind": "account", "source": "bank",
           "currency": "EUR", "balance": 1180.5, "balance_at": "2026-11-01T10:00:00+00:00", "consent_until": null,
-          "status": "renew", "bank_id": 2, "last_at": null, "count": 0, "spent_month": 0}], "total": 1180.5}
+          "status": "renew", "bank_id": 2, "last_at": null, "count": 0, "spent_month": 0, "hidden": false}], "total": 1180.5}
         """.utf8))
         XCTAssertEqual(accounts.total, 1180.5)
         XCTAssertEqual(accounts.accounts.first?.bankId, 2)

@@ -725,6 +725,8 @@ struct FoodDay: Decodable {
     var left: FoodGoals
     var bonus: FoodBonus
     var score: DayScore?
+    /// Coach's line over Health → Food (what to do with the rest of the day); nil from an older server.
+    var line: String?
 
     init(date: String) {
         (self.date, meals, totals, goals, base, left, bonus) = (date, [], FoodTotals(), FoodGoals(), FoodGoals(),
@@ -741,8 +743,9 @@ struct FoodDay: Decodable {
         left = try c.decodeIfPresent(FoodGoals.self, forKey: .left) ?? FoodGoals()
         bonus = try c.decodeIfPresent(FoodBonus.self, forKey: .bonus) ?? FoodBonus()
         score = try c.decodeIfPresent(DayScore.self, forKey: .score)
+        line = try c.decodeIfPresent(String.self, forKey: .line)
     }
-    private enum CodingKeys: String, CodingKey { case date, meals, totals, goals, base, left, bonus, score }
+    private enum CodingKeys: String, CodingKey { case date, meals, totals, goals, base, left, bonus, score, line }
 }
 
 /// What the day's workouts add to its targets: done ones from the Watch, or (`planned`) a run in the calendar.
@@ -2490,6 +2493,8 @@ struct LockList: Decodable {
     let passes: EmergencyPasses?
     /// Daily app limits; nil from an older server.
     let limits: [ScreenLimit]?
+    /// Coach's line over the phone's Screen half (what holds now or comes next); nil from an older server.
+    var line: String?
 }
 
 /// A new daily limit (docs/API.md, "Daily app limits").

@@ -267,3 +267,23 @@ def test_api_limits_and_usage(client):
     assert client.patch(f"/v1/limits/{social['id']}", json={"minutes": 45}, headers=AUTH).json()["minutes"] == 45
     assert client.delete(f"/v1/limits/{social['id']}", headers=AUTH).json() == {"ok": True}
     assert client.patch(f"/v1/limits/{social['id']}", json={"minutes": 45}, headers=AUTH).status_code == 404
+
+
+def test_coachs_screen_line_says_what_holds_or_comes_next(store):
+    now = at("2026-11-02T15:00")  # a Monday
+    assert store.coach_line(now).startswith("No locks or limits yet.")
+    bedtime = store.schedule("Bedtime", "23:00", "07:00", [])
+    assert store.coach_line(now) == "Bedtime starts at 23:00."
+    assert store.coach_line(at("2026-11-02T23:30")) == "Bedtime is on until 07:00 tomorrow."
+    store.update(bedtime["id"], enabled=False, now=now)
+    social = store.add_limit("Social", 30, now=now)
+    assert store.coach_line(now) == "Today's limits: Social, 30 min."
+    store.limit_reached(social["id"], "2026-11-02", now)
+    assert store.coach_line(now) == "Social is used up for today; it opens again at midnight."
+    store.set_device(False, 0, now)
+    assert store.coach_line(now).startswith("Screen Time isn't allowed on the phone")
+    store.set_device(True, 3, now)
+    # The week before at 2 h a day, the last one at 3 h: an hour more.
+    store.record_usage([((date(2026, 11, 2) - timedelta(days=n)).isoformat(), 120 if n > 7 else 180)
+                        for n in range(1, 15)], now)
+    assert store.coach_line(now).endswith(" This week's about 1h00 a day more than the week before.")

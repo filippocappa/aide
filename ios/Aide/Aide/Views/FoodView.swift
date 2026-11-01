@@ -82,6 +82,12 @@ struct FoodPage: View {
                             .card(padding: 14)
                         }
                         .buttonStyle(CardPress())
+                        // Coach's line, as on Body: what to do with the rest of the day (tap: the Food log chat).
+                        if let line = food.line {
+                            AgentLine(agent: coach, text: line) {
+                                push.route = foodChat.map { .conversation($0) } ?? .agent(coach.id)
+                            }
+                        }
                     }
                     foodCard
                     logButton
