@@ -27,11 +27,13 @@ targets:
       - Aide
       - Shared
       - ScreenTime
+      - Usage
     dependencies:
       - target: AideWidgets
       - target: AideShare
       - target: LockMonitor
       - target: LockShield
+      - target: UsageReport
       - package: SwiftMath
     info:
       path: Aide/Info.plist
@@ -172,6 +174,27 @@ targets:
         CODE_SIGN_ENTITLEMENTS: LockShield/LockShield.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
+  # The Screen tab's usage (Views/ScreenView.swift): only this extension can read which apps were used and for how
+  # long, and it draws that part of the page itself, sandboxed (no network, nothing written back). Usage/ is shared
+  # with the app, which draws the same views from sample data for Simulator screenshots.
+  UsageReport:
+    type: app-extension
+    platform: iOS
+    sources:
+      - UsageReport
+      - Usage
+    info:
+      path: UsageReport/Info.plist
+      properties:
+        CFBundleDisplayName: Aide
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.deviceactivityui.report-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).usagereport
+        CODE_SIGN_ENTITLEMENTS: UsageReport/UsageReport.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
   # The Mac app: the same views as the phone, in a sidebar window. What only a phone has (Apple Health, Live
   # Activities, location, the meal camera, Apple Reminders sync) stays on the phone: Mac/MacServices.swift
   # stands in for those services, and Mac/iOSCompat.swift lets the shared views' UIKit and iOS-only modifiers build.
@@ -194,6 +217,7 @@ targets:
           - Sync/ReminderSyncService.swift
           - Views/MealCameraView.swift
           - Views/ScreenTimeView.swift
+          - Views/ScreenView.swift
       - Mac
       - Shared/LineBadge.swift
       - Shared/MealIntents.swift

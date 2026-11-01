@@ -123,10 +123,12 @@ struct ContentView: View {
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var digest: DigestViewModel
     @State private var tab = Tab.chat
+    /// The Health tab's half (`HealthView`): Food for `aide://food` and the meal buttons.
+    @AppStorage("healthHalf") private var healthHalf = HealthHalf.body
     /// Things waiting for your OK, on the Team tab's badge.
     @State private var waiting = 0
 
-    enum Tab { case chat, study, health, food, settings }
+    enum Tab { case chat, study, health, screen, settings }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -140,9 +142,9 @@ struct ContentView: View {
             HealthView()
                 .tabItem { Label("Health", systemImage: "heart.text.square") }
                 .tag(Tab.health)
-            FoodView()
-                .tabItem { Label("Food", systemImage: "fork.knife") }
-                .tag(Tab.food)
+            ScreenView()
+                .tabItem { Label("Screen", systemImage: "hourglass") }
+                .tag(Tab.screen)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)
@@ -150,16 +152,17 @@ struct ContentView: View {
         .onAppear {
             if !settings.isConfigured { tab = .settings }
             #if DEBUG
-            // Simulator screenshots: `-previewTab today`, `health`, `food`, `study` or `settings` (Team otherwise).
+            // Simulator screenshots: `-previewTab today`, `health`, `food`, `screen`, `study` or `settings` (Team otherwise).
             if settings.isPreview, let name = UserDefaults.standard.string(forKey: "previewTab") {
                 tab = switch name {
-                case "health": .health
-                case "food": .food
+                case "health", "food": .health
+                case "screen": .screen
                 case "study": .study
                 case "settings": .settings
                 default: .chat
                 }
                 if name == "today" { env.showToday = true }
+                if name == "food" { healthHalf = .food } else if name == "health" { healthHalf = .body }
             }
             #endif
         }
@@ -174,9 +177,10 @@ struct ContentView: View {
             let onToday: Bool
             switch route {
             case .today, .digest, .note, .objectives: tab = .chat; onToday = true
-            case .health: tab = .health; env.showToday = false; return
-            case .food: tab = .food; env.showToday = false; return
-            case .meal(let way): tab = .food; env.showToday = false; env.mealLog = way; return
+            case .health: tab = .health; healthHalf = .body; env.showToday = false; return
+            case .food: tab = .health; healthHalf = .food; env.showToday = false; return
+            case .meal(let way): tab = .health; healthHalf = .food; env.showToday = false; env.mealLog = way; return
+            case .screen: tab = .screen; env.showToday = false; return
             case .chats: tab = .chat; env.showToday = false; return
             case .moodle: onToday = false // a sheet over any tab, once Today is out of the way
             default: tab = .chat; onToday = false
