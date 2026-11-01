@@ -2454,7 +2454,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 
 ## Live Activities
 
-Three kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's widget extension:
+Four kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's widget extension:
 
 - **`tram`**: a tram alert's countdown. When an alert fires, the server starts it (APNs push-to-start) instead of
   the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left,
@@ -2469,6 +2469,8 @@ One notification for each thing (since 2026-10-30): while an agent works, its ac
 failed, the activity goes at once and one normal push takes its place.
 - **`event`** (since 2026-10-27): the next calendar event's countdown, started by the server 10 minutes before a
   timed event on the Work calendar ("Macroeconomics in 10 min · Aula 5"), unless leave-now has set a tram alert for it.
+- **`lock`** (since 2026-11-01): a Screen Time lock while it holds, started by the server when the lock comes on
+  ("Bedtime · Locked until 07:00"), counting down to when it opens.
 
 The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as before.
 
@@ -2476,12 +2478,12 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent" \| "event", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
+| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent" \| "event" \| "lock", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
 | `DELETE /v1/live/tokens/{kind}` | | `{"ok": true}` |
 | `POST /v1/live/activities` | `{"key": "agent:3f2a…", "token": "a91c…", "environment": "sandbox"}` | `{"ok": true}` |
 | `DELETE /v1/live/activities/{key}` | | `{"ok": true}`, also for an unknown key |
-| `GET /v1/live/settings` | | `{"events": true}` |
-| `PATCH /v1/live/settings` | `{"events": false}` | the settings |
+| `GET /v1/live/settings` | | `{"events": true, "locks": true}` |
+| `PATCH /v1/live/settings` | `{"events": false}` (either field, or both) | the settings |
 
 - `/v1/live/tokens`: a **push-to-start** token (`Activity<…>.pushToStartTokenUpdates`), one per kind; a new one
   replaces the old. The app sends it on launch and when it changes, and deletes it when Live Activities are turned
@@ -2492,6 +2494,7 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
   stops pushing (and, for a tram, stops following it). Keys and tokens older than 12 hours are dropped. Since 2026-10-27, an activity the server started
   and ended before its token came (a short job) is ended as soon as the token comes, within an hour.
 - `/v1/live/settings` (since 2026-10-27): `events` (default true) turns the `event` countdowns on or off.
+  `locks` (since 2026-11-01, default true) turns the `lock` countdowns on or off.
 - Tokens are hex, like device tokens; `environment` as for devices. A token APNs refuses (`410`, `BadDeviceToken`)
   is deleted.
 - Since 2026-10-27 every `start` push carries `"input-push-token": 1`, so iOS gives the new activity an update token
@@ -2602,8 +2605,8 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
   Tapping it opens the live view while it needs you (`aide://errand/<id>`), else the conversation.
 - Tapping the activity opens the conversation (`aide://conversation/<id>`; the Team chat: `aide://team`).
 - When the server starts (since 2026-10-30), it ends at once, as `failed` with `detail` "Interrupted", every chat,
-  errand and notes activity whose key it still has: the restart cut their jobs off. Tram and event countdowns are
-  followed again instead.
+  errand and notes activity whose key it still has: the restart cut their jobs off. Tram, event and lock
+  countdowns are followed again instead.
 - Opening a chat in the app ends its `agent:<conversation id>` activity and clears that chat's delivered
   notifications.
 
@@ -2622,6 +2625,25 @@ treats them as optional.
 - An `update` when the event moves or its place changes; `end` with `started` true at the start, dismissed 10
   minutes later; `end` dismissed at once when the event is deleted or moved to another calendar.
 - Tapping it opens Today (`aide://today`).
+
+**`lock`** (`LockActivityAttributes`, since 2026-11-01). Attributes: `key` (`lock:<lock id>:<the start, Unix>`, one
+per time a lock holds), `title` (the lock's). Content state:
+
+| Field | Meaning |
+|---|---|
+| `until` | when it opens (Unix seconds) |
+| `since` | when it came on: a bar fills from here to `until` |
+| `strict` | only an emergency pass ends it early |
+| `over` | it has opened (the last update, sent with `end`) |
+
+- Started when a lock comes on: a schedule's start, Lock now, Coach's one-off (a change to the locks is looked at
+  at once, else every minute), with a quiet alert (title the lock's, body "Locked until 07:00", plus ", strict");
+  `stale-date` is `until`. None with less than 2 minutes left, or with `locks` off in `/v1/live/settings`.
+- An `update` when `until` moves; `end` with `over` true when it opens (dismissed 2 minutes later), or dismissed at
+  once when it's unlocked early, switched off or deleted.
+- A server restart doesn't end it: it's followed again, like trams and events.
+- The phone only: limits that run out aren't shown (the phone tells the server about those at its next sync).
+- Tapping it opens Health's Screen half (`aide://screen`).
 
 ## Widgets
 

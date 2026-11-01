@@ -564,6 +564,7 @@ class LiveTokenIn(BaseModel):
 
 class LiveSettingsPatch(BaseModel):
     events: bool | None = None
+    locks: bool | None = None
 
 
 class LiveActivityIn(BaseModel):
@@ -3089,7 +3090,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.patch("/v1/live/settings", dependencies=[Depends(auth)])
     async def edit_live_settings(body: LiveSettingsPatch):
-        return live.update_settings(events=body.events)
+        return live.update_settings(events=body.events, locks=body.locks)
 
     @app.post("/v1/live/activities", dependencies=[Depends(auth)])
     async def live_activity(body: LiveActivityIn):

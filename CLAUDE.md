@@ -54,6 +54,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   `leave.py`: leave-now for calendar events (the event's GTT ride from Maps becomes a one-off tram alert).
 - `plans.py`: events an agent proposes together (`propose_events`), added when the user taps Add on the week card.
 - `upcoming.py`: the next calendar event's Live Activity (a countdown from 30 min before; `live.py` sends it).
+- `lockwatch.py`: a Screen Time lock's Live Activity while it holds (a countdown to when it opens).
 - `locks.py`: Screen Time locks (one-offs and weekly schedules, unlocking early with a reason); `tools/locks.py`: Coach's.
 - `browser.py`: Aide's own Chromium (Playwright, headless, a phone-sized page, a profile per site in `data/browser/`),
   the page listing the model reads, the live view's screencast and input. `errands.py`: browser errands (the store,
@@ -527,7 +528,9 @@ it and records the hit; ending one early takes a reason, a strict one a pass, an
 tightened. The estimate: one `usage` activity over what the user picks in "Share with Coach" (every category), events
 every 15 min to 8 h then hourly to 16 h; the monitor keeps the day's highest step, the app sends the last 7 days and the
 limit hits on sync (`PUT /v1/screen/usage`), and Coach reads them (`screen_usage`, as "at least"). Not yet tried on the
-phone. A countdown in the Dynamic Island is not done.
+phone. The lock's countdown (2026-11-01, contract "Live Activities", `lock`; `lockwatch.py`): the server push-starts
+it when a lock comes on (Pebble asleep, the time left, a bar), ends it when it opens or is unlocked; on/off in Settings →
+Notifications. Not yet tried on the phone (the Simulator won't start one).
 
 **Done, both sides (2026-10-27), tried on the server, not yet on the phone:** browser errands (#22, contract in
 `docs/API.md`, "Browser errands"). Aide starts an errand (`start_errand`) for anything a shop or booking site shows now
