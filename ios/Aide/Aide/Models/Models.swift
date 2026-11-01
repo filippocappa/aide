@@ -3126,21 +3126,52 @@ struct BankLinkStart: Decodable { let url: String }
 
 struct Subscription: Decodable, Identifiable, Hashable {
     let merchant: String
+    var key: String?
     let amount: Double
     let period: String
     var category: String = "subscriptions"
     var account: String?
-    let last: String
+    /// The last charge on record; nil for one the user added before any charge came.
+    var last: String?
     let next: String
     var count: Int = 1
     var monthly: Double = 0
     var priceWas: Double?
-    var id: String { merchant }
+    /// The user said it's a subscription (added it, or set its price, period or next charge).
+    var mine: Bool = false
+    var id: String { key ?? merchant }
+}
+
+/// A merchant the user said isn't a subscription.
+struct HiddenSubscription: Decodable, Identifiable, Hashable {
+    let merchant: String
+    let key: String
+    var id: String { key }
 }
 
 struct SubscriptionList: Decodable {
     let subscriptions: [Subscription]
     var monthlyTotal: Double = 0
+    var hidden: [HiddenSubscription] = []
+}
+
+/// `PUT /v1/finance/subscriptions`: `subscription` nil forgets what the user said.
+struct SubscriptionIn: Encodable {
+    let merchant: String
+    let subscription: Bool?
+    var amount: Double?
+    var period: String?
+    var next: String?
+
+    func encode(to encoder: Encoder) throws {
+        enum K: String, CodingKey { case merchant, subscription, amount, period, next }
+        var c = encoder.container(keyedBy: K.self)
+        try c.encode(merchant, forKey: .merchant)
+        try c.encode(subscription, forKey: .subscription)  // null is meaningful
+        try c.encodeIfPresent(amount, forKey: .amount)
+        try c.encodeIfPresent(period, forKey: .period)
+        try c.encodeIfPresent(next, forKey: .next)
+    }
 }
 
 struct FinanceBudget: Codable, Hashable {

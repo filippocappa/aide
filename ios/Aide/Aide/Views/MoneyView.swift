@@ -24,6 +24,7 @@ struct MoneyView: View {
     @State private var open: Payment?
     @State private var editingBudget = false
     @State private var editingCard: FinanceAccount?
+    @State private var editingSubscription: SubscriptionEdit?
 
     private var finance: Agent { chat.agent("finance") }
     private var tint: Color { finance.tint }
@@ -66,9 +67,12 @@ struct MoneyView: View {
                         }
                         PaymentDays(payments: shownPayments, tint: tint) { open = $0 }
                     }
-                    if let subscriptions, !subscriptions.subscriptions.isEmpty, isCurrent {
-                        header("Subscriptions", detail: "\(Euros.text(subscriptions.monthlyTotal)) a month")
-                        SubscriptionsCard(list: subscriptions, tint: tint)
+                    if let subscriptions, isCurrent {
+                        header("Subscriptions", detail: subscriptions.subscriptions.isEmpty ? nil
+                               : "\(Euros.text(subscriptions.monthlyTotal)) a month")
+                        SubscriptionsCard(list: subscriptions, tint: tint, edit: { s in
+                            editingSubscription = SubscriptionEdit(subscription: s)
+                        }, changed: { await load() })
                     }
                     if isCurrent, !accounts.isEmpty || banksOn {
                         header("Accounts", detail: total.map { "\(Euros.text($0)) in all" }) {
@@ -98,6 +102,9 @@ struct MoneyView: View {
             }
             .sheet(item: $open) { p in
                 PaymentSheet(payment: p, tint: tint) { await load() }
+            }
+            .sheet(item: $editingSubscription) { e in
+                SubscriptionSheet(subscription: e.subscription, tint: tint) { await load() }
             }
             .sheet(item: $editingCard) { card in
                 CardOwedSheet(card: card, tint: tint) { await load() }
@@ -299,4 +306,10 @@ struct PaymentSetupView: View {
         .navigationTitle("Payments")
         .navigationBarTitleDisplayMode(.inline)
     }
+}
+
+/// The subscription sheet's item: one to edit, or nil to add one.
+struct SubscriptionEdit: Identifiable {
+    let subscription: Subscription?
+    var id: String { subscription?.id ?? "new" }
 }

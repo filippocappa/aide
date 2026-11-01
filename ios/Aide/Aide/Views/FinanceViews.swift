@@ -609,35 +609,69 @@ struct CategoryPicker: View {
 struct SubscriptionsCard: View {
     let list: SubscriptionList
     let tint: Color
+    /// Tapping one (nil: Add a subscription).
+    var edit: (Subscription?) -> Void = { _ in }
+    var changed: () async -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(list.subscriptions) { s in
-                HStack(spacing: 12) {
-                    Text(String(s.merchant.prefix(1)).uppercased())
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(tint)
-                        .frame(width: 36, height: 36)
-                        .background(tint.opacity(0.14), in: Circle())
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(s.merchant).lineLimit(1)
-                        Text(Self.when(s)).font(.caption).foregroundStyle(.secondary)
-                        if let was = s.priceWas, was < s.amount {
-                            Text("Was \(Euros.text(was))").font(.caption.weight(.medium)).foregroundStyle(.orange)
-                        }
+                Button { edit(s) } label: { row(s) }
+                    .buttonStyle(.plain)
+                Divider().padding(.leading, 64)
+            }
+            Button { edit(nil) } label: {
+                Label("Add a subscription", systemImage: "plus")
+                    .font(.subheadline.weight(.medium)).foregroundStyle(tint)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if !list.hidden.isEmpty {
+                Divider().padding(.leading, 16)
+                NavigationLink {
+                    HiddenSubscriptionsView(hidden: list.hidden, tint: tint, changed: changed)
+                } label: {
+                    HStack {
+                        Text(list.hidden.count == 1 ? "1 hidden" : "\(list.hidden.count) hidden")
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                     }
-                    Spacer(minLength: 8)
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(Euros.text(s.amount)).monospacedDigit()
-                        Text("a \(s.period)").font(.caption).foregroundStyle(.secondary)
-                    }
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                if s.id != list.subscriptions.last?.id { Divider().padding(.leading, 64) }
+                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 2)
         .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private func row(_ s: Subscription) -> some View {
+        HStack(spacing: 12) {
+            Text(String(s.merchant.prefix(1)).uppercased())
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(tint)
+                .frame(width: 36, height: 36)
+                .background(tint.opacity(0.14), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.merchant).lineLimit(1)
+                Text(Self.when(s)).font(.caption).foregroundStyle(.secondary)
+                if let was = s.priceWas, was < s.amount {
+                    Text("Was \(Euros.text(was))").font(.caption.weight(.medium)).foregroundStyle(.orange)
+                }
+            }
+            .multilineTextAlignment(.leading)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(Euros.text(s.amount)).monospacedDigit()
+                Text("a \(s.period)").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .contentShape(Rectangle())
     }
 
     static func when(_ s: Subscription) -> String {
@@ -650,6 +684,176 @@ struct SubscriptionsCard: View {
         case 1: return "Tomorrow"
         default: return "In \(days) days · \(date)"
         }
+    }
+}
+
+/// A subscription: its price, how often and the next charge, or not a subscription at all. `subscription` nil:
+/// adding one by hand (then all three are needed).
+struct SubscriptionSheet: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.dismiss) private var dismiss
+    let subscription: Subscription?
+    let tint: Color
+    var saved: () async -> Void = {}
+
+    @State private var name = ""
+    @State private var price = ""
+    @State private var period = "month"
+    @State private var next = Date.now
+    @State private var error: String?
+    @State private var saving = false
+
+    private static let periods = [("week", "Every week"), ("month", "Every month"), ("year", "Every year")]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if subscription == nil {
+                        LabeledContent("Name") {
+                            TextField("Netflix", text: $name).multilineTextAlignment(.trailing)
+                        }
+                    }
+                    LabeledContent("Price") {
+                        TextField("0.00", text: $price)
+                            .multilineTextAlignment(.trailing)
+                            .keyboardType(.decimalPad)
+                    }
+                    Picker("How often", selection: $period) {
+                        ForEach(Self.periods, id: \.0) { Text($0.1).tag($0.0) }
+                    }
+                    DatePicker("Next charge", selection: $next, displayedComponents: .date)
+                } footer: {
+                    Text(footer).multilineTextAlignment(.leading)
+                }
+                if let s = subscription {
+                    Section {
+                        Button("Not a subscription", role: .destructive) {
+                            Task { await send(SubscriptionIn(merchant: s.merchant, subscription: s.count == 0 ? nil : false)) }
+                        }
+                        if s.mine && s.count > 0 {
+                            Button("Back to what the charges show") {
+                                Task { await send(SubscriptionIn(merchant: s.merchant, subscription: nil)) }
+                            }
+                        }
+                    } footer: {
+                        if s.count > 0 {
+                            Text("Not a subscription hides it for good; it's under Hidden if you change your mind.")
+                                .multilineTextAlignment(.leading)
+                        }
+                    }
+                }
+                if let error { Section { Text(error).foregroundStyle(.red) } }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .macSheetTitle(title)
+            .toolbar {
+                #if os(iOS)
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                #endif
+                ToolbarItem(placement: .sheetDone) {
+                    Button("Save") { Task { await save() } }.disabled(saving)
+                }
+            }
+            .onAppear(perform: fill)
+        }
+    }
+
+    private var title: String { subscription?.merchant ?? "Add a subscription" }
+
+    private var footer: String {
+        guard let s = subscription else {
+            return "For one paid in a way Aide doesn't see (Carta YOU online, a yearly plan). It counts in the monthly total."
+        }
+        var parts: [String] = []
+        if let last = s.last.flatMap(Wire.day) {
+            let times = s.count == 1 ? "once" : "\(s.count) times"
+            parts.append("Charged \(times), last on \(last.formatted(.dateTime.day().month(.wide)))\(s.account.map { " (\($0))" } ?? "").")
+        }
+        parts.append(s.mine ? "Set by you." : "Found from the charges; what you change here wins.")
+        return parts.joined(separator: " ")
+    }
+
+    private func fill() {
+        guard let s = subscription else { return }
+        price = String(format: "%.2f", s.amount)
+        period = s.period
+        next = Wire.day(s.next) ?? .now
+    }
+
+    private static func number(_ text: String) -> Double? {
+        let t = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "€", with: "")
+            .replacingOccurrences(of: ",", with: ".")
+        guard let v = Double(t), v > 0 else { return nil }
+        return v
+    }
+
+    private static func dayKey(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: d)
+        return String(format: "%04d-%02d-%02d", c.year ?? 2026, c.month ?? 1, c.day ?? 1)
+    }
+
+    private func save() async {
+        guard let amount = Self.number(price) else { error = "The price is an amount, more than 0."; return }
+        let day = Self.dayKey(next)
+        if let s = subscription {
+            // Only what changed becomes the user's; the rest keeps following the charges.
+            let body = SubscriptionIn(merchant: s.merchant, subscription: true,
+                                      amount: abs(amount - s.amount) < 0.005 ? nil : amount,
+                                      period: period == s.period ? nil : period,
+                                      next: day == s.next ? nil : day)
+            if body.amount == nil && body.period == nil && body.next == nil { dismiss(); return }
+            await send(body)
+        } else {
+            let merchant = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !merchant.isEmpty else { error = "Give it a name."; return }
+            await send(SubscriptionIn(merchant: merchant, subscription: true, amount: amount, period: period, next: day))
+        }
+    }
+
+    private func send(_ body: SubscriptionIn) async {
+        saving = true
+        defer { saving = false }
+        do {
+            _ = try await env.api.setSubscription(body)
+            await saved()
+            dismiss()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+/// The merchants the user said aren't subscriptions, each one back with Show again.
+struct HiddenSubscriptionsView: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @State var hidden: [HiddenSubscription]
+    let tint: Color
+    var changed: () async -> Void = {}
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(hidden) { h in
+                    LabeledContent(h.merchant) {
+                        Button("Show again") { Task { await show(h) } }.foregroundStyle(tint)
+                    }
+                }
+            } footer: {
+                Text("You said these aren't subscriptions. Show again lists one if its charges repeat.")
+            }
+            if let error { Section { Text(error).foregroundStyle(.red) } }
+        }
+        .navigationTitle("Hidden")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func show(_ h: HiddenSubscription) async {
+        do {
+            let list = try await env.api.setSubscription(SubscriptionIn(merchant: h.merchant, subscription: nil))
+            hidden = list.hidden
+            await changed()
+        } catch { self.error = error.localizedDescription }
     }
 }
 
