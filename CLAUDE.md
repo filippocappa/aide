@@ -584,6 +584,18 @@ moments on a timeline with time chips opening YouTube there and their frames, zo
 Videos (search, swipe to delete). The `AideShare` extension (bundle `.share`, App Group) sends a shared YouTube link with
 an optional question. The chat message is only the answer or the TL;DR; the card has the rest.
 
+**Done, both sides (2026-11-01), not yet tried on the phone:** Finance, step 1 of #31 (contract in `docs/API.md`,
+"Finance"; `finance.py`, `tools/finance.py`). Payments come from Apple Pay taps: a Shortcuts Transaction automation runs
+the app's Log payment intent (`Support/PaymentIntent.swift`, iPhone only; a tap with no connection waits in
+`PaymentInbox` and goes when the app opens; the same card, merchant and amount within 3 min is one payment). Cash and
+transfers are told to Finance in chat. Each new merchant is sorted by the fast model once, then by its rule; a change
+in the app or chat becomes the rule. The month, categories against an optional budget (never nagging: orange words
+only when ahead or over), subscriptions found from repeats, accounts. App (`Views/MoneyView.swift`,
+`Views/FinanceViews.swift`): the Money tab and the Mac's Money section, the month as a ring of what's left (without a
+budget: this month against last), category bars with a tick for today, payments by day, a payment's page (the
+category as a row, kept for the merchant), subscriptions by date, accounts, the budget sheet, Settings → Payments (how
+to make the automation), `payments` cards in chat. Debug builds: `-previewMonth 2026-10`. No bank data source yet.
+
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
    `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
@@ -591,8 +603,7 @@ an optional question. The chat message is only the answer or the TL;DR; the card
 2. Ideas from the agent-app research, not yet chosen: (#15, digests in a feed, is mostly covered by Today; #14,
    Goals, by objectives.)
 3. New, filed 2026-10-27, not yet chosen: the rest of #24 (buttons in the expanded view, voice chat in the background).
-4. Recording a lecture in the app. Notebooks for the other courses. Finance still has no data source (memory
-   only).
+4. Recording a lecture in the app. Notebooks for the other courses. Finance: banks (#31, after step 1).
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).

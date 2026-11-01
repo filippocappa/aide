@@ -631,6 +631,56 @@ final class APIClient {
         let _: OKResponse = try await send("DELETE", "/v1/health/weight/\(id)", body: EmptyBody())
     }
 
+    // MARK: Finance (docs/API.md, "Finance")
+
+    /// A Wallet tap (the Log payment intent) or one typed in. Told twice within 3 minutes, it's the same one.
+    func logPayment(_ payment: PaymentIn) async throws -> Payment {
+        let r: PaymentResponse = try await send("POST", "/v1/finance/payments", body: payment)
+        return r.payment
+    }
+
+    func payments(limit: Int = 50, before: String? = nil, category: String? = nil) async throws -> PaymentList {
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let before { query.append(URLQueryItem(name: "before", value: before)) }
+        if let category { query.append(URLQueryItem(name: "category", value: category)) }
+        return try await send("GET", "/v1/finance/payments", query: query)
+    }
+
+    func payment(_ id: Int) async throws -> PaymentDetail {
+        try await send("GET", "/v1/finance/payments/\(id)")
+    }
+
+    func updatePayment(_ id: Int, _ patch: PaymentPatch) async throws -> Payment {
+        let r: PaymentResponse = try await send("PATCH", "/v1/finance/payments/\(id)", body: patch)
+        return r.payment
+    }
+
+    func deletePayment(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/finance/payments/\(id)", body: EmptyBody())
+    }
+
+    /// `month` as `2026-10`; nil is this month.
+    func financeMonth(_ month: String? = nil) async throws -> FinanceMonth {
+        try await send("GET", "/v1/finance/month", query: month.map { [URLQueryItem(name: "month", value: $0)] } ?? [])
+    }
+
+    func financeAccounts() async throws -> [FinanceAccount] {
+        let r: AccountList = try await send("GET", "/v1/finance/accounts")
+        return r.accounts
+    }
+
+    func subscriptions() async throws -> SubscriptionList {
+        try await send("GET", "/v1/finance/subscriptions")
+    }
+
+    func budget() async throws -> FinanceBudget {
+        try await send("GET", "/v1/finance/budget")
+    }
+
+    func setBudget(_ budget: BudgetIn) async throws -> FinanceBudget {
+        try await send("PUT", "/v1/finance/budget", body: budget)
+    }
+
     func wake(_ request: WakeRequest) async throws -> WakeResult {
         try await send("POST", "/v1/wake", body: request)
     }

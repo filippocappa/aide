@@ -3,7 +3,7 @@ import SwiftUI
 /// The sidebar's sections: the phone's tabs, with Today, Habits, Objectives and Activity as places of their own (on
 /// the phone they open from Today or over the Team tab).
 enum MacSection: String, CaseIterable, Identifiable, Hashable {
-    case team, today, habits, objectives, activity, study, health, food, screen, settings
+    case team, today, habits, objectives, activity, study, health, food, screen, money, settings
 
     var id: String { rawValue }
 
@@ -18,6 +18,7 @@ enum MacSection: String, CaseIterable, Identifiable, Hashable {
         case .health: "Health"
         case .food: "Food"
         case .screen: "Screen"
+        case .money: "Money"
         case .settings: "Settings"
         }
     }
@@ -33,15 +34,19 @@ enum MacSection: String, CaseIterable, Identifiable, Hashable {
         case .health: "heart.text.square"
         case .food: "fork.knife"
         case .screen: "hourglass"
+        case .money: "creditcard"
         case .settings: "gearshape"
         }
     }
 
-    /// ⌘1–⌘9 for the first nine, ⌘0 for the tenth, Settings also on ⌘, (the app's Settings).
-    var shortcut: KeyEquivalent {
+    /// ⌘1–⌘9 for the first nine, ⌘0 for the tenth; Settings is on ⌘, (the app's Settings).
+    var shortcut: KeyboardShortcut? {
         let index = (MacSection.allCases.firstIndex(of: self) ?? 0) + 1
-        return KeyEquivalent(Character(String(index % 10)))
+        guard index <= 10 else { return nil }
+        return KeyboardShortcut(KeyEquivalent(Character(String(index % 10))), modifiers: .command)
     }
+
+    var shortcutLabel: String { shortcut.map { "⌘\($0.key.character)" } ?? "⌘," }
 }
 
 /// Which section is showing; the menu bar's Go menu sets it too.
@@ -150,6 +155,7 @@ struct MacRootView: View {
         case .health: HealthView()
         case .food: FoodView()
         case .screen: MacScreenPage()
+        case .money: MoneyView()
         case .settings: SettingsView()
         }
     }
@@ -250,7 +256,7 @@ struct MacSidebar: View {
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .help("\(item.title) (⌘\(String(item.shortcut.character)))")
+        .help("\(item.title) (\(item.shortcutLabel))")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -328,7 +334,7 @@ struct MacSidebar: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .help("\(item.title) (⌘\(String(item.shortcut.character)))")
+        .help("\(item.title) (\(item.shortcutLabel))")
         .accessibilityLabel(item.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }

@@ -698,6 +698,8 @@ struct AttachmentCard: View {
             VStack(spacing: 10) {
                 ForEach(errands) { ErrandCard(errand: $0, folded: foldedErrands.contains($0.id)) }
             }
+        case .payments(let payments):
+            PaymentsCard(payments: payments)
         case .purchases(let purchases):
             VStack(spacing: 10) { ForEach(purchases) { PurchaseCard(purchase: $0) } }
         case .products(let products):

@@ -47,6 +47,7 @@ struct SettingsView: View {
                     row("Screen Time", "hourglass", .indigo, value: screenTimeValue, off: !screenTime.isAuthorized) {
                         ScreenTimeView()
                     }
+                    row("Payments", "creditcard.fill", Color(red: 0.72, green: 0.57, blue: 0.11)) { PaymentSetupView() }
                 }
                 #else
                 Section {

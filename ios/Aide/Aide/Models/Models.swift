@@ -72,6 +72,7 @@ enum Attachment: Decodable, Hashable {
     case videos([VideoCard])
     case quiz(Quiz)
     case review(ReviewSession)
+    case payments([Payment])
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -90,12 +91,13 @@ enum Attachment: Decodable, Hashable {
         case "videos": self = .videos(try c.decode([VideoCard].self, forKey: .videos))
         case "quiz": self = .quiz(try c.decode(Quiz.self, forKey: .quiz))
         case "review": self = .review(try c.decode(ReviewSession.self, forKey: .review))
+        case "payments": self = .payments(try c.decode([Payment].self, forKey: .payments))
         default: self = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
         case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
-        case quiz, review
+        case quiz, review, payments
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
@@ -2951,4 +2953,208 @@ enum ShareLinks {
         let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
         return detector?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))?.url?.absoluteString
     }
+}
+
+// MARK: Finance (docs/API.md, "Finance")
+
+/// A payment: `amount` negative when money goes out. `sortedBy` is user, rule, model or none (not sorted yet).
+struct Payment: Decodable, Identifiable, Hashable {
+    let id: Int
+    let at: String
+    var amount: Double
+    var currency: String = "EUR"
+    var merchant: String
+    var category: String
+    var sortedBy: String = "none"
+    var source: String = "wallet"
+    var account: String?
+    var accountId: Int?
+    var place: String?
+    var note: String?
+
+    var date: Date? { Wire.parse(at) }
+    var isIncome: Bool { category == "income" }
+    var isSpending: Bool { !FinanceCategory.notSpending.contains(category) }
+    var cat: FinanceCategory { FinanceCategory(category) }
+}
+
+struct PaymentList: Decodable {
+    let payments: [Payment]
+    var more: Bool = false
+}
+
+struct PaymentDetail: Decodable {
+    struct Merchant: Decodable, Hashable {
+        let count: Int
+        let monthTotal: Double
+        var recent: [Payment] = []
+    }
+    let payment: Payment
+    let merchant: Merchant
+}
+
+struct PaymentResponse: Decodable { let payment: Payment }
+
+struct PaymentIn: Encodable {
+    let amount: String
+    let merchant: String
+    var card: String?
+    var at: String?
+    var source = "wallet"
+}
+
+struct PaymentPatch: Encodable {
+    var category: String?
+    var merchant: String?
+    var note: String?
+    var remember: Bool?
+}
+
+/// A month's spending (docs/API.md, "Finance", Month). Budget fields are nil without a monthly budget.
+struct FinanceMonth: Decodable, Hashable {
+    struct Last: Decodable, Hashable {
+        let month: String
+        var byNow: Double?
+        var total: Double?
+    }
+    struct Category: Decodable, Hashable, Identifiable {
+        let id: String
+        let name: String
+        let spent: Double
+        var budget: Double?
+        var pace: Double?
+        var ahead: Bool = false
+        var over: Bool = false
+        var lastByNow: Double = 0
+        var lastTotal: Double = 0
+        var cat: FinanceCategory { FinanceCategory(id) }
+    }
+    let month: String
+    let current: Bool
+    let day: Int
+    let days: Int
+    let daysLeft: Int
+    let spent: Double
+    let income: Double
+    let count: Int
+    var budget: Double?
+    var left: Double?
+    var perDay: Double?
+    var pace: Double?
+    var ahead: Bool = false
+    let lastMonth: Last
+    let categories: [Category]
+    let line: String
+}
+
+struct FinanceAccount: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    var kind: String = "card"
+    var source: String = "wallet"
+    var balance: Double?
+    var balanceAt: String?
+    var consentUntil: String?
+    var status: String = "wallet"
+    var lastAt: String?
+    var count: Int = 0
+    var spentMonth: Double = 0
+}
+
+struct AccountList: Decodable { let accounts: [FinanceAccount] }
+
+struct Subscription: Decodable, Identifiable, Hashable {
+    let merchant: String
+    let amount: Double
+    let period: String
+    var category: String = "subscriptions"
+    var account: String?
+    let last: String
+    let next: String
+    var count: Int = 1
+    var monthly: Double = 0
+    var priceWas: Double?
+    var id: String { merchant }
+}
+
+struct SubscriptionList: Decodable {
+    let subscriptions: [Subscription]
+    var monthlyTotal: Double = 0
+}
+
+struct FinanceBudget: Codable, Hashable {
+    var monthly: Double?
+    var categories: [String: Double] = [:]
+}
+
+/// `monthly` is always sent (nil removes it); a category's nil removes its budget.
+struct BudgetIn: Encodable {
+    let monthly: Double?
+    let categories: [String: Double?]
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Keys.self)
+        try c.encode(monthly, forKey: .monthly)
+        var cats = c.nestedContainer(keyedBy: AnyKey.self, forKey: .categories)
+        for (k, v) in categories { try cats.encode(v, forKey: AnyKey(k)) }
+    }
+    private enum Keys: String, CodingKey { case monthly, categories }
+    private struct AnyKey: CodingKey {
+        let stringValue: String
+        init(_ s: String) { stringValue = s }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int? { nil }
+        init?(intValue: Int) { nil }
+    }
+}
+
+/// The server's categories with the app's names and icons (the icons are the app's; docs/API.md, "Finance").
+struct FinanceCategory: Hashable, Identifiable {
+    let id: String
+    init(_ id: String) { self.id = id }
+
+    static let notSpending: Set<String> = ["income", "transfer"]
+    static let all = ["groceries", "eating_out", "transport", "shopping", "subscriptions", "bills", "health", "study",
+                      "travel", "fun", "cash", "other", "income", "transfer"].map(FinanceCategory.init)
+    static let spending = all.filter { !notSpending.contains($0.id) }
+
+    var name: String {
+        switch id {
+        case "groceries": "Groceries"
+        case "eating_out": "Eating out"
+        case "transport": "Transport"
+        case "shopping": "Shopping"
+        case "subscriptions": "Subscriptions"
+        case "bills": "Bills"
+        case "health": "Health"
+        case "study": "Study"
+        case "travel": "Travel"
+        case "fun": "Fun"
+        case "cash": "Cash"
+        case "income": "Income"
+        case "transfer": "Transfer"
+        default: "Other"
+        }
+    }
+
+    var icon: String {
+        switch id {
+        case "groceries": "cart.fill"
+        case "eating_out": "fork.knife"
+        case "transport": "tram.fill"
+        case "shopping": "bag.fill"
+        case "subscriptions": "arrow.triangle.2.circlepath"
+        case "bills": "house.fill"
+        case "health": "cross.case.fill"
+        case "study": "book.fill"
+        case "travel": "airplane"
+        case "fun": "ticket.fill"
+        case "cash": "banknote.fill"
+        case "income": "arrow.down.left"
+        case "transfer": "arrow.left.arrow.right"
+        default: "creditcard.fill"
+        }
+    }
+
+    /// Bills and subscriptions are fixed: a pace tick means nothing for them.
+    var isFixed: Bool { id == "bills" || id == "subscriptions" }
 }

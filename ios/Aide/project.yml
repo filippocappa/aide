@@ -212,6 +212,7 @@ targets:
           - Health/WakeUpIntent.swift
           - Support/LiveActivities.swift
           - Support/LocationService.swift
+          - Support/PaymentIntent.swift
           - Support/ScreenTimeService.swift
           - Support/TouchTracker.swift
           - Sync/ReminderSyncService.swift

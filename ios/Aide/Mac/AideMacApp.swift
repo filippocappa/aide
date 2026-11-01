@@ -113,7 +113,7 @@ struct MacCommands: Commands {
         CommandMenu("Go") {
             ForEach(MacSection.allCases) { section in
                 Button(section.title) { MacNavigation.shared.section = section }
-                    .keyboardShortcut(section.shortcut, modifiers: .command)
+                    .keyboardShortcut(section.shortcut)
             }
             Divider()
             Button("Refresh") { Task { await AppEnvironment.shared.refreshAll() } }

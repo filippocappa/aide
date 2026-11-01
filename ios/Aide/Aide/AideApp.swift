@@ -26,7 +26,7 @@ struct AideApp: App {
                 .tint(Theme.accent)
                 .task { await env.refreshAll() }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active { Task { await env.refreshAll() } }
+                    if phase == .active { Task { await env.refreshAll(); await PaymentInbox.flush(env.api) } }
                     // Leaving the app: the widgets show what changed in it (check-ins, meals, objectives).
                     if phase == .background { WidgetCenter.shared.reloadAllTimelines() }
                 }
