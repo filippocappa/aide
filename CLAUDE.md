@@ -115,8 +115,11 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
 
 - `Mac/AideMacApp.swift`, `Mac/MacRootView.swift`: the app, one window (a second would share the one
   `AppEnvironment`), the rail, the menus (⌘N new chat, ⌘1–9, Show in Menu Bar) and the Pebble in the menu bar (the
-  small cut, `MenuBarPebble`, a 15 pt template). The window toolbar has no background of its own (no hard line).
-  Closing the window leaves Aide running.
+  small cut, `MenuBarPebble`, cropped to the Pebble, 15 pt tall, a template). The Pebble opens a panel, not a menu
+  (`Mac/MacMenuBarPanel.swift`): Pebble breathing with the greeting, Ask Aide (a new chat in the window), the glance,
+  a week strip with a dot per calendar and the chosen day's events (today: what's left and its reminders), what's
+  waiting, the team to open a chat, the sections as icons. The window toolbar has no background of its own (no hard
+  line). Closing the window leaves Aide running.
 - On the Mac, Return sends in a chat (`MessageBox`'s `onReturn`; Option-Return is a new line), images dropped on a
   chat are added like picked photos (`photoDrop` in `Support/Photos.swift`), and PDFs or recordings dropped on a
   course page are uploaded.

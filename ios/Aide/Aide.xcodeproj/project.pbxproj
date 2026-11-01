@@ -34,6 +34,7 @@
 		134B9B0384FE48DECD7613EE /* VoiceLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67BBAA4A50EA4E94D5CE2C49 /* VoiceLog.swift */; };
 		143A571F111EC65BA92C06E9 /* SpeechDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B823567631C9266E89C0C5 /* SpeechDetector.swift */; };
 		1893AFF4B1D54A156C62BC0B /* Arithmetic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BB2B4B8577CDF6823F8251 /* Arithmetic.swift */; };
+		18FD927E56D5759F9BF2BFA6 /* MacMenuBarPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A8D813CE0493DAE81AB8566 /* MacMenuBarPanel.swift */; };
 		1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		1DBEECC5B0EF66AE05F8EE3C /* TransitAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE34FAE9A713F5C8D1AE1DA5 /* TransitAlertsView.swift */; };
 		20C61E5CE021F79C266224C3 /* AideMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EB8695757560B5E023263D /* AideMacApp.swift */; };
@@ -272,6 +273,7 @@
 		054584741E8F0145B3456003 /* ObjectivesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectivesView.swift; sourceTree = "<group>"; };
 		0707EC0845E48ECBB81D60A4 /* Skeleton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Skeleton.swift; sourceTree = "<group>"; };
 		0A69E8EEFF682D9CF99C9B61 /* AgentLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLiveActivity.swift; sourceTree = "<group>"; };
+		0A8D813CE0493DAE81AB8566 /* MacMenuBarPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMenuBarPanel.swift; sourceTree = "<group>"; };
 		0BB54B24704DB7ED0DAFF588 /* AideMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AideMac.entitlements; sourceTree = "<group>"; };
 		0D0E327019026782069A1BA0 /* AideTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideTests.swift; sourceTree = "<group>"; };
 		0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamChatView.swift; sourceTree = "<group>"; };
@@ -611,6 +613,7 @@
 				5E3809ACCFFA12ABB54F30E6 /* MacAssets.xcassets */,
 				D22CC0EC44582B201436684C /* MacGlance.swift */,
 				3D3CFB8E6C336BE4768DB561 /* MacList.swift */,
+				0A8D813CE0493DAE81AB8566 /* MacMenuBarPanel.swift */,
 				E82E2D2F31C60F70DB974B92 /* MacNavigationStack.swift */,
 				6EF10BCDADB734A13BDB47BE /* MacRootView.swift */,
 				9883DFA94F62FDEC76F14602 /* MacScreenTime.swift */,
@@ -1031,6 +1034,7 @@
 				CACCC83A44CB8718FB4A36C7 /* MacAppDelegate.swift in Sources */,
 				089CB209C2B169E594A84579 /* MacGlance.swift in Sources */,
 				560B7380C6D9D3882D360581 /* MacList.swift in Sources */,
+				18FD927E56D5759F9BF2BFA6 /* MacMenuBarPanel.swift in Sources */,
 				48987567C6B9D6E88B770CC3 /* MacNavigationStack.swift in Sources */,
 				4F8E671544A9ABE370D492F4 /* MacRootView.swift in Sources */,
 				0FC6E8696B392B7469604CB9 /* MacScreenTime.swift in Sources */,

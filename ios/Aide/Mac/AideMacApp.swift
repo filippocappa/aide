@@ -26,10 +26,11 @@ struct AideMacApp: App {
         .commands { MacCommands() }
 
         MenuBarExtra(isInserted: $menuBarItem) {
-            MacMenuBarMenu()
+            MacMenuBarPanel().withAideEnvironment(env)
         } label: {
             Image(nsImage: MacMenuBarIcon.image).accessibilityLabel("Aide")
         }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()
@@ -71,38 +72,22 @@ enum MacWindow {
 }
 
 /// Pebble's small cut (`brand/logo/pebble-small.svg`: heavier eyes, for 16–32 px), a template image so it takes the
-/// menu bar's colour, about as tall as the menu bar's own symbols.
+/// menu bar's colour. The SVG's Pebble fills only x 24–232, y 39.6–216.4 of its 256 box, so the image is cropped to
+/// the Pebble itself, 15 pt tall like the menu bar's own symbols.
 enum MacMenuBarIcon {
     static let image: NSImage = {
-        let size = NSSize(width: 15, height: 15)
+        let height: CGFloat = 15
+        let scale = height / 176.8                      // points per SVG unit
+        let size = NSSize(width: (208 * scale).rounded(.up), height: height)
         let image = NSImage(size: size, flipped: false) { rect in
-            NSImage(named: "MenuBarPebble")?.draw(in: rect)
+            let side = 256 * scale
+            let box = NSRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)
+            NSImage(named: "MenuBarPebble")?.draw(in: box)
             return true
         }
         image.isTemplate = true
         return image
     }()
-}
-
-/// The Pebble in the menu bar: Aide's window, a new chat and the sections, with the window closed too.
-struct MacMenuBarMenu: View {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button("Open Aide") { show() }
-        Button("New Chat with Aide") { show(); MacWindow.newChat() }
-        Divider()
-        ForEach(MacSection.allCases.filter { $0 != .settings }) { section in
-            Button(section.title) { show(); MacNavigation.shared.section = section }
-        }
-        Divider()
-        Button("Quit Aide") { NSApplication.shared.terminate(nil) }
-    }
-
-    private func show() {
-        openWindow(id: MacWindow.main)
-        NSApplication.shared.activate()
-    }
 }
 
 /// The menu bar: a new chat with Aide, and each section of the sidebar on ⌘1…⌘6.
