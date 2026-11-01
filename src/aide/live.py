@@ -252,8 +252,8 @@ class LiveActivities:
     def notes(self, key: str, conversation: str, title: str, total: int | None = None) -> "NotesRun":
         return NotesRun(self, key, conversation, title, total)
 
-    def errand(self, errand_id: int, conversation: str, title: str) -> "ErrandRun":
-        return ErrandRun(self, f"errand:{errand_id}", conversation, title, None)
+    def errand(self, errand_id: int, conversation: str, title: str, site: str | None = None) -> "ErrandRun":
+        return ErrandRun(self, f"errand:{errand_id}", conversation, title, None, site=site)
 
 
 class AgentTurn:
@@ -431,14 +431,20 @@ class ErrandRun(NotesRun):
     kept across the errand's phases; put away when the user hasn't come for WAITING_FOR."""
 
     AGENT = "aide"
+    TRAIL = 2  # earlier steps shown above the current one
+    PLAIN = {"Working", "Starting", "Going on", "Waiting to start"}
 
-    def __init__(self, live: LiveActivities, key: str, conversation: str, title: str, total: int | None):
+    def __init__(self, live: LiveActivities, key: str, conversation: str, title: str, total: int | None,
+                 site: str | None = None):
         super().__init__(live, key, conversation, title, total)
         self.errand = int(key.split(":")[1])
+        self.site = site
+        self.trail: list[str] = []
 
     def _state_of(self, status: str, detail: str = "", text: str = "") -> dict:
         status = "browsing" if status == "writing" else status
-        return {**super()._state_of(status, detail, text), "errand": self.errand}
+        return {**super()._state_of(status, detail, text), "errand": self.errand, "site": self.site,
+                "steps": list(self.trail)}
 
     def start(self, detail: str) -> None:
         if self._started is None:
@@ -447,6 +453,8 @@ class ErrandRun(NotesRun):
             self.browsing(detail)
 
     def browsing(self, detail: str) -> None:
+        if self.detail and self.detail != detail and self.detail not in self.PLAIN:
+            self.trail = [*self.trail, clip(self.detail, 80)][-self.TRAIL:]
         self.detail = detail
         self._want(self._state_of("browsing", detail))
 

@@ -2606,8 +2606,11 @@ Since 2026-10-27 it follows the user with the app's fixes (see Location):
   no update token yet, APNs refused it). After 30 minutes waiting the activity ends at once, still `needs_you` (the
   errand goes on waiting in its chat and in Waiting for you), and a new one starts when the errand goes on. Back to
   `browsing` when it goes on (one activity across the whole errand); then `end` with `done` (`text` the result) or
-  `failed`, dismissed at once. Its content state has one
-  more field, `errand` (the errand's id), absent on every other agent activity; `done` and `total` are null.
+  `failed`, dismissed at once. Its content state has more fields, absent on every other agent activity: `errand`
+  (the errand's id), and since 2026-11-02 `site` (the errand's site, "amazon.it", or null) and `steps` (the earlier
+  step lines, oldest first, up to 2; the expanded island shows them faint above `detail`); `done` and `total` are null.
+  Every line the errand writes for the user (`detail`, the questions, the result) is in English since 2026-11-02,
+  whatever the site's language.
   Tapping it opens the live view while it needs you (`aide://errand/<id>`), else the conversation.
 - Tapping the activity opens the conversation (`aide://conversation/<id>`; the Team chat: `aide://team`).
 - When the server starts (since 2026-10-30), it ends at once, as `failed` with `detail` "Interrupted", every chat,

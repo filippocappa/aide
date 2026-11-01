@@ -519,6 +519,22 @@ async def test_an_errand_that_needs_you_says_it_on_its_activity(env, monkeypatch
     assert end["dismissal-date"] <= int(time.time())
 
 
+async def test_an_errands_activity_shows_its_site_and_last_steps(env, monkeypatch):
+    _, _, live, apns = env
+    monkeypatch.setattr(live_mod, "THROTTLE", 0)
+    live.set_start_token("agent", START, "sandbox")
+    run = live.errand(5, "c1", "Coros HR band", site="amazon.it")
+    run.start("Working")
+    live.register("errand:5", ACTIVITY, "sandbox")
+    for step in ("Searching for the Coros band", "Checking the variants", "Reading the reviews",
+                 "Reading the reviews"):
+        run.step(step)
+        await settle()
+    state = aps(apns)[-1]["content-state"]
+    assert state["site"] == "amazon.it" and state["detail"] == "Reading the reviews"
+    assert state["steps"] == ["Searching for the Coros band", "Checking the variants"]  # "Working" isn't a step
+
+
 # -- widgets -------------------------------------------------------------------------------------
 
 

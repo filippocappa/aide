@@ -14,20 +14,33 @@ struct AgentLiveActivity: Widget {
             let a = context.attributes, s = context.state
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    AgentMark(agent: a.agentModel, size: 36).padding(.leading, 4)
+                    AgentMark(agent: a.agentModel, size: 44).padding(.leading, 6).padding(.top, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    AgentElapsed(state: s).font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.trailing, 4)
+                    Group {
+                        if s.isOver {
+                            AgentStatusIcon(state: s, tint: a.agentModel.tint).font(.title3)
+                        } else {
+                            AgentElapsed(state: s).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.trailing, 6).padding(.top, 4)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(a.title ?? a.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    VStack(spacing: 2) {
+                        Text(a.title ?? a.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                        Text(s.phase).font(.caption.weight(.medium))
+                            .foregroundStyle(s.status == "needs_you" ? Color.orange : a.agentModel.tint)
+                            .lineLimit(1)
+                    }
+                    .padding(.top, 4)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(s.line(name: a.name)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    VStack(alignment: .leading, spacing: 10) {
+                        AgentTrail(state: s, name: a.name, tint: a.agentModel.tint)
                         AgentProgress(state: s, tint: a.agentModel.tint)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.top, 8)
                 }
             } compactLeading: {
                 PebbleMark(size: 20, figure: a.agentModel.figure).foregroundStyle(a.agentModel.tint)
@@ -63,6 +76,36 @@ struct AgentElapsed: View {
             Text(state.status == "done" ? "Done" : "Failed")
         } else {
             Text(state.sinceDate, style: .timer).monospacedDigit().multilineTextAlignment(.trailing).frame(maxWidth: 48)
+        }
+    }
+}
+
+/// The expanded island's body: an errand's earlier steps, faint, above what it's doing now (a dot of the agent's
+/// colour; orange when it needs you); the reply or the result once it's over.
+struct AgentTrail: View {
+    let state: AgentActivityAttributes.ContentState
+    let name: String
+    let tint: Color
+
+    var body: some View {
+        if state.isOver {
+            Text(state.line(name: name)).font(.subheadline).lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Array((state.steps ?? []).enumerated()), id: \.offset) { _, step in
+                    row(step, dot: Color.secondary.opacity(0.5), lines: 1).font(.caption).foregroundStyle(.secondary)
+                }
+                row(state.line(name: name), dot: state.status == "needs_you" ? .orange : tint, lines: 2)
+                    .font(.subheadline.weight(.medium))
+            }
+        }
+    }
+
+    private func row(_ text: String, dot: Color, lines: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle().fill(dot).frame(width: 6, height: 6).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+            Text(text).lineLimit(lines)
         }
     }
 }

@@ -932,7 +932,7 @@ class ErrandLive:
     def __init__(self, reaches: bool):
         self.reaches, self.runs, self.handed = reaches, [], []
 
-    def errand(self, errand_id, conversation, title):
+    def errand(self, errand_id, conversation, title, site=None):
         self.runs.append(FakeRun(self.reaches))
         return self.runs[-1]
 
