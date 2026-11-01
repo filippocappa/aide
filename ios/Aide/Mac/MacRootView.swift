@@ -196,6 +196,7 @@ struct MacSidebar: View {
             row(.study)
             row(.health)
             row(.food)
+            row(.screen)
             Spacer(minLength: 12)
             if glance.scores != nil || glance.kcal != nil {
                 MacGlanceCard(glance: glance) { section = $0 }
@@ -286,6 +287,7 @@ struct MacSidebar: View {
             icon(.study)
             icon(.health)
             icon(.food)
+            icon(.screen)
             divider
             if glance.scores != nil {
                 Button { section = .health } label: { MacGlanceRings(glance: glance) }
