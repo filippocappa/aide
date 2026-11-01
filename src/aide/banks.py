@@ -62,10 +62,15 @@ NOISE = [
 ]
 CASH = re.compile(r"\b(prelievo|prelevamento|atm|bancomat|cash\s+withdrawal)\b", re.I)
 # The user's money moving between their own places, which isn't spending or income: a card topping up an account
-# (money in), Revolut's savings and investment pockets, paying off a credit card, an Italian "giroconto".
+# (money in), another bank's card paying for one ("PAGAMENTO PRESSO REVOLUT**1234* VILNIUS"), Revolut's savings and
+# investment pockets, paying off a credit card, an Italian "giroconto".
 TOP_UP = re.compile(r"\btop[- ]?up\b", re.I)
 OWN_TEXT = re.compile(r"\bgiroconto\b|\bto (investment|savings) account\b|\b(vault|pocket|salvadanaio)\b|"
-                      r"\badvanzia\b|\bcarta you\b", re.I)
+                      r"\brevolut\s*\*\*", re.I)
+# Paying off a credit card Aide can't read (Advanzia's Carta YOU): its purchases aren't seen, so the payoff is the
+# spending. Revolut writes it "Mastercard To Filippo Cappa" (to a card in the user's own name).
+CARD_PAYOFF = re.compile(r"\badvanzia\b|\bcarta you\b", re.I)
+MASTERCARD = re.compile(r"\bmastercard\b", re.I)
 REFUND = re.compile(r"\b(refund|rimborso|storno)\b", re.I)
 
 
@@ -180,15 +185,34 @@ def pick_balance(balances: list[dict], card: bool = False) -> tuple[float, str] 
     return None
 
 
-def own_move(amount: float, party: str, raw: str, holders: set[frozenset[str]]) -> bool:
-    """Money between the user's own accounts or cards, by the bank's text: a top-up coming in, a pocket, a card payoff,
-    or the other side in the user's own name (any order of the words; a refund from a shop in their name isn't)."""
-    if REFUND.search(raw):
-        return False
-    if (amount > 0 and TOP_UP.search(raw)) or OWN_TEXT.search(raw):
-        return True
+def party_of(raw: str) -> str:
+    """The other side's name as parse_tx put it in front of the text ("Massimo Cappa · Paghetta"), else empty."""
+    return raw.split(" · ")[0] if " · " in raw else ""
+
+
+def mine(party: str, holders: set[frozenset[str]]) -> bool:
     words = frozenset(normalise(party).split())
     return len(words) >= 2 and words in holders
+
+
+def someone_else(party: str, holders: set[frozenset[str]]) -> bool:
+    """A full name that isn't the user's ("Massimo Cappa"); a lone word ("Filippo") could be anyone, the user too.
+    Nobody is, before the user's own name is known."""
+    words = frozenset(normalise(party).split())
+    return bool(holders) and len(words) >= 2 and words not in holders
+
+
+def own_kind(amount: float, party: str, raw: str, holders: set[frozenset[str]]) -> str | None:
+    """The user's own money moving, by the bank's text: "card" for paying off the credit card Aide can't read (spending,
+    standing for its purchases), "transfer" for a top-up coming in, a pocket, a credit line drawn into another account,
+    or the other side in the user's own name (any order of the words; a refund from a shop in their name isn't)."""
+    if REFUND.search(raw):
+        return None
+    if amount < 0 and (CARD_PAYOFF.search(raw) or (MASTERCARD.search(raw) and mine(party, holders))):
+        return "card"
+    if (amount > 0 and TOP_UP.search(raw)) or OWN_TEXT.search(raw) or mine(party, holders):
+        return "transfer"
+    return None
 
 
 def parse_tx(t: dict, uid: str, seen: dict[str, int]) -> dict | None:
@@ -304,7 +328,9 @@ class Banks:
         iban = (a.get("account_id") or {}).get("iban")
         card = (a.get("cash_account_type") or "").upper() == "CARD"
         holder = (a.get("name") or "").strip() or None  # Enable Banking's `name` is the account holder's
-        name = a.get("product") or a.get("details") or bank
+        mine = self._holders() | ({frozenset(normalise(holder).split())} if holder else set())
+        picks = [x for x in (a.get("product"), a.get("details")) if x and frozenset(normalise(x).split()) not in mine]
+        name = picks[0] if picks else bank
         name = name if bank.lower() in name.lower() else f"{bank} {name}"
         if iban:
             name += f" ··{iban[-4:]}"
@@ -390,8 +416,9 @@ class Banks:
                 return 0
             self.conn.execute("UPDATE finance_banks SET last_sync_at = ?, error = NULL WHERE id = ?",
                               (utcnow().isoformat(), bank_id))
-            self._mark_transfers()
             self._mark_own()
+            self._mark_transfers()
+            self._tidy_names()
         if new_rows:
             asyncio.create_task(self.finance.sort_pending())
             if psu is None and self.notify:  # the user isn't in the app: say when money comes in
@@ -406,10 +433,8 @@ class Banks:
         if not acc.get("holder"):  # linked before holders were kept: once
             try:
                 holder = ((await self.client.details(uid)).get("name") or "").strip()
-                if holder:  # and out of the account's name, where it was put before
-                    name = " ".join(acc["name"].replace(holder, " ").split()) or acc["name"]
-                    self.conn.execute("UPDATE finance_accounts SET holder = ?, name = ? WHERE id = ?",
-                                      (holder, name, acc["id"]))
+                if holder:
+                    self.conn.execute("UPDATE finance_accounts SET holder = ? WHERE id = ?", (holder, acc["id"]))
             except BankError as e:
                 log.info("account details failed: %s", e.code)
         got = pick_balance(await self.client.balances(uid, psu), acc["kind"] == "card")
@@ -466,8 +491,9 @@ class Banks:
         own = p["iban"] and self.conn.execute("SELECT 1 FROM finance_accounts WHERE iban = ?",
                                               (p["iban"],)).fetchone()
         category, sorted_by = "other", "none"
-        if own or own_move(p["amount"], p.get("party") or "", p["raw"], self._holders()):
-            category, sorted_by = "transfer", "rule"
+        kind = "transfer" if own else own_kind(p["amount"], p.get("party") or "", p["raw"], self._holders())
+        if kind:
+            category, sorted_by = kind, "rule"
         elif p["cash"] and p["amount"] < 0:
             category, sorted_by = "cash", "rule"
         elif (r := f.rule(p["merchant"])) is not None:
@@ -503,27 +529,56 @@ class Banks:
             "SELECT DISTINCT holder FROM finance_accounts WHERE holder IS NOT NULL")}
 
     def _mark_own(self) -> None:
-        """Bank records that are the user's own money moving (own_move) and aren't yet: transfers, unless the user
-        sorted them. Also catches what came in before the rule or before an account's holder was known."""
+        """Bank records sorted again by own_kind, unless the user sorted them: catches what came in before a rule or
+        before an account's holder was known. A transfer by rule with someone else on the other side (paired by amount
+        alone, before pairing left them out) goes back to income, or to its merchant's rule."""
         holders = self._holders()
-        for r in self.conn.execute("SELECT id, amount, raw FROM finance_transactions WHERE source = 'bank' AND "
-                                   "category != 'transfer' AND sorted_by != 'user'").fetchall():
-            if own_move(r["amount"], (r["raw"] or "").split(" · ")[0], r["raw"] or "", holders):
-                self.conn.execute("UPDATE finance_transactions SET category = 'transfer', sorted_by = 'rule' "
-                                  "WHERE id = ?", (r["id"],))
+        for r in self.conn.execute("SELECT id, amount, raw, merchant, category FROM finance_transactions WHERE "
+                                   "source = 'bank' AND sorted_by != 'user'").fetchall():
+            raw = r["raw"] or ""
+            party = party_of(raw)
+            kind = own_kind(r["amount"], party, raw, holders)
+            if kind is None and r["category"] == "transfer" and someone_else(party, holders):
+                rule = self.finance.rule(r["merchant"])
+                kind = rule["category"] if rule else "income" if r["amount"] > 0 else "other"
+            if kind and kind != r["category"]:
+                self.conn.execute("UPDATE finance_transactions SET category = ?, sorted_by = 'rule' WHERE id = ?",
+                                  (kind, r["id"]))
+
+    def _tidy_names(self) -> None:
+        """The user's own name out of their accounts' names, where banks or an older Aide put it ("HYPE FILIPPO CAPPA
+        ··4225" → "HYPE ··4225")."""
+        holders = self._holders()
+        for a in self.conn.execute("SELECT id, name FROM finance_accounts WHERE source = 'bank'").fetchall():
+            words = a["name"].split()
+            for h in holders:
+                n = len(h)
+                for i in range(len(words) - n + 1):
+                    if frozenset(normalise(" ".join(words[i:i + n])).split()) == h:
+                        words = words[:i] + words[i + n:]
+                        break
+            name = " ".join(words)
+            if name and name != a["name"]:
+                self.conn.execute("UPDATE finance_accounts SET name = ? WHERE id = ?", (name, a["id"]))
 
     def _mark_transfers(self) -> None:
         """Money out of one linked account and the same into another within 3 days: a transfer, not spending or
-        income (unless the user sorted it)."""
+        income (unless the user sorted it). Never with someone else on either side (the allowance and a card payoff of
+        the same amount), nor a card payoff."""
+        holders = self._holders()
         rows = self.conn.execute(
-            "SELECT o.id AS o, i.id AS i FROM finance_transactions o JOIN finance_transactions i ON i.amount = -o.amount "
+            "SELECT o.id AS o, i.id AS i, o.raw AS o_raw, i.raw AS i_raw FROM finance_transactions o "
+            "JOIN finance_transactions i ON i.amount = -o.amount "
             "AND i.account_id != o.account_id AND julianday(i.at) BETWEEN julianday(o.at) - 3 AND julianday(o.at) + 3 "
             "WHERE o.source = 'bank' AND i.source = 'bank' AND o.amount < 0 AND NOT (o.category = 'transfer' AND "
-            "i.category = 'transfer') AND o.sorted_by != 'user' AND i.sorted_by != 'user' AND o.at >= ?",
+            "i.category = 'transfer') AND 'card' NOT IN (o.category, i.category) AND o.sorted_by != 'user' "
+            "AND i.sorted_by != 'user' AND o.at >= ? ORDER BY abs(julianday(i.at) - julianday(o.at))",
             (f"{(utcnow() - timedelta(days=FIRST_DAYS + 5)).isoformat()}",)).fetchall()
         done: set[int] = set()
         for r in rows:
             if r["o"] in done or r["i"] in done:
+                continue
+            if any(someone_else(party_of(x or ""), holders) for x in (r["o_raw"], r["i_raw"])):
                 continue
             done |= {r["o"], r["i"]}
             self.conn.execute("UPDATE finance_transactions SET category = 'transfer', sorted_by = 'rule' WHERE id IN "

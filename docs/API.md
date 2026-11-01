@@ -2248,7 +2248,9 @@ the user's own accounts); a refund (positive, not income) takes from its categor
   "place": null, "lat": null, "lon": null, "note": null}`. `sorted_by` is `user` (picked or corrected), `rule` (the
   merchant's rule), `model` (the model's first answer for it) or `none` (not sorted yet: `category` is `other` for now).
 - **Categories:** `groceries`, `eating_out`, `transport`, `shopping`, `subscriptions`, `bills`, `health`, `study`,
-  `travel`, `fun`, `cash`, `income`, `transfer`, `other`. Their icons are the app's.
+  `travel`, `fun`, `cash`, `card`, `income`, `transfer`, `other`. Their icons are the app's. `card` ("Credit card") is
+  set only by the bank rules: paying off a credit card whose purchases Aide doesn't see (Advanzia's Carta YOU), which
+  stands for them. It's spending and can be budgeted.
 - **Sorting.** A merchant's rule first: the user's correction, else the model's earlier answer for it (a rule also
   covers the same merchant at another shop: "esselunga" for "ESSELUNGA via Nizza 12"). A new merchant goes to the fast
   model in the background (one call for every merchant waiting), so a payment can come back `none` and be sorted a
@@ -2329,11 +2331,13 @@ private key on `cappa`) are in `.env`; `ENABLE_BANKING_REDIRECT` is the callback
 - **Sorting.** As for taps (a merchant's rule, else the model), with the merchant taken out of the bank's text
   ("PAGAMENTO POS … ESSELUNGA TORINO CARTA N.****1234" → "Esselunga Torino"). Money in is `income`; a cash machine is
   `cash`; money between two linked accounts (an own IBAN, or the same amount out of one and into another within 3
-  days) is `transfer` on both sides. So is the user's own money moving by the bank's text, linked or not: a card's
-  top-up coming in ("Apple Pay Top-Up by *5372"), Revolut's investment and savings pockets, a giroconto, paying off
-  Advanzia's Carta YOU, and money to or from the user's own name (the account holder Enable Banking gives, in any
-  word order; a refund in their name stays income). Records from before are sorted again on each read. The user's own
-  correction always wins.
+  days, never with a full name on either side that isn't the user's) is `transfer` on both sides. So is the user's own
+  money moving by the bank's text, linked or not: a card's top-up coming in ("Apple Pay Top-Up by *5372") and the
+  same card's payment to Revolut on the other bank ("PAGAMENTO PRESSO REVOLUT**1234*", a credit line drawn included:
+  it's spent from where it lands), Revolut's investment and savings pockets, a giroconto, and money to or from the
+  user's own name (the account holder Enable Banking gives, in any word order; a refund in their name stays income).
+  Paying off Advanzia's Carta YOU (its name, or Revolut's "Mastercard To" the user) is `card`. Records from before are
+  sorted again on each read. The user's own correction always wins.
 - **Privacy.** The private key and the bank data stay on `cappa`; nothing from a bank goes in the logs. Enable Banking
   sees what any account-information provider sees.
 

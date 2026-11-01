@@ -88,11 +88,14 @@ CATEGORIES: dict[str, tuple[str, str]] = {
     "travel": ("Travel", "flights, long-distance trains, hotels, holidays"),
     "fun": ("Fun", "cinema, concerts, games, events, hobbies"),
     "cash": ("Cash", "cash withdrawals"),
+    "card": ("Credit card", "paying off a credit card whose purchases Aide doesn't see (Advanzia's Carta YOU): the payoff "
+                            "stands for them"),
     "income": ("Income", "salary, allowances, money received"),
-    "transfer": ("Transfer", "moving money between the user's own accounts, card repayments"),
+    "transfer": ("Transfer", "moving money between the user's own accounts, a credit line drawn into them"),
     "other": ("Other", "anything else"),
 }
 NOT_SPENDING = {"income", "transfer"}
+RULE_ONLY = {"card"}  # set by the bank rules, never by the sorting model
 SOURCES = {"wallet", "bank", "statement", "manual"}
 REPEAT_WINDOW = timedelta(minutes=3)  # a Shortcut that runs twice for one tap
 # A repeated charge: (period, its days, the gaps that count as it)
@@ -101,7 +104,7 @@ SAME_PRICE = 0.2  # charges within 20% of the last one are the same subscription
 
 SORT_PROMPT = f"""You sort payments into spending categories for one person, a university student in Turin, Italy.
 The categories (id: what goes in it):
-{chr(10).join(f"- {k}: {v[1]}" for k, v in CATEGORIES.items() if k not in NOT_SPENDING)}
+{chr(10).join(f"- {k}: {v[1]}" for k, v in CATEGORIES.items() if k not in NOT_SPENDING | RULE_ONLY)}
 Answer with JSON only: an object from each merchant exactly as given to its category id. When unsure, pick the most \
 likely; "other" only when nothing fits."""
 
