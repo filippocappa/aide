@@ -45,6 +45,10 @@ struct SettingsView: View {
                         ScreenTimeView()
                     }
                 }
+                #else
+                Section("This Mac") {
+                    row("Screen Time", "hourglass", .indigo, value: macScreenTimeValue) { MacScreenTimeView() }
+                }
                 #endif
                 Section {
                     row("Moodle", "graduationcap.fill", .orange) { MoodleView() }
@@ -90,6 +94,8 @@ struct SettingsView: View {
                 case "location": LocationSettingsView()
                 #if os(iOS)
                 case "screentime": ScreenTimeView()
+                #else
+                case "screentime": MacScreenTimeView()
                 #endif
                 case "nutrition": NutritionTargetsView()
                 case "videos": VideosView()
@@ -123,6 +129,13 @@ struct SettingsView: View {
         if let (_, until) = screenTime.current { return "Locked until \(ScreenTimeView.time(until))" }
         let weekly = screenTime.locks.filter { !$0.once && $0.enabled }.count
         return weekly == 0 ? "On" : "\(weekly) lock\(weekly == 1 ? "" : "s")"
+    }
+    #else
+    private var macScreenTimeValue: String {
+        if let (_, until) = screenTime.strictOn { return "Strict until \(MacScreenTimeView.time(until))" }
+        if let (_, until) = screenTime.current { return "Locked until \(MacScreenTimeView.time(until))" }
+        let weekly = screenTime.locks.filter { !$0.once && $0.enabled }.count
+        return weekly == 0 ? "Off" : "\(weekly) lock\(weekly == 1 ? "" : "s")"
     }
     #endif
 

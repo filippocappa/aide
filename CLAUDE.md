@@ -130,8 +130,12 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
 - Screen Time on the Mac (#30, in progress): Apple's Screen Time API is iOS-only, so Aide enforces the phone's locks
   itself. `Mac/MacScreenTime.swift` reads `/v1/locks` (on open, after a chat turn, every minute, on wake) and works out
   when each holds with `ScreenTime/LockClock.swift` (shared with the phone and its extensions), waking at the next
-  start or end; the glance says "Locked until 07:00". Not yet: the app picker, the shield window, the settings page,
-  refusing Quit during a strict lock, the login item.
+  start or end; the glance says "Locked until 07:00". Step 2 (2026-11-01): the Mac app is no longer sandboxed
+  (it quits other apps, an Apple Event). What a lock covers is the Mac's own, "only these" apps by bundle ID, kept on
+  this Mac (`MacLockApps`). `Mac/MacShield.swift` quits a covered app when it opens or comes forward (hides it if it
+  won't quit) and Pebble pops up asleep over its Dock icon with Open anyway. Settings → This Mac → Screen Time
+  (`Mac/MacScreenTimeView.swift`): Lock now, the usual apps, weekly locks with their own apps. Debug builds:
+  `-shieldTest 2` adds a local 2-minute lock. Not yet: refusing Quit during a strict lock, the login item.
 - `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
   `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
 - The Mac look (2026-10-31): `Mac/MacList.swift` makes `List` a grouped `Form` (rounded inset sections, no heavy

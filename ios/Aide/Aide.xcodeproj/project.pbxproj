@@ -109,6 +109,7 @@
 		6F50A0BBCD8AE4B87A0300EC /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32DFE4D7AD03B872AE8A96C /* Models.swift */; };
 		6FFB4761315BC0B5CD78D8C6 /* PushService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36387E8AE9A51ED3851F3281 /* PushService.swift */; };
 		707BBC79D4EA16657F5EE1E0 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
+		707C5701257FFAC221CAF2EC /* MacShield.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7510E58A67A58DB9D0E7725 /* MacShield.swift */; };
 		717B9649EF5B1FF87668F918 /* ErrandStageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31033B32F4A37807EB1A7190 /* ErrandStageViews.swift */; };
 		72C49417699FB469145362D1 /* EventWeekView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF6CCC9091F2A82B831A7E3A /* EventWeekView.swift */; };
 		731F6A69DA90B3592DCAF24B /* HabitIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FA885056211A769DEA36F2 /* HabitIntents.swift */; };
@@ -179,6 +180,7 @@
 		D340A738067BC1E71E6D4EF1 /* RoutinesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53C02A40AE154F5373B2E531 /* RoutinesView.swift */; };
 		D458DCBBCCFFCED61C593420 /* Skeleton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0707EC0845E48ECBB81D60A4 /* Skeleton.swift */; };
 		D70DECEDF4E4EC132639432C /* TeamChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */; };
+		D96AE9A8C21393E5189CCF29 /* MacScreenTimeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582BAE089C17E030C634DB60 /* MacScreenTimeView.swift */; };
 		DAFEE2E684BC48DD701D876F /* DigestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */; };
 		DB01843DAFBCA6B96BC5AAA6 /* MoodleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289CE8321C0A5A80F6B92C /* MoodleView.swift */; };
 		DCCB151C61A44732969A6427 /* FoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDFDB90CA977D76111828E4F /* FoodViews.swift */; };
@@ -313,6 +315,7 @@
 		55FA885056211A769DEA36F2 /* HabitIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitIntents.swift; sourceTree = "<group>"; };
 		57A79367A6A80084A66BE442 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		57E832869DBA4E90B67C6D56 /* LiveActivities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivities.swift; sourceTree = "<group>"; };
+		582BAE089C17E030C634DB60 /* MacScreenTimeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScreenTimeView.swift; sourceTree = "<group>"; };
 		58AE8C76701A110B13945027 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		591D1D0440D0AE931595EE83 /* HealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthView.swift; sourceTree = "<group>"; };
 		5E3809ACCFFA12ABB54F30E6 /* MacAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = MacAssets.xcassets; sourceTree = "<group>"; };
@@ -358,6 +361,7 @@
 		B21264FA61ED8665DC82B517 /* ShieldConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShieldConfig.swift; sourceTree = "<group>"; };
 		B2712472C5856CDCD16C4FAB /* LineBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineBadge.swift; sourceTree = "<group>"; };
 		B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeUpIntent.swift; sourceTree = "<group>"; };
+		B7510E58A67A58DB9D0E7725 /* MacShield.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacShield.swift; sourceTree = "<group>"; };
 		B767930966E7CE68008A6BC6 /* WidgetSamples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSamples.swift; sourceTree = "<group>"; };
 		B9FC43C842297C98B8EC0DAE /* AideTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AideTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC045FC4847C746FA98D8C55 /* ScanViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanViews.swift; sourceTree = "<group>"; };
@@ -617,7 +621,9 @@
 				E82E2D2F31C60F70DB974B92 /* MacNavigationStack.swift */,
 				6EF10BCDADB734A13BDB47BE /* MacRootView.swift */,
 				9883DFA94F62FDEC76F14602 /* MacScreenTime.swift */,
+				582BAE089C17E030C634DB60 /* MacScreenTimeView.swift */,
 				7EE4431CF529BAD1BA4486C7 /* MacServices.swift */,
+				B7510E58A67A58DB9D0E7725 /* MacShield.swift */,
 			);
 			path = Mac;
 			sourceTree = "<group>";
@@ -1038,7 +1044,9 @@
 				48987567C6B9D6E88B770CC3 /* MacNavigationStack.swift in Sources */,
 				4F8E671544A9ABE370D492F4 /* MacRootView.swift in Sources */,
 				0FC6E8696B392B7469604CB9 /* MacScreenTime.swift in Sources */,
+				D96AE9A8C21393E5189CCF29 /* MacScreenTimeView.swift in Sources */,
 				CC59E982D38033B55B1A7B86 /* MacServices.swift in Sources */,
+				707C5701257FFAC221CAF2EC /* MacShield.swift in Sources */,
 				79450FD6866BA5F4644FD323 /* MealIntents.swift in Sources */,
 				3E02268A67EFC449A249DF39 /* MemoryView.swift in Sources */,
 				9A7C4BA815F2DE7DCDDA6883 /* Models.swift in Sources */,

@@ -37,6 +37,8 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>During a Screen Time lock, Aide closes the apps it covers.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Aide listens when you click the microphone, so you can talk instead of type.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

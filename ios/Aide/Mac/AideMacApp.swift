@@ -9,6 +9,8 @@ struct AideMacApp: App {
     @AppStorage("menuBarItem") private var menuBarItem = true
     private var env: AppEnvironment { .shared }
 
+    init() { MacSandboxMove.run() }
+
     var body: some Scene {
         // One window: the chats, the sidebar and what's on screen are one `AppEnvironment`, which a second window
         // would share and fight over. Closing it leaves Aide in the menu bar.
@@ -117,5 +119,21 @@ struct MacCommands: Commands {
             Button("Refresh") { Task { await AppEnvironment.shared.refreshAll() } }
                 .keyboardShortcut("r")
         }
+    }
+}
+
+/// The Mac app left the App Sandbox on 2026-11-01 (Screen Time quits the apps a lock covers). Its few settings (the
+/// section, the sidebar, the menu bar item) were in the container's defaults: copied over once. The keychain items
+/// are the same either way.
+enum MacSandboxMove {
+    static func run() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "movedFromSandbox"), let id = Bundle.main.bundleIdentifier else { return }
+        let old = FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: "Library/Containers/\(id)/Data/Library/Preferences/\(id).plist")
+        if let values = NSDictionary(contentsOf: old) as? [String: Any] {
+            for (key, value) in values where defaults.object(forKey: key) == nil { defaults.set(value, forKey: key) }
+        }
+        defaults.set(true, forKey: "movedFromSandbox")
     }
 }

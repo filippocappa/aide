@@ -4,7 +4,10 @@
 <dict>
 	<key>com.apple.developer.aps-environment</key>
 	<string>development</string>
-	<key>com.apple.security.app-sandbox</key>
+	<!-- Not sandboxed (2026-11-01): Screen Time (Mac/MacShield.swift) quits whichever apps a lock covers and finds
+	     their Dock icons, which the App Sandbox allows only for apps named in advance. Quitting is an Apple Event,
+	     hence automation (hardened runtime). -->
+	<key>com.apple.security.automation.apple-events</key>
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>

@@ -5,9 +5,13 @@ import UserNotifications
 /// alert pushes only; the silent ones (reminders sync, location) are the phone's, so there's nothing to run here.
 final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     @MainActor var env: AppEnvironment { .shared }
+    /// Covers the apps a Screen Time lock covers while it holds.
+    @MainActor private var shield: MacShield?
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    @MainActor func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        shield = MacShield(screenTime: env.screenTime)
+        Task { await env.screenTime.sync() }
     }
 
     func application(_ application: NSApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {

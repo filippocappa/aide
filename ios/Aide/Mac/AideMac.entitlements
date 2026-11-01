@@ -2,7 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>com.apple.security.app-sandbox</key>
+	<!-- Not sandboxed (2026-11-01): Screen Time (Mac/MacShield.swift) quits whichever apps a lock covers and finds
+	     their Dock icons, which the App Sandbox allows only for apps named in advance. Quitting is an Apple Event,
+	     hence automation (hardened runtime). -->
+	<key>com.apple.security.automation.apple-events</key>
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>

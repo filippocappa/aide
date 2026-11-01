@@ -213,6 +213,7 @@ targets:
         NSMicrophoneUsageDescription: Aide listens when you click the microphone, so you can talk instead of type.
         NSSpeechRecognitionUsageDescription: Aide turns what you say into text to send to your assistant.
         ITSAppUsesNonExemptEncryption: false
+        NSAppleEventsUsageDescription: During a Screen Time lock, Aide closes the apps it covers.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).mac
