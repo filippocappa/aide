@@ -9,12 +9,12 @@
 
 <p align="center">
   A personal assistant for one person, backed by Claude.<br>
-  Calendar, reminders, mail, health, habits, study notes, trams and errands on the web, through chat on the phone.
+  Calendar, reminders, mail, health, habits, study notes, trams and errands on the web, through chat on the phone and the Mac.
 </p>
 
 ---
 
-Aide is a Python server that runs on a home machine and an iOS app that talks to it over Tailscale. You chat with
+Aide is a Python server that runs on a home machine and an app for iPhone and Mac that talks to it over Tailscale. You chat with
 **Aide**, which hands the work to a small team of specialists, each with its own chats, tools and memory:
 
 | Agent | Looks after |
@@ -28,13 +28,52 @@ Aide is a Python server that runs on a home machine and an iOS app that talks to
 Anything destructive or outward-facing (sending mail, deleting an event, moving a reminder, placing an order) is
 queued in code and runs only after you tap **Confirm** in the app. The model never runs it directly.
 
-Besides chat, the app has a Today page (the briefing, what's waiting for you, habits and objectives), a Health page
-(Strain, Recovery and Sleep scores, last night's numbers against your usual, food; see [Health scores](#health-scores)), routines and
-watches (an agent's scheduled job, or a check that posts only when something needs you), widgets, and Live
-Activities on the Lock Screen and in the Dynamic Island (the next tram, the next event, an agent at work).
+On the phone the app has four tabs, one per area, each opening with a line from its agent:
+
+- **Team:** the chats with Aide and the specialists, the briefing, what's waiting for you, and Today (habits and
+  objectives). Settings is behind the gear in the corner.
+- **Study:** Professor's courses, with notebooks, lessons, quizzes and practice exams.
+- **Health:** Coach's Body, Food and Screen. Body has the Strain, Recovery and Sleep scores and last night's numbers
+  against your usual (see [Health scores](#health-scores)). Food has meals from a photo, a description or a
+  barcode. Screen has screen time and its locks and limits.
+- **Money:** Finance. For now it's a placeholder until the bank and card data comes in.
+
+Around them are routines and watches (an agent's scheduled job, or a check that posts only when something needs
+you), widgets, and Live Activities on the Lock Screen and in the Dynamic Island (the next tram, the next event, an
+agent at work).
+
+The **Mac app** is the same app in a window. It has the sections in a sidebar, the day at a glance under them, and
+Pebble in the menu bar for a quick look. It also has its own screen time: the Mac counts its apps and websites and
+enforces the phone's locks itself.
 
 The API is in [docs/API.md](docs/API.md), the contract between the server and the app. [SPEC.md](SPEC.md) is the
 original plan, and [CLAUDE.md](CLAUDE.md) is where things stand.
+
+## Screenshots
+
+**iPhone:** Study, a course, Health (Body, Food, Screen) and Money.
+
+<p align="center">
+  <img src="docs/screenshots/iphone-study.jpg" width="32%" alt="Study: Professor's line, what's up next, the courses">
+  <img src="docs/screenshots/iphone-course.jpg" width="32%" alt="A course: Learn, Quiz me, Practice exam, the dates, how well you know it">
+  <img src="docs/screenshots/iphone-health.jpg" width="32%" alt="Health, Body: Strain, Recovery and Sleep, Coach's line, last night">
+</p>
+<p align="center">
+  <img src="docs/screenshots/iphone-food.jpg" width="32%" alt="Health, Food: the week, the day's score, macros, Log a meal">
+  <img src="docs/screenshots/iphone-screen.jpg" width="32%" alt="Health, Screen: time a day, focus, the apps">
+  <img src="docs/screenshots/iphone-money.jpg" width="32%" alt="Money: Finance's placeholder">
+</p>
+
+**Mac:** Study, Health, Food and Screen, with the sidebar and the day at a glance.
+
+<p align="center">
+  <img src="docs/screenshots/mac-study.jpg" width="49%" alt="Mac, Study">
+  <img src="docs/screenshots/mac-health.jpg" width="49%" alt="Mac, Health">
+</p>
+<p align="center">
+  <img src="docs/screenshots/mac-food.jpg" width="49%" alt="Mac, Food">
+  <img src="docs/screenshots/mac-screen.jpg" width="49%" alt="Mac, Screen: this Mac's apps and websites">
+</p>
 
 ## How it fits together
 
@@ -286,7 +325,7 @@ src/aide/
   routines.py            routines and watches; activity.py: the feed of what the agents did
   locks.py               Screen Time locks
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
-ios/Aide/                the iOS app (SwiftUI, iOS 17+)
+ios/Aide/                the app (SwiftUI): iPhone (iOS 17+) and Mac (target AideMac, macOS 14+)
 brand/                   Pebble, the logo
 deploy/                  systemd units
 ```
@@ -326,11 +365,11 @@ cp Config/Signing.local.xcconfig.example Config/Signing.local.xcconfig
 #   DEVELOPMENT_TEAM: your team ID. AIDE_BUNDLE_ID: a bundle ID of your own (and APNS_BUNDLE_ID in .env to match).
 #   A free Apple ID: leave AIDE_ENTITLEMENTS out (no push).
 xcodegen generate
-open Aide.xcodeproj               # run it on your phone
+open Aide.xcodeproj               # run the Aide scheme on your phone, AideMac on the Mac
 ```
 
 In the app, Settings: the server URL (`https://<machine>.<tailnet>.ts.net`) and your `AIDE_API_TOKEN`. Both are
-kept on the phone (the token in the Keychain).
+kept on the device (the token in the Keychain). The Mac app asks for them once, the same way.
 
 **Tuned for its first user, so check these:** the time zone (`AIDE_TIMEZONE`); the calendars the study side
 reads (`AIDE_STUDY_CALENDAR`, `AIDE_EXAM_CALENDAR`: a course is an event title that repeats there); practice exams
@@ -592,3 +631,43 @@ back with it.
   `google/gemini-3.5-flash-lite` over OpenRouter (`AIDE_TRANSCRIBE_MODEL` to change it; off without an OpenRouter key). Prompt caching is on for both; server-side refusal fallback only works direct, and not on Haiku.
 - Each turn is saved to SQLite only after it completes. A crash mid-turn loses that turn but never corrupts history.
 - Every tool call is written to `audit_log`.
+
+## Credits
+
+- **The idea:** [Gabriele De Stalis](https://github.com/DeStalisGabriele) and his
+  [daneel](https://github.com/DeStalisGabriele/daneel), which turns Claude Code on your own server into a personal
+  assistant on the iPhone. Aide started from it. Thanks, Gabriele.
+- **Ideas from other apps:** the code and formulas here are our own, but these apps shaped them.
+  - The health scores follow the spirit of [Whoop](https://www.whoop.com), [Bevel](https://www.bevel.health) and
+    [Athlytic](https://www.athlyticapp.com).
+  - The sleep need and the training load are done the way [Oura](https://ouraring.com) does them (`scores.py`).
+  - The Health page's look comes from Bevel.
+  - The Study page works the way [Quizlet](https://quizlet.com) does, and lessons the way
+    [Brilliant](https://brilliant.org) does.
+- **Methods:**
+  - Strain uses Banister's training impulse (TRIMP).
+  - Food quality uses [Nutri-Score](https://www.santepubliquefrance.fr/en/nutri-score) (the 2023 rules) and the
+    [NOVA](https://world.openfoodfacts.org/nova) processing groups.
+  - The nutrient lines follow the World Health Organization's guidelines.
+- **Data:**
+  - [Open Food Facts](https://world.openfoodfacts.org) (ODbL) for foods and barcodes.
+  - [GTT](https://www.gtt.to.it)'s GTFS timetable and live feed for Turin's trams and buses.
+  - Google Maps and [Tavily](https://tavily.com) for places, routes and web search.
+- **Models:**
+  - Claude (Anthropic), through [OpenRouter](https://openrouter.ai) or the Claude plan in Claude Code.
+  - Gemini for voice and meal photos.
+  - [Whisper](https://github.com/openai/whisper) (through
+    [faster-whisper](https://github.com/SYSTRAN/faster-whisper)) and NVIDIA's
+    [Parakeet](https://github.com/NVIDIA/NeMo) for lectures.
+- **Libraries and tools:**
+  - On the server: [FastAPI](https://fastapi.tiangolo.com), [Uvicorn](https://www.uvicorn.org), the
+    [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-python), the
+    [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python),
+    [caldav](https://github.com/python-caldav/caldav), [Playwright](https://playwright.dev),
+    [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [FFmpeg](https://ffmpeg.org),
+    [WsgiDAV](https://github.com/mar10/wsgidav), [httpx](https://www.python-httpx.org),
+    [niquests](https://github.com/jawah/niquests), [PyJWT](https://github.com/jpadilla/pyjwt) and
+    [gtfs-realtime-bindings](https://github.com/MobilityData/gtfs-realtime-bindings).
+  - In the app: [SwiftMath](https://github.com/mgriebling/SwiftMath) draws the formulas.
+  - Building: [uv](https://docs.astral.sh/uv/) and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+  - Notes: [Obsidian](https://obsidian.md) with Remotely Save.
