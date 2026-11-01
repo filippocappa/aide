@@ -25,3 +25,4 @@ credentials.json
 *.db-shm
 *.log
 .claude/
+ios/Aide/build/
