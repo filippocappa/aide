@@ -607,17 +607,25 @@ struct CategoryPicker: View {
 
 /// The next charge first with "in 6 days"; a price that went up says so in orange.
 struct SubscriptionsCard: View {
+    @EnvironmentObject private var env: AppEnvironment
     let list: SubscriptionList
     let tint: Color
     /// Tapping one (nil: Add a subscription).
     var edit: (Subscription?) -> Void = { _ in }
     var changed: () async -> Void = {}
 
+    /// Deleted here, gone at once while the server catches up.
+    @State private var removed: Set<String> = []
+
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(list.subscriptions) { s in
+            ForEach(list.subscriptions.filter { !removed.contains($0.id) }) { s in
                 Button { edit(s) } label: { row(s) }
                     .buttonStyle(.plain)
+                    .swipeToDelete { Task { await delete(s) } }
+                    .contextMenu {
+                        Button("Delete", systemImage: "trash", role: .destructive) { Task { await delete(s) } }
+                    }
                 Divider().padding(.leading, 64)
             }
             Button { edit(nil) } label: {
@@ -647,6 +655,20 @@ struct SubscriptionsCard: View {
         }
         .padding(.vertical, 2)
         .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .animation(.snappy, value: removed)
+    }
+
+    /// Off the list: one found from the charges is hidden (under Hidden), one added by hand is forgotten.
+    private func delete(_ s: Subscription) async {
+        removed.insert(s.id)
+        do {
+            _ = try await env.api.setSubscription(SubscriptionIn(merchant: s.merchant,
+                                                                 subscription: s.count == 0 ? nil : false))
+        } catch {
+            removed.remove(s.id)
+        }
+        await changed()
     }
 
     private func row(_ s: Subscription) -> some View {
@@ -685,6 +707,79 @@ struct SubscriptionsCard: View {
         default: return "In \(days) days · \(date)"
         }
     }
+}
+
+/// Swiping a row left shows a red Delete; a long swipe deletes at once. For rows in a card (a `List` has
+/// `swipeActions`). A tap while it's open closes it.
+struct SwipeToDelete: ViewModifier {
+    let delete: () -> Void
+    @State private var offset: CGFloat = 0
+    @State private var start: CGFloat = 0
+    @State private var horizontal: Bool?
+    @State private var width: CGFloat = 0
+    private let reveal: CGFloat = 88
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: .trailing) {
+            Button {
+                remove()
+            } label: {
+                Image(systemName: "trash").font(.body.weight(.semibold)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .buttonStyle(.plain)
+            .frame(width: max(-offset, 0))
+            .frame(maxHeight: .infinity)
+            .background(Color.red)
+            .opacity(offset < 0 ? 1 : 0)
+            .accessibilityLabel("Delete")
+            content
+                .offset(x: offset)
+                .overlay {
+                    if offset != 0 {
+                        Color.clear.contentShape(Rectangle()).offset(x: offset).onTapGesture { close() }
+                    }
+                }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 16)
+                .onChanged { v in
+                    if horizontal == nil { horizontal = abs(v.translation.width) > abs(v.translation.height) }
+                    guard horizontal == true else { return }
+                    offset = min(0, start + v.translation.width)
+                }
+                .onEnded { v in
+                    defer { horizontal = nil }
+                    guard horizontal == true else { return }
+                    let end = start + v.predictedEndTranslation.width
+                    if end < -max(width * 0.6, 200) {
+                        remove()
+                    } else if end < -reveal / 2 {
+                        withAnimation(.snappy) { offset = -reveal }
+                        start = -reveal
+                    } else {
+                        close()
+                    }
+                }
+        )
+        .sensoryFeedback(.impact(weight: .light), trigger: start)
+    }
+
+    private func close() {
+        withAnimation(.snappy) { offset = 0 }
+        start = 0
+    }
+
+    private func remove() {
+        withAnimation(.snappy(duration: 0.2)) { offset = -max(width, 300) }
+        start = 0
+        delete()
+    }
+}
+
+extension View {
+    func swipeToDelete(_ delete: @escaping () -> Void) -> some View { modifier(SwipeToDelete(delete: delete)) }
 }
 
 /// A subscription: its price, how often and the next charge, or not a subscription at all. `subscription` nil:
