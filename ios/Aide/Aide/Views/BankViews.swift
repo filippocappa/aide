@@ -38,16 +38,7 @@ struct BanksView: View {
                 Section {
                     statusRow(bank)
                     ForEach(accounts.filter { $0.bankId == bank.id }) { a in
-                        LabeledContent {
-                            if let balance = a.balance {
-                                Text(Euros.text(balance)).monospacedDigit()
-                            }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(a.name)
-                                Text(a.kind == "card" ? "Card" : "Account").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
+                        accountRow(a)
                     }
                     if bank.status != "linked" {
                         Button(linking == bank.bank ? "Opening the bank…" : "Renew the link") {
@@ -73,7 +64,7 @@ struct BanksView: View {
                             .disabled(reading)
                     }
                 } footer: {
-                    Text("You log in on your bank's own page. Aide only reads balances and transactions, through Enable Banking (a licensed PSD2 provider); nothing can move money. It reads four times a day and whenever Money opens. A link lasts up to 180 days; a week before it ends you're asked to renew. The data stays on your server.")
+                    Text("An account left out of Money (a credit line that's always below zero) isn't in the accounts or the total; its payments still count. You log in on your bank's own page. Aide only reads balances and transactions, through Enable Banking (a licensed PSD2 provider); nothing can move money. It reads four times a day and whenever Money opens. A link lasts up to 180 days; a week before it ends you're asked to renew. The data stays on your server.")
                 }
             }
         }
@@ -96,6 +87,25 @@ struct BanksView: View {
         } message: {
             Text("Aide stops reading it. Its accounts and payments stay; link it again any time.")
         }
+    }
+
+    @ViewBuilder
+    private func accountRow(_ a: FinanceAccount) -> some View {
+        let kind = a.hidden ? "Hidden from Money" : a.kind == "card" ? "Card" : "Account"
+        LabeledContent {
+            if let balance = a.balance {
+                Text(Euros.text(balance)).monospacedDigit().foregroundStyle(a.hidden ? Color.secondary : Color.primary)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(a.name)
+                Text(kind).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        Toggle("Show in Money", isOn: Binding(get: { !a.hidden }, set: { show in Task { await setShown(a, show) } }))
+            #if os(macOS)
+            .toggleStyle(.phoneSwitch)
+            #endif
     }
 
     private func statusRow(_ bank: BankLink) -> some View {
@@ -170,6 +180,17 @@ struct BanksView: View {
             await changed()
         } catch let cancelled as ASWebAuthenticationSessionError where cancelled.code == .canceledLogin {
             // Closed the sheet.
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func setShown(_ account: FinanceAccount, _ show: Bool) async {
+        do {
+            let updated = try await env.api.setAccountHidden(account.id, !show)
+            if let i = accounts.firstIndex(where: { $0.id == updated.id }) { accounts[i] = updated }
+            error = nil
+            await changed()
         } catch {
             self.error = error.localizedDescription
         }

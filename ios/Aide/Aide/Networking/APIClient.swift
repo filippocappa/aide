@@ -693,6 +693,13 @@ final class APIClient {
                        query: force ? [URLQueryItem(name: "force", value: "true")] : [], body: EmptyBody(), timeout: 90)
     }
 
+    /// Hides an account from Money's accounts and total, or shows it again.
+    func setAccountHidden(_ id: Int, _ hidden: Bool) async throws -> FinanceAccount {
+        struct Patch: Encodable { let hidden: Bool }
+        let r: AccountResponse = try await send("PATCH", "/v1/finance/accounts/\(id)", body: Patch(hidden: hidden))
+        return r.account
+    }
+
     func unlinkBank(_ id: Int) async throws {
         let _: OKResponse = try await send("DELETE", "/v1/finance/banks/\(id)", body: EmptyBody())
     }
