@@ -657,10 +657,23 @@ struct SubscriptionsCard: View {
 struct AccountsCard: View {
     let accounts: [FinanceAccount]
     let tint: Color
+    /// Tapping the credit card: what's owed on it.
+    var editCard: (FinanceAccount) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(accounts) { a in
+                Button { if a.isCredit { editCard(a) } } label: { row(a) }
+                    .buttonStyle(.plain)
+                    .disabled(!a.isCredit)
+                if a.id != accounts.last?.id { Divider().padding(.leading, 64) }
+            }
+        }
+        .padding(.vertical, 2)
+        .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private func row(_ a: FinanceAccount) -> some View {
                 HStack(spacing: 12) {
                     Text(String(a.name.prefix(1)).uppercased())
                         .font(.subheadline.weight(.bold))
@@ -675,7 +688,14 @@ struct AccountsCard: View {
                     }
                     Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 2) {
-                        if let balance = a.balance {
+                        if a.isCredit {
+                            if let balance = a.balance {
+                                Text(Euros.text(abs(balance))).fontWeight(.semibold).monospacedDigit()
+                                Text(balance <= 0 ? "owed" : "in credit").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("Set what's owed").font(.subheadline).foregroundStyle(tint)
+                            }
+                        } else if let balance = a.balance {
                             Text(Euros.text(balance)).fontWeight(.semibold).monospacedDigit()
                         } else {
                             Text(Euros.text(a.spentMonth, whole: a.spentMonth >= 100)).monospacedDigit()
@@ -684,14 +704,14 @@ struct AccountsCard: View {
                     }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 10)
-                if a.id != accounts.last?.id { Divider().padding(.leading, 64) }
-            }
-        }
-        .padding(.vertical, 2)
-        .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .contentShape(Rectangle())
     }
 
     static func status(_ a: FinanceAccount) -> String {
+        if a.isCredit {
+            let card = "Credit card" + (a.last4.map { " ··\($0)" } ?? "")
+            return a.balance == nil ? "\(card) · payoffs count as spending" : "\(card) · its taps are the spending"
+        }
         let source = switch a.status {
         case "wallet": "Apple Pay taps"
         case "bank": "From the bank"
@@ -717,6 +737,95 @@ struct AccountsCard: View {
         case ..<(24 * 60): return "read \(minutes / 60) h ago"
         default: return "read \(d.formatted(.dateTime.day().month(.abbreviated)))"
         }
+    }
+}
+
+// MARK: The credit card
+
+/// What's owed on Carta YOU now, and its last 4 digits (they name money drawn from it). From then on its Apple Pay
+/// taps are the spending and payoffs only move money to it (docs/API.md, "Finance", Carta YOU).
+struct CardOwedSheet: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.dismiss) private var dismiss
+    let card: FinanceAccount
+    let tint: Color
+    var saved: () async -> Void = {}
+
+    @State private var owed = ""
+    @State private var last4 = ""
+    @State private var error: String?
+    @State private var saving = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent("Owed now") {
+                        TextField("0", text: $owed)
+                            .multilineTextAlignment(.trailing)
+                            .keyboardType(.decimalPad)
+                    }
+                } footer: {
+                    Text("What the Advanzia app says you owe right now, statement and new purchases together. From now on Aide counts the card's Apple Pay taps as your spending, and paying it off only moves money to it.")
+                        .multilineTextAlignment(.leading)
+                }
+                Section {
+                    LabeledContent("Last 4 digits") {
+                        TextField("1234", text: $last4)
+                            .multilineTextAlignment(.trailing)
+                            .keyboardType(.numberPad)
+                    }
+                } footer: {
+                    Text("Money drawn from the card into another account shows up there as \"Top-Up by *1234\".")
+                        .multilineTextAlignment(.leading)
+                }
+                Section {
+                    Text("For the taps to come in, the Wallet automation in Settings → Payments has to run for this card too.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                if let error { Section { Text(error).foregroundStyle(.red) } }
+            }
+            .navigationTitle(card.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .macSheetTitle(card.name)
+            .toolbar {
+                #if os(iOS)
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                #endif
+                ToolbarItem(placement: .sheetDone) {
+                    Button("Save") { Task { await save() } }.disabled(saving)
+                }
+            }
+            .onAppear {
+                if let b = card.balance { owed = String(format: "%.2f", abs(b)) }
+                last4 = card.last4 ?? ""
+            }
+        }
+    }
+
+    private func save() async {
+        let text = owed.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "€", with: "")
+            .replacingOccurrences(of: ",", with: ".")
+        let digits = last4.trimmingCharacters(in: .whitespaces)
+        let amount = text.isEmpty ? nil : Double(text)
+        guard text.isEmpty || (amount ?? -1) >= 0 else { error = "Owed is an amount, 0 or more."; return }
+        guard digits.isEmpty || (digits.count == 4 && digits.allSatisfy(\.isNumber)) else {
+            error = "The last 4 digits are 4 numbers."; return
+        }
+        // Unchanged amounts don't restart the following.
+        let current = card.balance.map { abs($0) }
+        let newOwed = amount.flatMap { a in current.map { abs($0 - a) < 0.005 } == true ? nil : a }
+        let newLast4 = digits.isEmpty || digits == card.last4 ? nil : digits
+        saving = true
+        defer { saving = false }
+        do {
+            if newOwed != nil || newLast4 != nil {
+                _ = try await env.api.setCardOwed(card.id, owed: newOwed, last4: newLast4)
+            }
+            await saved()
+            dismiss()
+        } catch { self.error = error.localizedDescription }
     }
 }
 

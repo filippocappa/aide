@@ -2437,14 +2437,24 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return {"accounts": accounts, "total": round(sum(held), 2) if held else None}
 
     class AccountPatch(BaseModel):
-        hidden: bool
+        hidden: bool | None = None
+        owed: float | None = Field(None, ge=0, le=1_000_000)  # the credit card only: what's owed on it now
+        last4: str | None = Field(None, pattern=r"^\d{4}$")
 
     @app.patch("/v1/finance/accounts/{account_id}", dependencies=[Depends(auth)])
     async def finance_account_patch(account_id: int, body: AccountPatch):
-        account = finance.set_hidden(account_id, body.hidden)
+        account = next((a for a in finance.accounts() if a["id"] == account_id), None)
         if account is None:
             raise HTTPException(404, "no such account")
-        return {"account": account}
+        if body.owed is not None or body.last4 is not None:
+            if account["kind"] != "credit":
+                raise HTTPException(400, "owed is only for the credit card")
+            finance.set_owed(body.owed, body.last4)
+            if banks is not None:
+                banks.mark_card()
+        if body.hidden is not None:
+            finance.set_hidden(account_id, body.hidden)
+        return {"account": next(a for a in finance.accounts() if a["id"] == account_id)}
 
     @app.get("/v1/finance/subscriptions", dependencies=[Depends(auth)])
     async def finance_subscriptions():

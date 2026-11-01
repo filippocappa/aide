@@ -440,3 +440,55 @@ def test_a_bank_that_puts_the_holder_in_details_doesnt_put_it_in_the_name(setup)
     finance.conn.execute("UPDATE finance_accounts SET name = 'HYPE CAPPA FILIPPO ··4225' WHERE iban LIKE '%4225'")
     asyncio.run(banks.sync_all(force=True))
     assert "HYPE ··4225" in {a["name"] for a in finance.accounts()}
+
+
+def test_carta_you_is_followed_from_whats_owed_and_its_payoffs_then_move_money(setup):
+    finance, banks, fake, _ = setup
+    d = today(finance)
+    payoff = dict(name="Filippo Cappa", text="Mastercard To Filippo Cappa")
+    fake.txs["u1"] = [tx(-1800, d - timedelta(days=5), ident="p1", **payoff),
+                      tx(1800, d - timedelta(days=5), text="Top-Up by *5523", ident="d1"),  # round the card
+                      tx(-300, d - timedelta(days=4), ident="p2", **payoff)]
+    link(banks, fake)
+    cats = lambda: {r["ref"].split(":")[1]: r["category"] for r in finance.conn.execute(  # noqa: E731
+        "SELECT ref, category FROM finance_transactions WHERE ref IS NOT NULL")}
+    assert cats() == {"p1": "card", "d1": "transfer", "p2": "card"}
+    card = next(a for a in finance.accounts() if a["kind"] == "credit")
+    assert card["name"] == "Carta YOU" and card["balance"] is None
+    finance.set_owed(None, "5523")  # its last digits name its draws: the 1,800 went round it
+    banks.mark_card()
+    assert cats() == {"p1": "card", "d1": "card", "p2": "card"}
+    assert sum(finance._spent(d - timedelta(days=10), d).values()) == 300
+    finance.set_owed(500)
+    finance.conn.execute("UPDATE finance_accounts SET opening_at = ? WHERE kind = 'credit'",
+                         (datetime.combine(d - timedelta(days=2), datetime.min.time(), ROME).isoformat(),))
+    finance.add(-40, "Esselunga", account="Carta YOU", at=datetime.combine(d, datetime.min.time(), ROME))
+    finance.add(-5, "Bar", account="Mastercard ··5523", at=datetime.combine(d, datetime.min.time(), ROME))
+    fake.txs["u1"] += [tx(-200, d, ident="p3", **payoff), tx(100, d, text="Apple Pay Top-Up by *5523", ident="d2"),
+                       tx(60, d, text="Apple Pay Top-Up by *9954", ident="d3")]  # another card: not this one
+    asyncio.run(banks.sync_all(force=True))
+    assert cats()["p3"] == cats()["d2"] == "transfer" and cats()["p2"] == "card"  # before, it stood for purchases
+    assert cats()["d3"] == "transfer"
+    card = next(a for a in finance.accounts() if a["kind"] == "credit")
+    assert card["balance"] == -(500 + 40 + 5 - 200 + 100) and card["last4"] == "5523"
+    assert len([a for a in finance.accounts() if a["kind"] == "credit"]) == 1
+
+
+def test_cash_told_to_finance_takes_its_share_out_of_the_withdrawal(setup):
+    finance, banks, fake, _ = setup
+    d = today(finance)
+    fake.txs["u1"] = [tx(-100, d, text="PRELIEVO BANCOMAT", ident="w1")]
+    link(banks, fake)
+    finance.conn.execute("UPDATE finance_transactions SET at = ?", (  # taken out first thing today
+        datetime.combine(d, datetime.min.time(), ROME).astimezone(timezone.utc).isoformat(),))
+    assert finance.month()["spent"] == 100
+    finance.add(-30, "Pizzeria", account="Cash", category="eating_out")
+    m = finance.month()
+    assert m["spent"] == 100
+    cats = {c["id"]: c["spent"] for c in m["categories"]}
+    assert cats["cash"] == 70 and cats["eating_out"] == 30
+    finance.add(-90, "Mercato", account="contanti", category="groceries")
+    m = finance.month()
+    assert m["spent"] == 100 + 20  # 20 more than was taken out: cash from somewhere else
+    assert "cash" not in {c["id"] for c in m["categories"] if c["spent"]}
+    assert [a["kind"] for a in finance.accounts() if a["name"] == "Cash"] == ["cash"]

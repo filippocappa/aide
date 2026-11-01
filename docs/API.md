@@ -2230,7 +2230,7 @@ the user's own accounts); a refund (positive, not income) takes from its categor
 | `DELETE /v1/finance/payments/{id}` | | `{"ok": true}`; 404 |
 | `GET /v1/finance/month` | `?month=2026-10` (default this month) | Month; 400 for a month not yet started |
 | `GET /v1/finance/accounts` | | `{"accounts": [Account], "total": 1180.5}` |
-| `PATCH /v1/finance/accounts/{id}` | `{"hidden": true}` | `{"account": Account}`; 404 |
+| `PATCH /v1/finance/accounts/{id}` | `{"hidden": true}`; on the credit card also `{"owed": 412.5, "last4": "1234"}` (since 2026-11-01), each optional | `{"account": Account}`; 404; 400 for `owed`/`last4` on another account. `owed` is what's owed now (≥ 0) and starts following from now |
 | `GET /v1/finance/subscriptions` | | `{"subscriptions": [Subscription], "monthly_total": 24.3}`, next charge first |
 | `GET /v1/finance/budget` | | Budget |
 | `PUT /v1/finance/budget` | `{"monthly": 600, "categories": {"eating_out": 80, "fun": null}}` | Budget; `monthly` absent leaves it, `null` removes it; a category's `null` removes its budget; 400 for ≤ 0 or `income`/`transfer` |
@@ -2249,8 +2249,19 @@ the user's own accounts); a refund (positive, not income) takes from its categor
   merchant's rule), `model` (the model's first answer for it) or `none` (not sorted yet: `category` is `other` for now).
 - **Categories:** `groceries`, `eating_out`, `transport`, `shopping`, `subscriptions`, `bills`, `health`, `study`,
   `travel`, `fun`, `cash`, `card`, `income`, `transfer`, `other`. Their icons are the app's. `card` ("Credit card") is
-  set only by the bank rules: paying off a credit card whose purchases Aide doesn't see (Advanzia's Carta YOU), which
-  stands for them. It's spending and can be budgeted.
+  set only by the bank rules: paying off Advanzia's Carta YOU before Aide follows its purchases (see Carta YOU below):
+  the payoff stands for them, and money drawn from the card into an account (positive) takes its share back out.
+  It's spending and can be budgeted.
+- **Carta YOU** (since 2026-11-01): Advanzia's credit card has no bank link, so Aide follows it itself, as an Account of
+  `kind` `credit` named "Carta YOU" (made when it's first needed). Its Wallet taps (a `card` with "Carta YOU",
+  "Advanzia" or its last 4 digits) are its payments, spending like any other. The user tells Finance (`card_owed`) or
+  the app (PATCH `owed`) what's owed now; from then (or its first tap, if earlier) a payoff from another account and a
+  draw into one ("Top-Up by *<last4>") are `transfer`s that move what's owed, not spending. Its `balance` is what's
+  owed, below zero: the amount told, minus its taps since, plus the payoffs, minus the draws (`null` until told).
+- **Cash:** a cash machine is `cash` spending when the money's taken out. A cash payment told to Finance (`log_payment`
+  with `cash`, or a PaymentIn `card` "Cash"/"Contanti") goes on the "Cash" account (`kind` `cash`) in its own
+  category and takes that much out of the oldest withdrawal before it with cash left, so it isn't counted twice; past
+  what was taken out it just counts.
 - **Sorting.** A merchant's rule first: the user's correction, else the model's earlier answer for it (a rule also
   covers the same merchant at another shop: "esselunga" for "ESSELUNGA via Nizza 12"). A new merchant goes to the fast
   model in the background (one call for every merchant waiting), so a payment can come back `none` and be sorted a
@@ -2282,7 +2293,8 @@ the user's own accounts); a refund (positive, not income) takes from its categor
   (linked), `renew` (the consent ends within 7 days), `expired` (link it again) or `unlinked`. `balance` (the
   bank's available balance on an account, the booked one on a card) and `balance_at` come from bank sync, else
   `null`. `GET /v1/finance/accounts` also has `total`: the linked accounts' balances added up (`kind` `account`,
-  cards and hidden accounts left out), `null` with none.
+  cards, the credit card and hidden accounts left out), `null` with none. `kind` is `account`, `card`, `credit` (Carta
+  YOU, with `owed_since`, when what's owed was told, and `last4`) or `cash`.
 - **Payment** has two more fields since step 2: `pending` (the bank hasn't booked it yet; it becomes booked in place,
   or goes if the bank cancels it) and `bank` (the bank's record of it has come: `source` `bank`, or a tap matched to
   it).
@@ -2291,7 +2303,7 @@ the user's own accounts); a refund (positive, not income) takes from its categor
   Charges that repeat each week, month or year at about the same price (within 20%), or a single charge sorted as a
   subscription (monthly until it shows otherwise); dropped when one is 1.5 periods late. `price_was` is the charge
   before when it was different, else `null`.
-- **Finance** has `accounts` (balances and each link's state), `log_payment` (cash, a transfer; Apple Pay taps come in by themselves), `list_payments` (a
+- **Finance** has `accounts` (balances and each link's state), `log_payment` (cash with `cash`, a transfer; Apple Pay taps come in by themselves), `card_owed` (what's owed on Carta YOU now, and its last 4), `list_payments` (a
   `payments` card), `spending`, `recategorize`, `set_budget` (only when asked), `subscriptions` and `delete_payment`
   (queued). Its starters: "How much have I spent this month?", "What subscriptions do I have?", "I spent ".
 - **Privacy.** Payments stay on `cappa` (and its backups) and never go in the logs. The model sees only merchant names
@@ -2336,8 +2348,9 @@ private key on `cappa`) are in `.env`; `ENABLE_BANKING_REDIRECT` is the callback
   same card's payment to Revolut on the other bank ("PAGAMENTO PRESSO REVOLUT**1234*", a credit line drawn included:
   it's spent from where it lands), Revolut's investment and savings pockets, a giroconto, and money to or from the
   user's own name (the account holder Enable Banking gives, in any word order; a refund in their name stays income).
-  Paying off Advanzia's Carta YOU (its name, or Revolut's "Mastercard To" the user) is `card`. Records from before are
-  sorted again on each read. The user's own correction always wins.
+  Paying off Advanzia's Carta YOU (its name, or Revolut's "Mastercard To" the user) and drawing from it ("Top-Up by
+  *<its last4>") are tied to the card: `card` before Aide follows it, `transfer` after (Finance, Carta YOU). Records
+  from before are sorted again on each read. The user's own correction always wins.
 - **Privacy.** The private key and the bank data stay on `cappa`; nothing from a bank goes in the logs. Enable Banking
   sees what any account-information provider sees.
 

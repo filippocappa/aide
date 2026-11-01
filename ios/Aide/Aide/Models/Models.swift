@@ -3066,6 +3066,11 @@ struct FinanceAccount: Decodable, Identifiable, Hashable {
     var spentMonth: Double = 0
     /// Kept out of Money's accounts and total by the user (a credit line always below zero); its payments still count.
     var hidden: Bool = false
+    /// Carta YOU (`kind` credit), which Aide follows itself: when what's owed was told, and its last 4 digits.
+    var owedSince: String?
+    var last4: String?
+
+    var isCredit: Bool { kind == "credit" }
 }
 
 struct AccountResponse: Decodable { let account: FinanceAccount }
