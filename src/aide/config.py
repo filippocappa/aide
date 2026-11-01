@@ -54,6 +54,9 @@ class Settings:
     webdav_url: str | None = None  # how the phone reaches it, for the app's setup screen
     moodle_url: str | None = None  # https://elearning.unito.it/sme
     moodle_token: str | None = None  # from the app's Moodle login, written here by the server
+    enable_banking_app_id: str | None = None  # bank sync (#31): Enable Banking's application ID
+    enable_banking_key: Path | None = None  # its private key (PEM), copied to the server by the user
+    enable_banking_redirect: str | None = None  # the callback URL registered with Enable Banking
     gtt: bool = True  # Turin's GTT: stops, live arrivals and tram alerts (AIDE_GTT=0 turns it off)
 
 
@@ -125,5 +128,8 @@ def load_settings() -> Settings:
         webdav_url=os.environ.get("AIDE_WEBDAV_URL", "").strip() or None,
         moodle_url=os.environ.get("AIDE_MOODLE_URL", "").strip().rstrip("/") or None,
         moodle_token=os.environ.get("MOODLE_TOKEN", "").strip() or None,
+        enable_banking_app_id=os.environ.get("ENABLE_BANKING_APP_ID", "").strip() or None,
+        enable_banking_key=Path(k).expanduser() if (k := os.environ.get("ENABLE_BANKING_KEY", "").strip()) else None,
+        enable_banking_redirect=os.environ.get("ENABLE_BANKING_REDIRECT", "").strip() or None,
         gtt=os.environ.get("AIDE_GTT", "1").strip() not in ("0", "false", "no", "off"),
     )

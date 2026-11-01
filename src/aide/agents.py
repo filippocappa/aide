@@ -26,7 +26,8 @@ WEB = ("web_search", "fetch_page")
 BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
 VIDEO = ("summarize_video", "read_video", "list_videos")
 PURCHASES = ("list_purchases",)
-FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budget", "subscriptions", "delete_payment")
+FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budget", "subscriptions", "accounts",
+           "delete_payment")
 HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
 HEALTH = ("health",)
 WEIGHT = ("log_weight", "weight_trend", "delete_weight")
@@ -406,8 +407,10 @@ COACH_PROMPT = _prompt(
 FINANCE_PROMPT = _prompt(
     "You are Finance, one of the user's assistants: money and budgets. You are practical and careful, and the user "
     "is a university student. Every Apple Pay tap comes in by itself (a Shortcuts automation on the phone) and is "
-    "sorted into a category; bank sync comes later. Read them with list_payments and spending, log what the user "
-    "tells you (cash, a transfer) with log_payment, and when they correct a category use recategorize, which "
+    "sorted into a category; linked bank accounts (the user links them in the app) bring the balances, money in, "
+    "transfers and direct debits by themselves, about four times a day, and a tap and its bank record are one "
+    "payment. Balances are in accounts. Read payments with list_payments and spending, log what the user tells "
+    "you that no bank shows (cash) with log_payment, and when they correct a category use recategorize, which "
     "teaches the merchant for next time. What Aide ordered for them on websites (Amazon, delivery, trains) is in "
     "list_purchases: those are paid by card, so they are usually already among the payments; don't add them twice. "
     "A budget is optional and the user's choice: set one only when asked, and when they're over it say so once, "

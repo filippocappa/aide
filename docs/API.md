@@ -2212,9 +2212,11 @@ question and its answer, the TL;DR, what to know, the moments with their times (
 ## Finance
 
 Since 2026-11-01 (#31, step 1). The user's payments, sorted into categories, for Finance and the Money tab. They come
-from the Wallet: a Shortcuts automation (Transaction: when I tap any card) runs the app's **Log payment** App Intent
-with the card, the merchant and the amount, and the app posts it here. Bank sync (PSD2) and statements come later
-(`source` `bank` and `statement`). Aide never moves money; nothing here does.
+from linked bank accounts (step 2, see Banks below: balances, money in, transfers, direct debits) and from the Wallet:
+a Shortcuts automation (Transaction: when I tap any card) runs the app's **Log payment** App Intent with the card, the
+merchant and the amount, and the app posts it here. A tap is there in seconds with a clean name and the exact time;
+the bank's record comes hours later and is matched to it, so it's one payment. Statements come later (`source`
+`statement`). Aide never moves money; nothing here does.
 
 Amounts are euros, **negative when money goes out**. Spending is every payment except `income` and `transfer` (between
 the user's own accounts); a refund (positive, not income) takes from its category.
@@ -2271,19 +2273,63 @@ the user's own accounts); a refund (positive, not income) takes from its categor
   optional:** without one the Money page compares with last month by the same day, and being over is said once in
   words, never louder.
 - **Account:** `{"id": 1, "name": "Revolut", "kind": "card", "source": "wallet", "currency": "EUR", "balance": null,
-  "balance_at": null, "consent_until": null, "status": "wallet", "last_at": "…", "count": 41, "spent_month":
-  210.4}`. `status` is where its payments come from (`wallet` now; `bank` with a consent date later). `balance` comes
-  with bank sync.
+  "balance_at": null, "consent_until": null, "status": "wallet", "bank_id": null, "last_at": "…", "count": 41,
+  "spent_month": 210.4}`. `status` is where its payments come from: `wallet`, `manual`, or for a bank account `bank`
+  (linked), `renew` (the consent ends within 7 days), `expired` (link it again) or `unlinked`. `balance` (the
+  bank's available balance on an account, the booked one on a card) and `balance_at` come from bank sync, else
+  `null`. `GET /v1/finance/accounts` also has `total`: the linked accounts' balances added up (`kind` `account`,
+  cards left out), `null` with none.
+- **Payment** has two more fields since step 2: `pending` (the bank hasn't booked it yet; it becomes booked in place,
+  or goes if the bank cancels it) and `bank` (the bank's record of it has come: `source` `bank`, or a tap matched to
+  it).
 - **Subscription:** `{"merchant": "Spotify", "amount": 11.99, "period": "month", "category": "subscriptions",
   "account": "Hype", "last": "2026-11-03", "next": "2026-12-03", "count": 4, "monthly": 11.99, "price_was": 10.99}`.
   Charges that repeat each week, month or year at about the same price (within 20%), or a single charge sorted as a
   subscription (monthly until it shows otherwise); dropped when one is 1.5 periods late. `price_was` is the charge
   before when it was different, else `null`.
-- **Finance** has `log_payment` (cash, a transfer; Apple Pay taps come in by themselves), `list_payments` (a
+- **Finance** has `accounts` (balances and each link's state), `log_payment` (cash, a transfer; Apple Pay taps come in by themselves), `list_payments` (a
   `payments` card), `spending`, `recategorize`, `set_budget` (only when asked), `subscriptions` and `delete_payment`
   (queued). Its starters: "How much have I spent this month?", "What subscriptions do I have?", "I spent ".
 - **Privacy.** Payments stay on `cappa` (and its backups) and never go in the logs. The model sees only merchant names
   when sorting, and what Finance reads in chat.
+
+### Banks
+
+Since 2026-11-01 (#31, step 2). Bank accounts read through [Enable Banking](https://enablebanking.com), a licensed
+PSD2 account-information provider: read-only, nothing can move money. The user picks the bank in the app and logs in
+on the bank's own page (in an `ASWebAuthenticationSession`); the bank sends the browser to the server's callback,
+which keeps the link and redirects to `aide://money/banks`. A link lasts the bank's maximum, at most 180 days; a week
+before it ends a `finance` push asks to renew (linking the same bank again replaces the old link and keeps its
+accounts and payments). Off unless `ENABLE_BANKING_APP_ID` and `ENABLE_BANKING_KEY` (the path of the application's
+private key on `cappa`) are in `.env`; `ENABLE_BANKING_REDIRECT` is the callback URL registered with Enable Banking
+(else the `server` the app sends).
+
+| Endpoint | Body / query | Response |
+|---|---|---|
+| `GET /v1/finance/banks` | | `{"enabled": true, "banks": [Bank]}`, the linked ones (and ended ones to renew); `enabled` false: bank sync is off on the server |
+| `GET /v1/finance/banks/available` | `?country=IT` | `{"banks": [{"name": "Intesa Sanpaolo", "country": "IT", "logo": "https://…png", "beta": false, "days": 180}]}`, by name; `days` is how long a link lasts. 503 when bank sync is off, 502 when Enable Banking fails |
+| `POST /v1/finance/banks/link` | `{"bank": "Intesa Sanpaolo", "country": "IT", "server": "https://cappa.<tailnet>.ts.net"}` | `{"url": "https://…"}`: open it in a web authentication session with callback scheme `aide`. 400 for an unknown bank or no callback URL |
+| `GET /v1/finance/banks/callback` | `?state=…&code=…` (or `error=`), from the bank's page; **no token** (the one-time `state`, 30 min, is the key) | 302 to `aide://money/banks?linked=<bank id>` after the link is kept and the last 90 days read, or `aide://money/banks?error=<text>` |
+| `POST /v1/finance/banks/sync` | `?force=true` to read even within 2 minutes of the last read | `{"new": 3, "banks": [Bank]}`; the app calls it when Money opens (the user is there: the bank lets Aide read beyond its 4 reads a day), then reloads. `{"new": 0, "banks": []}` when off |
+| `DELETE /v1/finance/banks/{id}` | | `{"ok": true}`: the link is closed; its accounts and payments stay, `status` `unlinked`; 404 |
+
+- **Bank:** `{"id": 2, "bank": "Intesa Sanpaolo", "country": "IT", "status": "linked", "valid_until":
+  "2027-04-30T10:00:00+00:00", "days_left": 179, "last_sync_at": "…", "error": null, "accounts": [3, 4]}`. `status`
+  is `linked`, `renew` (7 days or fewer left) or `expired`. `error` is the last read's problem in words ("The bank
+  asked to wait: it reads again later."), `null` when it went well.
+- **When it reads.** Without the user, at most 4 times a day per bank (PSD2's limit): 07:00, 12:00, 17:00 and 22:00
+  local. With the user, when Money opens (`/sync`), and when Finance's `accounts` tool runs. Each read takes the
+  balances and the transactions from 10 days before the last booked one (90 days the first time).
+- **One payment, not two.** A bank transaction is matched, by amount, to a Wallet tap from 5 days before to a day
+  after (the nearest in time, the most alike name first): the tap keeps its name, time and category, and the bank's
+  text goes with it. A tap that comes after the bank's record (it waited on the phone) merges into it the same way.
+  A pending transaction becomes the booked one in place.
+- **Sorting.** As for taps (a merchant's rule, else the model), with the merchant taken out of the bank's text
+  ("PAGAMENTO POS … ESSELUNGA TORINO CARTA N.****1234" → "Esselunga Torino"). Money in is `income`; a cash machine is
+  `cash`; money between two linked accounts (an own IBAN, or the same amount out of one and into another within 3
+  days) is `transfer` on both sides. The user's own correction always wins.
+- **Privacy.** The private key and the bank data stay on `cappa`; nothing from a bank goes in the logs. Enable Banking
+  sees what any account-information provider sees.
 
 ## Usage
 
@@ -2360,6 +2406,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `transit` | alert, `interruption-level: time-sensitive` | a tram alert fires ("Tram 4 in 7 min: leave now") | `alert_id` | nothing special (opens the app) |
 | `location` | silent (like `sync`) | a tram alert wants to know where the phone is | | (not shown) the app sends a fresh fix to `POST /v1/location` |
 | `errand` | alert; `interruption-level: time-sensitive` when it needs you in the live view or waits for a Confirm | a browser errand needs you (a login, a code, a card step), asks something, waits for a Confirm (since 2026-10-30 only when its Live Activity didn't say it), is done or failed (since 2026-10-27). Not shown while the app is on that errand's chat or live view | `errand_id`, `conversation_id` | needing you in the live view: opens it (`aide://errand/<id>`); else the conversation |
+| `finance` | alert | money came into a linked bank account (€10 or more, read while the app wasn't open: "Money in", "€250 from Borsa di studio"), or a bank's consent ends within a week ("Renew Intesa Sanpaolo"); since 2026-11-01 | `payment_id` or `bank_id` | `payment_id`: Money on that payment; `bank_id`: Money's accounts (Renew there) |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
 ```json

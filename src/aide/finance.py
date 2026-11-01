@@ -59,6 +59,19 @@ CREATE TABLE IF NOT EXISTS finance_rules (
     origin     TEXT NOT NULL,     -- user | model
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS finance_banks (
+    id            INTEGER PRIMARY KEY,
+    session_id    TEXT NOT NULL UNIQUE,
+    bank          TEXT NOT NULL,
+    country       TEXT NOT NULL,
+    valid_until   TEXT,
+    status        TEXT NOT NULL DEFAULT 'linked',  -- linked | expired | unlinked | replaced
+    error         TEXT,
+    last_sync_at  TEXT,
+    last_slot_at  TEXT,  -- the background slot last read
+    reminded      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
@@ -129,6 +142,19 @@ class FinanceStore:
         self.tz = tz
         self.ask = ask  # the fast model, for sorting new merchants; None: they stay "other" until a rule says
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Bank sync (#31, step 2, banks.py): the bank's id of each payment, pending ones, and each account's link."""
+        cols = {t: {r["name"] for r in self.conn.execute(f"PRAGMA table_info({t})")}
+                for t in ("finance_transactions", "finance_accounts")}
+        for table, col, decl in (("finance_transactions", "ref", "TEXT"),
+                                 ("finance_transactions", "pending", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("finance_accounts", "bank_id", "INTEGER"), ("finance_accounts", "uid", "TEXT"),
+                                 ("finance_accounts", "ident", "TEXT"), ("finance_accounts", "iban", "TEXT")):
+            if col not in cols[table]:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS finance_transactions_ref ON finance_transactions (ref)")
 
     def today(self) -> date:
         return datetime.now(self.tz).date()
@@ -162,9 +188,23 @@ class FinanceStore:
                                       (a["id"], self._utc(self.today().replace(day=1)))).fetchone()["s"]
             out.append({"id": a["id"], "name": a["name"], "kind": a["kind"], "source": a["source"],
                         "currency": a["currency"], "balance": a["balance"], "balance_at": a["balance_at"],
-                        "consent_until": a["consent_until"], "status": a["source"],
+                        "consent_until": a["consent_until"], "status": self._status(a), "bank_id": a["bank_id"],
                         "last_at": last["at"], "count": last["n"], "spent_month": round(-month, 2)})
         return out
+
+    def _status(self, a) -> str:
+        """Where an account's payments come from: wallet, manual, or its bank's link (bank, renew a week before the
+        consent ends, expired, unlinked)."""
+        if not a["bank_id"]:
+            return a["source"]
+        b = self.conn.execute("SELECT status, valid_until FROM finance_banks WHERE id = ?", (a["bank_id"],)).fetchone()
+        if not b or b["status"] in ("unlinked", "replaced") or not a["uid"]:
+            return "unlinked"
+        if b["status"] == "expired" or b["valid_until"] and datetime.fromisoformat(b["valid_until"]) <= utcnow():
+            return "expired"
+        if b["valid_until"] and datetime.fromisoformat(b["valid_until"]) - utcnow() <= timedelta(days=7):
+            return "renew"
+        return "bank"
 
     # -- transactions -----------------------------------------------------------------------------
 
@@ -173,7 +213,8 @@ class FinanceStore:
         return {"id": row["id"], "at": row["at"], "amount": row["amount"], "currency": row["currency"],
                 "merchant": row["merchant"], "category": row["category"], "sorted_by": row["sorted_by"],
                 "source": row["source"], "account": acc["name"] if acc else None, "account_id": row["account_id"],
-                "place": row["place"], "lat": row["lat"], "lon": row["lon"], "note": row["note"]}
+                "place": row["place"], "lat": row["lat"], "lon": row["lon"], "note": row["note"],
+                "pending": bool(row["pending"]), "bank": bool(row["ref"])}
 
     def find(self, tx_id: int) -> dict:
         row = self.conn.execute("SELECT * FROM finance_transactions WHERE id = ?", (tx_id,)).fetchone()
@@ -231,6 +272,18 @@ class FinanceStore:
                       (when + REPEAT_WINDOW).isoformat())).fetchone()
         if same:
             return self.as_json(same), False
+        if source == "wallet" and (bank := self._bank_twin(amount, when)) is not None:
+            # the bank had it first (the tap waited on the phone): the tap's name, time and place, the bank's record
+            self.conn.execute("UPDATE finance_transactions SET merchant = ?, at = ?, source = 'wallet', place = ?, "
+                              "lat = ?, lon = ? WHERE id = ?", (merchant, when.isoformat(), place, lat, lon, bank["id"]))
+            if bank["sorted_by"] != "user":
+                cat, by = (category, "user") if category else \
+                    ((r["category"], "rule") if (r := self.rule(merchant)) else ("other", "none"))
+                if category:
+                    self._save_rule(merchant, category, "user")
+                self.conn.execute("UPDATE finance_transactions SET category = ?, sorted_by = ? WHERE id = ?",
+                                  (cat, by, bank["id"]))
+            return self.find(bank["id"]), True
         sorted_by = "none"
         if category:
             sorted_by = "user"
@@ -245,6 +298,14 @@ class FinanceStore:
             (acc and acc["id"], when.isoformat(), amount, currency, merchant, raw, category or "other", sorted_by,
              source, place, lat, lon, note, utcnow().isoformat()))
         return self.find(cur.lastrowid), True
+
+    def _bank_twin(self, amount: float, when: datetime):
+        """A bank transaction of this amount from the day of the tap to 5 days after, not yet matched to a tap."""
+        day = when.astimezone(self.tz).date()
+        rows = self.conn.execute("SELECT * FROM finance_transactions WHERE source = 'bank' AND amount = ? AND at "
+                                 "BETWEEN ? AND ? ORDER BY at", (amount, self._utc(day - timedelta(days=1)),
+                                                                 self._utc(day + timedelta(days=6)))).fetchall()
+        return rows[0] if rows else None
 
     async def sort_pending(self) -> int:
         """Ask the model once for every merchant still unsorted; their answers become rules. Returns how many payments

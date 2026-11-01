@@ -8,13 +8,14 @@ import logging
 import re
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Awaitable, Callable, Literal
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import anthropic
 import httpx
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import activity, usage
@@ -55,6 +56,7 @@ from ..transit import AlertStore, Boards, Location
 from ..videos import VideoWorker, find_link
 from ..wake import WakeService
 from ..weight import WeightStore
+from ..banks import Banks, BankError
 from ..finance import CATEGORIES as FINANCE_CATEGORIES, NOT_SPENDING, FinanceStore, parse_amount
 
 log = logging.getLogger(__name__)
@@ -418,6 +420,12 @@ class BudgetIn(BaseModel):
     categories: dict[str, float | None] = {}  # null removes a category's budget
 
 
+class BankLinkIn(BaseModel):
+    bank: str
+    country: str = Field("IT", pattern=r"^[A-Za-z]{2}$")
+    server: str | None = None  # the app's server URL, for the callback when the server has none set
+
+
 class InsightIn(BaseModel):
     kind: Literal["sleep", "recovery", "strain"]
     day: date | None = Field(None, alias="date")  # local date; omit for today
@@ -611,7 +619,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                errand_store: ErrandStore | None = None, plans: PlanStore | None = None,
                foods: FoodDB | None = None, off: OpenFoodFacts | None = None,
                weights: WeightStore | None = None, videos: VideoWorker | None = None,
-               lessons: LessonStore | None = None, finance: FinanceStore | None = None) -> FastAPI:
+               lessons: LessonStore | None = None, finance: FinanceStore | None = None,
+               banks: Banks | None = None, bank_redirect: str | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -626,6 +635,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     health.age = lambda: nutrition.targets()["profile"].get("age")
     weights = weights or WeightStore(db.conn, tz, health)
     finance = finance or FinanceStore(db.conn, tz)
+    banks = banks or Banks(finance, None)  # no Enable Banking key: bank sync is off
     if habits.health_days is None:  # limit habits count from Apple Health
         habits.health_days = health
     digest = digest or DigestService(db.conn, agent.client, agent.model, tz, store, habits, calendar, health=health)
@@ -2421,7 +2431,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/finance/accounts", dependencies=[Depends(auth)])
     async def finance_accounts():
-        return {"accounts": finance.accounts()}
+        accounts = finance.accounts()
+        held = [a["balance"] for a in accounts if a["balance"] is not None and a["kind"] == "account"
+                and a["status"] != "unlinked"]
+        return {"accounts": accounts, "total": round(sum(held), 2) if held else None}
 
     @app.get("/v1/finance/subscriptions", dependencies=[Depends(auth)])
     async def finance_subscriptions():
@@ -2439,6 +2452,73 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return finance.set_budget(categories=body.categories)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+
+    # -- Banks (docs/API.md, "Finance", Banks) ---------------------------------------------------------
+
+    def banks_on() -> None:
+        if not banks.enabled:
+            raise HTTPException(503, "bank sync isn't set up on the server (ENABLE_BANKING_APP_ID)")
+
+    def psu(request: Request) -> dict:
+        """The user is in the app: the bank may be read beyond its 4 unattended reads a day."""
+        ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "")).split(",")[0]
+        return {k: v for k, v in (("Psu-Ip-Address", ip.strip()),
+                                  ("Psu-User-Agent", request.headers.get("user-agent", ""))) if v}
+
+    @app.get("/v1/finance/banks", dependencies=[Depends(auth)])
+    async def linked_banks():
+        return {"enabled": banks.enabled, "banks": banks.linked()}
+
+    @app.get("/v1/finance/banks/available", dependencies=[Depends(auth)])
+    async def available_banks(country: str = Query("IT", pattern=r"^[A-Za-z]{2}$")):
+        banks_on()
+        try:
+            return {"banks": await banks.banks(country)}
+        except BankError as e:
+            raise HTTPException(502, f"Enable Banking: {e}") from None
+
+    @app.post("/v1/finance/banks/link", dependencies=[Depends(auth)])
+    async def link_bank(body: BankLinkIn):
+        banks_on()
+        redirect = bank_redirect or (body.server.rstrip("/") + "/v1/finance/banks/callback"
+                                     if body.server and body.server.startswith("https://") else None)
+        if not redirect:
+            raise HTTPException(400, "no callback URL: set ENABLE_BANKING_REDIRECT or send the server's https URL")
+        try:
+            return {"url": await banks.start_link(body.bank, body.country, redirect)}
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        except BankError as e:
+            raise HTTPException(502, f"Enable Banking: {e}") from None
+
+    @app.get("/v1/finance/banks/callback")  # the bank's page sends the browser here: no token, the state is the key
+    async def bank_callback(request: Request, state: str = "", code: str = "", error: str = "",
+                            error_description: str = ""):
+        if not banks.enabled:
+            return HTMLResponse("Bank sync is off on the server.", status_code=503)
+        back = "aide://money/banks"
+        if error or not code:
+            log.info("bank link not finished: %s", error or "no code")
+            return RedirectResponse(f"{back}?error={quote(error_description or error or 'cancelled')}", 302)
+        try:
+            linked = await banks.finish_link(state, code, psu(request))
+        except (ValueError, BankError) as e:
+            log.warning("bank link failed: %s", e)
+            return RedirectResponse(f"{back}?error={quote(str(e)[:200])}", 302)
+        return RedirectResponse(f"{back}?linked={linked['id']}", 302)
+
+    @app.post("/v1/finance/banks/sync", dependencies=[Depends(auth)])
+    async def sync_banks(request: Request, force: bool = False):
+        if not banks.enabled:
+            return {"new": 0, "banks": []}
+        return await banks.sync_all(psu(request), force=force)
+
+    @app.delete("/v1/finance/banks/{bank_id}", dependencies=[Depends(auth)])
+    async def unlink_bank(bank_id: int):
+        banks_on()
+        if not await banks.unlink(bank_id):
+            raise HTTPException(404, "no such bank")
+        return {"ok": True}
 
     @app.post("/v1/wake", dependencies=[Depends(auth)])
     async def wake_up(body: WakeIn | None = None):

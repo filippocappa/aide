@@ -47,6 +47,7 @@ from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
 from .videos import VideoStore, VideoWorker
 from .weight import WeightStore
+from .banks import Banks, EnableBanking
 from .finance import FinanceStore
 from .webdav import USER as WEBDAV_USER
 from .tools import ToolRegistry
@@ -139,7 +140,14 @@ def main() -> None:
     async def finance_ask(system, text):  # sorting new merchants: the fast model, never waiting at the plan's limit
         return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, background=True)
     finance = FinanceStore(db.conn, settings.timezone, finance_ask)
-    tools += finance_tools(finance)
+    bank_client = None
+    if settings.enable_banking_app_id and settings.enable_banking_key:
+        try:
+            bank_client = EnableBanking(settings.enable_banking_app_id, settings.enable_banking_key)
+        except OSError as e:
+            log.warning("bank sync off: can't read the Enable Banking key (%s)", type(e).__name__)
+    banks = Banks(finance, bank_client, lambda title, body, extra: push.send_finance(title, body, **extra))
+    tools += finance_tools(finance, banks)
     quizzes = QuizStore(notebook)
 
     async def lesson_ask(system, content, max_tokens, fast, live):  # the plan first; live calls never wait at its limit
@@ -308,6 +316,7 @@ def main() -> None:
             *([errands.run()] if errands else []),
             videos.run(),
             lessons.run(),
+            *([banks.run()] if banks.enabled else []),
         ]
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
@@ -316,7 +325,8 @@ def main() -> None:
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off,
-                             weights=weights, videos=videos, lessons=lessons, finance=finance)
+                             weights=weights, videos=videos, lessons=lessons, finance=finance,
+                             banks=banks, bank_redirect=settings.enable_banking_redirect)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

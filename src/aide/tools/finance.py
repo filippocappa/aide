@@ -40,7 +40,7 @@ def describe_month(m: dict) -> str:
     return "\n".join(lines)
 
 
-def finance_tools(store: FinanceStore) -> list[Tool]:
+def finance_tools(store: FinanceStore, banks=None) -> list[Tool]:
     async def log_payment(amount: float, merchant: str, income: bool = False, category: str | None = None,
                           paid_at: str | None = None, account: str | None = None, note: str | None = None) -> str:
         value = abs(amount) if income else -abs(amount)
@@ -98,6 +98,26 @@ def finance_tools(store: FinanceStore) -> list[Tool]:
                          f"last {x['last']} ({x['count']} charges)")
         return "\n".join(lines)
 
+    async def accounts() -> str:
+        if banks is not None and banks.enabled:
+            await banks.sync_all()  # within 2 minutes of the last read this reads nothing
+        lines = []
+        for a in store.accounts():
+            if a["balance"] is not None:
+                when = store.local(a["balance_at"]).strftime("%a %d %b %H:%M") if a["balance_at"] else "?"
+                line = f"- {a['name']} ({a['kind']}): {'-' if a['balance'] < 0 else ''}{euros(a['balance'])}, " \
+                       f"as of {when}"
+            else:
+                line = f"- {a['name']} ({a['kind']}): no balance (from {a['source']})"
+            status = {"renew": "the bank link ends within a week: renew it in Money", "expired": "the bank link "
+                      "ended: link it again in Money", "unlinked": "not linked any more"}.get(a["status"])
+            lines.append(line + (f"; {status}" if status else ""))
+        if not lines:
+            return "No accounts yet. Banks are linked in the app: Money → Accounts → Link a bank."
+        if banks is None or not banks.linked():
+            lines.append("No bank is linked, so there are no balances (Money → Accounts → Link a bank).")
+        return "\n".join(lines)
+
     async def delete_payment(payment_id: int) -> str:
         tx = store.find(payment_id)
         store.delete(payment_id)
@@ -151,6 +171,9 @@ def finance_tools(store: FinanceStore) -> list[Tool]:
         Tool("subscriptions", "Charges that repeat each week, month or year (and anything sorted as a subscription): "
              "the price, when the next one is, price changes, and the monthly total.",
              {"type": "object", "properties": {}, "additionalProperties": False}, subscriptions),
+        Tool("accounts", "The user's accounts and cards: each balance from the bank (read now if the last read is "
+             "older than 2 minutes) and the bank link's state. Read-only: Aide can't move money.",
+             {"type": "object", "properties": {}, "additionalProperties": False}, accounts),
         Tool("delete_payment", "Delete a payment logged by mistake or twice ([payment N]). Needs the user's "
              "confirmation: it is queued, and runs only when the user replies !yes.",
              {"type": "object", "properties": {"payment_id": {"type": "integer"}}, "required": ["payment_id"],

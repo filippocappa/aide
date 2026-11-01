@@ -241,6 +241,10 @@ class Push:
         # Time-sensitive: it's worth breaking through a Focus, and stale a few minutes later.
         return await self._alert("transit", title, body, level="time-sensitive", alert_id=alert_id)
 
+    async def send_finance(self, title: str, body: str, **extra) -> bool:
+        """Money in, or a bank's consent to renew (`bank_id`)."""
+        return await self._alert("finance", title, body, **extra)
+
     async def request_location(self) -> bool:
         """Ask the phone for a fresh location fix (silent): a tram alert needs to know the walk."""
         sent, _ = await self.send({"aps": {"content-available": 1}, "aide": {"kind": "location"}}, background=True)
