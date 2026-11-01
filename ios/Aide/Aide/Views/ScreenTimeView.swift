@@ -11,6 +11,10 @@ struct ScreenTimeView: View {
     @State private var unlocking: Unlocking?
     @State private var adding = false
 
+    @State private var countingPicker = false
+    @State private var addingLimit = false
+    @State private var unlockingLimit: ScreenLimit?
+
     /// The sheet that ends a lock early: with a reason, or for a strict one an emergency pass.
     struct Unlocking: Identifiable {
         let lock: ScreenLock
@@ -34,7 +38,19 @@ struct ScreenTimeView: View {
         .navigationTitle("Screen Time")
         .navigationBarTitleDisplayMode(.inline)
         .familyActivityPicker(isPresented: $picking, selection: $screenTime.allowed)
-        .sheet(item: $unlocking) { item in UnlockSheet(lock: item.lock, pass: item.pass) }
+        .sheet(item: $unlocking) { item in
+            UnlockSheet(name: item.lock.title, pass: item.pass,
+                        after: item.lock.once ? "It ends for good." : "It's back next time, as usual.") { reason in
+                await screenTime.unlock(item.lock, reason: reason, pass: item.pass)
+            }
+        }
+        .sheet(item: $unlockingLimit) { limit in
+            UnlockSheet(name: limit.title, pass: limit.strict, after: "It counts again tomorrow.") { reason in
+                await screenTime.unlock(limit, reason: reason, pass: limit.strict)
+            }
+        }
+        .sheet(isPresented: $addingLimit) { NavigationStack { LimitEditor(limit: nil, apps: FamilyActivitySelection()) } }
+        .familyActivityPicker(isPresented: $countingPicker, selection: $screenTime.counted)
         .sheet(isPresented: $adding) { NavigationStack { LockEditor(lock: nil, apps: LockApps(only: false, selection: screenTime.allowed)) } }
         .refreshable { await screenTime.sync() }
         .task { await screenTime.sync() }
@@ -157,6 +173,32 @@ struct ScreenTimeView: View {
             Text("Coach sets these in chat too: \"lock my phone from 23:00 to 7:00 on weeknights\", \"no phone until "
                  + "16:00\". They start and end on time with Aide closed. A strict one ends early only with an "
                  + "emergency pass (\(screenTime.passes?.month ?? 3) a month), and locks this page while it's on.")
+        }
+        Section {
+            ForEach(screenTime.limits) { limit in
+                NavigationLink {
+                    LimitEditor(limit: limit, apps: screenTime.limitApps[limit.id] ?? FamilyActivitySelection())
+                } label: {
+                    LimitRow(limit: limit) { unlockingLimit = limit }
+                }
+            }
+            Button { addingLimit = true } label: { Label("Add a limit", systemImage: "plus") }
+                .disabled(!screenTime.isAuthorized)
+        } header: {
+            Text("Daily limits")
+        } footer: {
+            Text("Some apps get so much time a day, then they lock until midnight: Social, 30 minutes. Ending one "
+                 + "early for the day takes a reason (a strict one, an emergency pass). Coach sees them.")
+        }
+        Section {
+            PickRow(title: "Counted", value: screenTime.countedCount == 0 ? "Nothing yet"
+                    : "\(screenTime.countedCount) categor\(screenTime.countedCount == 1 ? "y" : "ies")") { countingPicker = true }
+                .disabled(!screenTime.isAuthorized)
+        } header: {
+            Text("Share with Coach")
+        } footer: {
+            Text("Pick every category (the top row in the picker) and Aide sends Coach how long you were on your "
+                 + "phone each day, to the nearest 15 minutes. Which apps stays on this phone.")
         }
     }
 
@@ -366,13 +408,16 @@ private struct LockEditor: View {
     }
 }
 
-/// Ending a lock early: say why, then wait a few seconds. Coach sees the reason.
+/// Ending a lock or a limit early: say why, then wait a few seconds. Coach sees the reason.
 private struct UnlockSheet: View {
     @EnvironmentObject private var screenTime: ScreenTimeService
     @Environment(\.dismiss) private var dismiss
-    let lock: ScreenLock
-    /// An emergency pass, for a strict lock.
+    let name: String
+    /// An emergency pass, for a strict one.
     var pass = false
+    /// What happens after: "It ends for good."
+    let after: String
+    let unlock: (String) async -> Bool
 
     static let wait = 10
     @State private var reason = ""
@@ -387,7 +432,7 @@ private struct UnlockSheet: View {
                         .lineLimit(2...4)
                 } footer: {
                     Text((pass ? "Uses one of your \(screenTime.passes?.left ?? 0) passes left this month. " : "")
-                         + (lock.once ? "It ends for good." : "It's back next time, as usual.") + " Coach sees the reason.")
+                         + after + " Coach sees the reason.")
                 }
                 .listRowBackground(Theme.row)
                 if let error = screenTime.lastError {
@@ -396,7 +441,7 @@ private struct UnlockSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
-            .navigationTitle(pass ? "Emergency pass" : "End \(lock.title) early")
+            .navigationTitle(pass ? "Emergency pass" : "End \(name) early")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Keep it") { dismiss() } }
@@ -405,10 +450,7 @@ private struct UnlockSheet: View {
                         Button(left > 0 ? "Unlock (\(left))" : "Unlock") {
                             Task {
                                 isBusy = true
-                                if await screenTime.unlock(lock, reason: reason.trimmingCharacters(in: .whitespacesAndNewlines),
-                                                           pass: pass) {
-                                    dismiss()
-                                }
+                                if await unlock(reason.trimmingCharacters(in: .whitespacesAndNewlines)) { dismiss() }
                                 isBusy = false
                             }
                         }
@@ -424,5 +466,184 @@ private struct UnlockSheet: View {
             }
         }
         .presentationDetents([.medium])
+    }
+}
+
+/// A limit: its title, how much a day, and today: reached at 14:20 (with End for today), ended early, or not today.
+private struct LimitRow: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    let limit: ScreenLimit
+    let endEarly: () -> Void
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(limit.title)
+                Text(limit.summary).font(.subheadline).foregroundStyle(.secondary)
+                Text(appsLine).font(.caption).foregroundStyle(.secondary)
+                if let note {
+                    Text(note).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if screenTime.holds(limit) {
+                Button(limit.strict ? "Pass…" : "End…", action: endEarly)
+                    .buttonStyle(.bordered)
+                    .disabled(limit.strict && screenTime.passes?.left == 0)
+            } else {
+                Toggle(limit.title, isOn: Binding(get: { limit.enabled },
+                                                  set: { on in Task { await screenTime.setEnabled(limit, on) } }))
+                    .labelsHidden()
+                    .tint(Theme.toggle)
+            }
+        }
+        .opacity(limit.enabled ? 1 : 0.6)
+    }
+
+    private var appsLine: String {
+        let picked = screenTime.limitApps[limit.id] ?? FamilyActivitySelection()
+        let text = LockApps(only: true, selection: picked).text
+        return text == "Nothing picked" ? "No apps on this phone yet: pick them" : "Counts " + text
+    }
+
+    private var note: String? {
+        var parts: [String] = limit.strict ? ["Strict"] : []
+        if screenTime.holds(limit) {
+            let at = screenTime.reachedAt(limit).map { " at \($0.formatted(date: .omitted, time: .shortened))" } ?? ""
+            parts.append("Reached\(at), locked until midnight")
+        } else if screenTime.reachedAt(limit) != nil {
+            parts.append("Ended early for today")
+        } else if limit.enabled && !limit.counts() {
+            parts.append("Not today")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
+/// A daily limit: its name, how much a day, the days, the apps, strict. A strict one reached today can only be
+/// tightened until tomorrow.
+private struct LimitEditor: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    @Environment(\.dismiss) private var dismiss
+    let limit: ScreenLimit?
+
+    @State private var title: String
+    @State private var minutes: Int
+    @State private var days: Set<Int>
+    @State private var enabled: Bool
+    @State private var strict: Bool
+    @State private var apps: FamilyActivitySelection
+    @State private var picking = false
+    @State private var isBusy = false
+
+    static let choices = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240]
+
+    init(limit: ScreenLimit?, apps: FamilyActivitySelection) {
+        self.limit = limit
+        _title = State(initialValue: limit?.title ?? "Social")
+        _minutes = State(initialValue: limit?.minutes ?? 30)
+        _days = State(initialValue: Set(limit?.days ?? []))
+        _enabled = State(initialValue: limit?.enabled ?? true)
+        _strict = State(initialValue: limit?.strict ?? false)
+        _apps = State(initialValue: apps)
+    }
+
+    /// Strict and used up today: nothing that loosens it until tomorrow.
+    private var held: Bool { limit.map { $0.strict && screenTime.holds($0) } ?? false }
+
+    private var amounts: [Int] {
+        let all = Set(Self.choices + [minutes])
+        return all.filter { !held || $0 <= (limit?.minutes ?? 0) }.sorted()
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Name", text: $title)
+            } footer: {
+                Text("Aide's server and Coach see this name, not the apps.")
+            }
+            .listRowBackground(Theme.row)
+            Section {
+                Picker("A day", selection: $minutes) {
+                    ForEach(amounts, id: \.self) { m in Text(Self.amount(m)).tag(m) }
+                }
+                DayPicker(days: $days, tint: Theme.accent)
+                    .disabled(held)
+                if limit != nil { Toggle("On", isOn: $enabled).tint(Theme.toggle).disabled(held) }
+            } footer: {
+                Text(held ? "It's strict and used up today: it can only get tighter until tomorrow."
+                     : "The days it counts on; none picked is every day. Time used earlier today counts too.")
+            }
+            .listRowBackground(Theme.row)
+            Section {
+                PickRow(title: "Apps", value: appsValue) { picking = true }
+                    .disabled(held)
+            } footer: {
+                Text("Their time is added up; once it reaches the limit, they all lock until midnight. Picking a "
+                     + "category (Social) covers apps you install later too.")
+            }
+            .listRowBackground(Theme.row)
+            Section {
+                Toggle("Strict", isOn: $strict).tint(Theme.toggle).disabled(held)
+            } footer: {
+                Text("Once it's used up, it ends early only with an emergency pass (3 a month), and can't be "
+                     + "loosened until the next day.")
+            }
+            .listRowBackground(Theme.row)
+            if let limit {
+                Section {
+                    Button("Delete limit", role: .destructive) {
+                        Task {
+                            isBusy = true
+                            if await screenTime.delete(limit) { dismiss() }
+                            isBusy = false
+                        }
+                    }
+                }
+                .listRowBackground(Theme.row)
+                .disabled(isBusy || held)
+            }
+            if let error = screenTime.lastError {
+                Text(error).foregroundStyle(.red).listRowBackground(Theme.row)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Theme.grouped)
+        .familyActivityPicker(isPresented: $picking, selection: $apps)
+        .navigationTitle(limit?.title ?? "New limit")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if limit == nil {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                if isBusy { ProgressView() } else {
+                    Button("Save") {
+                        Task {
+                            isBusy = true
+                            if await screenTime.saveLimit(limit, title: title.trimmingCharacters(in: .whitespaces),
+                                                          minutes: minutes, days: days.sorted(), enabled: enabled,
+                                                          strict: strict, apps: apps) {
+                                dismiss()
+                            }
+                            isBusy = false
+                        }
+                    }
+                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || apps == FamilyActivitySelection())
+                }
+            }
+        }
+    }
+
+    private var appsValue: String {
+        let text = LockApps(only: true, selection: apps).text
+        return text == "Nothing picked" ? "Pick" : text
+    }
+
+    /// "30 min", "1 h 30 min".
+    static func amount(_ minutes: Int) -> String {
+        let h = minutes / 60, m = minutes % 60
+        return [h > 0 ? "\(h) h" : nil, m > 0 ? "\(m) min" : nil].compactMap { $0 }.joined(separator: " ")
     }
 }

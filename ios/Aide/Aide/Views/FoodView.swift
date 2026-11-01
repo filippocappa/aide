@@ -1,17 +1,34 @@
 import SwiftUI
 
-/// The Food tab, for a day (today, or an earlier one from the arrows): the day's score and targets, what's left,
-/// and what you ate. Meals come from photos with a few words, or the words alone, that Coach names and estimates (a
-/// packet's barcode in a photo brings its real numbers); tap one to fix the numbers, swipe to delete. Every meal also
-/// goes to Apple Health (`HealthService.writeMeals`). The Control Center buttons and `aide://meal/…` open it.
+/// The Mac's Food section: the food page on its own, with its own day.
 struct FoodView: View {
+    @State private var day = Calendar.current.startOfDay(for: Date())
+
+    var body: some View {
+        NavigationStack {
+            FoodPage(day: $day) { DayHeader(day: $day) }
+                .background(Theme.grouped)
+                .navigationTitle("Food")
+        }
+    }
+}
+
+/// Food for a day (today, or an earlier one from the arrows): the day's score and targets, what's left, and what you
+/// ate. On the phone it is the Food half of the Health tab, sharing its day; `header` is what sits above it (the
+/// tab's title, the Body · Food switch and the day). Meals come from photos with a few words, or the words alone,
+/// that Coach names and estimates (a packet's barcode in a photo brings its real numbers); tap one to fix the
+/// numbers, swipe to delete. Every meal also goes to Apple Health (`HealthService.writeMeals`). The Control Center
+/// buttons and `aide://meal/…` open it.
+struct FoodPage<Header: View>: View {
+    @Binding var day: Date
+    @ViewBuilder var header: () -> Header
+
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var health: HealthService
 
-    @State private var day = Calendar.current.startOfDay(for: Date())
     @State private var food: FoodDay?
     /// An older server without food.
     @State private var noFood = false
@@ -40,95 +57,94 @@ struct FoodView: View {
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section { DayHeader(day: $day) }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
-                if noFood {
+        List {
+            Section { header() }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
+            if noFood {
+                Section {
+                    Text("This server doesn't keep a food log yet.").font(.subheadline).foregroundStyle(.secondary)
+                }
+                .listRowBackground(Theme.row)
+            } else {
+                if let food {
                     Section {
-                        Text("This server doesn't keep a food log yet.").font(.subheadline).foregroundStyle(.secondary)
+                        NavigationLink { NutritionDayView(day: food, tint: coach.tint) } label: {
+                            DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
+                        }
                     }
                     .listRowBackground(Theme.row)
-                } else {
-                    if let food {
-                        Section {
-                            NavigationLink { NutritionDayView(day: food, tint: coach.tint) } label: {
-                                DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
-                            }
-                        }
-                        .listRowBackground(Theme.row)
-                    }
-                    foodSection
-                    // Its own section: a clear row inside the card's section cut off the card's rounded bottom.
-                    Section { logButton }
-                    mealsSection
                 }
+                foodSection
+                // Its own section: a clear row inside the card's section cut off the card's rounded bottom.
+                Section { logButton }
+                mealsSection
             }
-            .scrollContentBackground(.hidden)
-            .background(Theme.grouped)
-            .navigationTitle("Food")
-            .sheet(isPresented: $showGoals, onDismiss: { Task { await loadFood() } }) {
-                NavigationStack { NutritionTargetsView(inSheet: true) }
-            }
-            .sheet(item: $editingMeal) { meal in
-                MealSheet(meal: meal, save: { await update(meal, $0) }, delete: { await remove(meal) })
-            }
-            .alert("What did you eat?", isPresented: $describing) {
-                TextField("A cappuccino and a croissant", text: $mealText)
-                Button("Cancel", role: .cancel) { mealText = "" }
-                Button("Log") {
-                    let text = mealText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    mealText = ""
-                    if !text.isEmpty { Task { await log(text: text) } }
-                }
-            }
-            .fullScreenCover(isPresented: $showCamera, onDismiss: afterCamera) {
-                MealCameraView(tint: coach.tint, date: isToday ? nil : Wire.dayString(day)) { cameraResult = $0 }
-            }
-            // The meal camera above takes photos here; the library comes from this.
-            .photoSources(camera: .constant(false), library: $showLibrary, limit: 4, barcodes: true) { photos in
-                // A lone packet with its barcode: the real numbers and how much, no model call. Anything more
-                // (other photos) goes to Coach, with the barcodes.
-                if photos.count == 1, let code = photos[0].barcodes.first {
-                    scanned = ScannedCode(code: code, photo: photos[0])
-                } else {
-                    pickedPhotos = PickedMeal(photos: photos)
-                }
-            }
-            .sheet(item: $pickedPhotos) { picked in
-                MealPhotosSheet(photos: picked.photos) { text in Task { await log(photos: picked.photos, text: text) } }
-            }
-            .alert("Barcode", isPresented: $typingBarcode) {
-                TextField("8001505005707", text: $barcodeText).keyboardType(.numberPad)
-                Button("Cancel", role: .cancel) { barcodeText = "" }
-                Button("Look up") {
-                    let code = barcodeText.filter(\.isNumber)
-                    barcodeText = ""
-                    if !code.isEmpty { scanned = ScannedCode(code: code) }
-                }
-            } message: {
-                Text("The digits under the barcode.")
-            }
-            .sheet(item: $scanned, onDismiss: {
-                if let photo = coachInstead { pickedPhotos = PickedMeal(photos: [photo]) }
-                coachInstead = nil
-            }) { code in
-                ScanSheet(barcode: code.code, date: isToday ? nil : Wire.dayString(day), tint: coach.tint,
-                          logged: loggedPacket, askCoach: code.photo.map { photo in { coachInstead = photo } })
-            }
-            .refreshable { await loadFood() }
-            .onChange(of: env.mealLog) { startMealLog() }
-            .task {
-                startMealLog() // a Control Center button that launched the app
-                #if DEBUG
-                if settings.isPreview, let code = UserDefaults.standard.string(forKey: "previewBarcode") {
-                    scanned = ScannedCode(code: code)
-                }
-                #endif
-            }
-            .task(id: day) { await loadFood() }
         }
+        .scrollContentBackground(.hidden)
+        #if os(iOS)
+        .contentMargins(.top, 0, for: .scrollContent) // the day sits where it does on Body, under the switch
+        #endif
+        .sheet(isPresented: $showGoals, onDismiss: { Task { await loadFood() } }) {
+            NavigationStack { NutritionTargetsView(inSheet: true) }
+        }
+        .sheet(item: $editingMeal) { meal in
+            MealSheet(meal: meal, save: { await update(meal, $0) }, delete: { await remove(meal) })
+        }
+        .alert("What did you eat?", isPresented: $describing) {
+            TextField("A cappuccino and a croissant", text: $mealText)
+            Button("Cancel", role: .cancel) { mealText = "" }
+            Button("Log") {
+                let text = mealText.trimmingCharacters(in: .whitespacesAndNewlines)
+                mealText = ""
+                if !text.isEmpty { Task { await log(text: text) } }
+            }
+        }
+        .fullScreenCover(isPresented: $showCamera, onDismiss: afterCamera) {
+            MealCameraView(tint: coach.tint, date: isToday ? nil : Wire.dayString(day)) { cameraResult = $0 }
+        }
+        // The meal camera above takes photos here; the library comes from this.
+        .photoSources(camera: .constant(false), library: $showLibrary, limit: 4, barcodes: true) { photos in
+            // A lone packet with its barcode: the real numbers and how much, no model call. Anything more
+            // (other photos) goes to Coach, with the barcodes.
+            if photos.count == 1, let code = photos[0].barcodes.first {
+                scanned = ScannedCode(code: code, photo: photos[0])
+            } else {
+                pickedPhotos = PickedMeal(photos: photos)
+            }
+        }
+        .sheet(item: $pickedPhotos) { picked in
+            MealPhotosSheet(photos: picked.photos) { text in Task { await log(photos: picked.photos, text: text) } }
+        }
+        .alert("Barcode", isPresented: $typingBarcode) {
+            TextField("8001505005707", text: $barcodeText).keyboardType(.numberPad)
+            Button("Cancel", role: .cancel) { barcodeText = "" }
+            Button("Look up") {
+                let code = barcodeText.filter(\.isNumber)
+                barcodeText = ""
+                if !code.isEmpty { scanned = ScannedCode(code: code) }
+            }
+        } message: {
+            Text("The digits under the barcode.")
+        }
+        .sheet(item: $scanned, onDismiss: {
+            if let photo = coachInstead { pickedPhotos = PickedMeal(photos: [photo]) }
+            coachInstead = nil
+        }) { code in
+            ScanSheet(barcode: code.code, date: isToday ? nil : Wire.dayString(day), tint: coach.tint,
+                      logged: loggedPacket, askCoach: code.photo.map { photo in { coachInstead = photo } })
+        }
+        .refreshable { await loadFood() }
+        .onChange(of: env.mealLog) { startMealLog() }
+        .task {
+            startMealLog() // a Control Center button that launched the app
+            #if DEBUG
+            if settings.isPreview, let code = UserDefaults.standard.string(forKey: "previewBarcode") {
+                scanned = ScannedCode(code: code)
+            }
+            #endif
+        }
+        .task(id: day) { await loadFood() }
     }
 
     /// From Control Center: today's food with the camera up (the library without one), or the describe box.

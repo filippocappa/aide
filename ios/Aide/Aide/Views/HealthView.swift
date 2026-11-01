@@ -1,8 +1,13 @@
 import SwiftUI
 
-/// The Health tab, one page for a day (today, or an earlier one from the arrows): Strain, Recovery and Sleep as rings
-/// (docs/API.md, "Scores"; each opens its page) with the day in a sentence, last night's numbers against your usual
-/// range, the day's heart rate and workouts, activity and weight. (Food has its own tab, habits are on Today.)
+/// The Health tab's two halves, Body and Food, on the switch at the top; the tab opens on the one used last.
+enum HealthHalf: String { case body, food }
+
+/// The Health tab, for a day (today, or an earlier one from the arrows), in two halves that share the day. Body:
+/// Strain, Recovery and Sleep as rings (docs/API.md, "Scores"; each opens its page) with the day in a sentence, last
+/// night's numbers against your usual range, the day's heart rate and workouts, activity and weight. Food: the food
+/// page (`FoodPage`). The camera in the corner logs a meal from either. On the Mac, Body only (Food is its own
+/// section there). Habits are on Today.
 struct HealthView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var settings: AppSettings
@@ -23,6 +28,8 @@ struct HealthView: View {
     @State private var loggingWeight = false
 
     @State private var day = Calendar.current.startOfDay(for: Date())
+    /// Shared with `ContentView`, which turns it to Food for `aide://food` and the meal buttons.
+    @AppStorage("healthHalf") private var half = HealthHalf.body
     private var coach: Agent { chat.agent("coach") }
 
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
@@ -53,50 +60,110 @@ struct HealthView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    TopBlock("Health")
-                    DayHeader(day: $day)
-                    scoreSections
-                    weightSection
+            Group {
+                #if os(iOS)
+                if half == .food {
+                    FoodPage(day: $day) { header }
+                        .pageGlow(coach.tint, reach: 700)
+                } else {
+                    bodyPage
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 32)
-                .pageColumn()
-            }
-            .previewAnchor()
-            .pageGlow(glow, reach: 900)
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $metric) { m in
-                HealthMetricView(metric: m, days: bodyDays ?? [], day: day, vitals: scores?.vitals)
-            }
-            .navigationDestination(item: $scoreKind) { kind in
-                if let scores { ScoreDetailView(kind: kind, scores: scores, day: reading, date: day) }
-            }
-            .navigationDestination(isPresented: $showWeight) { WeightView { await loadWeight() } }
-            .weightEntry(isPresented: $loggingWeight) { await loadWeight() }
-            .refreshable {
-                await loadBody(upload: true)
-                await loadScores()
-            }
-            .task {
-                await loadBody()
-                #if DEBUG
-                if settings.isPreview, let m = UserDefaults.standard.string(forKey: "previewMetric") {
-                    if m == "weight" { showWeight = true } else { metric = HealthMetric(rawValue: m) }
-                }
-                if settings.isPreview, case let back = UserDefaults.standard.integer(forKey: "previewDaysBack"), back > 0,
-                   let earlier = Calendar.current.date(byAdding: .day, value: -back, to: day) {
-                    day = earlier
-                }
-                if settings.isPreview, let k = UserDefaults.standard.string(forKey: "previewScore") {
-                    scoreKind = ScoreKind(rawValue: k)
-                }
+                #else
+                bodyPage
                 #endif
             }
-            .task(id: day) { await loadScores() }
+            #if os(iOS)
+            // The title, the camera and the switch stay put over both halves, so the switch doesn't jump between
+            // them; the day under it scrolls with the page.
+            .topBar { tabHeader }
+            .toolbar(.hidden, for: .navigationBar)
+            #else
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
         }
+    }
+
+    #if os(iOS)
+    /// The title with the camera on its line (it logs a meal from either half), and the Body · Food switch.
+    private var tabHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TopBlock("Health") { EmptyView() } trailing: {
+                Button {
+                    withAnimation(.snappy) { half = .food }
+                    env.mealLog = .photo // the food page opens the meal camera
+                } label: {
+                    CornerIcon(systemImage: "camera.fill")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Snap a meal")
+                .disabled(!settings.isConfigured)
+            }
+            Picker("Show", selection: Binding(get: { half }, set: { h in withAnimation(.snappy) { half = h } })) {
+                Text("Body").tag(HealthHalf.body)
+                Text("Food").tag(HealthHalf.food)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 4)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+    #endif
+
+    /// The top of both halves: the day (on the Mac, under the title).
+    @ViewBuilder private var header: some View {
+        #if os(iOS)
+        DayHeader(day: $day)
+        #else
+        VStack(alignment: .leading, spacing: 12) {
+            TopBlock("Health")
+            DayHeader(day: $day)
+        }
+        #endif
+    }
+
+    private var bodyPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                header
+                scoreSections
+                weightSection
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
+            .pageColumn()
+        }
+        .previewAnchor()
+        .pageGlow(glow, reach: 900)
+        .navigationDestination(item: $metric) { m in
+            HealthMetricView(metric: m, days: bodyDays ?? [], day: day, vitals: scores?.vitals)
+        }
+        .navigationDestination(item: $scoreKind) { kind in
+            if let scores { ScoreDetailView(kind: kind, scores: scores, day: reading, date: day) }
+        }
+        .navigationDestination(isPresented: $showWeight) { WeightView { await loadWeight() } }
+        .weightEntry(isPresented: $loggingWeight) { await loadWeight() }
+        .refreshable {
+            await loadBody(upload: true)
+            await loadScores()
+        }
+        .task {
+            await loadBody()
+            #if DEBUG
+            if settings.isPreview, let m = UserDefaults.standard.string(forKey: "previewMetric") {
+                if m == "weight" { showWeight = true } else { metric = HealthMetric(rawValue: m) }
+            }
+            if settings.isPreview, case let back = UserDefaults.standard.integer(forKey: "previewDaysBack"), back > 0,
+               let earlier = Calendar.current.date(byAdding: .day, value: -back, to: day) {
+                day = earlier
+            }
+            if settings.isPreview, let k = UserDefaults.standard.string(forKey: "previewScore") {
+                scoreKind = ScoreKind(rawValue: k)
+            }
+            #endif
+        }
+        .task(id: day) { await loadScores() }
     }
 
     @ViewBuilder private var scoreSections: some View {

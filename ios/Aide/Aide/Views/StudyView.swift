@@ -27,6 +27,12 @@ struct StudyView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     TopBlock("Study", overline: Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
                         if overview != nil { Text(line).foregroundStyle(.secondary) }
+                    } trailing: {
+                        #if os(iOS)
+                        Button { env.showMoodle = true } label: { CornerIcon(systemImage: "building.columns") }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Moodle")
+                        #endif
                     }
                     if let error { ErrorCard(text: error) }
                     if let now = overview?.now {
@@ -64,11 +70,15 @@ struct StudyView: View {
             .previewAnchor()
             .pageGlow(Theme.study)
             .navigationDestination(for: StudyCourse.self) { CourseView(course: $0) }
+            #if os(iOS)
+            .toolbar(.hidden, for: .navigationBar) // Moodle sits on the title's line
+            #else
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Moodle", systemImage: "building.columns") { env.showMoodle = true }
                 }
             }
+            #endif
             .fullScreenCover(item: $practice, onDismiss: { Task { await load() } }) { course in
                 PracticeExamView(course: course.id, courseName: course.name)
             }

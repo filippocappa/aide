@@ -1461,6 +1461,26 @@ final class ScreenTimeTests: XCTestCase {
         XCTAssertNotNil(LockClock.until(opened, at: local("23:30", days: 1))) // the next night it's back
     }
 
+    func testLimitDecodesAndCountsOnItsDays() throws {
+        let json = #"{"id": 3, "title": "Social", "minutes": 30, "days": [1, 2, 3, 4, 5], "enabled": true,"#
+            + #""strict": true, "reached": null, "reached_today": false, "open_today": false, "summary": "30 min on Mon–Fri"}"#
+        let limit = try JSONDecoder.api.decode(ScreenLimit.self, from: Data(json.utf8))
+        XCTAssertEqual(limit.minutes, 30)
+        XCTAssertTrue(limit.strict)
+        XCTAssertTrue(limit.counts(on: local("12:00"))) // Tuesday
+        XCTAssertFalse(limit.counts(on: local("12:00", days: 5))) // Sunday
+    }
+
+    func testUsageStepsAndEventNames() {
+        XCTAssertEqual(LockBook.usageSteps.first, 15)
+        XCTAssertEqual(LockBook.usageSteps.last, 960)
+        XCTAssertEqual(LockBook.usageSteps.count, 32 + 8)
+        XCTAssertEqual(LockBook.usageMinutes(of: LockBook.usageEvent(90)), 90)
+        XCTAssertNil(LockBook.usageMinutes(of: LockBook.limitEvent(4)))
+        XCTAssertEqual(LockBook.limitID(of: LockBook.limitActivity(4).rawValue), 4)
+        XCTAssertNil(LockBook.id(of: LockBook.limitActivity(4))) // a limit's activity isn't a lock's
+    }
+
     func testNextChangeIsTheNextStartOrEnd() throws {
         let bedtime = try lock(days: [7, 1, 2, 3, 4]) // Sunday to Thursday nights
         XCTAssertEqual(LockClock.nextChange([bedtime], after: local("12:00")), local("23:00"))

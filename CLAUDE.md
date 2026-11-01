@@ -231,8 +231,9 @@ efficiency, bed and wake consistency; recovery adds the 7-day HRV trend and the 
 the 3 highest workout peaks, zones shown in bpm (`zone_bpm`). Recovery's heart part is the heart rate asleep (`sleep_hr`,
 the phone's average over the night's sleep stages; `sleep_hr_low` the lowest ~15 min), not Apple's resting HR, which is
 mostly a daytime number and often missing in the morning (that one stays for strain's rest HR and as the fallback). Third pass (2026-10-30, from the phone): sleep weighs hours more (duration 50%, 90% of the need scores 75, 80% scores 50; efficiency 5%, full only at 97%), each part shows the usual of the last 30 nights (`usual`, `diff_min`); the cardio load stops the day before (today's half day made every morning look like detraining) and says why (`why`, the 7 days' strain); recovery says how it's worked out; a calendar on the day header. Food: a run in the calendar no longer adds kcal before it happens (only the Watch's workouts do), each meal's `quality_parts` on its page, Log a meal as Photo · Describe · Barcode, Coach's chats take photos with the meal camera. Each score's page asks Coach for its take
-(`POST /v1/health/insight`, contract "Coach's take"). Food is its own tab (`Views/FoodView.swift`; Team · Study ·
-Health · Food · Settings; `aide://food`, the meal buttons and the Food widget open it). Habits moved to Today (#21). Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
+(`POST /v1/health/insight`, contract "Coach's take"). Food is the other half of the Health tab (2026-11-01: a Body · Food switch under the title, `HealthHalf`, the last one
+kept; one day for both; a camera in the corner opens the meal camera; `FoodPage` in `Views/FoodView.swift`, which
+the Mac still shows as its own section; `aide://food`, the meal buttons and the Food widget open Health → Food). Habits moved to Today (#21). Health is on by default (`Aide/Health.entitlements`); `Aide.entitlements` has push plus Health. Server
 (live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
 implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for sleep), the `wake` digest with a
 time-aware greeting and leave-by times (Maps: walk and transit, arriving 10 min early, home and per-place mode from memory, else `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
@@ -487,8 +488,24 @@ with the app closed, `LockShield` is the locked app's screen ("Locked until 07:0
 entitlement (`Aide.entitlements` and both extensions): fine for development builds, TestFlight needs Apple's approval
 (a request form). Each lock picks its own apps on the phone (everything but some, or only some). Strict locks
 (2026-10-27): once on, only an emergency pass ends one early (3 a calendar month, `passes` on `/v1/locks`), not a
-reason or Coach, and the app's Screen Time page is locked until it's over. Usage thresholds and a countdown in the
-Dynamic Island are not done.
+reason or Coach, and the app's Screen Time page is locked until it's over.
+The Screen tab (2026-11-01, iPhone only, tabs Team · Study · Health · Screen · Settings, `aide://screen`): where the
+phone's time went, Day · Week · Month with arrows, Lock now in the corner and Locks and limits (`ScreenTimeView`)
+under the date (`Views/ScreenView.swift`). The page under it is drawn by the `UsageReport` extension
+(`DeviceActivityReport`, the only place iOS shows per-app use; it has no network and can't write to the App Group, so
+none of it reaches the server yet): the total is every app's time added up (not Apple's total), against your usual
+by now (14 days) or last week/month, a focus score (how much against 3 h, your usual, pickups, at night; tap the ring
+for its parts), pickups, first pickup, offline, hourly or daily bars, Most used (tap an app for its bars).
+The maths is `Usage/UsageMath.swift` (tested); the views `Usage/UsageReportView.swift` are shared, so the
+Simulator shows them from `UsageSample` in preview mode.
+Daily limits and estimates (2026-11-01, contract "Daily app limits", "Screen time estimates"; `locks.py`): a limit gives
+some apps so many minutes a day, then locks them until midnight (`/v1/limits`; the title is typed, the apps stay on the
+phone in `LockBook.limitApps`). A `limit-<id>` DeviceActivity per limit with one threshold event; `LockMonitor` shields
+it and records the hit; ending one early takes a reason, a strict one a pass, and a strict one reached today can only be
+tightened. The estimate: one `usage` activity over what the user picks in "Share with Coach" (every category), events
+every 15 min to 8 h then hourly to 16 h; the monitor keeps the day's highest step, the app sends the last 7 days and the
+limit hits on sync (`PUT /v1/screen/usage`), and Coach reads them (`screen_usage`, as "at least"). Not yet tried on the
+phone. A countdown in the Dynamic Island is not done.
 
 **Done, both sides (2026-10-27), tried on the server, not yet on the phone:** browser errands (#22, contract in
 `docs/API.md`, "Browser errands"). Aide starts an errand (`start_errand`) for anything a shop or booking site shows now
@@ -511,7 +528,7 @@ a small real order from the phone.
 (`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
 habits and objectives with Today / Week / Month, "From the team" (`/v1/activity?kind=routine,watch`) and all
 activity. It replaced the digest as a chat message, the sun button, the bell and the Objectives tab. Since 2026-10-26 the
-agents come first: tabs Team · Study · Health · Settings. The Team tab has the briefing behind a sun button in the
+agents come first: tabs Team · Study · Health · Settings (since 2026-11-01 also Screen, before Settings). The Team tab has the briefing behind a sun button in the
 corner (the digest sheet: Wake-up, Evening, Week, Month, and Refresh to write it again) and a small strip ("3 of 5 habits
 done today", what's waiting) above the team; Today opens from it as a page (`env.showToday`). The Morning digest is off
 (2026-10-26): the wake-up briefing is the morning one. Notifications open Today on their item (a routine's push carries `routine`), or the

@@ -1908,6 +1908,52 @@ chat (`lock_now`, `add_lock_schedule`); ending one early there is queued and nee
 - The app sends `PUT /v1/locks/device` when it opens and when Screen Time access or the allowed apps change, so the
   agents can say when locks won't hold.
 
+### Daily app limits
+
+A limit (since 2026-11-01) gives some apps so many minutes a day; once they're used up, those apps lock until
+midnight. The user makes limits in the app's Screen tab and picks the apps there (the tokens stay on the phone, so the
+`title` is what they typed); the agents only see them (`list_locks`). The phone watches each limit itself
+(one DeviceActivity a day with a threshold event) and locks the apps when it fires, with the app closed, then tells
+the server it was reached (`PUT /v1/screen/usage`).
+
+- `days`: the ISO weekdays it counts on, `[]` every day. `minutes`: 5 to 720.
+- **Ending it early** for today takes a reason (`POST …/unlock`), like a lock; it's open until midnight
+  (`open_today`) and counts again tomorrow. Only a limit reached today can be ended.
+- **Strict**: ending it early takes an emergency pass (the same 3 a month as the locks), and once reached it can't be
+  loosened (more minutes, off, not today, not strict) or deleted until tomorrow. Tightening is fine any time.
+- `GET /v1/locks` carries them as `limits`.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/limits` | `{"title": "Social", "minutes": 30, "days": [], "strict": false}` | the limit |
+| `PATCH /v1/limits/{id}` | any of `{"title", "minutes", "days", "enabled", "strict"}` | the limit; `400` loosening a strict one reached today |
+| `POST /v1/limits/{id}/unlock` | `{"reason": "…"}`; a strict one also `"pass": true` | the limit; `400` if it isn't reached today, or strict without a pass |
+| `DELETE /v1/limits/{id}` | | `{"ok": true}`; `400` for a strict one reached today |
+
+```json
+{
+  "id": 3, "title": "Social", "minutes": 30, "days": [], "enabled": true, "strict": false,
+  "reached": "2026-11-01T14:20:00+01:00", "reached_today": true, "open_today": false, "summary": "30 min a day"
+}
+```
+
+### Screen time estimates
+
+Which apps were used, and for how long, can only be read inside the app's report extension, which iOS keeps off the
+network: the Screen tab shows it, the server never gets it. What the server gets is an estimate: the phone watches the
+total of everything picked in the Screen tab's "Share with Coach" (all apps and categories) in 15-minute steps (to
+8 h, then hourly to 16 h) and sends the last step reached each day, so a day is *at least* `minutes`. Coach reads it
+with `screen_usage`.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `PUT /v1/screen/usage` | `{"days": [{"date": "2026-11-01", "minutes": 135}], "limits": [{"id": 3, "date": "2026-11-01", "at": "2026-11-01T14:20:00+01:00"}]}` | `{"ok": true}` |
+| `GET /v1/screen/usage?days=30` | | `{"days": [{"date": "2026-11-01", "minutes": 135, "updated_at": "…"}]}` |
+
+- A day's `minutes` only goes up (an older count doesn't lower it). Dates are local, from 400 days back to tomorrow.
+- `limits`: limits reached, by id, with when; ids since deleted are ignored.
+- The app sends the last 7 days when it syncs the locks (opening, after a chat turn, a silent `sync` push).
+
 ## Browser errands
 
 Aide does things on websites for you in its own browser (since 2026-10-27, #22): "order me a USB-C cable on

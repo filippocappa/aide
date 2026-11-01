@@ -2486,6 +2486,33 @@ struct LockList: Decodable {
     let device: ScreenTimeDevice
     /// nil from an older server.
     let passes: EmergencyPasses?
+    /// Daily app limits; nil from an older server.
+    let limits: [ScreenLimit]?
+}
+
+/// A new daily limit (docs/API.md, "Daily app limits").
+struct NewLimit: Encodable {
+    var title: String
+    var minutes: Int
+    var days: [Int]
+    var strict: Bool
+}
+
+/// Only what changes.
+struct LimitPatch: Encodable {
+    var title: String?
+    var minutes: Int?
+    var days: [Int]?
+    var enabled: Bool?
+    var strict: Bool?
+}
+
+/// The day's screen time, at least, and the limits reached (docs/API.md, "Screen time estimates").
+struct UsageUpload: Encodable {
+    struct Day: Encodable { let date: String; let minutes: Int }
+    struct Hit: Encodable { let id: Int; let date: String; let at: String }
+    let days: [Day]
+    let limits: [Hit]
 }
 
 /// This month's emergency passes, the only way to end a strict lock early.

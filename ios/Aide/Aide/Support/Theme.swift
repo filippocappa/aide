@@ -141,6 +141,15 @@ extension View {
         }
     }
 
+    /// Pinned at the top with the page scrolling under it, softly faded out where the system can.
+    @ViewBuilder func topBar<V: View>(@ViewBuilder _ content: () -> V) -> some View {
+        if #available(iOS 26, macOS 26, *) {
+            safeAreaBar(edge: .top, spacing: 0, content: content)
+        } else {
+            safeAreaInset(edge: .top, spacing: 0, content: content)
+        }
+    }
+
     /// A floating control: Liquid Glass where the system has it, else a frosted material with a soft shadow.
     @ViewBuilder func glass<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26, macOS 26, *) {
@@ -252,15 +261,19 @@ struct DetailCard<Content: View>: View {
 }
 
 /// The top of a page: a small line over a large title, then what the page has to say and its chips.
-struct TopBlock<Content: View>: View {
+struct TopBlock<Content: View, Trailing: View>: View {
     let overline: String?
     let title: String
     let content: Content
+    /// A control on the title's line, at its end (a tab's corner button, in place of a navigation bar of its own).
+    let trailing: Trailing
 
-    init(_ title: String, overline: String? = nil, @ViewBuilder content: () -> Content) {
+    init(_ title: String, overline: String? = nil, @ViewBuilder content: () -> Content,
+         @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.overline = overline
         self.content = content()
+        self.trailing = trailing()
     }
 
     var body: some View {
@@ -269,7 +282,10 @@ struct TopBlock<Content: View>: View {
                 if let overline {
                     Text(overline).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                 }
-                Text(title).font(.largeTitle.bold())
+                HStack(spacing: 12) {
+                    Text(title).font(.largeTitle.bold()).frame(maxWidth: .infinity, alignment: .leading)
+                    trailing
+                }
             }
             content
         }
@@ -280,8 +296,27 @@ struct TopBlock<Content: View>: View {
     }
 }
 
-extension TopBlock where Content == EmptyView {
+extension TopBlock where Trailing == EmptyView {
+    init(_ title: String, overline: String? = nil, @ViewBuilder content: () -> Content) {
+        self.init(title, overline: overline, content: content) { EmptyView() }
+    }
+}
+
+extension TopBlock where Content == EmptyView, Trailing == EmptyView {
     init(_ title: String, overline: String? = nil) { self.init(title, overline: overline) { EmptyView() } }
+}
+
+/// A tab's corner button beside its title: a glass circle, the size of a navigation bar's.
+struct CornerIcon: View {
+    let systemImage: String
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.primary)
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+            .glass(in: Circle())
+    }
 }
 
 /// A grey capsule to tap. `prominent` is the page's own colour, for what's waiting for you; `warning` is orange.
