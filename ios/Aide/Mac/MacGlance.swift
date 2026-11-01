@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The day at a glance, for the sidebar: the three scores, food against the day's target and habits done. Loaded from
+/// The day at a glance, for the menu bar panel: the three scores, food against the day's target and habits done. Loaded from
 /// the server (the same endpoints as Health, Food and Today), again every few minutes and when the window comes back.
 @MainActor
 final class MacGlance: ObservableObject {
@@ -27,7 +27,7 @@ final class MacGlance: ObservableObject {
     }
 }
 
-/// The glance in the sidebar: three rings that fill as they load, then food and habits as bars. Each opens its page.
+/// The glance in the menu bar panel: three rings that fill as they load, then food and habits as bars. Each opens its page.
 struct MacGlanceCard: View {
     @ObservedObject var glance: MacGlance
     @EnvironmentObject private var screenTime: ScreenTimeService
@@ -87,35 +87,6 @@ struct MacGlanceCard: View {
     static func time(_ date: Date) -> String {
         Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened)
             : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
-    }
-}
-
-/// The three scores as concentric rings, for the folded rail.
-struct MacGlanceRings: View {
-    @ObservedObject var glance: MacGlance
-    @State private var shown = false
-
-    var body: some View {
-        ZStack {
-            ring(.recovery, size: 34)
-            ring(.strain, size: 24)
-            ring(.sleep, size: 14)
-        }
-        .frame(width: 40, height: 40)
-        .onAppear { withAnimation(.spring(duration: 1.2, bounce: 0.2).delay(0.15)) { shown = true } }
-        .onDisappear { shown = false }
-    }
-
-    private func ring(_ kind: ScoreKind, size: CGFloat) -> some View {
-        let score = shown ? kind.score(glance.scores) ?? 0 : 0
-        return ZStack {
-            Circle().stroke(.primary.opacity(0.08), lineWidth: 3.5)
-            Circle()
-                .trim(from: 0, to: Double(score) / 100)
-                .stroke(kind.colors(score).last ?? .primary, style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .frame(width: size, height: size)
     }
 }
 

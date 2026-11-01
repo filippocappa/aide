@@ -96,6 +96,13 @@ extension View {
     /// For a sheet whose stack isn't inside another: give it the close button.
     func macSheet() -> some View { environment(\.macInStack, true) }
 
+    /// For the sheets `MacRootView` opens itself, outside the page that carries the window's size: the close button
+    /// and the size from the window. No frame of their own around it: a sheet takes its outermost minimum, and a
+    /// smaller one there left the stack wider than its sheet, cut off on both sides.
+    func macSheet(_ window: CGSize) -> some View {
+        environment(\.macInStack, true).environment(\.macWindowSize, window)
+    }
+
     /// The title shown next to a sheet's close button.
     func macSheetTitle(_ title: String) -> some View { preference(key: MacSheetTitleKey.self, value: title) }
 }

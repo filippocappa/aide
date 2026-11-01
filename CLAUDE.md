@@ -107,9 +107,8 @@ The app reaches the server over Tailscale (the phone needs the Tailscale app). E
 
 The phone's views in a Mac window, the sections (Team, Today, Habits, Objectives, Activity, Study, Health, Food,
 Screen, Settings) in a glass sidebar with their names floating on the left over the page (`MacSidebar`; no system sidebar),
-folding to a rail of icons (its button, ⌃⌘S, View → Show Section Names), with the day at a glance above Settings
-(`Mac/MacGlance.swift`: the three score rings filling as they load, kcal and habits as bars; concentric rings in the
-rail; reloaded every 5 min and on each change of section), macOS 14+, bundle
+folding to a rail of icons (its button, ⌃⌘S, View → Show Section Names; no glance there since 2026-11-01, only
+the menu bar panel has it), macOS 14+, bundle
 `$(AIDE_BUNDLE_ID).mac`, its own server URL and token in the Mac's keychain. Same server, same API, no contract of its
 own except `app: "mac"` on `POST /v1/devices`. What only the phone has stays on the phone: Apple Health uploads, Live
 Activities, location, the meal camera, the Apple Reminders sync, the silent pushes (the Mac reads what
@@ -132,12 +131,13 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
 - Screen Time on the Mac (#30, in progress): Apple's Screen Time API is iOS-only, so Aide enforces the phone's locks
   itself. `Mac/MacScreenTime.swift` reads `/v1/locks` (on open, after a chat turn, every minute, on wake) and works out
   when each holds with `ScreenTime/LockClock.swift` (shared with the phone and its extensions), waking at the next
-  start or end; the glance says "Locked until 07:00". Step 2 (2026-11-01): the Mac app is no longer sandboxed
+  start or end; the menu bar panel's glance says "Locked until 07:00". Step 2 (2026-11-01): the Mac app is no longer sandboxed
   (it quits other apps, an Apple Event). What a lock covers is the Mac's own, "only these" apps by bundle ID, kept on
   this Mac (`MacLockApps`). `Mac/MacShield.swift` quits a covered app when it opens or comes forward (hides it if it
   won't quit) and Pebble pops up asleep over its Dock icon with Open anyway. Settings → This Mac → Screen Time
   (`Mac/MacScreenTimeView.swift`): Lock now, the usual apps, weekly locks with their own apps. Debug builds:
-  `-shieldTest 2` adds a local 2-minute lock. Not yet: refusing Quit during a strict lock, the login item.
+  `-shieldTest 2` adds a local 2-minute lock. During a strict lock Quit is refused (`applicationShouldTerminate`;
+  logging out and shutting down still quit, Force Quit always works).
   Daily limits on the Mac (2026-11-01): the phone's limits, each with its own Mac apps (`MacLockApps.perLimit`),
   counted from this Mac's own time (`Mac/MacUsage.swift`) and held until midnight when used up (`MacHold` is a lock
   or a limit holding now, what the shield and the unlock sheet show); a hit goes to the server with `days: []`.
@@ -164,7 +164,8 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   `Mac/MacNavigationStack.swift` makes `NavigationStack` give a sheet a glass close button (Esc) in its top-left
   corner, since phone sheets often close only by swiping. Both shadow SwiftUI's types for `AideMac` only.
 - Sheets: macOS opens a sheet at its *minimum* size (an ideal size is ignored), so `MacSheetSize` works the minimum
-  out from the window (`macWindowSize` in the environment, set by `MacRootView`): a sheet about two thirds of it, a
+  out from the window (`MacRootView`'s own sheets: `.macSheet(windowSize)`, and no `.frame(minWidth:)` around a
+  sheet's stack: a smaller outer minimum makes the sheet narrower than the stack, cut off on both sides) (`macWindowSize` in the environment, set by `MacRootView`): a sheet about two thirds of it, a
   cover (`fullScreenCover`, `.macCoverSize()`, a no-op on the phone: slides, a video's page) nearly all of it. A centred
   title by the close button is `.macSheetTitle(_:)`; then keep `navigationTitle` to iOS (the Mac shows it too). Sheets
   don't inherit the window's styles, so each gets `.toggleStyle(.phoneSwitch)` (the switch at the row's end) and the

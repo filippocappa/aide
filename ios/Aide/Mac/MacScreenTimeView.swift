@@ -69,7 +69,7 @@ struct MacScreenTimeView: View {
             VStack(spacing: 10) {
                 LivePebble(mood: "sleeping", size: 72).foregroundStyle(Theme.accent)
                 Text("Locked until \(Self.time(until))").font(.title3.weight(.semibold))
-                Text("\(lock.title) is strict: nothing here changes until it's over.")
+                Text("\(lock.title) is strict: nothing here changes, and Aide won't quit, until it's over.")
                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
