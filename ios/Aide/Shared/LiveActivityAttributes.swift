@@ -79,6 +79,9 @@ struct AgentActivityAttributes: ActivityAttributes {
         var total: Int? = nil
         /// A browser errand's id; nil for the rest.
         var errand: Int? = nil
+        /// An errand's site ("amazon.it"), and its earlier steps, oldest first (up to 2); nil for the rest.
+        var site: String? = nil
+        var steps: [String]? = nil
 
         var sinceDate: Date { Date(timeIntervalSince1970: since) }
         var isOver: Bool { status == "done" || status == "failed" }
@@ -107,6 +110,19 @@ struct AgentActivityAttributes: ActivityAttributes {
 }
 
 extension AgentActivityAttributes.ContentState {
+    /// What kind of work it is, under the title in the expanded island: "Browsing amazon.it", "Asking the team".
+    var phase: String {
+        switch status {
+        case "done": "Done"
+        case "failed": "Stopped"
+        case "browsing": site.map { "Browsing \($0)" } ?? "Browsing"
+        case "needs_you": "Waiting for you"
+        case "asking": "Asking the team"
+        case "writing": total != nil || errand != nil ? "Writing" : "Writing the reply"
+        default: "Thinking"
+        }
+    }
+
     /// What it's doing, in a line.
     func line(name: String) -> String {
         switch status {
