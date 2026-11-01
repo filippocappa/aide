@@ -28,6 +28,29 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// A strict lock holds until its end: Quit (⌘Q, the Dock, the menu bar panel) is refused while one is on, since
+    /// only Aide enforces it here. Logging out, restarting and shutting down still go through, and Force Quit always
+    /// works: it's a commitment, not a jail.
+    @MainActor func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let (lock, until) = env.screenTime.strictOn, !Self.systemIsEnding else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Aide stays open during a strict lock"
+        alert.informativeText = "\(lock.title) holds until \(MacGlanceCard.time(until)). Quit works again once it's over."
+        alert.addButton(withTitle: "OK")
+        NSApplication.shared.activate()
+        alert.runModal()
+        return .terminateCancel
+    }
+
+    /// Whether this quit comes from logging out, restarting or shutting down (the quit Apple Event's reason).
+    @MainActor private static var systemIsEnding: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventID == kAEQuitApplication,
+              let reason = event.attributeDescriptor(forKeyword: kAEQuitReason)?.enumCodeValue else { return false }
+        return [kAELogOut, kAEReallyLogOut, kAEShowRestartDialog, kAERestart, kAEShowShutdownDialog, kAEShutDown]
+            .contains(reason)
+    }
+
     /// Banners while the app is open too, except for what's already on screen (as on the phone's `AppDelegate`).
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {

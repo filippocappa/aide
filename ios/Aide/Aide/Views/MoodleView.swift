@@ -37,6 +37,10 @@ struct MoodleView: View {
                 }
             }
         }
+        #if os(macOS)
+        // Buttons in rows as the accent's text, as in the Mac's other lists (`MacList`), not push buttons.
+        .buttonStyle(.borderless)
+        #endif
         .scrollContentBackground(.hidden)
         .background(Theme.grouped)
         .navigationTitle("Moodle")
@@ -101,14 +105,19 @@ struct MoodleView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(status.courses) { course in
-                Picker(selection: matchBinding(course)) {
-                    Text("Don't sync").tag(Int?.none)
-                    ForEach(courses) { Text($0.name).tag(Optional($0.id)) }
-                } label: {
+                // The name wraps and the menu keeps its own width, so Moodle's long names never widen the row.
+                HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(course.name)
                         Text(detail(course)).font(.caption).foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Picker(course.name, selection: matchBinding(course)) {
+                        Text("Don't sync").tag(Int?.none)
+                        ForEach(courses) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 }
             }
         } header: {

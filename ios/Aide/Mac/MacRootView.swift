@@ -66,7 +66,6 @@ struct MacRootView: View {
     /// Things waiting for your OK, on the Team row's badge.
     @State private var waiting = 0
     @AppStorage("macSidebarCollapsed") private var collapsed = false
-    @ObservedObject private var glance = MacGlance.shared
     /// The window's size: a Mac sheet comes up at its smallest, so sheets take theirs from the window (`MacSheetSize`).
     @State private var windowSize = CGSize(width: 1180, height: 780)
 
@@ -83,7 +82,7 @@ struct MacRootView: View {
             .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
             .overlay(alignment: .leading) {
                 MacSidebar(section: Binding(get: { nav.section ?? .team }, set: { nav.section = $0 }),
-                           waiting: waiting, collapsed: $collapsed, glance: glance)
+                           waiting: waiting, collapsed: $collapsed)
                     .ignoresSafeArea()
             }
             // The window's title goes right of the sidebar, not over it.
@@ -103,14 +102,6 @@ struct MacRootView: View {
         .task(id: settings.isConfigured) {
             if settings.isConfigured, let a = try? await env.api.approvals() { waiting = a.waiting }
         }
-        // The sidebar's glance: now, then every 5 minutes, and on each change of section (a meal or a habit logged).
-        .task(id: settings.isConfigured) {
-            while !Task.isCancelled {
-                await glance.load(env)
-                try? await Task.sleep(for: .seconds(300))
-            }
-        }
-        .onChange(of: nav.section) { _, _ in Task { await glance.load(env) } }
         // As on the phone (`ContentView`): links and, later, notifications open their place.
         .onReceive(push.$route.compactMap { $0 }) { route in
             push.route = nil
@@ -131,13 +122,11 @@ struct MacRootView: View {
         .sheet(isPresented: $env.showMoodle) {
             NavigationStack {
                 MoodleView()
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { env.showMoodle = false } } }
             }
-            .frame(minWidth: 520, minHeight: 560)
-            .macSheet()
+            .macSheet(windowSize)
         }
-        .sheet(item: $env.newFiles) { NewFilesSheet(ids: $0.ids).frame(minWidth: 480, minHeight: 480).macSheet() }
-        .sheet(isPresented: $digest.isPresented) { DigestSheet().frame(minWidth: 560, minHeight: 640).macSheet() }
+        .sheet(item: $env.newFiles) { NewFilesSheet(ids: $0.ids).macSheet(windowSize) }
+        .sheet(isPresented: $digest.isPresented) { DigestSheet().macSheet(windowSize) }
         // On the phone Today is a sheet over the Team tab; here it's a section of its own.
         .onChange(of: env.showToday) { _, show in
             if show { nav.section = .today; env.showToday = false }
@@ -164,7 +153,7 @@ struct MacRootView: View {
 
 /// The sections on the left, floating over the page in glass: a sidebar with each section's name, or folded into a
 /// rail of icons (the button at the bottom, ⌃⌘S, or View → Show Section Names). The names are on hover too, and in
-/// the Go menu (⌘1–9). Above Settings, the day at a glance (`MacGlance`).
+/// the Go menu (⌘1–9).
 struct MacSidebar: View {
     static let railWidth: CGFloat = 52
     static let fullWidth: CGFloat = 196
@@ -178,7 +167,6 @@ struct MacSidebar: View {
     @Binding var section: MacSection
     var waiting: Int
     @Binding var collapsed: Bool
-    @ObservedObject var glance: MacGlance
     @Namespace private var selection
 
     var body: some View {
@@ -205,11 +193,6 @@ struct MacSidebar: View {
             row(.food)
             row(.screen)
             Spacer(minLength: 12)
-            if glance.scores != nil || glance.kcal != nil {
-                MacGlanceCard(glance: glance) { section = $0 }
-                    .padding(.bottom, 6)
-                    .transition(.opacity)
-            }
             HStack {
                 row(.settings)
                 toggle
@@ -296,12 +279,6 @@ struct MacSidebar: View {
             icon(.food)
             icon(.screen)
             divider
-            if glance.scores != nil {
-                Button { section = .health } label: { MacGlanceRings(glance: glance) }
-                    .buttonStyle(.plain)
-                    .help("Recovery, strain and sleep")
-                divider
-            }
             icon(.settings)
             toggle.frame(width: 40, height: 36)
         }
