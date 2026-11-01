@@ -584,13 +584,14 @@ class Agent:
         if self._plan:
             return await self._run_on_plan(agent, channel, model, history, turn)
         restart = False  # the text so far came before a tool call: the draft starts over
-        history = _cut_old_results(history)
+        history = _drop_old_thinking(_cut_old_results(history))
         for _ in range(MAX_TOOL_ROUNDS):
             if on_text:
                 response = await self._stream(agent, model, history, turn, on_text, restart)
             else:
                 response = await self._create(agent, model, history, turn)
-            # Store blocks exactly as returned (thinking blocks included, even when empty).
+            # Store blocks exactly as returned (thinking blocks included, even when empty): the API needs them back
+            # within this turn's tool loop. Later turns don't send them (_drop_old_thinking).
             turn.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
             text = "\n\n".join(b.text for b in response.content if b.type == "text").strip()
 
@@ -906,6 +907,20 @@ def _cut_old_results(history: list[dict]) -> list[dict]:
                                           for c in b["content"]]}
                 blocks.append(b)
             m = {**m, "content": blocks}
+        out.append(m)
+    return out
+
+
+def _drop_old_thinking(history: list[dict]) -> list[dict]:
+    """Copy of earlier turns without their thinking blocks: a finished turn's thinking is billed as input on every
+    later call (its signature carries it) but isn't needed, since the tool calls, results and reply stay. Only the
+    turn in progress must send its thinking back. Stored history keeps them."""
+    out = []
+    for m in history:
+        if m["role"] == "assistant" and isinstance(m["content"], list):
+            blocks = [b for b in m["content"] if b.get("type") not in ("thinking", "redacted_thinking")]
+            if len(blocks) != len(m["content"]):
+                m = {**m, "content": blocks or [{"type": "text", "text": "(no reply)"}]}
         out.append(m)
     return out
 
