@@ -153,24 +153,7 @@ struct ScoresCard: View {
                 .padding(.vertical, 8)
                 .card()
             if let line = scores?.line {
-                Button(action: ask) {
-                    HStack(alignment: .bottom, spacing: 8) {
-                        AgentMark(agent: coach, size: 28)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(coach.name).font(.caption.weight(.semibold)).foregroundStyle(coach.tint)
-                            Text(line).font(.subheadline).multilineTextAlignment(.leading)
-                        }
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(coach.tint.opacity(0.14),
-                                    in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 6,
-                                                               bottomTrailingRadius: 18, topTrailingRadius: 18,
-                                                               style: .continuous))
-                        Spacer(minLength: 24)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(CardPress())
-                .accessibilityHint("Opens your chat with \(coach.name)")
+                AgentLine(agent: coach, text: line, ask: ask)
             }
         }
     }

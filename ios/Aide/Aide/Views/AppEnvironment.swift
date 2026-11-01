@@ -20,6 +20,8 @@ final class AppEnvironment: ObservableObject {
     let voice = VoiceController()
     /// The Moodle screen as a sheet, from a `moodle` notification.
     @Published var showMoodle = false
+    /// Settings, as a sheet over the tabs (the gear in Team's corner; on first launch until the app is set up).
+    @Published var showSettings = false
     /// The files a `moodle` notification was about, listed in a sheet.
     @Published var newFiles: NewFiles?
     /// The Team chat, from a widget or a Live Activity (`aide://team`); the home screen opens it and clears this.

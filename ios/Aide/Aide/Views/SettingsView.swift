@@ -87,6 +87,14 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
             .navigationTitle("Settings")
+            #if os(iOS)
+            // A sheet on the phone (the gear in Team's corner); it can't close until Aide is set up.
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { env.showSettings = false }.disabled(!settings.isConfigured)
+                }
+            }
+            #endif
             .task(id: settings.serverURL + settings.token) {
                 if connection.state != .unset { try? await Task.sleep(for: .milliseconds(700)) } // typing
                 guard !Task.isCancelled else { return }

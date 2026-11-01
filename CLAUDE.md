@@ -508,7 +508,7 @@ entitlement (`Aide.entitlements` and both extensions): fine for development buil
 (a request form). Each lock picks its own apps on the phone (everything but some, or only some). Strict locks
 (2026-10-27): once on, only an emergency pass ends one early (3 a calendar month, `passes` on `/v1/locks`), not a
 reason or Coach, and the app's Screen Time page is locked until it's over.
-The Screen tab (2026-11-01, iPhone only, tabs Team · Study · Health · Screen · Settings, `aide://screen`): where the
+The Screen half of Health (2026-11-01, iPhone only; Body · Food · Screen since #32, `aide://screen`): where the
 phone's time went, Day · Week · Month with arrows, Lock now in the corner and Locks and limits (`ScreenTimeView`)
 under the date (`Views/ScreenView.swift`). The page under it is drawn by the `UsageReport` extension
 (`DeviceActivityReport`, the only place iOS shows per-app use; it has no network and can't write to the App Group, so
@@ -547,7 +547,10 @@ a small real order from the phone.
 (`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
 habits and objectives with Today / Week / Month, "From the team" (`/v1/activity?kind=routine,watch`) and all
 activity. It replaced the digest as a chat message, the sun button, the bell and the Objectives tab. Since 2026-10-26 the
-agents come first: tabs Team · Study · Health · Settings (since 2026-11-01 also Screen, before Settings). The Team tab has the briefing behind a sun button in the
+agents come first. Since #32 (2026-11-01) the tabs are Team · Study · Health · Money: Settings is a sheet from the gear
+in Team's corner (`env.showSettings`; on first launch until set up, and it can't close before), Screen is Health's
+third half, Money is a placeholder for Finance (#31, `Views/MoneyView.swift`), and each area page leads with its
+agent's line (`AgentLine`: Professor on Study, Coach on Health, Finance on Money; tap: its chat). The Team tab has the briefing behind a sun button in the
 corner (the digest sheet: Wake-up, Evening, Week, Month, and Refresh to write it again) and a small strip ("3 of 5 habits
 done today", what's waiting) above the team; Today opens from it as a page (`env.showToday`). The Morning digest is off
 (2026-10-26): the wake-up briefing is the morning one. Notifications open Today on their item (a routine's push carries `routine`), or the

@@ -2,35 +2,35 @@ import DeviceActivity
 import FamilyControls
 import SwiftUI
 
-/// The Screen tab: where the phone's time went, for a day, a week or a month. The total is every app's time added
-/// up, so it's the same as the list under it (Apple's own total isn't). The page under the date is drawn by the
-/// UsageReport extension (`UsageReportView`), the only place iOS shows which apps were used; the app keeps the title,
-/// the switch, the date and the locks (Lock now in the corner, Locks and limits under the date). iPhone only.
+/// Health's Screen half: where the phone's time went, for a day, a week or a month. The total is every app's time
+/// added up, so it's the same as the list under it (Apple's own total isn't). The page under the date is drawn by the
+/// UsageReport extension (`UsageReportView`), the only place iOS shows which apps were used; this keeps the switch,
+/// the date and Locks and limits. Health's title bar holds it, with Lock now (`ScreenLockMenu`) in its corner.
+/// iPhone only.
 struct ScreenView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var screenTime: ScreenTimeService
     @AppStorage("screenKind") private var kind = UsageKind.day
     @State private var date = Calendar.current.startOfDay(for: Date())
-    @State private var showLocks = false
+    /// Locks and limits; shared with the corner's menu.
+    @Binding var showLocks: Bool
 
     private var period: DateInterval { UsageMath.period(kind, containing: date) }
     private var isCurrent: Bool { period.contains(Date()) }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                header
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 10)
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .background(alignment: .top) { glow }
-            .background(Theme.grouped)
-            .toolbar(.hidden, for: .navigationBar) // Lock now sits on the title's line
-            .navigationDestination(isPresented: $showLocks) { ScreenTimeView() }
-            .task { await screenTime.sync() }
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
+                .padding(.bottom, 10)
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(alignment: .top) { glow }
+        .background(Theme.grouped)
+        .navigationDestination(isPresented: $showLocks) { ScreenTimeView() }
+        .task { await screenTime.sync() }
     }
 
     /// The page's cyan, faded out by the end of the header (the report under it draws its own page).
@@ -42,7 +42,7 @@ struct ScreenView: View {
     }
 
     private var header: some View {
-        TopBlock("Screen") {
+        VStack(alignment: .leading, spacing: 10) {
             Picker("Show", selection: Binding(get: { kind }, set: { k in withAnimation(.snappy) { kind = k } })) {
                 Text("Day").tag(UsageKind.day)
                 Text("Week").tag(UsageKind.week)
@@ -51,9 +51,8 @@ struct ScreenView: View {
             .pickerStyle(.segmented)
             dateRow
             locksRow
-        } trailing: {
-            lockMenu
         }
+        .padding(.horizontal, 4)
     }
 
     private var dateRow: some View {
@@ -125,37 +124,6 @@ struct ScreenView: View {
         return count == 0 ? "None yet" : "\(count) lock\(count == 1 ? "" : "s")"
     }
 
-    /// Lock now from the corner: a length, or a strict one; while a lock holds, when it ends.
-    private var lockMenu: some View {
-        Menu {
-            if let (lock, until) = screenTime.current {
-                Section("\(lock.title): locked until \(ScreenTimeView.time(until))") {
-                    Button("Locks and limits") { showLocks = true }
-                }
-            } else {
-                Section("Lock now") {
-                    ForEach([15, 30, 60, 120], id: \.self) { minutes in
-                        Button(ScreenTimeView.length(minutes)) { Task { await screenTime.lockNow(minutes: minutes) } }
-                    }
-                    Menu {
-                        ForEach([30, 60, 120, 240], id: \.self) { minutes in
-                            Button(ScreenTimeView.length(minutes)) {
-                                Task { await screenTime.lockNow(minutes: minutes, strict: true) }
-                            }
-                        }
-                    } label: {
-                        Label("Strict", systemImage: "lock.shield")
-                    }
-                }
-            }
-        } label: {
-            CornerIcon(systemImage: screenTime.current == nil ? "lock" : "lock.fill")
-        }
-        .buttonStyle(.plain)
-        .disabled(!screenTime.isAuthorized)
-        .accessibilityLabel("Lock now")
-    }
-
     @ViewBuilder private var content: some View {
         #if DEBUG
         if settings.isPreview {
@@ -198,4 +166,42 @@ struct ScreenView: View {
             }
         }
     }
+}
+
+/// Lock now, in Health's corner while the Screen half is shown: a length, or a strict one; while a lock holds, when
+/// it ends.
+struct ScreenLockMenu: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    let openLocks: () -> Void
+
+    var body: some View {
+        Menu {
+            if let (lock, until) = screenTime.current {
+                Section("\(lock.title): locked until \(ScreenTimeView.time(until))") {
+                    Button("Locks and limits", action: openLocks)
+                }
+            } else {
+                Section("Lock now") {
+                    ForEach([15, 30, 60, 120], id: \.self) { minutes in
+                        Button(ScreenTimeView.length(minutes)) { Task { await screenTime.lockNow(minutes: minutes) } }
+                    }
+                    Menu {
+                        ForEach([30, 60, 120, 240], id: \.self) { minutes in
+                            Button(ScreenTimeView.length(minutes)) {
+                                Task { await screenTime.lockNow(minutes: minutes, strict: true) }
+                            }
+                        }
+                    } label: {
+                        Label("Strict", systemImage: "lock.shield")
+                    }
+                }
+            }
+        } label: {
+            CornerIcon(systemImage: screenTime.current == nil ? "lock" : "lock.fill")
+        }
+        .buttonStyle(.plain)
+        .disabled(!screenTime.isAuthorized)
+        .accessibilityLabel("Lock now")
+    }
+
 }

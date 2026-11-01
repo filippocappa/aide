@@ -1,13 +1,15 @@
 import SwiftUI
 
-/// The Health tab's two halves, Body and Food, on the switch at the top; the tab opens on the one used last.
-enum HealthHalf: String { case body, food }
+/// The Health tab's parts, Body, Food and Screen (iPhone only), on the switch at the top; the tab opens on the one
+/// used last. All three are Coach's.
+enum HealthHalf: String { case body, food, screen }
 
-/// The Health tab, for a day (today, or an earlier one from the arrows), in two halves that share the day. Body:
+/// The Health tab, for a day (today, or an earlier one from the arrows), in halves; Body and Food share the day. Body:
 /// Strain, Recovery and Sleep as rings (docs/API.md, "Scores"; each opens its page) with the day in a sentence, last
 /// night's numbers against your usual range, the day's heart rate and workouts, activity and weight. Food: the food
-/// page (`FoodPage`). The camera in the corner logs a meal from either. On the Mac, Body only (Food is its own
-/// section there). Habits are on Today.
+/// page (`FoodPage`). Screen: where the phone's time went (`ScreenView`, its own day, week or month), with Lock now
+/// in the corner instead of the camera. The camera in the corner logs a meal from Body or Food. On the Mac, Body only
+/// (Food and Screen are their own sections there). Habits are on Today.
 struct HealthView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var settings: AppSettings
@@ -26,6 +28,8 @@ struct HealthView: View {
     @State private var weight: WeightList?
     @State private var showWeight = false
     @State private var loggingWeight = false
+    /// The Screen half's Locks and limits, also opened from Lock now in the corner.
+    @State private var showLocks = false
 
     @State private var day = Calendar.current.startOfDay(for: Date())
     /// Shared with `ContentView`, which turns it to Food for `aide://food` and the meal buttons.
@@ -62,10 +66,13 @@ struct HealthView: View {
         NavigationStack {
             Group {
                 #if os(iOS)
-                if half == .food {
+                switch half {
+                case .food:
                     FoodPage(day: $day)
                         .pageGlow(coach.tint, reach: 700)
-                } else {
+                case .screen:
+                    ScreenView(showLocks: $showLocks)
+                case .body:
                     bodyPage
                 }
                 #else
@@ -85,29 +92,39 @@ struct HealthView: View {
     }
 
     #if os(iOS)
-    /// The title with the camera on its line (it logs a meal from either half), and the Body · Food switch.
+    /// The title with the camera on its line (it logs a meal from Body or Food; Lock now on Screen), and the
+    /// Body · Food · Screen switch.
     private var tabHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
             TopBlock("Health") { EmptyView() } trailing: {
-                Button {
-                    withAnimation(.snappy) { half = .food }
-                    env.mealLog = .photo // the food page opens the meal camera
-                } label: {
-                    CornerIcon(systemImage: "camera.fill")
+                if half == .screen {
+                    ScreenLockMenu { showLocks = true }
+                } else {
+                    cameraButton
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Snap a meal")
-                .disabled(!settings.isConfigured)
             }
             Picker("Show", selection: Binding(get: { half }, set: { h in withAnimation(.snappy) { half = h } })) {
                 Text("Body").tag(HealthHalf.body)
                 Text("Food").tag(HealthHalf.food)
+                Text("Screen").tag(HealthHalf.screen)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 4)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 6)
+    }
+
+    private var cameraButton: some View {
+        Button {
+            withAnimation(.snappy) { half = .food }
+            env.mealLog = .photo // the food page opens the meal camera
+        } label: {
+            CornerIcon(systemImage: "camera.fill")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Snap a meal")
+        .disabled(!settings.isConfigured)
     }
     #endif
 

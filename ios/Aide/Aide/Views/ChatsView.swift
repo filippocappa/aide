@@ -37,6 +37,8 @@ struct ChatsView: View {
                     } else {
                         TopBlock("Your team") {
                             Text("Add your server token in Settings to start.").foregroundStyle(.secondary)
+                        } trailing: {
+                            SettingsButton()
                         }
                     }
                     AideCard(agent: chat.orchestrator, latest: chat.chats(with: chat.orchestrator).first,
@@ -632,8 +634,9 @@ private struct RevealText: View {
     }
 }
 
-/// The top of the Team tab: the time of day, the latest briefing's note in full (tap: its Details), and chips for how
-/// many habits are done today and what's waiting for your OK; each chip opens Today there.
+/// The top of the Team tab: the time of day with Settings' gear in the corner, the latest briefing's note in full
+/// (tap: its Details), and chips for how many habits are done today and what's waiting for your OK; each chip opens
+/// Today there.
 private struct Greeting: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var digest: DigestViewModel
@@ -657,6 +660,8 @@ private struct Greeting: View {
                 }
                 .padding(.horizontal, -20)
                 .padding(.top, 2)
+            } trailing: {
+                SettingsButton()
             }
         }
         .task { await load() }
@@ -718,5 +723,18 @@ private struct Greeting: View {
         habits = (try? await env.api.habits()) ?? habits
         if let a = await approvals { waiting = a.waiting }
         await latest
+    }
+}
+
+/// Settings' gear in the Team tab's corner (a sheet over the tabs). The Mac has Settings in its sidebar.
+private struct SettingsButton: View {
+    @EnvironmentObject private var env: AppEnvironment
+
+    var body: some View {
+        #if os(iOS)
+        Button { env.showSettings = true } label: { CornerIcon(systemImage: "gearshape") }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
+        #endif
     }
 }

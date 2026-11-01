@@ -128,7 +128,9 @@ struct ContentView: View {
     /// Things waiting for your OK, on the Team tab's badge.
     @State private var waiting = 0
 
-    enum Tab { case chat, study, health, screen, settings }
+    /// Settings isn't a tab: the gear in Team's corner opens it as a sheet (`env.showSettings`). Screen is Health's
+    /// third half.
+    enum Tab { case chat, study, health, money }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -142,27 +144,31 @@ struct ContentView: View {
             HealthView()
                 .tabItem { Label("Health", systemImage: "heart.text.square") }
                 .tag(Tab.health)
-            ScreenView()
-                .tabItem { Label("Screen", systemImage: "hourglass") }
-                .tag(Tab.screen)
-            SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(Tab.settings)
+            MoneyView()
+                .tabItem { Label("Money", systemImage: "eurosign.circle") }
+                .tag(Tab.money)
         }
         .onAppear {
-            if !settings.isConfigured { tab = .settings }
+            // Not set up yet: Settings first, and it stays until it is.
+            if !settings.isConfigured { env.showSettings = true }
             #if DEBUG
-            // Simulator screenshots: `-previewTab today`, `health`, `food`, `screen`, `study` or `settings` (Team otherwise).
+            // Simulator screenshots: `-previewTab today`, `health`, `food`, `screen`, `study`, `money` or `settings`
+            // (Team otherwise).
             if settings.isPreview, let name = UserDefaults.standard.string(forKey: "previewTab") {
                 tab = switch name {
-                case "health", "food": .health
-                case "screen": .screen
+                case "health", "food", "screen": .health
                 case "study": .study
-                case "settings": .settings
+                case "money": .money
                 default: .chat
                 }
                 if name == "today" { env.showToday = true }
-                if name == "food" { healthHalf = .food } else if name == "health" { healthHalf = .body }
+                if name == "settings" { env.showSettings = true }
+                switch name {
+                case "food": healthHalf = .food
+                case "screen": healthHalf = .screen
+                case "health": healthHalf = .body
+                default: break
+                }
             }
             #endif
         }
@@ -174,13 +180,14 @@ struct ContentView: View {
         .onReceive(push.$route.compactMap { $0 }) { route in
             push.route = nil
             guard settings.isConfigured else { return }
+            env.showSettings = false // what the route opens is under the sheet
             let onToday: Bool
             switch route {
             case .today, .digest, .note, .objectives: tab = .chat; onToday = true
             case .health: tab = .health; healthHalf = .body; env.showToday = false; return
             case .food: tab = .health; healthHalf = .food; env.showToday = false; return
             case .meal(let way): tab = .health; healthHalf = .food; env.showToday = false; env.mealLog = way; return
-            case .screen: tab = .screen; env.showToday = false; return
+            case .screen: tab = .health; healthHalf = .screen; env.showToday = false; return
             case .chats: tab = .chat; env.showToday = false; return
             case .moodle: onToday = false // a sheet over any tab, once Today is out of the way
             default: tab = .chat; onToday = false
@@ -194,6 +201,9 @@ struct ContentView: View {
                 }
                 await env.open(route)
             }
+        }
+        .sheet(isPresented: $env.showSettings) {
+            SettingsView().interactiveDismissDisabled(!settings.isConfigured)
         }
         .sheet(isPresented: $env.showMoodle) {
             NavigationStack {

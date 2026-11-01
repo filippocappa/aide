@@ -211,6 +211,35 @@ extension Agent {
     var figure: Figure { Figure(agent: id) }
 }
 
+/// An area's agent speaking at the top of its page (Coach on Health, Professor on Study, Finance on Money): its
+/// Pebble and a line as a message bubble in its colour. Tap: its chat.
+struct AgentLine: View {
+    let agent: Agent
+    let text: String
+    let ask: () -> Void
+
+    var body: some View {
+        Button(action: ask) {
+            HStack(alignment: .bottom, spacing: 8) {
+                AgentMark(agent: agent, size: 28)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(agent.name).font(.caption.weight(.semibold)).foregroundStyle(agent.tint)
+                    Text(text).font(.subheadline).multilineTextAlignment(.leading).foregroundStyle(.primary)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(agent.tint.opacity(0.14),
+                            in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 6,
+                                                       bottomTrailingRadius: 18, topTrailingRadius: 18,
+                                                       style: .continuous))
+                Spacer(minLength: 24)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(CardPress())
+        .accessibilityHint("Opens your chat with \(agent.name)")
+    }
+}
+
 extension String {
     /// Inline markdown (bold, italics, links) from the model's replies, keeping line breaks. The vault's
     /// `[[Page]]` and `[[Page|words]]` links (in the notebook's text) read as their words.

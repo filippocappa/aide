@@ -6,11 +6,13 @@ extension Theme {
     static let study = Theme.readable(0x7A4FD0)
 }
 
-/// The Study tab: what's up next, what to review, and the courses, each with its notebook, lectures and files
-/// (docs/API.md, "Study", "Notebook", "Quizzes and review sessions").
+/// The Study tab: Professor's line (the next review sessions and exam; tap: its chat), what's up next, what to
+/// review, and the courses, each with its notebook, lectures and files (docs/API.md, "Study", "Notebook", "Quizzes
+/// and review sessions").
 struct StudyView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
+    @EnvironmentObject private var chat: ChatViewModel
     @State private var overview: StudyOverview?
     @State private var reviews: [ReviewSession] = []
     @State private var error: String?
@@ -20,19 +22,23 @@ struct StudyView: View {
     @State private var result: String?
 
     private var courses: [StudyCourse] { overview?.courses ?? [] }
+    private var professor: Agent { chat.agent("professor") }
 
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     TopBlock("Study", overline: Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
-                        if overview != nil { Text(line).foregroundStyle(.secondary) }
+                        EmptyView()
                     } trailing: {
                         #if os(iOS)
                         Button { env.showMoodle = true } label: { CornerIcon(systemImage: "building.columns") }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Moodle")
                         #endif
+                    }
+                    if overview != nil {
+                        AgentLine(agent: professor, text: line) { push.route = .agent(professor.id) }
                     }
                     if let error { ErrorCard(text: error) }
                     if let now = overview?.now {
