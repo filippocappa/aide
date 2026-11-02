@@ -196,9 +196,13 @@ private struct UsageReportHost: View {
     let kind: UsageKind
     let date: Date
     @State private var kept: [UsagePage] = []
+    @State private var filling = false
+    /// `usageFill` runs once a launch.
+    @MainActor private static var filled = false
 
     private var shown: UsagePage { UsagePage(kind: kind, date: date) }
-    private static let keep = 3
+    private var today: UsagePage { UsagePage(kind: kind, date: Calendar.current.startOfDay(for: Date())) }
+    private static let keep = 4
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -211,6 +215,17 @@ private struct UsageReportHost: View {
                     .accessibilityHidden(!on)
                     .zIndex(on ? 1 : 0)
             }
+            if filling {
+                DeviceActivityReport(.usageFill, filter: .usageFill)
+                    .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+        .task {
+            guard !Self.filled else { return }
+            Self.filled = true
+            filling = true
+            try? await Task.sleep(for: .seconds(30))
+            filling = false
         }
         .task(id: shown) {
             add(shown)
@@ -220,10 +235,10 @@ private struct UsageReportHost: View {
         }
     }
 
-    /// Keeps `page`, the shown one first, dropping the oldest past `keep`.
+    /// Keeps `page`, the shown one first and today's (the one most come back to), dropping the oldest past `keep`.
     private func add(_ page: UsagePage) {
         var pages = [shown]
-        for p in [page] + kept where !pages.contains(p) { pages.append(p) }
+        for p in [page, today] + kept where !pages.contains(p) { pages.append(p) }
         kept = Array(pages.prefix(Self.keep))
     }
 }

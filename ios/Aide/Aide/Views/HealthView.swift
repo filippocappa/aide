@@ -197,9 +197,7 @@ struct HealthView: View {
             ScoresCard(scores: scores, coach: coach, open: { kind in if scores != nil { scoreKind = kind } },
                        ask: { push.route = .agent(coach.id) })
         } else if bodyError == nil {
-            ForEach(0..<3, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.row).frame(height: 116)
-            }
+            ScoresSkeleton()
         }
         if let bodyError {
             ErrorCard(text: bodyError)

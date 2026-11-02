@@ -10,13 +10,14 @@ struct UsageReportExtension: DeviceActivityReportExtension {
         UsageScene(context: .usageDay, kind: .day) { UsageReportView(data: $0) }
         UsageScene(context: .usageWeek, kind: .week) { UsageReportView(data: $0) }
         UsageScene(context: .usageMonth, kind: .month) { UsageReportView(data: $0) }
+        UsageScene(context: .usageFill, kind: .day) { _ in EmptyView() }
     }
 }
 
-struct UsageScene: DeviceActivityReportScene {
+struct UsageScene<Content: View>: DeviceActivityReportScene {
     let context: DeviceActivityReport.Context
     let kind: UsageKind
-    let content: (UsageReportData) -> UsageReportView
+    let content: (UsageReportData) -> Content
 
     /// Every app's time, pickups and notifications by day (and by hour for a day). The period is the one around the
     /// last segment, which the app's filter ends with (`DeviceActivityFilter.usage`).
@@ -125,7 +126,20 @@ struct UsageScene: DeviceActivityReportScene {
             reads[name] = read
         }
         let kept = order.max { (reads[$0]?.lastUsed ?? .distantPast) < (reads[$1]?.lastUsed ?? .distantPast) }
-        let days = kept.flatMap { reads[$0]?.days.values }.map { Array($0) } ?? []
+        var days = kept.flatMap { reads[$0]?.days.values }.map { Array($0) } ?? []
+        // A recent day comes alone (`DeviceActivityFilter.usage`): the week before, for your usual, from what's kept.
+        if hourly, let kept, let latest {
+            let day = calendar.startOfDay(for: latest)
+            for back in 1...UsageMath.usualDays {
+                guard let date = calendar.date(byAdding: .day, value: -back, to: day),
+                      !days.contains(where: { $0.date == date }),
+                      let saved = DayCache.read(hourly: true, device: kept, date: date) else { continue }
+                days.append(saved.day)
+                #if DEBUG
+                fromCache += 1
+                #endif
+            }
+        }
         let period = UsageMath.period(kind, containing: latest ?? Date())
         var report = UsageReportData(kind: kind, days: days.sorted { $0.date < $1.date }, period: period,
                                      device: order.count > 1 ? kept : nil, leftOut: order.filter { $0 != kept })

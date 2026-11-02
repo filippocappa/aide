@@ -94,6 +94,9 @@ enum UsageMath {
     /// How many days before a day make "your usual": a week, since the phone's report reads them hour by hour and
     /// each day more is a slower page.
     static let usualDays = 7
+    /// How many days before today the phone's report reads once when Screen opens and keeps, so a day page from the
+    /// last week asks iOS for itself alone.
+    static let filledDays = 15
 
     /// The days before `day` with any use, newest first, up to `usualDays`.
     static func history(before day: UsageDay, in days: [UsageDay]) -> [UsageDay] {
