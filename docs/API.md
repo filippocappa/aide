@@ -2554,10 +2554,11 @@ Push type `liveactivity`, topic `<bundle id>.push-type.liveactivity`, to the tok
 | `here` | since 2026-11-02: the tram is at the user's stop now |
 | `missed` | since 2026-11-02: the time of the tram the user just missed or won't make, on the update that moves to the next one (with an `alert`, "You missed the 13:48 tram 10" or "You won’t make…"); else null |
 
-The server looks every 10 s (30 s before 2026-11-02) and updates it when `at` or `leave` moves by 20 s or more, the
+The server looks every 10 s (30 s before 2026-11-02) and updates it when `at` or `leave` moves by 45 s or more, the
 tram reaches another stop (`stops`, `near`, `starts`, `here`), `live`, `next`, `feed_down`, `at_stop` or `missed`
-change, or `seen` is a minute newer; `stale-date` is `at` (or now, if later) plus 2 minutes. Updates go at APNs
-priority 5, those with an `alert` at 10.
+change, or `seen` is a minute newer; `stale-date` is `at` (or now, if later) plus 2 minutes. Tram updates go at APNs
+priority 10 (iOS held priority-5 ones for minutes while the phone slept), so the app declares
+`NSSupportsLiveActivitiesFrequentUpdates` for the larger budget.
 
 Since 2026-11-02 the server reads GTT's vehicle positions (GTFS-RT VehiclePositions, every 10 s) beside its
 predictions, and places each tram on its trip's stops: `at` is when GTT last saw it plus the timetable's time from

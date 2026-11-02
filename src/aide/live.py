@@ -190,7 +190,9 @@ class LiveActivities:
             aps["alert"] = alert
         if stale:
             aps["stale-date"] = unix(stale)
-        return await self._send(key, row, aps, 10 if alert else 5)
+        # A tram's countdown is watched as it moves: at priority 5 iOS holds the update while the phone sleeps (seen
+        # 2026-11-02: minutes stale on the Lock Screen). 10 is shown at once; the app asks for the larger budget.
+        return await self._send(key, row, aps, 10 if alert or key.startswith("tram:") else 5)
 
     async def end(self, key: str, state: dict, dismiss: datetime) -> bool:
         """The last push; the key is forgotten either way. Without a token yet, it's sent when the token comes."""

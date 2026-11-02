@@ -140,7 +140,7 @@ async def test_a_tram_alert_starts_follows_and_ends_its_live_activity(env, timet
     update = aps(apns)[1]
     assert update["event"] == "update" and update["content-state"]["at"] == tram + 120
     assert update["content-state"]["delay"] == 240 and update["stale-date"] == tram + 240
-    assert apns.requests[1].headers["apns-priority"] == "5"
+    assert apns.requests[1].headers["apns-priority"] == "10"  # a tram's: shown at once, even with the phone asleep
 
     await watcher.tick(at(8, 9, 40))  # 08:09 was its time, but nobody sees it: it may just be late
     assert len(apns.requests) == 2 and key in watcher.following
