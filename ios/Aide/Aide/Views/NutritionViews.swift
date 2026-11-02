@@ -555,7 +555,7 @@ struct NutritionTargetsView: View {
                 }
                 if let weight = loaded?.weight {
                     Section {
-                        NavigationLink { WeightView() } label: { WeightTargetsRow(summary: weight) }
+                        NavigationLink { WeightView().macPageBack() } label: { WeightTargetsRow(summary: weight) }
                     } header: {
                         Text("Your weight")
                     } footer: {

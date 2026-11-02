@@ -35,6 +35,7 @@ struct NavigationStack<Root: View>: View {
         if inSheet {
             stack
                 .environment(\.macInStack, true)
+                .environment(\.macInSheet, true)
                 .toggleStyle(.phoneSwitch)
                 .formStyle(.grouped)
                 .onPreferenceChange(MacSheetTitleKey.self) { title = $0 }
@@ -78,6 +79,8 @@ struct MacSheetHidesCloseKey: PreferenceKey {
 
 extension EnvironmentValues {
     @Entry var macInStack = false
+    /// In a sheet's stack, where the system's back button sits by the close button and looks right.
+    @Entry var macInSheet = false
     /// The main window's size (`MacRootView`); sheets carry it from the page that opened them.
     @Entry var macWindowSize = CGSize(width: 1180, height: 780)
 }
@@ -118,6 +121,10 @@ extension View {
     /// The title shown next to a sheet's close button.
     func macSheetTitle(_ title: String) -> some View { preference(key: MacSheetTitleKey.self, value: title) }
 
+    /// A page pushed in the window: its own back button on the page, top left, instead of the system's, which the
+    /// window toolbar puts up in the sidebar's corner by the traffic lights. In a sheet nothing changes.
+    func macPageBack() -> some View { modifier(MacPageBack()) }
+
     /// No close button on this sheet: the page has its own way out.
     func macSheetHidesClose() -> some View { preference(key: MacSheetHidesCloseKey.self, value: true) }
 }
@@ -126,8 +133,21 @@ private struct SheetCloseButton: View {
     var action: () -> Void
 
     var body: some View {
+        MacGlassButton(symbol: "xmark", help: "Close (Esc)", action: action)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Close")
+    }
+}
+
+/// A small round glass button: a sheet's close, a page's back, full screen.
+struct MacGlassButton: View {
+    var symbol: String
+    var help: String
+    var action: () -> Void
+
+    var body: some View {
         Button(action: action) {
-            Image(systemName: "xmark")
+            Image(systemName: symbol)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 30, height: 30)
@@ -135,9 +155,7 @@ private struct SheetCloseButton: View {
         }
         .buttonStyle(.plain)
         .modifier(CloseBackground())
-        .keyboardShortcut(.cancelAction)
-        .help("Close (Esc)")
-        .accessibilityLabel("Close")
+        .help(help)
     }
 }
 
@@ -157,19 +175,11 @@ struct MacFullScreenButton: View {
     @State private var full = MacFullScreenButton.window?.styleMask.contains(.fullScreen) ?? false
 
     var body: some View {
-        Button {
+        MacGlassButton(symbol: full ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                       help: full ? "Exit Full Screen (⌃⌘F)" : "Full Screen (⌃⌘F)") {
             MacFullScreenButton.window?.toggleFullScreen(nil)
-        } label: {
-            Image(systemName: full ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 30, height: 30)
-                .contentShape(Circle())
         }
-        .buttonStyle(.plain)
-        .modifier(CloseBackground())
         .keyboardShortcut("f", modifiers: [.control, .command])
-        .help(full ? "Exit Full Screen (⌃⌘F)" : "Full Screen (⌃⌘F)")
         .accessibilityLabel(full ? "Exit full screen" : "Full screen")
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in full = true }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in full = false }
@@ -179,5 +189,26 @@ struct MacFullScreenButton: View {
     private static var window: NSWindow? {
         let key = NSApp.keyWindow
         return key?.sheetParent ?? NSApp.mainWindow ?? key
+    }
+}
+
+private struct MacPageBack: ViewModifier {
+    @Environment(\.macInSheet) private var inSheet
+    @Environment(\.dismiss) private var dismiss
+
+    func body(content: Content) -> some View {
+        if inSheet {
+            content
+        } else {
+            content
+                .navigationBarBackButtonHidden(true)
+                .safeAreaInset(edge: .top, alignment: .leading, spacing: 0) {
+                    MacGlassButton(symbol: "chevron.left", help: "Back") { dismiss() }
+                        .accessibilityLabel("Back")
+                        .padding(.leading, 20)
+                        .padding(.top, 2)
+                        .padding(.bottom, 4)
+                }
+        }
     }
 }

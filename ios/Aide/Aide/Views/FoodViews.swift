@@ -420,7 +420,7 @@ struct MealPage: View {
                 #endif
                 ToolbarItem(placement: .sheetDone) {
                     NavigationLink("Edit") {
-                        MealEditForm(meal: meal, save: save, delete: delete, close: { dismiss() })
+                        MealEditForm(meal: meal, save: save, delete: delete, close: { dismiss() }).macPageBack()
                     }
                 }
             }

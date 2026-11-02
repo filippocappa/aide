@@ -75,7 +75,7 @@ struct StudyView: View {
             }
             .previewAnchor()
             .pageGlow(Theme.study)
-            .navigationDestination(for: StudyCourse.self) { CourseView(course: $0) }
+            .navigationDestination(for: StudyCourse.self) { CourseView(course: $0).macPageBack() }
             #if os(iOS)
             .toolbar(.hidden, for: .navigationBar) // Moodle sits on the title's line
             #else
@@ -484,7 +484,7 @@ struct CourseView: View {
         .previewAnchor()
         .pageGlow(Theme.study)
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $page) { destination($0) }
+        .navigationDestination(item: $page) { destination($0).macPageBack() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -956,7 +956,7 @@ private struct CourseLecturesView: View {
     var body: some View {
         List(lectures) { lecture in
             NavigationLink {
-                LectureView(lecture: lecture)
+                LectureView(lecture: lecture).macPageBack()
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(lecture.title ?? "Lecture").lineLimit(2)
@@ -1019,7 +1019,7 @@ struct ExercisesView: View {
                         NavigationLink {
                             LoadedNotePage(title: set.topic.title, subtitle: detail(set)) {
                                 try await env.api.exercises(set.id)
-                            }
+                            }.macPageBack()
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(set.topic.title)

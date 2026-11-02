@@ -483,5 +483,7 @@ extension View {
     func macSheetTitle(_ title: String) -> some View { self }
     /// The Mac's large sheet (`Mac/iOSCompat.swift`); phone sheets are big already.
     func macCoverSize() -> some View { self }
+    /// The Mac's back button on a pushed page (`Mac/MacNavigationStack.swift`); the phone has its navigation bar's.
+    func macPageBack() -> some View { self }
     #endif
 }

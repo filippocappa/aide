@@ -21,7 +21,7 @@ struct SettingsView: View {
         NavigationStack(path: $path) {
             Form {
                 Section {
-                    NavigationLink { ConnectionSettingsView(connection: connection) } label: { ConnectionHeader(connection: connection) }
+                    NavigationLink { ConnectionSettingsView(connection: connection).macPageBack() } label: { ConnectionHeader(connection: connection) }
                 }
                 Section("Aide") {
                     row("Digests", "sun.horizon.fill", .orange) { DigestSettingsView() }
@@ -106,7 +106,7 @@ struct SettingsView: View {
             // Simulator screenshots: `-previewSettings digests` (or memory, voice, plan, notifications, reminders,
             // health, location, screentime, connection) opens that page.
             .navigationDestination(for: String.self) { page in
-                switch page {
+                Group { switch page {
                 case "digests": DigestSettingsView()
                 case "memory": MemoryView()
                 case "voice": VoiceSettingsView()
@@ -123,7 +123,7 @@ struct SettingsView: View {
                 case "nutrition": NutritionTargetsView()
                 case "videos": VideosView()
                 default: ConnectionSettingsView(connection: connection)
-                }
+                } }.macPageBack()
             }
             .onAppear {
                 if settings.isPreview, path.isEmpty, let page = UserDefaults.standard.string(forKey: "previewSettings") {
@@ -136,7 +136,7 @@ struct SettingsView: View {
 
     private func row<Destination: View>(_ title: String, _ icon: String, _ color: Color, value: String? = nil, off: Bool = false,
                                         @ViewBuilder destination: @escaping () -> Destination) -> some View {
-        NavigationLink(destination: destination) {
+        NavigationLink(destination: { destination().macPageBack() }) {
             LabeledContent {
                 if let value { Text(value).foregroundStyle(off ? Color.orange : .secondary) }
             } label: {
@@ -693,7 +693,7 @@ private struct LocationSettingsView: View {
                 Text("With Always, the iPhone sends where it is when you move about 500 m or a tram alert is about to fire, also with Aide closed.")
             }
             Section {
-                NavigationLink("Tram alerts") { TransitAlertsView() }
+                NavigationLink("Tram alerts") { TransitAlertsView().macPageBack() }
             } footer: {
                 Text("When to leave for your GTT tram, also for calendar events with a place: the walk from where you are to the stop, plus two minutes.")
             }

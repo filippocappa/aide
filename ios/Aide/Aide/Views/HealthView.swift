@@ -154,12 +154,12 @@ struct HealthView: View {
         .previewAnchor()
         .pageGlow(glow, reach: 900)
         .navigationDestination(item: $metric) { m in
-            HealthMetricView(metric: m, days: bodyDays ?? [], day: day, vitals: scores?.vitals)
+            HealthMetricView(metric: m, days: bodyDays ?? [], day: day, vitals: scores?.vitals).macPageBack()
         }
         .navigationDestination(item: $scoreKind) { kind in
-            if let scores { ScoreDetailView(kind: kind, scores: scores, day: reading, date: day) }
+            if let scores { ScoreDetailView(kind: kind, scores: scores, day: reading, date: day).macPageBack() }
         }
-        .navigationDestination(isPresented: $showWeight) { WeightView { await loadWeight() } }
+        .navigationDestination(isPresented: $showWeight) { WeightView { await loadWeight() }.macPageBack() }
         .weightEntry(isPresented: $loggingWeight) { await loadWeight() }
         .refreshable {
             await loadBody(upload: true)

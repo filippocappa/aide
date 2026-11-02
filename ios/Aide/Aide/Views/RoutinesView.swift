@@ -37,7 +37,7 @@ struct RoutinesSheet: View {
                         rows(routines)
                         if !routines.isEmpty { RowDivider(leading: 60) }
                         NavigationLink {
-                            RoutineEditor(agent: agent, choose: choose)
+                            RoutineEditor(agent: agent, choose: choose).macPageBack()
                         } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: "plus").font(.body.weight(.semibold))
@@ -56,7 +56,7 @@ struct RoutinesSheet: View {
                             ForEach(Array(ideas.enumerated()), id: \.element) { i, idea in
                                 if i > 0 { RowDivider(leading: 60) }
                                 NavigationLink {
-                                    RoutineEditor(agent: agent, idea: idea, choose: choose)
+                                    RoutineEditor(agent: agent, idea: idea, choose: choose).macPageBack()
                                 } label: {
                                     RoutineLine(title: idea.title, blurb: idea.blurb, watch: idea.watch, tint: tint,
                                                 when: Schedule.label(time: idea.time, days: idea.days)) {
@@ -88,7 +88,7 @@ struct RoutinesSheet: View {
             if i > 0 { RowDivider(leading: 60) }
             HStack(spacing: 0) {
                 NavigationLink {
-                    RoutineEditor(agent: agent, routine: routine, choose: choose)
+                    RoutineEditor(agent: agent, routine: routine, choose: choose).macPageBack()
                 } label: {
                     RoutineLine(title: routine.title, blurb: routine.blurb, watch: routine.isWatch, tint: tint,
                                 when: when(routine), on: routine.enabled) { EmptyView() }

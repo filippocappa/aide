@@ -31,7 +31,7 @@ struct ScreenView: View {
         }
         .background(alignment: .top) { glow }
         .background(Theme.grouped)
-        .navigationDestination(isPresented: $showLocks) { ScreenTimeView() }
+        .navigationDestination(isPresented: $showLocks) { ScreenTimeView().macPageBack() }
         .task { await screenTime.sync() }
     }
 

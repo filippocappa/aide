@@ -239,7 +239,7 @@ struct HabitSheet: View {
                 if kind != "limit" {
                     Section {
                         NavigationLink {
-                            WorkoutPicker(selection: $workouts)
+                            WorkoutPicker(selection: $workouts).macPageBack()
                         } label: {
                             LabeledContent("Apple Watch workouts", value: summary)
                         }

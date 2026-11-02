@@ -73,7 +73,7 @@ struct FoodPage: View {
                         .card()
                 } else {
                     if let food {
-                        NavigationLink { NutritionDayView(day: food, tint: coach.tint) } label: {
+                        NavigationLink { NutritionDayView(day: food, tint: coach.tint).macPageBack() } label: {
                             HStack(spacing: 8) {
                                 DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
                                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
@@ -102,7 +102,7 @@ struct FoodPage: View {
         .previewAnchor()
         #if DEBUG
         .navigationDestination(isPresented: $previewScore) {
-            if let food { NutritionDayView(day: food, tint: coach.tint) }
+            if let food { NutritionDayView(day: food, tint: coach.tint).macPageBack() }
         }
         #endif
         .sheet(isPresented: $showGoals, onDismiss: { Task { await loadFood() } }) {

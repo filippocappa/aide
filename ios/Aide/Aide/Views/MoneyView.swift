@@ -63,7 +63,7 @@ struct MoneyView: View {
                     }
                     if !shownPayments.isEmpty {
                         header("Payments") {
-                            NavigationLink("All") { PaymentListView(tint: tint) }
+                            NavigationLink("All") { PaymentListView(tint: tint).macPageBack() }
                         }
                         PaymentDays(payments: shownPayments, tint: tint) { open = $0 }
                     }
@@ -76,7 +76,7 @@ struct MoneyView: View {
                     }
                     if isCurrent, !accounts.isEmpty || banksOn {
                         header("Accounts", detail: total.map { "\(Euros.text($0)) in all" }) {
-                            NavigationLink("Banks") { BanksView(tint: tint) { await load() } }
+                            NavigationLink("Banks") { BanksView(tint: tint) { await load() }.macPageBack() }
                         }
                         if accounts.isEmpty {
                             linkBank
@@ -98,7 +98,7 @@ struct MoneyView: View {
             }
             .task(id: env.openPayment) { await openPayment() }
             .navigationDestination(item: $selectedCategory) { cat in
-                PaymentListView(category: cat, tint: tint)
+                PaymentListView(category: cat, tint: tint).macPageBack()
             }
             .sheet(item: $open) { p in
                 PaymentSheet(payment: p, tint: tint) { await load() }
@@ -172,12 +172,12 @@ struct MoneyView: View {
                 .font(.subheadline).foregroundStyle(.secondary)
             HStack(spacing: 18) {
                 if banksOn {
-                    NavigationLink { BanksView(tint: tint) { await load() } } label: {
+                    NavigationLink { BanksView(tint: tint) { await load() }.macPageBack() } label: {
                         Text("Link a bank").font(.subheadline.weight(.semibold)).foregroundStyle(tint)
                     }
                     .buttonStyle(.plain)
                 }
-                NavigationLink { PaymentSetupView() } label: {
+                NavigationLink { PaymentSetupView().macPageBack() } label: {
                     Text("Set up Log payment").font(.subheadline.weight(.semibold)).foregroundStyle(tint)
                 }
                 .buttonStyle(.plain)
@@ -189,7 +189,7 @@ struct MoneyView: View {
 
     /// Accounts with no account yet: the way to link one.
     private var linkBank: some View {
-        NavigationLink { BanksView(tint: tint) { await load() } } label: {
+        NavigationLink { BanksView(tint: tint) { await load() }.macPageBack() } label: {
             HStack(spacing: 12) {
                 Image(systemName: "building.columns")
                     .foregroundStyle(tint)

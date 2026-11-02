@@ -1050,7 +1050,7 @@ struct BrowserSettingsView: View {
                 Text("Opens the site in Aide's browser and its login here, on Aide's own screen. Your passwords and codes go to the page, never to Aide.")
             }
             Section {
-                NavigationLink("Purchases") { PurchasesView() }
+                NavigationLink("Purchases") { PurchasesView().macPageBack() }
             } footer: {
                 Text("Errands never buy, book or send anything without your Confirm, and never type card numbers.")
             }
