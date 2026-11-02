@@ -2,7 +2,7 @@
 taps it; the app never jumps on its own. Some things only the phone can do (picking Screen Time apps, permissions,
 the camera), so the agents send the user there with one of these."""
 
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from . import Tool, ToolOutput
 
@@ -66,7 +66,7 @@ def page_tools(study=None, notebook=None) -> list[Tool]:
                 if notebook is None:
                     raise ValueError("there's no notebook")
                 t = notebook.find_topic(topic, found["id"])
-                url += "?" + urlencode({"topic": t["public_id"], "title": t["title"]})
+                url += "?" + urlencode({"topic": t["public_id"], "title": t["title"]}, quote_via=quote)
                 subtitle = note or t["title"]
             elif page == "lesson":
                 raise ValueError("a lesson needs the topic (notebook lists them)")

@@ -242,6 +242,7 @@ async def test_a_lesson_card_carries_the_topic(nb, monkeypatch):  # noqa: F811
     url = urlparse(out.attachment["open"][0]["url"])
     assert url.path == f"/{nb.macro['id']}/lesson" and url.netloc == "study"
     assert parse_qs(url.query) == {"topic": ["t_abc"], "title": ["IS-LM & money"]}
+    assert "+" not in url.query  # spaces as %20: the app's URLComponents keeps a "+"
 
 
 def test_open_cards_merge_into_one():
