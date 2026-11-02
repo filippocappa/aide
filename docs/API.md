@@ -482,6 +482,27 @@ on the app's Today page. An unknown `agent` is `400`. Lines are kept 90 days; th
 
 Reads (listing events, searching mail) aren't recorded.
 
+`kind` `errand` (Aide's): an errand's state, title the errand's, detail its message ("Needs you: log in", "Cancelled").
+A meal scanned in the app is "Logged a meal" with the food in `detail` (before 2026-11-02 the title named it).
+
+**Grouped** (`?grouped=true`, since 2026-11-02; the app's feed): what came together is one row, newest first.
+`limit`, `before` and `next` still count lines, not rows, so a page can hold fewer rows than `limit`.
+```json
+{"id": 328, "ts": "2026-11-02T15:11:02+01:00", "agent": "coach", "kind": "action", "title": "Logged a meal",
+ "detail": "Logged: [74] Mon 02 Nov 15:11 · Lean meat…", "conversation_id": "c_9402…",
+ "count": 4, "agents": ["coach"], "children": [ /* the 4 Items, newest first */ ]}
+```
+- A run: lines next to each other with the same agent and kind, in one chat or with the same title, each within
+  45 min of the next. `title` is the shared one, or the distinct ones ("Changed a meal and Logged a meal").
+- An errand: "Started an errand" and the `errand` and `message` lines after it in that chat (until the next one) are
+  one row of kind `errand`, with the errand's title and its last state as `detail`.
+- A plan: `objectives` lines made within 10 min of each other, from any agent: "Proposed 14 objectives for today,
+  the week and the month", `detail` null, `agents` everyone who proposed.
+- Quiet checks: a day's `quiet` lines are one row at the newest one's place: "4 quiet checks", detail "Nothing
+  needed you: Habits tonight, Tomorrow, …".
+- The row's `id`, `ts`, `conversation_id` are the newest line's; `agent` is the first line's. A row of one line has
+  no `count`, `agents` or `children`: it's the Item as it was.
+
 ### Approvals
 
 `GET /v1/approvals` → everything waiting for your OK, and the routines coming up:

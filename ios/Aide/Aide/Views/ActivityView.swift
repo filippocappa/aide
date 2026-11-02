@@ -19,9 +19,10 @@ enum ActivityScope: Identifiable {
 }
 
 /// What the team did and what's waiting for you, in one place outside the chats (docs/API.md, "Activity and
-/// approvals"). On top, what's waiting for your OK (`WaitingSection`; left out from Today, which shows it itself),
-/// then the routines coming up, then the activity by day. Opened from Today's "All activity" for everyone, or from
-/// an agent's card for that agent alone.
+/// approvals"). Chips for whose, then what's waiting for your OK (`WaitingSection`; left out from Today, which shows
+/// it itself), the routines coming up, then what was done by day, grouped by the server (a run of meals, an errand,
+/// a plan is one row that folds open; a day's quiet checks one grey line). Opened from Today's "All activity" for
+/// everyone, or from an agent's card for that agent alone.
 struct ActivitySheet: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var chat: ChatViewModel
@@ -35,6 +36,8 @@ struct ActivitySheet: View {
     @State private var next: Int?
     @State private var loaded = false
     @State private var error: String?
+    /// The grouped rows opened to show their lines.
+    @State private var unfolded: Set<Int> = []
     /// False on Today, which shows what's waiting above its own link here.
     var showsWaiting = true
 
@@ -44,20 +47,16 @@ struct ActivitySheet: View {
                 if let error {
                     Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
                 }
+                Section { chips }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                 if showsWaiting {
                     WaitingSection(approvals: approvals, agent: agent, reload: { await load() }, open: go)
                 }
                 upcomingSection
                 ForEach(ActivityDays.group(items), id: \.day) { group in
                     Section(ActivityDays.title(group.day)) {
-                        ForEach(group.items) { item in
-                            Button { go(item.conversationId) } label: {
-                                ActivityRow(item: item, agent: chat.agent(item.agent), showsAgent: agent == nil)
-                                    .multilineTextAlignment(.leading) // the Mac centres a button's lines
-                            }
-                            .disabled(item.conversationId == nil)
-                            .listRowBackground(Theme.row)
-                        }
+                        ForEach(group.items) { item in rows(item) }
                     }
                 }
                 if let next {
@@ -77,9 +76,6 @@ struct ActivitySheet: View {
             .background(Theme.grouped)
             .navigationTitle(agent.map { "\($0.name)'s activity" } ?? "Activity")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { filter }
-            }
             .refreshable { await load() }
             .task(id: agent?.id) { await load() }
         }
@@ -113,17 +109,59 @@ struct ActivitySheet: View {
         }
     }
 
-    private var filter: some View {
-        Menu {
-            Picker("Who", selection: Binding(get: { agent?.id ?? "" },
-                                             set: { id in agent = id.isEmpty ? nil : chat.agent(id) })) {
-                Text("Everyone").tag("")
-                ForEach(chat.agents) { Text($0.name).tag($0.id) }
+    /// Everyone, then each agent: whose activity the sheet shows.
+    private var chips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip("Everyone", tint: Theme.accent, on: agent == nil) { agent = nil }
+                ForEach(chat.agents) { a in
+                    chip(a.name, tint: a.tint, on: agent?.id == a.id) { agent = a }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func chip(_ title: String, tint: Color, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(on ? .semibold : .regular))
+                .foregroundStyle(on ? Color.black.opacity(0.85) : .primary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(on ? tint : Theme.row, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    /// A row, and its lines under it while it's open. A row that folds lines opens on a tap; a line opens its chat.
+    @ViewBuilder private func rows(_ item: ActivityItem) -> some View {
+        let open = unfolded.contains(item.id)
+        Button {
+            if item.children != nil {
+                withAnimation(.snappy) { if open { unfolded.remove(item.id) } else { unfolded.insert(item.id) } }
+            } else {
+                go(item.conversationId)
             }
         } label: {
-            Image(systemName: agent == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+            ActivityRow(item: item, agent: chat.agent(item.agent), showsAgent: agent == nil,
+                        names: (item.agents ?? []).map { chat.agent($0).name }, unfolded: open)
+                .multilineTextAlignment(.leading) // the Mac centres a button's lines
         }
-        .accessibilityLabel("Show one agent")
+        .disabled(item.children == nil && item.conversationId == nil)
+        .listRowBackground(Theme.row)
+        if open {
+            ForEach(item.children ?? []) { line in
+                Button { go(line.conversationId) } label: {
+                    ActivityLine(item: line, agent: chat.agent(line.agent), showsAgent: (item.agents?.count ?? 1) > 1)
+                        .multilineTextAlignment(.leading)
+                }
+                .disabled(line.conversationId == nil)
+                .listRowBackground(Theme.row)
+            }
+        }
     }
 
     private func go(_ id: String?) {
@@ -138,7 +176,7 @@ struct ActivitySheet: View {
 
     private func load() async {
         async let waiting = env.api.approvals()
-        async let page = env.api.activity(agent: agent?.id)
+        async let page = env.api.activity(agent: agent?.id, grouped: true)
         do {
             let (w, p) = try await (waiting, page)
             approvals = w
@@ -153,7 +191,7 @@ struct ActivitySheet: View {
 
     private func loadMore(before: Int) async {
         do {
-            let page = try await env.api.activity(agent: agent?.id, before: before)
+            let page = try await env.api.activity(agent: agent?.id, before: before, grouped: true)
             items += page.items
             next = page.next
         } catch { self.error = describe(error) }
@@ -370,13 +408,38 @@ struct WaitingSection: View {
     }
 }
 
-/// One line of the feed: what, by whom, when.
+/// One row of the feed: what, by whom, when. A grouped row says how many lines it folds and has a chevron; a day's
+/// quiet checks are one small grey line.
 struct ActivityRow: View {
     let item: ActivityItem
     let agent: Agent
     let showsAgent: Bool
+    /// Who, for a grouped row of more than one agent.
+    var names: [String] = []
+    var unfolded = false
 
     var body: some View {
+        if item.kind == "quiet" { quiet } else { full }
+    }
+
+    private var quiet: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "eye").font(.caption).foregroundStyle(.tertiary).frame(width: 28)
+            Text([item.title, item.detail].compactMap { $0 }.joined(separator: " · "))
+                .font(.footnote).foregroundStyle(.secondary).lineLimit(unfolded ? nil : 1)
+            Spacer(minLength: 4)
+            if item.children != nil { chevron }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.down")
+            .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+            .rotationEffect(.degrees(unfolded ? 180 : 0))
+    }
+
+    private var full: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: ActivityRow.symbol(item.kind))
                 .font(.system(size: 15, weight: .semibold))
@@ -386,25 +449,32 @@ struct ActivityRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(heading).foregroundStyle(.primary).lineLimit(2)
+                    if let count = item.count, count > 1, item.kind != "objectives" {
+                        Text("×\(count)").font(.caption.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(agent.tint)
+                    }
                     Spacer(minLength: 4)
                     if let date = item.date {
                         Text(date.formatted(date: .omitted, time: .shortened)).font(.caption).foregroundStyle(.tertiary)
                     }
+                    if item.children != nil { chevron }
                 }
                 if let detail = item.detail, !detail.isEmpty {
-                    Text(detail.markdown).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                    Text(detail.markdown).font(.subheadline).foregroundStyle(.secondary).lineLimit(unfolded ? 1 : 3)
                 }
             }
         }
         .padding(.vertical, 2)
-        .opacity(item.kind == "quiet" || item.kind == "cancelled" ? 0.6 : 1)
+        .opacity(item.kind == "cancelled" ? 0.6 : 1)
         .accessibilityElement(children: .combine)
     }
 
-    /// "Coach · Added a reminder", or just the title in one agent's own feed.
+    /// "Coach · Added a reminder", "Coach and Professor · Proposed 9 objectives", or just the title in one agent's feed.
     private var heading: String {
         let what = ActivityRow.verb(item.kind).map { "\($0) \(item.title)" } ?? item.title
-        return showsAgent ? "\(agent.name) · \(what)" : what
+        guard showsAgent else { return what }
+        let who = names.count > 1 ? names.dropLast().joined(separator: ", ") + " and " + names.last! : agent.name
+        return "\(who) · \(what)"
     }
 
     /// Words before the title where the title alone wouldn't say what happened.
@@ -431,8 +501,34 @@ struct ActivityRow: View {
         case "objectives": "scope"
         case "drafts": "square.and.pencil"
         case "digest": "sun.horizon"
+        case "errand": "safari"
         default: "circle.fill"
         }
+    }
+}
+
+/// One of a grouped row's lines, small, under it: the time, what (when it's not the row's own title) and its detail.
+struct ActivityLine: View {
+    let item: ActivityItem
+    let agent: Agent
+    let showsAgent: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(item.date?.formatted(date: .omitted, time: .shortened) ?? "")
+                .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+                .frame(width: 44, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(showsAgent ? "\(agent.name) · \(item.title)" : item.title)
+                    .font(.footnote.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
+                if let detail = item.detail, !detail.isEmpty {
+                    Text(detail.markdown).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 12)
+        .accessibilityElement(children: .combine)
     }
 }
 

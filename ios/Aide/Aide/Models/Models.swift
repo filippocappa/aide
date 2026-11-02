@@ -1693,6 +1693,10 @@ struct ActivityItem: Decodable, Identifiable, Hashable {
     var detail: String?
     /// The chat it happened in: a chat id, "main", "team", or nil.
     var conversationId: String?
+    /// A grouped row (`grouped=true`): how many lines it folds, who, and the lines, newest first. Nil for one line.
+    var count: Int?
+    var agents: [String]?
+    var children: [ActivityItem]?
 
     var date: Date? { Wire.parse(ts) }
 }

@@ -827,12 +827,18 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/activity", dependencies=[Depends(auth)])
     async def get_activity(agent_id: str | None = Query(None, alias="agent"), before: int | None = None,
-                           limit: int = 100, kind: str | None = None):
+                           limit: int = 100, kind: str | None = None, grouped: bool = False):
         limit = max(1, min(limit, 200))
         kinds = [k.strip() for k in kind.split(",") if k.strip()] if kind else None
         items = activity.recent(db.conn, check_agent(agent_id) if agent_id is not None else None, before, limit, kinds)
-        return {"items": [{**i, "ts": local(i["ts"])} for i in items],
-                "next": items[-1]["id"] if len(items) == limit else None}
+        rows = activity.grouped(items, tz) if grouped else items
+
+        def out(i: dict) -> dict:
+            row = {**i, "ts": local(i["ts"])}
+            if "children" in i:
+                row["children"] = [out(c) for c in i["children"]]
+            return row
+        return {"items": [out(i) for i in rows], "next": items[-1]["id"] if len(items) == limit else None}
 
     @app.get("/v1/approvals", dependencies=[Depends(auth)])
     async def approvals():
@@ -1346,7 +1352,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             name = f"{name} ({brand})"[:MAX_FOOD_NAME]
         meal = food.add(name, **sums, eaten_at=when, notes=notes)
         foods.keep_items(meal["id"], rows, count=True)
-        activity.record(db.conn, "coach", "action", f"Logged {name}, {rows[0]['grams']:g} g (scanned in the app)")
+        activity.record(db.conn, "coach", "action", "Logged a meal",
+                        f"{name}, {rows[0]['grams']:g} g, scanned in the app")
         # In Coach's chat too (the one it was scanned in, else the Food log), so it's seen there and Coach knows.
         row = db.app_conversation(body.conversation_id) if body.conversation_id else None
         await agent.post(row["public_id"] if row and row["agent"] == "coach" else food_chat(), f"{SCANNED}: {name}, {rows[0]['grams']:g} g, logged by the app as meal "

@@ -149,3 +149,92 @@ def test_old_lines_are_dropped_and_long_ones_cut(env):
     rows = conn.execute("SELECT title, detail FROM activity").fetchall()
     assert [r["title"] for r in rows] == ["new"] and len(rows[0]["detail"]) == activity.DETAIL
 
+
+
+def line(i, minute, agent, kind, title, detail=None, chat=None, day=2):
+    return {"id": i, "ts": f"2026-11-0{day}T{minute // 60:02d}:{minute % 60:02d}:00+00:00", "agent": agent,
+            "kind": kind, "title": title, "detail": detail, "conversation_id": chat}
+
+
+def fold(*lines):
+    return activity.grouped(sorted(lines, key=lambda x: x["id"], reverse=True), ROME)
+
+
+def test_a_run_of_the_same_thing_in_one_chat_is_one_row():
+    rows = fold(line(1, 600, "coach", "action", "Logged a meal", "eggs", "c1"),
+                line(2, 610, "coach", "action", "Logged a meal", "toast", "c1"),
+                line(3, 640, "coach", "action", "Changed a meal", "toast, 2 slices", "c1"),
+                line(4, 800, "coach", "action", "Logged a meal", "pasta", "c1"))  # 2 h later: its own row
+    assert [r["id"] for r in rows] == [4, 3]
+    run = rows[1]
+    assert run["count"] == 3 and run["agents"] == ["coach"] and run["title"] == "Changed a meal and Logged a meal"
+    assert [c["id"] for c in run["children"]] == [3, 2, 1] and run["detail"] == "toast, 2 slices"
+    assert "count" not in rows[0] and "children" not in rows[0]
+
+
+def test_another_agent_or_chat_breaks_a_run():
+    rows = fold(line(1, 600, "coach", "action", "Logged a meal", chat="c1"),
+                line(2, 601, "coach", "action", "Changed a meal", chat="c2"),
+                line(3, 602, "aide", "action", "Changed a meal", chat="c2"))
+    assert [r.get("count", 1) for r in rows] == [1, 1, 1]
+
+
+def test_meals_scanned_in_the_app_join_the_ones_logged_in_chat():
+    rows = fold(line(1, 600, "coach", "action", "Logged HiPro Mango, 300 g (scanned in the app)"),
+                line(2, 601, "coach", "action", "Logged a meal", "eggs", "c1"),
+                line(3, 602, "coach", "action", "Logged a meal", "Penne, 300 g, scanned in the app"))
+    [run] = rows
+    assert run["count"] == 3 and run["title"] == "Logged a meal"
+
+
+def test_an_errand_is_one_row_with_its_last_state():
+    rows = fold(line(1, 600, "aide", "ask", "Asked Professor", chat="c1"),
+                line(2, 601, "aide", "action", "Started an errand", "Errand #17 started", "c1"),
+                line(3, 602, "aide", "errand", "Grade check", "Needs you: log in", "c1"),
+                line(4, 602, "aide", "message", "Uni chat", "I need you on unito.it", "c1"),
+                line(5, 610, "aide", "errand", "Grade check", "Cancelled", "c1"),
+                line(6, 611, "aide", "ask", "Asked Professor", chat="c1"))
+    assert [r["id"] for r in rows] == [6, 5, 1]
+    errand = rows[1]
+    assert errand["kind"] == "errand" and errand["title"] == "Grade check" and errand["detail"] == "Cancelled"
+    assert errand["count"] == 4 and [c["id"] for c in errand["children"]] == [5, 4, 3, 2]
+
+
+def test_a_plan_is_one_row_whoever_proposed():
+    rows = fold(line(1, 600, "secretary", "objectives", "Proposed 1 objective for the month"),
+                line(2, 600, "coach", "objectives", "Proposed 2 objectives for the month"),
+                line(3, 601, "professor", "objectives", "Proposed 3 objectives for the week"),
+                line(4, 601, "professor", "objectives", "Proposed 1 objective for the day"))
+    [plan] = rows
+    assert plan["kind"] == "objectives" and plan["count"] == 4 and plan["agents"] == ["secretary", "coach", "professor"]
+    assert plan["title"] == "Proposed 7 objectives for today, the week and the month"
+
+
+def test_a_days_quiet_checks_are_one_row_where_the_newest_was():
+    rows = fold(line(1, 480, "coach", "quiet", "Recovery check", "Checked: nothing needed you.", "w1"),
+                line(2, 580, "coach", "action", "Logged a meal", chat="c1"),
+                line(3, 600, "secretary", "quiet", "Mail that needs you", "Checked: nothing needed you.", "w2"),
+                line(4, 605, "coach", "action", "Logged a meal", chat="c1"),
+                line(0, 1050, "coach", "quiet", "Recovery check", day=1))
+    assert [r["id"] for r in rows] == [4, 3, 0]
+    quiet = rows[1]
+    assert quiet["title"] == "2 quiet checks" and quiet["agents"] == ["coach", "secretary"]
+    assert quiet["detail"] == "Nothing needed you: Mail that needs you, Recovery check."
+    assert rows[0]["count"] == 2  # the meals around a quiet check still make a run
+    assert "count" not in rows[2]  # another day's lone check is as it was
+
+
+def test_the_grouped_feed_pages_on_the_lines(env):
+    client, agent, _ = env()
+    for n in range(4):
+        activity.record(agent.db.conn, "coach", "action", "Logged a meal", f"meal {n}", "c1")
+    activity.record(agent.db.conn, "secretary", "quiet", "Tomorrow", "Checked: nothing needed you.", "w1")
+    page = feed(client, grouped="true", limit=3)
+    assert page["next"]  # the 3 newest lines: the check and two meals
+    quiet, meals = page["items"]
+    assert quiet["title"] == "Tomorrow" and "children" not in quiet  # a lone check is as it was
+    assert meals["children"][0]["ts"].endswith(("+01:00", "+02:00"))
+    assert meals["count"] == 2 and [c["detail"] for c in meals["children"]] == ["meal 3", "meal 2"]
+    rest = feed(client, grouped="true", before=page["next"])
+    assert rest["items"][0]["count"] == 2 and rest["next"] is None
+    assert len(feed(client)["items"]) == 5  # without grouped, the lines as they were
