@@ -184,6 +184,21 @@ async def test_stamp_says_where_the_phone_is(db):
     assert "phone" not in client.requests[1]["messages"][-1]["content"][0]["text"]
 
 
+async def test_stamp_carries_the_agents_context_fresh_each_message(db):
+    # Coach's food today: an old tool result in the chat may say lower targets (a run uploaded later raises them)
+    client = FakeClient([("end_turn", [text("x")]), ("end_turn", [text("y")])])
+    agent = Agent(client, db, TOOLS, model="m", delegate=False)
+    eaten = iter(["2690/2450 kcal", "2690/2930 kcal (targets include +481 kcal from workouts]"])
+    agent.context = lambda a: "food today: " + next(eaten) if a == "aide" else None
+    await agent.reply("discord", "what can I eat?")
+    assert client.requests[0]["messages"][-1]["content"][0]["text"].endswith(
+        ", food today: 2690/2450 kcal] what can I eat?")
+    await agent.reply("discord", "and now?")
+    stamp = client.requests[1]["messages"][-1]["content"][0]["text"]
+    assert stamp.endswith("food today: 2690/2930 kcal (targets include +481 kcal from workouts)] and now?")
+    assert [m["text"] for m in agent.visible_history("discord")][-2] == "and now?"  # the app never shows it
+
+
 def test_a_search_match_is_cut_around_the_words():
     from aide.agent import _snippet
     text = "We talked about a lot of things before this. " * 3 + "The dentist is on Friday at 10.\n\nThen " + "more words after it here. " * 4
