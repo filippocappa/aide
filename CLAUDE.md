@@ -174,7 +174,7 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   `List` (a `Form`) is 820 pt wide in the middle. On the Mac, `Theme.toggle` is the accent (ivory), not green.
   `.toolbar(.hidden, for: .navigationBar)` hides the back chevron there (`MacPhoneBar`).
 - A practice exam opens in a window of its own (`macWindowCover`, `Mac/MacCoverWindow.swift`; `fullScreenCover` on the
-  phone), over Aide's and in full screen when Aide is: macOS won't take a window with a sheet into full screen. `dismiss`
+  phone), over Aide's and a little smaller (the sheet's size), in full screen when Aide is: macOS won't take a window with a sheet into full screen. `dismiss`
   doesn't close it; the exam closes through `coverClose`, and its red button is off (Quit asks first).
 - `Mac/iOSCompat.swift`: lets the shared views build unchanged: `UIColor`/`UIImage`/`UIPasteboard` as their AppKit
   twins, `navigationBarTitleDisplayMode`, `topBarTrailing`, `keyboardType`, `fullScreenCover` (a sheet) and the like.
