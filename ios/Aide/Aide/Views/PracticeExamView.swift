@@ -323,6 +323,7 @@ private struct CountRow: View {
             withAnimation(.snappy) { value = min(max(new, range.lowerBound), range.upperBound) }
         } label: {
             Image(systemName: symbol).font(.subheadline.weight(.semibold)).frame(width: 40, height: 32)
+                .contentShape(Rectangle())  // the whole 40×32 takes the click: on the Mac only the glyph's lines did
         }
         .buttonStyle(.plain)
         .accessibilityLabel(symbol == "plus" ? "More \(title.lowercased())" : "Fewer \(title.lowercased())")
