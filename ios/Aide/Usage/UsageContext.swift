@@ -17,7 +17,7 @@ extension DeviceActivityReport.Context {
 }
 
 extension DeviceActivityFilter {
-    /// The phone's use for a page: hour by hour for a day (and the 14 days before, for your usual), day by day for a
+    /// The phone's use for a page: hour by hour for a day (and the 7 days before, for your usual), day by day for a
     /// week or month (and the one before).
     static func usage(_ kind: UsageKind, containing date: Date) -> DeviceActivityFilter {
         let asked = UsageMath.asked(kind, containing: date)

@@ -59,7 +59,7 @@ final class UsageMathTests: XCTestCase {
         let week = UsageMath.period(.week, containing: today)
         XCTAssertEqual(UsageMath.days(of: week).count, 7)
         XCTAssertEqual(UsageMath.asked(.week, containing: today).duration, 14 * 86400, accuracy: 7200)
-        XCTAssertEqual(UsageMath.days(of: UsageMath.asked(.day, containing: today)).count, 15)
+        XCTAssertEqual(UsageMath.days(of: UsageMath.asked(.day, containing: today)).count, 8)
     }
 
     func testAverageLeavesOutTheDayInProgress() {

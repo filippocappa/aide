@@ -247,6 +247,10 @@ private struct UsageSkeleton: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
+        // Only the space under the header: taller, the page (which doesn't scroll) grew past the screen and pushed
+        // Health's title up under the status bar.
+        .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+        .clipped()
         .opacity(dim ? 0.5 : 1)
         .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever()) { dim = true } }
         .accessibilityLabel("Loading screen time")

@@ -91,8 +91,9 @@ struct UsageDay: Identifiable, Hashable {
 
 /// The page's numbers, worked out the same way for the report and the tests.
 enum UsageMath {
-    /// How many days before a day make "your usual".
-    static let usualDays = 14
+    /// How many days before a day make "your usual": a week, since the phone's report reads them hour by hour and
+    /// each day more is a slower page.
+    static let usualDays = 7
 
     /// The days before `day` with any use, newest first, up to `usualDays`.
     static func history(before day: UsageDay, in days: [UsageDay]) -> [UsageDay] {
@@ -189,7 +190,7 @@ enum UsageMath {
         return calendar.dateInterval(of: unit, for: date) ?? DateInterval(start: calendar.startOfDay(for: date), duration: 86400)
     }
 
-    /// What the report asks for: the period and, before it, what it's compared with (the 14 days before a day, the
+    /// What the report asks for: the period and, before it, what it's compared with (the week before a day, the
     /// week or month before).
     static func asked(_ kind: UsageKind, containing date: Date, calendar: Calendar = .current) -> DateInterval {
         let period = period(kind, containing: date, calendar: calendar)
