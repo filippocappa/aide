@@ -15,7 +15,6 @@ struct UsageReportData {
     var device: String? = nil
     var leftOut: [String] = []
     /// Debug builds: how long iOS took to hand the usage over and whether the extension can keep anything.
-    var debug: String? = nil
 }
 
 /// The Screen tab's page under the switch and the date: the total (every app's time added up), the focus score, the
@@ -64,7 +63,7 @@ struct UsageReportView: View {
         .scrollContentBackground(.hidden)
         .background(UsageColors.page)
         .opacity(ready ? 1 : 0)
-        .animation(.easeOut(duration: 0.25), value: ready)
+        .animation(UsageMotion.fade, value: ready)
         .task {
             try? await Task.sleep(for: .seconds(5))
             gaveUp = true
@@ -92,7 +91,6 @@ struct UsageReportView: View {
                         .font(.caption.weight(.semibold)).textCase(.uppercase).foregroundStyle(.secondary)
                     Text(UsageMath.duration(headline))
                         .font(.system(size: 48, weight: .bold, design: .rounded))
-                        .contentTransition(.numericText())
                     if let line = comparison {
                         Label(line.text, systemImage: line.under ? "arrow.down" : "arrow.up")
                             .font(.subheadline.weight(.medium))
@@ -104,14 +102,11 @@ struct UsageReportView: View {
                         Text("Apps \(UsageMath.duration(day.added)) · iOS \(UsageMath.duration(day.reported))")
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    if let debug = data.debug {
-                        Text(debug).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                    }
                     #endif
                 }
                 Spacer(minLength: 0)
                 if let focus {
-                    Button { withAnimation(.snappy) { showFocus.toggle() } } label: {
+                    Button { withAnimation(UsageMotion.snappy) { showFocus.toggle() } } label: {
                         FocusRing(score: focus.score)
                     }
                     .buttonStyle(.plain)
@@ -236,7 +231,7 @@ struct UsageReportView: View {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, app in
                 VStack(spacing: 0) {
                     if index > 0 { Rectangle().fill(UsageColors.line).frame(height: 1).padding(.leading, 44) }
-                    Button { withAnimation(.snappy) { openApp = openApp == app.id ? nil : app.id } } label: {
+                    Button { withAnimation(UsageMotion.snappy) { openApp = openApp == app.id ? nil : app.id } } label: {
                         AppRow(app: app, share: app.seconds / top, average: data.kind == .day ? nil : app.seconds / Double(max(1, begun.count)))
                     }
                     .buttonStyle(.plain)
@@ -245,7 +240,7 @@ struct UsageReportView: View {
             }
             if !rest.isEmpty {
                 Rectangle().fill(UsageColors.line).frame(height: 1)
-                Button { withAnimation(.snappy) { showAll.toggle() } } label: {
+                Button { withAnimation(UsageMotion.snappy) { showAll.toggle() } } label: {
                     HStack {
                         Text(showAll ? "Show fewer" : "\(rest.count) other app\(rest.count == 1 ? "" : "s")")
                         Spacer()
@@ -320,7 +315,7 @@ struct UsageReportView: View {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, site in
                 VStack(spacing: 0) {
                     if index > 0 { Rectangle().fill(UsageColors.line).frame(height: 1).padding(.leading, 44) }
-                    Button { withAnimation(.snappy) { openSite = openSite == site.id ? nil : site.id } } label: {
+                    Button { withAnimation(UsageMotion.snappy) { openSite = openSite == site.id ? nil : site.id } } label: {
                         SiteRow(site: site, share: site.seconds / top,
                                 average: data.kind == .day ? nil : site.seconds / Double(max(1, begun.count)))
                     }
@@ -330,7 +325,7 @@ struct UsageReportView: View {
             }
             if !rest.isEmpty {
                 Rectangle().fill(UsageColors.line).frame(height: 1)
-                Button { withAnimation(.snappy) { showAllSites.toggle() } } label: {
+                Button { withAnimation(UsageMotion.snappy) { showAllSites.toggle() } } label: {
                     HStack {
                         Text(showAllSites ? "Show fewer" : "\(rest.count) other website\(rest.count == 1 ? "" : "s")")
                         Spacer()
@@ -623,4 +618,16 @@ private struct AppIcon: View {
         let h = app.id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
         return Color(hue: Double(h % 360) / 360, saturation: 0.55, brightness: 0.8)
     }
+}
+
+/// The report's motion: none on the phone, where the report is drawn by another process and handed over frame by
+/// frame (its animations stuttered); the Mac's are its own.
+enum UsageMotion {
+    #if os(iOS)
+    static let snappy: Animation? = nil
+    static let fade: Animation? = nil
+    #else
+    static let snappy: Animation? = .snappy
+    static let fade: Animation? = .easeOut(duration: 0.25)
+    #endif
 }

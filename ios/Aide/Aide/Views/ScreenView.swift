@@ -45,7 +45,7 @@ struct ScreenView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Show", selection: Binding(get: { kind }, set: { k in withAnimation(.snappy) { kind = k } })) {
+            Picker("Show", selection: $kind) {
                 Text("Day").tag(UsageKind.day)
                 Text("Week").tag(UsageKind.week)
                 Text("Month").tag(UsageKind.month)
@@ -69,7 +69,12 @@ struct ScreenView: View {
             }
             .accessibilityLabel("Earlier")
             Spacer()
-            Text(periodTitle).font(.headline).contentTransition(.numericText())
+            // A quick fade on the title alone: the page under it changes at once (it's drawn by another process, and
+            // animating it with the title made both stutter).
+            Text(periodTitle).font(.headline)
+                .id(periodTitle)
+                .transition(.opacity)
+                .animation(.easeOut(duration: 0.15), value: periodTitle)
             Spacer()
             Button { step(1) } label: {
                 Image(systemName: "chevron.right").frame(width: 36, height: 32).contentShape(Rectangle())
@@ -101,7 +106,7 @@ struct ScreenView: View {
     private func step(_ by: Int) {
         let unit: Calendar.Component = kind == .day ? .day : kind == .week ? .weekOfYear : .month
         guard let next = Calendar.current.date(byAdding: unit, value: by, to: date) else { return }
-        withAnimation(.snappy) { date = min(next, Calendar.current.startOfDay(for: Date())) }
+        date = min(next, Calendar.current.startOfDay(for: Date()))
     }
 
     /// Locks and limits (the locks page, which was in Settings), with what holds now or comes next.
