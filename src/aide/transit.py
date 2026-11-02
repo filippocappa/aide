@@ -74,7 +74,7 @@ WALK_SHOWN = 2000  # metres: a stop closer than this to the phone gets its walk 
 BOARD_TIMES = 4  # arrivals per line and direction on a departures card
 WALK_SPEED = 1.25  # m/s, for the straight-line estimate without Maps
 DETOUR = 1.3  # streets are longer than the straight line
-LIVE_MOVE = 20  # seconds: a tram's Live Activity is updated when its expected time moves this much
+LIVE_MOVE = 45  # seconds: a tram's Live Activity is updated when its expected time moves this much
 LIVE_GONE = timedelta(minutes=1)  # this long past its time, a tram nobody sees has left
 SEEN_AGAIN = 60  # seconds: the countdown is updated when where the tram was last seen is this much newer
 NOT_SEEN_GONE = timedelta(minutes=3)  # a followed tram with no position: this long past its time, it has gone
