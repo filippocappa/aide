@@ -22,7 +22,7 @@ def test_price_follows_the_rate_cards():
     assert usage.price("anthropic/claude-sonnet-5.5", 0, 50_000, 10_000, 0) == pytest.approx(0.01 + 0.025)
     assert usage.price("anthropic/claude-haiku-5.5", 120_000, 0, 0, 0) == pytest.approx(0.06)  # the long card
     # 10k written for an hour (2× input) out of 12k written
-    assert usage.price("anthropic/claude-haiku-5.5", 0, 0, 12_000, 0, write_1h=10_000) == pytest.approx(0.0025)
+    assert usage.price("anthropic/claude-haiku-5.5", 0, 0, 12_000, 0, write_1h=10_000) == pytest.approx(0.00225)
     assert usage.price("google/gemini-3.5-flash-lite", 1000, 0, 0, 0) is None
 
 
