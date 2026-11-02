@@ -177,7 +177,10 @@ like other deletions."""
 
 _WEB = """- Web: for anything current (news, prices, events, opening dates) or any fact you aren't sure of, use \
 web_search rather than guessing; use topic news for recent events. If the snippets aren't enough, read the best \
-result with fetch_page. Answer in a few lines and always give the link to your source."""
+result with fetch_page. Answer in a few lines and always give the link to your source.
+- Products, devices, apps and services (does X work with Y, what it supports, specs, versions, prices): search \
+before answering, even when you think you know, since these change and memory gets them wrong. Never answer \
+"probably not" from memory, and never send the user to check a site themselves: looking it up is your job."""
 
 _VIDEO = """- YouTube: when the user sends a YouTube link (youtube.com, youtu.be, a Shorts link), call summarize_video \
 with it, and with what they want from it as `question` if they said. It reads the video in the background and posts \
