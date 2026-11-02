@@ -28,8 +28,8 @@ struct UsageReportView: View {
     @State private var showAll = false
     @State private var openSite: String?
     @State private var showAllSites = false
-    /// Faded in once drawn, over the placeholder (the phone's report is drawn only when iOS has read the usage).
-    @State private var shown = false
+    /// The report waited this long with nothing from iOS, so the phone truly has no usage: shown anyway.
+    @State private var gaveUp = false
 
     private var calendar: Calendar { .current }
     private var periodDays: [UsageDay] {
@@ -61,8 +61,23 @@ struct UsageReportView: View {
         }
         .scrollContentBackground(.hidden)
         .background(UsageColors.page)
-        .opacity(shown ? 1 : 0)
-        .onAppear { withAnimation(.easeOut(duration: 0.25)) { shown = true } }
+        .opacity(ready ? 1 : 0)
+        .animation(.easeOut(duration: 0.25), value: ready)
+        .task {
+            try? await Task.sleep(for: .seconds(5))
+            gaveUp = true
+        }
+    }
+
+    /// On the phone iOS first draws the report empty, before it has read the usage, then again with it: until some
+    /// day has an app the page stays clear, so the placeholder behind it shows instead of a zero. The Mac draws its
+    /// own files at once.
+    private var ready: Bool {
+        #if os(iOS)
+        gaveUp || data.days.contains { !$0.apps.isEmpty }
+        #else
+        true
+        #endif
     }
 
     // MARK: The summary card
