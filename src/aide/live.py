@@ -72,6 +72,7 @@ class LiveActivities:
         # started); the end goes out when the token comes, so the activity doesn't stay on "working".
         self._ended: dict[str, tuple[dict, datetime, datetime]] = {}
         self._dismissed: set[str] = set()  # keys of activities the user swiped away
+        self._untold: set[str] = set()  # tram keys whose updates wait for a token, logged once
         self._handed: set[str] = set()  # conversations whose turn started an errand: its activity takes over
 
     @property
@@ -117,6 +118,9 @@ class LiveActivities:
             raise ValueError("key must be the activity's key")
         self._put(key, token, environment)
         self._dismissed.discard(key)
+        self._untold.discard(key)
+        if key.startswith("tram:"):
+            log.info("%s: the phone handed over its Live Activity token", key)
 
     def remove(self, key: str) -> None:
         self.conn.execute("DELETE FROM live_tokens WHERE key = ?", (key,))
@@ -171,7 +175,16 @@ class LiveActivities:
         """False when the app hasn't handed over the activity's token (or it's gone)."""
         row = self.token(key)
         if not (self.enabled and row):
+            if self.enabled and key.startswith("tram:") and key not in self._untold:
+                self._untold.add(key)  # once a key, till the token comes
+                log.info("%s: no token from the phone yet, the update waits", key)
             return False
+        if key.startswith("tram:"):
+            seen = state.get("seen")
+            log.info("%s: update at %s, %s stops, near %s%s%s", key,
+                     datetime.fromtimestamp(state["at"], timezone.utc).strftime("%H:%M:%S") if state.get("at") else "-",
+                     state.get("stops"), state.get("near"),
+                     f", seen {int(time.time()) - seen} s ago" if seen else "", " + alert" if alert else "")
         aps = {"event": "update", "content-state": state}
         if alert:
             aps["alert"] = alert

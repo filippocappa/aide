@@ -7,7 +7,8 @@ from zoneinfo import ZoneInfo
 
 from ..db import utcnow
 from ..leave import LeaveWatcher
-from ..transit import AlertStore, AlertWatcher, Boards, Location, Transit, line_key
+from ..transit import (AT_STOP, DEFAULT_WALK, DETOUR, FIX_AGE, WALK_SHOWN, WALK_SPEED, AlertStore, AlertWatcher, Boards,
+                       Location, Transit, line_key, metres)
 from . import Tool, ToolOutput
 
 STOPS_NEAR = 4  # stops shown for "near me"
@@ -69,7 +70,35 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
         late = round((a.delay or 0) / 60)
         return text + (f" ({late} late)" if late > 0 else f" ({-late} early)" if late < 0 else "")
 
-    async def transit_arrivals(stop: str | None = None, line: str | None = None, to: str | None = None) -> ToolOutput:
+    async def countdown(arrivals: list, stops: list, dest: dict | None, now: datetime) -> str:
+        """Starts the countdown for the tram the user can make (see `take`), or says why not."""
+        fix = location.latest()
+        fix = fix if fix and now - fix["at"] <= FIX_AGE else None
+        by_id = {s["id"]: s for s, _ in stops}
+
+        def walk(stop_id: str) -> float | None:
+            if fix is None:
+                return DEFAULT_WALK
+            d = metres(fix["lat"], fix["lon"], by_id[stop_id]["lat"], by_id[stop_id]["lon"])
+            return d * DETOUR / WALK_SPEED if d <= WALK_SHOWN else None
+
+        near = [a for a in arrivals if a.stop in by_id and walk(a.stop) is not None]
+        if not near:
+            return "No countdown: the stop is too far from where the phone is (over 2 km)."
+        if dest is None and len({(a.stop, a.headsign) for a in near}) > 1:
+            return ("No countdown yet: more than one direction. Pass `to` (where they're going; from memory, like "
+                    "home) or ask which way, then call again with take.")
+        pick = next((a for a in near if a.seconds(now) >= walk(a.stop) + AT_STOP), near[0])
+        stop = by_id[pick.stop]
+        if watcher and watcher.followed(pick.stop, pick.line):
+            return "Its countdown is already on the phone's Lock Screen."
+        alerts.create(pick.stop, pick.line, now=now, to_stop=pick.to_stop, right_away=True)
+        out = (f"Countdown started on the phone's Lock Screen for {pick.name()} at {stop['name']} "
+               f"(stop {stop['code']}): it follows the tram the user can make, and says so when they miss one.")
+        return out + ("" if fix else " The phone's location is old: it assumes a 5 min walk until it hears.")
+
+    async def transit_arrivals(stop: str | None = None, line: str | None = None, to: str | None = None,
+                               take: bool | None = None) -> ToolOutput:
         now = utcnow()
         if stop and stop.strip():
             stops = [(s, None) for s in timetable.find(stop)][:6]
@@ -108,6 +137,8 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
         if dest and not cards:
             out.append(f"No direct line to {dest['name']} in the next hour: the user may need to change.")
         text = "\n".join(out) + "\nMinutes are live from GTT unless marked (timetable). The app shows these as cards."
+        if take and arrivals:
+            text += "\n" + await countdown(arrivals, stops, dest, now)
         return ToolOutput(text, {"type": "departures", "departures": cards} if cards else None)
 
     async def list_transit_alerts() -> str:
@@ -150,7 +181,7 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
                  "description": "repeat on these ISO weekdays (1 = Monday … 7 = Sunday; [] every day): a commute, "
                  "needs time. Leave out for a one-off"},
         "minutes": {"type": "integer", "description": "alert when the tram is this many minutes from the stop. Leave "
-                    "out to alert when it's time to leave: the walk from where the phone is, plus 2 minutes"},
+                    "out to alert when it's time to leave: the walk from where the phone is, plus 3 minutes at the stop"},
     }
     aid = {"alert_id": {"type": "integer"}}
     return [
@@ -164,7 +195,10 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
                    "line": {"type": "string", "description": "only this line, e.g. 4, 15, M1"},
                    "to": {"type": "string", "description": "where the user is going: a GTT stop's name or number, or "
                           "a place in Turin (\"Politecnico\", \"Piazza della Repubblica\", an address; from memory for "
-                          "their usual places). Only lines that get there without a change are kept"}}, []),
+                          "their usual places). Only lines that get there without a change are kept"},
+                   "take": {"type": "boolean", "description": "the user wants to catch one now (\"when's the 10\", "
+                            "\"I'm going home\", \"which tram to uni\"): also starts the Live Activity countdown "
+                            "for the one they can make, without asking. Leave out when they only want to know"}}, []),
              transit_arrivals),
         Tool("list_transit_alerts", "List the tram alerts: id in brackets, line, stop, when, and how early.",
              _obj({}, []), list_transit_alerts),
@@ -232,7 +266,7 @@ def leave_tools(leave: LeaveWatcher, tz: ZoneInfo) -> list[Tool]:
             out.append(f"Too late to be there by {clock(arrive)} on transit; the first way from now:")
         out.append(f"Leave {'where the user is' if t['from'] == 'here' else 'home'} by {clock(t['leave'])}: "
                    f"{max(1, round(t['walk'] / 60))} min walk to {t['stop']['name']} (stop {t['stop']['code']}), "
-                   f"there 2 min before line {t['line']} at {clock(t['departs'])}.")
+                   f"there 3 min before line {t['line']} at {clock(t['departs'])}.")
         out += [f"- {r}" for r in rides(t["route"])]
         if t["alert"]:
             out.append(f"Tram alert [{t['alert']['id']}] set: about 3 min before it's time to leave, the phone shows "

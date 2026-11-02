@@ -275,6 +275,9 @@ in Chat); the Team chat on the app's home screen shows them all together.
   others (`ask_agent`), and those asks and answers are team messages like any other. `@aide` always goes to Aide.
 - Your message has `from: "user"`, `to: "team"`. A reply in the Team chat has `to: "team"` too. Asks and
   answers inside a turn keep `from`/`to` as in Team talk above.
+- Since 2026-11-02 an agent's reply in the Team chat carries `attachments` when its tools made cards (departures,
+  routes, reminders…; the same objects as `attachments` in Chat), here, in the stream's `team` events and in
+  `GET /v1/team`. Left out when there are none; older messages have none.
 - Each agent answering sees the last 30 team messages (the ones from before plus those already written this
   turn), its usual instructions, tools and memory (shared plus its own), and knows it's in the group chat: short,
   only what it adds, no repeating the others. Agents don't start new rounds by mentioning each other.
@@ -1753,6 +1756,8 @@ alerts in Settings. Off with `AIDE_GTT=0` on the server: the alert endpoints are
 ### Departures
 
 `transit_arrivals` in chat comes with a `departures` attachment: a Board per stop with something coming.
+Since 2026-11-02, when the user asks in order to catch one ("when's the 10?"), the same call also starts the tram's
+countdown (a `right_away` one-off alert for the stop and line they can make), with no need to ask for it.
 
 ```json
 {
@@ -1808,7 +1813,7 @@ An alert watches one line at one stop (each side of the road is its own stop, wi
   line at its stop (two alerts for the same tram: a leave-now one and one set in chat) doesn't start another; it's
   done. Countdowns being followed survive a server restart.
 - **When:** `minutes` null pushes a few minutes before it's time to leave: when the tram is the walk from the phone
-  to the stop, plus 2 minutes at the stop, plus 3 to get going, away (since 2026-10-27; it was the walk plus 2). So
+  to the stop, plus 3 minutes at the stop (2 before 2026-11-02), plus 3 to get going, away. So
   "Tram 4 in 10 min: leave in 3 min", or "leave now" when that's under a minute. A tram you can't reach in time is
   skipped. `minutes: 10` pushes when it's 10 minutes away.
 - Times are live from GTT where it has them (a trip's delay carried on to the later stops), else the timetable,
@@ -2532,7 +2537,7 @@ Push type `liveactivity`, topic `<bundle id>.push-type.liveactivity`, to the tok
 | Field | Meaning |
 |---|---|
 | `at` | when the tram is expected at the stop (live delay included) |
-| `leave` | when to leave: `at` minus the walk minus 2 minutes (so you're at the stop early), or null for an "N minutes away" alert |
+| `leave` | when to leave: `at` minus the walk minus 3 minutes (2 before 2026-11-02; so you're at the stop early), or null for an "N minutes away" alert |
 | `walk` | seconds from the phone to the stop, or null when the location isn't known |
 | `live` | false: timetable only |
 | `delay` | seconds late (negative: early), null when not live |
@@ -2545,18 +2550,32 @@ Push type `liveactivity`, topic `<bundle id>.push-type.liveactivity`, to the tok
 | `at_stop` | since 2026-10-27: the phone is at the stop (show that instead of when to leave) |
 | `riding` | since 2026-10-27: the user is on it. Then `at` is when it gets to `to` (or, without one, to `near`), `near` is its next stop, `stops` the stops before `to` (0: `to` is next; null without `to`), and `leave`, `walk`, `delay`, `next` are null |
 | `to` | since 2026-10-27: where the user gets off (the first ride's stop from Maps, for leave-now and "be there by"), or null |
+| `seen` | since 2026-11-02: when GTT last placed the tram (Unix seconds), or null when it isn't seen; then `at` comes from where it is, not GTT's guess, and moves later while it's held up |
+| `here` | since 2026-11-02: the tram is at the user's stop now |
+| `missed` | since 2026-11-02: the time of the tram the user just missed or won't make, on the update that moves to the next one (with an `alert`, "You missed the 13:48 tram 10" or "You won’t make…"); else null |
 
-The server updates it every 30 s or so when `at` or `leave` moves by 30 s or more, or the tram reaches another stop
-(`stops`, `near`, `starts`), or `live`, `next`, `feed_down` or `at_stop` change, sets `stale-date` to `at` plus 2
-minutes.
+The server looks every 10 s (30 s before 2026-11-02) and updates it when `at` or `leave` moves by 20 s or more, the
+tram reaches another stop (`stops`, `near`, `starts`, `here`), `live`, `next`, `feed_down`, `at_stop` or `missed`
+change, or `seen` is a minute newer; `stale-date` is `at` (or now, if later) plus 2 minutes. Updates go at APNs
+priority 5, those with an `alert` at 10.
+
+Since 2026-11-02 the server reads GTT's vehicle positions (GTFS-RT VehiclePositions, every 10 s) beside its
+predictions, and places each tram on its trip's stops: `at` is when GTT last saw it plus the timetable's time from
+there to the stop, `near` and `stops` are where it really is. A tram that's late stays on the countdown (never "gone"
+because its time has passed); it's gone once it has passed the stop, or, when GTT doesn't see it, 3 minutes after
+its time.
 
 Since 2026-10-27 it follows the user with the app's fixes (see Location):
 - **Before the tram:** the walk and `leave` are worked out again from each fix, and the tram is the first the user
   can make: an earlier one once they're closer (or at the stop), a later one when they can no longer make it (a
   minute's hurry allowed). A switch is an `update` with an `alert` ("Tram 4 in 2 min"); the key stays the same.
-- **When it comes:** a phone moving along its line, away from the stop, is on board: `riding`. Still at the stop 90 s
-  after the tram's time, the user missed it, and the next one is followed (with an alert). Neither (off the line, or
-  no fixes): it ends as before, about 1 minute after `at`; with fixes, a fix has up to 4 minutes to say.
+- **When it comes:** a phone next to the tram (since 2026-11-02, within 80 m of where GTT sees it), or moving along
+  its line away from the stop, is on board: `riding`. Still at the stop once it has gone, the user missed it: the next
+  one is followed, with `missed` and an alert ("You missed the 13:48 tram 10", "Next: 13:56."), twice at most.
+  Neither (off the line, far from the stop, or no fixes): it ends; with fixes, a fix has up to 4 minutes to say.
+- **Can't make it** (since 2026-11-02): when the walk plus 3 minutes is longer than the tram is away, it moves to the
+  next one with `missed` and an alert ("You won’t make the 13:48 tram 10", "6 min walk, it's 3 min away. Next:
+  13:56, leave by 13:50.").
 - **On board:** an `update` with an `alert` ("Porta Susa is next": get off at the next stop) when `to` is next; the
   end, dismissed 2 minutes later, once it has reached `to`, the phone is 600 m from the tram's stretch of line (they got
   off), or it's at its last stop. The end state has `riding` and `gone` true.

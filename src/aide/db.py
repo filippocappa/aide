@@ -163,6 +163,8 @@ class Database:
                 self.conn.execute(TEAM_TABLE)
                 self.conn.execute("INSERT INTO team_messages SELECT * FROM team_messages_old")
                 self.conn.execute("DROP TABLE team_messages_old")
+        if "attachments" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(team_messages)")}:
+            self.conn.execute("ALTER TABLE team_messages ADD COLUMN attachments TEXT")  # cards in the Team chat
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(routines)")}
         if "summary" not in columns:  # databases created before routines had a line for the app
             self.conn.execute("ALTER TABLE routines ADD COLUMN summary TEXT")
@@ -286,18 +288,21 @@ class Database:
         """The latest `limit` team messages from every chat, oldest first, with the chat's public id
         (the channel name for the shared conversation, None for the Team chat itself)."""
         rows = self.conn.execute(
-            "SELECT * FROM (SELECT t.id, t.sender, t.recipient, t.text, t.ts, "
+            "SELECT * FROM (SELECT t.id, t.sender, t.recipient, t.text, t.ts, t.attachments, "
             "COALESCE(c.public_id, c.channel) AS conversation FROM team_messages t "
             "LEFT JOIN conversations c ON c.id = t.conversation_id ORDER BY t.id DESC LIMIT ?) ORDER BY id",
             (limit,),
         ).fetchall()
         return [{"from": r["sender"], "to": r["recipient"], "text": r["text"], "ts": r["ts"],
-                 "conversation_id": r["conversation"]} for r in rows]
+                 "conversation_id": r["conversation"],
+                 **({"attachments": json.loads(r["attachments"])} if r["attachments"] else {})} for r in rows]
 
     def add_team_message(self, message: dict) -> None:
-        """One message said in the Team chat itself ({from, to, text, ts}), tied to no chat."""
-        self.conn.execute("INSERT INTO team_messages (sender, recipient, text, ts) VALUES (?, ?, ?, ?)",
-                          (message["from"], message["to"], message["text"], message["ts"]))
+        """One message said in the Team chat itself ({from, to, text, ts}, and an answer's `attachments`: the cards
+        from its tools), tied to no chat."""
+        self.conn.execute("INSERT INTO team_messages (sender, recipient, text, ts, attachments) VALUES (?, ?, ?, ?, ?)",
+                          (message["from"], message["to"], message["text"], message["ts"],
+                           json.dumps(message["attachments"]) if message.get("attachments") else None))
 
     def history(self, conversation_id: int) -> list[dict]:
         rows = self.conn.execute(

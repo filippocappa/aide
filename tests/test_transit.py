@@ -15,7 +15,7 @@ from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
 from aide.tools.transit import transit_tools
 from aide.transit import (AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts,
-                          build, line_key, parse_live, pretty, stop_name)
+                          build, line_key, locate, parse_live, parse_vehicles, pretty, stop_name)
 from test_api import AUTH, ROME, TOKEN, FakeClient
 
 DAY = date(2026, 10, 22)  # a Thursday
@@ -30,7 +30,8 @@ def csv_text(header: str, *rows: str) -> str:
 
 
 def gtfs_zip(path) -> None:
-    """A tiny GTT: the 4 to Falchera (stops 100 → 252 → 400) and back the other way at 253, the 33 at 252."""
+    """A tiny GTT: the 4 to Falchera (stops 100 → 252 → 400) and back the other way at 253, the 33 at 252; the 16
+    down a straight street (500 → 600 → 700), for where GTT sees its trams."""
     files = {
         "stops.txt": csv_text(
             '"stop_id","stop_code","stop_name","stop_desc","stop_lat","stop_lon","location_type","parent_station"',
@@ -38,16 +39,20 @@ def gtfs_zip(path) -> None:
             '"2","253","Fermata 253 - PORTA NUOVA","","45.06269","7.67753","",""',
             '"3","100","Fermata 100 - VITTORIO EMANUELE II CAP","","45.0700","7.6800","",""',
             '"4","400","Fermata 400 - FALCHERA","","45.1200","7.7100","",""',
+            '"5","500","Fermata 500 - SABOTINO","","45.0900","7.6400","",""',
+            '"6","600","Fermata 600 - CROCETTA","","45.0900","7.6500","",""',
+            '"7","700","Fermata 700 - LINGOTTO","","45.0900","7.6700","",""',
             '"9","","STAZIONE","","45.0","7.6","1",""'),
         "routes.txt": csv_text(
             '"route_id","agency_id","route_short_name","route_long_name","route_desc","route_type"',
             '"4U","U","4","Falchera - Mirafiori","x, y","0"',
-            '"33U","U","33","a","b","3"'),
+            '"33U","U","33","a","b","3"', '"16U","U","16","a","b","0"'),
         "trips.txt": csv_text(
             '"route_id","service_id","trip_id","trip_headsign","direction_id"',
             '"4U","S1","T1","FALCHERA","0"', '"4U","S1","T2","FALCHERA","0"', '"4U","S1","T0","FALCHERA","0"',
             '"4U","S1","T3","MIRAFIORI","1"', '"4U","S1","T5","FALCHERA","0"', '"33U","S2","B1","SASSI","0"',
-            '"4U","S1","N1","FALCHERA","0"', '"4U","OFF","X1","FALCHERA","0"'),
+            '"4U","S1","N1","FALCHERA","0"', '"4U","OFF","X1","FALCHERA","0"',
+            '"16U","S1","V1","LINGOTTO","0"', '"16U","S1","V2","LINGOTTO","0"'),
         "stop_times.txt": csv_text(
             '"trip_id","arrival_time","departure_time","stop_id","stop_sequence"',
             '"T0","07:55:00","07:55:00","3","1"', '"T0","07:58:00","07:58:00","1","2"',
@@ -59,7 +64,11 @@ def gtfs_zip(path) -> None:
             '"T5","08:07:00","08:07:00","1","2"',
             '"B1","08:09:00","08:09:00","1","1"',
             '"N1","24:20:00","24:20:00","1","2"',
-            '"X1","08:08:00","08:08:00","1","2"'),
+            '"X1","08:08:00","08:08:00","1","2"',
+            '"V1","10:00:00","10:00:00","5","1"', '"V1","10:03:00","10:03:00","6","2"',
+            '"V1","10:09:00","10:09:00","7","3"',
+            '"V2","10:10:00","10:10:00","5","1"', '"V2","10:13:00","10:13:00","6","2"',
+            '"V2","10:19:00","10:19:00","7","3"'),
         "calendar.txt": csv_text(
             '"service_id","monday","tuesday","wednesday","thursday","friday","saturday","sunday","start_date","end_date"',
             '"S1","1","1","1","1","1","1","1","20261001","20270131"',
@@ -91,11 +100,20 @@ def live_feed(*trips) -> bytes:
 
 
 class FakeLive(Live):
-    def __init__(self, data: bytes = b""):
+    def __init__(self, data: bytes = b"", seen: dict | None = None):
         self.data = data
+        self.seen = seen if seen is not None else {}  # where the vehicles are: see `vehicle`
 
     async def trips(self):
         return parse_live(self.data)
+
+    async def vehicles(self):
+        return self.seen
+
+
+def vehicle(trip: str, lat: float, lon: float, when: datetime) -> dict:
+    """One entry of Live.vehicles(): the trip's vehicle (on DAY) at lat, lon at `when`."""
+    return {(trip, DAY.strftime("%Y%m%d")): {"lat": lat, "lon": lon, "at": when.astimezone(timezone.utc)}}
 
 
 class FakePush:
@@ -197,6 +215,55 @@ async def test_live_waits_for_the_first_fetch_then_refreshes_behind_the_scenes(m
     assert await live.trips() == {} and live.down  # too old to trust: GTT's live times aren't coming through
 
 
+def test_parse_vehicles_reads_gtts_positions():
+    from pathlib import Path
+    seen = parse_vehicles((Path(__file__).parent / "data" / "gtt_vehicles.pb").read_bytes())
+    assert len(seen) > 300
+    (trip, day), v = next(iter(seen.items()))
+    assert trip.endswith("U") and len(day) == 8 and 44.9 < v["lat"] < 45.3 and 7.4 < v["lon"] < 7.9
+    assert v["at"].tzinfo is not None
+
+
+def test_locate_puts_a_point_on_the_stretch_it_is_on():
+    stops = [{"lat": 45.0700, "lon": 7.6800, "at": 100}, {"lat": 45.0600, "lon": 7.6800, "at": 200},
+             {"lat": 45.0500, "lon": 7.6800, "at": 400}]
+    x = locate(stops, 45.0650, 7.6801)
+    assert x["i"] == 0 and abs(x["t"] - 0.5) < 0.01 and abs(x["point"] - 150) < 2 and x["off"] < 10
+    assert locate(stops, 45.0550, 7.6800)["point"] == pytest.approx(300, abs=2)
+    assert locate(stops, 45.0650, 7.7000) is None  # 1.5 km off the line
+
+
+SABOTINO, CROCETTA, LINGOTTO = (45.0900, 7.6400), (45.0900, 7.6500), (45.0900, 7.6700)  # the 16's stops
+
+
+async def test_where_gtt_sees_the_tram_says_when_it_comes(timetable):
+    # V1 is due at Crocetta at 10:03. Seen halfway from Sabotino at 10:04: it's there a minute and a half later,
+    # whatever the feed guessed.
+    transit = Transit(timetable, FakeLive(live_feed(("V1", [(2, -60)])), vehicle("V1", 45.09, 7.645, at(10, 4))))
+    [v1] = [a for a in await transit.arrivals(["6"], "16", at(10, 4, 10)) if a.trip == "V1"]
+    assert v1.live and v1.seen == at(10, 4) and not v1.here
+    assert abs((v1.at - at(10, 5, 30)).total_seconds()) < 3
+    assert await transit.position(v1, at(10, 4, 10)) == {"stops": 0, "near": "Sabotino", "starts": None}
+    # Long past its time but still not there: it stays in the list (it would have gone 30 s after its time).
+    transit.live.seen = vehicle("V1", 45.09, 7.645, at(10, 9))
+    assert "V1" in [a.trip for a in await transit.arrivals(["6"], "16", at(10, 9, 10))]
+    # At the stop, then past it.
+    transit.live.seen = vehicle("V1", 45.0900, 7.65005, at(10, 10))
+    [v1] = [a for a in await transit.arrivals(["6"], "16", at(10, 10, 10)) if a.trip == "V1"]
+    assert v1.here and await transit.position(v1, at(10, 10, 10)) == {"stops": 0, "near": "Crocetta", "starts": None}
+    transit.live.seen = vehicle("V1", 45.0900, 7.6560, at(10, 11))
+    assert "V1" not in [a.trip for a in await transit.arrivals(["6"], "16", at(10, 11, 10))]
+    gone = await transit.arrival_for("V1", DAY, "6", at(10, 3), at(10, 11, 10))
+    assert gone.gone and gone.seen == at(10, 11)
+    # A position too old says nothing: back to the feed's delay.
+    assert (await transit.arrival_for("V1", DAY, "6", at(10, 3), at(10, 13))).at == at(10, 2)
+    # Waiting at its first stop: the timetable says when it leaves.
+    transit.live.seen = vehicle("V2", *SABOTINO, at(10, 8))
+    [v2] = [a for a in await transit.arrivals(["6"], "16", at(10, 8, 10)) if a.trip == "V2"]
+    assert v2.at == at(10, 13) and v2.seen == at(10, 8)
+    assert (await transit.position(v2, at(10, 8, 10)))["starts"] == int(at(10, 10).timestamp())
+
+
 async def test_unknown_line_is_an_error(timetable):
     with pytest.raises(ValueError, match="no line"):
         await Transit(timetable, FakeLive()).arrivals(["1"], "99", at(8, 0))
@@ -250,9 +317,9 @@ async def test_leave_now_fires_a_few_minutes_before_it_is_time_to_leave(env, mon
     feed = live_feed(("T1", [(2, 120)]), ("T5", None))
     watcher = AlertWatcher(alerts, Transit(timetable, FakeLive(feed)), location, Walks(), push)
     location.save(45.0650, 7.6756, 10, at(7, 55))  # about 270 m north of the stop: a 5 min walk
-    await watcher.tick(at(7, 57))  # T1 comes at 08:07: 10 min away, more than 4.7 + 2 at the stop + 3 to get ready
+    await watcher.tick(at(7, 56))  # T1 comes at 08:07: 11 min away, more than 4.7 + 3 at the stop + 3 to get ready
     assert push.alerts == []
-    await watcher.tick(at(7, 57, 30))
+    await watcher.tick(at(7, 56, 30))
     (alert_id, title, body), = push.alerts
     assert (alert_id, title) == (a["id"], "Tram 4 in 10 min: leave in 3 min")
     assert body == ("Porta Nuova (stop 252), towards Falchera. 5 min walk from where you are. Your stop is its "
@@ -394,6 +461,25 @@ async def test_arrivals_to_a_destination_keep_the_lines_that_go_there(tools):
     assert "No direct line to Falchera" in out and out.attachment is None
     with pytest.raises(ValueError, match="no GTT stop matches 'Mars'"):
         await t["transit_arrivals"].handler(stop="252", to="Mars")
+
+
+async def test_asked_to_take_one_the_countdown_starts_by_itself(tools, env):
+    t, location = tools
+    alerts = env[3]
+    out = await t["transit_arrivals"].handler(stop="Porta Nuova", line="4", take=True)  # both sides of the road
+    assert "No countdown yet: more than one direction" in out and alerts.all() == []
+    location.save(45.2000, 7.6756, 10, at(7, 59))  # 15 km away
+    out = await t["transit_arrivals"].handler(stop="252", to="Falchera", take=True)
+    assert "too far from where the phone is" in out and alerts.all() == []
+    location.save(45.0650, 7.6756, 10, at(7, 59))  # about 270 m from stop 252
+    out = await t["transit_arrivals"].handler(stop="252", to="Falchera", take=True)
+    assert "Countdown started on the phone's Lock Screen for Tram 4 at Porta Nuova (stop 252)" in out
+    assert out.attachment["type"] == "departures"
+    a, = alerts.all()
+    assert (a["stop"], a["line"], a["right_away"], a["to_stop"]) == ("1", "4", True, "4")
+    await t["transit_arrivals"].handler(stop="252", to="Falchera", take=True)  # asked again: still one
+    assert len(alerts.all()) == 1
+    assert "Countdown" not in await t["transit_arrivals"].handler(stop="252", to="Falchera")  # only to know
 
 
 async def test_a_destination_can_be_a_place_found_on_maps(env):
