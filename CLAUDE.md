@@ -520,7 +520,7 @@ phone's time went, Day · Week · Month with arrows, Lock now in the corner and 
 under the date (`Views/ScreenView.swift`). The page under it is drawn by the `UsageReport` extension
 (`DeviceActivityReport`, the only place iOS shows per-app use; it has no network and can't write to the App Group, so
 none of it reaches the server yet): the total is every app's time added up (not Apple's total), against your usual
-by now (14 days) or last week/month, a focus score (how much against 3 h, your usual, pickups, at night; tap the ring
+by now (7 days) or last week/month, a focus score (how much against 3 h, your usual, pickups, at night; tap the ring
 for its parts), pickups, first pickup, offline, hourly or daily bars, Most used (tap an app for its bars).
 The maths is `Usage/UsageMath.swift` (tested); the views `Usage/UsageReportView.swift` are shared, so the
 Simulator shows them from `UsageSample` in preview mode.
