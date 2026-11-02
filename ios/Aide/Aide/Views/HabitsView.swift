@@ -78,6 +78,7 @@ struct LimitCounter: View {
         HStack(spacing: 6) {
             Button { count(-1) } label: {
                 Image(systemName: "minus").font(.caption.weight(.bold)).frame(width: 26, height: 26)
+                    .contentShape(Rectangle())  // on the Mac only the glyph's thin line took the click
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
