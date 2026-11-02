@@ -28,6 +28,8 @@ struct UsageReportView: View {
     @State private var showAll = false
     @State private var openSite: String?
     @State private var showAllSites = false
+    /// Faded in once drawn, over the placeholder (the phone's report is drawn only when iOS has read the usage).
+    @State private var shown = false
 
     private var calendar: Calendar { .current }
     private var periodDays: [UsageDay] {
@@ -59,6 +61,8 @@ struct UsageReportView: View {
         }
         .scrollContentBackground(.hidden)
         .background(UsageColors.page)
+        .opacity(shown ? 1 : 0)
+        .onAppear { withAnimation(.easeOut(duration: 0.25)) { shown = true } }
     }
 
     // MARK: The summary card

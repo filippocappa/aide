@@ -177,7 +177,7 @@ struct ScreenView: View {
 
 /// The report alone, with nothing from the page's environment, so a chat reply or a Screen Time sync redrawing the
 /// page doesn't make it ask iOS again: it changes only with the page (day, week, month) or the date. The placeholder
-/// sits behind it until the extension draws its opaque page over it.
+/// sits behind it until the extension draws its opaque page over it; a new date or page starts a new report.
 private struct UsageReportHost: View {
     let kind: UsageKind
     let date: Date
@@ -185,7 +185,11 @@ private struct UsageReportHost: View {
     var body: some View {
         ZStack(alignment: .top) {
             UsageSkeleton()
+            // A new report for each page and date, so the last one's numbers leave at once and the placeholder
+            // shows until the new one fades in (`UsageReportView`), instead of the old day lingering.
             DeviceActivityReport(.usage(kind), filter: .usage(kind, containing: date))
+                .id("\(kind.rawValue)-\(date.timeIntervalSince1970)")
+                .transition(.opacity)
         }
     }
 }
