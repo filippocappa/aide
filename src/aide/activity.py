@@ -7,7 +7,7 @@ Recording never fails the thing it records.
 
 import logging
 import sqlite3
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from .db import utcnow
 
@@ -90,3 +90,122 @@ def recent(conn: sqlite3.Connection, agent: str | None = None, before: int | Non
     rows = conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*params, limit)).fetchall()
     return [{"id": r["id"], "ts": r["ts"], "agent": r["agent"], "kind": r["kind"], "title": r["title"],
              "detail": r["detail"], "conversation_id": r["conversation"]} for r in rows]
+
+
+# -- grouped (the app's feed, since 2026-11-02) ------------------------------------------------------------------
+
+RUN = timedelta(minutes=45)   # lines of one run: the same agent doing the same kind of thing in one chat
+PLAN = timedelta(minutes=10)  # one plan's objectives lines, whoever proposed them
+ERRAND = "Started an errand"
+
+
+def grouped(items: list[dict], tz) -> list[dict]:
+    """The feed folded for reading: what came together as one row, newest first.
+
+    - A run: lines next to each other with the same agent and kind, in one chat or with the same title, each within
+      45 min of the next ("Logged a meal" four times is one row with `count` 4).
+    - An errand: "Started an errand" and what the errand posted in that chat after it, until the next one, is one row
+      of kind `errand` with the errand's title and its last state.
+    - A plan: the `objectives` lines made within 10 min of each other, from any agent, are one row.
+    - Quiet checks: a day's `quiet` lines are one row, where the newest of them was.
+    A row of more than one line has `count`, `agents` (who, in order of first appearance) and `children` (the lines,
+    newest first); a single line is as it was. `items` is newest first, as `recent` gives it.
+    """
+    oldest_first = list(reversed(items))
+    groups: list[list[dict]] = []
+    errands: dict[str | None, list[dict]] = {}  # the open errand per chat
+    quiet: dict[str, list[dict]] = {}            # the day's quiet checks, by local day
+    for item in oldest_first:
+        ts = _ts(item)
+        if item["kind"] == "quiet":
+            day = ts.astimezone(tz).date().isoformat()
+            if day not in quiet:
+                quiet[day] = []
+                groups.append(quiet[day])
+            quiet[day].append(item)
+            continue
+        chat = item["conversation_id"]
+        if item["kind"] == "action" and item["title"] == ERRAND:
+            errands[chat] = [item]
+            groups.append(errands[chat])
+            continue
+        run = errands.get(chat)
+        if run and chat and item["kind"] in ("errand", "message") and ts - _ts(run[-1]) <= RUN:
+            run.append(item)
+            continue
+        last = next((g for g in reversed(groups) if g[-1]["kind"] != "quiet"), None)
+        if last is not None and not _is_errand(last) and _joins(last, item):
+            last.append(item)
+            continue
+        groups.append([item])
+    rows = [_row(g) for g in groups]
+    rows.sort(key=lambda r: r["id"], reverse=True)
+    return rows
+
+
+def _joins(group: list[dict], item: dict) -> bool:
+    prev = group[-1]
+    gap = _ts(item) - _ts(prev)
+    if item["kind"] == "objectives":
+        return prev["kind"] == "objectives" and gap <= PLAN
+    same_place = prev["conversation_id"] == item["conversation_id"] or _title(prev) == _title(item)
+    return (prev["kind"] == item["kind"] and prev["agent"] == item["agent"] and same_place
+            and item["kind"] not in ("digest", "errand") and gap <= RUN)
+
+
+def _title(item: dict) -> str:
+    """The title a run is told by: a meal scanned in the app (before 2026-11-02 "Logged Penne, 300 g (scanned in the
+    app)") is "Logged a meal" like the ones logged in chat."""
+    title = item["title"]
+    if item["kind"] == "action" and title.startswith("Logged ") and title.endswith("(scanned in the app)"):
+        return "Logged a meal"
+    return title
+
+
+def _row(group: list[dict]) -> dict:
+    newest = group[-1]
+    if len(group) == 1 and not _is_errand(group):
+        return newest
+    children = list(reversed(group))
+    agents: list[str] = []
+    for item in group:
+        if item["agent"] not in agents:
+            agents.append(item["agent"])
+    row = {**newest, "agent": group[0]["agent"], "count": len(group), "agents": agents, "children": children}
+    kind = newest["kind"]
+    if _is_errand(group):
+        states = [i for i in children if i["kind"] == "errand"]
+        row.update(kind="errand", title=states[0]["title"] if states else "An errand",
+                   detail=states[0]["detail"] if states else group[0]["detail"])
+    elif kind == "quiet":
+        names = list(dict.fromkeys(i["title"] for i in children))
+        row.update(title="1 quiet check" if len(group) == 1 else f"{len(group)} quiet checks",
+                   detail="Nothing needed you: " + ", ".join(names) + ".")
+    elif kind == "objectives":
+        periods = [p for p in ("month", "week", "day") if any(i["title"].endswith(f"for the {p}") for i in group)]
+        n = sum(_number(i["title"]) for i in group)
+        words = {"day": "today", "week": "the week", "month": "the month"}
+        row.update(title=f"Proposed {n} objective{'s' if n != 1 else ''}"
+                   + (" for " + _and([words[p] for p in reversed(periods)]) if periods else ""),
+                   detail=None)
+    else:
+        titles = list(dict.fromkeys(_title(i) for i in children))
+        row["title"] = titles[0] if len(titles) == 1 else _and(titles[:3]) + (" and more" if len(titles) > 3 else "")
+    return row
+
+
+def _is_errand(group: list[dict]) -> bool:
+    return group[0]["kind"] == "action" and group[0]["title"] == ERRAND
+
+
+def _ts(item: dict) -> datetime:
+    return datetime.fromisoformat(item["ts"])
+
+
+def _number(title: str) -> int:
+    words = title.split()
+    return int(words[1]) if len(words) > 1 and words[1].isdigit() else 1
+
+
+def _and(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]

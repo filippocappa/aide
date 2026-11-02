@@ -156,8 +156,9 @@ final class APIClient {
 
     /// `kinds`: only those kinds of line (e.g. the team's notes, `["routine", "watch"]`).
     func activity(agent: String? = nil, kinds: [String] = [], before: Int? = nil,
-                  limit: Int = 100) async throws -> ActivityPage {
+                  limit: Int = 100, grouped: Bool = false) async throws -> ActivityPage {
         var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if grouped { query.append(URLQueryItem(name: "grouped", value: "true")) }
         if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
         if !kinds.isEmpty { query.append(URLQueryItem(name: "kind", value: kinds.joined(separator: ","))) }
         if let before { query.append(URLQueryItem(name: "before", value: String(before))) }
