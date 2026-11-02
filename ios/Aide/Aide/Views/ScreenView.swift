@@ -202,7 +202,7 @@ private struct UsageReportHost: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            UsageSkeleton()
+            UsageSkeleton(page: shown)
             ForEach(kept.contains(shown) ? kept : [shown] + kept, id: \.self) { page in
                 let on = page == shown
                 DeviceActivityReport(.usage(page.kind), filter: .usage(page.kind, containing: page.date))
@@ -231,6 +231,8 @@ private struct UsageReportHost: View {
 /// The report's shape while iOS reads the usage: the summary card (the number, the stats, the bars) and the first
 /// apps, in grey, breathing.
 private struct UsageSkeleton: View {
+    /// The page being read: the pulse starts again when it changes.
+    let page: UsagePage
     @State private var dim = false
 
     var body: some View {
@@ -286,7 +288,18 @@ private struct UsageSkeleton: View {
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
         .clipped()
         .opacity(dim ? 0.5 : 1)
-        .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever()) { dim = true } }
+        // A few breaths each time the page changes, then still: it sits under the report once that's drawn (and
+        // under Body and Food, where Screen stays loaded), and a pulse that never ends redraws every frame there.
+        .task(id: page) {
+            for _ in 0..<4 {
+                withAnimation(.easeInOut(duration: 0.9)) { dim = true }
+                try? await Task.sleep(for: .seconds(0.9))
+                withAnimation(.easeInOut(duration: 0.9)) { dim = false }
+                try? await Task.sleep(for: .seconds(0.9))
+                if Task.isCancelled { break }
+            }
+            dim = false
+        }
         .accessibilityLabel("Loading screen time")
     }
 

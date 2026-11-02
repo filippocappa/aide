@@ -29,6 +29,12 @@ struct UsageScene: DeviceActivityReportScene {
     /// twice, or an app listed under two categories in one hour, is counted once.
     func makeConfiguration(representing data: DeviceActivityResults<DeviceActivityData>) async -> UsageReportData {
         let calendar = Calendar.current
+        #if DEBUG
+        let started = Date()
+        var firstAt: Date?
+        var segments = 0
+        UsageProbe.calls += 1
+        #endif
         var reads: [String: DeviceRead] = [:]
         var order: [String] = []
         var latest: Date?
@@ -38,6 +44,10 @@ struct UsageScene: DeviceActivityReportScene {
             if reads[name] == nil { reads[name] = DeviceRead(); order.append(name) }
             var read = reads[name]!
             for await segment in device.activitySegments {
+                #if DEBUG
+                if firstAt == nil { firstAt = Date() }
+                segments += 1
+                #endif
                 let start = segment.dateInterval.start
                 latest = max(latest ?? start, start)
                 guard read.seen.insert(start).inserted else { continue }
@@ -94,10 +104,38 @@ struct UsageScene: DeviceActivityReportScene {
         let kept = order.max { (reads[$0]?.lastUsed ?? .distantPast) < (reads[$1]?.lastUsed ?? .distantPast) }
         let days = kept.flatMap { reads[$0]?.days.values }.map { Array($0) } ?? []
         let period = UsageMath.period(kind, containing: latest ?? Date())
-        return UsageReportData(kind: kind, days: days.sorted { $0.date < $1.date }, period: period,
-                               device: order.count > 1 ? kept : nil, leftOut: order.filter { $0 != kept })
+        var report = UsageReportData(kind: kind, days: days.sorted { $0.date < $1.date }, period: period,
+                                     device: order.count > 1 ? kept : nil, leftOut: order.filter { $0 != kept })
+        #if DEBUG
+        let first = firstAt.map { String(format: "%.1f", $0.timeIntervalSince(started)) } ?? "–"
+        report.debug = "first segment \(first)s · all \(String(format: "%.1f", Date().timeIntervalSince(started)))s · "
+            + "\(segments) segments · call \(UsageProbe.calls), process \(Int(Date().timeIntervalSince(UsageProbe.launched)))s · "
+            + UsageProbe.disk()
+        #endif
+        return report
     }
 }
+
+#if DEBUG
+/// Debug builds: whether the extension's process lives on between reports and whether it can write a file.
+private enum UsageProbe {
+    static let launched = Date()
+    static var calls = 0
+
+    static func disk() -> String {
+        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return "no caches" }
+        let url = dir.appendingPathComponent("probe.txt")
+        let last = (try? String(contentsOf: url, encoding: .utf8)).flatMap(Double.init)
+            .map { "last write \(Int(Date().timeIntervalSince1970 - $0))s ago" } ?? "nothing saved yet"
+        do {
+            try "\(Date().timeIntervalSince1970)".write(to: url, atomically: true, encoding: .utf8)
+            return "disk ok, \(last)"
+        } catch {
+            return "disk refused (\((error as NSError).code)), \(last)"
+        }
+    }
+}
+#endif
 
 /// One device's days, while the report reads.
 private struct DeviceRead {
