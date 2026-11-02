@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Bigger text on the Mac. The shared views use the text styles (`.body`, `.subheadline`…), which macOS sets at
-/// 13 pt and 11 pt (the phone: 17 and 15), too small in a big window. These shadow SwiftUI's styles for `AideMac`
+/// 13 pt and 11 pt (the phone: 17 and 15), too small in a big window. Body is 16, as in Claude's app. These shadow SwiftUI's styles for `AideMac`
 /// only (a declaration in this module wins over the imported one), between the Mac's sizes and the phone's.
 /// Text with no font of its own gets `.body` from `MacRootView`.
 enum MacFontSize {
@@ -12,7 +12,7 @@ enum MacFontSize {
         case .title: 25
         case .title2: 20
         case .title3: 17
-        case .headline, .body: 15
+        case .headline, .body: 16
         case .callout: 14
         case .subheadline: 13
         case .footnote: 12
