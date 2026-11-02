@@ -333,7 +333,8 @@ class ObjectivesPlan(BaseModel):
 class ObjectivesAccept(BaseModel):
     period: Period
     day: date | None = Field(None, alias="date")
-    ids: list[str] | None = None  # None: all of the period's proposals
+    ids: list[str] | None = None  # None: all of the period's proposals (but those in drop)
+    drop: list[str] | None = None  # dropped instead
 
 
 class ActionsIn(BaseModel):
@@ -841,8 +842,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     **({"detail": a["detail"]} if a["detail"] else {})}
                    for a in db.pending_actions(CONVERSATION, PENDING_TTL)]
         today = objectives.today()
-        proposed = [o for p in ("month", "week", "day") for o in objectives.block(p, today)["objectives"]
-                    if o["status"] == "proposed"]
+        plans = []
+        for p in ("day", "week", "month"):  # each period's plan waiting, as one card
+            block = objectives.block(p, today)
+            if waiting_here := [o for o in block["objectives"] if o["status"] == "proposed"]:
+                plans.append({**block, "objectives": waiting_here})
+        proposed = [o for b in plans[::-1] for o in b["objectives"]]
         proposals = []
         for p in notebook.proposals(None, "pending"):
             course = study.course(p["course_id"]) or {}
@@ -852,9 +857,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         coming = sorted(((n, r) for r in routines.all() if (n := routines.next_run(r))), key=lambda x: x[0])
         replies = drafts.waiting()
         stuck = [errand_store.as_json(e) for e in errands.waiting()] if errands else []
-        return {"waiting": len(actions) + len(proposed) + len(proposals) + len(replies) + len(stuck)
+        return {"waiting": len(actions) + len(plans) + len(proposals) + len(replies) + len(stuck)
                 + (1 if paused else 0),
-                "actions": actions, "objectives": proposed, "proposals": proposals, "drafts": replies,
+                "actions": actions, "plans": plans, "objectives": proposed, "proposals": proposals, "drafts": replies,
                 "errands": stuck,
                 "writer": paused, "upcoming": [routines.as_json(r) for _, r in coming[:5]]}
 
@@ -1062,7 +1067,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def accept_objectives(body: ObjectivesAccept):
         day = body.day or objectives.today()
         try:
-            objectives.accept(body.period, day, body.ids)
+            objectives.accept(body.period, day, body.ids, drop=body.drop)
         except KeyError as e:
             raise HTTPException(404, e.args[0])
         return objectives.block(body.period, day)

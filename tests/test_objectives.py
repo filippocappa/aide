@@ -484,3 +484,97 @@ async def test_steps(env, tmp_path):
     by = {o["title"]: o for o in made}
     assert [s["text"] for s in by["Sign up for the exam"]["steps"]] == ["Open Esse3", "Confirm"]
     assert by.get("Sleep 7h") is None or by["Sleep 7h"]["steps"] == []
+
+
+def test_a_plan_starts_at_midday_an_hour_after_its_made_never_before_its_period(env):
+    store, *_ = env
+    at = lambda d, h, m=0: datetime(d.year, d.month, d.day, h, m, tzinfo=ROME)  # noqa: E731
+    mon = date(2026, 11, 2)
+    assert store.starts_at("day", mon, at(mon, 8)) == at(mon, 12)
+    assert store.starts_at("day", mon, at(mon, 11, 30)) == at(mon, 12, 30)
+    assert store.starts_at("day", mon, at(mon, 20)) == at(mon, 21)
+    sun = mon - timedelta(days=1)
+    assert store.starts_at("week", mon, at(sun, 20)) == at(mon, 12)  # the week's plan, made the evening before
+
+
+def test_proposals_start_by_themselves_unless_dropped_or_too_late(env):
+    store, *_ = env
+    made = store.replace_proposals("day", TODAY, ["coach", "professor"], [
+        {"agent": "coach", "title": "Stretch"}, {"agent": "coach", "title": "Walk"},
+        {"agent": "professor", "title": "Practice before the mid-term", "due": f"{TODAY}T00:00"}])
+    stretch, walk, late = (store.as_json(o) for o in made)
+    assert stretch["status"] == "proposed" and stretch["starts_at"]
+    assert late["status"] == "lapsed" and late["due"] == f"{TODAY}T00:00" and late["starts_at"] is None
+    assert store.block("day", TODAY)["starts_at"] == stretch["starts_at"]
+    store.update(walk["id"], status="dropped")
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    store.conn.execute("UPDATE objectives SET starts_at = ?", (past,))  # its time has come
+    found = {o["title"]: store.status(o) for o in store.objectives("day", TODAY, dropped=True)}
+    assert found == {"Stretch": "active", "Walk": "dropped", "Practice before the mid-term": "lapsed"}
+    assert store.block("day", TODAY)["starts_at"] is None
+    # Added by hand or by an agent in chat: never waits.
+    assert store.as_json(store.add("coach", "day", TODAY, "Mine"))["starts_at"] is None
+
+
+def test_accept_can_drop_some_and_take_the_rest(env):
+    store, *_ = env
+    a, b, c = store.replace_proposals("week", TODAY, ["coach"], [
+        {"agent": "coach", "title": t} for t in ("One", "Two", "Three")])
+    taken = store.accept("week", TODAY, drop=[b["public_id"]])
+    assert [o["title"] for o in taken] == ["One", "Three"]
+    assert {o["title"]: o["status"] for o in store.objectives("week", TODAY, dropped=True)} == {
+        "One": "active", "Two": "dropped", "Three": "active"}
+    with pytest.raises(KeyError):
+        store.accept("week", TODAY, drop=["o_000000000000"])
+
+
+async def test_the_plan_reads_due_and_links_a_days_step_to_its_week(env):
+    store, planner, engine, *_ = env
+    week = store.add("professor", "week", TODAY, "Two practice exams")
+    engine.replies.append(json.dumps([
+        {"agent": "professor", "title": "One practice exam", "parent": week["public_id"], "due": f"{TODAY}T23:59"},
+        {"agent": "professor", "title": "Too late already", "due": f"{TODAY}T00:00"},
+        {"agent": "coach", "title": "Out of the period", "due": f"{TODAY + timedelta(days=9)}T10:00"}]))
+    made = await planner.plan("day", TODAY)
+    assert "today's step of one of" in engine.asked[0]["system"]
+    assert f"[{week['public_id']}]" in engine.asked[0]["text"]  # the week's, with its id, to name as parent
+    j = [store.as_json(o) for o in made]
+    assert [o["title"] for o in j] == ["One practice exam", "Out of the period"]
+    assert j[0]["parent"] == week["public_id"] and j[0]["due"] == f"{TODAY}T23:59"
+    assert j[1]["due"] is None
+
+
+def test_a_weeks_measured_objective_has_its_days_and_a_source(env):
+    store, *_ = env
+    run = store.habits.add("Run", per_week=3)
+    o = store.add("coach", "week", TODAY, "Run 3 times", measure={"type": "habit", "habit": run.id}, target=3)
+    store.habits.check(run.id, TODAY)
+    j = store.as_json(o)
+    start = bounds("week", TODAY)[0]
+    assert [d["date"] for d in j["days"]] == [(start + timedelta(days=i)).isoformat() for i in range(7)]
+    by_day = {d["date"]: d["count"] for d in j["days"]}
+    assert by_day[TODAY.isoformat()] == 1
+    assert all(n is None for d, n in by_day.items() if d > TODAY.isoformat())
+    assert all(n == 0 for d, n in by_day.items() if d < TODAY.isoformat())
+    assert j["measure"]["source"] == "Run"
+    sleep = store.add("coach", "day", TODAY, "Sleep 7h", measure={"type": "sleep", "hours": 7})
+    assert "days" not in store.as_json(sleep) and store.as_json(sleep)["measure"]["source"] == "Apple Health"
+    assert "days" not in store.as_json(store.add("coach", "week", TODAY, "By hand"))
+
+
+def test_approvals_show_each_plan_once(env, tmp_path):
+    store, planner, engine, db, _ = env
+    agent = Agent(RecordingClient([]), db, ToolRegistry([]), model="m", tz=ROME,
+                  photos=PhotoStore(tmp_path / "photos"), delegate=False)
+    api = TestClient(create_app(agent, store.reminders, FakeCalendar([]), ROME, TOKEN, store.habits,
+                                objectives=store, planner=planner))
+    engine.replies.append(json.dumps([{"agent": "coach", "title": "Run twice"}, {"agent": "coach", "title": "Walk"}]))
+    api.post("/v1/objectives/plan", json={"period": "week"}, headers=AUTH)
+    body = api.get("/v1/approvals", headers=AUTH).json()
+    assert body["waiting"] == 1 and len(body["objectives"]) == 2  # the old list stays for older apps
+    [plan] = body["plans"]
+    assert plan["period"] == "week" and plan["starts_at"] and len(plan["objectives"]) == 2
+    walk = plan["objectives"][1]["id"]
+    week = api.post("/v1/objectives/accept", json={"period": "week", "drop": [walk]}, headers=AUTH).json()
+    assert [o["title"] for o in week["objectives"]] == ["Run twice"] and week["starts_at"] is None
+    assert api.get("/v1/approvals", headers=AUTH).json()["plans"] == []
