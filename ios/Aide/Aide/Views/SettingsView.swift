@@ -102,29 +102,35 @@ struct SettingsView: View {
                 await connection.check(env.api, configured: settings.isConfigured)
             }
             .task { await health.refreshStatus() }
-            #if DEBUG
-            // Simulator screenshots: `-previewSettings digests` (or memory, voice, plan, notifications, reminders,
-            // health, location, screentime, connection) opens that page.
+            // A page by name: `aide://settings/<page>` from an `open` card in chat (`env.settingsPage`), and
+            // Simulator screenshots (`-previewSettings digests`).
             .navigationDestination(for: String.self) { page in
                 Group { switch page {
                 case "digests": DigestSettingsView()
                 case "memory": MemoryView()
                 case "voice": VoiceSettingsView()
                 case "plan": NotesWriterView()
+                case "browser": BrowserSettingsView()
+                case "nutrition": NutritionTargetsView()
+                case "videos": VideosView()
+                case "moodle": MoodleView()
+                case "obsidian": ObsidianView()
+                #if os(iOS)
                 case "notifications": NotificationSettingsView()
                 case "reminders": ReminderSettingsView()
                 case "health": HealthSettingsView()
                 case "location": LocationSettingsView()
-                #if os(iOS)
                 case "screentime": ScreenTimeView()
+                case "payments": PaymentSetupView()
                 #else
                 case "screentime": MacScreenTimeView()
                 #endif
-                case "nutrition": NutritionTargetsView()
-                case "videos": VideosView()
                 default: ConnectionSettingsView(connection: connection)
                 } }.macPageBack()
             }
+            .onAppear { follow() }
+            .onChange(of: env.settingsPage) { _, page in if page != nil { follow() } }
+            #if DEBUG
             .onAppear {
                 if settings.isPreview, path.isEmpty, let page = UserDefaults.standard.string(forKey: "previewSettings") {
                     path.append(page)
@@ -132,6 +138,24 @@ struct SettingsView: View {
             }
             #endif
         }
+    }
+
+    /// The pages a link can open on this device; another one (the Mac has no Notifications page) opens Settings.
+    #if os(iOS)
+    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "nutrition", "videos", "moodle",
+                                     "obsidian", "notifications", "reminders", "health", "location", "screentime",
+                                     "payments", "connection"]
+    #else
+    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "nutrition", "videos", "moodle",
+                                     "obsidian", "screentime", "connection"]
+    #endif
+
+    /// Opens the page an `open` card in chat asked for (`env.settingsPage`), from Settings' top.
+    private func follow() {
+        guard let page = env.settingsPage else { return }
+        env.settingsPage = nil
+        path = NavigationPath()
+        if Self.pages.contains(page) { path.append(page) }
     }
 
     private func row<Destination: View>(_ title: String, _ icon: String, _ color: Color, value: String? = nil, off: Bool = false,

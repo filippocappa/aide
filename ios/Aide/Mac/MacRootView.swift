@@ -115,6 +115,8 @@ struct MacRootView: View {
             case .food, .meal: nav.section = .food; return
             case .screen: nav.section = .screen; return
             case .money(let payment): nav.section = .money; env.openPayment = payment; return
+            case .study(let link): nav.section = .study; env.studyLink = link; return
+            case .settings(let page): nav.section = .settings; env.settingsPage = page; return
             case .chats: nav.section = .team; return
             case .moodle: break
             default: nav.section = .team

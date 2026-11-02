@@ -617,6 +617,15 @@ are transfers, money in ≥ €10 is pushed (`finance`), a push a week before th
 the total under Accounts, Pending on rows. Live: the Enable Banking application is set up and a bank is linked
 (2026-11-02).
 
+**Done, both sides (2026-11-02), not yet tried on the phone:** chat drives the app (contract "Attachments", `open`;
+"Daily app limits"). Coach adds and changes daily app limits (ending early and deleting queued; the apps are picked on
+the phone), edits habits and the food targets; Professor reads and corrects course dates; Aide reads and changes the
+server's settings (`tools/settings.py`: digest times, Live Activities, leave-now, the engines) and writes a digest
+again. Any agent can put an `open` card under its reply (`open_page`, `tools/pages.py`): buttons to a page of the app,
+opened only on a tap (`OpenLinksCard` in `ChatView.swift`). New links: `aide://study[/<course>[/practice|/quiz|/lesson]]`
+(`StudyLink`, followed by `StudyView`) and `aide://settings[/<page>]` (followed by `SettingsView`; the Mac opens its
+Settings section, without the phone's pages). Debug builds: `-previewRoute <aide:// link>`.
+
 **Next** (GitHub issues):
 1. Voice redesign (#34, the only open issue): talking with an agent and quizzes by voice are too slow. Multiple-choice
    answers marked with no model call first, then an overlapped pipeline (streamed audio, end of turn on the server,

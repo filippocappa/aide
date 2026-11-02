@@ -567,6 +567,19 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(PushRoute(url: URL(string: "aide://team")!), .team)
         XCTAssertEqual(PushRoute(url: URL(string: "aide://meal/describe")!), .meal(.describe))
         XCTAssertEqual(PushRoute(url: URL(string: "aide://meal")!), .meal(.photo))
+        // From `open` cards in chat.
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://study")!), .study(nil))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://study/5")!), .study(StudyLink(course: 5)))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://study/5/practice")!), .study(StudyLink(course: 5, page: .practice)))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://study/5/quiz?topic=t_ab")!),
+                       .study(StudyLink(course: 5, page: .quiz, topic: "t_ab")))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://study/5/lesson?topic=t_ab&title=IS-LM%20%26%20money")!),
+                       .study(StudyLink(course: 5, page: .lesson, topic: "t_ab", title: "IS-LM & money")))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://study/5/lesson")!), .study(nil)) // a lesson needs its topic
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://study/5/lesson?topic=t_ab&title=Money+%2B+banks")!),
+                       .study(StudyLink(course: 5, page: .lesson, topic: "t_ab", title: "Money + banks")))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://settings")!), .settings(nil))
+        XCTAssertEqual(PushRoute(url: URL(string: "aide://settings/screentime")!), .settings("screentime"))
         XCTAssertEqual(PushRoute(url: URL(string: "aide://voice")!), .voice)
         XCTAssertEqual(PushRoute(url: URL(string: "aide://today")!), .today)
         XCTAssertEqual(PushRoute(url: URL(string: "aide://objectives")!), .objectives)
@@ -728,6 +741,22 @@ final class PushTests: XCTestCase {
         guard case .review(let session) = attachments[1] else { return XCTFail("expected review") }
         XCTAssertEqual(session.name, "Macroeconomics")
         XCTAssertEqual(session.topics, ["The IS-LM model"])
+    }
+
+    func testOpenAttachmentDecodes() throws {
+        let json = #"""
+        [{"type":"open","open":[{"id":"aide://settings/screentime","title":"Screen Time","subtitle":"Pick the apps",
+          "url":"aide://settings/screentime"},{"id":"aide://study/5/practice","title":"Practice exam","subtitle":null,
+          "url":"aide://study/5/practice"}]}]
+        """#
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .open(let links) = attachments[0] else { return XCTFail("expected open") }
+        XCTAssertEqual(links.map(\.title), ["Screen Time", "Practice exam"])
+        XCTAssertEqual(links[0].subtitle, "Pick the apps")
+        XCTAssertNil(links[1].subtitle)
+        XCTAssertEqual(links[0].systemImage, "hourglass")
+        XCTAssertEqual(links[1].systemImage, "checklist")
+        XCTAssertEqual(PushRoute(url: URL(string: links[1].url)!), .study(StudyLink(course: 5, page: .practice)))
     }
 
     func testRoutesAttachmentDecodes() throws {

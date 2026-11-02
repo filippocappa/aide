@@ -31,6 +31,16 @@ struct AideApp: App {
                     if phase == .background { WidgetCenter.shared.reloadAllTimelines() }
                 }
                 .onOpenURL { url in env.push.route = PushRoute(url: url) }
+                #if DEBUG
+                // Simulator screenshots: `-previewRoute aide://study/5/practice` follows that link once the app is up,
+                // as a tap on an `open` card would (`simctl openurl` asks "Open in Aide?" first).
+                .task {
+                    guard env.settings.isPreview, let link = UserDefaults.standard.string(forKey: "previewRoute"),
+                          let url = URL(string: link) else { return }
+                    try? await Task.sleep(for: .seconds(2))
+                    env.push.route = PushRoute(url: url)
+                }
+                #endif
         }
     }
 }
@@ -189,6 +199,17 @@ struct ContentView: View {
             case .meal(let way): tab = .health; healthHalf = .food; env.showToday = false; env.mealLog = way; return
             case .screen: tab = .health; healthHalf = .screen; env.showToday = false; return
             case .money(let payment): tab = .money; env.showToday = false; env.openPayment = payment; return
+            case .study(let link): tab = .study; env.showToday = false; env.studyLink = link; return
+            case .settings(let page):
+                Task {
+                    if env.showToday {
+                        env.showToday = false
+                        try? await Task.sleep(for: .milliseconds(450)) // let Today slide away first
+                    }
+                    env.settingsPage = page
+                    env.showSettings = true
+                }
+                return
             case .chats: tab = .chat; env.showToday = false; return
             case .moodle: onToday = false // a sheet over any tab, once Today is out of the way
             default: tab = .chat; onToday = false

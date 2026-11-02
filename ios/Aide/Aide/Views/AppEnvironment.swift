@@ -36,6 +36,10 @@ final class AppEnvironment: ObservableObject {
     @Published var mealLog: MealLogWay?
     /// A payment to open on the Money page (a "Money in" push); Money clears it.
     @Published var openPayment: Int?
+    /// A course page to open from an `open` card (`aide://study/…`); the Study tab follows it and clears this.
+    @Published var studyLink: StudyLink?
+    /// A Settings page to open from an `open` card (`aide://settings/<page>`); Settings follows it and clears this.
+    @Published var settingsPage: String?
 
     private init() {
         let settings = AppSettings()
@@ -150,8 +154,8 @@ final class AppEnvironment: ObservableObject {
             } else if let conversation = errand.conversationId {
                 await chat.open(id: conversation)
             }
-        case .health, .food, .screen, .chats, .meal, .money:
-            break // tabs, switched by ContentView
+        case .health, .food, .screen, .chats, .meal, .money, .study, .settings:
+            break // tabs and Settings, switched by ContentView
         }
     }
 
