@@ -47,6 +47,7 @@ targets:
           - CFBundleURLName: $(AIDE_BUNDLE_ID)
             CFBundleURLSchemes: [aide]
         NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
         UILaunchScreen:
           UIColorName: LaunchBackground
         UISupportedInterfaceOrientations:
