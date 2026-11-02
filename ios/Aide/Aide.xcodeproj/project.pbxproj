@@ -10,6 +10,7 @@
 		007F5D563C8413AC0A0FE70D /* ScreenLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5A6ADA18164E31DD49CD71 /* ScreenLock.swift */; };
 		012ACF433600814E41F434CD /* MealControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95CA5950A59DD5065B084678 /* MealControl.swift */; };
 		024F2D8A495A2AAA4CCB1A65 /* SleepSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */; };
+		029ECB5468639E54D5ADA3A2 /* MacFonts.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18F516CEE4E57ACE6B7713F /* MacFonts.swift */; };
 		03B01F505920F1FA05E66BCA /* ErrandViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4B434BFB9F5B347D240B333 /* ErrandViews.swift */; };
 		058C1D6DDCF73028E25DB202 /* WeightViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7DDCAD5B02A385C9E492CEB /* WeightViews.swift */; };
 		0688E1FF26A515CF635002C6 /* UsageReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F41469809377FE5BEAF0871 /* UsageReportView.swift */; };
@@ -437,6 +438,7 @@
 		DF6CCC9091F2A82B831A7E3A /* EventWeekView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventWeekView.swift; sourceTree = "<group>"; };
 		DFD117E9E143D868B430B441 /* AideWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AideWidgets.entitlements; sourceTree = "<group>"; };
 		E0155AA3FAF4B728A7ED781B /* UsageSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSample.swift; sourceTree = "<group>"; };
+		E18F516CEE4E57ACE6B7713F /* MacFonts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacFonts.swift; sourceTree = "<group>"; };
 		E5D42096136F2F92641EAC10 /* MealIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealIntents.swift; sourceTree = "<group>"; };
 		E5EB8695757560B5E023263D /* AideMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideMacApp.swift; sourceTree = "<group>"; };
 		E6A623639391457CF5AA5349 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -680,6 +682,7 @@
 				5E3809ACCFFA12ABB54F30E6 /* MacAssets.xcassets */,
 				5C2632A04AC09C5B2F3DB4C2 /* MacBrowser.swift */,
 				848CB00B00F5042EC8BEB505 /* MacCoverWindow.swift */,
+				E18F516CEE4E57ACE6B7713F /* MacFonts.swift */,
 				D22CC0EC44582B201436684C /* MacGlance.swift */,
 				3D3CFB8E6C336BE4768DB561 /* MacList.swift */,
 				ED75A40C75D31819393889F1 /* MacLoginItem.swift */,
@@ -1157,6 +1160,7 @@
 				CACCC83A44CB8718FB4A36C7 /* MacAppDelegate.swift in Sources */,
 				86BC72CD9352AE2184F5B2B3 /* MacBrowser.swift in Sources */,
 				A0CE873F4E95E35C1154EB20 /* MacCoverWindow.swift in Sources */,
+				029ECB5468639E54D5ADA3A2 /* MacFonts.swift in Sources */,
 				089CB209C2B169E594A84579 /* MacGlance.swift in Sources */,
 				560B7380C6D9D3882D360581 /* MacList.swift in Sources */,
 				F2942EA09BFC19DE9E840178 /* MacLoginItem.swift in Sources */,
