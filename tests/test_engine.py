@@ -203,6 +203,22 @@ async def test_background_work_has_its_own_switch(plan):
     assert len(calls()) == 1 and len(client.requests) == 1
 
 
+async def test_small_calls_go_to_openrouter_and_to_the_plan_only_when_it_refuses(plan):
+    engine, client, calls, *_ = plan
+    engine.set_engine("claude")
+    engine.set_background("claude")
+    client.responses.append(done("A title"))
+    assert await engine.ask("Title it.", TEXT, 300, fast=True, background=True, effort="low", small=True) == "A title"
+    assert client.requests[0]["model"] == "m" and calls() == []
+    # OpenRouter says no (here: nothing scripted, the client raises): the plan, on Haiku
+    assert await engine.ask("Title it.", TEXT, 300, small=True) == "ok from haiku"
+    assert len(calls()) == 1
+    engine.set_engine("openrouter")
+    engine.set_background("openrouter")  # the plan not chosen: the refusal stands
+    with pytest.raises(Exception):
+        await engine.ask("Title it.", TEXT, 300, small=True)
+
+
 async def test_at_the_limit_background_work_goes_to_openrouter_without_asking(plan):
     engine, client, calls, limit, unlimit, _ = plan
     engine.set_background("claude")

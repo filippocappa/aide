@@ -419,7 +419,7 @@ class DigestService:
                 self.engine, self.client, self.model,
                 PROMPT.format_map({**dict(zip(("title", "closing"), CLOSING.get(kind, LOOKING_AHEAD))),
                                    "extra": WAKE if kind == "wake" else ""}),
-                "\n".join(lines), 2000)
+                "\n".join(lines), 2000, small=True)
         except Exception:
             log.warning("digest: the model failed; sending it without its text", exc_info=True)
             text = ""
@@ -441,7 +441,7 @@ class DigestService:
                "Notes, newest first:\n" + "\n".join(f"- {n}" for n in notes))
         text = ""
         try:  # room for the model's thinking: at 300 tokens the JSON was sometimes cut off
-            text = await ask_text(self.engine, self.client, self.model, TRAVEL_PROMPT, ask, 2000)
+            text = await ask_text(self.engine, self.client, self.model, TRAVEL_PROMPT, ask, 2000, small=True)
             found = json.loads(text[text.index("{"):text.rindex("}") + 1])
         except Exception as e:
             log.warning("digest: couldn't read home and travel mode from memory (%s): %r", e, text[:200])
