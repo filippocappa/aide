@@ -2,7 +2,7 @@ import Foundation
 
 /// One app's use over a day or a period: the time, the pickups that opened it first, its notifications, and (on a day)
 /// the time in each hour.
-struct UsageApp: Identifiable, Hashable {
+struct UsageApp: Identifiable, Hashable, Codable {
     /// The bundle ID, else the name.
     let id: String
     var name: String
@@ -17,7 +17,7 @@ struct UsageApp: Identifiable, Hashable {
 
 /// A website's time (the Mac only: the phone's report can't see sites), part of its browser's time, not added to the
 /// total again.
-struct UsageSite: Identifiable, Hashable {
+struct UsageSite: Identifiable, Hashable, Codable {
     /// The site, "youtube.com".
     let id: String
     var seconds: TimeInterval = 0
@@ -35,7 +35,7 @@ enum UsageKind: String, CaseIterable, Identifiable {
 
 /// A day's use, every app's time added up: Apple's own total counts time it can't put on an app and overlaps, so
 /// Aide's total is the apps' sum, the same number as the list under it.
-struct UsageDay: Identifiable, Hashable {
+struct UsageDay: Identifiable, Hashable, Codable {
     /// Midnight, local.
     let date: Date
     var apps: [UsageApp] = []
