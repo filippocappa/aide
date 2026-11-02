@@ -24,6 +24,28 @@ def _obj(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
+def food_day_line(store: FoodStore, nutrition: Nutrition, d: Date) -> str:
+    """The day's totals against its targets (the goals plus what workouts burned), and its score. Also stamped on
+    each of Coach's messages (Agent.context), so it never answers from an old tool result."""
+    sums, day = totals(store.day(d)), nutrition.day(d)
+    goals = day["targets"]
+    parts = [f"{sums[k]}" + (f"/{goals[k]}" if goals[k] else "") + (" kcal" if k == "calories" else f" g {NAMES[k]}")
+             for k in MACROS]
+    line = f"{d:%a %d %b} so far: " + ", ".join(parts)
+    drinks = [f"{sums['water_ml']} ml water"] if sums["water_ml"] else []
+    drinks += [f"{sums['caffeine_mg']} mg caffeine"] if sums["caffeine_mg"] else []
+    if drinks:  # amounts with no target, so the model doesn't call them goals reached
+        line += f" (also logged, no targets: {' and '.join(drinks)})"
+    if day["bonus"]["kcal"]:
+        line += f" (targets include +{day['bonus']['kcal']} kcal from workouts)"
+    if s := day["score"]:
+        line += f". Day score {s['score']}/100" + (f", food quality {s['quality']}" if s["quality"] is not None
+                                                    else "")
+        if low := weakest(s):
+            line += f"; weakest: {low}"
+    return line
+
+
 def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB | None = None,
                off: OpenFoodFacts | None = None, health: HealthStore | None = None) -> list[Tool]:
     foods = foods or FoodDB(store.conn)
@@ -50,24 +72,7 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         return f"\nMeal quality {q['quality']}/100 ({foods})"
 
     def day_line(d: Date) -> str:
-        """The day's totals against its targets (the goals plus what workouts burned), and its score."""
-        sums, day = totals(store.day(d)), nutrition.day(d)
-        goals = day["targets"]
-        parts = [f"{sums[k]}" + (f"/{goals[k]}" if goals[k] else "") + (" kcal" if k == "calories" else f" g {NAMES[k]}")
-                 for k in MACROS]
-        line = f"{d:%a %d %b} so far: " + ", ".join(parts)
-        drinks = [f"{sums['water_ml']} ml water"] if sums["water_ml"] else []
-        drinks += [f"{sums['caffeine_mg']} mg caffeine"] if sums["caffeine_mg"] else []
-        if drinks:  # amounts with no target, so the model doesn't call them goals reached
-            line += f" (also logged, no targets: {' and '.join(drinks)})"
-        if day["bonus"]["kcal"]:
-            line += f" (targets include +{day['bonus']['kcal']} kcal from workouts)"
-        if s := day["score"]:
-            line += f". Day score {s['score']}/100" + (f", food quality {s['quality']}" if s["quality"] is not None
-                                                        else "")
-            if low := weakest(s):
-                line += f"; weakest: {low}"
-        return line
+        return food_day_line(store, nutrition, d)
 
     async def log_meal(name: str, items: list[dict], eaten_at: str | None = None, photo_id: str | None = None,
                        notes: str | None = None, water_ml: int = 0, caffeine_mg: int = 0,

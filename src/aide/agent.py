@@ -118,6 +118,9 @@ class Agent:
         self.short_chat: Callable[[str], bool] | None = None
         # Where the phone is, in words, for the stamp (transit.Whereabouts.describe); None leaves it out.
         self.whereabouts: Callable[[], Awaitable[str | None]] | None = None
+        # What an agent should see fresh on every message, for its stamp (Coach: today's food against the day's
+        # targets, which grow when a workout comes in later). None, or None for the agent, leaves it out.
+        self.context: Callable[[str], str | None] | None = None
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued, and
         # `agent_tools(agent id, any agent)` for other per-agent sets (objectives).
         # Aide delegates: it has only its own few tools and ask_agent, and the specialists do the work. A specialist
@@ -377,7 +380,7 @@ class Agent:
             if reads:
                 with usage.labels(purpose="photo read", agent=agent, conversation=conversation or channel):
                     body += await self._describe(text)
-            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice)}]
+            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice, agent)}]
             self._plan = self._plan_tools = (agent in PLAN_CHATS and not voice and self.engine is not None
                                              and self.engine.plan_now())
             try:
@@ -410,17 +413,29 @@ class Agent:
             if self.photos is None or not self.photos.exists(p):
                 raise ValueError(f"no photo {p}")
 
-    async def _stamp(self, channel: str, text: str, voice: bool = False) -> str:
+    async def _stamp(self, channel: str, text: str, voice: bool = False, agent: str | None = None) -> str:
         """Stamped so the model never reuses a stale time from earlier in the conversation (with where the phone
-        is, when that's known, and "by voice" for a spoken message), and shown the real queue, which may differ
-        from what it remembers queuing."""
+        is, when that's known, "by voice" for a spoken message, and the agent's own context), and shown the real
+        queue, which may differ from what it remembers queuing."""
         where = await self.whereabouts() if self.whereabouts else None
         stamped = (f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{', ' + where if where else ''}"
-                   f"{', by voice' if voice else ''}] {text}")
+                   f"{', by voice' if voice else ''}{self._context(agent)}] {text}")
         if queued := self.db.pending_actions(channel, PENDING_TTL):
             lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
             stamped += f"{_QUEUE_MARK}\n{lines}]"
         return stamped
+
+    def _context(self, agent: str | None) -> str:
+        """The agent's context for the stamp (", food today: …"), or "". Inside the stamp's brackets, so it never
+        shows in the app's history; a "]" in it would end the stamp early."""
+        if agent is None or self.context is None:
+            return ""
+        try:
+            line = self.context(agent)
+        except Exception:
+            log.exception("context for %s", agent)
+            return ""
+        return f", {line.replace(']', ')')}" if line else ""
 
     def _start(self, channel: str, conversation: str | None, model: str,
                on_team: Callable[[dict], None] | None = None) -> None:
@@ -449,7 +464,7 @@ class Agent:
             else:
                 note = (f"{_ROUTINE} \"{routine['title']}\". The user set this up to run on a schedule and isn't in "
                         "the chat right now: write the message they'll read here.]\n" + routine["prompt"])
-            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note)}]
+            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note, agent=routine["agent"])}]
             self._plan = self.engine is not None and self.engine.plan_for_background()
             with usage.labels(purpose="watch" if routine.get("watch") else "routine", conversation=conversation):
                 try:
@@ -522,7 +537,7 @@ class Agent:
                     "their assistants. The latest messages, oldest first:\n" + lines + "\n\n"
                     "Answer the user's last message as yourself, for the group: short, only what you add, "
                     "without repeating what the others said. Don't bring the others in by mentioning them.]")
-            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note)}]
+            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note, agent=agent)}]
             self._attachments = []  # this agent's cards, with its answer
             with usage.labels(purpose="team chat", conversation=TEAM):
                 reply = await self._run(agent, channel, self.model, [], turn)
@@ -562,7 +577,8 @@ class Agent:
                 with usage.labels(purpose="photo read", agent=agent):
                     photos += await self._describe(request)
                 model = self.model
-            turn = [{"role": "user", "content": f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}] [Asked by {name}] {request}{photos}"}]
+            stamp = f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{self._context(agent)}]"
+            turn = [{"role": "user", "content": f"{stamp} [Asked by {name}] {request}{photos}"}]
             self._asked.append(agent)
             try:
                 with usage.labels(purpose="ask"):
