@@ -128,7 +128,7 @@ async def test_request_is_cache_friendly(db):
     await agent.reply("discord", "b")
     first, second = client.requests
     assert first["system"] == second["system"]
-    assert first["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert first["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
     assert first["tools"] == second["tools"]
     assert second["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
     assert "fallbacks" not in first
