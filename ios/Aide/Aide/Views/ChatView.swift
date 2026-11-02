@@ -675,6 +675,42 @@ private struct MessagePhotos: View {
 
 /// The reminders, events, meals, departures, routes or study files a reply was about, as a card: reminders tick off right
 /// here, events show on a week, files open, a notebook proposal is answered. A long list shows its first few until you ask for the rest.
+/// Buttons to pages of the app that an agent put under its reply (`open_page`). Nothing opens until one is tapped.
+struct OpenLinksCard: View {
+    let links: [OpenLink]
+    @EnvironmentObject private var push: PushService
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(links) { link in
+                Button {
+                    if let url = URL(string: link.url), let route = PushRoute(url: url) { push.route = route }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: link.systemImage)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(link.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                            if let subtitle = link.subtitle {
+                                Text(subtitle).font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                        .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .card(padding: 14)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(CardPress())
+                .accessibilityHint("Opens \(link.title)")
+            }
+        }
+    }
+}
+
 struct AttachmentCard: View {
     let attachment: Attachment
     /// Errands shown again further down: one line here.
@@ -715,6 +751,8 @@ struct AttachmentCard: View {
             QuizResultCard(quiz: quiz)
         case .review(let session):
             ReviewStartCard(session: session)
+        case .open(let links):
+            if !links.isEmpty { OpenLinksCard(links: links) }
         case .unknown:
             EmptyView()
         }

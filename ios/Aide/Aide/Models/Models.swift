@@ -77,6 +77,8 @@ enum Attachment: Decodable, Hashable {
     case quiz(Quiz)
     case review(ReviewSession)
     case payments([Payment])
+    /// Buttons to pages of the app, opened only when tapped.
+    case open([OpenLink])
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -96,16 +98,60 @@ enum Attachment: Decodable, Hashable {
         case "quiz": self = .quiz(try c.decode(Quiz.self, forKey: .quiz))
         case "review": self = .review(try c.decode(ReviewSession.self, forKey: .review))
         case "payments": self = .payments(try c.decode([Payment].self, forKey: .payments))
+        case "open": self = .open(try c.decode([OpenLink].self, forKey: .open))
         default: self = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
         case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
-        case quiz, review, payments
+        case quiz, review, payments, open
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
         (list ?? []).filter { $0 != .unknown }
+    }
+}
+
+/// A button under a reply that opens a page of the app (`aide://…`; docs/API.md, Attachments, `open`).
+struct OpenLink: Decodable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    var subtitle: String?
+    let url: String
+
+    /// The page's icon, from where the link goes.
+    var systemImage: String {
+        guard let url = URL(string: url) else { return "arrow.up.right.square" }
+        let page = url.pathComponents.dropFirst().first
+        switch url.host {
+        case "study":
+            switch url.pathComponents.dropFirst(2).first {
+            case "practice": return "checklist"
+            case "quiz": return "rectangle.on.rectangle.angled"
+            case "lesson": return "graduationcap"
+            default: return "book"
+            }
+        case "settings":
+            switch page {
+            case "screentime": return "hourglass"
+            case "notifications": return "bell.badge"
+            case "voice": return "waveform"
+            case "nutrition": return "fork.knife"
+            case "digests": return "sun.horizon"
+            case "location": return "tram"
+            case "health": return "heart"
+            case "reminders": return "checklist"
+            default: return "gearshape"
+            }
+        case "today": return "sun.max"
+        case "team", "agent": return "person.3"
+        case "objectives": return "target"
+        case "health": return "heart.text.square"
+        case "food", "meal": return "fork.knife"
+        case "screen": return "hourglass"
+        case "money": return page == "banks" ? "building.columns" : "eurosign.circle"
+        default: return "arrow.up.right.square"
+        }
     }
 }
 

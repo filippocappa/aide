@@ -20,6 +20,14 @@ struct StudyView: View {
     @State private var practice: StudyCourse?
     @State private var studying: StudyTarget?
     @State private var result: String?
+    /// A lesson opened from an `open` card in chat.
+    @State private var lesson: LinkedLesson?
+
+    private struct LinkedLesson: Identifiable {
+        let course: StudyCourse
+        let topic: LessonTopicRef
+        var id: String { topic.id }
+    }
 
     private var courses: [StudyCourse] { overview?.courses ?? [] }
     private var professor: Agent { chat.agent("professor") }
@@ -91,11 +99,16 @@ struct StudyView: View {
             .fullScreenCover(item: $studying, onDismiss: { Task { await load() } }) { target in
                 StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
             }
+            .fullScreenCover(item: $lesson, onDismiss: { Task { await load() } }) { l in
+                LessonView(topic: l.topic, course: l.course.id, courseName: l.course.title).macCoverSize()
+            }
             .sheet(item: Binding(get: { result.map(QuizID.init) }, set: { result = $0?.id })) { QuizResultSheet(id: $0.id) }
             .task {
                 await load()
                 openPreview()
+                await follow()
             }
+            .onChange(of: env.studyLink) { _, link in if link != nil { Task { await follow() } } }
             .refreshable { await load() }
         }
     }
@@ -143,6 +156,23 @@ struct StudyView: View {
         }
     }
 
+
+    /// Opens what an `open` card in chat asked for (`env.studyLink`): a course's page, its practice exam, a study
+    /// session (on one topic, or all) or a topic's lesson.
+    private func follow() async {
+        guard let link = env.studyLink else { return }
+        env.studyLink = nil
+        if !courses.contains(where: { $0.id == link.course }) { await load() }
+        guard let course = courses.first(where: { $0.id == link.course }) else { return }
+        switch link.page {
+        case .course: path = [course]
+        case .practice: practice = course
+        case .quiz: studying = StudyTarget(course: course.id, name: course.title, topics: link.topic.map { [$0] } ?? [])
+        case .lesson:
+            guard let topic = link.topic else { return }
+            lesson = LinkedLesson(course: course, topic: LessonTopicRef(id: topic, title: link.title ?? "Lesson"))
+        }
+    }
 
     /// Simulator screenshots: `-previewOpen course:5` opens that course, `date:5` its first date's editor,
     /// `practice:5` its practice exam (with

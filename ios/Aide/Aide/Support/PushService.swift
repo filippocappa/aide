@@ -30,10 +30,15 @@ enum PushRoute: Equatable {
     case meal(MealLogWay)
     /// The Money tab, on a payment (money came in) or, with none, on the accounts (a bank link to renew).
     case money(payment: Int?)
+    /// From an `open` card in chat: the Study tab, or a course's page, practice exam, study session or lesson.
+    case study(StudyLink?)
+    /// From an `open` card in chat: Settings, on one of its pages (`digests`, `screentime`, …) or its top.
+    case settings(String?)
 
     /// `aide://conversation/<id>`, `aide://team`, `aide://agent/<id>`, `aide://voice`, `aide://today`,
     /// `aide://objectives`, `aide://health`, `aide://food`, `aide://screen`, `aide://errand/<id>`, `aide://meal/photo`
-    /// (or `describe`), `aide://money` (or `aide://money/<payment id>`).
+    /// (or `describe`), `aide://money` (or `aide://money/<payment id>`), `aide://study[/<course>[/practice|/quiz|/lesson]]`
+    /// (`?topic=<t_…>&title=…`), `aide://settings[/<page>]`.
     init?(url: URL) {
         guard url.scheme == "aide" else { return nil }
         let id = url.pathComponents.dropFirst().first
@@ -50,6 +55,8 @@ enum PushRoute: Equatable {
         case "errand": guard let id = id.flatMap(Int.init) else { return nil }; self = .errand(id)
         case "meal": self = .meal(id.flatMap(MealLogWay.init(rawValue:)) ?? .photo)
         case "money": self = .money(payment: id.flatMap(Int.init))
+        case "study": self = .study(StudyLink(url: url))
+        case "settings": self = .settings(id)
         default: return nil
         }
     }
@@ -81,6 +88,35 @@ enum PushRoute: Equatable {
 
     private static func kind(_ userInfo: [AnyHashable: Any]) -> String? {
         (userInfo["aide"] as? [String: Any])?["kind"] as? String
+    }
+}
+
+/// A course's page to open on the Study tab (`aide://study/<course>/…`), from an `open` card in chat.
+struct StudyLink: Equatable {
+    enum Page: String { case course, practice, quiz, lesson }
+    let course: Int
+    var page = Page.course
+    /// A notebook topic's id (`t_…`) and title: a lesson's topic, or the one a study session starts on.
+    var topic: String?
+    var title: String?
+
+    init(course: Int, page: Page = .course, topic: String? = nil, title: String? = nil) {
+        self.course = course; self.page = page; self.topic = topic; self.title = title
+    }
+
+    /// nil for `aide://study` (the tab), or a link this version can't follow.
+    init?(url: URL) {
+        let parts = url.pathComponents.dropFirst()
+        guard let course = parts.first.flatMap(Int.init) else { return nil }
+        // A "+" is a space too (form encoding), which URLComponents leaves as it is.
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedQueryItems ?? []
+        let value = { (name: String) in
+            query.first { $0.name == name }?.value?.replacingOccurrences(of: "+", with: "%20").removingPercentEncoding
+                .flatMap { $0.isEmpty ? nil : $0 }
+        }
+        let page = parts.dropFirst().first.map { Page(rawValue: $0) } ?? .course
+        guard let page, page != .lesson || value("topic") != nil else { return nil }
+        self.init(course: course, page: page, topic: value("topic"), title: value("title"))
     }
 }
 
