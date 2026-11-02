@@ -70,17 +70,12 @@ struct ScreenView: View {
                 Image(systemName: "chevron.left").frame(width: 36, height: 32).contentShape(Rectangle())
             }
             .accessibilityLabel("Earlier")
-            // The title slides the way you went; the page under it changes at once (it's drawn by another process, and
-            // moving it with the title made both stutter), and its bars grow in.
-            ZStack {
-                Text(periodTitle).font(.headline)
-                    .lineLimit(1).minimumScaleFactor(0.8)
-                    .id(periodTitle)
-                    .transition(.push(from: forward ? .trailing : .leading))
-            }
-            .frame(maxWidth: .infinity)
-            .clipped()
-            .animation(.snappy(duration: 0.3), value: periodTitle)
+            // The title's digits roll; the page under it changes at once (it's drawn by another process, and moving it
+            // with the title made both stutter), and its number rolls from the one before.
+            Text(periodTitle).font(.headline)
+                .contentTransition(.numericText(countsDown: !forward))
+                .animation(.snappy, value: periodTitle)
+                .frame(maxWidth: .infinity)
             Button { step(1) } label: {
                 Image(systemName: "chevron.right").frame(width: 36, height: 32).contentShape(Rectangle())
             }
@@ -221,7 +216,7 @@ private struct UsageReportHost: View {
             ForEach(kept.contains(shown) ? kept : [shown] + kept, id: \.self) { page in
                 let on = page == shown
                 DeviceActivityReport(.usage(page.kind), filter: .usage(page.kind, containing: page.date))
-                    .padding(.trailing, on ? 0 : 1) // hidden a point narrower: the report grows its bars when shown
+                    .padding(.trailing, on ? 0 : 1) // hidden a point narrower: the report knows which one is on screen
                     .opacity(on ? 1 : 0)
                     .allowsHitTesting(on)
                     .accessibilityHidden(!on)
