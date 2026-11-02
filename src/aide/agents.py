@@ -12,7 +12,8 @@ ORCHESTRATOR = "aide"
 # Tools every agent gets, whatever its domain.
 ROUTINES = ("list_routines", "create_routine", "update_routine", "delete_routine")
 OBJECTIVES = ("list_objectives", "add_objective", "update_objective", "accept_objectives", "plan_objectives")
-COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", *ROUTINES, *OBJECTIVES)
+COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", "open_page", *ROUTINES, *OBJECTIVES)
+SETTINGS = ("settings", "change_setting", "run_digest")
 CALENDAR_READ = ("list_calendars", "list_events", "search_events", "free_time")
 CALENDAR = (*CALENDAR_READ, "create_event", "edit_event", "delete_event")
 PLANS = ("propose_events",)
@@ -27,18 +28,20 @@ BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
 VIDEO = ("summarize_video", "read_video", "list_videos")
 PURCHASES = ("list_purchases",)
 FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budget", "subscriptions",
-           "set_subscription", "accounts", "delete_payment")
-HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "delete_habit")
+           "set_subscription", "accounts", "card_owed", "delete_payment")
+HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "update_habit", "delete_habit")
 HEALTH = ("health",)
 WEIGHT = ("log_weight", "weight_trend", "delete_weight")
-FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal", "find_food", "save_food", "update_food")
-LOCKS = ("list_locks", "screen_usage", "lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock")
+FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "food_targets", "delete_meal", "find_food", "save_food",
+        "update_food")
+LOCKS = ("list_locks", "screen_usage", "lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock",
+         "add_limit", "update_limit", "end_limit", "delete_limit")
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "check_moodle",
          "update_notes",
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
          "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
          "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
-         "cancel_review_session")
+         "cancel_review_session", "course_dates", "add_course_date", "edit_course_date", "hide_course_date")
 
 
 @dataclass(frozen=True)
@@ -155,10 +158,23 @@ don't argue, but if they unlock the same lock often (list_locks shows the week's
 a later start or a shorter lock. A strict lock (only when they ask for one, or agree to your suggestion) can't be \
 ended from chat at all: only with one of their 3 emergency passes a month, in the app; while it's on, the app's \
 Screen Time page is locked too. Offer strict when they keep unlocking a lock that matters to them. Daily app limits ("Social, 30 min a day, \
-then locked until midnight") are set by the user in the app's Screen tab, where they pick the apps; you see them and \
-whether they were reached in list_locks, and can suggest one. screen_usage has their phone time day by day (at least \
+then locked until midnight"): add_limit when the user asks for one (a title naming what it covers, the minutes), \
+update_limit to change it; it does nothing until they pick its apps on the phone, so say so (the card under your \
+reply opens the page). list_locks shows them and whether they were reached today; ending a reached one early \
+(end_limit, their reason) and deleting one are queued, and a strict one reached today can only be tightened. screen_usage has their phone time day by day (at least \
 so much: it comes in 15-minute steps) against their usual; bring it in when it matters (a late night on the phone, \
 a study day that went to the screen), not as a lecture."""
+
+_SETTINGS = """- Settings: settings lists Aide's own (digest times and which are on, the Live Activities, tram alerts for \
+events, who writes notes and does background work); change_setting changes one at once when the user asks. A few \
+are kept on the phone: for those it puts a button to the page under your reply. run_digest writes a digest again.
+"""
+
+_PAGES = """- open_page puts a button under your reply that opens a page of the app when tapped (a practice exam, a \
+lesson, a course, Health, a Settings page). Use it when the user wants to go somewhere or start something that \
+happens in the app, or for what only the phone can do (picking Screen Time apps, permissions). Never say you opened \
+it: they tap it.
+"""
 
 _CARDS = """- In the app, the reminders, calendar events, meals, routes and videos your tools listed, created or changed this turn are \
 shown under your reply as cards (with tick boxes for reminders). So don't repeat them line \
@@ -311,7 +327,12 @@ question at a time, with its options, and never give away the answer before they
 quiz_answer at once: the letter for a multiple-choice question; for a flashcard, judge their words against the \
 card's answer and pass right (the gist is there) or wrong; blank for "I don't know" or a skip. Then say in a line \
 whether it was right and why (the explanation it returns), and ask the next question it gives you. If they stop, \
-end_quiz. Answers count for what comes back next time, so record every one.
+end_quiz. Answers count for what comes back next time, so record every one. When they'd rather do it in the app (a \
+practice exam, flashcards, a lesson), open_page puts the button under your reply: practice_exam, study_session \
+(a topic or the whole course) or lesson (a topic).
+- Course dates: course_dates lists a course's exams, mid-terms and deadlines; when the user corrects one or tells you \
+of one, edit_course_date, add_course_date or hide_course_date (a wrong one). Their changes stay when the course is \
+read again.
 - Review sessions: when the user wants study time planned ("plan my reviews before the exam"), look at the exam \
 date (list_courses), study_progress (weak and never-practised topics first) and free_time, then propose the \
 sessions with one propose_events call (each with its course and topics), spaced out and closer together near \
@@ -398,7 +419,8 @@ AIDE_PROMPT = _prompt(
     "You are Aide, a personal assistant for one person, and the one they talk to first. Like an executive "
     "assistant with a team behind them, you understand what they want, hand it to the specialist whose work it "
     "is, and report back. You look things up on the web and on maps yourself.",
-    _BASICS, _CARDS, _PHOTOS, _MEMORY_SHARED, _WEB, _VIDEO, _MAPS, _TRANSIT, _BROWSER, _DELEGATE, _ROUTINES, _WATCHES,
+    _BASICS, _CARDS, _PAGES, _SETTINGS, _PHOTOS, _MEMORY_SHARED, _WEB, _VIDEO, _MAPS, _TRANSIT, _BROWSER, _DELEGATE,
+    _ROUTINES, _WATCHES,
     _ROUTINES_ANY, _OBJECTIVES, _OBJECTIVES_ANY,
 )
 
@@ -406,7 +428,7 @@ SECRETARY_PROMPT = _prompt(
     "You are Secretary, one of the user's assistants: their calendar, reminders and mail. You are efficient: "
     "you get the day organised in as few words as possible, notice clashes and loose ends, and propose the "
     "next step instead of asking open questions.",
-    _BASICS, _CALENDAR, _MAIL, _CARDS, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _TRANSIT, _ASKED, _ROUTINES,
+    _BASICS, _CALENDAR, _MAIL, _CARDS, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _TRANSIT, _ASKED, _ROUTINES,
     _WATCHES, _OBJECTIVES,
 )
 
@@ -415,7 +437,7 @@ PROFESSOR_PROMPT = _prompt(
     "explain step by step, starting from what the user already knows, with a small example where it helps. "
     "After a longer explanation, check understanding with one short question. Study plans are concrete: "
     "topics, order and time per session, working back from the exam date.",
-    _BASICS, _QUEUE, _STUDY, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _VIDEO, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _STUDY, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _VIDEO, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 COACH_PROMPT = _prompt(
@@ -424,7 +446,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day; to put a session in it, ask Secretary.",
-    _BASICS, _QUEUE, _HEALTH, _HABITS, _LOCKS, _CARDS, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _HEALTH, _HABITS, _LOCKS, _CARDS, _PAGES, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 FINANCE_PROMPT = _prompt(
@@ -446,7 +468,7 @@ FINANCE_PROMPT = _prompt(
     "how often or the next charge, or tells you of one, use set_subscription. You give no investment advice beyond general principles (an "
     "emergency fund, diversification, low fees, not betting money you need), you never recommend specific "
     "securities, and you can never move money.",
-    _BASICS, _QUEUE, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 # The watches the server sets up once (docs/API.md, "Watches"), also offered as ideas: (agent, idea).
@@ -480,7 +502,7 @@ LATER_WATCHES = tuple((n, a, dict(i, days=list(i["days"]))) for n, a, i in _LATE
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
-             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *VIDEO, *MAPS, *TRANSIT, *BROWSER),
+             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *VIDEO, *MAPS, *TRANSIT, *BROWSER, *SETTINGS),
              orchestrator=True,
              routine_ideas=(_idea("Plan my week", "Look at my calendar, reminders and habits for the coming week and "
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
@@ -521,24 +543,31 @@ _CONNECTORS = (
     ("reminders", "Reminders", REMINDERS, {"create_reminder", "update_reminder", "complete_reminder", "delete_reminder"}),
     ("mail", "Gmail", MAIL, {"send_mail", "reply_mail", "draft_reply", "discard_draft"}),
     ("health", "Apple Health", (*HEALTH, *WEIGHT), {"log_weight", "delete_weight"}),
-    ("habits", "Habits", HABITS, {"add_habit", "check_habit", "count_habit", "fill_habit_days", "delete_habit"}),
-    ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "delete_meal"}),
-    ("screen_time", "Screen Time", LOCKS, {"lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock"}),
+    ("habits", "Habits", HABITS, {"add_habit", "check_habit", "count_habit", "fill_habit_days",
+                                          "update_habit", "delete_habit"}),
+    ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "food_targets",
+                                        "delete_meal", "save_food", "update_food"}),
+    ("screen_time", "Screen Time", LOCKS, {"lock_now", "add_lock_schedule", "update_lock", "end_lock",
+                                                     "delete_lock", "add_limit", "update_limit", "end_limit",
+                                                     "delete_limit"}),
     ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
                                      "edit_topic", "start_notebook", "rewrite_introduction", "find_figures",
                                      "write_exercises", "write_mock_exam", "notes_writer", "add_review_session",
-                                     "cancel_review_session"}),
+                                     "cancel_review_session", "quiz_me", "quiz_answer", "end_quiz",
+                                     "add_course_date", "edit_course_date", "hide_course_date"}),
     ("web", "Web search", WEB, set()),
     ("youtube", "YouTube", VIDEO, {"summarize_video"}),
     ("maps", "Google Maps", MAPS, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
     ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand"}),
-    ("payments", "Payments", FINANCE, {"log_payment", "recategorize", "set_budget", "delete_payment"}),
+    ("payments", "Payments", FINANCE, {"log_payment", "recategorize", "set_budget", "set_subscription",
+                                                   "card_owed", "delete_payment"}),
     ("purchases", "Purchases", PURCHASES, set()),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),
     ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
     ("objectives", "Objectives", OBJECTIVES, {"add_objective", "update_objective", "accept_objectives",
                                               "plan_objectives"}),
+    ("settings", "Settings", SETTINGS, {"change_setting", "run_digest"}),
     ("team", "The team", ("ask_agent",), {"ask_agent"}),  # Aide's, and a specialist's for its teammates
 )
 

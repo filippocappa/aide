@@ -863,7 +863,7 @@ def _merge(attachments: list[dict]) -> list[dict]:
     for a in attachments:
         key = {"reminders": "reminders", "events": "events", "meals": "meals", "departures": "departures",
                "routes": "routes", "errands": "errands", "purchases": "purchases",
-               "videos": "videos", "payments": "payments"}.get(a["type"])
+               "videos": "videos", "payments": "payments", "open": "open"}.get(a["type"])
         if key is None:
             continue
         items = merged.setdefault(a["type"], {})
