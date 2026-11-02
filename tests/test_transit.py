@@ -482,6 +482,15 @@ async def test_asked_to_take_one_the_countdown_starts_by_itself(tools, env):
     assert "Countdown" not in await t["transit_arrivals"].handler(stop="252", to="Falchera")  # only to know
 
 
+async def test_a_stop_by_name_is_the_lines_own_and_the_nearest_first(tools):
+    t, location = tools
+    location.save(45.06269, 7.67753, 10, at(7, 59))  # at 253
+    out = await t["transit_arrivals"].handler(stop="Porta Nuova", line="4")
+    assert out.startswith("Porta Nuova (stop 253)") and "Porta Nuova (stop 252)" in out
+    out = await t["transit_arrivals"].handler(stop="a", line="4")  # most stops have an "a": only the 4's
+    assert "Sabotino" not in out and "Crocetta" not in out
+
+
 async def test_a_destination_can_be_a_place_found_on_maps(env):
     db, timetable, location, alerts, push = env
 

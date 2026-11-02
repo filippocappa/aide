@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 
 from ..db import utcnow
 from ..leave import LeaveWatcher
-from ..transit import (AT_STOP, DEFAULT_WALK, DETOUR, FIX_AGE, WALK_SHOWN, WALK_SPEED, AlertStore, AlertWatcher, Boards,
-                       Location, Transit, line_key, metres)
+from ..transit import (AT_STOP, DEFAULT_WALK, DETOUR, FIX_AGE, FIX_USABLE, WALK_SHOWN, WALK_SPEED, AlertStore,
+                       AlertWatcher, Boards, Location, Transit, line_key, metres)
 from . import Tool, ToolOutput
 
 STOPS_NEAR = 4  # stops shown for "near me"
@@ -101,9 +101,17 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
                                take: bool | None = None) -> ToolOutput:
         now = utcnow()
         if stop and stop.strip():
-            stops = [(s, None) for s in timetable.find(stop)][:6]
-            if not stops:
+            found = timetable.find(stop)
+            if not found:
                 raise ValueError(f"no GTT stop matches {stop!r}")
+            # A name can be a dozen stops (Filadelfia is 14): the line's own, the nearest to the phone first.
+            if line:
+                key = line_key(line)
+                found = [s for s in found if any(l["name"] == key for l in timetable.lines(s["id"]))] or found
+            fix = location.latest()
+            if fix and now - fix["at"] <= FIX_USABLE:
+                found.sort(key=lambda s: metres(fix["lat"], fix["lon"], s["lat"], s["lon"]))
+            stops = [(s, None) for s in found][:6]
         else:
             fix = await here()
             stops = timetable.near(fix["lat"], fix["lon"])
