@@ -66,14 +66,23 @@ struct HealthView: View {
         NavigationStack {
             Group {
                 #if os(iOS)
-                switch half {
-                case .food:
-                    FoodPage(day: $day)
-                        .pageGlow(coach.tint, reach: 700)
-                case .screen:
+                ZStack {
+                    // Screen stays loaded under the other halves once Health opens, so its report (slow: iOS reads
+                    // the usage hour by hour) is already drawn when you switch to it.
+                    let onScreen = half == .screen
                     ScreenView(showLocks: $showLocks)
-                case .body:
-                    bodyPage
+                        .opacity(onScreen ? 1 : 0)
+                        .allowsHitTesting(onScreen)
+                        .accessibilityHidden(!onScreen)
+                    switch half {
+                    case .food:
+                        FoodPage(day: $day)
+                            .pageGlow(coach.tint, reach: 700)
+                    case .body:
+                        bodyPage
+                    case .screen:
+                        EmptyView()
+                    }
                 }
                 #else
                 bodyPage

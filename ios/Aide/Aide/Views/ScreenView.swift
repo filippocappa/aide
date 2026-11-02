@@ -175,22 +175,56 @@ struct ScreenView: View {
     }
 }
 
-/// The report alone, with nothing from the page's environment, so a chat reply or a Screen Time sync redrawing the
-/// page doesn't make it ask iOS again: it changes only with the page (day, week, month) or the date. The placeholder
-/// sits behind it until the extension draws its opaque page over it; a new date or page starts a new report.
+/// A report's page: the day, week or month with `date` in it.
+private struct UsagePage: Hashable {
+    let kind: UsageKind
+    let date: Date
+
+    /// The day, week or month before.
+    var earlier: UsagePage {
+        let unit: Calendar.Component = kind == .day ? .day : kind == .week ? .weekOfYear : .month
+        return UsagePage(kind: kind, date: Calendar.current.date(byAdding: unit, value: -1, to: date) ?? date)
+    }
+}
+
+/// The reports alone, with nothing from the page's environment, so a chat reply or a Screen Time sync redrawing the
+/// page doesn't make them ask iOS again. iOS is slow to read the usage, so reports are read ahead and kept: the one
+/// shown, the one before it (asked a moment after, so it doesn't slow the shown one down) and the last one shown,
+/// each drawn hidden until it's the page. Going back a day or returning to one is then instant. A page not read yet
+/// shows the placeholder behind until its report fades in (`UsageReportView`).
 private struct UsageReportHost: View {
     let kind: UsageKind
     let date: Date
+    @State private var kept: [UsagePage] = []
+
+    private var shown: UsagePage { UsagePage(kind: kind, date: date) }
+    private static let keep = 3
 
     var body: some View {
         ZStack(alignment: .top) {
             UsageSkeleton()
-            // A new report for each page and date, so the last one's numbers leave at once and the placeholder
-            // shows until the new one fades in (`UsageReportView`), instead of the old day lingering.
-            DeviceActivityReport(.usage(kind), filter: .usage(kind, containing: date))
-                .id("\(kind.rawValue)-\(date.timeIntervalSince1970)")
-                .transition(.opacity)
+            ForEach(kept.contains(shown) ? kept : [shown] + kept, id: \.self) { page in
+                let on = page == shown
+                DeviceActivityReport(.usage(page.kind), filter: .usage(page.kind, containing: page.date))
+                    .opacity(on ? 1 : 0)
+                    .allowsHitTesting(on)
+                    .accessibilityHidden(!on)
+                    .zIndex(on ? 1 : 0)
+            }
         }
+        .task(id: shown) {
+            add(shown)
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            add(shown.earlier)
+        }
+    }
+
+    /// Keeps `page`, the shown one first, dropping the oldest past `keep`.
+    private func add(_ page: UsagePage) {
+        var pages = [shown]
+        for p in [page] + kept where !pages.contains(p) { pages.append(p) }
+        kept = Array(pages.prefix(Self.keep))
     }
 }
 
