@@ -43,6 +43,10 @@ struct UsageDay: Identifiable, Hashable {
     var sites: [UsageSite] = []
     /// When the phone was first picked up that day.
     var firstPickup: Date?
+    /// The apps' own times added up before they were cut to iOS's, and iOS's own total (the phone's report only;
+    /// a check against Settings → Screen Time in debug builds).
+    var added: TimeInterval = 0
+    var reported: TimeInterval = 0
 
     var id: Date { date }
     var total: TimeInterval { apps.reduce(0) { $0 + $1.seconds } }

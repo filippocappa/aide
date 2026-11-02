@@ -147,7 +147,7 @@ struct ScreenView: View {
 
     @ViewBuilder private var report: some View {
         if screenTime.isAuthorized {
-            DeviceActivityReport(.usage(kind), filter: .usage(kind, containing: date))
+            UsageReportHost(kind: kind, date: date)
         } else {
             ScrollView {
                 VStack(spacing: 12) {
@@ -171,6 +171,21 @@ struct ScreenView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
             }
+        }
+    }
+}
+
+/// The report alone, with nothing from the page's environment, so a chat reply or a Screen Time sync redrawing the
+/// page doesn't make it ask iOS again: it changes only with the page (day, week, month) or the date. A spinner sits
+/// behind it until the extension draws (its card covers it).
+private struct UsageReportHost: View {
+    let kind: UsageKind
+    let date: Date
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            ProgressView().padding(.top, 90)
+            DeviceActivityReport(.usage(kind), filter: .usage(kind, containing: date))
         }
     }
 }
