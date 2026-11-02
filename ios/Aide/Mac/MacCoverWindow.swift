@@ -3,7 +3,7 @@ import SwiftUI
 
 /// A practice exam opens on the Mac as a window of its own, not as a sheet over Aide's window: macOS won't take a
 /// window with a sheet into full screen, so in a sheet neither the green button nor the exam's own did anything.
-/// The window opens over Aide's (in full screen when Aide is), and goes away when the exam is quit or finished.
+/// The window opens over Aide's, a little smaller like the sheet was (in full screen when Aide is), and goes away when the exam is quit or finished.
 /// On the phone `macWindowCover` is `fullScreenCover` (`Support/Theme.swift`).
 @MainActor
 final class MacCovers {
@@ -11,7 +11,7 @@ final class MacCovers {
 
     struct Entry {
         let view: AnyView
-        /// Aide's window when it opened: the cover takes its place and its full screen.
+        /// Aide's window when it opened: the cover opens over it, a little smaller, and in full screen when it is.
         let frame: NSRect?
         let fullScreen: Bool
         let closed: () -> Void
@@ -33,6 +33,14 @@ struct MacCoverWindowContent: View {
 
     final class WindowBox { weak var window: NSWindow? }
 
+    /// The size the sheet had: a little smaller than Aide's window (`MacSheetSize.cover`), centred across it, its top
+    /// just under Aide's title bar. Leaving full screen comes back to this.
+    static func popUp(over host: NSRect) -> NSRect {
+        let size = MacSheetSize.cover(host.size)
+        let width = min(size.width, host.width), height = min(size.height, host.height - 28)
+        return NSRect(x: host.midX - width / 2, y: host.maxY - 28 - height, width: width, height: height)
+    }
+
     var body: some View {
         if let id, let entry = MacCovers.shared.entries[id] {
             entry.view
@@ -45,7 +53,7 @@ struct MacCoverWindowContent: View {
                     // The exam has its own ways out (Close, Quit that asks first, Done); the red button and ⌘W
                     // would just drop it.
                     window.standardWindowButton(.closeButton)?.isEnabled = false
-                    if let frame = entry.frame { window.setFrame(frame, display: true) }
+                    if let frame = entry.frame { window.setFrame(Self.popUp(over: frame), display: true) }
                     if entry.fullScreen, !window.styleMask.contains(.fullScreen) {
                         DispatchQueue.main.async { window.toggleFullScreen(nil) }
                     }
