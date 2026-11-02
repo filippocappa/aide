@@ -279,7 +279,7 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None,
                    "near": {"type": "string",
                             "description": "Address or place to search around, or \"here\" for where the "
                                            "user's phone is; default the user's home"}},
-                  ["query"]), find_places),
+                  ["query"]), find_places, step=lambda a: f"Looking on Maps for {a.get('query', 'places')}"),
         Tool("travel_time", "How long it takes to get somewhere, with Google Maps. Driving includes live traffic; "
              "transit lists the lines and departure times. The app shows the route as a card (time, distance, rides and a "
              "button to open it in Maps), so answer in a line and don't paste the link.",
@@ -290,5 +290,5 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None,
                    "departure_time": {"type": "string", "description": f"Leave at this time. {TIME_HELP}"},
                    "arrival_time": {"type": "string",
                                     "description": f"Arrive by this time (transit only). {TIME_HELP}"}},
-                  ["destination"]), travel_time),
+                  ["destination"]), travel_time, step=lambda a: f"Checking the way to {a.get('destination', 'there')}"),
     ]

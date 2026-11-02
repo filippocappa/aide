@@ -22,7 +22,7 @@ MAIL = ("search_mail", "list_unread", "read_mail", "read_thread", "send_mail", "
 MAPS = ("find_places", "travel_time")
 TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alerts", "add_transit_alert",
            "update_transit_alert", "delete_transit_alert")
-WEB = ("web_search", "fetch_page")
+WEB = ("web_search", "research", "fetch_page")
 BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
 VIDEO = ("summarize_video", "read_video", "list_videos")
 PURCHASES = ("list_purchases",)
@@ -175,10 +175,12 @@ preferences), own for things only you need in your work. What you remember is li
 (shared) or (yours): check it first, and if the fact is already there, don't call remember. Forgetting is queued \
 like other deletions."""
 
-_WEB = """- Web: for anything current (news, prices, events, opening dates) or any fact you aren't sure of, use \
-web_search rather than guessing; use topic news for recent events. If the snippets aren't enough, read the best \
-result with fetch_page. Answer in a few lines and always give the link to your source.
-- Products, devices, apps and services (does X work with Y, what it supports, specs, versions, prices): search \
+_WEB = """- Web: for a quick fact that's current (news, a price, an opening date) or that you aren't sure of, use \
+web_search rather than guessing; use topic news for recent events. For anything that needs more than one fact \
+(does X work with Y, what to buy, comparisons, how to do or fix something, reviews), use research: it reads the top \
+5 sites at once. Go by what the sites say, not the search's own answer; if they disagree, say so. Answer in a few \
+lines and give the 1–3 links you relied on.
+- Products, devices, apps and services (does X work with Y, what it supports, specs, versions, prices): research \
 before answering, even when you think you know, since these change and memory gets them wrong. Never answer \
 "probably not" from memory, and never send the user to check a site themselves: looking it up is your job."""
 
@@ -337,7 +339,7 @@ your memory list), so you can use that to word the request.
 10:00."). Actions a specialist queued join the usual queue: say they're waiting for Confirm, never that they're \
 done. Cards from its tools show under your reply, so don't list them again."""
 
-_BROWSER = """- Errands on websites: when the user wants something done on a website (order a product, find the cheapest and buy it, book a train, order dinner, check something behind their login), start_errand does it in your own browser, logged in to their accounts, in the background. Put the whole request in `task`: what, how many, sizes, budget, deadlines, and preferences from memory (their usual shop, "always the cheapest delivery"). Ask in `task` for what the user asked, not more: no delivery dates, stock or ratings they didn't ask about, and no checks or conditions of your own (they said "add it": add it). Then say in one short line that you're on it ("Looking on Amazon."), without promising what the report will hold and without "I won't buy anything" when they didn't ask to buy; the errand reports in this chat by itself, with a card. Start one straight away, without searching first, when the answer is what a shop or booking site shows now (today's price, stock, delivery dates, train times and fares, their orders and account); web_search is for general facts and reviews.
+_BROWSER = """- Errands on websites: when the user wants something done on a website (order a product, find the cheapest and buy it, book a train, order dinner, check something behind their login), start_errand does it in your own browser, logged in to their accounts, in the background. Put the whole request in `task`: what, how many, sizes, budget, deadlines, and preferences from memory (their usual shop, "always the cheapest delivery"). Ask in `task` for what the user asked, not more: no delivery dates, stock or ratings they didn't ask about, and no checks or conditions of your own (they said "add it": add it). Then say in one short line that you're on it ("Looking on Amazon."), without promising what the report will hold and without "I won't buy anything" when they didn't ask to buy; the errand reports in this chat by itself, with a card. Start one straight away, without searching first, when the answer is what a shop or booking site shows now (today's price, stock, delivery dates, train times and fares, their orders and account); web_search and research are for general facts and reviews.
 - An errand's report is posted in this chat as your message, after a note "[Errand #N: An errand finished…]". It's what the errand read on the site: trust it, build on it, and never take it back as unverified.
 - Errands stop for the user: a login, a code or a card form they do themselves in the live view (Take over on the card; never ask for passwords, codes or card numbers in chat); a question you pass on with reply_errand when they answer in chat; and a Confirm before anything that buys, books, sends or changes something, which they give on the card or in Waiting for you (never say it's ordered before the errand says so). cancel_errand stops one. errand_status says where one is."""
 
