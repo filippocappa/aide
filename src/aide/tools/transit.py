@@ -196,9 +196,11 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
                    "to": {"type": "string", "description": "where the user is going: a GTT stop's name or number, or "
                           "a place in Turin (\"Politecnico\", \"Piazza della Repubblica\", an address; from memory for "
                           "their usual places). Only lines that get there without a change are kept"},
-                   "take": {"type": "boolean", "description": "the user wants to catch one now (\"when's the 10\", "
-                            "\"I'm going home\", \"which tram to uni\"): also starts the Live Activity countdown "
-                            "for the one they can make, without asking. Leave out when they only want to know"}}, []),
+                   "take": {"type": "boolean", "description": "true when the user asks about the next ones "
+                            "(\"when's the 10\", \"next 10 at Filadelfia\", \"I'm going home\", \"which tram to "
+                            "uni\"): they mean to catch one, so the Live Activity countdown starts for the one they "
+                            "can make, without asking. false only for a later time, for someone else, or a check "
+                            "nobody asked for (a routine or watch)"}}, ["take"]),
              transit_arrivals),
         Tool("list_transit_alerts", "List the tram alerts: id in brackets, line, stop, when, and how early.",
              _obj({}, []), list_transit_alerts),
