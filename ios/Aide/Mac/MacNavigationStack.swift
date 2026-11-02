@@ -29,6 +29,7 @@ struct NavigationStack<Root: View>: View {
     }
 
     @State private var title: String?
+    @State private var hidesClose = false
 
     var body: some View {
         if inSheet {
@@ -37,17 +38,9 @@ struct NavigationStack<Root: View>: View {
                 .toggleStyle(.phoneSwitch)
                 .formStyle(.grouped)
                 .onPreferenceChange(MacSheetTitleKey.self) { title = $0 }
+                .onPreferenceChange(MacSheetHidesCloseKey.self) { hidesClose = $0 }
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    HStack {
-                        SheetCloseButton { dismiss() }
-                        Spacer()
-                    }
-                    .overlay {
-                        if let title { Text(title).font(.headline).lineLimit(1).padding(.horizontal, 56) }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
-                    .padding(.bottom, 4)
+                    if !hidesClose { closeRow }
                 }
                 // Phone sheets fill the screen; on the Mac a sheet comes up at its smallest size. Most of the window.
                 .frame(minWidth: MacSheetSize.sheet(window).width, maxWidth: .infinity,
@@ -56,12 +49,31 @@ struct NavigationStack<Root: View>: View {
             stack.environment(\.macInStack, true)
         }
     }
+
+    private var closeRow: some View {
+        HStack {
+            SheetCloseButton { dismiss() }
+            Spacer()
+        }
+        .overlay {
+            if let title { Text(title).font(.headline).lineLimit(1).padding(.horizontal, 56) }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
 }
 
 /// A sheet's title, in the middle of the row with the close button (the Mac shows no navigation title in a sheet).
 struct MacSheetTitleKey: PreferenceKey {
     static let defaultValue: String? = nil
     static func reduce(value: inout String?, nextValue: () -> String?) { value = value ?? nextValue() }
+}
+
+/// A page in a sheet that has its own way out (a practice exam's Quit, which asks first) hides the close button.
+struct MacSheetHidesCloseKey: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
 }
 
 extension EnvironmentValues {
@@ -105,6 +117,9 @@ extension View {
 
     /// The title shown next to a sheet's close button.
     func macSheetTitle(_ title: String) -> some View { preference(key: MacSheetTitleKey.self, value: title) }
+
+    /// No close button on this sheet: the page has its own way out.
+    func macSheetHidesClose() -> some View { preference(key: MacSheetHidesCloseKey.self, value: true) }
 }
 
 private struct SheetCloseButton: View {
@@ -133,5 +148,36 @@ private struct CloseBackground: ViewModifier {
         } else {
             content.background(.regularMaterial, in: Circle())
         }
+    }
+}
+
+/// The window in and out of full screen (⌃⌘F), from a sheet too: the sheet's window is the main one's child, and a
+/// cover grows with it (`MacSheetSize.cover`).
+struct MacFullScreenButton: View {
+    @State private var full = MacFullScreenButton.window?.styleMask.contains(.fullScreen) ?? false
+
+    var body: some View {
+        Button {
+            MacFullScreenButton.window?.toggleFullScreen(nil)
+        } label: {
+            Image(systemName: full ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 30, height: 30)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .modifier(CloseBackground())
+        .keyboardShortcut("f", modifiers: [.control, .command])
+        .help(full ? "Exit Full Screen (⌃⌘F)" : "Full Screen (⌃⌘F)")
+        .accessibilityLabel(full ? "Exit full screen" : "Full screen")
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in full = true }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in full = false }
+    }
+
+    /// Aide's window: the one the sheet hangs from, else the main one.
+    private static var window: NSWindow? {
+        let key = NSApp.keyWindow
+        return key?.sheetParent ?? NSApp.mainWindow ?? key
     }
 }

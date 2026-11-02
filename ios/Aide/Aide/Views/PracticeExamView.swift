@@ -383,7 +383,11 @@ private struct PracticeTaking: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            #if os(macOS)
+            macBar
+            #endif
             progress
+            tally
             #if os(iOS)
             TabView(selection: $page) {
                 ForEach(Array(quiz.questions.enumerated()), id: \.element.id) { index, question in
@@ -415,6 +419,7 @@ private struct PracticeTaking: View {
             controls
         }
         .pageGlow(Theme.study)
+        #if os(iOS)
         .navigationTitle("\(page + 1) of \(quiz.questions.count)")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Quit") { confirmQuit = true } }
@@ -422,6 +427,9 @@ private struct PracticeTaking: View {
                 if let deadline { Clock(deadline: deadline) }
             }
         }
+        #else
+        .macSheetHidesClose()  // the corner's ✕ would close it with no "Quit?": Quit is in the bar
+        #endif
         .confirmationDialog(quiz.kind == "mock" ? "Hand it in?" : "Finish the practice exam?", isPresented: $confirmFinish,
                             titleVisibility: .visible) {
             Button("Finish") { submit() }
@@ -488,13 +496,71 @@ private struct PracticeTaking: View {
         return answered(question) ? Theme.study.opacity(0.5) : Theme.chip
     }
 
+    /// How it's going: answered so far and, when answers show as they go, right, wrong and the points the exam
+    /// would give for them now.
+    private var tally: some View {
+        let done = quiz.questions.count - blanks
+        let marked = quiz.questions.compactMap { q -> Bool? in
+            if q.isCard { return answers[q.n].map { $0 == "right" } }
+            guard !q.isOpen, let checked = revealed[q.n], answers[q.n] != nil else { return nil }
+            return checked.correct == true
+        }
+        let right = marked.filter { $0 }.count, wrong = marked.count - right
+        let scoring = quiz.scoring ?? QuizScoring(right: 1, wrong: -0.25)
+        // Flashcards are marked by hand with no penalty: a wrong one is 0.
+        let cardsWrong = quiz.questions.filter { $0.isCard && answers[$0.n] == "wrong" }.count
+        let points = Double(right) * scoring.right + Double(wrong - cardsWrong) * scoring.wrong
+        return HStack(spacing: 12) {
+            Text("\(done) of \(quiz.questions.count) answered")
+            Spacer()
+            if !marked.isEmpty {
+                Label("\(right)", systemImage: "checkmark").foregroundStyle(Theme.study)
+                Label("\(wrong)", systemImage: "xmark").foregroundStyle(.orange)
+                Text("\(points.points) pts").foregroundStyle(.primary)
+            }
+        }
+        .font(.caption.weight(.semibold)).monospacedDigit()
+        .foregroundStyle(.secondary)
+        .labelStyle(TallyLabel())
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .animation(.snappy, value: marked)
+        .accessibilityElement(children: .combine)
+    }
+
+    #if os(macOS)
+    /// The Mac's top: Quit, where you are, the clock and full screen (the phone has them in its navigation bar).
+    private var macBar: some View {
+        HStack(spacing: 14) {
+            Button("Quit") { confirmQuit = true }
+                .buttonStyle(.plain).font(.body.weight(.medium)).foregroundStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
+                .help("Quit (Esc)")
+            Text("\(page + 1) of \(quiz.questions.count)").font(.headline).monospacedDigit()
+            Spacer()
+            if let deadline {
+                Label { Clock(deadline: deadline) } icon: { Image(systemName: "timer").foregroundStyle(.secondary) }
+            }
+            MacFullScreenButton()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+    }
+    #endif
+
     private var controls: some View {
         HStack(spacing: 12) {
             Button {
                 withAnimation { page -= 1 }
             } label: {
-                Image(systemName: "chevron.left").frame(width: 44, height: 44)
+                Image(systemName: "chevron.left").font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .background(Theme.chip, in: Circle())
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
+            .opacity(page == 0 ? 0.35 : 1)
             .disabled(page == 0)
             .accessibilityLabel("Previous question")
             Spacer()
@@ -519,9 +585,11 @@ private struct PracticeTaking: View {
             .buttonStyle(CardPress())
             .disabled(finishing || checking || (current.map { uploadingPhotos($0) } ?? false))
             Spacer()
-            Button("Finish") { confirmFinish = true }
-                .font(.subheadline)
-                .frame(width: 60, height: 44)
+            Button { confirmFinish = true } label: {
+                Text("Finish").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.study)
+                    .frame(width: 60, height: 44).contentShape(Rectangle())
+            }
+                .buttonStyle(.plain)
                 .opacity(isLast && !canCheck ? 0 : 1)
                 .disabled(finishing || (isLast && !canCheck))
         }
@@ -583,6 +651,13 @@ private struct PracticeTaking: View {
             await finish(handed)
             finishing = false
         }
+    }
+}
+
+/// An icon and its number, close together.
+private struct TallyLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) { configuration.icon.font(.caption2.weight(.bold)); configuration.title }
     }
 }
 
