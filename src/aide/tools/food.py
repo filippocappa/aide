@@ -54,9 +54,11 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         goals = day["targets"]
         parts = [f"{sums[k]}" + (f"/{goals[k]}" if goals[k] else "") + (" kcal" if k == "calories" else f" g {NAMES[k]}")
                  for k in MACROS]
-        parts += [f"{sums['water_ml']} ml water"] if sums["water_ml"] else []
-        parts += [f"{sums['caffeine_mg']} mg caffeine"] if sums["caffeine_mg"] else []
         line = f"{d:%a %d %b} so far: " + ", ".join(parts)
+        drinks = [f"{sums['water_ml']} ml water"] if sums["water_ml"] else []
+        drinks += [f"{sums['caffeine_mg']} mg caffeine"] if sums["caffeine_mg"] else []
+        if drinks:  # amounts with no target, so the model doesn't call them goals reached
+            line += f" (also logged, no targets: {' and '.join(drinks)})"
         if day["bonus"]["kcal"]:
             line += f" (targets include +{day['bonus']['kcal']} kcal from workouts)"
         if s := day["score"]:
