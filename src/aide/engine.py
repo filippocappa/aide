@@ -327,7 +327,9 @@ class Engine:
             self.claude, "-p", "--model", CLAUDE_MODELS[tier], "--input-format", "stream-json",
             "--output-format", "stream-json", "--verbose", "--system-prompt", system, "--tools", "",
             "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands",
-            "--setting-sources", "project",
+            # No settings at all: "project" read the repo's CLAUDE.md (data/claude is inside the checkout), ~24k
+            # tokens on every call (#29).
+            "--setting-sources", "",
             cwd=self.workdir, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
         try:

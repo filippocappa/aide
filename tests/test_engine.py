@@ -105,6 +105,7 @@ async def test_the_plan_writes_with_sonnet_and_haiku_and_its_usage_is_kept(plan)
     first = calls()[0]
     args = first["args"]
     assert args[args.index("--system-prompt") + 1] == "Be brief." and args[args.index("--tools") + 1] == ""
+    assert args[args.index("--setting-sources") + 1] == ""  # no CLAUDE.md from the checkout (#29)
     assert "--no-session-persistence" in args and "--bare" not in args  # --bare would skip the plan's login
     assert first["key"] is None and first["max"] == "4096"  # a floor; 16000 below stays 16000  # never an API key: it would bill the key, not the plan
     assert first["content"] == TEXT and first["cwd"].endswith("work")

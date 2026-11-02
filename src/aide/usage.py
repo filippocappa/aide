@@ -26,7 +26,7 @@ KEEP = timedelta(days=180)
 LONG_PROMPT = 100_000  # Haiku 5.5's dearer rate card starts above this many prompt tokens
 
 # Dollars per million tokens: (input, output), and Haiku's above LONG_PROMPT. Cache reads are 0.1× input,
-# writes 1.25× (the 5-minute cache). Matched on the model name, so "anthropic/claude-haiku-5.5" finds "haiku-5".
+# writes 1.25× (the 5-minute cache) or 2× (the hour's: agent prompts and memory). Matched on the model name, so "anthropic/claude-haiku-5.5" finds "haiku-5".
 PRICES = {
     "haiku-5": ((0.10, 0.50), (0.50, 2.50)),
     "sonnet-5": ((2.0, 10.0), None),
@@ -66,26 +66,29 @@ def label(**kw) -> None:
     _labels.set({**_labels.get(), **{k: v for k, v in kw.items() if v is not None}})
 
 
-def price(model: str | None, input: int, cache_read: int, cache_write: int, output: int) -> float | None:
-    """Dollars for a call on OpenRouter, from PRICES; None for a model not listed there."""
+def price(model: str | None, input: int, cache_read: int, cache_write: int, output: int,
+          write_1h: int = 0) -> float | None:
+    """Dollars for a call on OpenRouter, from PRICES; None for a model not listed there. `write_1h` is the part of
+    `cache_write` cached for an hour."""
     card = next((c for key, c in PRICES.items() if model and key in model.replace(".", "-")), None)
     if card is None:
         return None
     (i, o), long = card
     if long and input + cache_read + cache_write > LONG_PROMPT:
         i, o = long
-    return (input * i + cache_read * i * 0.1 + cache_write * i * 1.25 + output * o) / 1e6
+    return (input * i + cache_read * i * 0.1 + cache_write * i * 1.25 + write_1h * i * 0.75 + output * o) / 1e6
 
 
 def record(engine: str, model: str | None = None, *, input: int = 0, cache_read: int = 0, cache_write: int = 0,
            output: int = 0, cost: float | None = None, ms: int | None = None, ok: bool = True,
-           purpose: str | None = None, agent: str | None = None, conversation: str | None = None) -> None:
+           purpose: str | None = None, agent: str | None = None, conversation: str | None = None,
+           write_1h: int = 0) -> None:
     if _conn is None:
         return
     try:
         tags = _labels.get()
         if cost is None and engine == "openrouter":
-            cost = price(model, input, cache_read, cache_write, output)
+            cost = price(model, input, cache_read, cache_write, output, write_1h)
         _conn.execute(
             "INSERT INTO usage (at, engine, model, purpose, agent, conversation, input, cache_read, cache_write, "
             "output, cost, ms, ok) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -104,10 +107,12 @@ def from_response(response, engine: str = "openrouter", started: float | None = 
     if u is None:
         return record(engine, model, ms=_ms(started), **kw)
     cost = getattr(u, "cost", None)  # OpenRouter's own figure, when it sends one
+    write_1h = getattr(getattr(u, "cache_creation", None), "ephemeral_1h_input_tokens", 0) or 0
     record(engine, model, input=getattr(u, "input_tokens", 0) or 0,
            cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
            cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0, output=getattr(u, "output_tokens", 0) or 0,
-           cost=cost if isinstance(cost, (int, float)) else None, ms=_ms(started), **kw)
+           cost=cost if isinstance(cost, (int, float)) else None, ms=_ms(started),
+           write_1h=write_1h if isinstance(write_1h, int) else 0, **kw)
 
 
 def from_claude_code(result: dict | None, model: str, started: float | None = None) -> None:
