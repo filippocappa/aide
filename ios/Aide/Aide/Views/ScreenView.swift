@@ -14,6 +14,8 @@ struct ScreenView: View {
     @EnvironmentObject private var push: PushService
     @AppStorage("screenKind") private var kind = UsageKind.day
     @State private var date = Calendar.current.startOfDay(for: Date())
+    /// The way the last arrow went, which the title slides.
+    @State private var forward = false
     /// Locks and limits; shared with the corner's menu.
     @Binding var showLocks: Bool
 
@@ -68,14 +70,17 @@ struct ScreenView: View {
                 Image(systemName: "chevron.left").frame(width: 36, height: 32).contentShape(Rectangle())
             }
             .accessibilityLabel("Earlier")
-            Spacer()
-            // A quick fade on the title alone: the page under it changes at once (it's drawn by another process, and
-            // animating it with the title made both stutter).
-            Text(periodTitle).font(.headline)
-                .id(periodTitle)
-                .transition(.opacity)
-                .animation(.easeOut(duration: 0.15), value: periodTitle)
-            Spacer()
+            // The title slides the way you went; the page under it changes at once (it's drawn by another process, and
+            // moving it with the title made both stutter), and its bars grow in.
+            ZStack {
+                Text(periodTitle).font(.headline)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .id(periodTitle)
+                    .transition(.push(from: forward ? .trailing : .leading))
+            }
+            .frame(maxWidth: .infinity)
+            .clipped()
+            .animation(.snappy(duration: 0.3), value: periodTitle)
             Button { step(1) } label: {
                 Image(systemName: "chevron.right").frame(width: 36, height: 32).contentShape(Rectangle())
             }
@@ -106,6 +111,7 @@ struct ScreenView: View {
     private func step(_ by: Int) {
         let unit: Calendar.Component = kind == .day ? .day : kind == .week ? .weekOfYear : .month
         guard let next = Calendar.current.date(byAdding: unit, value: by, to: date) else { return }
+        forward = by > 0
         date = min(next, Calendar.current.startOfDay(for: Date()))
     }
 
@@ -215,6 +221,7 @@ private struct UsageReportHost: View {
             ForEach(kept.contains(shown) ? kept : [shown] + kept, id: \.self) { page in
                 let on = page == shown
                 DeviceActivityReport(.usage(page.kind), filter: .usage(page.kind, containing: page.date))
+                    .padding(.trailing, on ? 0 : 1) // hidden a point narrower: the report grows its bars when shown
                     .opacity(on ? 1 : 0)
                     .allowsHitTesting(on)
                     .accessibilityHidden(!on)
