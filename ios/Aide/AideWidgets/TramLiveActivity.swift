@@ -178,7 +178,9 @@ struct TramLockScreen: View {
                 }
             }
             if let missed = state.missedDate, !state.isRiding {
-                Label("Missed the \(missed.formatted(date: .omitted, time: .shortened)): this is the next one",
+                // Still to come: too far to make it (the server's alert says "You won't make the …"); else it went.
+                Label("\(missed > .now ? "Can't make" : "Missed") the "
+                      + "\(missed.formatted(date: .omitted, time: .shortened)): this is the next one",
                       systemImage: "arrow.uturn.forward")
                     .font(.caption.weight(.medium)).foregroundStyle(.orange).lineLimit(1)
             }
