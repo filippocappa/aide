@@ -384,36 +384,49 @@ workout; a streak about to break.
 ## Objectives
 
 Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the **day**, the **week** and the
-**month**. They propose them, you OK them, and most of them tick themselves from the data.
+**month**. They propose them, they start by themselves unless you drop them, and most of them tick themselves from
+the data.
 
 ```json
 {"id": "o_3f9a1c2b7d4e", "agent": "coach", "period": "week", "start": "2026-10-19", "end": "2026-10-25",
  "title": "Run 3 times", "why": "Building up to the half marathon",
- "measure": {"type": "habit", "habit": 4, "label": "check-ins of Run"},
+ "measure": {"type": "habit", "habit": 4, "label": "check-ins of Run", "source": "Run"},
  "progress": 1, "target": 3, "done": false, "steps": [], "status": "active", "parent": "o_91be0a7c55d2",
- "added_by": "agent"}
+ "added_by": "agent", "due": null, "starts_at": null,
+ "days": [{"date": "2026-10-19", "count": 1}, {"date": "2026-10-20", "count": 0}, {"date": "2026-10-21", "count": null}, …]}
 ```
 - `period` is `day`, `week` (Monday to Sunday) or `month`. `start` and `end` are local dates, both included.
-- `status`: `proposed` (waiting for your OK), `active`, `dropped`, or `lapsed` (a proposal whose period ended
-  without an OK; read-only).
+- `status`: `proposed` (waiting: it starts by itself at `starts_at`), `active`, `dropped`, or `lapsed` (a proposal
+  whose period ended, or whose `due` passed, before it started; read-only).
+- `starts_at` (since 2026-11-02): on a proposal, when it becomes `active` by itself if you haven't dropped it:
+  midday on the day the plan is made (the period's first day, for a plan made before it), and at least an hour
+  after it's made; `null` on anything not waiting, and on proposals from before 2026-11-02 (those wait for an OK).
+- `due` (since 2026-11-02): a local time `"2026-11-02T12:30"` it only makes sense before (a practice exam before a
+  mid-term), or `null`. A proposal whose `due` has passed is `lapsed` instead of starting late.
+- `days` (since 2026-11-02): only on a **week**'s objective with a measure other than `reminder`: Monday to Sunday,
+  each day's `count` of what the measure counts (`null` for days still to come). The app draws them as dots.
 - `measure` says what ticks it, with a readable `label`; `null` means you tick it. Types:
   `habit` {`habit`}: check-ins in the period (days done, for a limit or food habit). `practice` {`course`, `score`?}: practice exams finished (at
   `score`% or more). `notes` {`course`}: notebook topics written or revised (notes Aide wrote after your OK, or
   your edits in Obsidian; a topic counts once, added figures don't count). `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
   goal (calories within 10%). `sleep` {`hours`}: nights at or over. `steps` {`steps`}: days at or over.
-  `reminder` {`reminder`}: that reminder done (target 1). An unknown type is fine: show `label`.
+  `reminder` {`reminder`}: that reminder done (target 1). An unknown type is fine: show `label`. `source` (since
+  2026-11-02) is where it comes from in a word or two: the habit's name, `Practice exams`, `Notebook`, `Food log`,
+  `Apple Health`, `Reminders`.
 - `progress` of `target` is worked out on every read (only days of the period so far count). `done` is true when
   `progress` reaches `target`, or when you ticked it (for one without a measure, `progress` is then 1).
 - `steps`: a checklist, `[{"text": "Log in to Moodle", "done": true}, …]`, up to 10, often empty. On one without a
   measure, `progress` of `target` counts the steps done, and it's `done` when they all are; ticking it (`done`)
   ticks or unticks them all. On a measured one they're only a checklist. The planner may propose 2 to 5.
-- `parent` is the week's or month's objective it serves, or `null`. `added_by` is `agent` or `user`.
+- `parent` is the week's or month's objective it serves, or `null`: a day's objective with a week's `parent` is
+  that goal's step for today. The planner sets it on most day objectives. `added_by` is `agent` or `user`.
 - **Proposals.** A plan is made once per period, before the digest that opens it: the month's before the monthly
   digest (or the first morning digest of the month), the week's before the weekly one (or Monday's morning),
   the day's before the morning digest (or the wake-up briefing). Each goes higher levels first. One model call
   per plan, from the calendar, reminders, courses, exams and practice exams, habits, food, sleep and steps, memory,
   the objectives above and how the last period went: at most 2 a day (6 a day in all), 3 a week and 2 a month
-  per specialist, none when there's nothing real to go on. A new plan replaces only the proposals still waiting.
+  per specialist, none when there's nothing real to go on. A new plan replaces only the proposals still waiting
+  (and sets their `starts_at` again from when it's made).
   Titles state the period's total, matching `target` ("Sleep 7h or more on 5 nights this week").
 - **Not habits** (since 2026-10-26): a day's objectives are never a habit's daily round ("Log your meals today",
   "Stretch today"); habits keep their own streaks. When a habit matters, the plan proposes a week or month target
@@ -427,10 +440,10 @@ Each specialist (Secretary, Professor, Coach, Finance) keeps objectives for the 
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/objectives` | `?date=2026-10-22` (optional, default today) | `{"day": Block, "week": Block, "month": Block}` for the periods around that date. A Block is `{"period", "start", "end", "planned": true, "objectives": [ … ]}`: by agent order, then oldest first; dropped ones left out. `planned` is false until that period's plan has been made. |
+| `GET /v1/objectives` | `?date=2026-10-22` (optional, default today) | `{"day": Block, "week": Block, "month": Block}` for the periods around that date. A Block is `{"period", "start", "end", "planned": true, "starts_at", "objectives": [ … ]}`: by agent order, then oldest first; dropped ones left out. `planned` is false until that period's plan has been made. `starts_at` is the earliest of its proposals' (`null` when none waits). |
 | `POST /v1/objectives` | `{"agent": "coach", "period": "day", "title": "Stretch", "why"?, "date"?, "steps"?: ["…"]}` | `201` and the new objective (`active`, `added_by: "user"`, no measure). `400` for Aide or an unknown agent or period, or an empty title. |
 | `PATCH /v1/objectives/{id}` | any of `title`, `done` (true/false), `status` (`active` / `dropped`), `target`, `steps` (`[{"text", "done"}]`, replaces the list) | the objective. Ticking a proposal also accepts it. `404` if unknown. |
-| `POST /v1/objectives/accept` | `{"period": "day", "date"?, "ids"?}` (no `ids`: all of that period's proposals) | that period's Block. `404` if an id isn't a proposal of that period. |
+| `POST /v1/objectives/accept` | `{"period": "day", "date"?, "ids"?, "drop"?}` (no `ids`: all of that period's proposals; `drop`, since 2026-11-02: those are dropped instead, so `{"period": "day", "drop": ["o_…"]}` takes the rest) | that period's Block. `404` if an id isn't a proposal of that period. |
 | `POST /v1/objectives/plan` | `{"period": "week", "date"?}` | proposes now (replacing those still waiting) and returns the Block. Can take 30 s. |
 
 ## Activity and approvals
@@ -477,21 +490,25 @@ Reads (listing events, searching mail) aren't recorded.
  "actions": [{"id": 42, "summary": "Send the reply to Marco", "agent": "secretary", "conversation_id": "c_91f…",
               "created_at": "2026-10-22T10:02:11+02:00", "expires_at": "2026-10-22T10:32:11+02:00"}],
  "errands": [ /* browser errands waiting for you: status needs_you or interrupted (see Browser errands) */ ],
- "objectives": [ /* Objective objects with "status": "proposed", for this month, week and day */ ],
+ "plans": [ /* since 2026-11-02: each period's plan with proposals waiting, day then week then month: a Block (see
+             Objectives) with only its proposals in "objectives", and its "starts_at" */ ],
+ "objectives": [ /* Objective objects with "status": "proposed", for this month, week and day (the plans' together) */ ],
  "proposals": [ /* notebook Proposals still pending, plus "course_name" and "conversation_id" (the course chat, or null) */ ],
  "drafts": [ /* reply Drafts waiting to be sent, newest mail first (see Mail drafts) */ ],
  "writer": null,
  "upcoming": [ /* the next 5 enabled routines (watches too), soonest first: Routine objects */ ]}
 ```
-- `waiting` counts actions, objectives, proposals, drafts, errands and the writer's question: the app's badge.
+- `waiting` counts actions, plans (a plan is one, however many proposals it has; before 2026-11-02 each proposal
+  counted), notebook proposals, drafts, errands and the writer's question: the app's badge.
 - `actions`: the confirmation queue, with who queued it and from which chat. An action expires 30 min after it's
   queued. Confirm or cancel one with `POST /v1/confirm` / `/v1/cancel` and `{"ids": [42]}`. Since 2026-10-27 an
   action can carry a `detail` object to draw instead of the plain summary (absent otherwise); so far only an errand's
   order, `{"kind": "purchase", …}` (see Browser errands). `detail` is on `pending` rows too.
 - `errands` (since 2026-10-27): Errand objects that need you (log in, answer, or go on after a restart); open the
   live view, answer with `POST /v1/errands/{id}/reply`, or cancel.
-- `objectives`: accept with `POST /v1/objectives/accept` (`period`, `date` = the objective's `start`, `ids`), drop
-  with `PATCH /v1/objectives/{id}` (see Objectives).
+- `plans`: start one now with `POST /v1/objectives/accept` (`period`, `date` = the Block's `start`, and `drop` for
+  the ones you don't want), or leave it to start at `starts_at`. `objectives` (kept for older apps) is the same
+  proposals in one list: accept with `ids`, drop with `PATCH /v1/objectives/{id}`.
 - `proposals`: apply or decline with `/v1/proposals/{id}/apply` and `/decline` (see Notebook).
 - `drafts` (since 2026-10-22): send, edit or dismiss with `/v1/mail/drafts/{id}/…` (see Mail drafts). Unlike
   an action, a draft doesn't expire for 7 days.

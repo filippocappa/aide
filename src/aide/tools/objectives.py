@@ -77,7 +77,8 @@ def objective_tools(store: ObjectiveStore, planner: ObjectivePlanner | None, age
         made = await planner.plan(period, store.today(), mine)
         if not made:
             return "Nothing to propose for now."
-        return ("Proposed (they wait for the user's OK; accept_objectives once they agree):\n"
+        return ("Proposed (they start by themselves around midday unless the user drops them; accept_objectives "
+                "takes them now):\n"
                 + "\n".join(store.line(o) for o in made))
 
     period = {"type": "string", "enum": list(PERIODS)}
@@ -104,7 +105,8 @@ def objective_tools(store: ObjectiveStore, planner: ObjectivePlanner | None, age
     whose = "every specialist's" if any_agent else "your"
     return [
         Tool("list_objectives", f"List {whose} objectives for today, this week and this month (or one period): id in "
-             "brackets, progress, done, and whether it's still a proposal waiting for the user's OK.",
+             "brackets, progress, done, and whether it's still a proposal (it starts by itself unless the user drops "
+             "it).",
              _obj({"period": period}, []), list_objectives),
         Tool("add_objective", "Add an objective the user asked for, for today, this week or this month. It starts "
              "accepted. Tie it to a measure (track) when one fits, so it ticks itself.",
