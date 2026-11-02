@@ -31,6 +31,8 @@ struct UsageReportView: View {
     @State private var showAllSites = false
     /// The report waited this long with nothing from iOS, so the phone truly has no usage: shown anyway.
     @State private var gaveUp = false
+    /// Counts the times the page came into view, which grows its bars again.
+    @State private var shown = 0
 
     private var calendar: Calendar { .current }
     private var periodDays: [UsageDay] {
@@ -64,6 +66,17 @@ struct UsageReportView: View {
         .background(UsageColors.page)
         .opacity(ready ? 1 : 0)
         .animation(UsageMotion.fade, value: ready)
+        #if os(iOS)
+        // The app keeps a few pages drawn but hidden, 1 pt narrower (`UsageReportHost`): widening means this page
+        // came into view, so its bars grow in, as a page read just now does.
+        .background {
+            GeometryReader { geo in
+                Color.clear.onChange(of: geo.size.width) { old, new in
+                    if new > old + 0.5 { shown += 1 }
+                }
+            }
+        }
+        #endif
         .task {
             try? await Task.sleep(for: .seconds(5))
             gaveUp = true
@@ -196,14 +209,14 @@ struct UsageReportView: View {
     @ViewBuilder private var bars: some View {
         switch data.kind {
         case .day:
-            UsageBars(values: day.hourly, now: currentHour, labels: ["00", "06", "12", "18", "24"])
+            UsageBars(values: day.hourly, now: currentHour, labels: ["00", "06", "12", "18", "24"], replay: shown)
         case .week:
             UsageBars(values: periodDays.map(\.total), now: currentDayIndex,
                       labels: periodDays.map { $0.date.formatted(.dateTime.weekday(.narrow)) },
-                      average: UsageMath.average(begun, now: now), labelsUnder: true)
+                      average: UsageMath.average(begun, now: now), labelsUnder: true, replay: shown)
         case .month:
             UsageBars(values: periodDays.map(\.total), now: currentDayIndex, labels: ["1", "8", "15", "22", "29"],
-                      average: UsageMath.average(begun, now: now))
+                      average: UsageMath.average(begun, now: now), replay: shown)
         }
     }
 
@@ -457,7 +470,8 @@ private struct FocusParts: View {
 }
 
 /// Bars of time: the hours of a day, or the days of a week or month. The bar for now is full colour, the ones to
-/// come are missing; an average, if given, is a dashed line.
+/// come are missing; an average, if given, is a dashed line. They grow in from the left when shown (and when `replay`
+/// changes), and move to new numbers.
 struct UsageBars: View {
     let values: [TimeInterval]
     var now: Int?
@@ -466,6 +480,8 @@ struct UsageBars: View {
     var height: CGFloat = 88
     /// One label under each bar (a week); else labels spread along the axis.
     var labelsUnder = false
+    var replay = 0
+    @State private var grown = false
 
     var body: some View {
         let top = max(values.max() ?? 0, average ?? 0, 60)
@@ -480,7 +496,10 @@ struct UsageBars: View {
                             UnevenRoundedRectangle(topLeadingRadius: min(3, width / 2), topTrailingRadius: min(3, width / 2))
                                 .fill(LinearGradient(colors: UsageColors.cyan, startPoint: .top, endPoint: .bottom))
                                 .opacity(now.map { i > $0 ? 0 : 1 } ?? 1)
-                                .frame(width: width, height: values[i] > 0 ? max(2, h) : 0)
+                                .frame(width: width, height: values[i] > 0 && grown ? max(2, h) : 0)
+                                .animation(.spring(response: 0.5, dampingFraction: 0.82)
+                                    .delay(grown ? Double(i) * 0.4 / Double(max(1, values.count)) : 0), value: grown)
+                                .animation(.spring(response: 0.5, dampingFraction: 0.82), value: values[i])
                         }
                     }
                     if let average, average > 0 {
@@ -503,8 +522,20 @@ struct UsageBars: View {
                 }
             }
         }
+        .onAppear(perform: grow)
+        .onChange(of: replay) { grow() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(average.map { "Bars, \(UsageMath.duration($0)) on average" } ?? "Bars by hour")
+    }
+}
+
+extension UsageBars {
+    /// Down at once, then up bar by bar.
+    private func grow() {
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) { grown = false }
+        Task { @MainActor in grown = true }
     }
 }
 
