@@ -273,12 +273,77 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
             out.append("A job is paused on the plan's limit, waiting for the user: wait, or OpenRouter.")
         return " ".join(out)
 
+    # -- a course's dates (exams, mid-terms, deadlines): Professor's reads with the user's edits over them ---------
+
+    async def course_dates(course: str, past: bool = False) -> str:
+        cid = await course_id(course)
+        today = datetime.now(tz).date()
+        items = notebook.dates(cid, since=None if past else today)
+        if not items:
+            return "No dates for this course" + ("" if past else " from today on") + "."
+        return "\n".join(f"[{d['id']}] {date_line(d, today)}" + (" · yours" if d["by"] == "you" else "")
+                         for d in items)
+
+    async def dates_changed(cid: int, done: str) -> str:
+        """As the API does after the user's change: the calendar checked again, and a missing exam proposed."""
+        try:
+            await notebook.calendar_check(cid)
+        except Exception:  # the calendar being down doesn't undo the change
+            pass
+        notebook.reread_dates(cid)
+        return done
+
+    def date_fields(**given) -> dict:
+        return {k: v for k, v in given.items() if v is not None}
+
+    async def add_course_date(course: str, what: str, date: str, kind: str = "other", time: str | None = None,  # noqa: A002
+                              end: str | None = None, room: str | None = None, details: str | None = None) -> str:
+        cid = await course_id(course)
+        d = notebook.add_date(cid, date_fields(what=what, date=date, kind=kind, time=time, end=end, room=room,
+                                                details=details))
+        return await dates_changed(cid, f"Added: [{d['id']}] {date_line(d, datetime.now(tz).date())}")
+
+    async def edit_course_date(course: str, date_id: str, what: str | None = None, date: str | None = None,  # noqa: A002
+                               kind: str | None = None, time: str | None = None, end: str | None = None,
+                               room: str | None = None, details: str | None = None) -> str:
+        cid = await course_id(course)
+        fields = date_fields(what=what, date=date, kind=kind, time=time, end=end, room=room, details=details)
+        if time == "":  # all day
+            fields["time"] = fields["end"] = None
+        d = notebook.edit_date(cid, date_id, fields)
+        return await dates_changed(cid, f"Changed: [{d['id']}] {date_line(d, datetime.now(tz).date())}")
+
+    async def hide_course_date(course: str, date_id: str) -> str:
+        cid = await course_id(course)
+        d = notebook.find_date(cid, date_id)
+        notebook.hide_date(cid, date_id)
+        return await dates_changed(cid, f"Removed: {d['what']} on {d['date']}")
+
     lid = {"lecture_id": {"type": "string", "description": "The id in brackets, l_…"}}
     course = {"course": {"type": "string", "description": "A course name from list_courses; omit for all"}}
     one_course = {"course": {"type": "string", "description": "A course name from list_courses"}}
     tid = {"topic": {"type": "string", "description": "The topic's id in brackets, t_…, or its title"}}
     pid = {"proposal": {"type": "string", "description": "The proposal's id, p_…"}}
+    hhmm = {"type": "string", "description": "HH:MM, 24-hour, local"}
+    date_props = {"what": {"type": "string", "description": "short: 1st mid-term, Exam sign-up closes"},
+                  "date": {"type": "string", "description": "YYYY-MM-DD"},
+                  "kind": {"type": "string", "enum": ["exam", "mid-term", "deadline", "other"]},
+                  "time": {**hhmm, "description": "HH:MM start; omit for all day (\"\" makes it all day)"},
+                  "end": hhmm, "room": {"type": "string"}, "details": {"type": "string"}}
+    did = {"date_id": {"type": "string", "description": "The id in brackets from course_dates"}}
     notebook_tools = [
+        Tool("course_dates", "A course's dates (exams, mid-terms, sign-up deadlines) from today on, or past ones too, "
+             "each with its id in brackets: what Professor read from the course's page and files, with the user's "
+             "changes over it.", _obj({**one_course, "past": {"type": "boolean"}}, ["course"]), course_dates),
+        Tool("add_course_date", "Add a date to a course (an exam, a mid-term, a deadline) the user tells you about. "
+             "It stays the user's when the course is read again. Runs immediately.",
+             _obj({**one_course, **date_props}, ["course", "what", "date"]), add_course_date),
+        Tool("edit_course_date", "Change a course date (the user's correction: another day, a time, the room). Pass "
+             "only what changes; it stays the user's when the course is read again. Runs immediately.",
+             _obj({**one_course, **did, **date_props}, ["course", "date_id"]), edit_course_date),
+        Tool("hide_course_date", "Remove a course date that's wrong or not the user's (one Professor read stays hidden "
+             "when the course is read again). Runs immediately.",
+             _obj({**one_course, **did}, ["course", "date_id"]), hide_course_date),
         Tool("notebook", "A course notebook's outline: the exam in a line, then each topic with its id, title, "
              "summary, subtopics and how many questions and cards it has, and proposals waiting for the user. No "
              "text: start here, then read_topic what you need.", _obj(one_course, ["course"]), notebook_outline),

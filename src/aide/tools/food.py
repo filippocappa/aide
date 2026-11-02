@@ -10,10 +10,11 @@ from zoneinfo import ZoneInfo
 from ..food import DRINKS, MACROS, FoodStore, totals
 from ..foods import FoodDB, free_notes
 from ..health import HealthStore
-from ..nutrition import Nutrition, weakest
+from ..nutrition import GOALS, Nutrition, weakest
 from ..photos import PhotoStore
 from . import Tool, ToolOutput
 from .nutrition import OpenFoodFacts, nutrition_tools, quality_schema
+from .pages import open_card
 
 WHEN_HELP = "Local time as YYYY-MM-DDTHH:MM. Omit for now."
 NAMES = {"calories": "kcal", "protein_g": "protein", "carbs_g": "carbs", "fat_g": "fat"}
@@ -114,6 +115,29 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         set_ = [f"{goals[k]}{' kcal' if k == 'calories' else ' g ' + NAMES[k]}" for k in MACROS if goals[k]]
         return "Daily goals: " + (", ".join(set_) if set_ else "none")
 
+    def targets_text(t: dict) -> str:
+        base = t["base"]
+        w, p = t["workouts"], t["profile"]
+        parts = [f"{base[k]}{' kcal' if k == 'calories' else ' g ' + NAMES[k]}" for k in MACROS if base.get(k)]
+        out = ["Rest-day base: " + (", ".join(parts) if parts else "none (the day score is quality alone)")]
+        out.append("Workouts: " + (f"add {round(w['share'] * 100)}% of the Watch's workout kcal, {w['carbs_pct']}% of it "
+                                   "as carbs" if w["on"] else "add nothing"))
+        prof = ", ".join(f"{k} {v}" for k, v in p.items() if v is not None)
+        return "\n".join(out + [f"Profile: {prof or 'empty'}"])
+
+    async def food_targets(workouts_on: bool | None = None, workout_share: float | None = None,
+                           workout_carbs_pct: int | None = None, goal: str | None = None,
+                           note: str | None = None) -> str:
+        workouts = {k: v for k, v in (("on", workouts_on), ("share", workout_share),
+                                      ("carbs_pct", workout_carbs_pct)) if v is not None}
+        profile = {k: v for k, v in (("goal", goal), ("note", note)) if v is not None}
+        if not workouts and not profile:
+            return targets_text(nutrition.targets())
+        t = nutrition.set_targets(workouts=workouts or None, profile=profile or None)
+        return ToolOutput("Saved.\n" + targets_text(t) + "\nTo have the numbers proposed from the user's data, they "
+                          "tap Ask Coach on the targets page (the card opens it).",
+                          open_card("Nutrition targets", "Ask Coach to propose", "aide://settings/nutrition"))
+
     async def delete_meal(meal_id: int) -> str:
         meal = store.find(meal_id)
         store.delete(meal_id)
@@ -167,6 +191,15 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
              _obj({"date": {"type": "string", "description": "YYYY-MM-DD"}}, []), list_meals),
         Tool("set_food_goals", "Set daily goals for calories and macros (grams). Give only the ones that change; "
              "0 removes a goal. Runs immediately.", _obj(dict(numbers), []), set_food_goals),
+        Tool("food_targets", "The nutrition targets: the rest-day base (set with set_food_goals), what the Watch's "
+             "workouts add to it, and the profile proposals start from. Without arguments it reads them; with any, it "
+             "changes those: workouts_on, workout_share (0–1.5 of the workout kcal added), workout_carbs_pct (0–100, "
+             "the rest is fat), goal (lose, keep, gain, perform = fuel my training), note (anything else Coach should "
+             "know when proposing). A full proposal from the user's data is made on the targets page (Ask Coach). "
+             "Changes run immediately.",
+             _obj({"workouts_on": {"type": "boolean"}, "workout_share": {"type": "number"},
+                   "workout_carbs_pct": {"type": "integer"}, "goal": {"type": "string", "enum": list(GOALS)},
+                   "note": {"type": "string"}}, []), food_targets),
         Tool("delete_meal", "Delete a logged meal. Needs the user's confirmation: it is queued, and runs only "
              "when the user replies !yes.", _obj(mid, ["meal_id"]),
              delete_meal, confirm=True, describe=describe_delete, target_arg="meal_id"),

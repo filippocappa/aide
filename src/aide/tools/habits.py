@@ -66,6 +66,30 @@ def habit_tools(store: HabitStore) -> list[Tool]:
         habit = store.set_days(habit_id, values)
         return f"Filled in {len(values)} day{'s' if len(values) != 1 else ''}: " + fmt(habit, store.today())
 
+    async def update_habit(habit_id: int, name: str | None = None, per_week: int | None = None,
+                           max: int | None = None, food: str | None = None, health: str | None = None,  # noqa: A002
+                           workouts: list[str] | None = None) -> str:
+        changes: dict = {}
+        if name is not None:
+            changes["name"] = name
+        if per_week is not None:
+            changes["per_week"] = per_week or None  # 0: daily
+            if per_week:
+                changes["max_count"] = None
+        if max is not None:
+            changes["max_count"] = max or None  # 0: no longer a limit habit
+            if max:
+                changes["per_week"] = None
+        if food is not None:
+            changes["food"] = None if food == "none" else food
+        if health is not None:
+            changes["health"] = None if health == "none" else health
+        if workouts is not None:
+            changes["workouts"] = workouts
+        if not changes:
+            raise ValueError("nothing to change")
+        return "Updated: " + fmt(store.update(habit_id, **changes), store.today())
+
     async def delete_habit(habit_id: int) -> str:
         habit = store.find(habit_id)
         store.delete(habit_id)
@@ -107,6 +131,15 @@ def habit_tools(store: HabitStore) -> list[Tool]:
                  "count": {"type": "integer", "description": "limit habits: the day's total"},
                  "done": {"type": "boolean", "description": "other habits"}}, ["date"])}}, ["habit_id", "days"]),
              fill_habit_days),
+        Tool("update_habit", "Change a habit: rename it, make it daily (per_week 0) or so many times a week, make it a "
+             "limit habit or change its limit (max; 0 makes it an ordinary habit again), tick it from the food log "
+             "(food; none stops), count it from Apple Health (health; none stops), or tick it from Watch workouts "
+             "(workouts: types like running, strength; [] stops). Pass only what changes; the history stays. Runs "
+             "immediately.",
+             _obj({**hid, "name": {"type": "string"}, "per_week": {"type": "integer"}, "max": {"type": "integer"},
+                   "food": {"type": "string", "enum": [*FOOD_METRICS, "none"]},
+                   "health": {"type": "string", "enum": [*HEALTH_COUNTS, "none"]},
+                   "workouts": {"type": "array", "items": {"type": "string"}}}, ["habit_id"]), update_habit),
         Tool("delete_habit", "Stop tracking a habit and drop its history. Needs the user's confirmation: it is "
              "queued, and runs only when the user replies !yes.", _obj(hid, ["habit_id"]),
              delete_habit, confirm=True, describe=describe_delete, target_arg="habit_id"),

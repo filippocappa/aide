@@ -94,6 +94,20 @@ from the tools the assistant used in that turn, not parsed from its text:
   on the card; the message's text is what to go over (and an open question's marks).
 - `review`: a review session starting (since 2026-10-31; see Quizzes and review sessions), `{"type": "review",
   "review": Session plus "name" (the course's)}`, on Professor's message when it starts.
+- `open`: buttons that open a page of the app (since 2026-11-02), `{"type": "open", "open": [{"id", "title",
+  "subtitle", "url"}]}`. `id` is the `url`; `subtitle` may be `null`. Any agent adds one with `open_page`, and some
+  tools add one themselves: a daily limit made in chat ("Pick the apps"), a phone-only setting asked for in chat, the
+  food targets. The app draws a button per item and opens `url` only when it's tapped; it never jumps by itself. The
+  links, besides the ones in Push and Widgets:
+  - `aide://today`, `aide://team`, `aide://objectives`, `aide://health`, `aide://food`, `aide://screen`,
+    `aide://money`, `aide://money/banks`
+  - `aide://study`: the Study tab. `aide://study/<course id>`: the course's page. `…/practice`: its practice exam.
+    `…/quiz`: the Study page for the course, or one topic with `?topic=<t_…>&title=<title>`. `…/lesson?topic=<t_…>
+    &title=<title>`: that topic's lesson.
+  - `aide://settings`: Settings. `aide://settings/<page>`, `<page>` one of `digests`, `memory`, `voice`, `plan`
+    (Claude plan), `browser`, `nutrition`, `videos`, `notifications`, `reminders`, `health`, `location` (location and
+    trams), `screentime`, `payments`, `moodle`, `obsidian`. A page the device doesn't have (the Mac has no
+    `notifications`, `reminders`, `health`, `location`, `payments`) opens Settings.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
@@ -1927,7 +1941,9 @@ chat (`lock_now`, `add_lock_schedule`); ending one early there is queued and nee
 
 A limit (since 2026-11-01) gives some apps so many minutes a day; once they're used up, those apps lock until
 midnight. The user makes limits in the app's Screen tab and picks the apps there (the tokens stay on the phone, so the
-`title` is what they typed); the agents only see them (`list_locks`). The phone watches each limit itself
+`title` is what they typed). Since 2026-11-02 Coach can make and change them in chat too (`add_limit`,
+`update_limit`; ending one early and deleting one are queued like a lock's), with the same rules; a limit made in chat
+covers nothing until its apps are picked on the phone, so its reply carries an `open` card to Screen Time. The phone watches each limit itself
 (one DeviceActivity a day with a threshold event) and locks the apps when it fires, with the app closed, then tells
 the server it was reached (`PUT /v1/screen/usage`).
 

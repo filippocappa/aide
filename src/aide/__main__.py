@@ -56,6 +56,8 @@ from .tools.clock import clock_tool
 from .tools.food import food_tools
 from .tools.nutrition import OpenFoodFacts
 from .tools.objectives import objective_tools
+from .tools.pages import page_tools
+from .tools.settings import settings_tools
 from .tools.habits import habit_tools
 from .tools.locks import lock_tools
 from .tools.health import health_tools
@@ -223,6 +225,9 @@ def main() -> None:
     elif transit:
         log.info("leave-now alerts for events need the calendar and GOOGLE_MAPS_API_KEY: off")
 
+    # Made below (digest) or maybe not at all (leave): the settings tools find them when called.
+    tools += settings_tools(lambda: digest, live, lambda: leave, engine)
+    tools += page_tools(study, notebook)
     objectives = ObjectiveStore(db.conn, settings.timezone, habits, food, health, reminders)
     planner = ObjectivePlanner(objectives, engine, db, cal, study, notebook)
     replanner = StudyReplanner(planner)  # Professor's proposals follow the notes and dates as they change

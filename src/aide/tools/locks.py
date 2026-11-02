@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 from ..db import utcnow
 from ..locks import PASSES, UNLOCKS_SHOWN, LockStore
 from ..routines import check_time
-from . import Tool
+from . import Tool, ToolOutput
+from .pages import open_card
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -28,7 +29,7 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
         device = store.device()
         lines = [store.line(lock, now) for lock in store.all(now)] or ["No locks yet."]
         if limits := store.limits():
-            lines.append("Daily app limits (the user sets them in the app's Screen tab, with the apps they cover):")
+            lines.append("Daily app limits (the apps each covers are picked on the phone):")
             lines += [f"- {store.limit_line(limit, now)}" for limit in limits]
         if not device["authorized"]:
             lines.append("The phone hasn't allowed Screen Time yet (Settings → Screen Time in the app), so locks "
@@ -96,7 +97,54 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
         on = " It's on now, so the apps unlock." if store.locked_until(lock, now) else ""
         return f"Delete the lock '{lock['title']}' ({store.summary(lock, now)}).{on}"
 
+    # -- daily app limits: the apps each covers are picked on the phone (Apple's picker), the rest is here ----------
+
+    async def add_limit(title: str, minutes: int, days: list[int] | None = None, strict: bool = False) -> str:
+        now = utcnow()
+        limit = store.add_limit(title, minutes, days=days, strict=strict, now=now)
+        return ToolOutput(f"Set: {store.limit_line(limit, now)}. It counts nothing until the user picks its apps on "
+                          "the phone (Screen Time → the limit): say so, the card opens that page.",
+                          open_card("Pick the apps", f"For the limit '{limit['title']}'", "aide://settings/screentime"))
+
+    async def update_limit(limit_id: int, title: str | None = None, minutes: int | None = None,
+                           days: list[int] | None = None, enabled: bool | None = None,
+                           strict: bool | None = None) -> str:
+        now = utcnow()
+        limit = store.update_limit(limit_id, now=now, title=title, minutes=minutes, days=days, enabled=enabled,
+                                   strict=strict)
+        return "Updated: " + store.limit_line(limit, now)
+
+    async def end_limit(limit_id: int, reason: str) -> str:
+        limit = store.unlock_limit(limit_id, reason)
+        return f"Ended the limit '{limit['title']}' for today: its apps are open until midnight"
+
+    async def describe_end_limit(limit_id: int, reason: str) -> str:
+        now = utcnow()
+        limit = store.get_limit(limit_id)
+        if not store.reached(limit, now):
+            raise ValueError(f"'{limit['title']}' isn't reached today: nothing to end")
+        if limit["strict"]:
+            raise ValueError(f"'{limit['title']}' is strict: it can't be ended from chat, only with an emergency pass "
+                             f"in the app (Screen Time; {store.passes(now)['left']} left this month)")
+        if not reason.strip():
+            raise ValueError("ending a limit early needs the user's reason")
+        return f"End the limit '{limit['title']}' for today and open its apps until midnight. Reason: {reason.strip()}"
+
+    async def delete_limit(limit_id: int) -> str:
+        limit = store.get_limit(limit_id)
+        store.delete_limit(limit_id)
+        return f"Deleted the limit '{limit['title']}'"
+
+    async def describe_delete_limit(limit_id: int) -> str:
+        now = utcnow()
+        limit = store.get_limit(limit_id)
+        if limit["strict"] and store.reached(limit, now):
+            raise ValueError(f"'{limit['title']}' is strict and reached today: it can be deleted tomorrow")
+        on = " It's reached today, so its apps open." if store.reached(limit, now) else ""
+        return f"Delete the limit '{limit['title']}' ({store.limit_summary(limit)}).{on}"
+
     lid = {"lock_id": {"type": "integer"}}
+    mid = {"limit_id": {"type": "integer"}}
     hhmm = {"type": "string", "description": "HH:MM, 24-hour, local time"}
     days = {"type": "array", "items": {"type": "integer"},
             "description": "ISO weekdays it starts on, 1 = Monday … 7 = Sunday; [] for every day"}
@@ -136,4 +184,26 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
              describe=describe_end, target_arg="lock_id"),
         Tool("delete_lock", "Delete a lock for good. Queued: runs only when the user confirms.", _obj(lid, ["lock_id"]),
              delete_lock, confirm=True, describe=describe_delete, target_arg="lock_id"),
+        Tool("add_limit", "Add a daily app limit: so many minutes a day on some apps, then they're locked until "
+             "midnight. Which apps it covers can only be picked on the phone (Apple's picker), so the title says what "
+             "they are (Social, Games) and the reply tells the user to pick them; the card opens the page. Runs "
+             "immediately.",
+             _obj({"title": {"type": "string", "description": "short: what the apps are, Social, YouTube, Games"},
+                   "minutes": {"type": "integer", "description": "minutes a day, 5 to 720"}, "days": days,
+                   "strict": {**strict, "description": "only when the user asks for it: once reached, it can't be "
+                              f"ended early from chat, only with one of the {PASSES} emergency passes a month"}},
+                  ["title", "minutes"]), add_limit),
+        Tool("update_limit", "Change a daily app limit: title, minutes, days, strict, or turn it off and on with "
+             "enabled. Pass only what changes. A strict limit reached today can only be tightened until tomorrow. "
+             "Runs immediately. (Its apps are changed on the phone.)",
+             _obj({**mid, "title": {"type": "string"}, "minutes": {"type": "integer"}, "days": days,
+                   "enabled": {"type": "boolean"}, "strict": {"type": "boolean"}}, ["limit_id"]), update_limit),
+        Tool("end_limit", "End a daily app limit reached today, until midnight. Only when the user asks, with their "
+             "reason in their words. Not for a strict limit (only an emergency pass in the app). Queued: runs only "
+             "when the user confirms.",
+             _obj({**mid, "reason": {"type": "string"}}, ["limit_id", "reason"]), end_limit, confirm=True,
+             describe=describe_end_limit, target_arg="limit_id"),
+        Tool("delete_limit", "Delete a daily app limit for good. Queued: runs only when the user confirms.",
+             _obj(mid, ["limit_id"]), delete_limit, confirm=True, describe=describe_delete_limit,
+             target_arg="limit_id"),
     ]
