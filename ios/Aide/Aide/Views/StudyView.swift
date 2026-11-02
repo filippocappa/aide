@@ -85,7 +85,7 @@ struct StudyView: View {
                 }
             }
             #endif
-            .fullScreenCover(item: $practice, onDismiss: { Task { await load() } }) { course in
+            .macWindowCover(item: $practice, onDismiss: { Task { await load() } }) { course in
                 PracticeExamView(course: course.id, courseName: course.name)
             }
             .fullScreenCover(item: $studying, onDismiss: { Task { await load() } }) { target in
@@ -536,7 +536,7 @@ struct CourseView: View {
         .fullScreenCover(isPresented: $learning, onDismiss: { Task { await load() } }) {
             LearnPathView(course: course).macCoverSize()
         }
-        .fullScreenCover(isPresented: $showPractice, onDismiss: { Task { await load() } }) {
+        .macWindowCover(isPresented: $showPractice, onDismiss: { Task { await load() } }) {
             PracticeExamView(course: course.id, courseName: course.name)
         }
         .fullScreenCover(item: $studying, onDismiss: { Task { await load() } }) { target in
@@ -1137,7 +1137,7 @@ struct MockExamsView: View {
         .navigationTitle("Mock exams")
         .task { await load() }
         .refreshable { await load() }
-        .fullScreenCover(item: $taking, onDismiss: { Task { await load() } }) { mock in
+        .macWindowCover(item: $taking, onDismiss: { Task { await load() } }) { mock in
             PracticeExamView(course: course.id, courseName: course.name, mock: mock)
         }
     }

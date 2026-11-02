@@ -111,7 +111,7 @@ struct ChatView: View {
                                : Binding(get: { chat.smart }, set: { on in Task { await chat.setSmart(on) } }),
                            course: chat.course != nil)
         }
-        .fullScreenCover(isPresented: $showPractice, onDismiss: {
+        .macWindowCover(isPresented: $showPractice, onDismiss: {
             Task { await chat.loadHistory() } // Professor's note on the result
         }) {
             if let course = chat.course { PracticeExamView(course: course.id, courseName: course.name) }
