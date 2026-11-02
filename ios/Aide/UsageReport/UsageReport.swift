@@ -24,15 +24,20 @@ struct UsageScene: DeviceActivityReportScene {
     /// Each segment's apps are cut down to iOS's own time for it when they add up to more (two apps on screen at once
     /// would count twice).
     ///
+    /// Days that are over are worked out once and kept (`DayCache`): their hours are skipped after that, so a report
+    /// counts only today's (iOS asks again every time the usage changes, often several times a minute).
+    ///
     /// Only one phone: the filter can name a model, not this phone, so another iPhone sharing Screen Time on the same
     /// Apple ID comes too; the one used last is kept and the others are named under the list. An hour iOS hands over
     /// twice, or an app listed under two categories in one hour, is counted once.
     func makeConfiguration(representing data: DeviceActivityResults<DeviceActivityData>) async -> UsageReportData {
         let calendar = Calendar.current
+        let hourly = kind == .day
         #if DEBUG
         let started = Date()
         var firstAt: Date?
         var segments = 0
+        var fromCache = 0
         UsageProbe.calls += 1
         #endif
         var reads: [String: DeviceRead] = [:]
@@ -50,8 +55,19 @@ struct UsageScene: DeviceActivityReportScene {
                 #endif
                 let start = segment.dateInterval.start
                 latest = max(latest ?? start, start)
-                guard read.seen.insert(start).inserted else { continue }
                 let date = calendar.startOfDay(for: start)
+                if read.cached.contains(date) { continue }
+                if read.days[date] == nil, DayCache.isOver(date),
+                   let saved = DayCache.read(hourly: hourly, device: name, date: date) {
+                    read.days[date] = saved.day
+                    read.cached.insert(date)
+                    if let used = saved.lastUsed { read.lastUsed = max(read.lastUsed ?? used, used) }
+                    #if DEBUG
+                    fromCache += 1
+                    #endif
+                    continue
+                }
+                guard read.seen.insert(start).inserted else { continue }
                 var day = read.days[date] ?? UsageDay(date: date)
                 if let first = segment.firstPickup, first < day.firstPickup ?? .distantFuture { day.firstPickup = first }
                 let hour = calendar.component(.hour, from: start)
@@ -95,9 +111,16 @@ struct UsageScene: DeviceActivityReportScene {
                         app.hourly[hour] += used.seconds
                     }
                     day.apps.append(app)
-                    if used.seconds > 0 { read.lastUsed = max(read.lastUsed ?? start, start) }
+                    if used.seconds > 0 {
+                        read.lastUsed = max(read.lastUsed ?? start, start)
+                        read.lastUsedOn[date] = max(read.lastUsedOn[date] ?? start, start)
+                    }
                 }
                 read.days[date] = day
+            }
+            for (date, day) in read.days where !read.cached.contains(date) && DayCache.isOver(date) {
+                DayCache.write(SavedDay(day: day, lastUsed: read.lastUsedOn[date]), hourly: hourly, device: name)
+                read.cached.insert(date)
             }
             reads[name] = read
         }
@@ -109,7 +132,7 @@ struct UsageScene: DeviceActivityReportScene {
         #if DEBUG
         let first = firstAt.map { String(format: "%.1f", $0.timeIntervalSince(started)) } ?? "–"
         report.debug = "first segment \(first)s · all \(String(format: "%.1f", Date().timeIntervalSince(started)))s · "
-            + "\(segments) segments · call \(UsageProbe.calls), process \(Int(Date().timeIntervalSince(UsageProbe.launched)))s · "
+            + "\(segments) segments, \(fromCache) days kept · call \(UsageProbe.calls), process \(Int(Date().timeIntervalSince(UsageProbe.launched)))s · "
             + UsageProbe.disk()
         #endif
         return report
@@ -142,4 +165,73 @@ private struct DeviceRead {
     var days: [Date: UsageDay] = [:]
     var seen: Set<Date> = []
     var lastUsed: Date?
+    /// When an app was last used on each day, kept with the day.
+    var lastUsedOn: [Date: Date] = [:]
+    /// The days that came from `DayCache` (their segments are skipped).
+    var cached: Set<Date> = []
+}
+
+/// A day that's over, as worked out once, and when an app was last used in it (which picks the phone).
+struct SavedDay: Codable {
+    var day: UsageDay
+    var lastUsed: Date?
+}
+
+/// Days that are over, worked out once and kept in the extension's own caches folder (a JSON file a day, a few KB)
+/// and in memory while the extension runs: hour by hour for the Day page, whole days for Week and Month. Kept 130
+/// days; iOS may clear the folder, and then they're worked out again. It never leaves the extension.
+enum DayCache {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var memory: [String: SavedDay] = [:]
+
+    private static let folder: URL? = {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let folder = caches.appendingPathComponent("usage-days-v1", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let old = Date().addingTimeInterval(-130 * 86400)
+        for url in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if let modified, modified < old { try? FileManager.default.removeItem(at: url) }
+        }
+        return folder
+    }()
+
+    private static let dayFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// Over, and a couple of hours past, so iOS has handed in its last hour.
+    static func isOver(_ date: Date) -> Bool {
+        guard let end = Calendar.current.date(byAdding: .day, value: 1, to: date) else { return false }
+        return end.addingTimeInterval(2 * 3600) < Date()
+    }
+
+    private static func key(hourly: Bool, device: String, date: Date) -> String {
+        let phone = String(String.UnicodeScalarView(device.unicodeScalars.filter(CharacterSet.alphanumerics.contains)))
+        return "\(hourly ? "h" : "d")-\(phone)-\(dayFormat.string(from: date))"
+    }
+
+    static func read(hourly: Bool, device: String, date: Date) -> SavedDay? {
+        let key = key(hourly: hourly, device: device, date: date)
+        lock.lock()
+        defer { lock.unlock() }
+        if let saved = memory[key] { return saved }
+        guard let url = folder?.appendingPathComponent(key + ".json"), let data = try? Data(contentsOf: url),
+              let saved = try? JSONDecoder().decode(SavedDay.self, from: data), saved.day.date == date else { return nil }
+        memory[key] = saved
+        return saved
+    }
+
+    static func write(_ saved: SavedDay, hourly: Bool, device: String) {
+        let key = key(hourly: hourly, device: device, date: saved.day.date)
+        lock.lock()
+        defer { lock.unlock() }
+        memory[key] = saved
+        if let url = folder?.appendingPathComponent(key + ".json"), let data = try? JSONEncoder().encode(saved) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
 }
