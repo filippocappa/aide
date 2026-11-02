@@ -249,6 +249,7 @@ async def test_research_reads_the_top_sites_and_keeps_what_matches():
     tools = search(rec)
     out = await tools["research"].handler(query="COROS heart rate monitor Apple Watch")
     assert rec.body()["include_raw_content"] is True and rec.body()["max_results"] == 7
+    assert rec.body()["search_depth"] == "advanced"
     assert "Read 5 sites" in out and "5. Site 5" in out and "6. Site 6" not in out
     assert "works with Apple Watch (all models)" in out
     assert "PRODUCTS" not in out  # the menu is dropped
