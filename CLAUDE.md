@@ -595,7 +595,7 @@ moments on a timeline with time chips opening YouTube there and their frames, zo
 Videos (search, swipe to delete). The `AideShare` extension (bundle `.share`, App Group) sends a shared YouTube link with
 an optional question. The chat message is only the answer or the TL;DR; the card has the rest.
 
-**Done, both sides (2026-11-01), not yet tried on the phone:** Finance, step 1 of #31 (contract in `docs/API.md`,
+**Done, both sides (2026-11-01), live (closes #31):** Finance, step 1 of #31 (contract in `docs/API.md`,
 "Finance"; `finance.py`, `tools/finance.py`). Payments come from Apple Pay taps: a Shortcuts Transaction automation runs
 the app's Log payment intent (`Support/PaymentIntent.swift`, iPhone only; a tap with no connection waits in
 `PaymentInbox` and goes when the app opens; the same card, merchant and amount within 3 min is one payment). Cash and
@@ -614,8 +614,8 @@ token, a one-time state), then `aide://money/banks`. Reads at 07/12/17/22 and wh
 its bank record are one payment (amount, 5 days before to 1 after), pending becomes booked in place, own-account moves
 are transfers, money in ≥ €10 is pushed (`finance`), a push a week before the consent ends. App
 (`Views/BankViews.swift`): Money → Banks (link, renew, unlink, Read now, the bank picker with logos), balances and
-the total under Accounts, Pending on rows. Off on the server until the Enable Banking application exists; not yet
-tried with a real bank.
+the total under Accounts, Pending on rows. Live: the Enable Banking application is set up and a bank is linked
+(2026-11-02).
 
 **Next** (filed as GitHub issues, #11 first):
 1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
@@ -624,7 +624,7 @@ tried with a real bank.
 2. Ideas from the agent-app research, not yet chosen: (#15, digests in a feed, is mostly covered by Today; #14,
    Goals, by objectives.)
 3. New, filed 2026-10-27, not yet chosen: the rest of #24 (buttons in the expanded view, voice chat in the background).
-4. Recording a lecture in the app. Notebooks for the other courses. Finance: banks (#31, after step 1).
+4. Recording a lecture in the app. Notebooks for the other courses.
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
