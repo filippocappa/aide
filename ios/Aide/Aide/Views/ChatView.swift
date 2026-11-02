@@ -259,7 +259,11 @@ struct ChatView: View {
                             Spacer(minLength: 32)
                         }
                         .padding(.horizontal, 2)
-                    } else if chat.isSending, chat.liveTeam.last?.from != chat.orchestrator.id {
+                    }
+                    if chat.isSending, let step = chat.liveStep {
+                        // A tool is running: say what (a search, the sites it reads), under any draft before it.
+                        ThinkingRow(label: step, symbol: "magnifyingglass").transition(.opacity)
+                    } else if chat.isSending, draft.isEmpty, chat.liveTeam.last?.from != chat.orchestrator.id {
                         // While an agent works on its answer, the thread shows it thinking instead.
                         ThinkingRow()
                     }
@@ -277,6 +281,7 @@ struct ChatView: View {
             .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.liveTeam) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.liveReply) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: chat.liveStep) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: chat.isSending) { _, sending in
                 scrollToBottom(proxy)
                 if !sending, chat.messages.last?.role == .assistant, chat.messages.last?.isError == false {
@@ -823,11 +828,17 @@ struct TeamThread: View {
 
 private struct ThinkingRow: View {
     var label = "Thinking…"
+    var symbol: String?
 
     var body: some View {
         HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text(label).font(.footnote).foregroundStyle(.secondary)
+            if let symbol {
+                Image(systemName: symbol).font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    .symbolEffect(.pulse, options: .repeating)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Text(label).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
             Spacer()
         }
         .padding(.horizontal, 2)

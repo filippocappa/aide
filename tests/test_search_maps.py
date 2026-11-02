@@ -89,7 +89,7 @@ def maps(rec: Recorder, home=HOME) -> dict:
 
 def test_all_tools_are_read_only():
     tools = [*search(Recorder()).values(), *maps(Recorder()).values()]
-    assert [t.name for t in tools] == ["web_search", "fetch_page", "find_places", "travel_time"]
+    assert [t.name for t in tools] == ["web_search", "research", "fetch_page", "find_places", "travel_time"]
     assert not any(t.confirm for t in tools)
 
 
@@ -226,3 +226,48 @@ async def test_google_error_message_is_passed_on():
     rec = Recorder(httpx.Response(403, json={"error": {"message": "Routes API has not been used in project"}}))
     with pytest.raises(RuntimeError, match="Routes API has not been used"):
         await maps(rec)["travel_time"].handler(destination="Park")
+
+
+# -- research -----------------------------------------------------------------------------
+
+
+PAGE = "\n".join([
+    "* [PRODUCTS](https://coros.example/products)", "* [SUPPORT](https://coros.example/support)",
+    "Box contents and care for your strap, washing it by hand in cold water.",
+    "Compatibility: the COROS Heart Rate Monitor works with Apple Watch (all models) over Bluetooth.",
+    "Shipping and returns within 30 days of purchase for every order placed online.",
+])
+
+
+async def test_research_reads_the_top_sites_and_keeps_what_matches():
+    rec = Recorder(httpx.Response(200, json={
+        "answer": "Yes, it pairs.",
+        "results": [{"title": f"Site {i}", "url": f"https://s{i}.example/p", "content": "snip",
+                     "raw_content": PAGE if i == 1 else f"Apple Watch heart rate monitor notes number {i} here."}
+                    for i in range(1, 7)] + [{"title": "Unread", "url": "https://u.example", "content": "c"}],
+    }))
+    tools = search(rec)
+    out = await tools["research"].handler(query="COROS heart rate monitor Apple Watch")
+    assert rec.body()["include_raw_content"] is True and rec.body()["max_results"] == 7
+    assert "Read 5 sites" in out and "5. Site 5" in out and "6. Site 6" not in out
+    assert "works with Apple Watch (all models)" in out
+    assert "PRODUCTS" not in out  # the menu is dropped
+    assert "Also found, not read:\n- Site 6: https://s6.example/p\n- Unread: https://u.example" in out
+    assert tools["research"].step({"query": "q"}) == "Reading 5 sites on “q”"
+    assert tools["web_search"].step({"query": "q"}) == "Searching the web for “q”"
+    assert tools["fetch_page"].step({"url": "https://www.coros.com/a/b"}) == "Reading coros.com"
+
+
+async def test_research_without_page_text_falls_back_to_a_search():
+    rec = Recorder(httpx.Response(200, json={"results": [{"title": "T", "url": "https://t.example", "content": "c"}]}),
+                   httpx.Response(200, json={"results": [{"title": "T", "url": "https://t.example", "content": "c"}]}))
+    out = await search(rec)["research"].handler(query="q", sites=3)
+    assert out.startswith("1. T") and len(rec.requests) == 2
+
+
+def test_excerpt_keeps_the_closest_parts_within_the_limit():
+    from aide.tools.search import _excerpt
+    filler = [f"Unrelated paragraph {i} about shipping costs and delivery windows in general." for i in range(80)]
+    page = "\n".join(filler[:40] + ["The strap pairs with Apple Watch over Bluetooth, says the maker."] + filler[40:])
+    out = _excerpt(page, "does the strap pair with Apple Watch", 600)
+    assert "pairs with Apple Watch" in out and len(out) < 1100

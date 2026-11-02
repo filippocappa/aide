@@ -782,13 +782,18 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         speaker = (row["agent"] if row else None) or ORCHESTRATOR
         activity_turn = live.turn(conversation, speaker)
 
-        async def respond(on_team=None, on_text=None) -> Turn:
+        async def respond(on_team=None, on_text=None, on_step=None) -> Turn:
             mine = working[conversation] = {"agent": speaker, "text": text, "photos": body.photos,
                                             "since": datetime.now(tz).replace(microsecond=0).isoformat()}
+
+            def step(who: str, label: str) -> None:
+                mine["step"] = label  # for an app that hung up and asks /v1/history
+                if on_step:
+                    on_step(who, label)
             try:
                 turn = await agent.respond(CONVERSATION, text, conversation, hooks(on_team, activity_turn.team),
                                            hooks(on_text, activity_turn.text) if on_text else None, body.photos,
-                                           body.voice)
+                                           body.voice, step)
             except BaseException:
                 activity_turn.failed()
                 raise
@@ -805,7 +810,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return chat_json(conversation, await respond())
         return streamed(
             lambda emit: respond(lambda t: emit("team", team_json(t)),
-                                 lambda delta, restart: emit("text", {"delta": delta, "restart": restart})),
+                                 lambda delta, restart: emit("text", {"delta": delta, "restart": restart}),
+                                 lambda who, label: emit("step", {"agent": who, "text": label})),
             lambda turn: sse("reply", chat_json(conversation, turn)), hung_up)
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])

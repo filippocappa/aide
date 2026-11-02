@@ -79,6 +79,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var liveTeam: [TeamMessage] = []
     /// The reply on its way, as it's written. Replaced by the finished reply.
     @Published private(set) var liveReply = ""
+    /// What the agent is doing for the reply on its way ("Searching the web for …"), while a tool runs.
+    @Published private(set) var liveStep: String?
     /// The agents' group chat, oldest first (docs/API.md, "Team talk").
     @Published private(set) var team: [TeamMessage] = []
     /// The agent writing in the Team chat right now.
@@ -196,6 +198,7 @@ final class ChatViewModel: ObservableObject {
     private func leaveTurn() {
         liveTeam = []
         liveReply = ""
+        liveStep = nil
         isSending = conversationID.map { working[$0] != nil } ?? false
     }
 
@@ -382,7 +385,8 @@ final class ChatViewModel: ObservableObject {
                 loaded.append(asked)
                 messages = loaded
                 isSending = true
-                working[id] = Working(agent: running.agent, status: "Still working…")
+                working[id] = Working(agent: running.agent, status: running.step ?? "Still working…")
+                liveStep = running.step
                 Task { await recover(turn: id, asked: asked, reason: "The reply didn't come.") }
                 return
             }
@@ -422,6 +426,10 @@ final class ChatViewModel: ObservableObject {
             do {
                 history = try await api.history(limit: 200, conversationID: turn)
                 misses = 0
+                if let step = history?.working?.step {
+                    working[turn]?.status = step
+                    if (conversationID ?? "main") == turn { liveStep = step }
+                }
             } catch {
                 misses += 1
                 if misses >= 20 { break } // a minute without the server: give up
@@ -438,6 +446,7 @@ final class ChatViewModel: ObservableObject {
             messages.append(Message(role: .assistant, text: reason, isError: true, team: liveTeam))
             liveTeam = []
             liveReply = ""
+            liveStep = nil
             isSending = false
             return
         }
@@ -445,6 +454,7 @@ final class ChatViewModel: ObservableObject {
         if here {
             liveTeam = []
             liveReply = ""
+            liveStep = nil
             isSending = false
             messages = Self.messages(history)
         } else {
@@ -466,6 +476,7 @@ final class ChatViewModel: ObservableObject {
         messages.append(asked)
         isSending = true
         liveReply = ""
+        liveStep = nil
         let speaker = agentID
         var started: String? // the turn's chat, once known
         do {
@@ -484,6 +495,7 @@ final class ChatViewModel: ObservableObject {
                 working[turn]?.status = "Writing…"
                 live?.agentUpdate(conversation: turn, status: "writing")
                 guard here() else { return }
+                liveStep = nil
                 liveReply = restart ? delta : liveReply + delta
                 onDraft?(liveReply, restart)
             }, onTeam: { [weak self] message in
@@ -493,6 +505,11 @@ final class ChatViewModel: ObservableObject {
                     live?.agentUpdate(conversation: turn, status: "asking", detail: "Asking \(self.agent(message.to).name)")
                 }
                 if here() { liveTeam.append(message) }
+            }, onStep: { [weak self] who, label in
+                guard let self else { return }
+                let said = who == speaker ? label : "\(self.agent(who).name): \(label)"
+                working[turn]?.status = said
+                if here() { liveStep = said }
             })
             working[turn] = nil
             live?.agentFinished(conversation: turn, reply: reply.reply)
@@ -503,11 +520,13 @@ final class ChatViewModel: ObservableObject {
                 if let id = reply.conversationId { conversationID = id }
                 liveTeam = []
                 liveReply = ""
+                liveStep = nil
                 isSending = false
                 if writing == nil { watchNotebook() } // "yes" to a proposal starts the writing
             } else if here() { // left and came back while it was on its way: the history has it all now
                 liveTeam = []
                 liveReply = ""
+                liveStep = nil
                 isSending = false
                 await loadHistory()
             } else {
@@ -524,6 +543,7 @@ final class ChatViewModel: ObservableObject {
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true, team: liveTeam))
             liveTeam = []
             liveReply = ""
+            liveStep = nil
             isSending = false
         }
     }

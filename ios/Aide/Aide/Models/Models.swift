@@ -367,6 +367,8 @@ struct HistoryResponse: Decodable {
         let agent: String
         let text: String
         let photos: [String]?
+        /// What it's doing now ("Searching the web for …"), when a tool is running.
+        var step: String?
     }
 }
 

@@ -515,6 +515,18 @@ def test_streamed_text_starts_over_after_tools(env):
     assert got[-1][1]["reply"] == "Free\n\nall day."
 
 
+def test_streamed_chat_says_what_a_tool_is_doing(env):
+    """A tool with a step sends it as it starts, before the reply."""
+    import dataclasses
+    client, agent, _ = env([("tool_use", [Block(type="tool_use", id="t0", name="web_search", input={"query": "q"})]),
+                            done("Found it.")])
+    tools = agent.registries["aide"]._tools
+    tools["web_search"] = dataclasses.replace(tools["web_search"], step=lambda a: f"Searching for {a['query']}")
+    got = events(client.post("/v1/chat", json={"text": "look it up", "stream": True}, headers=AUTH))
+    assert ("step", {"agent": "aide", "text": "Searching for q"}) in got
+    assert [e for e, _ in got].index("step") < [e for e, _ in got].index("reply")
+
+
 async def test_a_running_turn_shows_in_history_and_quiet_streams_get_pings(env, monkeypatch):
     import asyncio
     import httpx

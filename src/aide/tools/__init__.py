@@ -36,6 +36,9 @@ class Tool:
     # Argument naming what the action changes (e.g. event_id). A newly queued action on the
     # same target replaces older queued ones, so "no, make it 2pm" doesn't leave both waiting.
     target_arg: str | None = None
+    # step(args) says in a few words what the call is doing ("Searching the web for …"), shown live in the app
+    # while it runs; None (or no step) shows nothing.
+    step: Callable[[dict], str | None] | None = None
 
     def definition(self) -> dict:
         return {

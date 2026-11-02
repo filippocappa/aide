@@ -122,6 +122,9 @@ data: {"from": "aide", "to": "coach", "text": "…", "ts": "…"}
 event: team
 data: {"from": "coach", "to": "aide", "text": "…", "ts": "…"}
 
+event: step
+data: {"agent": "aide", "text": "Reading 5 sites on “Coros arm band Apple Watch”"}
+
 event: text
 data: {"delta": "Coach says", "restart": true}
 
@@ -139,6 +142,10 @@ data: { the usual /v1/chat body, including the whole "team" }
   check.") streams too; when it writes again after the tool, the first event has `"restart": true` (possibly with
   an empty `delta`): drop the draft and start over. Speaking it aloud as it comes is fine; already spoken stays
   spoken. `reply` has the final text: show that one. A server without `text` events just sends `reply`.
+- `step` events (since 2026-11-02) say what a tool is doing as it starts, in a few words for the chat ("Searching
+  the web for …", "Reading 5 sites on …", "Reading coros.com", "Checking Moodle", "Looking on Maps for …"):
+  `agent` is who runs it (an agent Aide asked too). Show the latest until the next `step`, `text` or `reply`. Only
+  some tools have one. `GET /v1/history`'s `working` carries the latest as `step` while the turn runs.
 - A failure after the stream has started is `event: error` with `data: {"error": "…"}`, then the stream ends.
   Failures before it starts (401, 400…) are plain HTTP errors as usual.
 - A server that doesn't know `stream` answers plain JSON; the app checks `Content-Type` and handles both.
@@ -172,7 +179,8 @@ so a reminder ticked since shows `completed: true`, and one deleted since shows 
 
 While a turn runs in that chat (since 2026-10-29), the history also has `"working": {"agent": "aide", "text":
 "plan my week", "photos": [], "since": "2026-10-29T15:03:12+01:00"}`: the message being answered, which isn't in
-`messages` yet (a turn is saved when it ends), and who answers. Absent otherwise. An app that lost the stream shows
+`messages` yet (a turn is saved when it ends), and who answers; `step` (since 2026-11-02) once a tool with one ran,
+what it's doing (as the `step` event). Absent otherwise. An app that lost the stream shows
 the message with the agent working, and asks again every few seconds until `working` is gone.
 
 ## Conversations

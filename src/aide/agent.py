@@ -341,13 +341,16 @@ class Agent:
     async def respond(self, channel: str, text: str, conversation: str | None = None,
                       on_team: Callable[[dict], None] | None = None,
                       on_text: Callable[[str, bool], None] | None = None,
-                      photos: list[str] | tuple[str, ...] = (), voice: bool = False) -> Turn:
+                      photos: list[str] | tuple[str, ...] = (), voice: bool = False,
+                      on_step: Callable[[str, str], None] | None = None) -> Turn:
         """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
 
         `photos` are ids from the photo store, sent with the text (which may then be empty). The message stores a
         [Photo id] line for each, and the model sees them as images in this turn only (_with_photos).
 
         `on_team` gets each team message as it happens: an ask when Aide sends it, the answer when it's back.
+        `on_step` gets (agent, what it's doing) when a tool with a step starts ("Searching the web for …"), the
+        agents it asks included.
         `on_text` gets the reply as it's written, piece by piece, and True with the first piece of a model round
         after one that called tools: the draft starts over (the reply is the last round's text).
         `voice`: the user said it in a voice chat, and the reply is read aloud; the stamp says so.
@@ -363,6 +366,7 @@ class Agent:
                 self.db.conversation_model(conversation_id) or self.model
             history = self.db.history(conversation_id)
             self._start(channel, conversation, model, on_team)
+            self._on_step = on_step
             self._photos = tuple(photos)
             self.check_photos(photos)
             body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
@@ -410,6 +414,7 @@ class Agent:
         self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
         self._watching, self._photos, self._read = False, (), None
         self._plan, self._plan_calls = False, 0
+        self._on_step: Callable[[str, str], None] | None = None
 
     async def run_routine(self, channel: str, routine: dict) -> tuple[str | None, int]:
         """One run of a routine: its agent answers the hidden prompt in the routine's chat, with that chat's history.
@@ -784,6 +789,7 @@ class Agent:
             if self._watching and (tool.confirm or name in WRITES):
                 return "Not during a check: nothing can be changed now. Suggest it in your note instead.", True
             if not tool.confirm:
+                self._step(agent, tool, args)
                 out, err = await self._execute(name, args, self.registries[agent])
                 if not err and getattr(out, "attachment", None):
                     self._attachments.append(out.attachment)
@@ -803,6 +809,16 @@ class Agent:
         activity.record(self.db.conn, agent, "queued", summary, conversation=self._conversation or channel)
         note = " This replaces the change queued earlier for it." if replaced else ""
         return f"Queued, waiting for the user's !yes: {summary}.{note}", False
+
+    def _step(self, agent: str, tool, args: dict) -> None:
+        """Tell the app what the tool is doing while it runs; a failing label never stops the call."""
+        if not (self._on_step and tool.step):
+            return
+        try:
+            if label := tool.step(args):
+                self._on_step(agent, label)
+        except Exception:
+            log.warning("step for %s failed", tool.name, exc_info=True)
 
     async def _execute(self, name: str, args: dict, tools: ToolRegistry | None = None) -> tuple[str, bool]:
         """Run a tool. Queued actions run from the orchestrator's registry, which has every tool."""

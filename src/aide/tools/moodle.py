@@ -60,4 +60,5 @@ def moodle_tools(moodle: MoodleSync) -> list[Tool]:
                  "changed course files, and new lines on a course page, where notices go. Use it before answering "
                  "about anything that may have just come out on Moodle (grades or results, a notice, new slides), or "
                  "when the user says something is there.", {"type": "object", "properties": {}, "required": [],
-                                                            "additionalProperties": False}, check_moodle)]
+                                                            "additionalProperties": False}, check_moodle,
+                 step=lambda _: "Checking Moodle")]
