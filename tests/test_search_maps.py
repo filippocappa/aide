@@ -130,7 +130,7 @@ async def test_drive_reports_traffic_and_link():
     assert body["travelMode"] == "DRIVE" and body["routingPreference"] == "TRAFFIC_AWARE"
     assert body["origin"] == {"address": HOME} and "departureTime" not in body
     assert out.startswith(f"Drive from {HOME} to Linate Airport: 33 min with traffic (25 min without), 12.4 km.")
-    assert out.endswith("travelmode=driving") and "don't paste the link" in out
+    assert "google.com" not in out and out.endswith("(no link to paste).")  # the card has it
     [card] = out.attachment["routes"]
     assert out.attachment["type"] == "routes"
     assert {k: card[k] for k in ("mode", "from", "to", "duration", "usual", "distance", "rides")} == {
@@ -152,7 +152,7 @@ async def test_here_starts_from_the_phone():
     out = await tools["travel_time"].handler(destination="SME, Torino", origin="here")
     assert rec.body(0)["origin"] == {"location": {"latLng": {"latitude": 45.0703, "longitude": 7.6869}}}
     assert out.startswith("Drive from where you are to SME, Torino: 15 min, 6.1 km.")
-    assert "origin=45.070300%2C7.686900" in out
+    assert "origin=45.070300%2C7.686900" in out.attachment["routes"][0]["url"]
     await tools["find_places"].handler(query="pharmacy", near="Here")
     assert rec.body(1) == {"textQuery": "pharmacy", "pageSize": 5, "locationBias": {"circle": {
         "center": {"latitude": 45.0703, "longitude": 7.6869}, "radius": 1500}}}
@@ -199,7 +199,7 @@ async def test_transit_arrival_time_lists_lines_in_local_time():
     assert "Transit from Via Roma 1, Milano to Milano Centrale: 25 min, 6.1 km." in out
     assert "First departure Mon 05 Jan 08:40." in out
     assert "- Subway M3 towards Comasina: Mon 05 Jan 08:40 from Duomo, Mon 05 Jan 08:52 at Centrale FS" in out
-    assert "travelmode=transit" in out
+    assert "travelmode=transit" in out.attachment["routes"][0]["url"]
     [card] = out.attachment["routes"]
     assert card["rides"] == [{"line": "M3", "vehicle": "Metro", "towards": "Comasina", "from": "Duomo",
                               "depart": "2099-01-05T07:40:00Z", "to": "Centrale FS", "arrive": "2099-01-05T07:52:00Z"}]

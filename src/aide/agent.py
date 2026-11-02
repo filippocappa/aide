@@ -503,9 +503,12 @@ class Agent:
                     "Answer the user's last message as yourself, for the group: short, only what you add, "
                     "without repeating what the others said. Don't bring the others in by mentioning them.]")
             turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, note)}]
+            self._attachments = []  # this agent's cards, with its answer
             with usage.labels(purpose="team chat", conversation=TEAM):
                 reply = await self._run(agent, channel, self.model, [], turn)
-            said({"from": agent, "to": TEAM, "text": reply, "ts": utcnow().isoformat()})
+            cards = _merge(self._attachments)
+            said({"from": agent, "to": TEAM, "text": reply, "ts": utcnow().isoformat(),
+                  **({"attachments": cards} if cards else {})})
 
     def _say(self, sender: str, recipient: str, text: str) -> None:
         """One team message of the turn in progress."""

@@ -629,6 +629,18 @@ def test_actions_queued_in_the_team_chat_join_the_queue(env):
     assert client.get("/v1/history", headers=AUTH).json()["messages"] == []  # no note lands in the shared chat
 
 
+def test_cards_from_a_team_chat_answer_go_with_it(env):
+    client, agent, store = env()
+    rem = store.create("Bins", None)
+    agent.client.responses = [calls(("list_reminders", {})), done("Bins tonight."), done("Nothing from me.")]
+    body = client.post("/v1/team", json={"text": "@secretary @coach what's on?"}, headers=AUTH).json()
+    user, secretary, coach = body["messages"]
+    assert [r["id"] for r in secretary["attachments"][0]["reminders"]] == [rem.id]
+    assert "attachments" not in user and "attachments" not in coach  # each answer only its own cards
+    stored = client.get("/v1/team", headers=AUTH).json()["messages"]
+    assert stored[1]["attachments"] == secretary["attachments"] and "attachments" not in stored[2]
+
+
 def test_streamed_team_chat(env):
     client, _, _ = env([ask("coach", "Recovery?"), done("HRV is up."), done("Coach says you're recovered.")])
     got = events(client.post("/v1/team", json={"text": "how am I doing?", "stream": True}, headers=AUTH))

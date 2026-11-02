@@ -261,8 +261,7 @@ def maps_tools(maps: GoogleMaps, tz: ZoneInfo, home: str | None,
                 out.append("No transit rides on this route (it's walking only).")
             depart = next((local(r["depart"]) for r in card_rides[:1] if r["depart"]), None)
             arrive = next((local(r["arrive"]) for r in card_rides[-1:] if r["arrive"]), None)
-        out.append(f"The app shows this route as a card with a button to open it in Maps, so don't paste the link: "
-                   f"{link}")
+        out.append("The app shows this route as a card with a button to open it in Maps (no link to paste).")
         card = {
             "id": hashlib.sha1(f"{mode}|{link_start}|{destination}|{departure_time}|{arrival_time}".encode())
             .hexdigest()[:12],

@@ -18,7 +18,8 @@ from aide.tools import ToolRegistry
 from aide.transit import AlertStore, AlertWatcher, Boards, Location, Transit, Walks
 from test_api import AUTH, ROME, TOKEN, FakeClient, done
 from test_push import APNs, key  # noqa: F401: the key fixture
-from test_transit import DAY, FakeLive, FakePush, at, live_feed, timetable  # noqa: F401: the timetable fixture
+from test_transit import (CROCETTA, DAY, SABOTINO, FakeLive, FakePush, at, live_feed, timetable,  # noqa: F401
+                          vehicle)
 
 START = "c3" * 32
 ACTIVITY = "d4" * 32
@@ -121,10 +122,10 @@ async def test_a_tram_alert_starts_follows_and_ends_its_live_activity(env, timet
         "timestamp": start["timestamp"], "event": "start", "attributes-type": "TramActivityAttributes",
         "attributes": {"key": key, "line": "4", "vehicle": "Tram", "stop": "Porta Nuova", "code": "252",
                        "towards": "Falchera", "alert": a["id"]},
-        "content-state": {"at": tram, "leave": tram - walk - 120, "walk": walk, "live": True, "delay": 120,
+        "content-state": {"at": tram, "leave": tram - walk - 180, "walk": walk, "live": True, "delay": 120,
                           "next": int(at(8, 15).timestamp()), "gone": False, "stops": 0,
                           "near": "Vittorio Emanuele II Cap", "starts": None, "feed_down": False, "at_stop": False,
-                          "riding": False, "to": None},
+                          "riding": False, "to": None, "seen": None, "here": False, "missed": None},
         "stale-date": tram + 120, "input-push-token": 1,
         "alert": {"title": "Tram 4 in 7 min: leave now", "body": start["alert"]["body"], "sound": "default"}}
     assert apns.requests[0].headers["apns-priority"] == "10"
@@ -141,10 +142,12 @@ async def test_a_tram_alert_starts_follows_and_ends_its_live_activity(env, timet
     assert update["content-state"]["delay"] == 240 and update["stale-date"] == tram + 240
     assert apns.requests[1].headers["apns-priority"] == "5"
 
-    await watcher.tick(at(8, 9, 40))  # 08:09 was its time: it has left
+    await watcher.tick(at(8, 9, 40))  # 08:09 was its time, but nobody sees it: it may just be late
+    assert len(apns.requests) == 2 and key in watcher.following
+    await watcher.tick(at(8, 12, 10))  # long gone, and no fix says the user is on it
     end = aps(apns)[2]
     assert end["event"] == "end" and end["content-state"]["gone"] is True
-    assert end["dismissal-date"] == int(at(8, 11, 40).timestamp())
+    assert end["dismissal-date"] == int(at(8, 14, 10).timestamp())
     assert watcher.following == {} and live.token(key) is None
 
 
@@ -184,7 +187,7 @@ async def test_near_the_stop_it_follows_the_earlier_tram_then_the_ride_to_where_
     assert ride["content-state"] | {} == {
         "at": int(at(8, 30).timestamp()), "leave": None, "walk": None, "live": False, "delay": None, "next": None,
         "gone": False, "stops": 0, "near": "Falchera", "starts": None, "feed_down": False, "at_stop": False,
-        "riding": True, "to": "Falchera"}
+        "riding": True, "to": "Falchera", "seen": None, "here": False, "missed": None}
     assert ride["alert"]["title"] == "Falchera is next"
     await watcher.tick(at(8, 20))
     assert len(apns.requests) == 3  # nothing new, and the heads-up only once
@@ -209,14 +212,81 @@ async def test_still_at_the_stop_once_it_has_gone_it_follows_the_next(env, timet
     key = start["attributes"]["key"]
     live.register(key, ACTIVITY, "sandbox")
     location.save(*STOP_252, 15, at(8, 6, 30))
-    await watcher.tick(at(8, 6, 40))  # the 08:05 went without them
+    await watcher.tick(at(8, 6, 40))  # the 08:05 is late, as far as anyone can tell
+    assert len(apns.requests) == 1
+    location.save(*STOP_252, 15, at(8, 8, 10))
+    await watcher.tick(at(8, 8, 20))  # nobody saw it, but it's long past its time: it went without them
     switch = aps(apns)[1]
-    assert switch["event"] == "update" and switch["content-state"]["at"] == int(at(8, 7).timestamp())
-    assert switch["alert"]["title"].startswith("Tram 4 now") and watcher.following[key]["trip"] == "T5"
+    assert switch["event"] == "update" and switch["content-state"]["at"] == int(at(8, 15).timestamp())
+    assert switch["content-state"]["missed"] == int(at(8, 5).timestamp())
+    assert switch["alert"]["title"] == "You missed the 08:05 tram 4"
+    assert switch["alert"]["body"].startswith("Next: 08:15.") and watcher.following[key]["trip"] == "T2"
 
-    location.save(45.0716, 7.6756, 15, at(8, 9))  # walked off, nowhere along its line
-    await watcher.tick(at(8, 9, 10))
+    location.save(45.1000, 7.6756, 15, at(8, 18, 20))  # 4 km off, nowhere along its line: not waiting for it
+    await watcher.tick(at(8, 18, 30))
     assert aps(apns)[2]["event"] == "end" and watcher.following == {}
+
+
+async def test_the_countdown_follows_the_tram_gtt_sees_and_boarding_is_next_to_it(env, timetable):  # noqa: F811
+    db, push, live, apns = env
+    fake = FakePush()
+    location = Location(db.conn, fake)
+    alerts = AlertStore(db.conn, ROME, timetable)
+    alerts.create("6", "16", now=at(9, 55).astimezone(timezone.utc), right_away=True)
+    feed = FakeLive(seen=vehicle("V1", *SABOTINO, at(9, 58, 50)))
+    watcher = AlertWatcher(alerts, Transit(timetable, feed), location, Walks(), fake, live)
+    live.set_start_token("tram", START, "sandbox")
+    location.save(*CROCETTA, 10, at(9, 59))
+    await watcher.tick(at(9, 59, 10))
+    [start] = aps(apns)
+    key = start["attributes"]["key"]
+    state = start["content-state"]
+    assert key.endswith(":V1:20261022") and state["at"] == int(at(10, 3).timestamp())  # waiting to leave Sabotino
+    assert state["seen"] == int(at(9, 58, 50).timestamp()) and state["starts"] == int(at(10, 0).timestamp())
+    live.register(key, ACTIVITY, "sandbox")
+
+    # Held up halfway, past its time: the countdown waits for it instead of sitting at zero.
+    feed.seen = vehicle("V1", 45.09, 7.645, at(10, 3))
+    location.save(*CROCETTA, 10, at(10, 3))
+    await watcher.tick(at(10, 3, 10))
+    state = aps(apns)[1]["content-state"]
+    assert abs(state["at"] - at(10, 4, 30).timestamp()) <= 1 and state["seen"] == int(at(10, 3).timestamp())
+    assert state["stops"] == 0 and state["near"] == "Sabotino" and not state["gone"] and not state["here"]
+
+    feed.seen = vehicle("V1", 45.09, 7.65005, at(10, 4, 40))  # at the stop
+    location.save(*CROCETTA, 10, at(10, 4, 40))
+    await watcher.tick(at(10, 4, 50))
+    state = aps(apns)[2]["content-state"]
+    assert state["here"] is True and state["near"] == "Crocetta" and state["stops"] == 0
+
+    feed.seen = vehicle("V1", 45.09, 7.656, at(10, 5, 30))  # gone on, and the phone with it
+    location.save(45.09, 7.6562, 15, at(10, 5, 35))
+    await watcher.tick(at(10, 5, 40))
+    ride = aps(apns)[3]["content-state"]
+    assert ride["riding"] is True and ride["seen"] == int(at(10, 5, 30).timestamp())
+    assert watcher.following[key]["riding"]
+
+
+async def test_too_far_to_make_it_it_says_so_and_follows_the_next(env, timetable):  # noqa: F811
+    db, push, live, apns = env
+    fake = FakePush()
+    location = Location(db.conn, fake)
+    alerts = AlertStore(db.conn, ROME, timetable)
+    alerts.create("6", "16", now=at(9, 55).astimezone(timezone.utc), right_away=True)
+    watcher = AlertWatcher(alerts, Transit(timetable, FakeLive()), location, Walks(), fake, live)
+    live.set_start_token("tram", START, "sandbox")
+    location.save(*CROCETTA, 10, at(9, 58))
+    await watcher.tick(at(9, 58, 10))
+    [start] = aps(apns)
+    key = start["attributes"]["key"]
+    live.register(key, ACTIVITY, "sandbox")
+    location.save(45.0942, 7.6500, 10, at(10, 0))  # went the other way: minutes from the stop, the 10:03 is 3 away
+    await watcher.tick(at(10, 0, 10))
+    switch = aps(apns)[1]
+    assert switch["alert"]["title"] == "You won’t make the 10:03 tram 16"
+    assert "min walk, it's 3 min away. Next: 10:13, leave by 10:" in switch["alert"]["body"]
+    assert switch["content-state"]["missed"] == int(at(10, 3).timestamp())
+    assert switch["content-state"]["at"] == int(at(10, 13).timestamp()) and watcher.following[key]["trip"] == "V2"
 
 
 async def test_one_countdown_per_tram_kept_across_a_restart(env, timetable):  # noqa: F811
