@@ -79,6 +79,8 @@ struct MacRootView: View {
             // The page's glow runs up under the title; no band of the toolbar's own with a hard edge under it.
             .modifier(SoftTitleBar())
             .environment(\.macWindowSize, windowSize)
+            // Text with no font of its own: the Mac's bigger body (`MacFonts.swift`).
+            .font(.body)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
             .overlay(alignment: .leading) {
                 MacSidebar(section: Binding(get: { nav.section ?? .team }, set: { nav.section = $0 }),
@@ -221,10 +223,10 @@ struct MacSidebar: View {
             HStack(spacing: 10) {
                 Image(systemName: item.icon)
                     .symbolVariant(selected ? .fill : .none)
-                    .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                    .font(.system(size: 15, weight: selected ? .semibold : .regular))
                     .frame(width: 22)
                 Text(item.title)
-                    .font(.system(size: 13, weight: selected ? .semibold : .medium))
+                    .font(.system(size: 14, weight: selected ? .semibold : .medium))
                 Spacer(minLength: 0)
                 if item == .activity, waiting > 0 { badge }
             }
@@ -299,7 +301,7 @@ struct MacSidebar: View {
         return Button { section = item } label: {
             Image(systemName: item.icon)
                 .symbolVariant(selected ? .fill : .none)
-                .font(.system(size: 16, weight: selected ? .semibold : .regular))
+                .font(.system(size: 17, weight: selected ? .semibold : .regular))
                 .foregroundStyle(selected ? Color.primary : Color.secondary)
                 .frame(width: 40, height: 40)
                 .background {
