@@ -108,7 +108,7 @@ async def test_a_tram_alert_starts_follows_and_ends_its_live_activity(env, timet
     a = alerts.create("1", "4", now=at(7, 50).astimezone(timezone.utc))
     feed = FakeLive(live_feed(("T1", [(2, 120)]), ("T5", None)))
     watcher = AlertWatcher(alerts, Transit(timetable, feed), location, Walks(), fake, live)
-    location.save(45.0650, 7.6756, 10, at(7, 59))
+    location.save(45.0650, 7.6756, 10, at(7, 57))  # good for the start, from before it for following: no re-pick
     live.set_start_token("tram", START, "sandbox")
 
     await watcher.tick(at(8, 0, 20))
@@ -225,6 +225,27 @@ async def test_still_at_the_stop_once_it_has_gone_it_follows_the_next(env, timet
     location.save(45.1000, 7.6756, 15, at(8, 18, 20))  # 4 km off, nowhere along its line: not waiting for it
     await watcher.tick(at(8, 18, 30))
     assert aps(apns)[2]["event"] == "end" and watcher.following == {}
+
+
+async def test_a_phone_standing_at_the_stop_sends_nothing_new_and_has_missed_it(env, timetable):  # noqa: F811
+    db, push, live, apns = env
+    fake = FakePush()
+    location = Location(db.conn, fake)
+    alerts = AlertStore(db.conn, ROME, timetable)
+    alerts.create("1", "4", now=at(8, 0).astimezone(timezone.utc))
+    watcher = AlertWatcher(alerts, Transit(timetable, FakeLive()), location, Walks(), fake, live)
+    live.set_start_token("tram", START, "sandbox")
+    location.save(*STOP_252, 15, at(8, 3))  # the only fix: the phone doesn't move again
+    await watcher.tick(at(8, 3, 30))
+    key = aps(apns)[0]["attributes"]["key"]
+    live.register(key, ACTIVITY, "sandbox")
+    await watcher.tick(at(8, 6, 40))
+    await watcher.tick(at(8, 8, 20))  # gone, unseen: could they be on it? nothing says yet
+    assert len(apns.requests) == 1 and key in watcher.following
+    await watcher.tick(at(8, 10, 10))  # 4 min on, still nothing new from the phone: it's where it was, at the stop
+    switch = aps(apns)[1]
+    assert switch["event"] == "update" and switch["alert"]["title"] == "You missed the 08:05 tram 4"
+    assert switch["content-state"]["at"] == int(at(8, 15).timestamp()) and switch["content-state"]["at_stop"] is True
 
 
 async def test_the_countdown_follows_the_tram_gtt_sees_and_boarding_is_next_to_it(env, timetable):  # noqa: F811
