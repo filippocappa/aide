@@ -37,6 +37,10 @@ struct TeamMessage: Decodable, Hashable {
     var ts: String?
     /// Aide's chat it came from; only in `GET /v1/team`.
     var conversationId: String?
+    /// An answer's cards (departures, routes, reminders…), as in a chat.
+    var attachments: [Attachment]?
+
+    var cards: [Attachment] { Attachment.known(attachments) }
 }
 
 struct TeamList: Decodable { let messages: [TeamMessage] }

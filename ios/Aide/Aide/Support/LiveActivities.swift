@@ -76,10 +76,15 @@ final class LiveActivities {
 
     private func hand(_ token: Data, key: String, id: String) async {
         guard sent[id] != token else { return }
-        do {
-            try await api.registerLiveActivity(key: key, token: PushService.hex(token), environment: environment)
-            sent[id] = token
-        } catch {}
+        for attempt in 0..<2 {  // a second go a few seconds later: without the token the server can't move it
+            do {
+                try await api.registerLiveActivity(key: key, token: PushService.hex(token), environment: environment)
+                sent[id] = token
+                return
+            } catch {
+                if attempt == 0 { try? await Task.sleep(for: .seconds(4)) }
+            }
+        }
     }
 
     /// The tokens the server hasn't taken yet, again: a push-started activity's token can come while the app is

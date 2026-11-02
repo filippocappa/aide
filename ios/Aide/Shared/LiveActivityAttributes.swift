@@ -35,14 +35,22 @@ struct TramActivityAttributes: ActivityAttributes {
         var riding: Bool? = nil
         /// Where the user gets off, when known.
         var to: String? = nil
+        /// When GTT last placed the tram (then `at` comes from where it is), or nil.
+        var seen: Double? = nil
+        /// The tram is at the user's stop now.
+        var here: Bool? = nil
+        /// The tram the user just missed or won't make, on the update that moves to this one.
+        var missed: Double? = nil
 
         enum CodingKeys: String, CodingKey {
-            case at, leave, walk, live, delay, next, gone, stops, near, starts, riding, to
+            case at, leave, walk, live, delay, next, gone, stops, near, starts, riding, to, seen, here, missed
             case feedDown = "feed_down"
             case atStop = "at_stop"
         }
 
         var isRiding: Bool { riding == true }
+        var isHere: Bool { here == true && !gone && !isRiding }
+        var missedDate: Date? { missed.map(Date.init(timeIntervalSince1970:)) }
 
         var atDate: Date { Date(timeIntervalSince1970: at) }
         var startsDate: Date? { starts.map(Date.init(timeIntervalSince1970:)) }
