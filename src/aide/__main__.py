@@ -138,8 +138,8 @@ def main() -> None:
         log.info("Claude Code not found: notes are written through OpenRouter only")
     tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
 
-    async def finance_ask(system, text):  # sorting new merchants: the fast model, never waiting at the plan's limit
-        return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, background=True)
+    async def finance_ask(system, text):  # sorting new merchants: a small call, OpenRouter's fast model
+        return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, small=True)
     finance = FinanceStore(db.conn, settings.timezone, finance_ask)
     bank_client = None
     if settings.enable_banking_app_id and settings.enable_banking_key:

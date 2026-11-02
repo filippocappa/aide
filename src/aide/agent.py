@@ -566,7 +566,8 @@ class Agent:
         try:
             with usage.labels(purpose="title"):
                 answer = await ask_text(self.engine, self.client, self.model, TITLE_PROMPT,
-                                        f"User: {text[:1000]}\n\nAssistant: {reply[:1000]}", 1000)
+                                        f"User: {text[:1000]}\n\nAssistant: {reply[:1000]}", 1000,
+                                        small=True)
             title = " ".join(answer.split()).strip("\"'.")
         except Exception:
             log.warning("could not title a chat", exc_info=True)

@@ -10,6 +10,9 @@ Two switches, set apart in the app:
 - Background (`background`): the work nobody waits on: routines and watches (`Engine.run`, a tool loop through the
   Claude Agent SDK, with Aide's own tools run in this process), digest greetings, mail drafts, chat titles and the
   objectives planner (`Engine.ask(background=True)`). At the plan's limit these go to OpenRouter without asking.
+- Small calls (`small`): a chat title, a digest greeting, where the user goes for an event, sorting a merchant. Always
+  OpenRouter's fast model (~0.1¢): on the plan each one paid Claude Code's own ~24k-token prompt, uncached, for a few
+  words. The plan only when OpenRouter refuses (the key's spending cap) and the plan can be used now.
 
 Chat stays on OpenRouter: it streams through Aide's own tool loop.
 """
@@ -142,12 +145,21 @@ class Engine:
     # -- asking ---------------------------------------------------------------------------------
 
     async def ask(self, system: str, content: list[dict], max_tokens: int, fast: bool = False,
-                  wait: bool = True, background: bool = False, effort: str | None = None) -> str:
+                  wait: bool = True, background: bool = False, effort: str | None = None,
+                  small: bool = False) -> str:
         """One model call, with the engine the user chose for notes; while the plan's limit is reached, it waits for
         the user's answer (or the reset). `wait` False: a call that can't wait goes to OpenRouter at the limit
         instead, without asking. `background`: with the background engine, never waiting. `effort` is OpenRouter's
-        (Claude Code thinks on its own)."""
+        (Claude Code thinks on its own). `small`: OpenRouter's fast model, the plan only if OpenRouter says no."""
         tier = "fast" if fast else "smart"
+        if small:
+            try:
+                return await self._openrouter(system, content, max_tokens, "fast", effort)
+            except Exception:
+                if not (self.available and (self.plan_now() or self.plan_for_background())):
+                    raise
+                log.warning("OpenRouter refused a small call; asking the plan", exc_info=True)
+                return await self._claude(system, content, max_tokens, "fast")
         if background:
             if self.plan_for_background():
                 try:
@@ -398,12 +410,12 @@ def _resets(info: dict | None, text: str) -> datetime | None:
 
 
 async def ask_text(engine: "Engine | None", client, model: str, system: str, text: str, max_tokens: int,
-                   effort: str = "low") -> str:
-    """A small background call (a greeting, a title, drafts): through the engine, on the plan when the user chose it
-    for background work; straight to `client` when there's no engine (tests)."""
+                   effort: str = "low", small: bool = False) -> str:
+    """A background call (a greeting, a title, drafts): through the engine, on the plan when the user chose it for
+    background work (`small`: always OpenRouter's fast model); straight to `client` when there's no engine (tests)."""
     if engine is not None:
         return await engine.ask(system, [{"type": "text", "text": text}], max_tokens,
-                                fast=model != engine.models["smart"], background=True, effort=effort)
+                                fast=model != engine.models["smart"], background=True, effort=effort, small=small)
     response = await client.beta.messages.create(
         model=model, max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": text}],
         output_config={"effort": effort})
