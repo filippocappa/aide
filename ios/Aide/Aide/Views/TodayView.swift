@@ -6,9 +6,10 @@ enum TodayFocus: Equatable {
 }
 
 /// The Today tab (#21): one page for the day instead of a digest in the chat, the bell and the Objectives tab. From
-/// the top (opened from the strip on the Team tab): the latest digest as a card, everything waiting for your OK, habits and objectives (Today / Week /
-/// Month), then the team's notes from routines and watches, with the whole activity feed behind them. Each part
-/// loads on its own (docs/API.md, "Today").
+/// the top (opened from the strip on the Team tab): the latest digest as a card, everything waiting for your OK (a
+/// period's proposals as one plan card), the week's goals (each with its days and today's step), today's other
+/// objectives, habits, the month as a strip, then the team's notes from routines and watches, with the whole
+/// activity feed behind them. Each part loads on its own (docs/API.md, "Today", "Objectives").
 struct TodayView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var chat: ChatViewModel
@@ -19,18 +20,18 @@ struct TodayView: View {
     @Environment(\.dismiss) private var dismiss
     /// Things waiting for your OK, for the tab's badge.
     @Binding var waiting: Int
-    /// Only the objectives (Today / Week / Month): the Mac's Objectives section. Nil: the whole page.
+    /// Only the objectives (with their plans waiting): the Mac's Objectives section. False: the whole page.
     var objectivesOnly = false
 
     @State private var approvals: Approvals?
     @State private var habits: [Habit] = []
     @State private var habitsLoaded = false
     @State private var overview: ObjectivesOverview?
-    @State private var period = "day"
     @State private var notes: [ActivityItem] = []
     @State private var notesLoaded = false
     @State private var error: String?
-    @State private var planning = false
+    /// The period being planned now.
+    @State private var planning: String?
     @State private var addingObjective = false
     @State private var opened: Objective?
     @State private var addingHabit = false
@@ -39,8 +40,6 @@ struct TodayView: View {
     @State private var showActivity = false
     /// Picked in the Activity sheet; opened once it's gone.
     @State private var openAfterActivity: String?
-
-    private static let periods = [("day", "Today"), ("week", "Week"), ("month", "Month")]
 
     var body: some View {
         NavigationStack {
@@ -53,8 +52,6 @@ struct TodayView: View {
                         digestSection.id(TodayFocus.digest)
                         WaitingSection(approvals: approvals, agent: nil, reload: { await loadApprovals() }) { open($0) }
                     }
-                    planSection.id(TodayFocus.habits)
-                    if period == "day" && !objectivesOnly { habitsSection }
                     objectivesSection
                     if !objectivesOnly { notesSection.id(TodayFocus.notes) }
                 }
@@ -72,7 +69,6 @@ struct TodayView: View {
                 .onChange(of: env.todayFocus, initial: true) { _, focus in
                     guard let focus else { return }
                     env.todayFocus = nil
-                    if focus == .habits { period = "day" }
                     Task {
                         if focus == .digest { await digest.loadLatest() }
                         if focus == .notes { await loadNotes() }
@@ -92,12 +88,12 @@ struct TodayView: View {
                 default: break
                 }
                 if settings.isPreview, let n = UserDefaults.standard.string(forKey: "previewObjective"),
-                   let o = block?.objectives.first(where: { $0.title.localizedCaseInsensitiveContains(n) }) { opened = o }
+                   let o = allObjectives.first(where: { $0.title.localizedCaseInsensitiveContains(n) }) { opened = o }
                 #endif
             }
             .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await load() } } }
             .sheet(isPresented: $addingObjective) {
-                NewObjectiveSheet(period: period, agents: chat.agents.filter { !$0.orchestrator }) { await add($0) }
+                NewObjectiveSheet(period: "week", agents: chat.agents.filter { !$0.orchestrator }) { await add($0) }
             }
             .sheet(item: $opened) { o in
                 ObjectiveDetailSheet(objective: o, agent: chat.agent(o.agent),
@@ -154,21 +150,6 @@ struct TodayView: View {
 
     // MARK: Habits and objectives
 
-    private var planSection: some View {
-        Section {
-            Picker("Period", selection: $period) {
-                ForEach(Self.periods, id: \.0) { Text($0.1).tag($0.0) }
-            }
-            .pickerStyle(.segmented)
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
-        } header: {
-            if !objectivesOnly { Text("Habits and objectives") }
-        } footer: {
-            if let block { Text(ObjectiveDates.span(block)).font(.subheadline) }
-        }
-    }
-
     @ViewBuilder private var habitsSection: some View {
         if settings.isConfigured {
             Section {
@@ -196,77 +177,167 @@ struct TodayView: View {
         }
     }
 
-    /// The period's objectives, proposals left to Waiting for you.
+    /// The week is the page: its goals as cards with today's steps inside, then today's other objectives, the
+    /// habits, and the month as a strip. Proposals wait in their plan card (in Waiting for you; here, on the
+    /// Mac's own page).
     @ViewBuilder private var objectivesSection: some View {
         if let error {
             Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
         }
-        if let block {
-            // On their own page the proposals are here too, with Accept (on Today they're in Waiting for you).
-            let shown = block.objectives.filter { objectivesOnly || !$0.isProposed }
-            Section {
-                ForEach(shown) { o in
-                    let agent = chat.agent(o.agent)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(agent.name.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(agent.tint)
-                        ObjectiveRow(objective: o, tint: agent.tint, tick: { Task { await tick(o) } }, open: { opened = o })
-                        if o.isProposed {
-                            HStack {
-                                Button("Accept") { Task { await accept(o) } }.tint(agent.tint)
-                                Button("Drop", role: .destructive) { Task { await drop(o) } }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .padding(.leading, 34)
+        if let overview {
+            if objectivesOnly {
+                let plans = ["day", "week", "month"].compactMap { p -> ObjectiveBlock? in
+                    var b = overview[p]
+                    b.objectives = b.proposed
+                    return b.objectives.isEmpty ? nil : b
+                }
+                if !plans.isEmpty {
+                    Section {
+                        ForEach(plans, id: \.period) { plan in
+                            ObjectivePlanCard(plan: plan) { await loadObjectives(); await loadApprovals() }
                         }
-                    }
-                    .swipeActions(edge: .trailing) {
-                        if !o.isLapsed { Button("Drop", role: .destructive) { Task { await drop(o) } } }
-                    }
+                    } header: { Text("Waiting for you") }
+                    .listRowBackground(Theme.row)
                 }
-                if shown.isEmpty {
-                    Text(emptyText(block)).font(.subheadline).foregroundStyle(.secondary)
-                    if !block.planned || block.objectives.isEmpty { proposeButton }
-                }
-            } header: {
-                Text("Objectives")
             }
-            .listRowBackground(Theme.row)
+            weekSection(overview)
+            todaySection(overview)
+            if !objectivesOnly { habitsSection.id(TodayFocus.habits) }
+            monthSection(overview)
         } else if settings.isConfigured && error == nil {
             SkeletonSections(sections: 1, rows: 2)
         }
     }
 
+    private func weekSection(_ overview: ObjectivesOverview) -> some View {
+        let week = overview.week
+        let goals = week.objectives.filter { !$0.isProposed }
+        let today = overview.day.objectives.filter { !$0.isProposed }
+        return Section {
+            ForEach(goals) { goal in
+                WeekGoalCard(goal: goal, agent: chat.agent(goal.agent), steps: today.filter { $0.parent == goal.id },
+                             tick: { o in Task { await tick(o) } }, open: { opened = $0 })
+                    .swipeActions(edge: .trailing) {
+                        if !goal.isLapsed { Button("Drop", role: .destructive) { Task { await drop(goal) } } }
+                    }
+            }
+            if goals.isEmpty {
+                Text(emptyText(week)).font(.subheadline).foregroundStyle(.secondary)
+                if !week.planned || week.objectives.isEmpty { proposeButton("week") }
+            }
+        } header: {
+            HStack(alignment: .firstTextBaseline) {
+                Text("This week")
+                Spacer()
+                Text(ObjectiveDates.span(week)).textCase(nil)
+            }
+        } footer: {
+            if !goals.isEmpty { Text(weekSummary(goals, week)) }
+        }
+        .listRowBackground(Theme.row)
+    }
+
+    /// Today's objectives that aren't a week goal's step. Nothing when there are none.
+    @ViewBuilder private func todaySection(_ overview: ObjectivesOverview) -> some View {
+        let goals = Set(overview.week.objectives.filter { !$0.isProposed }.map(\.id))
+        let loose = overview.day.objectives.filter { !$0.isProposed && !goals.contains($0.parent ?? "") }
+        if !loose.isEmpty {
+            Section {
+                ForEach(loose) { o in
+                    let agent = chat.agent(o.agent)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(agent.name.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(agent.tint)
+                        ObjectiveRow(objective: o, tint: agent.tint, tick: { Task { await tick(o) } }, open: { opened = o })
+                    }
+                    .swipeActions(edge: .trailing) {
+                        if !o.isLapsed { Button("Drop", role: .destructive) { Task { await drop(o) } } }
+                    }
+                }
+            } header: {
+                Text("Also today")
+            }
+            .listRowBackground(Theme.row)
+        }
+    }
+
+    /// The month, small: a bar per goal. Left out when it's planned and has none.
+    @ViewBuilder private func monthSection(_ overview: ObjectivesOverview) -> some View {
+        let month = overview.month
+        let goals = month.objectives.filter { !$0.isProposed }
+        if !goals.isEmpty || !month.planned {
+            Section {
+                ForEach(goals) { goal in
+                    MonthGoalRow(goal: goal, agent: chat.agent(goal.agent),
+                                 tick: { Task { await tick(goal) } }, open: { opened = goal })
+                        .swipeActions(edge: .trailing) {
+                            if !goal.isLapsed { Button("Drop", role: .destructive) { Task { await drop(goal) } } }
+                        }
+                }
+                if goals.isEmpty {
+                    Text(emptyText(month)).font(.subheadline).foregroundStyle(.secondary)
+                    proposeButton("month")
+                }
+            } header: {
+                Text(ObjectiveDates.date(month.start)?.formatted(.dateTime.month(.wide)) ?? "This month")
+            }
+            .listRowBackground(Theme.row)
+        }
+    }
+
+    /// "1 of 3 done · 5 days left".
+    private func weekSummary(_ goals: [Objective], _ week: ObjectiveBlock) -> String {
+        let done = goals.filter(\.done).count
+        var out = "\(done) of \(goals.count) done"
+        if let end = ObjectiveDates.date(week.end) {
+            let left = (Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: .now), to: end).day ?? 0) + 1
+            out += left == 1 ? " · last day" : " · \(left) days left"
+        }
+        return out
+    }
+
     private func emptyText(_ block: ObjectiveBlock) -> String {
-        if !block.proposed.isEmpty { return "Proposals are waiting for your OK above." }
+        let period = block.period
+        if !block.proposed.isEmpty {
+            let above = objectivesOnly ? "above" : "in Waiting for you"
+            return "The plan for \(ObjectiveDates.this(period)) is \(above). " + ObjectiveDates.starts(block.startsAt) + "."
+        }
         if block.planned { return "Nothing set for \(ObjectiveDates.this(period)). Add one, or ask the team for a plan." }
         return "Not planned yet. The team proposes \(ObjectiveDates.when(period)), or now:"
     }
 
-    private var proposeButton: some View {
-        Button { Task { await plan() } } label: {
+    private func proposeButton(_ period: String) -> some View {
+        Button { Task { await plan(period) } } label: {
             HStack {
                 Label("Propose \(ObjectiveDates.this(period))'s objectives", systemImage: "sparkles")
-                if planning { Spacer(); ProgressView() }
+                if planning == period { Spacer(); ProgressView() }
             }
         }
-        .disabled(planning)
+        .disabled(planning != nil)
     }
 
     private var addMenu: some View {
         Menu {
             Button("Add an objective", systemImage: "scope") { addingObjective = true }
             Button("Add a habit", systemImage: "flame") { addingHabit = true }
-            Button("Propose new objectives", systemImage: "sparkles") { Task { await plan() } }
-                .disabled(planning)
+            Menu {
+                Button("For today") { Task { await plan("day") } }
+                Button("For this week") { Task { await plan("week") } }
+                Button("For this month") { Task { await plan("month") } }
+            } label: {
+                Label("Propose new objectives", systemImage: "sparkles")
+            }
+            .disabled(planning != nil)
         } label: {
-            if planning { ProgressView() } else { Image(systemName: "plus") }
+            if planning != nil { ProgressView() } else { Image(systemName: "plus") }
         }
         .accessibilityLabel("Add or propose")
         .disabled(!settings.isConfigured)
     }
 
-    private var block: ObjectiveBlock? { overview?[period] }
+    private var allObjectives: [Objective] {
+        guard let overview else { return [] }
+        return overview.day.objectives + overview.week.objectives + overview.month.objectives
+    }
 
     // MARK: Notes
 
@@ -400,10 +471,10 @@ struct TodayView: View {
         catch { self.error = describe(error) }
     }
 
-    private func plan() async {
-        guard let block else { return }
-        planning = true
-        defer { planning = false }
+    private func plan(_ period: String) async {
+        guard let block = overview?[period] else { return }
+        planning = period
+        defer { planning = nil }
         do {
             overview?[block.period] = try await env.api.planObjectives(period: block.period, date: block.start)
             error = nil

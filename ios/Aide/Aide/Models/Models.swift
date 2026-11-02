@@ -1487,6 +1487,10 @@ struct Objective: Decodable, Identifiable, Hashable {
         let label: String?
         /// The reminder that ticks a `reminder` measure.
         let reminder: String?
+        /// Where it comes from, in a word or two: "Apple Health", the habit's name. Nil from an older server.
+        let origin: String?
+
+        enum CodingKeys: String, CodingKey { case type, label, reminder, origin = "source" }
     }
     let id: String
     let agent: String
@@ -1505,6 +1509,12 @@ struct Objective: Decodable, Identifiable, Hashable {
     let addedBy: String?
     /// A checklist; nil from a server older than steps.
     var steps: [ObjectiveStep]?
+    /// Local "YYYY-MM-DDTHH:MM" it only makes sense before (a mid-term), or nil.
+    var due: String?
+    /// On a proposal: when it starts by itself (ISO with offset). Nil otherwise, or it waits for an OK.
+    var startsAt: String?
+    /// A week's measured objective, Monday to Sunday; `count` nil for days to come.
+    var days: [ObjectiveDay]?
 
     var isProposed: Bool { status == "proposed" }
     var isLapsed: Bool { status == "lapsed" }
@@ -1515,6 +1525,11 @@ struct Objective: Decodable, Identifiable, Hashable {
     /// Ticked by tapping: a hand-ticked one, or one tied to a reminder (the tap completes the reminder). The rest
     /// tick themselves from the data.
     var canTick: Bool { !isLapsed && (isManual || reminderID != nil) }
+}
+
+struct ObjectiveDay: Decodable, Hashable {
+    let date: String
+    let count: Int?
 }
 
 struct ObjectiveStep: Codable, Hashable {
@@ -1544,6 +1559,8 @@ struct ObjectiveBlock: Decodable, Hashable {
     let start: String
     let end: String
     let planned: Bool
+    /// When its waiting proposals start by themselves; nil when none waits.
+    var startsAt: String?
     var objectives: [Objective]
 
     var proposed: [Objective] { objectives.filter(\.isProposed) }
@@ -1578,7 +1595,7 @@ struct ObjectivePatch: Encodable {
     var steps: [ObjectiveStep]?
 }
 struct NewObjective: Encodable { let agent: String; let period: String; let title: String; var steps: [String] = [] }
-struct ObjectivesAccept: Encodable { let period: String; let date: String; var ids: [String]? }
+struct ObjectivesAccept: Encodable { let period: String; let date: String; var ids: [String]?; var drop: [String]? }
 struct ObjectivesPlan: Encodable { let period: String; let date: String }
 
 struct DigestSchedule: Codable, Equatable {
@@ -1705,6 +1722,8 @@ struct QueuedAction: Decodable, Identifiable, Hashable {
 struct Approvals: Decodable {
     var waiting: Int
     var actions: [QueuedAction]
+    /// Each period's plan with proposals waiting (only those in `objectives`); nil from an older server.
+    var plans: [ObjectiveBlock]?
     var objectives: [Objective]
     var proposals: [NotebookProposal]
     /// Reply drafts waiting to be sent; nil from a server before them.

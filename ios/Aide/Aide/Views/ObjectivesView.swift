@@ -266,7 +266,7 @@ struct ObjectiveDetailSheet: View {
 }
 
 /// How far along a measured objective is; a tick once it's done.
-private struct ProgressRing: View {
+struct ProgressRing: View {
     let fraction: Double
     let done: Bool
     let tint: Color
