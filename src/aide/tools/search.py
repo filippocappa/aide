@@ -93,9 +93,12 @@ class Tavily:
         return r.json()
 
     async def search(self, query: str, max_results: int, topic: str, pages: bool = False) -> dict:
-        """`pages`: each result also carries its page's text (`raw_content`), so one call reads them all."""
+        """`pages`: each result also carries its page's text (`raw_content`), so one call reads them all, from
+        Tavily's advanced search (2 credits, ~1 s slower; it finds the makers' own support pages the basic one misses)."""
         return await self._post("/search", {"query": query, "max_results": max_results, "topic": topic,
-                                            "include_answer": True, **({"include_raw_content": True} if pages else {})})
+                                            "include_answer": True,
+                                            **({"include_raw_content": True, "search_depth": "advanced"} if pages
+                                               else {})})
 
     async def extract(self, url: str) -> dict:
         return await self._post("/extract", {"urls": [url]})
@@ -141,6 +144,9 @@ def search_tools(tavily: Tavily, tz: ZoneInfo) -> list[Tool]:
         if rest := [r for r in results if r not in read]:
             lines.append("\nAlso found, not read:\n" + "\n".join(f"- {r.get('title') or r['url']}: {r['url']}"
                                                                 for r in rest))
+        lines.append("\nIf part of the question is still open after these (a step, a setting, whether it works "
+                     "with something), research that part now with its own query before answering. Don't tell "
+                     "the user to check it themselves.")
         return "\n".join(lines)
 
     async def fetch_page(url: str) -> str:

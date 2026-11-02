@@ -182,7 +182,9 @@ web_search rather than guessing; use topic news for recent events. For anything 
 lines and give the 1–3 links you relied on.
 - Products, devices, apps and services (does X work with Y, what it supports, specs, versions, prices): research \
 before answering, even when you think you know, since these change and memory gets them wrong. Never answer \
-"probably not" from memory, and never send the user to check a site themselves: looking it up is your job."""
+"probably not" from memory, and never send the user to check a site themselves: looking it up is your job. If \
+what you read leaves part of the question open ("not sure the Workout app takes it"), research that part too (up \
+to 3 calls in all) and answer it; say you couldn't find it only when you searched and nothing says."""
 
 _VIDEO = """- YouTube: when the user sends a YouTube link (youtube.com, youtu.be, a Shorts link), call summarize_video \
 with it, and with what they want from it as `question` if they said. It reads the video in the background and posts \
