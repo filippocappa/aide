@@ -230,9 +230,12 @@ private struct TeamBubble: View {
                 }
                 .font(.subheadline.weight(.semibold))
                 RichText(text: message.text).font(.callout)
+                ForEach(Array(message.cards.enumerated()), id: \.offset) { _, attachment in
+                    AttachmentCard(attachment: attachment).padding(.top, 6)
+                }
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: message.cards.isEmpty ? .combine : .contain)
     }
 }
 

@@ -41,13 +41,18 @@ struct TramLiveActivity: Widget {
     }
 }
 
-/// Minutes to the tram, counting down by itself; "Gone" once it has left.
+/// Minutes to the tram, counting down by itself; "Here" at the stop, "Due" when it's late past its time (the next
+/// update moves it), "Gone" once it has left.
 struct TramCountdown: View {
     let state: TramActivityAttributes.ContentState
 
     var body: some View {
-        if state.gone || state.atDate <= Date() {
-            Text(state.gone ? (state.isRiding ? "There" : "Gone") : "Now")
+        if state.gone {
+            Text(state.isRiding ? "There" : "Gone")
+        } else if state.isHere {
+            Text("Here")
+        } else if state.atDate <= Date() {
+            Text("Due")
         } else {
             Text(timerInterval: Date()...state.atDate, countsDown: true, showsHours: false)
                 .monospacedDigit().multilineTextAlignment(.trailing)
@@ -82,7 +87,8 @@ struct TramDetails: View {
             }
             Spacer(minLength: 0)
             if state.live {
-                Label(delayText, systemImage: "dot.radiowaves.left.and.right")
+                // Placed by GTT: where it is, not a guess.
+                Label(delayText, systemImage: state.seen == nil ? "dot.radiowaves.left.and.right" : "location.fill")
                     .foregroundStyle(state.delay ?? 0 > 60 ? .orange : .green)
             } else if state.feedDown == true {
                 Label("GTT live down", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -138,6 +144,7 @@ struct TramTrack: View {
     }
 
     private func caption(_ stops: Int) -> String {
+        if state.isHere { return "At your stop now" }
         if state.isRiding, let to = state.to {
             if stops == 0 { return "\(to) is next: get off there" }
             return "\(stops) stop\(stops == 1 ? "" : "s") before \(to)" + (state.near.map { " · next \($0)" } ?? "")
@@ -169,6 +176,11 @@ struct TramLockScreen: View {
                     TramCountdown(state: state).font(.title2.weight(.bold))
                     Text(state.atDate, style: .time).font(.caption2).foregroundStyle(.secondary)
                 }
+            }
+            if let missed = state.missedDate, !state.isRiding {
+                Label("Missed the \(missed.formatted(date: .omitted, time: .shortened)): this is the next one",
+                      systemImage: "arrow.uturn.forward")
+                    .font(.caption.weight(.medium)).foregroundStyle(.orange).lineLimit(1)
             }
             TramTrack(state: state, color: LineBadge(line: attributes.line, vehicle: attributes.vehicle).color)
             TramDetails(attributes: attributes, state: state)
