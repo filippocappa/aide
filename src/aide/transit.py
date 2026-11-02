@@ -80,8 +80,8 @@ SEEN_AGAIN = 60  # seconds: the countdown is updated when where the tram was las
 NOT_SEEN_GONE = timedelta(minutes=3)  # a followed tram with no position: this long past its time, it has gone
 LIVE_STALE = timedelta(minutes=2)  # after its time, the countdown is stale; and the ended one goes after this
 LIVE_FOR = timedelta(hours=2)  # a tram followed longer than this is let go
-FIX_FRESH = timedelta(minutes=2)  # a fix this young says where the user is now (the app sends one every ~20 s while a
-# tram's Live Activity is on)
+FIX_FRESH = timedelta(minutes=2)  # a fix this young says where the user is now (while a tram's Live Activity is on
+# the app sends one at most every ~20 s as the phone moves, none while it stands still)
 FIX_GOOD = 200  # metres: a fix vaguer than this doesn't say which stop the user is at, or whether they're on board
 AT_THE_STOP = 100  # metres: a fix this close to the stop (or within its accuracy) has the user there
 TOKEN_NUDGE = timedelta(minutes=1)  # at most one wake-up for a countdown's missing token per this long
@@ -1273,7 +1273,10 @@ class AlertWatcher:
             return await self.ride(key, now)
         stop = self.transit.timetable.stop(f["stop"])
         fix = self.location.latest()
-        fix = fix if fix and now - fix["at"] <= FIX_FRESH and (fix["accuracy"] or 0) <= FIX_GOOD and stop else None
+        # While the countdown is on the app sends a fix each time the phone moves 10 m, so one from since it started
+        # still says where the user is: a phone standing at the stop sends nothing new (seen 2026-11-02).
+        fresh = fix and (now - fix["at"] <= FIX_FRESH or fix["at"] >= f["started"] - FIX_FRESH)
+        fix = fix if fresh and (fix["accuracy"] or 0) <= FIX_GOOD and stop else None
         walk, at_stop = f["walk"], False
         if fix:
             at_stop = metres(fix["lat"], fix["lon"], stop["lat"], stop["lon"]) <= max(AT_THE_STOP, fix["accuracy"] or 0)
@@ -1297,8 +1300,11 @@ class AlertWatcher:
                     log.info("tram Live Activity %s: on board", key)
                     return await self.ride(key, now)
                 if gone:
-                    if on is None and fix is not None and now - f["gone_at"] < BOARD_WAIT:
-                        return  # can't tell yet
+                    if on is None and fix is not None:
+                        if now - f["gone_at"] < BOARD_WAIT:
+                            return  # can't tell yet: on board, the phone sends fixes as it moves
+                        if at_stop:
+                            on = False  # nothing new from the phone since: still at the stop, it went without them
                     near = fix is not None and metres(fix["lat"], fix["lon"], stop["lat"], stop["lon"]) <= WALK_SHOWN
                     if on is None or not near or f.get("misses", 0) >= MISSES:
                         log.info("tram Live Activity %s: gone (%s)", key, "no fix" if on is None else "not on it")
