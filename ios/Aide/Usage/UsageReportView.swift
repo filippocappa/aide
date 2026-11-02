@@ -14,6 +14,8 @@ struct UsageReportData {
     /// The phone shown, when other devices sharing Screen Time were left out (`leftOut`).
     var device: String? = nil
     var leftOut: [String] = []
+    /// Debug builds: how long iOS took to hand the usage over and whether the extension can keep anything.
+    var debug: String? = nil
 }
 
 /// The Screen tab's page under the switch and the date: the total (every app's time added up), the focus score, the
@@ -101,6 +103,9 @@ struct UsageReportView: View {
                         // A check against Settings → Screen Time: the apps as iOS hands them over, and its own total.
                         Text("Apps \(UsageMath.duration(day.added)) · iOS \(UsageMath.duration(day.reported))")
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    if let debug = data.debug {
+                        Text(debug).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                     }
                     #endif
                 }
