@@ -124,7 +124,7 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   a week strip with a dot per calendar and the chosen day's events (today: what's left and its reminders), what's
   waiting, the team to open a chat, the sections as icons. The window toolbar has no background of its own (no hard
   line). Closing the window leaves Aide running.
-- On the Mac, Return sends in a chat (`MessageBox`'s `onReturn`; Option-Return is a new line), images dropped on a
+- On the Mac, Return sends in a chat (`MessageBox`'s `onReturn`; Option-, Shift-, Cmd- or Cmd-Shift-Return is a new line), images dropped on a
   chat are added like picked photos (`photoDrop` in `Support/Photos.swift`), and PDFs or recordings dropped on a
   course page are uploaded.
 - Push (`Mac/MacAppDelegate.swift`): alerts only, with the topic `<bundle id>.mac` (the server's `push.py`). Off unless

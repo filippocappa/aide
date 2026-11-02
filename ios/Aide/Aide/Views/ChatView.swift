@@ -492,7 +492,7 @@ struct MessageBox<Buttons: View>: View {
     /// Changed by the chat on every send: the text field is made anew, so the keyboard has nothing left to write a
     /// pending prediction or autocorrection back into (it put the sent message back in the box).
     var reset = 0
-    /// Return on the Mac sends (Option-Return starts a new line); on the phone Return is a new line.
+    /// Return on the Mac sends (Option-, Shift- or Cmd-Return starts a new line); on the phone Return is a new line.
     var onReturn: (() -> Void)?
     let buttons: Buttons
 
@@ -514,6 +514,12 @@ struct MessageBox<Buttons: View>: View {
                 .focused(focused)
                 #if os(macOS)
                 .onSubmit { onReturn?() }
+                .onKeyPress(.return, phases: .down) { press in
+                    // Shift-, Cmd- or Cmd-Shift-Return: a new line at the cursor, as Option-Return makes.
+                    guard !press.modifiers.isDisjoint(with: [.shift, .command]) else { return .ignored }
+                    NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil)
+                    return .handled
+                }
                 #endif
                 .id(reset)
                 .padding(.leading, 8)
