@@ -278,7 +278,7 @@ server-sent events (checked through `tailscale serve`, not buffered). Writing in
 @mentions pick who answers (else Aide, which may ask the others), each sees the last 30 team messages, streamed
 with `working`, `team` and `done`. App (dfbca79): the "Your team" home grid, a drawn
 figure per agent (`Support/Figure.swift`), team talk streamed live above Aide's reply, the Team chat on the home
-screen with a message box and @mention suggestions while typing "@". Being tried on the phone (#11).
+screen with a message box and @mention suggestions while typing "@". Tried on the phone (#11, closed).
 
 **Done, both sides, not yet tried live:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
 and `run`, a chat per routine (`routine` on conversation rows and on the messages a run posts), the scheduler
@@ -498,7 +498,7 @@ habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departure
 `aide://` links (`PushRoute(url:)`). The first phone install needs the App Group and the `.widgets` bundle ID on the
 team (Xcode's automatic signing adds them).
 
-**Done, both sides (2026-10-27), not yet tried on the phone:** more in the Dynamic Island (#24, two of its ideas;
+**Done, both sides (2026-10-27), closed:** more in the Dynamic Island (#24, two of its ideas;
 contract in `docs/API.md`, "Live Activities"). The next event: 10 min before a timed event on the Work calendar the server
 (`upcoming.py`) push-starts an `event` countdown with its place, follows a move, ends at the start; none when leave-now
 set a tram alert for it; off in Settings → Notifications (`/v1/live/settings`). Notes jobs: Professor's agent activity
@@ -617,14 +617,11 @@ are transfers, money in ≥ €10 is pushed (`finance`), a push a week before th
 the total under Accounts, Pending on rows. Live: the Enable Banking application is set up and a bank is linked
 (2026-11-02).
 
-**Next** (filed as GitHub issues, #11 first):
-1. Try it all on the phone (#11): voice (works on the phone since the mic restarts after iOS's audio setup change; `SpeechDetector` tuned from
-   `voice.log`, pulled with `devicectl` as in `Support/VoiceLog.swift`; talking over Aide not yet tried), streamed
-   replies, reminder lists, the team grid, Team chat, routines, photos and the food log.
-2. Ideas from the agent-app research, not yet chosen: (#15, digests in a feed, is mostly covered by Today; #14,
-   Goals, by objectives.)
-3. New, filed 2026-10-27, not yet chosen: the rest of #24 (buttons in the expanded view, voice chat in the background).
-4. Recording a lecture in the app. Notebooks for the other courses.
+**Next** (GitHub issues):
+1. Voice redesign (#34, the only open issue): talking with an agent and quizzes by voice are too slow. Multiple-choice
+   answers marked with no model call first, then an overlapped pipeline (streamed audio, end of turn on the server,
+   speaking from the first words) and a streaming voice; a realtime speech-to-speech model as a spike.
+2. Recording a lecture in the app. Notebooks for the other courses.
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
