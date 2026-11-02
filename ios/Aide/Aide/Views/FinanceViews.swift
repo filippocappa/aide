@@ -378,7 +378,7 @@ struct PaymentSheet: View {
                     header
                     VStack(spacing: 0) {
                         NavigationLink {
-                            CategoryPicker(selected: payment.category, tint: tint) { pick($0) }
+                            CategoryPicker(selected: payment.category, tint: tint) { pick($0) }.macPageBack()
                         } label: {
                             HStack(spacing: 12) {
                                 CategoryIcon(category: payment.cat, tint: tint, size: 34)
@@ -639,7 +639,7 @@ struct SubscriptionsCard: View {
             if !list.hidden.isEmpty {
                 Divider().padding(.leading, 16)
                 NavigationLink {
-                    HiddenSubscriptionsView(hidden: list.hidden, tint: tint, changed: changed)
+                    HiddenSubscriptionsView(hidden: list.hidden, tint: tint, changed: changed).macPageBack()
                 } label: {
                     HStack {
                         Text(list.hidden.count == 1 ? "1 hidden" : "\(list.hidden.count) hidden")

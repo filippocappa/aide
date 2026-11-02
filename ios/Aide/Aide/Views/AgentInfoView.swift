@@ -54,7 +54,7 @@ struct AgentInfoSheet: View {
                         }
                         VStack(spacing: 0) {
                             NavigationLink {
-                                InstructionsPage(agent: agent)
+                                InstructionsPage(agent: agent).macPageBack()
                             } label: {
                                 linkRow("How \(agent.name) is told to work", icon: "doc.text")
                             }

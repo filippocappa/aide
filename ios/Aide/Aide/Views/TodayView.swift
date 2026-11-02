@@ -68,7 +68,7 @@ struct TodayView: View {
                     ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
                     #endif
                 }
-                .navigationDestination(isPresented: $showHabits) { HabitsScreen(habits: $habits) }
+                .navigationDestination(isPresented: $showHabits) { HabitsScreen(habits: $habits).macPageBack() }
                 .onChange(of: env.todayFocus, initial: true) { _, focus in
                     guard let focus else { return }
                     env.todayFocus = nil

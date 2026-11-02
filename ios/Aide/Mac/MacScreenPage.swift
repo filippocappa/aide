@@ -29,7 +29,7 @@ struct MacScreenPage: View {
             .background(alignment: .top) { glow }
             .background(Theme.grouped)
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(isPresented: $showLocks) { MacScreenTimeView() }
+            .navigationDestination(isPresented: $showLocks) { MacScreenTimeView().macPageBack() }
             .task { await screenTime.sync() }
         }
     }

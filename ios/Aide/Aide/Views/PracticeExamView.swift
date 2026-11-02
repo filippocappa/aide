@@ -529,13 +529,12 @@ private struct PracticeTaking: View {
     }
 
     #if os(macOS)
-    /// The Mac's top: Quit, where you are, the clock and full screen (the phone has them in its navigation bar).
+    /// The Mac's top: quit (✕), where you are, the clock and full screen (the phone has them in its navigation bar).
     private var macBar: some View {
         HStack(spacing: 14) {
-            Button("Quit") { confirmQuit = true }
-                .buttonStyle(.plain).font(.body.weight(.medium)).foregroundStyle(.secondary)
+            // Like every sheet's close button, but it asks first: the answers would be lost.
+            MacGlassButton(symbol: "xmark", help: "Quit (Esc)") { confirmQuit = true }
                 .keyboardShortcut(.cancelAction)
-                .help("Quit (Esc)")
             Text("\(page + 1) of \(quiz.questions.count)").font(.headline).monospacedDigit()
             Spacer()
             if let deadline {
@@ -585,9 +584,13 @@ private struct PracticeTaking: View {
             .buttonStyle(CardPress())
             .disabled(finishing || checking || (current.map { uploadingPhotos($0) } ?? false))
             Spacer()
+            // Hand it in before the last question: a chip, the back button's twin on the other side.
             Button { confirmFinish = true } label: {
-                Text("Finish").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.study)
-                    .frame(width: 60, height: 44).contentShape(Rectangle())
+                Text("Finish").font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 18)
+                    .frame(height: 44)
+                    .background(Theme.chip, in: Capsule())
+                    .contentShape(Capsule())
             }
                 .buttonStyle(.plain)
                 .opacity(isLast && !canCheck ? 0 : 1)

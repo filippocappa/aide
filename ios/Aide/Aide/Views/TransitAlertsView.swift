@@ -37,7 +37,7 @@ struct TransitAlertsView: View {
                             } else {
                                 alerts.removeAll { $0.id == alert.id }
                             }
-                        }
+                        }.macPageBack()
                     } label: {
                         TransitAlertRow(alert: alert) { on in Task { await setEnabled(alert, on) } }
                     }

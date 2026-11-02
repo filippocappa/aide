@@ -160,7 +160,7 @@ struct ScreenTimeView: View {
         }
         Section {
             ForEach(screenTime.locks.filter { !$0.once }) { lock in
-                NavigationLink { LockEditor(lock: lock, apps: screenTime.apps(for: lock)) } label: { LockRow(lock: lock) }
+                NavigationLink { LockEditor(lock: lock, apps: screenTime.apps(for: lock)).macPageBack() } label: { LockRow(lock: lock) }
             }
             ForEach(screenTime.locks.filter { $0.once && !$0.locked }) { lock in
                 LockRow(lock: lock)
@@ -177,7 +177,7 @@ struct ScreenTimeView: View {
         Section {
             ForEach(screenTime.limits) { limit in
                 NavigationLink {
-                    LimitEditor(limit: limit, apps: screenTime.limitApps[limit.id] ?? FamilyActivitySelection())
+                    LimitEditor(limit: limit, apps: screenTime.limitApps[limit.id] ?? FamilyActivitySelection()).macPageBack()
                 } label: {
                     LimitRow(limit: limit) { unlockingLimit = limit }
                 }
