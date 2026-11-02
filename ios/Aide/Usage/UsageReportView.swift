@@ -77,6 +77,13 @@ struct UsageReportView: View {
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(line.under ? UsageColors.good : UsageColors.over)
                     }
+                    #if DEBUG
+                    if data.kind == .day, day.reported > 0 {
+                        // A check against Settings → Screen Time: the apps as iOS hands them over, and its own total.
+                        Text("Apps \(UsageMath.duration(day.added)) · iOS \(UsageMath.duration(day.reported))")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    #endif
                 }
                 Spacer(minLength: 0)
                 if let focus {
