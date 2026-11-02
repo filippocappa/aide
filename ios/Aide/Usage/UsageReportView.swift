@@ -58,7 +58,7 @@ struct UsageReportView: View {
             .padding(.bottom, 32)
         }
         .scrollContentBackground(.hidden)
-        .background(Color.clear)
+        .background(UsageColors.page)
     }
 
     // MARK: The summary card
@@ -367,9 +367,13 @@ enum UsageColors {
     static let cyan = [Color(red: 0.39, green: 0.82, blue: 1.0), Color(red: 0.11, green: 0.65, blue: 0.79)]
     #if os(iOS)
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
+    /// The page under the report, opaque on the phone so the placeholder behind it (`UsageSkeleton`) never shows
+    /// through once it's drawn; the same colour as Health's page.
+    static let page = Color(uiColor: .systemGroupedBackground)
     static let line = Color(uiColor: .separator).opacity(0.6)
     #else
     static let card = Theme.row
+    static let page = Color.clear
     static let line = Color(nsColor: .separatorColor).opacity(0.6)
     #endif
     static let good = Color(red: 0.2, green: 0.75, blue: 0.4)

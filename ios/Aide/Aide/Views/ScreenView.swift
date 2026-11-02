@@ -26,21 +26,21 @@ struct ScreenView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
                 .padding(.bottom, 10)
+                .background { glow }
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(alignment: .top) { glow }
         .background(Theme.grouped)
         .navigationDestination(isPresented: $showLocks) { ScreenTimeView().macPageBack() }
         .task { await screenTime.sync() }
     }
 
-    /// The page's cyan, faded out by the end of the header (the report under it draws its own page).
+    /// The page's cyan, gone by the end of the header: the report under it draws its own opaque page.
     private var glow: some View {
-        LinearGradient(colors: [UsageColors.cyan[0].opacity(0.32), UsageColors.cyan[0].opacity(0)],
+        LinearGradient(colors: [UsageColors.cyan[0].opacity(0.32), UsageColors.cyan[0].opacity(0.04),
+                                UsageColors.cyan[0].opacity(0)],
                        startPoint: .top, endPoint: .bottom)
-            .frame(height: 420)
-            .ignoresSafeArea()
+            .ignoresSafeArea(edges: .top)
     }
 
     private var header: some View {
@@ -176,17 +176,82 @@ struct ScreenView: View {
 }
 
 /// The report alone, with nothing from the page's environment, so a chat reply or a Screen Time sync redrawing the
-/// page doesn't make it ask iOS again: it changes only with the page (day, week, month) or the date. A spinner sits
-/// behind it until the extension draws (its card covers it).
+/// page doesn't make it ask iOS again: it changes only with the page (day, week, month) or the date. The placeholder
+/// sits behind it until the extension draws its opaque page over it.
 private struct UsageReportHost: View {
     let kind: UsageKind
     let date: Date
 
     var body: some View {
         ZStack(alignment: .top) {
-            ProgressView().padding(.top, 90)
+            UsageSkeleton()
             DeviceActivityReport(.usage(kind), filter: .usage(kind, containing: date))
         }
+    }
+}
+
+/// The report's shape while iOS reads the usage: the summary card (the number, the stats, the bars) and the first
+/// apps, in grey, breathing.
+private struct UsageSkeleton: View {
+    @State private var dim = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        bar(width: 150, height: 11)
+                        bar(width: 170, height: 44)
+                        bar(width: 190, height: 14)
+                    }
+                    Spacer()
+                    Circle().stroke(Color.secondary.opacity(0.18), lineWidth: 10).frame(width: 110, height: 110)
+                }
+                Divider().opacity(0.4)
+                HStack {
+                    ForEach(0..<3, id: \.self) { _ in
+                        VStack(alignment: .leading, spacing: 6) { bar(width: 44, height: 16); bar(width: 64, height: 11) }
+                        Spacer()
+                    }
+                }
+                HStack(alignment: .bottom, spacing: 5) {
+                    ForEach([18, 30, 8, 4, 12, 40, 70, 24, 10, 6, 14, 20], id: \.self) { h in
+                        RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.18))
+                            .frame(height: CGFloat(h) * 1.4)
+                    }
+                }
+                .frame(height: 100, alignment: .bottom)
+            }
+            .padding(16)
+            .background(UsageColors.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            VStack(alignment: .leading, spacing: 16) {
+                bar(width: 100, height: 16)
+                ForEach(0..<4, id: \.self) { i in
+                    HStack(spacing: 14) {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.secondary.opacity(0.18))
+                            .frame(width: 44, height: 44)
+                        VStack(alignment: .leading, spacing: 8) {
+                            bar(width: CGFloat(120 - i * 15), height: 13)
+                            bar(width: nil, height: 6)
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(UsageColors.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .opacity(dim ? 0.5 : 1)
+        .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever()) { dim = true } }
+        .accessibilityLabel("Loading screen time")
+    }
+
+    private func bar(width: CGFloat?, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: height / 2.5, style: .continuous).fill(Color.secondary.opacity(0.18))
+            .frame(maxWidth: width ?? .infinity, alignment: .leading)
+            .frame(width: width, height: height)
     }
 }
 
