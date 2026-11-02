@@ -67,6 +67,7 @@ from .tools.reminders import reminder_tools
 from .tools.search import Tavily, search_tools
 from .tools.plans import plan_tools
 from .tools.quiz import quiz_tools
+from .tools.moodle import moodle_tools
 from .tools.study import study_tools
 from .tools.transit import leave_tools, transit_tools
 from .tools.videos import video_tools
@@ -137,6 +138,9 @@ def main() -> None:
     if not engine.available:
         log.info("Claude Code not found: notes are written through OpenRouter only")
     tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
+    moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push,  # its worker comes later
+                        save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token), notebook=notebook)
+    tools += moodle_tools(moodle)
 
     async def finance_ask(system, text):  # sorting new merchants: a small call, OpenRouter's fast model
         return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, small=True)
@@ -286,8 +290,7 @@ def main() -> None:
         else:
             log.warning("Claude plan limit reached during a job with no course: waiting for the reset")
     engine.on_pause = plan_limit
-    moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push, worker=worker,
-                        save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token), notebook=notebook)
+    moodle.worker = worker
     vault, vault_info = None, None
     if settings.webdav_password:
         vault = Vault(settings.vault_dir / settings.vault_name, study, notebook)

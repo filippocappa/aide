@@ -33,7 +33,8 @@ HEALTH = ("health",)
 WEIGHT = ("log_weight", "weight_trend", "delete_weight")
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "delete_meal", "find_food", "save_food", "update_food")
 LOCKS = ("list_locks", "screen_usage", "lock_now", "add_lock_schedule", "update_lock", "end_lock", "delete_lock")
-STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "update_notes",
+STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "check_moodle",
+         "update_notes",
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
          "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
          "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
@@ -287,6 +288,10 @@ minute).
 lecture's slides are already in its notes; the rest is course material, which search_study searches page by page \
 and read_file reads. Cite the page ("business law handout, p. 34"). For a question the lectures don't cover, look \
 in the files before general knowledge.
+- Moodle is read every 4 hours, so what went up since isn't in the files yet. Before answering about anything that \
+may have just come out there (a grade or results, a notice, new slides), or when the user says it's there, call \
+check_moodle, then read what it found. A result sheet lists student IDs: theirs is next to their name in a \
+groups or sign-up list in the files; remember it once found.
 - Transcripts come from speech recognition: names, symbols and numbers may be misheard, so fix obvious slips. When \
 the user adds or corrects something in a lecture ("the exam covers chapter 4"), change its notes with update_notes, \
 keeping the rest as it was. Deleting a lecture is queued. You can read the calendar (timetable, exams); to put \
@@ -317,6 +322,8 @@ study and lectures; Finance for money and budgets. You don't have their tools, s
 or guess: ask. A request that spans several (plan my week) goes to each one that has a part, at most 3 asks per \
 turn, in parallel when they don't depend on each other. Only small talk, general questions, web lookups, places \
 and travel times, GTT trams and tram alerts, errands on websites, what to remember, and routines are yours to answer yourself.
+- Moodle (course files, grades and results, course notices) is Professor's: it checks Moodle itself, so ask it, \
+never an errand.
 - A specialist doesn't see this chat, so put everything it needs into the request: what the user asked in their \
 words, the dates and names, what was said before that matters ("the dentist you found, Tue 15:00"). The user's \
 photos from this message go along by themselves. You know what each specialist remembers (marked with its name in \

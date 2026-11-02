@@ -261,3 +261,24 @@ async def test_an_expired_login_asks_once(env):
     await moodle.sync()
     assert push.moodle == [("Log in again to keep getting course files.", True)]
     assert api.get("/v1/moodle", headers=AUTH).json()["error"] == "the Moodle login has expired"
+
+
+async def test_professor_checks_moodle_now(env):
+    from aide.tools.moodle import moodle_tools
+    _, moodle, server, _, _ = env()
+    check = moodle_tools(moodle)[0].handler
+    first = await check()
+    assert first.startswith("Checked Moodle just now. 3 new or changed file(s)")
+    assert "IS-LM slides.pdf (macroeconomics, new · put up " in first
+    assert await check() == ("Checked Moodle just now: nothing new since the last check. What's there is in the "
+                             "course files.")
+    # Results go up: a file, and a new line on the course page.
+    server.contents[101][0]["modules"].append({"id": 10, "name": "Mid-term results",
+                                               "contents": [pdf(10, "results.pdf", T + 600)]})
+    out = await check()
+    assert "Mid-term results.pdf (macroeconomics, new" in out and "IS-LM" not in out
+    assert out.endswith("New on the macroeconomics page:\n- Mid-term results")
+    server.token = "new"
+    assert (await check()).startswith("Moodle couldn't be checked: the Moodle login has expired.")
+    moodle.token = None
+    assert (await check()).startswith("Moodle isn't connected")
