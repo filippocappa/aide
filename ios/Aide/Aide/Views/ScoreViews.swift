@@ -189,6 +189,48 @@ struct ScoresCard: View {
     }
 }
 
+/// The rings' card while the scores load: the three rings and their names in grey, breathing a few times.
+struct ScoresSkeleton: View {
+    @State private var dim = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 0) {
+            ForEach(ScoreKind.allCases) { kind in
+                let big = kind == .recovery
+                let size: CGFloat = big ? 128 : 76
+                VStack(spacing: 8) {
+                    Circle().stroke(Color.primary.opacity(0.08), lineWidth: size * 0.11)
+                        .frame(width: size, height: size)
+                    VStack(spacing: 5) {
+                        Capsule().fill(Color.primary.opacity(0.08)).frame(width: big ? 70 : 54, height: big ? 13 : 11)
+                        Capsule().fill(Color.primary.opacity(0.06)).frame(width: big ? 50 : 40, height: 9)
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(maxWidth: .infinity)
+                .layoutPriority(big ? 1 : 0)
+            }
+        }
+        .padding(.top, 6)
+        #if os(macOS)
+        .frame(maxWidth: 540)
+        .frame(maxWidth: .infinity)
+        #endif
+        .padding(.vertical, 8)
+        .card()
+        .opacity(dim ? 0.5 : 1)
+        .task {
+            for _ in 0..<4 {
+                withAnimation(.easeInOut(duration: 0.9)) { dim = true }
+                try? await Task.sleep(for: .seconds(0.9))
+                withAnimation(.easeInOut(duration: 0.9)) { dim = false }
+                try? await Task.sleep(for: .seconds(0.9))
+            }
+        }
+        .accessibilityLabel("Loading the scores")
+    }
+}
+
 // MARK: - Vitals
 
 /// Last night's numbers, each on a gauge with your usual range in the middle.
