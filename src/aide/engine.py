@@ -14,7 +14,8 @@ Two switches, set apart in the app:
   OpenRouter's fast model (~0.1¢): on the plan each one paid Claude Code's own ~24k-token prompt, uncached, for a few
   words. The plan only when OpenRouter refuses (the key's spending cap) and the plan can be used now.
 
-Chat stays on OpenRouter: it streams through Aide's own tool loop.
+Chat stays on OpenRouter: it streams through Aide's own tool loop. Except Professor's: its typed turns run on the
+plan with Sonnet whenever the notes do (`plan_now`; agent.py, PLAN_CHATS), through `Engine.run`, the reply in one piece.
 """
 
 import asyncio

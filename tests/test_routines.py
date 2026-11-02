@@ -13,7 +13,7 @@ from aide.reminders import ReminderStore
 from aide.routines import deliver
 from aide.tools import ToolRegistry
 from aide.tools.reminders import reminder_tools
-from test_agents import AUTH, OTHERS, ROME, FakeClient, calls, done
+from test_agents import AUTH, OTHERS, ROME, FakeClient, calls, done, events
 
 
 class FakePush:
@@ -198,6 +198,9 @@ class FakePlan:
         self.results: list = []
 
     def plan_for_background(self) -> bool:
+        return True
+
+    def plan_now(self) -> bool:  # the notes are on the plan too (Professor's chat follows them)
         return True
 
     async def run(self, system, prompt, tools, call, fast=True, max_turns=12, effort=None):
@@ -505,3 +508,62 @@ def test_older_team_messages_survive_the_rebuild(tmp_path):
     assert [(t["text"], t["conversation_id"]) for t in db.team_messages(10)] == [("Gym?", "main"), ("hi all", None)]
     assert db.history_with_ts(1)[0][6] is None
     db.close()
+
+
+# -- Professor's chat on the plan -------------------------------------------------
+
+
+def professor_chat(client):
+    return client.post("/v1/conversations", json={"agent": "professor"}, headers=AUTH).json()["id"]
+
+
+def test_professors_chat_runs_on_the_plan_with_the_smart_model_and_keeps_its_tool_results(env):
+    client, agent, *_ = env()
+    agent.smart_model = "smart"
+    agent.engine = FakePlan([("list_events", {})], "Quiz q_1, question 1: what is the multiplier?")
+    cid = professor_chat(client)
+    body = client.post("/v1/chat", json={"text": "quiz me", "conversation_id": cid}, headers=AUTH).json()
+    assert body["reply"] == "Quiz q_1, question 1: what is the multiplier?"
+    run = agent.engine.runs[0]
+    assert run["fast"] is False and run["system"].startswith(AGENTS["professor"].prompt)
+    assert agent.client.requests == []  # nothing on OpenRouter
+    stored = agent.db.history(agent.db.app_conversation(cid)["id"])
+    assert [m["role"] for m in stored] == ["user", "assistant", "user", "assistant"]
+    assert stored[1]["content"][0]["type"] == "tool_use" and stored[2]["content"][0]["tool_use_id"] == \
+        stored[1]["content"][0]["id"]
+    shown = client.get("/v1/history", params={"conversation_id": cid}, headers=AUTH).json()["messages"]
+    assert [m["text"] for m in shown] == ["quiz me", "Quiz q_1, question 1: what is the multiplier?"]
+
+    agent.engine.script, agent.engine.reply = [], "Right."
+    client.post("/v1/chat", json={"text": "B", "conversation_id": cid}, headers=AUTH)
+    assert "[Tool list_events returned: list_events ran]" in agent.engine.runs[1]["prompt"]
+
+
+def test_a_streamed_turn_on_the_plan_sends_the_reply_as_one_text(env):
+    client, agent, *_ = env()
+    agent.engine = FakePlan(reply="Y = 1900.")
+    cid = professor_chat(client)
+    got = events(client.post("/v1/chat", json={"text": "solve q10", "conversation_id": cid, "stream": True},
+                             headers=AUTH))
+    assert ("text", {"delta": "Y = 1900.", "restart": False}) in got and got[-1][1]["reply"] == "Y = 1900."
+
+
+def test_other_chats_and_voice_stay_on_openrouter(env):
+    client, agent, *_ = env([done("Coach here."), done("Title"), done("By voice.")])
+    agent.engine = FakePlan()
+    coach = client.post("/v1/conversations", json={"agent": "coach"}, headers=AUTH).json()["id"]
+    client.post("/v1/chat", json={"text": "hi", "conversation_id": coach}, headers=AUTH)
+    cid = professor_chat(client)
+    agent.client.responses = [done("By voice."), done("Title")]
+    body = client.post("/v1/chat", json={"text": "quiz me", "conversation_id": cid, "voice": True},
+                       headers=AUTH).json()
+    assert body["reply"] == "By voice." and agent.engine.runs == []
+
+
+def test_when_the_plan_fails_before_any_tool_professor_answers_on_openrouter(env):
+    client, agent, *_ = env([done("From OpenRouter."), done("Title")])
+    agent.smart_model = "smart"
+    agent.engine = FakePlan(fail=RuntimeError("Claude Code: no login"))
+    cid = professor_chat(client)
+    body = client.post("/v1/chat", json={"text": "explain IS-LM", "conversation_id": cid}, headers=AUTH).json()
+    assert body["reply"] == "From OpenRouter." and agent.client.requests[0]["model"] == "m"  # not Sonnet on the key

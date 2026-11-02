@@ -41,6 +41,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   the university Moodle's PDFs into the study files (login through the app; the token in `.env`).
 - `engine.py`: OpenRouter or the Claude plan through Claude Code, for the notes and (its own switch) background work:
   routines and watches (Claude Agent SDK, Aide's tools in-process), digests, drafts, titles, objectives.
+  Professor's typed chat turns run on the plan too, with Sonnet, whenever the notes do (`PLAN_CHATS` in `agent.py`;
+  voice turns and every other chat stay on OpenRouter's Haiku; if the plan fails before a tool ran, OpenRouter answers).
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
 - `lessons.py`: a lesson per notebook topic (hook, goals, steps with checks), written from the topic's notes through
