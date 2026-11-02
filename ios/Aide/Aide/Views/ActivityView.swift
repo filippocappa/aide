@@ -186,6 +186,12 @@ struct WaitingSection: View {
         let actions = (approvals?.actions ?? []).filter(mine(\.agent))
         let drafts = (approvals?.drafts ?? []).filter(mine(\.agent))
         let objectives = (approvals?.objectives ?? []).filter(mine(\.agent))
+        // A server with plans: each period's proposals as one card. An older one: a row each.
+        let plans = approvals?.plans.map { plans in
+            plans.map { p in var p = p; p.objectives = p.objectives.filter(mine(\.agent)); return p }
+                .filter { !$0.objectives.isEmpty }
+        }
+        let rows = plans == nil ? objectives : []
         let proposals = agent == nil || agent?.id == "professor" ? approvals?.proposals ?? [] : []
         let writer = agent == nil || agent?.id == "professor" ? approvals?.writer : nil
         let errands = agent == nil || agent?.id == "aide" ? approvals?.errands ?? [] : []
@@ -227,7 +233,11 @@ struct WaitingSection: View {
                              dismiss: { Task { error = await answer(draft, send: nil) } })
                         .listRowBackground(Theme.row)
                 }
-                ForEach(objectives) { o in
+                ForEach(plans ?? [], id: \.period) { plan in
+                    ObjectivePlanCard(plan: plan) { await load() }
+                        .listRowBackground(Theme.row)
+                }
+                ForEach(rows) { o in
                     HStack(alignment: .top, spacing: 10) {
                         AgentMark(agent: chat.agent(o.agent), size: 22).padding(.top, 1)
                         VStack(alignment: .leading, spacing: 3) {
@@ -246,9 +256,9 @@ struct WaitingSection: View {
                     }
                     .listRowBackground(Theme.row)
                 }
-                if !objectives.isEmpty {
-                    Button { Task { await accept(objectives) } } label: {
-                        Label(objectives.count == 1 ? "Accept the objective" : "Accept all \(objectives.count) objectives",
+                if !rows.isEmpty {
+                    Button { Task { await accept(rows) } } label: {
+                        Label(rows.count == 1 ? "Accept the objective" : "Accept all \(rows.count) objectives",
                               systemImage: "scope").font(.body.weight(.semibold))
                     }
                     .disabled(busy.contains("objectives"))
@@ -273,7 +283,7 @@ struct WaitingSection: View {
             } header: {
                 Text("Waiting for you")
             } footer: {
-                if !objectives.isEmpty { Text("Swipe an objective to accept or drop it on its own.") }
+                if !rows.isEmpty { Text("Swipe an objective to accept or drop it on its own.") }
             }
             .sheet(item: $editing) { draft in
                 DraftEditor(draft: draft, send: { await answer(draft, send: $0) }, dismiss: { await answer(draft, send: nil) })

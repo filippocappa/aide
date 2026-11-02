@@ -492,8 +492,9 @@ final class APIClient {
     }
 
     /// `ids` nil: all of that period's proposals. `date` is any day in the period.
-    func acceptObjectives(period: String, date: String, ids: [String]? = nil) async throws -> ObjectiveBlock {
-        try await send("POST", "/v1/objectives/accept", body: ObjectivesAccept(period: period, date: date, ids: ids))
+    /// OKs a period's proposals (or only `ids`); those in `drop` are dropped instead.
+    func acceptObjectives(period: String, date: String, ids: [String]? = nil, drop: [String]? = nil) async throws -> ObjectiveBlock {
+        try await send("POST", "/v1/objectives/accept", body: ObjectivesAccept(period: period, date: date, ids: ids, drop: drop))
     }
 
     /// Proposes now (one model call, can take 30 s).
