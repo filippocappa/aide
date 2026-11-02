@@ -11,6 +11,7 @@ struct PracticeExamView: View {
     var mock: MockExam?
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.coverClose) private var coverClose
     @Environment(\.dismiss) private var dismiss
     @State private var bank: QuizBank?
     @State private var quiz: Quiz?
@@ -23,17 +24,22 @@ struct PracticeExamView: View {
     @State private var timed = true
     @State private var minutes = 30
 
+    /// Out of the exam: on the Mac it's a window of its own, which `dismiss` doesn't close (`coverClose`).
+    private func close() {
+        if let coverClose { coverClose() } else { dismiss() }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
                 if let result {
                     PracticeResults(quiz: result, again: mock == nil ? { again() } : nil)
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { close() } } }
                         .task(id: result.id) { await followMarking() }
                 } else if let quiz {
                     PracticeTaking(quiz: quiz, revealNow: settings.studyRevealNow && quiz.kind != "mock", error: error,
                                    check: { n, answer in try await env.api.checkQuiz(quiz.id, n: n, answer: answer) },
-                                   finish: finish, quit: { dismiss() })
+                                   finish: finish, quit: { close() })
                 } else {
                     setup
                 }
@@ -73,7 +79,7 @@ struct PracticeExamView: View {
             .padding(.bottom, 16)
         }
         .pageGlow(Theme.study)
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } } }
         .bottomBar {
             if mock != nil || (bank.map { $0.questions + $0.cards + $0.exercises } ?? 0) > 0 {
                 Button { Task { await start() } } label: {

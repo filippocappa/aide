@@ -169,26 +169,29 @@ private struct CloseBackground: ViewModifier {
     }
 }
 
-/// The window in and out of full screen (⌃⌘F), from a sheet too: the sheet's window is the main one's child, and a
-/// cover grows with it (`MacSheetSize.cover`).
+/// Its window in and out of full screen (⌃⌘F): the practice exam's, which is a window of its own for this
+/// (`MacCoverWindow.swift`; a window with a sheet on it can't go full screen).
 struct MacFullScreenButton: View {
-    @State private var full = MacFullScreenButton.window?.styleMask.contains(.fullScreen) ?? false
+    @State private var window: NSWindow?
+    @State private var full = false
 
     var body: some View {
         MacGlassButton(symbol: full ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                        help: full ? "Exit Full Screen (⌃⌘F)" : "Full Screen (⌃⌘F)") {
-            MacFullScreenButton.window?.toggleFullScreen(nil)
+            (window ?? NSApp.keyWindow)?.toggleFullScreen(nil)
         }
         .keyboardShortcut("f", modifiers: [.control, .command])
         .accessibilityLabel(full ? "Exit full screen" : "Full screen")
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in full = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in full = false }
-    }
-
-    /// Aide's window: the one the sheet hangs from, else the main one.
-    private static var window: NSWindow? {
-        let key = NSApp.keyWindow
-        return key?.sheetParent ?? NSApp.mainWindow ?? key
+        .background(MacWindowReader { found in
+            window = found
+            full = found.styleMask.contains(.fullScreen)
+        })
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { note in
+            if note.object as? NSWindow === window { full = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { note in
+            if note.object as? NSWindow === window { full = false }
+        }
     }
 }
 
