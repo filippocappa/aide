@@ -51,8 +51,13 @@ struct UsageReportView: View {
         ScrollView {
             VStack(spacing: 12) {
                 summary
-                if total >= 60 { mostUsed }
-                if total >= 60, !sites.isEmpty { websites }
+                // Apps beside websites when the page is wide (the Mac), else one under the other.
+                if total >= 60 {
+                    Columns(max: 2, minWidth: 380) {
+                        mostUsed
+                        if !sites.isEmpty { websites }
+                    }
+                }
                 if let device = data.device, !data.leftOut.isEmpty {
                     Text("Only \(device). Screen Time from \(data.leftOut.joined(separator: ", ")) is left out.")
                         .font(.footnote).foregroundStyle(.secondary)

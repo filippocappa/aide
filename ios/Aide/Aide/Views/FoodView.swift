@@ -73,31 +73,36 @@ struct FoodPage: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                         .card()
                 } else {
-                    if let food {
-                        NavigationLink { NutritionDayView(day: food, tint: coach.tint).macPageBack() } label: {
-                            HStack(spacing: 8) {
-                                DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
-                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    // The day and how to log it beside the meals when the page is wide (the Mac).
+                    Columns(max: 2, minWidth: 420) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if let food {
+                                NavigationLink { NutritionDayView(day: food, tint: coach.tint).macPageBack() } label: {
+                                    HStack(spacing: 8) {
+                                        DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
+                                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                                    }
+                                    .foregroundStyle(.primary)
+                                    .card(padding: 14)
+                                }
+                                .buttonStyle(CardPress())
+                                // Coach's line, as on Body: what to do with the rest of the day (tap: the Food log chat).
+                                if let line = food.line {
+                                    AgentLine(agent: coach, text: line) {
+                                        push.route = foodChat.map { .conversation($0) } ?? .agent(coach.id)
+                                    }
+                                }
                             }
-                            .foregroundStyle(.primary)
-                            .card(padding: 14)
+                            foodCard
+                            logButton
                         }
-                        .buttonStyle(CardPress())
-                        // Coach's line, as on Body: what to do with the rest of the day (tap: the Food log chat).
-                        if let line = food.line {
-                            AgentLine(agent: coach, text: line) {
-                                push.route = foodChat.map { .conversation($0) } ?? .agent(coach.id)
-                            }
-                        }
+                        mealsCard
                     }
-                    foodCard
-                    logButton
-                    mealsCard
                 }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
-            .pageColumn()
+            .pageColumn(1180)
             .animation(.easeInOut(duration: 0.25), value: pending)
         }
         .previewAnchor()
@@ -278,10 +283,17 @@ struct FoodPage: View {
     }
 
     /// The day's meals, newest first, on one card; the one being logged on top.
+    /// Under the log buttons on the phone; at the top of its own column on the Mac.
+    #if os(macOS)
+    private static let mealsTop: CGFloat = 0
+    #else
+    private static let mealsTop: CGFloat = 8
+    #endif
+
     private var mealsCard: some View {
         let meals = Meal.newestFirst(food?.meals ?? [])
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Meals").font(.title3.weight(.bold)).padding(.horizontal, 4).padding(.top, 8)
+            Text("Meals").font(.title3.weight(.bold)).padding(.horizontal, 4).padding(.top, Self.mealsTop)
             VStack(spacing: 0) {
                 if let pending {
                     LoggingMealRow(photo: pending.photo, text: pending.text, coach: coach)

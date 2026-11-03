@@ -199,6 +199,7 @@
 		BFEBCBEDF16B580DF9D38464 /* NotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A4AEC9022A036D36BF776D /* NotesView.swift */; };
 		C09D1B1769A15612EC00F4D0 /* HabitsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */; };
 		C24F2E73A92BACD6109776BA /* LockMonitor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0ED3D94C12E8FE5324793C80 /* LockMonitor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C3942029599C11D03CC6388F /* Columns.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF01ED5407EDD683110116BF /* Columns.swift */; };
 		C5018E9FDE0C54B6F23F2CD2 /* BedtimeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8C7557E4884EAD2417AE8DA /* BedtimeView.swift */; };
 		C95CFFA7BF809325C6437161 /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87678035748931339F27CC91 /* Photos.swift */; };
 		C9E49AE1E7182DCFB48FDE7A /* TodayWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B080CFFD5248A57D95546299 /* TodayWidget.swift */; };
@@ -1259,6 +1260,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C3942029599C11D03CC6388F /* Columns.swift in Sources */,
 				57E9A016371735158F6E9BAF /* UsageContext.swift in Sources */,
 				70A2FC53E6403F25677B845A /* UsageMath.swift in Sources */,
 				927FEC4D30DDF5EE897A7745 /* UsageReport.swift in Sources */,

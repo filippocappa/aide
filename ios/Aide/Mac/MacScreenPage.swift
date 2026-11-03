@@ -20,10 +20,10 @@ struct MacScreenPage: View {
                 header
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
-                    .pageColumn(760)
+                    .pageColumn(1180)
                 UsageReportView(data: usage.data(kind, containing: date), now: Date())
                     .id("\(kind)\(date)\(usage.revision)")
-                    .pageColumn(760)
+                    .pageColumn(1180)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(alignment: .top) { glow }
