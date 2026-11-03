@@ -99,17 +99,18 @@ def _local(value: str | None, tz: ZoneInfo) -> datetime | None:
         return None
 
 
-def usual_wake(days: dict[str, dict], day: date, tz: ZoneInfo) -> str | None:
-    """'07:25': the median wake of the last 4 weeks' mornings of the same kind (weekdays, weekends), else of all of
-    them, to 5 minutes; None with fewer than 5."""
+def usual_wake(days: dict[str, dict], day: date, tz: ZoneInfo, weekends: bool | None = None) -> str | None:
+    """'07:25': the median wake of the 4 weeks' mornings before `day` of the same kind (weekdays, weekends; or the
+    kind asked for), else of all of them, to 5 minutes; None with fewer than 5."""
     wakes: dict[bool, list[int]] = {True: [], False: []}
     for i in range(1, WAKE_NIGHTS + 1):
         d = day - timedelta(days=i)
         at = _local(((days.get(d.isoformat()) or {}).get("sleep") or {}).get("wake"), tz)
         if at and at.hour < 14:  # a night shift's wake isn't the usual
             wakes[weekend(d)].append(at.hour * 60 + at.minute)
-    same = wakes[weekend(day)]
-    pool = same if len(same) >= MIN_WAKE_NIGHTS else same + wakes[not weekend(day)]
+    kind = weekend(day) if weekends is None else weekends
+    same = wakes[kind]
+    pool = same if len(same) >= MIN_WAKE_NIGHTS else same + wakes[not kind]
     if len(pool) < MIN_WAKE_NIGHTS:
         return None
     m = 5 * round(median(pool) / 5)
@@ -153,10 +154,9 @@ class Bedtime:
 
     def usual(self, now: datetime | None = None) -> dict:
         """The learnt wake times, weekdays and weekends ('07:25', or None while there are too few nights)."""
-        today = (now or utcnow()).astimezone(self.tz).date()
-        days = self._days(today)
-        monday, saturday = (today + timedelta(days=(n - today.weekday()) % 7 or 7) for n in (0, 5))
-        return {"weekdays": usual_wake(days, monday, self.tz), "weekends": usual_wake(days, saturday, self.tz)}
+        day = self.morning((now or utcnow()).astimezone(self.tz))  # the same nights as tonight's plan
+        days = self._days(day)
+        return {"weekdays": usual_wake(days, day, self.tz, False), "weekends": usual_wake(days, day, self.tz, True)}
 
     # -- the plan -----------------------------------------------------------------------------------------
 
