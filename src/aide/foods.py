@@ -185,6 +185,31 @@ class FoodDB:
                       for _, times, m in combos[:RECENT_MEALS]],
         }
 
+    def latest(self, tz: ZoneInfo, text: str = "", limit: int = RECENT_FOODS) -> dict:
+        """What the user ate, newest first: each saved food as it was had in a meal of the last RECENT_DAYS (the
+        same food every time it was had), with `eaten_at`, `grams` and the `meal` it was in; with `text`, only foods
+        with every word in their name, brand or other names. Items estimated on their own (no saved food) are left
+        out: there's nothing to have again."""
+        since = (utcnow() - timedelta(days=RECENT_DAYS)).isoformat()
+        words = normalize(text).split()
+        out = []
+        for r in self.conn.execute(
+                "SELECT f.*, i.grams AS item_grams, m.id AS meal_id, m.name AS meal_name, m.eaten_at "
+                "FROM meal_items i JOIN meals m ON m.id = i.meal_id JOIN foods f ON f.id = i.food_id "
+                "WHERE m.eaten_at >= ? ORDER BY m.eaten_at DESC, i.id", (since,)):
+            r = dict(r)
+            if not all(w in normalize(" ".join((r["name"], r["brand"] or "", r["aliases"] or ""))) for w in words):
+                continue
+            eaten = datetime.fromisoformat(r["eaten_at"]).astimezone(tz).replace(microsecond=0).isoformat()
+            last = r["last_used"] and datetime.fromisoformat(r["last_used"]).astimezone(tz).replace(microsecond=0)
+            out.append({**self.as_json(r), "emoji": meal_emoji(r["name"]), "uses": r["uses"],
+                        "last_used": last and last.isoformat(), "eaten_at": eaten,
+                        "grams": r["item_grams"] and round(r["item_grams"]), "meal_id": r["meal_id"],
+                        "meal": r["meal_name"]})
+            if len(out) == limit:
+                break
+        return {"foods": out, "meals": []}
+
     def _clean(self, changes: dict) -> dict:
         out = {}
         for key, value in changes.items():

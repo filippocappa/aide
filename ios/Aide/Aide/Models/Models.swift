@@ -1119,20 +1119,29 @@ struct RecentFoods: Decodable {
     var meals: [RecentMeal] = []
 }
 
-/// A saved food with how often it's eaten; its emoji guessed from the name.
+/// A saved food with how often it's eaten; its emoji guessed from the name. In the Latest order (`order=latest`)
+/// it's one time it was had: when, how much and in which meal, so the same food can come more than once.
 struct RecentFood: Decodable, Identifiable, Hashable {
     let food: SavedFood
     let emoji: String
     let uses: Int
-    var id: Int { food.id }
+    var eatenAt: String?
+    var grams: Double?
+    var mealId: Int?
+    var meal: String?
+    var id: String { mealId.map { "\(food.id)@\($0)" } ?? "\(food.id)" }
 
-    private enum Keys: String, CodingKey { case emoji, uses }
+    private enum Keys: String, CodingKey { case emoji, uses, eatenAt, grams, mealId, meal }
 
     init(from decoder: Decoder) throws {
         food = try SavedFood(from: decoder)
         let c = try decoder.container(keyedBy: Keys.self)
         emoji = try c.decodeIfPresent(String.self, forKey: .emoji) ?? "🍽️"
         uses = try c.decodeIfPresent(Int.self, forKey: .uses) ?? 0
+        eatenAt = try c.decodeIfPresent(String.self, forKey: .eatenAt)
+        grams = try c.decodeIfPresent(Double.self, forKey: .grams)
+        mealId = try c.decodeIfPresent(Int.self, forKey: .mealId)
+        meal = try c.decodeIfPresent(String.self, forKey: .meal)
     }
 }
 

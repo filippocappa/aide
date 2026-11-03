@@ -561,10 +561,15 @@ final class APIClient {
         return logged.meal
     }
 
-    /// What the user eats (with `query`, any saved food matching it) and meals of several items, most had first.
-    func recentFoods(query: String = "") async throws -> RecentFoods {
+    /// What the user eats (with `query`, any saved food matching it) and meals of several items, most had first;
+    /// with `latest`, every food as it was had, newest first (no meals).
+    func recentFoods(query: String = "", latest: Bool = false) async throws -> RecentFoods {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return try await send("GET", "/v1/food/recent", query: q.isEmpty ? [] : [URLQueryItem(name: "q", value: q)])
+        var items = q.isEmpty ? [] : [URLQueryItem(name: "q", value: q)]
+        if latest {
+            items += [URLQueryItem(name: "order", value: "latest"), URLQueryItem(name: "limit", value: "100")]
+        }
+        return try await send("GET", "/v1/food/recent", query: items)
     }
 
     /// Several saved foods as one meal; the server adds them up, no model call.
