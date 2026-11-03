@@ -615,11 +615,11 @@ struct TopicPageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
-        .fullScreenCover(item: $studying) { target in
+        .macWindowCover(item: $studying) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
-        .fullScreenCover(item: $learning) { ref in
-            if let course { LessonView(topic: ref, course: course.id, courseName: course.title).macCoverSize() }
+        .macWindowCover(item: $learning) { ref in
+            if let course { LessonView(topic: ref, course: course.id, courseName: course.title) }
         }
     }
 

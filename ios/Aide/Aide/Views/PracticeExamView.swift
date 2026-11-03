@@ -1290,7 +1290,7 @@ struct ReviewStartCard: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .fullScreenCover(item: $studying) { target in
+        .macWindowCover(item: $studying) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
     }

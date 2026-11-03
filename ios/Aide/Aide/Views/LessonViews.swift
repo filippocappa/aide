@@ -11,6 +11,7 @@ struct LessonView: View {
     var courseName: String?
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.coverClose) private var coverClose
     @State private var topic: LessonTopicRef
     @State private var lesson: Lesson?
     @State private var error: String?
@@ -22,6 +23,11 @@ struct LessonView: View {
         _topic = State(initialValue: topic)
     }
 
+    /// Out of it: on the Mac it's a window of its own, which `dismiss` doesn't close (`coverClose`).
+    private func close() {
+        if let coverClose { coverClose() } else { dismiss() }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -31,7 +37,7 @@ struct LessonView: View {
                               rewrite: { Task { await open(again: true) } },
                               restart: { Task { await open(restart: true) } },
                               practise: { practising = StudyTarget(course: course, name: courseName, topics: [topic.id]) },
-                              close: { dismiss() })
+                              close: { close() })
                         .id(lesson.id + (lesson.startedAt ?? "new"))
                 } else {
                     waiting
@@ -48,7 +54,7 @@ struct LessonView: View {
                 if let fresh = try? await env.api.lesson(topic: topic.id) { withAnimation { lesson = fresh } }
             }
         }
-        .fullScreenCover(item: $practising) { target in
+        .macWindowCover(item: $practising) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
     }
@@ -75,7 +81,7 @@ struct LessonView: View {
             .padding(.bottom, 16)
         }
         .pageGlow(Theme.study)
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { dismiss() } } }
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { close() } } }
     }
 
     private var building: some View {
@@ -753,11 +759,17 @@ struct LearnPathView: View {
     let course: StudyCourse
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.coverClose) private var coverClose
     @State private var path: LessonPath?
     @State private var error: String?
     @State private var learning: LessonTopicRef?
 
     private var next: LessonPathTopic? { path?.topics.first { $0.id == path?.next } }
+
+    /// Out of it: on the Mac it's a window of its own, which `dismiss` doesn't close (`coverClose`).
+    private func close() {
+        if let coverClose { coverClose() } else { dismiss() }
+    }
 
     var body: some View {
         NavigationStack {
@@ -786,13 +798,13 @@ struct LearnPathView: View {
             }
             .pageGlow(Theme.study)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { close() } } }
             .refreshable { await load() }
         }
         .tint(Theme.study)
         .task { await load() }
-        .fullScreenCover(item: $learning, onDismiss: { Task { await load() } }) { topic in
-            LessonView(topic: topic, course: course.id, courseName: course.title).macCoverSize()
+        .macWindowCover(item: $learning, onDismiss: { Task { await load() } }) { topic in
+            LessonView(topic: topic, course: course.id, courseName: course.title)
         }
     }
 

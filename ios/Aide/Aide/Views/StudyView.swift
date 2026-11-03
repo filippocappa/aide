@@ -96,11 +96,11 @@ struct StudyView: View {
             .macWindowCover(item: $practice, onDismiss: { Task { await load() } }) { course in
                 PracticeExamView(course: course.id, courseName: course.name)
             }
-            .fullScreenCover(item: $studying, onDismiss: { Task { await load() } }) { target in
+            .macWindowCover(item: $studying, onDismiss: { Task { await load() } }) { target in
                 StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
             }
-            .fullScreenCover(item: $lesson, onDismiss: { Task { await load() } }) { l in
-                LessonView(topic: l.topic, course: l.course.id, courseName: l.course.title).macCoverSize()
+            .macWindowCover(item: $lesson, onDismiss: { Task { await load() } }) { l in
+                LessonView(topic: l.topic, course: l.course.id, courseName: l.course.title)
             }
             .sheet(item: Binding(get: { result.map(QuizID.init) }, set: { result = $0?.id })) { QuizResultSheet(id: $0.id) }
             .task {
@@ -563,13 +563,13 @@ struct CourseView: View {
                 if let fresh = try? await env.api.courseDates(course: course.id) { dates = fresh }
             }
         }
-        .fullScreenCover(isPresented: $learning, onDismiss: { Task { await load() } }) {
-            LearnPathView(course: course).macCoverSize()
+        .macWindowCover(isPresented: $learning, onDismiss: { Task { await load() } }) {
+            LearnPathView(course: course)
         }
         .macWindowCover(isPresented: $showPractice, onDismiss: { Task { await load() } }) {
             PracticeExamView(course: course.id, courseName: course.name)
         }
-        .fullScreenCover(item: $studying, onDismiss: { Task { await load() } }) { target in
+        .macWindowCover(item: $studying, onDismiss: { Task { await load() } }) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
         .confirmationDialog("Start the notebook?", isPresented: $confirmStart, titleVisibility: .visible) {

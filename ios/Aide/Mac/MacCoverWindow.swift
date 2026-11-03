@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// A practice exam opens on the Mac as a window of its own, not as a sheet over Aide's window: macOS won't take a
+/// A practice exam, a lesson, the Learn path or a quiz opens on the Mac as a window of its own, not as a sheet over Aide's window: macOS won't take a
 /// window with a sheet into full screen, so in a sheet neither the green button nor the exam's own did anything.
 /// The window opens over Aide's, a little smaller like the sheet was (in full screen when Aide is), and goes away when the exam is quit or finished.
 /// On the phone `macWindowCover` is `fullScreenCover` (`Support/Theme.swift`).
