@@ -8,6 +8,12 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
     /// Covers the apps a Screen Time lock covers while it holds.
     @MainActor private var shield: MacShield?
 
+    /// Aide's windows never go in tabs: a lesson or a quiz opens in a window of its own over Aide's, and macOS put
+    /// it in a tab beside another (before the window could say no). Off for the whole app, before any window opens.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+
     @MainActor func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         shield = MacShield(screenTime: env.screenTime)
