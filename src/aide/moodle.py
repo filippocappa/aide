@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -105,8 +106,16 @@ class MoodleClient:
             raise MoodleError(f"Moodle said: {data.get('message') or data.get('errorcode')}")
         return data
 
+    def on_site(self, url: str) -> bool:
+        """`url` is on the Moodle site itself (same scheme, host and port): only there does the token go."""
+        a, b = urlsplit(url), urlsplit(self.site)
+        return bool(a.hostname) and (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
+
     async def download(self, url: str, dest: Path) -> int:
-        """A file from Moodle, streamed to `dest`. Its size; MoodleError if it's not a file."""
+        """A file from Moodle, streamed to `dest`. Its size; MoodleError if it's not a file, or not on the Moodle
+        site (a fileurl naming another host is skipped: the token would go there)."""
+        if not self.on_site(url):
+            raise MoodleError(f"the file isn't on the Moodle site ({urlsplit(url).hostname or 'no host'})")
         size = 0
         try:
             async with self.http.stream("GET", url + ("&" if "?" in url else "?") + "token=" + self.token) as r:

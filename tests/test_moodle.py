@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from aide.agent import Agent
 from aide.channels.api import create_app
 from aide.db import Database
-from aide.moodle import MoodleSync, token_from
+from aide.moodle import MoodleClient, MoodleError, MoodleSync, token_from
 from aide.notebook import NotebookStore
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
@@ -282,3 +282,21 @@ async def test_professor_checks_moodle_now(env):
     assert (await check()).startswith("Moodle couldn't be checked: the Moodle login has expired.")
     moodle.token = None
     assert (await check()).startswith("Moodle isn't connected")
+
+
+async def test_the_token_goes_only_to_the_moodle_site(tmp_path):
+    seen = []
+
+    def handle(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, headers={"content-type": "application/pdf"}, content=b"%PDF-1.4")
+
+    client = MoodleClient(SITE, "tok123", httpx.MockTransport(handle))
+    assert await client.download(f"{SITE}/webservice/pluginfile.php/1/a.pdf?forcedownload=1", tmp_path / "a") == 8
+    assert "token=tok123" in seen[0]
+    for url in ("https://evil.example/a.pdf", "http://elearning.unito.it/sme/a.pdf",
+                "https://elearning.unito.it.evil.example/a.pdf", "https://elearning.unito.it:8443/a.pdf"):
+        with pytest.raises(MoodleError, match="isn't on the Moodle site"):
+            await client.download(url, tmp_path / "b")
+    assert len(seen) == 1
+    await client.close()
