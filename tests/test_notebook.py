@@ -473,6 +473,13 @@ async def test_the_formula_sheet_gathers_every_topics_formulas(nb):
     assert sheet["body"].startswith("## The IS-LM model\n\nY = C + I + G\n\n## Crowding out\n\n### Crowding\n")
     assert nb.api.get("/v1/notebook/formulas?course=999", headers=AUTH).status_code == 404
 
+
+async def test_notebook_search_takes_any_word_with_the_best_match_first(nb):
+    is_lm, crowding = await built(nb)
+    found = nb.notebook.search("what does public spending do to the interest rate?", nb.macro["id"])
+    assert found and found[0]["id"] == crowding["id"]
+    assert nb.notebook.search("what is it") == [] and nb.notebook.search("") == []  # only stopwords: all of them
+
     # In the vault: a page of its own, linked from the Introduction, kept in step until the user edits it.
     await nb.vault.sync()
     root = nb.vault.folder / "Aide/macroeconomics"
