@@ -261,8 +261,14 @@ _INSPECT_JS = r"""
   const submit = form && el.tagName !== 'BUTTON' &&
     form.querySelector('button[type=submit],input[type=submit],button:not([type])');
   const submits = submit ? (submit.innerText || submit.value || submit.getAttribute('aria-label') || '') : '';
+  // What the page's code calls it: ids, names, classes, test ids, where its form goes (place-order, buyNow…).
+  const hintsOf = (e, f) => !e ? '' : [e.id, e.getAttribute('name'), typeof e.className === 'string' ? e.className : '',
+    e.getAttribute('data-testid'), e.getAttribute('data-test'), e.getAttribute('data-action'), e.getAttribute('formaction'),
+    e.tagName === 'A' ? e.getAttribute('href') : '', f && f.getAttribute('action')].filter(Boolean).join(' ').slice(0, 400);
+  const inForm = !!form;
   return {tag: el.tagName.toLowerCase(), type: el.type || '', text: text.slice(0, 200), sensitive,
-          submits: submits.replace(/\s+/g, ' ').trim().slice(0, 120)};
+          submits: submits.replace(/\s+/g, ' ').trim().slice(0, 120), hints: hintsOf(el, el.form),
+          submit_hints: hintsOf(submit, form), in_form: inForm};
 }
 """
 

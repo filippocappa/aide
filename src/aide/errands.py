@@ -56,6 +56,29 @@ PICTURE_SECONDS = 30  # at the end, opening product pages for the pictures no pa
 CONFIRM_TTL = timedelta(minutes=30)  # agent.PENDING_TTL: an unanswered Confirm expires
 WAITING_FOR = timedelta(minutes=30)  # live.WAITING_FOR: an errand waiting for the user keeps its activity this long
 
+# What a committing element is called in the page's code (ids, classes, test ids, form actions), whatever its text
+# says: an icon-only pay button, or one worded unusually.
+COMMIT_HINT = re.compile(
+    r"place[-_ ]?(your[-_ ]?)?order|placeorder|buy[-_ ]?now|buynow|submit[-_ ]?order|submitorder|"
+    r"confirm[-_ ]?(order|payment|purchase|booking)|complete[-_ ]?(order|purchase|checkout|booking)|"
+    r"pay[-_ ]?now|\bpay\b|checkout[-_ ]?submit|order[-_ ]?submit|conferma[-_ ]?ordine|effettua[-_ ]?ordine", re.I)
+# A checkout: a page where the next button may be the one that pays.
+CHECKOUT_URL = re.compile(r"checkout|/pay(ment)?\b|pagamento|riepilogo|order[-_]?review|/buy/|/spc/|conferma", re.I)
+CHECKOUT_TEXT = re.compile(r"metodo di pagamento|payment method|totale (dell'?)?ordine|order total|totale da pagare|"
+                           r"importo totale|riepilogo (dell'?)?ordine|order summary|review your order", re.I)
+# There, a button that says only to go on (or nothing at all) may be the final one: it needs the Confirm too.
+GO_ON = re.compile(r"^(procedi|prosegui|continua|avanti|conferma|vai|fatto|ok|next|continue|proceed|confirm|done|"
+                   r"submit|go)\b|^[\W_]*$", re.I)
+# Small controls that never buy: a quantity's + and −, a close button.
+STEPPER = re.compile(r"qty|quantit|increment|decrement|stepper|minus|plus|close|dismiss|chiudi", re.I)
+# A page that says an order went through.
+PLACED_URL = re.compile(r"thank|grazie|order[-_]?(confirm|placed|complete|success)|confirmation|conferma[-_]?ordine|"
+                        r"success", re.I)
+PLACED = re.compile(r"thank you for your (order|purchase|booking)|order (confirmed|placed|received|complete)|"
+                    r"grazie per (il tuo |l'|aver )?(ordin|acquist|prenot)|"
+                    r"(ordine|prenotazione|order|booking)( n\.?| #| number)? ?[\w-]{0,20} (effettuat|confermat|ricevut|"
+                    r"completat|placed|confirmed)|acquisto completato|booking confirmed", re.I)
+
 # Buttons that commit: they need the user's Confirm. (Going to the checkout, adding to the cart, searching don't.)
 COMMIT = re.compile(
     r"\b(acquista|compra( ora| adesso)?|ordina( ora)?|effettua (l'|il )?(ordine|pagamento)|invia (l'|il )?ordine|"
@@ -778,6 +801,27 @@ class Phase:
         if run := self.runner._runs.get(self.errand_id):
             run.step(doing or text)
 
+    async def _placed_unconfirmed(self, clicked: str) -> None:
+        """After a click that wasn't confirmed: if the page now says an order went through, the guard missed a
+        committing button. Stop the errand and tell the user, rather than carry on as if nothing happened."""
+        where = self.browser.where(self.owner) or {}
+        try:
+            heading = (await self.browser.text(self.owner))[:300]
+        except Exception:
+            heading = ""
+        if not placed(where.get("url"), heading):
+            return
+        log.error("errand %s: \"%s\" led to an order page without a Confirm (%s)", self.errand_id, clicked[:80],
+                  where.get("url"))
+        self.store.log(self.errand_id, f"\"{clicked[:80]}\" seems to have placed an order without your Confirm",
+                       counts=False)
+        activity.record(self.store.conn, "aide", "action", "An errand may have ordered without your Confirm",
+                        f"After \"{clicked[:80]}\" on {where.get('site') or 'the site'}",
+                        self.store.get(self.errand_id)["conversation"])
+        self._end("finish", {"result": f"Stopped: after clicking \"{clicked[:80]}\" the page says an order or booking "
+                             "went through, without your Confirm. Check the site and your mail, and cancel it there "
+                             "if it isn't what you wanted.", "ok": False, "products": []})
+
     def _confirm(self) -> dict | None:
         c = self.store.get(self.errand_id)["confirm"]
         return c if c and c.get("go") and not c.get("used") else None
@@ -796,6 +840,9 @@ class Phase:
         b, owner = self.browser, self.owner
 
         async def open_page(url: str, doing: str | None = None) -> str:
+            if COMMIT_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
+                raise ValueError("That address looks like it places an order or pays: go there through the page, "
+                                 "and ask_confirm with the button.")
             self._step(f"Opened {url[:120]}", doing=doing)
             heading = await b.open(owner, url)
             if not self.store.get(self.errand_id)["site"]:
@@ -824,22 +871,29 @@ class Phase:
         async def click(ref: str, doing: str | None = None) -> str:
             info = await b.inspect(owner, ref)
             text = info["text"] or info["tag"]
-            if commits(text):
+            where = b.where(owner) or {}
+            why = commit_reason(info, where.get("url"), await b.text(owner))
+            if why:
                 if not await self._commit_ok(text):
-                    raise ValueError(f"[{ref}] \"{text[:80]}\" would change something (buy, book, send, sign up, "
-                                     "delete). Use ask_confirm with this ref; the user confirms first.")
+                    raise ValueError(f"[{ref}] \"{text[:80]}\" could change something (buy, book, send, sign up, "
+                                     f"delete): {why}. Use ask_confirm with this ref; the user confirms first.")
                 c = self._confirm()
                 self.store.update(self.errand_id, confirm={**c, "used": True})
                 self._step(f"Clicked the confirmed \"{text[:80]}\"", doing=doing)
             else:
                 self._step(f"Clicked [{ref}] \"{text[:80]}\"", doing=doing)
-            return await b.click(owner, ref)
+            out = await b.click(owner, ref)
+            if not why:
+                await self._placed_unconfirmed(text)
+            return out
 
         async def type_text(ref: str, text: str, press_enter: bool | None = None, doing: str | None = None) -> str:
             info = await b.inspect(owner, ref)
             if info["sensitive"]:
                 raise ValueError("That's a password or card field: the user fills it. Use need_user.")
-            if press_enter and commits(info["submits"]):
+            if press_enter and (commits(info["submits"]) or COMMIT_HINT.search(info.get("submit_hints") or "")
+                                or (info.get("in_form") and at_checkout((b.where(owner) or {}).get("url"),
+                                                                        await b.text(owner)))):
                 raise ValueError("Enter would send that form. Type without press_enter, then ask_confirm with the "
                                  "form's button.")
             self._step(f"Typed \"{text[:60]}\" in [{ref}]" + (" and pressed Enter" if press_enter else ""), doing=doing)
@@ -847,13 +901,17 @@ class Phase:
 
         async def select_option(ref: str, option: str, doing: str | None = None) -> str:
             self._step(f"Chose \"{option[:60]}\" in [{ref}]", doing=doing)
-            return await b.choose(owner, ref, option)
+            out = await b.choose(owner, ref, option)
+            await self._placed_unconfirmed(f"{option} (a drop-down)")
+            return out
 
         async def press_key(key: str, doing: str | None = None) -> str:
             if key not in KEYS:
                 raise ValueError(f"key must be one of {', '.join(KEYS)}")
             if key == "Enter":
-                if commits((await b.focused(owner)).get("submits")):
+                focused = await b.focused(owner)
+                if commits(focused.get("submits")) or COMMIT_HINT.search(focused.get("submit_hints") or "") or (
+                        focused.get("in_form") and at_checkout((b.where(owner) or {}).get("url"), await b.text(owner))):
                     raise ValueError("Enter would send that form: ask_confirm with the form's button instead.")
             self._step(f"Pressed {key}", doing=doing)
             return await b.press(owner, key)
@@ -864,7 +922,9 @@ class Phase:
 
         async def go_back(doing: str | None = None) -> str:
             self._step("Went back", doing=doing)
-            return await b.back(owner)
+            out = await b.back(owner)
+            await self._placed_unconfirmed("Back")
+            return out
 
         ref = {"type": "string", "description": "The number in brackets from read_page, like \"12\""}
         doing = {"doing": {"type": ["string", "null"], "description":
@@ -1060,6 +1120,32 @@ class Phase:
 
 
 KEYS = ("Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "Backspace")
+
+
+def at_checkout(url: str | None, text: str | None) -> bool:
+    """The page is a checkout (its address, or what it says: a payment method, the order's total)."""
+    return bool(CHECKOUT_URL.search(urlparse(url or "").path or "")) or bool(CHECKOUT_TEXT.search(text or ""))
+
+
+def commit_reason(info: dict, url: str | None, page_text: str | None) -> str | None:
+    """Why clicking this element (browser.inspect's) could buy, book, send or delete, or None. Its text (`commits`),
+    what the page's code calls it (`COMMIT_HINT`), and on a checkout any button that only says to go on, or nothing."""
+    text = info.get("text") or ""
+    if commits(text):
+        return "its text"
+    if COMMIT_HINT.search(info.get("hints") or ""):
+        return "what the page calls it"
+    if at_checkout(url, page_text) and info.get("tag") in ("button", "input", "a", "div", "span", "img", "svg") \
+            and info.get("type") not in ("text", "email", "tel", "search", "number", "checkbox", "radio") \
+            and len(_norm(text)) <= COMMIT_TEXT and GO_ON.search(_norm(text)) \
+            and not STEPPER.search(info.get("hints") or ""):
+        return "on a checkout, a button that only says to go on"
+    return None
+
+
+def placed(url: str | None, heading: str | None) -> bool:
+    """The page says an order (or a booking) went through."""
+    return bool(PLACED_URL.search(urlparse(url or "").path or "")) or bool(PLACED.search(heading or ""))
 
 
 def commits(text: str | None) -> bool:
