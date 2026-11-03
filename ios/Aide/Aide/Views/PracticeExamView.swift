@@ -535,7 +535,7 @@ private struct PracticeTaking: View {
     }
 
     #if os(macOS)
-    /// The Mac's top: quit (✕), where you are, the clock and full screen (the phone has them in its navigation bar).
+    /// The Mac's top: quit (✕), where you are, the clock and ⤢ (fill the window) (the phone has them in its navigation bar).
     private var macBar: some View {
         HStack(spacing: 14) {
             // Like every sheet's close button, but it asks first: the answers would be lost.
@@ -546,7 +546,7 @@ private struct PracticeTaking: View {
             if let deadline {
                 Label { Clock(deadline: deadline) } icon: { Image(systemName: "timer").foregroundStyle(.secondary) }
             }
-            MacFullScreenButton()
+            MacCoverExpandButton()
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
