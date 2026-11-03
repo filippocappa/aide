@@ -382,10 +382,13 @@ private struct StudyRunView: View {
                     Button("Close", systemImage: "xmark") { close() }
                 }
             }
+            #if os(iOS)
             ToolbarItem(placement: .principal) {
                 Text(phase == .done ? "Done" : "Round \(round)").font(.subheadline.weight(.semibold))
             }
+            #endif
         }
+        .macSheetTitle(phase == .done ? "Done" : "Round \(round)")
         .bottomBar { bottom }
         .sensoryFeedback(trigger: result) { _, new in
             guard let new else { return nil }

@@ -485,12 +485,12 @@ extension View {
     func macCoverSize() -> some View { self }
     /// The Mac's back button on a pushed page (`Mac/MacNavigationStack.swift`); the phone has its navigation bar's.
     func macPageBack() -> some View { self }
-    /// The Mac's cover in a window of its own (`Mac/MacCoverWindow.swift`), so it can go full screen.
-    func macWindowCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil, closable: Bool = false,
+    /// The Mac's cover as a card in Aide's window (`Mac/MacCoverLayer.swift`), so the window can go full screen.
+    func macWindowCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil,
                                        @ViewBuilder content: @escaping () -> Content) -> some View {
         fullScreenCover(isPresented: isPresented, onDismiss: onDismiss, content: content)
     }
-    func macWindowCover<Item: Identifiable, Content: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil, closable: Bool = false,
+    func macWindowCover<Item: Identifiable, Content: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil,
                                                            @ViewBuilder content: @escaping (Item) -> Content) -> some View {
         fullScreenCover(item: item, onDismiss: onDismiss, content: content)
     }
@@ -498,7 +498,7 @@ extension View {
 }
 
 extension EnvironmentValues {
-    /// Closes the cover a view is in when `dismiss` can't: the Mac opens a practice exam in a window of its own
-    /// (`Mac/MacCoverWindow.swift`). Nil on the phone.
+    /// Closes the cover a view is in when `dismiss` can't: the Mac opens a practice exam, a lesson or a quiz as a card
+    /// in Aide's window (`Mac/MacCoverLayer.swift`). Nil on the phone.
     @Entry var coverClose: (() -> Void)? = nil
 }

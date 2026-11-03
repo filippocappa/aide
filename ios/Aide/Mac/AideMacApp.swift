@@ -27,12 +27,6 @@ struct AideMacApp: App {
         .defaultSize(width: 1180, height: 780)
         .commands { MacCommands() }
 
-        // A practice exam, a lesson or a quiz, in a window of its own so it can go full screen (`Mac/MacCoverWindow.swift`).
-        WindowGroup("Study", id: MacWindow.cover, for: UUID.self) { $id in
-            MacCoverWindowContent(id: id).withAideEnvironment(env)
-        }
-        .defaultSize(width: 1180, height: 780)
-
         MenuBarExtra(isInserted: $menuBarItem) {
             MacMenuBarPanel().withAideEnvironment(env)
         } label: {
