@@ -100,9 +100,11 @@ struct StudyLink: Equatable {
     /// A notebook topic's id (`t_…`) and title: a lesson's topic, or the one a study session starts on.
     var topic: String?
     var title: String?
+    /// A focus session just over (`?focus=f_…` on a quiz): the check after it.
+    var focus: String?
 
-    init(course: Int, page: Page = .course, topic: String? = nil, title: String? = nil) {
-        self.course = course; self.page = page; self.topic = topic; self.title = title
+    init(course: Int, page: Page = .course, topic: String? = nil, title: String? = nil, focus: String? = nil) {
+        self.course = course; self.page = page; self.topic = topic; self.title = title; self.focus = focus
     }
 
     /// nil for `aide://study` (the tab), or a link this version can't follow.
@@ -117,7 +119,7 @@ struct StudyLink: Equatable {
         }
         let page = parts.dropFirst().first.map { Page(rawValue: $0) } ?? .course
         guard let page, page != .lesson || value("topic") != nil else { return nil }
-        self.init(course: course, page: page, topic: value("topic"), title: value("title"))
+        self.init(course: course, page: page, topic: value("topic"), title: value("title"), focus: value("focus"))
     }
 }
 

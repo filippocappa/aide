@@ -10,6 +10,9 @@ struct StudySessionView: View {
     var courseName: String?
     /// Topics to start on, by title or id (a review session's, a topic page's).
     var focus: [String] = []
+    /// A focus session just over (its id): the check, 5 multiple-choice questions, starts by itself and its first
+    /// round's score goes back to the session (docs/API.md, "Focus sessions").
+    var afterFocus: String? = nil
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
     @Environment(\.coverClose) private var coverClose
@@ -34,7 +37,12 @@ struct StudySessionView: View {
         NavigationStack {
             Group {
                 if let quiz {
-                    StudyRunView(quiz: quiz, again: { withAnimation { self.quiz = nil } }, close: { close() })
+                    StudyRunView(quiz: quiz, again: { withAnimation { self.quiz = nil } }, close: { close() },
+                                 firstRound: afterFocus.map { id in
+                                     { right, total in
+                                         Task { _ = try? await env.api.checkFocus(id, right: right, total: total) }
+                                     }
+                                 })
                         .id(quiz.id)
                 } else {
                     setup
@@ -50,8 +58,9 @@ struct StudySessionView: View {
     private var setup: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                TopBlock("Study", overline: courseName) {
-                    Text("No timer and no score. Whatever you miss comes back until you know it.")
+                TopBlock(afterFocus == nil ? "Study" : "What stuck", overline: courseName) {
+                    Text(afterFocus == nil ? "No timer and no score. Whatever you miss comes back until you know it."
+                         : "Five questions on what you just studied, right or wrong at once.")
                         .foregroundStyle(.secondary)
                 }
                 if let error { ErrorCard(text: error) }
@@ -221,6 +230,14 @@ struct StudySessionView: View {
                 if !picked.isEmpty { scope = .picked }
             }
             bank = fresh
+            if afterFocus != nil {
+                size = 5
+                if StudyMode.learn.count(available) > 0 {
+                    mode = .learn
+                    await start()
+                    return
+                }
+            }
             if mode.count(available) == 0, let first = StudyMode.allCases.first(where: { $0.count(available) > 0 }) {
                 mode = first
             }
@@ -315,6 +332,8 @@ private struct StudyRunView: View {
     let quiz: Quiz
     let again: () -> Void
     let close: () -> Void
+    /// Told once the first round is over: how many were right the first time, of how many.
+    var firstRound: ((Int, Int) -> Void)? = nil
     @Environment(\.coverClose) private var coverClose
     @EnvironmentObject private var env: AppEnvironment
 
@@ -669,6 +688,9 @@ private struct StudyRunView: View {
             error = nil
             index += 1
             if index >= queue.count { phase = missed.isEmpty ? .done : .roundDone }
+        }
+        if round == 1, index >= queue.count, let firstRound {
+            firstRound(first.values.filter { $0 }.count, first.count)
         }
         if phase == .done { finish() }
     }

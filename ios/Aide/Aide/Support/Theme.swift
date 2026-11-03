@@ -53,6 +53,9 @@ enum Theme {
     }
 
     /// A colour from the server (`#RRGGBB`), lightened a little in dark mode so a dark one stays readable on black.
+    /// Professor's colour: the Study tab's one hue (and the focus session's Live Activity).
+    static let study = Theme.readable(0x7A4FD0)
+
     static func readable(_ hex: UInt32) -> Color {
         Color(uiColor: UIColor { traits in
             let base = UIColor(hex: hex)

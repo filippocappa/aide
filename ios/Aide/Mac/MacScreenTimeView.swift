@@ -156,6 +156,15 @@ struct MacScreenTimeView: View {
                     + "Chrome, Arc, Brave or Edge; everything else stays open. Finder, System Settings and Aide never are.")
         }
         Section {
+            AppList(apps: screenTime.focusApps, locked: screenTime.focusInUse, sites: false) { screenTime.setFocusApps($0) }
+        } header: {
+            Text("Open during focus")
+        } footer: {
+            Text(screenTime.focusInUse ? "A focus round is on now: change these once it's over."
+                 : "A focus session's rounds close every other app on this Mac (Aide stays open, for the Study page); "
+                    + "breaks open them again. Start one from a course in Study.")
+        }
+        Section {
             ForEach(screenTime.locks.filter { !$0.once && $0.id >= 0 }) { lock in
                 Button { editing = Editing(lock: lock) } label: { MacLockRow(lock: lock) }
                     .buttonStyle(.plain)
@@ -202,6 +211,8 @@ struct MacScreenTimeView: View {
 private struct AppList: View {
     let apps: Set<String>
     var locked = false
+    /// A website row too.
+    var sites = true
     let set: (Set<String>) -> Void
     @State private var site = ""
 
@@ -217,12 +228,16 @@ private struct AppList: View {
                     Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Don't lock \(app.name)")
+                .help(sites ? "Don't lock \(app.name)" : "Close \(app.name) in focus too")
                 .disabled(locked)
             }
         }
         Button { pick() } label: { Label("Add Apps…", systemImage: "plus") }
             .disabled(locked)
+        if sites { siteRow }
+    }
+
+    private var siteRow: some View {
         HStack(spacing: 10) {
             Image(systemName: "globe").foregroundStyle(.secondary).frame(width: 22)
             TextField("Add a website", text: $site, prompt: Text("Add a website, like youtube.com"))

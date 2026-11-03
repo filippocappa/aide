@@ -483,13 +483,18 @@ private struct NotificationSettingsView: View {
                         Toggle("Bedtime", isOn: Binding(get: { bedtime }, set: { on in Task { await set(bedtime: on) } }))
                             .tint(Theme.toggle)
                     }
+                    if let focus = live.focus {
+                        Toggle("Focus sessions", isOn: Binding(get: { focus }, set: { on in Task { await set(focus: on) } }))
+                            .tint(Theme.toggle)
+                    }
                 } header: {
                     Text("Lock Screen")
                 } footer: {
                     Text("10 minutes before an event on your Work calendar, a countdown to it on the Lock Screen and in "
                          + "the Dynamic Island, with where it is. Not when a tram alert is taking you there: the tram's shows then."
                          + (live.locks == nil ? "" : " While a lock holds, the time left until it opens.")
-                         + (live.bedtime == nil ? "" : " In the evening, the time left to bedtime (else a notification)."))
+                         + (live.bedtime == nil ? "" : " In the evening, the time left to bedtime (else a notification).")
+                         + (live.focus == nil ? "" : " In a focus session, the round or break and the time left, with a sound at each switch."))
                 }
             }
         }
@@ -501,14 +506,15 @@ private struct NotificationSettingsView: View {
     }
 
     /// One switch at a time; the other is left out, so the server keeps it.
-    private func set(events: Bool? = nil, locks: Bool? = nil, bedtime: Bool? = nil) async {
+    private func set(events: Bool? = nil, locks: Bool? = nil, bedtime: Bool? = nil, focus: Bool? = nil) async {
         guard let before = live else { return }
         live?.events = events ?? before.events
         live?.locks = locks ?? before.locks
         live?.bedtime = bedtime ?? before.bedtime
+        live?.focus = focus ?? before.focus
         do {
             live = try await env.api.updateLiveSettings(LiveSettings(events: events ?? before.events, locks: locks,
-                                                                     bedtime: bedtime))
+                                                                     bedtime: bedtime, focus: focus))
         } catch {
             live = before
         }

@@ -21,6 +21,8 @@ final class ScreenTimeService: ObservableObject {
     @Published private(set) var usualApps: Set<String> = MacLockApps.usual
     /// The apps each lock picked for itself, by lock id.
     @Published private(set) var lockApps: [Int: Set<String>] = MacLockApps.perLock
+    /// What stays open in a focus session's rounds, by bundle ID; a round closes every other app (not websites).
+    @Published private(set) var focusApps: Set<String> = MacLockApps.focus
     /// Daily app limits (docs/API.md, "Daily app limits"), the same as the phone's. Each device counts its own time:
     /// here, the time this Mac spent in the limit's Mac apps (`MacUsage`).
     @Published private(set) var limits: [ScreenLimit] = []
@@ -86,13 +88,30 @@ final class ScreenTimeService: ObservableObject {
     func covering(_ bundleID: String?) -> MacHold? {
         guard let bundleID, !MacLockApps.never.contains(bundleID) else { return nil }
         let now = Date()
-        let byLocks = locks.filter { MacSites.covers(apps(for: $0), bundleID) }
+        let byLocks = locks.filter { $0.focus != nil ? focusCovers(bundleID) : MacSites.covers(apps(for: $0), bundleID) }
             .compactMap { lock in LockClock.until(lock, at: now).map { MacHold(lock: lock, until: $0) } }
         let midnight = Calendar.current.startOfDay(for: now).addingTimeInterval(86400 + 3600)
         let byLimits = limits.filter { heldLimits.contains($0.id) && MacSites.covers(limitApps[$0.id] ?? [], bundleID) }
             .map { MacHold(limit: $0, until: Calendar.current.startOfDay(for: midnight)) }
         return (byLocks + byLimits).max { $0.until < $1.until }
     }
+
+    /// A focus round covers every app you'd switch to (a regular app, or one not running) but the focus ones; never
+    /// a website (the browser itself is an app) or a background helper.
+    private func focusCovers(_ bundleID: String) -> Bool {
+        guard MacSites.site(of: bundleID) == nil, !focusApps.contains(bundleID) else { return false }
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        return running.isEmpty || running.contains { $0.activationPolicy == .regular }
+    }
+
+    /// The focus apps. Not during a round: that would be unlocking early.
+    func setFocusApps(_ apps: Set<String>) {
+        guard !focusInUse else { return }
+        focusApps = apps
+        MacLockApps.focus = apps
+    }
+
+    var focusInUse: Bool { locks.contains { $0.focus != nil && LockClock.until($0) != nil } }
 
     /// The usual apps. Not while a lock that uses them is on: that would be unlocking early.
     func setUsualApps(_ apps: Set<String>) {
@@ -208,7 +227,7 @@ final class ScreenTimeService: ObservableObject {
     }
 
     /// A lock that uses the usual apps is on: they can't change until it's over.
-    var usualInUse: Bool { locks.contains { lockApps[$0.id] == nil && LockClock.until($0) != nil } }
+    var usualInUse: Bool { locks.contains { $0.focus == nil && lockApps[$0.id] == nil && LockClock.until($0) != nil } }
 
     func setEnabled(_ lock: ScreenLock, _ on: Bool) async {
         await change { _ = try await self.api.updateLock(lock.id, LockPatch(enabled: on)) }
@@ -364,6 +383,16 @@ enum MacLockApps {
     static var usual: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: "macLockUsual") ?? ["com.apple.Safari"]) }
         set { UserDefaults.standard.set(newValue.sorted(), forKey: "macLockUsual") }
+    }
+
+    /// Open in a focus round: notes, the PDFs, a calculator, a dictionary (Aide itself always is).
+    static var focus: Set<String> {
+        get {
+            Set(UserDefaults.standard.stringArray(forKey: "macFocusApps")
+                ?? ["com.apple.Notes", "com.apple.Preview", "md.obsidian", "com.apple.TextEdit", "com.apple.calculator",
+                    "com.apple.Dictionary"])
+        }
+        set { UserDefaults.standard.set(newValue.sorted(), forKey: "macFocusApps") }
     }
 
     static var perLimit: [Int: Set<String>] {

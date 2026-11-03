@@ -55,7 +55,8 @@ struct LessonView: View {
             }
         }
         .macWindowCover(item: $practising) { target in
-            StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+            StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
+                             afterFocus: target.afterFocus)
         }
     }
 

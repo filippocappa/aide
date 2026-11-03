@@ -117,7 +117,8 @@ struct ChatView: View {
             if let course = chat.course { PracticeExamView(course: course.id, courseName: course.name) }
         }
         .macWindowCover(item: $studying) { target in
-            StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+            StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
+                             afterFocus: target.afterFocus)
         }
         .sheet(isPresented: $showPastChats, onDismiss: {
             guard let picked = pastChoice else { return }

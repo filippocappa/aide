@@ -8,6 +8,7 @@ import SwiftUI
 struct ScreenTimeView: View {
     @EnvironmentObject private var screenTime: ScreenTimeService
     @State private var picking = false
+    @State private var focusPicking = false
     @State private var unlocking: Unlocking?
     @State private var adding = false
 
@@ -38,6 +39,7 @@ struct ScreenTimeView: View {
         .navigationTitle("Screen Time")
         .navigationBarTitleDisplayMode(.inline)
         .familyActivityPicker(isPresented: $picking, selection: $screenTime.allowed)
+        .familyActivityPicker(isPresented: $focusPicking, selection: $screenTime.focusAllowed)
         .sheet(item: $unlocking) { item in
             UnlockSheet(name: item.lock.title, pass: item.pass,
                         after: item.lock.once ? "It ends for good." : "It's back next time, as usual.") { reason in
@@ -127,6 +129,18 @@ struct ScreenTimeView: View {
                  : "For Lock now and the locks Coach sets: everything else is locked. Pick Aide too, so you can "
                     + "still end a lock early, and what you need on the way (Maps, your bank). Calls always work. "
                     + "Each lock can pick its own apps.")
+        }
+        Section {
+            PickRow(title: "Stays open", value: screenTime.focusAllowedCount == 0 ? "Nothing yet"
+                    : "\(screenTime.focusAllowedCount) app\(screenTime.focusAllowedCount == 1 ? "" : "s")") { focusPicking = true }
+                .disabled(!screenTime.isAuthorized || screenTime.focusInUse)
+        } header: {
+            Text("During focus")
+        } footer: {
+            Text(screenTime.focusInUse ? "A focus round is on now: change these once it's over."
+                 : "A focus session's rounds lock everything else, and its breaks open it again. Pick Aide, so the "
+                    + "Study page stays open, and what you study with (Notes, Files, a dictionary). Until you pick, "
+                    + "the usual ones above.")
         }
         Section {
             if let (lock, until) = screenTime.current {

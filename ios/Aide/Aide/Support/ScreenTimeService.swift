@@ -17,6 +17,13 @@ final class ScreenTimeService: ObservableObject {
             Task { await report() }
         }
     }
+    /// The apps and sites that stay open in a focus session's rounds. Changing them reshields a round that's on.
+    @Published var focusAllowed: FamilyActivitySelection = LockBook.focusAllowed {
+        didSet {
+            LockBook.focusAllowed = focusAllowed
+            apply()
+        }
+    }
     /// The apps each lock picked for itself.
     @Published private(set) var apps: [Int: LockApps] = LockBook.apps
     @Published private(set) var lastError: String?
@@ -58,10 +65,20 @@ final class ScreenTimeService: ObservableObject {
         locks.filter(\.isStrict).compactMap { lock in LockClock.until(lock).map { (lock, $0) } }.max { $0.1 < $1.1 }
     }
 
+    /// A focus round is on: its apps can't change until it's over.
+    var focusInUse: Bool { locks.contains { $0.focus != nil && LockClock.until($0) != nil } }
     /// A lock on now uses the usual apps: they can't change until it's over (that would be unlocking early).
-    var usualInUse: Bool { locks.contains { apps[$0.id] == nil && LockClock.until($0) != nil } }
+    var usualInUse: Bool { locks.contains { $0.focus == nil && apps[$0.id] == nil && LockClock.until($0) != nil } }
 
-    func apps(for lock: ScreenLock) -> LockApps { apps[lock.id] ?? LockApps(only: false, selection: allowed) }
+    func apps(for lock: ScreenLock) -> LockApps {
+        if lock.focus != nil { return LockApps(only: false, selection: LockBook.focusAllowed) }
+        return apps[lock.id] ?? LockApps(only: false, selection: allowed)
+    }
+
+    var focusAllowedCount: Int {
+        let picked = LockBook.focusAllowed
+        return picked.applicationTokens.count + picked.webDomainTokens.count
+    }
 
     /// A lock's own apps, or nil for the usual ones. Not for a lock that's on.
     private func setApps(_ picked: LockApps?, for id: Int) {
