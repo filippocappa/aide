@@ -179,7 +179,7 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   one window (`macWindowCover`, `Mac/MacCoverLayer.swift`; `fullScreenCover` on the phone): not a sheet, since macOS
   won't take a window with a sheet into full screen, and not a window of their own (they piled up, 2026-11-03). The
   card is the sheet's size with a border, in full screen too (the window's green button); its ⤢ (⇧⌘F,
-  `MacCoverExpandButton`) makes it fill Aide's window. One opened from a card goes on top. `dismiss` doesn't close a card: `coverClose` does (the views' Close), and so does the X its
+  `MacCoverExpandButton`, remembered) makes it fill Aide's window, the title and toolbar hidden meanwhile. One opened from a card goes on top. `dismiss` doesn't close a card: `coverClose` does (the views' Close), and so does the X its
   `NavigationStack` puts in the corner (`macCoverRoot`). Toolbar items in a card would land in Aide's window toolbar, so
   the cover views keep theirs to the phone (`coverClose == nil`, titles through `.macSheetTitle`).
 - `Mac/iOSCompat.swift`: lets the shared views build unchanged: `UIColor`/`UIImage`/`UIPasteboard` as their AppKit

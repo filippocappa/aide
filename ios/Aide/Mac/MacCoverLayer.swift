@@ -18,8 +18,11 @@ final class MacCoverStack: ObservableObject {
     }
 
     @Published private(set) var entries: [Entry] = []
-    /// The cards fill Aide's window, edge to edge (their ⤢ button); otherwise they sit in it with a border.
-    @Published var expanded = false
+    /// The cards fill Aide's window, edge to edge and under the title bar (their ⤢ button); otherwise they sit in it
+    /// with a border. Kept for the next card.
+    @Published var expanded = UserDefaults.standard.bool(forKey: "macCoverExpanded") {
+        didSet { UserDefaults.standard.set(expanded, forKey: "macCoverExpanded") }
+    }
 
     func push(_ entry: Entry) { entries.append(entry) }
 
@@ -29,7 +32,6 @@ final class MacCoverStack: ObservableObject {
         let gone = Array(entries[i...].reversed())
         withAnimation(.snappy(duration: 0.22)) {
             entries.removeSubrange(i...)
-            if entries.isEmpty { expanded = false }
         }
         gone.forEach { $0.closed() }
     }
@@ -40,6 +42,11 @@ final class MacCoverStack: ObservableObject {
 struct MacCoverLayer: View {
     let windowSize: CGSize
     @ObservedObject private var stack = MacCoverStack.shared
+    @State private var window: NSWindow?
+    @State private var fullScreen = false
+
+    /// A card fills the window: the window's title and toolbar (the page's buttons) go, so nothing sits over it.
+    private var filling: Bool { stack.expanded && !stack.entries.isEmpty }
 
     var body: some View {
         GeometryReader { geo in
@@ -58,10 +65,29 @@ struct MacCoverLayer: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
+        .ignoresSafeArea(edges: filling ? .top : [])
         .animation(.snappy(duration: 0.22), value: stack.entries.map(\.id))
         .animation(.snappy(duration: 0.25), value: stack.expanded)
         // With no card up the layer is empty: nothing in it may take a click.
         .allowsHitTesting(!stack.entries.isEmpty)
+        .background(MacWindowReader { found in
+            window = found
+            fullScreen = found.styleMask.contains(.fullScreen)
+            showTitleBar(!filling)
+        })
+        .onChange(of: filling) { _, on in showTitleBar(!on) }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { note in
+            if note.object as? NSWindow === window { fullScreen = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { note in
+            if note.object as? NSWindow === window { fullScreen = false }
+        }
+    }
+
+    private func showTitleBar(_ shown: Bool) {
+        guard let window else { return }
+        window.titleVisibility = shown ? .visible : .hidden
+        window.toolbar?.isVisible = shown
     }
 
     /// The size the sheet had, a little smaller than the window (in full screen too, with its border); expanded, all
@@ -71,6 +97,8 @@ struct MacCoverLayer: View {
         let width = full ? space.width : min(space.width - 24, max(720, space.width - 100))
         let height = full ? space.height : min(space.height - 16, max(540, space.height - 40))
         let shape = RoundedRectangle(cornerRadius: full ? 0 : 16, style: .continuous)
+        // Filling a window (not full screen), the card's top row goes below the red, yellow and green buttons.
+        let lights: CGFloat = full && !fullScreen ? 28 : 0
         let close = { [stack] in stack.close(entry.id) }
         return entry.view
             .environment(\.coverClose, close)
@@ -78,6 +106,7 @@ struct MacCoverLayer: View {
             .environment(\.macInStack, true)
             .environment(\.macWindowSize, windowSize)
             .font(.body)
+            .safeAreaPadding(.top, lights)
             .frame(width: max(width, 0), height: max(height, 0))
             .background(Theme.background)
             .clipShape(shape)
