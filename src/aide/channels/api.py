@@ -27,8 +27,8 @@ from ..drafts import Drafts
 from ..browser import BrowserError, check_site, full_url, site_of
 from ..engine import Engine
 from ..errands import ErrandRunner, ErrandStore
-from ..food import MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
-from ..foods import MAX_NAME as MAX_FOOD_NAME, FoodDB
+from ..food import MACROS, MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
+from ..foods import MAX_NAME as MAX_FOOD_NAME, FoodDB, free_notes
 from ..nutrition import PROPOSE_PROMPT, PROPOSE_TOKENS, Nutrition, parse_proposal, proposal_input
 from ..habits import HabitStore
 from ..health import HealthStore, workout_date, workout_minutes
@@ -89,6 +89,23 @@ class FoodLogOne(BaseModel):
     grams: float | None = None  # None: the usual portion, else one serving
     day: date | None = Field(None, alias="date")
     conversation_id: str | None = None  # the Coach chat it was scanned in; else the Food log
+
+
+class FoodItemIn(BaseModel):
+    food_id: int
+    grams: float | None = None  # None: the usual portion, else one serving
+
+
+class FoodsLogIn(BaseModel):
+    items: list[FoodItemIn] = Field(min_length=1, max_length=20)
+    name: str | None = None  # None: the foods' names
+    day: date | None = Field(None, alias="date")
+    conversation_id: str | None = None
+
+
+class MealAgainIn(BaseModel):
+    day: date | None = Field(None, alias="date")
+    conversation_id: str | None = None
 
 
 class MealPatch(BaseModel):
@@ -1335,31 +1352,97 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(422, f"the label didn't read right ({e}); try another photo") from None
         return {"food": foods.as_json(saved)}
 
+    def meal_time(day: date | None) -> datetime:
+        """Now, or now's time on an earlier day."""
+        today = food.today()
+        if day and day > today:
+            raise HTTPException(400, "a meal can't be in the future")
+        when = datetime.now(tz)
+        return datetime.combine(day, when.time(), tz) if day and day != today else when
+
+    def food_name(rows: list[dict]) -> str:
+        """One food: its name (and brand); more: "Yogurt greco, granola and banana"."""
+        if len(rows) == 1:
+            name, brand = rows[0]["name"], foods.get(rows[0]["food_id"])["brand"]
+            return f"{name} ({brand})" if brand and brand.lower() not in name.lower() else name
+        names = [r["name"] for r in rows]
+        return (", ".join(names[:-1]) + " and " + names[-1])[:MAX_FOOD_NAME]
+
+    async def logged(meal: dict, rows: list[dict], how: str, conversation_id: str | None) -> dict:
+        """A meal the app logged without the model: in the activity feed and in Coach's chat (the one it was logged
+        from, else the Food log), so it's seen there and Coach knows."""
+        said = f"{meal['name']}, {rows[0]['grams']:g} g" if len(rows) == 1 else meal["name"]
+        grams = said if len(rows) < 2 else ", ".join(f"{r['name']} {r['grams']:g} g" for r in rows)
+        activity.record(db.conn, "coach", "action", "Logged a meal", f"{grams}, {how} in the app")
+        row = db.app_conversation(conversation_id) if conversation_id else None
+        note = (f"{SCANNED}: {grams}, logged by the app as meal {meal['id']}.]" if how == "scanned" else
+                f"[Logged from history in the app: {grams}, as meal {meal['id']}.]")
+        await agent.post(row["public_id"] if row and row["agent"] == "coach" else food_chat(), note,
+                         f"Logged {said}: {meal['calories']} kcal.", [{"type": "meals", "meals": [food.as_json(meal)]}],
+                         record=False)
+        return {"meal": food.as_json(meal)}
+
+    def from_items(items: list[dict]) -> tuple[list[dict], dict, str]:
+        try:
+            return foods.from_items(items, "")
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'"))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
     @app.post("/v1/food/foods/{food_id}/log", dependencies=[Depends(auth)])
     async def log_one_food(food_id: int, body: FoodLogOne):
         if foods.get(food_id) is None:
             raise HTTPException(404, f"no food {food_id}")
-        today = food.today()
-        if body.day and body.day > today:
-            raise HTTPException(400, "a meal can't be in the future")
-        when = datetime.now(tz)
-        if body.day and body.day != today:
-            when = datetime.combine(body.day, when.time(), tz)
-        rows, sums, notes = foods.from_items([{"food_id": food_id, "grams": body.grams}], "")
-        name = rows[0]["name"]
-        brand = foods.get(food_id)["brand"]
-        if brand and brand.lower() not in name.lower():
-            name = f"{name} ({brand})"[:MAX_FOOD_NAME]
-        meal = food.add(name, **sums, eaten_at=when, notes=notes)
+        when = meal_time(body.day)
+        rows, sums, notes = from_items([{"food_id": food_id, "grams": body.grams}])
+        meal = food.add(food_name(rows), **sums, eaten_at=when, notes=notes)
         foods.keep_items(meal["id"], rows, count=True)
-        activity.record(db.conn, "coach", "action", "Logged a meal",
-                        f"{name}, {rows[0]['grams']:g} g, scanned in the app")
-        # In Coach's chat too (the one it was scanned in, else the Food log), so it's seen there and Coach knows.
-        row = db.app_conversation(body.conversation_id) if body.conversation_id else None
-        await agent.post(row["public_id"] if row and row["agent"] == "coach" else food_chat(), f"{SCANNED}: {name}, {rows[0]['grams']:g} g, logged by the app as meal "
-                         f"{meal['id']}.]", f"Logged {name}, {rows[0]['grams']:g} g: {meal['calories']} kcal.",
-                         [{"type": "meals", "meals": [food.as_json(meal)]}], record=False)
-        return {"meal": food.as_json(meal)}
+        return await logged(meal, rows, "scanned", body.conversation_id)
+
+    # What the user eats, to log it again: saved foods and past meals, no model call.
+    @app.get("/v1/food/recent", dependencies=[Depends(auth)])
+    async def food_recent(q: str = "", limit: int = Query(40, ge=1, le=100)):
+        return foods.recent(tz, q, limit)
+
+    @app.post("/v1/food/foods/log", dependencies=[Depends(auth)])
+    async def log_foods(body: FoodsLogIn):
+        when = meal_time(body.day)
+        rows, sums, notes = from_items([i.model_dump() for i in body.items])
+        try:
+            meal = food.add((body.name or "").strip() or food_name(rows), **sums, eaten_at=when, notes=notes)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        foods.keep_items(meal["id"], rows, count=True)
+        return await logged(meal, rows, "from history", body.conversation_id)
+
+    @app.post("/v1/food/meals/{meal_id}/again", dependencies=[Depends(auth)])
+    async def meal_again(meal_id: int, body: MealAgainIn):
+        """The same meal again: its items at the same grams (saved foods with today's numbers), else its totals."""
+        old = meal_or_404(meal_id)
+        when = meal_time(body.day)
+        items = []
+        for i in foods.items(meal_id):
+            if i["food_id"] is not None and foods.get(i["food_id"]):
+                items.append({"food_id": i["food_id"], "grams": i["grams"]})
+            elif i["grams"]:  # an item estimated on its own: its numbers per 100 g from what it came to
+                per = 100 / i["grams"]
+                items.append({"name": i["name"], "grams": i["grams"], "kcal_100g": i["calories"] * per,
+                              "protein_100g": i["protein_g"] * per, "carbs_100g": i["carbs_g"] * per,
+                              "fat_100g": i["fat_g"] * per})
+            else:
+                items = None  # can't be rebuilt from its items: copy the totals
+                break
+        drinks = {k: old[k] for k in ("water_ml", "caffeine_mg")}
+        if items:
+            rows, sums, notes = from_items(items)
+            meal = food.add(old["name"], **sums, **drinks, eaten_at=when, notes=notes, emoji=old["emoji"])
+            foods.keep_items(meal["id"], rows, count=True)
+        else:
+            rows = []
+            meal = food.add(old["name"], **{k: old[k] for k in MACROS}, **drinks, eaten_at=when,
+                            notes=free_notes(old["notes"]), emoji=old["emoji"])
+        return await logged(meal, rows, "again", body.conversation_id)
 
     @app.patch("/v1/food/meals/{meal_id}", dependencies=[Depends(auth)])
     async def edit_meal(meal_id: int, body: MealPatch):

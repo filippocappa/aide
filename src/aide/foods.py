@@ -8,9 +8,11 @@ A meal logged from items keeps them in meal_items. Drinks are per 100 ml, the sa
 
 import sqlite3
 import unicodedata
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from .db import utcnow
-from .food import MACROS
+from .food import MACROS, meal_emoji
 from .nutrition import grade
 
 SCHEMA = """
@@ -67,6 +69,10 @@ QUALITY_COLUMNS = {"sugars_100g": "REAL", "sat_fat_100g": "REAL", "fibre_100g": 
 MAX_NAME = 100
 MAX_PORTION = 5000  # g in one serving or one item
 SEARCH_LIMIT = 5
+RECENT_DAYS = 90  # how far back "what you eat" looks
+RECENT_HOURS = 2  # eaten within this many hours of now's time of day counts double (breakfast in the morning)
+RECENT_FOODS = 40
+RECENT_MEALS = 10
 
 
 def normalize(text: str) -> str:
@@ -120,6 +126,64 @@ class FoodDB:
                  if all(w in normalize(f"{r['name']} {r['brand']} {r['aliases']}") for w in words)]
         found.sort(key=lambda f: (f["uses"], f["last_used"] or ""), reverse=True)
         return found[:limit]
+
+    def recent(self, tz: ZoneInfo, text: str = "", limit: int = RECENT_FOODS) -> dict:
+        """What the user eats, to log it again without the model: `foods` (eaten ones, or with `text` any saved food
+        matching every word) and `meals` of more than one item, the same items once (the latest). Both ranked by how
+        often they were had in the last RECENT_DAYS, each time near now's time of day counting double."""
+        now = datetime.now(tz)
+        since = (utcnow() - timedelta(days=RECENT_DAYS)).isoformat()
+        rows = [dict(r) for r in self.conn.execute(
+            "SELECT i.meal_id, i.food_id, i.name AS item, i.grams, m.name, m.emoji, m.eaten_at, m.calories "
+            "FROM meal_items i JOIN meals m ON m.id = i.meal_id WHERE m.eaten_at >= ? ORDER BY m.eaten_at, i.id",
+            (since,))]
+
+        def near(eaten_at: str) -> bool:
+            when = datetime.fromisoformat(eaten_at).astimezone(tz)
+            gap = abs((when.hour * 60 + when.minute) - (now.hour * 60 + now.minute))
+            return min(gap, 1440 - gap) <= RECENT_HOURS * 60
+
+        def score(times: list[str]) -> tuple[int, str]:
+            return len(times) + sum(near(t) for t in times), max(times)
+
+        eaten: dict[int, list[str]] = {}
+        meals: dict[int, list[dict]] = {}
+        for r in rows:
+            if r["food_id"] is not None:
+                eaten.setdefault(r["food_id"], []).append(r["eaten_at"])
+            meals.setdefault(r["meal_id"], []).append(r)
+        words = normalize(text).split()
+
+        def matches(*names: str) -> bool:
+            return all(w in normalize(" ".join(names)) for w in words)
+
+        foods = [dict(r) for r in self.conn.execute("SELECT * FROM foods")]
+        foods = [f for f in foods if matches(f["name"], f["brand"], f["aliases"]) if words or f["id"] in eaten
+                 or f["uses"]]
+        foods.sort(key=lambda f: (score(eaten[f["id"]]) if f["id"] in eaten else (0, ""), f["uses"],
+                                  f["last_used"] or ""), reverse=True)
+
+        same: dict[tuple, list[list[dict]]] = {}  # the same items, whatever the meal was called
+        for items in meals.values():
+            if len(items) > 1:
+                key = tuple(sorted(i["food_id"] if i["food_id"] is not None else normalize(i["item"]) for i in items))
+                same.setdefault(key, []).append(items)
+        combos = [(score([m[0]["eaten_at"] for m in group]), len(group), group[-1]) for group in same.values()
+                  if matches(group[-1][0]["name"], *(i["item"] for i in group[-1]))]
+        combos.sort(key=lambda c: c[0], reverse=True)
+
+        def local(stamp: str | None) -> str | None:
+            return stamp and datetime.fromisoformat(stamp).astimezone(tz).replace(microsecond=0).isoformat()
+
+        return {
+            "foods": [{**self.as_json(f), "emoji": meal_emoji(f["name"]), "uses": f["uses"],
+                       "last_used": local(f["last_used"])} for f in foods[:limit]],
+            "meals": [{"id": m[0]["meal_id"], "name": m[0]["name"], "emoji": m[0]["emoji"] or meal_emoji(m[0]["name"]),
+                       "calories": m[0]["calories"], "times": times, "last_eaten": local(m[0]["eaten_at"]),
+                       "items": [{"food_id": i["food_id"], "name": i["item"], "grams": i["grams"] and round(i["grams"])}
+                                 for i in m]}
+                      for _, times, m in combos[:RECENT_MEALS]],
+        }
 
     def _clean(self, changes: dict) -> dict:
         out = {}
