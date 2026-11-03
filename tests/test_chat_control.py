@@ -103,6 +103,26 @@ def test_a_reached_limit_ends_with_a_reason_but_not_a_strict_one(db):
     assert not store.reached(store.get_limit(social["id"]), utcnow())
 
 
+def test_coach_cant_loosen_a_limit_reached_today(db):
+    store = LockStore(db.conn, ROME)
+    tools = tools_by_name(lock_tools(store, ROME))
+    now = utcnow()
+    today = now.astimezone(ROME).date().isoformat()
+    other_day = (now.astimezone(ROME).isoweekday() % 7) + 1
+    social = store.add_limit("Social", 30, [])
+    store.limit_reached(social["id"], today, None)
+    for change in ({"minutes": 45}, {"enabled": False}, {"days": [other_day]}):
+        with pytest.raises(ValueError, match="end_limit"):
+            run(tools["update_limit"].handler(limit_id=social["id"], **change))
+    assert store.get_limit(social["id"])["minutes"] == 30
+    assert "20 min" in run(tools["update_limit"].handler(limit_id=social["id"], minutes=20))  # tighter is fine
+    run(tools["update_limit"].handler(limit_id=social["id"], strict=True))  # so is making it strict
+    games = store.add_limit("Games", 30, [])  # not reached: changed freely
+    assert "1 h" in run(tools["update_limit"].handler(limit_id=games["id"], minutes=60))
+    run(tools["update_limit"].handler(limit_id=games["id"], enabled=False))
+    assert not store.get_limit(games["id"])["enabled"]
+
+
 def test_update_habit_changes_only_whats_given(db):
     store = HabitStore(db.conn, ROME)
     tools = tools_by_name(habit_tools(store))
