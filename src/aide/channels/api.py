@@ -1402,8 +1402,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     # What the user eats, to log it again: saved foods and past meals, no model call.
     @app.get("/v1/food/recent", dependencies=[Depends(auth)])
-    async def food_recent(q: str = "", limit: int = Query(40, ge=1, le=100)):
-        return foods.recent(tz, q, limit)
+    async def food_recent(q: str = "", limit: int = Query(40, ge=1, le=100),
+                          order: str = Query("usual", pattern="^(usual|latest)$")):
+        return foods.latest(tz, q, limit) if order == "latest" else foods.recent(tz, q, limit)
 
     @app.post("/v1/food/foods/log", dependencies=[Depends(auth)])
     async def log_foods(body: FoodsLogIn):

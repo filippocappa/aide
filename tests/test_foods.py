@@ -296,6 +296,32 @@ def test_what_you_eat_is_listed_searched_and_logged_again_without_the_model(app_
     assert api.post("/v1/food/meals/999/again", json={}, headers=AUTH).status_code == 404
 
 
+def test_latest_lists_every_food_as_it_was_had_newest_first(app_env):
+    from datetime import datetime
+    api, food, foods, rec, model = app_env()
+    now = datetime.now(ROME)
+    pasta = foods.save("Penne rigate", 350, 12, 70, 1.5, "off", brand="Voiello")
+    oil = foods.save("Olio extravergine", 884, 0, 0, 100, "estimate")
+    for days, items, name in ((2, [(pasta, 80), (oil, 10)], "Pasta"), (0, [(oil, 5)], "Salad"),
+                              (1, [(pasta, 100)], "Lunch")):
+        rows, sums, notes = foods.from_items([{"food_id": f["id"], "grams": g} for f, g in items], "")
+        meal = food.add(name, **sums, eaten_at=now - timedelta(days=days), notes=notes)
+        foods.keep_items(meal["id"], rows, count=True)
+    food.add("Pizza", 800, 30, 90, 30, eaten_at=now - timedelta(hours=1))  # a meal without items: not listed
+
+    latest = api.get("/v1/food/recent?order=latest", headers=AUTH).json()
+    assert latest["meals"] == []
+    assert [(f["name"], f["grams"], f["meal"]) for f in latest["foods"]] == [
+        ("Olio extravergine", 5, "Salad"), ("Penne rigate", 100, "Lunch"),
+        ("Penne rigate", 80, "Pasta"), ("Olio extravergine", 10, "Pasta")]
+    first = latest["foods"][1]
+    assert first["brand"] == "Voiello" and first["uses"] == 2 and first["eaten_at"].endswith("+01:00")
+    assert [f["grams"] for f in api.get("/v1/food/recent?order=latest&q=voiello&limit=1",
+                                        headers=AUTH).json()["foods"]] == [100]
+    assert api.get("/v1/food/recent?order=oldest", headers=AUTH).status_code == 400
+    assert model.requests == []
+
+
 def test_what_you_eat_at_this_time_of_day_comes_first(env):
     from datetime import datetime
     _, food, foods, _ = env()

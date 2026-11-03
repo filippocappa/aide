@@ -3,8 +3,11 @@ import SwiftUI
 /// "Recent" on Health → Food: what you eat, to have it again without Coach or a model call (docs/API.md, "Food",
 /// `GET /v1/food/recent`). Meals of several items you've had, then foods, both by how often you have them (at this time
 /// of day counting double), with a search over every saved food. A meal is logged again as it was; a food opens its
-/// how-much page (the scan sheet); the + on foods builds one meal of several at their usual portions.
+/// how-much page (the scan sheet); the + on foods builds one meal of several at their usual portions. Latest lists every
+/// food as it was had, newest first, by day (`order=latest`).
 struct RecentFoodsSheet: View {
+    enum Order: String { case usual, latest }
+
     /// The day being looked at; nil is today.
     let date: String?
     var tint: Color = Theme.accent
@@ -14,6 +17,8 @@ struct RecentFoodsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var query = ""
+    /// Usual or Latest, the last one kept.
+    @AppStorage("recentFoodsOrder") private var order: Order = .usual
     @State private var recent: RecentFoods?
     @State private var error: String?
     /// The foods picked for one meal, in the order picked, with the grams typed for each.
@@ -28,6 +33,14 @@ struct RecentFoodsSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                Picker("Order", selection: $order) {
+                    Text("Usual").tag(Order.usual)
+                    Text("Latest").tag(Order.latest)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
                 }
@@ -35,26 +48,19 @@ struct RecentFoodsSheet: View {
                     if recent.foods.isEmpty && recent.meals.isEmpty {
                         Text(query.isEmpty
                              ? "Nothing here yet. Foods show up once you've logged them, from a photo, a description or a barcode."
+                             : order == .latest ? "You haven't had a food called that in the last 90 days."
                              : "No saved food called that. Describe it to Coach instead.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
-                    if !recent.meals.isEmpty {
-                        Section(query.isEmpty ? "Meals you have" : "Meals") {
-                            ForEach(recent.meals) { meal in
-                                Button { again = meal } label: { mealRow(meal) }
-                                    .buttonStyle(.plain)
+                    if order == .latest {
+                        ForEach(days(recent.foods), id: \.day) { group in
+                            Section(dayTitle(group.day)) {
+                                ForEach(group.foods) { item in latestRow(item) }
                             }
                         }
-                    }
-                    if !recent.foods.isEmpty {
-                        Section {
-                            ForEach(recent.foods) { item in foodRow(item) }
-                        } header: {
-                            Text("Foods")
-                        } footer: {
-                            Text("Tap a food to say how much. + adds it to one meal with others, at your usual portion.")
-                        }
+                    } else {
+                        usual(recent)
                     }
                 } else if error == nil {
                     HStack { Spacer(); ProgressView(); Spacer() }.listRowBackground(Color.clear)
@@ -76,11 +82,12 @@ struct RecentFoodsSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 #endif
             }
-            .task(id: query) {
+            .task(id: "\(order.rawValue)|\(query)") {
                 if !query.isEmpty { try? await Task.sleep(for: .milliseconds(250)) } // while typing
                 guard !Task.isCancelled else { return }
                 await load()
             }
+            .onChange(of: order) { recent = nil }
             .confirmationDialog(again.map { "\($0.name), \($0.calories) kcal" } ?? "", isPresented: Binding(
                 get: { again != nil }, set: { if !$0 { again = nil } }
             ), titleVisibility: .visible, presenting: again) { meal in
@@ -98,6 +105,27 @@ struct RecentFoodsSheet: View {
             }
         }
         .presentationDetents([.large])
+    }
+
+    /// Usual: meals of several items, then foods, by how often you have them.
+    @ViewBuilder private func usual(_ recent: RecentFoods) -> some View {
+                    if !recent.meals.isEmpty {
+                        Section(query.isEmpty ? "Meals you have" : "Meals") {
+                            ForEach(recent.meals) { meal in
+                                Button { again = meal } label: { mealRow(meal) }
+                                    .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    if !recent.foods.isEmpty {
+                        Section {
+                            ForEach(recent.foods) { item in foodRow(item) }
+                        } header: {
+                            Text("Foods")
+                        } footer: {
+                            Text("Tap a food to say how much. + adds it to one meal with others, at your usual portion.")
+                        }
+                    }
     }
 
     // MARK: Rows
@@ -180,6 +208,52 @@ struct RecentFoodsSheet: View {
         return parts.joined(separator: " · ")
     }
 
+    // MARK: Latest
+
+    /// The foods by the day they were had, newest first (the server's order kept inside a day).
+    private func days(_ foods: [RecentFood]) -> [(day: Date, foods: [RecentFood])] {
+        var out: [(day: Date, foods: [RecentFood])] = []
+        for item in foods {
+            let day = Calendar.current.startOfDay(for: item.eatenAt.flatMap(Wire.parse) ?? .distantPast)
+            if out.last?.day == day { out[out.count - 1].foods.append(item) } else { out.append((day, [item])) }
+        }
+        return out
+    }
+
+    /// "Today", "Yesterday" or "Saturday 1 November".
+    private func dayTitle(_ day: Date) -> String {
+        if Calendar.current.isDateInToday(day) { return "Today" }
+        if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
+        return day.formatted(.dateTime.weekday(.wide).day().month(.wide))
+    }
+
+    /// One time a food was had: its name, then "Voiello · 300 g · 12:04" and the meal it was in. Tap: how much, to
+    /// have it again.
+    private func latestRow(_ item: RecentFood) -> some View {
+        let food = item.food
+        let time = item.eatenAt.flatMap(Wire.parse)?.formatted(date: .omitted, time: .shortened)
+        let line = [food.brand.isEmpty ? nil : food.brand, item.grams.map(ScanSheet.g), time].compactMap { $0 }
+        return Button { single = food } label: {
+            HStack(spacing: 12) {
+                MealEmoji(emoji: item.emoji, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(food.name).font(.subheadline.weight(.semibold)).lineLimit(2)
+                    Text(line.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if let meal = item.meal, meal != food.name, !meal.hasPrefix(food.name) {
+                        Text("in \(meal)").font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                    }
+                }
+                .multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                if let g = item.grams {
+                    Text("\(food.portion(g).calories) kcal").font(.subheadline).monospacedDigit()
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: One meal of several
 
     /// The bar under the list while foods are picked: what they come to, and Log.
@@ -226,7 +300,7 @@ struct RecentFoodsSheet: View {
 
     private func load() async {
         do {
-            let loaded = try await env.api.recentFoods(query: query)
+            let loaded = try await env.api.recentFoods(query: query, latest: order == .latest)
             guard !Task.isCancelled else { return }
             recent = loaded
             error = nil
