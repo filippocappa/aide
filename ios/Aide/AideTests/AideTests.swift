@@ -256,6 +256,24 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(ActivityRow.verb("queued"), "Asked to")
     }
 
+    func testAnEarlierDayFoldsToWhatAndWho() throws {
+        let json = #"""
+        {"items": [
+          {"id": 9, "ts": "2026-10-22T18:00:00+02:00", "agent": "coach", "kind": "action", "title": "Logged a meal",
+           "count": 4, "agents": ["coach"], "children": []},
+          {"id": 4, "ts": "2026-10-22T07:01:00+02:00", "agent": "secretary", "kind": "objectives", "title": "Proposed 3",
+           "count": 2, "agents": ["secretary", "professor"], "children": []},
+          {"id": 2, "ts": "2026-10-22T06:00:00+02:00", "agent": "aide", "kind": "digest", "title": "Wake-up briefing"}],
+         "next": null}
+        """#
+        let page = try JSONDecoder.api.decode(ActivityPage.self, from: Data(json.utf8))
+        let names = ["coach": "Coach", "secretary": "Secretary", "professor": "Professor", "aide": "Aide"]
+        let day = ActivityDays.group(page.items)[0]
+        XCTAssertEqual(ActivityDays.summary(day, names: { names[$0]! }),
+                       "7 things from Coach, Professor, Secretary and Aide")
+        XCTAssertEqual(page.items[0].children?.count, 0)
+    }
+
     func testActionIDsEncode() throws {
         let data = try JSONEncoder.api.encode(ActionIDs(ids: [42, 43]))
         XCTAssertEqual(String(decoding: data, as: UTF8.self), #"{"ids":[42,43]}"#)
