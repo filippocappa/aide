@@ -47,6 +47,7 @@ struct FoodPage: View {
     /// "Ask Coach instead" on a barcode's sheet: the photo, sent the usual way once the sheet is gone.
     @State private var coachInstead: PickedPhoto?
     @State private var typingBarcode = false
+    @State private var showRecent = false
     @State private var barcodeText = ""
     @State private var showGoals = false
     @State private var editingMeal: Meal?
@@ -110,7 +111,10 @@ struct FoodPage: View {
         }
         .sheet(item: $editingMeal) { meal in
             MealPage(meal: meal, coach: coach, save: { await update(meal, $0) }, delete: { await remove(meal) },
-                     askCoach: openFoodChat)
+                     askCoach: openFoodChat, again: { await logAgain(meal) })
+        }
+        .sheet(isPresented: $showRecent) {
+            RecentFoodsSheet(date: isToday ? nil : Wire.dayString(day), tint: coach.tint, logged: loggedPacket)
         }
         .alert("What did you eat?", isPresented: $describing) {
             TextField("A cappuccino and a croissant", text: $mealText)
@@ -243,8 +247,9 @@ struct FoodPage: View {
         .card()
     }
 
-    /// Three ways in, side by side: a photo (Aide's camera, with the library in it), a few words, or a barcode (the
-    /// camera reads it by itself, or type it). Coach (or, for one packet, the server) does the rest.
+    /// Four ways in, side by side: a photo (Aide's camera, with the library in it), a few words, a barcode (the camera
+    /// reads it by itself, or type it), or something you've had before. Coach (or, for a packet or something had
+    /// before, the server) does the rest.
     private var logButton: some View {
         VStack(spacing: 6) {
             HStack(spacing: 8) {
@@ -263,6 +268,9 @@ struct FoodPage: View {
                     Button("Type the number", systemImage: "number") { typingBarcode = true }
                 } label: {
                     LogTile(title: "Barcode", systemImage: "barcode", filled: false)
+                }
+                Button { showRecent = true } label: {
+                    LogTile(title: "Recent", systemImage: "clock.arrow.circlepath", filled: false)
                 }
             }
             .buttonStyle(.plain)
@@ -334,6 +342,7 @@ struct FoodPage: View {
                 case "meal": editingMeal = Meal.newestFirst(loaded.meals).first
                 case "score": previewScore = true
                 case "logging": pending = PendingMeal(photo: nil, text: "a bowl of pasta with tomato and basil")
+                case "recent": showRecent = true
                 default: break
                 }
             }
@@ -380,6 +389,14 @@ struct FoodPage: View {
             try? await Task.sleep(for: .milliseconds(450))
             push.route = route
         }
+    }
+
+    /// "Have it again" on a meal's page: the same items now (or on the day being looked at).
+    private func logAgain(_ meal: Meal) async -> String? {
+        do {
+            loggedPacket(try await env.api.mealAgain(meal.id, FoodPortion(date: isToday ? nil : Wire.dayString(day))))
+            return nil
+        } catch { return error.localizedDescription }
     }
 
     private func update(_ meal: Meal, _ changes: MealChanges) async -> String? {

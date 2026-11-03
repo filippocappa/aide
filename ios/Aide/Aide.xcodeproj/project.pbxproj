@@ -179,6 +179,7 @@
 		AEEA7D4B2EB40173AC263CF1 /* PracticeExamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */; };
 		B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */; };
 		B498B793AEFA7987A267B6D0 /* Figure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E5D11C27686D088BF88108 /* Figure.swift */; };
+		B5544DEBFD6FFF64B092ABC5 /* RecentFoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2884A9E5CE8EFF2BA09F5D5 /* RecentFoodViews.swift */; };
 		B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
 		B80EB1D82215C188A6E90082 /* HeartSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9B460E43DC41726DAA0D2B8 /* HeartSummary.swift */; };
 		B8456A965823E33B1D7CC857 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
@@ -193,6 +194,7 @@
 		C24F2E73A92BACD6109776BA /* LockMonitor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0ED3D94C12E8FE5324793C80 /* LockMonitor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C95CFFA7BF809325C6437161 /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87678035748931339F27CC91 /* Photos.swift */; };
 		C9E49AE1E7182DCFB48FDE7A /* TodayWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B080CFFD5248A57D95546299 /* TodayWidget.swift */; };
+		CAA8FB4E0645029A2DE7491D /* RecentFoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2884A9E5CE8EFF2BA09F5D5 /* RecentFoodViews.swift */; };
 		CACCC83A44CB8718FB4A36C7 /* MacAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38F0E0A30B4DF8F0F6F9D585 /* MacAppDelegate.swift */; };
 		CB0EE634A585D77AA9BC3B87 /* VoiceLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67BBAA4A50EA4E94D5CE2C49 /* VoiceLog.swift */; };
 		CC59E982D38033B55B1A7B86 /* MacServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EE4431CF529BAD1BA4486C7 /* MacServices.swift */; };
@@ -453,6 +455,7 @@
 		EBA213D456FF8A690E35B36F /* ScreenTimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeService.swift; sourceTree = "<group>"; };
 		ED75A40C75D31819393889F1 /* MacLoginItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLoginItem.swift; sourceTree = "<group>"; };
 		F052E49EFFBA77932E41460B /* StudySessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudySessionView.swift; sourceTree = "<group>"; };
+		F2884A9E5CE8EFF2BA09F5D5 /* RecentFoodViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentFoodViews.swift; sourceTree = "<group>"; };
 		F32DFE4D7AD03B872AE8A96C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		F4B434BFB9F5B347D240B333 /* ErrandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrandViews.swift; sourceTree = "<group>"; };
 		F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSheet.swift; sourceTree = "<group>"; };
@@ -521,6 +524,7 @@
 				054584741E8F0145B3456003 /* ObjectivesView.swift */,
 				525C202EFF430C8A11DDC8AA /* PlanViews.swift */,
 				E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */,
+				F2884A9E5CE8EFF2BA09F5D5 /* RecentFoodViews.swift */,
 				31E717ACC950E43DC53B945E /* RichText.swift */,
 				390203A3696FD54CC8786945 /* RouteCard.swift */,
 				53C02A40AE154F5373B2E531 /* RoutinesView.swift */,
@@ -1189,6 +1193,7 @@
 				B8C1C840F6F79522D7D40EAC /* PlanViews.swift in Sources */,
 				27014DDA70702F7E1FD41A5F /* PracticeExamView.swift in Sources */,
 				3FDE79165FD718783D2AB999 /* PushService.swift in Sources */,
+				CAA8FB4E0645029A2DE7491D /* RecentFoodViews.swift in Sources */,
 				53D6CAD14839C5903FA5CB93 /* RichText.swift in Sources */,
 				0B4609FC7D85FD28662E5F68 /* RouteCard.swift in Sources */,
 				D340A738067BC1E71E6D4EF1 /* RoutinesView.swift in Sources */,
@@ -1287,6 +1292,7 @@
 				23E40DD753D79D4F35F5BA25 /* PlanViews.swift in Sources */,
 				AEEA7D4B2EB40173AC263CF1 /* PracticeExamView.swift in Sources */,
 				6FFB4761315BC0B5CD78D8C6 /* PushService.swift in Sources */,
+				B5544DEBFD6FFF64B092ABC5 /* RecentFoodViews.swift in Sources */,
 				BD46F83D3EF35D141EA7239C /* ReminderSyncService.swift in Sources */,
 				AA3A37D30E4DCE329F1D78A5 /* RichText.swift in Sources */,
 				9A5EC9E4AB9A77C8A2AF2FF6 /* RouteCard.swift in Sources */,
