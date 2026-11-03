@@ -13,7 +13,7 @@ struct NavigationStack<Root: View>: View {
     @Environment(\.macInStack) private var inSheet
     @Environment(\.dismiss) private var dismiss
     @Environment(\.macWindowSize) private var window
-    /// A cover card's own stack (`MacCoverLayer`): the close button takes the card off, and full screen sits opposite.
+    /// A cover card's own stack (`MacCoverLayer`): the close button takes the card off, and ⤢ (fill the window) sits opposite.
     @Environment(\.macCoverRoot) private var coverRoot
 
     init(@ViewBuilder root: () -> Root) {
@@ -58,7 +58,7 @@ struct NavigationStack<Root: View>: View {
         HStack {
             SheetCloseButton { if let coverRoot { coverRoot() } else { dismiss() } }
             Spacer()
-            if coverRoot != nil { MacFullScreenButton() }
+            if coverRoot != nil { MacCoverExpandButton() }
         }
         .overlay {
             if let title { Text(title).font(.headline).lineLimit(1).padding(.horizontal, 56) }
@@ -104,7 +104,7 @@ enum MacSheetSize {
 /// A cover's size, from the window.
 struct MacCoverFrame: ViewModifier {
     @Environment(\.macWindowSize) private var window
-    /// A cover card's own stack (`MacCoverLayer`): the close button takes the card off, and full screen sits opposite.
+    /// A cover card's own stack (`MacCoverLayer`): the close button takes the card off, and ⤢ (fill the window) sits opposite.
     @Environment(\.macCoverRoot) private var coverRoot
 
     func body(content: Content) -> some View {
@@ -175,29 +175,18 @@ private struct CloseBackground: ViewModifier {
     }
 }
 
-/// Aide's window in and out of full screen (⌃⌘F), from a cover card (`MacCoverLayer.swift`): a practice exam, a lesson,
-/// a quiz. The card fills the screen with it.
-struct MacFullScreenButton: View {
-    @State private var window: NSWindow?
-    @State private var full = false
+/// A cover card's ⤢: the card fills Aide's window, and back to the card with its border (`MacCoverLayer.swift`).
+/// Full screen is the window's green button.
+struct MacCoverExpandButton: View {
+    @ObservedObject private var stack = MacCoverStack.shared
 
     var body: some View {
-        MacGlassButton(symbol: full ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                       help: full ? "Exit Full Screen (⌃⌘F)" : "Full Screen (⌃⌘F)") {
-            (window ?? NSApp.keyWindow)?.toggleFullScreen(nil)
+        MacGlassButton(symbol: stack.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                       help: stack.expanded ? "Back to a card (⇧⌘F)" : "Fill the window (⇧⌘F)") {
+            stack.expanded.toggle()
         }
-        .keyboardShortcut("f", modifiers: [.control, .command])
-        .accessibilityLabel(full ? "Exit full screen" : "Full screen")
-        .background(MacWindowReader { found in
-            window = found
-            full = found.styleMask.contains(.fullScreen)
-        })
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { note in
-            if note.object as? NSWindow === window { full = true }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { note in
-            if note.object as? NSWindow === window { full = false }
-        }
+        .keyboardShortcut("f", modifiers: [.shift, .command])
+        .accessibilityLabel(stack.expanded ? "Back to a card" : "Fill the window")
     }
 }
 
