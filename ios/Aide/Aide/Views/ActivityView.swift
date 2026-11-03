@@ -45,17 +45,59 @@ struct ActivitySheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if let error {
-                    Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
-                }
-                Section { chips }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                if showsWaiting {
-                    WaitingSection(approvals: approvals, agent: agent, reload: { await load() }, open: go)
-                }
-                upcomingSection
+            page
+            .scrollContentBackground(.hidden)
+            .background(Theme.grouped)
+            .navigationTitle(agent.map { "\($0.name)'s activity" } ?? "Activity")
+            .navigationBarTitleDisplayMode(.inline)
+            .refreshable { await load() }
+            .task(id: agent?.id) { await load() }
+        }
+        .presentationDetents([.large])
+        .presentationBackground(Theme.grouped)
+    }
+
+    /// The phone: one list. The Mac: the feed, with what's waiting and what's coming up beside it.
+    @ViewBuilder private var page: some View {
+        #if os(macOS)
+        MacSplitList(sideWidth: 380) {
+            if let error {
+                Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
+            }
+            Section { chips }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            feed
+        } side: {
+            if showsWaiting {
+                WaitingSection(approvals: approvals, agent: agent, reload: { await load() }, open: go)
+            }
+            upcomingSection
+            if loaded, (approvals?.waiting ?? 0) == 0 || !showsWaiting,
+               (approvals?.upcoming ?? []).filter(mine(\.agent)).isEmpty {
+                Section { Text("Nothing waiting for you, and nothing planned.").foregroundStyle(.secondary) }
+                    .listRowBackground(Theme.row)
+            }
+        }
+        #else
+        List {
+            if let error {
+                Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
+            }
+            Section { chips }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            if showsWaiting {
+                WaitingSection(approvals: approvals, agent: agent, reload: { await load() }, open: go)
+            }
+            upcomingSection
+            feed
+        }
+        #endif
+    }
+
+    /// The days, the newest open, the earlier ones folded.
+    @ViewBuilder private var feed: some View {
                 let days = ActivityDays.group(items)
                 ForEach(days, id: \.day) { group in
                     if group.day == days.first?.day {
@@ -78,16 +120,6 @@ struct ActivitySheet: View {
                 if !loaded && error == nil {
                     SkeletonSections(sections: 2, rows: 3)
                 }
-            }
-            .scrollContentBackground(.hidden)
-            .background(Theme.grouped)
-            .navigationTitle(agent.map { "\($0.name)'s activity" } ?? "Activity")
-            .navigationBarTitleDisplayMode(.inline)
-            .refreshable { await load() }
-            .task(id: agent?.id) { await load() }
-        }
-        .presentationDetents([.large])
-        .presentationBackground(Theme.grouped)
     }
 
     // MARK: Coming up

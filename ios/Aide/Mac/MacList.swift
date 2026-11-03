@@ -38,3 +38,36 @@ struct List<Content: View>: View {
         }
     }
 }
+
+/// Two lists side by side on a wide page: the main one, and a narrower one beside it (what's waiting, what's coming
+/// up, the habits). Each scrolls on its own, and the pair is kept to 1280 pt in the middle. Without room for both,
+/// one list with the side's sections after the main's.
+struct MacSplitList<Main: View, Side: View>: View {
+    private let sideWidth: CGFloat
+    private let main: Main
+    private let side: Side
+
+    init(sideWidth: CGFloat = 400, @ViewBuilder main: () -> Main, @ViewBuilder side: () -> Side) {
+        self.sideWidth = sideWidth
+        self.main = main()
+        self.side = side()
+    }
+
+    var body: some View {
+        GeometryReader { page in
+            if page.size.width >= 560 + sideWidth {
+                HStack(alignment: .top, spacing: 0) {
+                    List { main }
+                    List { side }.frame(width: sideWidth)
+                }
+                .frame(maxWidth: 1280)
+                .frame(maxWidth: .infinity)
+            } else {
+                List {
+                    main
+                    side
+                }
+            }
+        }
+    }
+}

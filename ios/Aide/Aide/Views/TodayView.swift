@@ -44,17 +44,7 @@ struct TodayView: View {
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
-                List {
-                    if !settings.isConfigured {
-                        Section { Text("Add your server token in Settings to start.").foregroundStyle(.secondary) }
-                    }
-                    if !objectivesOnly {
-                        digestSection.id(TodayFocus.digest)
-                        WaitingSection(approvals: approvals, agent: nil, reload: { await loadApprovals() }) { open($0) }
-                    }
-                    objectivesSection
-                    if !objectivesOnly { notesSection.id(TodayFocus.notes) }
-                }
+                page
                 .scrollContentBackground(.hidden)
                 .pageGlow(Theme.accent)
                 .navigationTitle(objectivesOnly ? "Objectives" : "Today")
@@ -118,6 +108,52 @@ struct TodayView: View {
             }
         }
         .onChange(of: approvals?.waiting) { _, n in if let n { waiting = n } }
+    }
+
+    /// The phone: one list from the digest down. The Mac: the day and its goals, with what's waiting, the habits and
+    /// the team's notes beside them (Objectives: the goals, with the plans waiting and the month beside them).
+    @ViewBuilder private var page: some View {
+        #if os(macOS)
+        MacSplitList {
+            if !settings.isConfigured {
+                Section { Text("Add your server token in Settings to start.").foregroundStyle(.secondary) }
+            }
+            if !objectivesOnly { digestSection.id(TodayFocus.digest) }
+            if let error {
+                Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
+            }
+            if let overview {
+                weekSection(overview)
+                todaySection(overview)
+                if !objectivesOnly { monthSection(overview) }
+            } else if settings.isConfigured && error == nil {
+                SkeletonSections(sections: 1, rows: 2)
+            }
+        } side: {
+            if objectivesOnly {
+                if let overview {
+                    plansSection(overview)
+                    monthSection(overview)
+                }
+            } else {
+                WaitingSection(approvals: approvals, agent: nil, reload: { await loadApprovals() }) { open($0) }
+                habitsSection.id(TodayFocus.habits)
+                notesSection.id(TodayFocus.notes)
+            }
+        }
+        #else
+        List {
+            if !settings.isConfigured {
+                Section { Text("Add your server token in Settings to start.").foregroundStyle(.secondary) }
+            }
+            if !objectivesOnly {
+                digestSection.id(TodayFocus.digest)
+                WaitingSection(approvals: approvals, agent: nil, reload: { await loadApprovals() }) { open($0) }
+            }
+            objectivesSection
+            if !objectivesOnly { notesSection.id(TodayFocus.notes) }
+        }
+        #endif
     }
 
     // MARK: Digest
@@ -185,27 +221,30 @@ struct TodayView: View {
             Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
         }
         if let overview {
-            if objectivesOnly {
-                let plans = ["day", "week", "month"].compactMap { p -> ObjectiveBlock? in
-                    var b = overview[p]
-                    b.objectives = b.proposed
-                    return b.objectives.isEmpty ? nil : b
-                }
-                if !plans.isEmpty {
-                    Section {
-                        ForEach(plans, id: \.period) { plan in
-                            ObjectivePlanCard(plan: plan) { await loadObjectives(); await loadApprovals() }
-                        }
-                    } header: { Text("Waiting for you") }
-                    .listRowBackground(Theme.row)
-                }
-            }
+            if objectivesOnly { plansSection(overview) }
             weekSection(overview)
             todaySection(overview)
             if !objectivesOnly { habitsSection.id(TodayFocus.habits) }
             monthSection(overview)
         } else if settings.isConfigured && error == nil {
             SkeletonSections(sections: 1, rows: 2)
+        }
+    }
+
+    /// Each period's proposals as one plan card (the Mac's Objectives page; elsewhere they're in Waiting for you).
+    @ViewBuilder private func plansSection(_ overview: ObjectivesOverview) -> some View {
+        let plans = ["day", "week", "month"].compactMap { p -> ObjectiveBlock? in
+            var b = overview[p]
+            b.objectives = b.proposed
+            return b.objectives.isEmpty ? nil : b
+        }
+        if !plans.isEmpty {
+            Section {
+                ForEach(plans, id: \.period) { plan in
+                    ObjectivePlanCard(plan: plan) { await loadObjectives(); await loadApprovals() }
+                }
+            } header: { Text("Waiting for you") }
+            .listRowBackground(Theme.row)
         }
     }
 
