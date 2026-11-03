@@ -40,7 +40,6 @@ struct FoodPage: View {
     @State private var cameraResult: MealCameraResult?
     @State private var showLibrary = false
     @State private var describing = false
-    @State private var mealText = ""
     /// Photos just picked or taken, waiting for their description.
     @State private var pickedPhotos: PickedMeal?
     @State private var scanned: ScannedCode?
@@ -48,7 +47,8 @@ struct FoodPage: View {
     @State private var coachInstead: PickedPhoto?
     @State private var typingBarcode = false
     @State private var showRecent = false
-    @State private var barcodeText = ""
+    /// The code typed in the barcode sheet, looked up once that sheet has gone (one sheet at a time).
+    @State private var typedCode: String?
     @State private var showGoals = false
     @State private var editingMeal: Meal?
     /// The meal being logged, shown at the top of Meals until Coach is done.
@@ -116,14 +116,9 @@ struct FoodPage: View {
         .sheet(isPresented: $showRecent) {
             RecentFoodsSheet(date: isToday ? nil : Wire.dayString(day), tint: coach.tint, logged: loggedPacket)
         }
-        .alert("What did you eat?", isPresented: $describing) {
-            TextField("A cappuccino and a croissant", text: $mealText)
-            Button("Cancel", role: .cancel) { mealText = "" }
-            Button("Log") {
-                let text = mealText.trimmingCharacters(in: .whitespacesAndNewlines)
-                mealText = ""
-                if !text.isEmpty { Task { await log(text: text) } }
-            }
+        .sheet(isPresented: $describing) {
+            DescribeMealSheet(dayNote: isToday ? nil : day.formatted(.dateTime.weekday(.wide).day().month(.wide)),
+                              tint: coach.tint) { text in Task { await log(text: text) } }
         }
         .fullScreenCover(isPresented: $showCamera, onDismiss: afterCamera) {
             MealCameraView(tint: coach.tint, date: isToday ? nil : Wire.dayString(day)) { cameraResult = $0 }
@@ -141,16 +136,11 @@ struct FoodPage: View {
         .sheet(item: $pickedPhotos) { picked in
             MealPhotosSheet(photos: picked.photos) { text in Task { await log(photos: picked.photos, text: text) } }
         }
-        .alert("Barcode", isPresented: $typingBarcode) {
-            TextField("8001505005707", text: $barcodeText).keyboardType(.numberPad)
-            Button("Cancel", role: .cancel) { barcodeText = "" }
-            Button("Look up") {
-                let code = barcodeText.filter(\.isNumber)
-                barcodeText = ""
-                if !code.isEmpty { scanned = ScannedCode(code: code) }
-            }
-        } message: {
-            Text("The digits under the barcode.")
+        .sheet(isPresented: $typingBarcode, onDismiss: {
+            if let code = typedCode { scanned = ScannedCode(code: code) }
+            typedCode = nil
+        }) {
+            BarcodeEntrySheet(tint: coach.tint) { typedCode = $0 }
         }
         .sheet(item: $scanned, onDismiss: {
             if let photo = coachInstead { pickedPhotos = PickedMeal(photos: [photo]) }
@@ -261,13 +251,18 @@ struct FoodPage: View {
                 Button { describing = true } label: {
                     LogTile(title: "Describe", systemImage: "text.cursor", filled: false)
                 }
-                Menu {
-                    if MealCamera.isAvailable {
+                // With a camera, scan it or type it; without one (the Mac), straight to typing it.
+                if MealCamera.isAvailable {
+                    Menu {
                         Button("Scan it", systemImage: "barcode.viewfinder") { showCamera = true }
+                        Button("Type the number", systemImage: "number") { typingBarcode = true }
+                    } label: {
+                        LogTile(title: "Barcode", systemImage: "barcode", filled: false)
                     }
-                    Button("Type the number", systemImage: "number") { typingBarcode = true }
-                } label: {
-                    LogTile(title: "Barcode", systemImage: "barcode", filled: false)
+                } else {
+                    Button { typingBarcode = true } label: {
+                        LogTile(title: "Barcode", systemImage: "barcode", filled: false)
+                    }
                 }
                 Button { showRecent = true } label: {
                     LogTile(title: "Recent", systemImage: "clock.arrow.circlepath", filled: false)
@@ -445,5 +440,161 @@ private struct LogTile: View {
         .background(filled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.accent.opacity(0.14)),
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+/// A small sheet for one thing typed: a meal in words, or a barcode's digits. Not an alert (a one-line field under a
+/// system title) and not a full page: an icon, a sentence on what happens, a roomy field and one button. On the phone
+/// it rises to its own height; on the Mac it's a small card (no `NavigationStack`, so not the big sheet size).
+private struct EntrySheet<Field: View>: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    var note: String?
+    let action: String
+    let ready: Bool
+    let tint: Color
+    @ViewBuilder let field: () -> Field
+    let submit: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: symbol)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 44, height: 44)
+                    .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.title3.weight(.bold))
+                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            field()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Theme.row, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line))
+            if let note {
+                Text(note).font(.footnote).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 10) {
+                Button { dismiss() } label: {
+                    Text("Cancel")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(Theme.accent.opacity(0.12), in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .keyboardShortcut(.cancelAction)
+                Button {
+                    submit()
+                    dismiss()
+                } label: {
+                    Text(action)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Theme.onAccent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(Theme.accent.opacity(ready ? 1 : 0.4), in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!ready)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(22)
+        #if os(macOS)
+        .frame(width: 460)
+        #else
+        .padding(.top, 8)
+        .modifier(FitHeight())
+        #endif
+        .background(Theme.grouped)
+    }
+}
+
+#if os(iOS)
+/// The sheet as tall as what's in it.
+private struct FitHeight: ViewModifier {
+    @State private var height: CGFloat = 340
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .presentationDetents([.height(height)])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
+    }
+}
+#endif
+
+/// Describe: a meal in your words, for Coach.
+struct DescribeMealSheet: View {
+    var dayNote: String?
+    var tint: Color = Theme.accent
+    let log: (String) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var words: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        EntrySheet(symbol: "text.cursor", title: "What did you eat?",
+                   detail: "Coach works out the calories and macros" + (dayNote.map { " for \($0)." } ?? "."),
+                   note: "Amounts, brands and what's hidden (oil, sugar in the coffee) make the numbers better.",
+                   action: "Log", ready: !words.isEmpty, tint: tint) {
+            TextField("A cappuccino and a croissant", text: $text, axis: .vertical)
+                .font(.body)
+                .lineLimit(3...6)
+                .textFieldStyle(.plain)
+                .focused($focused)
+        } submit: {
+            if !words.isEmpty { log(words) }
+        }
+        .onAppear { focused = true }
+    }
+}
+
+/// A barcode typed in (the Mac has no camera; on the phone, a code the camera won't read).
+struct BarcodeEntrySheet: View {
+    var tint: Color = Theme.accent
+    let lookUp: (String) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var digits: String { text.filter(\.isNumber) }
+
+    var body: some View {
+        EntrySheet(symbol: "barcode", title: "Type the barcode",
+                   detail: "The digits under the bars. You'll see the packet and say how much you had.",
+                   action: "Look up", ready: digits.count >= 8, tint: tint) {
+            HStack {
+                TextField("8001505005707", text: $text)
+                    .font(.title2.weight(.medium).monospacedDigit())
+                    .textFieldStyle(.plain)
+                    .keyboardType(.numberPad)
+                    .focused($focused)
+                    .onChange(of: text) { _, new in
+                        let only = String(new.filter(\.isNumber).prefix(14))
+                        if only != new { text = only }
+                    }
+                if !digits.isEmpty {
+                    Text("\(digits.count)")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } submit: {
+            if digits.count >= 8 { lookUp(digits) }
+        }
+        .onAppear { focused = true }
     }
 }
