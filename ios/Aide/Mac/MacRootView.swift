@@ -63,8 +63,6 @@ struct MacRootView: View {
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var digest: DigestViewModel
     @ObservedObject private var nav = MacNavigation.shared
-    /// Lessons, quizzes and exams open as cards over the page (`MacCoverLayer`); under them nothing takes clicks or keys.
-    @ObservedObject private var covers = MacCoverStack.shared
     /// Things waiting for your OK, on the Team row's badge.
     @State private var waiting = 0
     @AppStorage("macSidebarCollapsed") private var collapsed = false
@@ -89,7 +87,6 @@ struct MacRootView: View {
                            waiting: waiting, collapsed: $collapsed)
                     .ignoresSafeArea()
             }
-            .disabled(!covers.entries.isEmpty)
             .overlay { MacCoverLayer(windowSize: windowSize) }
             // The window's title goes right of the sidebar, not over it.
             .toolbar {
