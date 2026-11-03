@@ -51,7 +51,11 @@ struct MacCoverWindowContent: View {
                     if let window = box.window { window.close() } else { dismissWindow(id: MacWindow.cover, value: id) }
                 }
                 .frame(minWidth: 720, minHeight: 540)
+                // Like Aide's window: no title and no band at the top, the traffic lights over the page.
+                .modifier(SoftTitleBar())
                 .background(MacWindowReader { window in
+                    window.titleVisibility = .hidden
+                    window.titlebarAppearsTransparent = true
                     box.window = window
                     // An exam has its own ways out (Close, Quit that asks first, Done); the red button and ⌘W
                     // would just drop it.
