@@ -32,6 +32,7 @@ struct SettingsView: View {
                     row("Claude plan", "sparkles", Color(red: 0.85, green: 0.47, blue: 0.34)) { NotesWriterView() }
                     row("Browser", "safari.fill", .blue) { BrowserSettingsView() }
                     row("Nutrition targets", "fork.knife", .green) { NutritionTargetsView() }
+                    row("Bedtime", "bed.double.fill", .indigo) { BedtimeView() }
                     row("Videos", "play.rectangle.fill", .red) { VideosView() }
                 }
                 #if os(iOS)
@@ -112,6 +113,7 @@ struct SettingsView: View {
                 case "plan": NotesWriterView()
                 case "browser": BrowserSettingsView()
                 case "nutrition": NutritionTargetsView()
+                case "bedtime": BedtimeView()
                 case "videos": VideosView()
                 case "moodle": MoodleView()
                 case "obsidian": ObsidianView()
@@ -142,12 +144,12 @@ struct SettingsView: View {
 
     /// The pages a link can open on this device; another one (the Mac has no Notifications page) opens Settings.
     #if os(iOS)
-    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "nutrition", "videos", "moodle",
-                                     "obsidian", "notifications", "reminders", "health", "location", "screentime",
+    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "nutrition", "bedtime", "videos",
+                                     "moodle", "obsidian", "notifications", "reminders", "health", "location", "screentime",
                                      "payments", "connection"]
     #else
-    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "nutrition", "videos", "moodle",
-                                     "obsidian", "screentime", "connection"]
+    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "nutrition", "bedtime", "videos",
+                                     "moodle", "obsidian", "screentime", "connection"]
     #endif
 
     /// Opens the page an `open` card in chat asked for (`env.settingsPage`), from Settings' top.
@@ -477,12 +479,17 @@ private struct NotificationSettingsView: View {
                         Toggle("Screen Time locks", isOn: Binding(get: { locks }, set: { on in Task { await set(locks: on) } }))
                             .tint(Theme.toggle)
                     }
+                    if let bedtime = live.bedtime {
+                        Toggle("Bedtime", isOn: Binding(get: { bedtime }, set: { on in Task { await set(bedtime: on) } }))
+                            .tint(Theme.toggle)
+                    }
                 } header: {
                     Text("Lock Screen")
                 } footer: {
                     Text("10 minutes before an event on your Work calendar, a countdown to it on the Lock Screen and in "
                          + "the Dynamic Island, with where it is. Not when a tram alert is taking you there: the tram's shows then."
-                         + (live.locks == nil ? "" : " While a lock holds, the time left until it opens."))
+                         + (live.locks == nil ? "" : " While a lock holds, the time left until it opens.")
+                         + (live.bedtime == nil ? "" : " In the evening, the time left to bedtime (else a notification)."))
                 }
             }
         }
@@ -494,12 +501,14 @@ private struct NotificationSettingsView: View {
     }
 
     /// One switch at a time; the other is left out, so the server keeps it.
-    private func set(events: Bool? = nil, locks: Bool? = nil) async {
+    private func set(events: Bool? = nil, locks: Bool? = nil, bedtime: Bool? = nil) async {
         guard let before = live else { return }
         live?.events = events ?? before.events
         live?.locks = locks ?? before.locks
+        live?.bedtime = bedtime ?? before.bedtime
         do {
-            live = try await env.api.updateLiveSettings(LiveSettings(events: events ?? before.events, locks: locks))
+            live = try await env.api.updateLiveSettings(LiveSettings(events: events ?? before.events, locks: locks,
+                                                                     bedtime: bedtime))
         } catch {
             live = before
         }

@@ -542,6 +542,11 @@ private struct DigestCard: View {
                     text += night.asleepMin < usual ? " · \(gap) under your usual" : " · \(gap) over your usual"
                 }
                 out.append(Line(icon: "moon.zzz.fill", color: .indigo, text: text))
+            case .bedtime(let plan):
+                if let bed = plan.bedtimeDate, let wake = plan.wakeDate {
+                    out.append(Line(icon: "bed.double.fill", color: .indigo,
+                                    text: "In bed by \(BedtimeCard.time(bed)) · up at \(BedtimeCard.time(wake))"))
+                }
             case .weather(let weather):
                 let now = weather.now.map { "\($0.temp)° now · " } ?? ""
                 out.append(Line(icon: WeatherCard.icon(weather.now?.symbol ?? weather.symbol), color: .cyan,

@@ -33,6 +33,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `photos.py`: photos for chat and food, files in `data/photos/` (backed up once each). `food.py`: meals and food goals.
   `foods.py`: saved foods per 100 g with the usual portion, which meals are added up from (`tools/nutrition.py`: Open Food Facts).
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
+  `bedtime.py`: the steady wake time (learnt or set) and tonight's bedtime worked back from it, the evening nudge
+  (a `bedtime` Live Activity or a push), the optional wind-down lock, each night against its plan.
 - `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
 - `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU
   (Parakeet for English, Whisper for the rest and to pick the language).
@@ -655,6 +657,15 @@ Open-Meteo where the phone is (a fix under 2 h old), else home; a `weather` sect
 (the greeting names it only when it changes plans), the `weather` tool for Aide, Secretary and Coach (Coach flags a
 run in rain or heat), "Rain likely (70%): take an umbrella." on a leave-now tram alert. App: `WeatherCard` in the
 digest Details, a line on Today's digest card.
+
+**Done, both sides (2026-11-03), not yet tried on the phone:** bedtime (#53, contract "Apple Health", "Bedtime";
+`bedtime.py`). The wake time is the anchor: set in Settings → Bedtime, else learnt from the last 28 mornings (weekdays
+and weekends apart), moved earlier only for an early event (when to leave, less getting ready). The bedtime is the wake
+less the sleep need, the usual time awake in the night and 15 min to fall asleep. `lead_min` before it the server
+starts a `bedtime` Live Activity (`AideWidgets/BedtimeLiveActivity.swift`: Pebble asleep, the countdown, "7h30 of sleep ·
+up at 7:15"), or a push without a token; with wind-down on, a "Bedtime" Screen Time lock to the wake time (the Mac holds
+it too). The evening digest's Tonight card (`BedtimeCard`), a line on Today's digest card; the wake briefing says how
+the night went against the plan, Coach's `sleep_plan` sees the week, `set_sleep_plan` changes it.
 
 **Next** (GitHub issues):
 0. The code check (2026-11-03) filed #35–#50, one finding each. First the ones that can lose data: #35
