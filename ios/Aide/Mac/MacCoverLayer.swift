@@ -56,6 +56,8 @@ struct MacCoverLayer: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .animation(.snappy(duration: 0.22), value: stack.entries.map(\.id))
+        // With no card up the layer is empty: nothing in it may take a click.
+        .allowsHitTesting(!stack.entries.isEmpty)
         .background(MacWindowReader { found in
             window = found
             fullScreen = found.styleMask.contains(.fullScreen)
@@ -105,6 +107,9 @@ struct MacWindowReader: NSViewRepresentable {
         }
 
         required init?(coder: NSCoder) { nil }
+
+        /// Only there to find the window: clicks go through to what's under it (over the whole window it took them all).
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
