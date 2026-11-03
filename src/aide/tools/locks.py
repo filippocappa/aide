@@ -110,7 +110,7 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
                            days: list[int] | None = None, enabled: bool | None = None,
                            strict: bool | None = None) -> str:
         now = utcnow()
-        limit = store.update_limit(limit_id, now=now, title=title, minutes=minutes, days=days, enabled=enabled,
+        limit = store.update_limit(limit_id, now=now, reached_needs_reason=True, title=title, minutes=minutes, days=days, enabled=enabled,
                                    strict=strict)
         return "Updated: " + store.limit_line(limit, now)
 

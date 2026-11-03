@@ -335,9 +335,12 @@ class LockStore:
         self._changed()
         return self.get_limit(cur.lastrowid)
 
-    def update_limit(self, limit_id: int, now: datetime | None = None, **changes) -> dict:
+    def update_limit(self, limit_id: int, now: datetime | None = None, reached_needs_reason: bool = False,
+                     **changes) -> dict:
         """Its title, minutes, days, enabled or strict. A strict limit reached today can't be loosened (more minutes,
-        off, not today, not strict) until tomorrow: that's ending it early, with an emergency pass."""
+        off, not today, not strict) until tomorrow: that's ending it early, with an emergency pass. With
+        `reached_needs_reason` (an agent's change) no limit reached today can be loosened: that's `end_limit`, with
+        the user's reason."""
         now = now or utcnow()
         limit = self.get_limit(limit_id)
         changes = {k: v for k, v in changes.items() if v is not None}
@@ -346,11 +349,14 @@ class LockStore:
         if "days" in changes:
             changes["days"] = check_days(changes["days"])
         after = {**limit, **changes}
-        looser = (after["minutes"] > limit["minutes"] or not after["enabled"] or not after["strict"]
-                  or not self.counts_today(after, now))
+        looser = (after["minutes"] > limit["minutes"] or not after["enabled"]
+                  or (limit["strict"] and not after["strict"]) or not self.counts_today(after, now))
         if limit["strict"] and self.reached(limit, now) and looser:
             raise ValueError(f"'{limit['title']}' is strict and reached today: it can be loosened from tomorrow, or "
                              "ended for today with an emergency pass")
+        if reached_needs_reason and self.reached(limit, now) and looser:
+            raise ValueError(f"'{limit['title']}' is reached today: loosening it now would open its apps. Use "
+                             "end_limit, with the user's reason, or change it from tomorrow")
         self.conn.execute(
             "UPDATE screen_limits SET title = ?, minutes = ?, days = ?, enabled = ?, strict = ? WHERE id = ?",
             (_title(after["title"]), after["minutes"], json.dumps(after["days"]), int(bool(after["enabled"])),
