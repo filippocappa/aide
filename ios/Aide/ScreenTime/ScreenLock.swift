@@ -25,6 +25,8 @@ struct ScreenLock: Codable, Identifiable, Hashable {
     let openUntil: String?
     let next: String?
     let summary: String
+    /// A focus session's round (its id, `f_…`): everything but the apps allowed for focus. nil for any other lock.
+    var focus: String? = nil
 
     var isStrict: Bool { strict == true }
 }

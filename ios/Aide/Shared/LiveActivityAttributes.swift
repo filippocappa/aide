@@ -234,3 +234,32 @@ struct BedtimeActivityAttributes: ActivityAttributes {
     var key: String
     var title: String
 }
+
+/// A focus session (docs/API.md, "Live Activities", `focus`): its rounds and breaks, started by the server when it
+/// begins and moved on at each switch (with a sound), ended a little after the last round.
+struct FocusActivityAttributes: ActivityAttributes {
+    struct ContentState: Codable, Hashable {
+        /// "focus", "break" or "done".
+        var phase: String
+        /// When this phase began and ends (unix seconds): the countdown and the bar.
+        var since: Double
+        var ends: Double
+        var round: Int
+        var rounds: Int
+        var strict: Bool
+        /// Minutes of focus so far.
+        var minutes: Int
+        var over: Bool
+
+        var isFocus: Bool { phase == "focus" }
+        var sinceDate: Date { Date(timeIntervalSince1970: since) }
+        var endsDate: Date { Date(timeIntervalSince1970: ends) }
+    }
+
+    /// `focus:<session id>`
+    var key: String
+    /// The course.
+    var title: String
+    /// The topic, or "".
+    var topic: String
+}

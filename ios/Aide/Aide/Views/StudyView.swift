@@ -1,11 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-extension Theme {
-    /// Professor's colour: the Study tab's one hue.
-    static let study = Theme.readable(0x7A4FD0)
-}
-
 /// The Study tab: Professor's line (the next review sessions and exam; tap: its chat), what's up next, what to
 /// review, and the courses, each with its notebook, lectures and files (docs/API.md, "Study", "Notebook", "Quizzes
 /// and review sessions").
@@ -22,6 +17,7 @@ struct StudyView: View {
     @State private var result: String?
     /// A lesson opened from an `open` card in chat.
     @State private var lesson: LinkedLesson?
+    @State private var focusing: FocusTarget?
 
     private struct LinkedLesson: Identifiable {
         let course: StudyCourse
@@ -49,6 +45,7 @@ struct StudyView: View {
                         AgentLine(agent: professor, text: line) { push.route = .agent(professor.id) }
                     }
                     if let error { ErrorCard(text: error) }
+                    if let session = env.focus { FocusCard(session: session) }
                     if let now = overview?.now {
                         Label("\(now.name.prefix(1).uppercased() + now.name.dropFirst()) is on now",
                               systemImage: "dot.radiowaves.left.and.right")
@@ -57,6 +54,10 @@ struct StudyView: View {
                     if !reviews.isEmpty {
                         UpNextCard(sessions: Array(reviews.prefix(3)), name: name) { session in
                             studying = StudyTarget(course: session.course, name: name(session.course), topics: session.topics)
+                        } focus: { session in
+                            focusing = FocusTarget(course: session.course, name: name(session.course),
+                                                   topicTitle: session.topics.isEmpty ? nil : session.topics.joined(separator: ", "),
+                                                   review: session.id)
                         } open: { session in
                             if let course = courses.first(where: { $0.id == session.course }) { path = [course] }
                         }
@@ -97,13 +98,16 @@ struct StudyView: View {
                 PracticeExamView(course: course.id, courseName: course.name)
             }
             .macWindowCover(item: $studying, onDismiss: { Task { await load() } }) { target in
-                StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+                StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
+                             afterFocus: target.afterFocus)
             }
             .macWindowCover(item: $lesson, onDismiss: { Task { await load() } }) { l in
                 LessonView(topic: l.topic, course: l.course.id, courseName: l.course.title)
             }
             .sheet(item: Binding(get: { result.map(QuizID.init) }, set: { result = $0?.id })) { QuizResultSheet(id: $0.id) }
+            .sheet(item: $focusing, onDismiss: { Task { await env.refreshFocus() } }) { FocusStartSheet(target: $0) }
             .task {
+                await env.refreshFocus()
                 await load()
                 openPreview()
                 await follow()
@@ -167,7 +171,8 @@ struct StudyView: View {
         switch link.page {
         case .course: path = [course]
         case .practice: practice = course
-        case .quiz: studying = StudyTarget(course: course.id, name: course.title, topics: link.topic.map { [$0] } ?? [])
+        case .quiz: studying = StudyTarget(course: course.id, name: course.title, topics: link.topic.map { [$0] } ?? [],
+                                           afterFocus: link.focus)
         case .lesson:
             guard let topic = link.topic else { return }
             lesson = LinkedLesson(course: course, topic: LessonTopicRef(id: topic, title: link.title ?? "Lesson"))
@@ -226,6 +231,8 @@ struct StudyTarget: Identifiable {
     let course: Int
     var name: String?
     var topics: [String] = []
+    /// The check after a focus session (its id).
+    var afterFocus: String?
 }
 
 struct ErrorCard: View {
@@ -240,6 +247,7 @@ private struct UpNextCard: View {
     let sessions: [ReviewSession]
     let name: (Int) -> String
     let quiz: (ReviewSession) -> Void
+    let focus: (ReviewSession) -> Void
     let open: (ReviewSession) -> Void
 
     private var first: Date? { sessions.first.flatMap { Wire.parse($0.start) } }
@@ -260,8 +268,13 @@ private struct UpNextCard: View {
                             .frame(maxWidth: .infinity).padding(.vertical, 11)
                             .foregroundStyle(.white).background(Theme.study, in: Capsule())
                     }
+                    Button { focus(session) } label: {
+                        Label("Focus", systemImage: "timer")
+                            .frame(maxWidth: .infinity).padding(.vertical, 11)
+                            .foregroundStyle(.primary).background(Theme.chip, in: Capsule())
+                    }
                     Button { open(session) } label: {
-                        Text("Open course")
+                        Text("Course")
                             .frame(maxWidth: .infinity).padding(.vertical, 11)
                             .foregroundStyle(.primary).background(Theme.chip, in: Capsule())
                     }
@@ -453,6 +466,7 @@ struct CourseView: View {
     @State private var allReviews = false
     @State private var dates: CourseDates?
     @State private var editing: DateEdit?
+    @State private var focusing: FocusTarget?
 
     /// The date editor: a new date, or one of the course's.
     enum DateEdit: Identifiable {
@@ -488,6 +502,7 @@ struct CourseView: View {
                 if let note {
                     Label(note.text, systemImage: note.symbol).font(.footnote).foregroundStyle(.secondary).card()
                 }
+                if let session = env.focus, session.courseId == course.id { FocusCard(session: session) }
                 if notebook?.started == true, !written.isEmpty { practiceChips }
                 if dates != nil {
                     CourseDatesCard(dates: dates, add: { editing = .new }, read: { Task { await readDates() } },
@@ -550,6 +565,7 @@ struct CourseView: View {
             return true
         }
         .sheet(item: $openFile) { PDFSheet(file: $0) }
+        .sheet(item: $focusing, onDismiss: { Task { await env.refreshFocus() } }) { FocusStartSheet(target: $0) }
         .sheet(item: $editing) { edit in
             switch edit {
             case .new: CourseDateEditor(course: course.id, item: nil) { dates = $0 }
@@ -570,7 +586,8 @@ struct CourseView: View {
             PracticeExamView(course: course.id, courseName: course.name)
         }
         .macWindowCover(item: $studying, onDismiss: { Task { await load() } }) { target in
-            StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+            StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
+                             afterFocus: target.afterFocus)
         }
         .confirmationDialog("Start the notebook?", isPresented: $confirmStart, titleVisibility: .visible) {
             Button("Start") { Task { await start() } }
@@ -612,6 +629,11 @@ struct CourseView: View {
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 Chip(title: "Learn", systemImage: "graduationcap", style: .prominent, tint: Theme.study) { learning = true }
+                if env.focus?.isOn != true {
+                    Chip(title: "Focus", systemImage: "timer") {
+                        focusing = FocusTarget(course: course.id, name: course.title)
+                    }
+                }
                 if questions {
                     Chip(title: "Quiz me", systemImage: "rectangle.on.rectangle.angled") {
                         studying = StudyTarget(course: course.id, name: course.title)
@@ -684,7 +706,7 @@ struct CourseView: View {
 
     private var reviewsCard: some View {
         DetailCard("Review sessions", note: "In your calendar. Professor offers a quiz on the topics when one starts. "
-                   + "Press and hold one to cancel it.", padding: 0) {
+                   + "Press and hold one to focus on it now, or to cancel it.", padding: 0) {
             ForEach(Array((allReviews ? reviews : Array(reviews.prefix(3))).enumerated()), id: \.element.id) { index, session in
                 if index > 0 { RowDivider() }
                 StatusRow(Wire.parse(session.start).map { StudyDay.when($0) } ?? "Review",
@@ -692,6 +714,12 @@ struct CourseView: View {
                     Image(systemName: "calendar").font(.title3).foregroundStyle(Theme.study)
                 }
                 .contextMenu {
+                    Button("Focus on it now", systemImage: "timer") {
+                        focusing = FocusTarget(course: course.id, name: course.title,
+                                               topicTitle: session.topics.isEmpty ? nil : session.topics.joined(separator: ", "),
+                                               review: session.id)
+                    }
+                    .disabled(env.focus?.isOn == true)
                     Button("Cancel the session", systemImage: "calendar.badge.minus", role: .destructive) {
                         Task { await cancel(session) }
                     }

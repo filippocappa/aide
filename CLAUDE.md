@@ -62,6 +62,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `upcoming.py`: the next calendar event's Live Activity (a countdown from 30 min before; `live.py` sends it).
 - `lockwatch.py`: a Screen Time lock's Live Activity while it holds (a countdown to when it opens).
 - `locks.py`: Screen Time locks (one-offs and weekly schedules, unlocking early with a reason); `tools/locks.py`: Coach's.
+- `focus.py`: focus sessions (study rounds and breaks, each round a strict lock over all but the focus apps), the
+  watcher (the Live Activity at each switch, the end), the check at the end and Professor's post in the course chat.
 - `browser.py`: Aide's own Chromium (Playwright, headless, a phone-sized page, a profile per site in `data/browser/`),
   the page listing the model reads, the live view's screencast and input. `errands.py`: browser errands (the store,
   the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
@@ -666,6 +668,18 @@ starts a `bedtime` Live Activity (`AideWidgets/BedtimeLiveActivity.swift`: Pebbl
 up at 7:15"), or a push without a token; with wind-down on, a "Bedtime" Screen Time lock to the wake time (the Mac holds
 it too). The evening digest's Tonight card (`BedtimeCard`), a line on Today's digest card; the wake briefing says how
 the night went against the plan, Coach's `sleep_plan` sees the week, `set_sleep_plan` changes it.
+
+**Done, both sides (2026-11-03), not yet tried on the phone:** focus sessions (#54, contract "Focus sessions";
+`focus.py`). Started from a course page or a topic (Focus chip), a review session (Up next's Focus, or a review row's
+press and hold), or by asking Professor: 25/5 × 4, 50/10 × 2 or your own (15–120 min rounds, up to 8), strict by
+default. Each round is a lock with `focus` (`Views/FocusViews.swift`: the start sheet, `FocusCard` on Study and the
+course page, ending a round early with a reason or, strict, a pass; a break ends freely). The phone locks all but
+`LockBook.focusAllowed` (Settings → Screen Time → During focus; until picked, the usual ones); the Mac closes every
+regular app but `MacLockApps.focus` (Notes, Preview, Obsidian…; Settings → This Mac → Screen Time) and Aide, never a
+website. The `focus` Live Activity (`AideWidgets/FocusLiveActivity.swift`: the phase, the time left, the round, a
+sound at each switch; off in Settings → Notifications). At the end the card and the push open "What stuck" (the Study
+page in Learn mode, 5 questions, `afterFocus`, the first round's score sent back), and Professor posts the session in
+the course chat. Minutes per course count for `study_progress`, the `focus` objectives measure and Coach.
 
 **Next** (GitHub issues):
 0. The code check (2026-11-03) filed #35–#50, one finding each. First the ones that can lose data: #35

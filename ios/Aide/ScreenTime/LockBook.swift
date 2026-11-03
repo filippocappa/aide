@@ -55,7 +55,22 @@ enum LockBook {
         }
     }
 
-    static func apps(for id: Int) -> LockApps { apps[id] ?? LockApps(only: false, selection: allowed) }
+    /// The apps and sites that stay open in a focus round (Aide for the Study page, Notes, Files…). Until picked, the
+    /// usual `allowed` ones.
+    static var focusAllowed: FamilyActivitySelection {
+        get {
+            defaults?.data(forKey: "screenFocusAllowed").flatMap { try? JSONDecoder().decode(FamilyActivitySelection.self, from: $0) }
+                ?? allowed
+        }
+        set { defaults?.set(try? JSONEncoder().encode(newValue), forKey: "screenFocusAllowed") }
+    }
+
+    /// What a lock covers: a focus round everything but the focus apps, else the lock's own pick or everything but
+    /// the usual ones.
+    static func apps(for id: Int) -> LockApps {
+        if locks.first(where: { $0.id == id })?.focus != nil { return LockApps(only: false, selection: focusAllowed) }
+        return apps[id] ?? LockApps(only: false, selection: allowed)
+    }
 
     /// What each lock was last scheduled with, so a sync only restarts the ones that changed.
     static var scheduled: [String: String] {

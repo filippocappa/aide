@@ -834,7 +834,7 @@ final class APIClient {
         try await send("PATCH", "/v1/live/settings", body: settings)
     }
 
-    /// A push-to-start token for one kind of Live Activity (`tram`, `agent`, `event`, `lock`, `bedtime`).
+    /// A push-to-start token for one kind of Live Activity (`tram`, `agent`, `event`, `lock`, `bedtime`, `focus`).
     func registerLiveToken(kind: String, token: String, environment: String) async throws {
         let _: OKResponse = try await send("POST", "/v1/live/tokens",
                                            body: LiveToken(kind: kind, token: token, environment: environment))
@@ -1095,6 +1095,32 @@ final class APIClient {
     }
 
     /// A study session: untimed, in a shuffled order, `write` flashcards answered in words.
+    // MARK: Focus sessions (docs/API.md, "Focus sessions")
+
+    func focusSessions(days: Int = 7, course: Int? = nil) async throws -> FocusList {
+        var query = [URLQueryItem(name: "days", value: String(days))]
+        if let course { query.append(URLQueryItem(name: "course", value: String(course))) }
+        return try await send("GET", "/v1/focus", query: query)
+    }
+
+    func startFocus(_ body: FocusStartBody) async throws -> FocusSession {
+        try await send("POST", "/v1/focus", body: body)
+    }
+
+    func focusSession(_ id: String) async throws -> FocusSession {
+        try await send("GET", "/v1/focus/\(id)")
+    }
+
+    /// Ends it early: a reason during a round, or an emergency pass for a strict one; nothing during a break.
+    func endFocus(_ id: String, reason: String?, pass: Bool = false) async throws -> FocusSession {
+        try await send("POST", "/v1/focus/\(id)/end", body: FocusEndBody(reason: reason, pass: pass ? true : nil))
+    }
+
+    /// The check after it: how many of the questions were right the first time.
+    func checkFocus(_ id: String, right: Int, total: Int) async throws -> FocusSession {
+        try await send("POST", "/v1/focus/\(id)/check", body: FocusCheckBody(right: right, total: total))
+    }
+
     func startStudy(course: Int, count: Int, cards: Int, write: Int, exercises: Int,
                     topics: [String]?) async throws -> Quiz {
         try await send("POST", "/v1/quizzes", body: QuizStartBody(course: course, count: count, cards: cards,

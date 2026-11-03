@@ -38,6 +38,8 @@ final class AppEnvironment: ObservableObject {
     @Published var openPayment: Int?
     /// A course page to open from an `open` card (`aide://study/…`); the Study tab follows it and clears this.
     @Published var studyLink: StudyLink?
+    /// The focus session on now (docs/API.md, "Focus sessions"), for the Study pages' card.
+    @Published var focus: FocusSession?
     /// A Settings page to open from an `open` card (`aide://settings/<page>`); Settings follows it and clears this.
     @Published var settingsPage: String?
 
@@ -91,6 +93,17 @@ final class AppEnvironment: ObservableObject {
         digest.completeReminder = { [weak sync] reminder, done in await sync?.setCompleted(reminder, done) ?? false }
     }
 
+    /// The focus session on now, again: after one starts or ends, at each switch, on return to the app.
+    func refreshFocus() async {
+        guard settings.isConfigured, !settings.isPreview else { return }
+        guard let list = try? await api.focusSessions(days: 1) else { return }
+        // On now, else one that finished in the last hour with its check still to do.
+        focus = list.current ?? list.sessions.first { s in
+            guard s.check == nil, s.minutes > 0, let end = Wire.parse(s.endedAt ?? s.endsAt) else { return false }
+            return end <= .now && end > .now.addingTimeInterval(-3600)
+        }
+    }
+
     /// Launch and return-to-foreground.
     func refreshAll() async {
         guard settings.isConfigured else { return }
@@ -112,6 +125,7 @@ final class AppEnvironment: ObservableObject {
         live.appBecameActive()
         await sync.sync()
         await screenTime.sync()
+        await refreshFocus()
         await agents
         await history
         await conversations

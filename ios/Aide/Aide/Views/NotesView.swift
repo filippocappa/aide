@@ -575,6 +575,7 @@ struct TopicPageView: View {
     @State private var error: String?
     @State private var studying: StudyTarget?
     @State private var learning: LessonTopicRef?
+    @State private var focusing: FocusTarget?
 
     var body: some View {
         NoteScroll(headings: headings) {
@@ -591,6 +592,12 @@ struct TopicPageView: View {
                         if (topic.questions ?? 0) + (topic.cards ?? 0) > 0 || page?.cardsList?.isEmpty == false {
                             Chip(title: "Quiz me", systemImage: "rectangle.on.rectangle.angled") {
                                 studying = StudyTarget(course: course.id, name: course.title, topics: [topic.id])
+                            }
+                        }
+                        if env.focus?.isOn != true {
+                            Chip(title: "Focus", systemImage: "timer") {
+                                focusing = FocusTarget(course: course.id, name: course.title, topic: topic.id,
+                                                       topicTitle: topic.title)
                             }
                         }
                     }
@@ -616,8 +623,10 @@ struct TopicPageView: View {
         .task { await load() }
         .refreshable { await load() }
         .macWindowCover(item: $studying) { target in
-            StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
+            StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
+                             afterFocus: target.afterFocus)
         }
+        .sheet(item: $focusing, onDismiss: { Task { await env.refreshFocus() } }) { FocusStartSheet(target: $0) }
         .macWindowCover(item: $learning) { ref in
             if let course { LessonView(topic: ref, course: course.id, courseName: course.title) }
         }

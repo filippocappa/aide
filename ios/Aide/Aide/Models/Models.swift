@@ -2651,6 +2651,8 @@ struct LiveSettings: Codable {
     var locks: Bool? = nil
     /// The bedtime countdown; nil from an older server (and, sent, leaves it as it is).
     var bedtime: Bool? = nil
+    /// The focus session's countdown; nil from an older server (and, sent, leaves it as it is).
+    var focus: Bool? = nil
 }
 
 // MARK: Bedtime (docs/API.md, "Apple Health", "Bedtime")
@@ -3541,4 +3543,94 @@ struct FinanceCategory: Hashable, Identifiable {
 
     /// Bills and subscriptions are fixed: a pace tick means nothing for them.
     var isFixed: Bool { id == "bills" || id == "subscriptions" }
+}
+
+// MARK: Focus sessions (docs/API.md, "Study", "Focus sessions")
+
+/// A focus session: rounds of study with breaks, each round a strict Screen Time lock over everything but the apps
+/// allowed for focus.
+struct FocusSession: Decodable, Identifiable, Hashable {
+    struct Phase: Decodable, Hashable {
+        /// "focus", "break" or "done".
+        let kind: String
+        let round: Int
+        let since: String
+        let ends: String
+        var isFocus: Bool { kind == "focus" }
+        var isDone: Bool { kind == "done" }
+        var sinceDate: Date? { Wire.parse(since) }
+        var endsDate: Date? { Wire.parse(ends) }
+    }
+    struct Check: Decodable, Hashable { let right: Int; let total: Int }
+
+    let id: String
+    let courseId: Int
+    let course: String
+    var topic: String?
+    var topicTitle: String?
+    let focusMin: Int
+    let breakMin: Int
+    let rounds: Int
+    let strict: Bool
+    var agent: String?
+    var review: String?
+    let startedAt: String
+    let endsAt: String
+    var endedAt: String?
+    /// "done" or "early".
+    var ended: String?
+    var reason: String?
+    let phase: Phase
+    let roundsDone: Int
+    let minutes: Int
+    var check: Check?
+    let checkUrl: String
+
+    var isOn: Bool { ended == nil && !phase.isDone }
+    /// "25/5 × 4"
+    var rhythm: String { rounds == 1 ? "\(focusMin) min" : "\(focusMin)/\(breakMin) × \(rounds)" }
+}
+
+struct FocusPreset: Decodable, Hashable {
+    let name: String
+    let focusMin: Int
+    let breakMin: Int
+    let rounds: Int
+}
+
+struct FocusTotal: Decodable, Hashable {
+    let courseId: Int
+    let name: String
+    let sessions: Int
+    let rounds: Int
+    let minutes: Int
+}
+
+struct FocusList: Decodable {
+    let current: FocusSession?
+    let presets: [FocusPreset]
+    let sessions: [FocusSession]
+    let totals: [FocusTotal]
+    var passes: EmergencyPasses?
+}
+
+struct FocusStartBody: Encodable {
+    let courseId: Int
+    let focusMin: Int
+    let breakMin: Int
+    let rounds: Int
+    var topic: String?
+    var topicTitle: String?
+    var strict: Bool
+    var review: String?
+}
+
+struct FocusEndBody: Encodable {
+    var reason: String?
+    var pass: Bool?
+}
+
+struct FocusCheckBody: Encodable {
+    let right: Int
+    let total: Int
 }
