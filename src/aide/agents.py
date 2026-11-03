@@ -389,7 +389,7 @@ there, and don't ask questions you need answered before going on."""
 
 _WATCHES = """- Watches: a routine can be a watch (watch true), a check that speaks up only when something needs the user. \
 A message that starts with "[Scheduled routine" and says it's a watch is one of those checks. Look with your tools; \
-nothing can be changed during a check (those tools are refused), so suggest instead, and draft what would help (a \
+nothing can be changed during a check and no pages opened (those tools are refused; web_search works), so suggest instead, and draft what would help (a \
 mail reply, a plan). If nothing needs the user, or you already told them in this chat and nothing has changed, \
 reply with exactly NOTHING. Otherwise write one short note: what you noticed, why it matters now, and what you \
 suggest. The user can answer in this chat to act on it."""
@@ -573,6 +573,9 @@ _CONNECTORS = (
 
 # Tools that change something: refused while an agent runs a watch (plus cancel_queued, which changes the queue).
 WRITES = frozenset({*(t for *_, writes in _CONNECTORS for t in writes), "cancel_queued"})
+# Refused during a watch: the writes, and opening a page the model picks. A watch reads mail and the like unattended,
+# so a link built from what it read could carry data out (web_search stays: it goes only to the search API).
+WATCH_REFUSED = WRITES | {"fetch_page", "research"}
 
 
 def connectors(tool_names: list[str]) -> list[dict]:

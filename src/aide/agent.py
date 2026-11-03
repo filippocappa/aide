@@ -16,7 +16,8 @@ from zoneinfo import ZoneInfo
 import anthropic
 
 from . import activity, usage
-from .agents import AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WRITES, check_agent, mentions
+from .agents import (AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WATCH_REFUSED, WRITES, check_agent,
+                     mentions)
 from .db import Database, utcnow
 from .engine import Engine, ask_text
 from .photos import PhotoStore
@@ -832,8 +833,10 @@ class Agent:
         calling_agent.set(agent)  # this call's own task (gather), so parallel calls don't mix
         try:
             tool = self.registries[agent].get(name)  # an agent can only call its own tools
-            if self._watching and (tool.confirm or name in WRITES):
-                return "Not during a check: nothing can be changed now. Suggest it in your note instead.", True
+            if self._watching and (tool.confirm or name in WATCH_REFUSED):
+                if name in WRITES or tool.confirm:
+                    return "Not during a check: nothing can be changed now. Suggest it in your note instead.", True
+                return "Not during a check: no pages are opened then (web_search still works).", True
             if not tool.confirm:
                 self._step(agent, tool, args)
                 out, err = await self._execute(name, args, self.registries[agent])
