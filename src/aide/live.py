@@ -2,7 +2,7 @@
 update and end them. Four kinds: `tram` (a tram alert's countdown, kept by transit.AlertWatcher), `agent` (an
 agent at work: a chat turn the app started, a scheduled routine or a notes job the server starts), `event` (the
 next calendar event's countdown, kept by upcoming.EventWatcher) and `lock` (a Screen Time lock's countdown, kept by
-lockwatch.LockWatcher).
+lockwatch.LockWatcher), `bedtime` (bedtime.py) and `focus` (a focus session's phases, focus.FocusWatcher).
 
 Push-to-start tokens are kept per kind until the app deletes one or APNs refuses it. An activity's update token is
 kept under the key in its attributes, for TOKEN_AGE at most. A start asks iOS for that token (`input-push-token`):
@@ -28,7 +28,8 @@ from .routines import first_line
 log = logging.getLogger(__name__)
 
 KINDS = {"tram": "TramActivityAttributes", "agent": "AgentActivityAttributes", "event": "EventActivityAttributes",
-         "lock": "LockActivityAttributes", "bedtime": "BedtimeActivityAttributes"}
+         "lock": "LockActivityAttributes", "bedtime": "BedtimeActivityAttributes",
+         "focus": "FocusActivityAttributes"}
 TOKEN_AGE = timedelta(hours=12)
 THROTTLE = 2.0  # seconds between an agent activity's updates
 SETTLE = 3.0  # seconds after a turn before its last update: the app, if open, ends the activity itself first
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS live_done (  -- agent activities showing a finished r
     state TEXT NOT NULL                 -- the done content-state, JSON
 );
 """
-SETTINGS = {"events": True, "locks": True, "bedtime": True}
+SETTINGS = {"events": True, "locks": True, "bedtime": True, "focus": True}
 
 
 def unix(dt: datetime) -> int:
@@ -214,7 +215,8 @@ class LiveActivities:
         none stays on "working" for hours. Trams, events and locks are picked up again from their own tables."""
         keys = [r["key"] for r in self.conn.execute(
             "SELECT key FROM live_tokens WHERE key NOT LIKE 'start:%' AND key NOT LIKE 'tram:%' "
-            "AND key NOT LIKE 'event:%' AND key NOT LIKE 'lock:%' AND key NOT LIKE 'bedtime:%'")]
+            "AND key NOT LIKE 'event:%' AND key NOT LIKE 'lock:%' AND key NOT LIKE 'bedtime:%' "
+            "AND key NOT LIKE 'focus:%'")]
         interrupted = {"status": "failed", "detail": "Interrupted", "text": "", "since": int(time.time())}
         done = {r["key"]: json.loads(r["state"]) for r in self.conn.execute("SELECT * FROM live_done")}
         self.conn.execute("DELETE FROM live_done")

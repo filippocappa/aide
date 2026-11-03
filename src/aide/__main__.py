@@ -81,6 +81,7 @@ from .upcoming import EventWatcher
 from .lockwatch import LockWatcher
 from .shapes import event_json
 from .bedtime import Bedtime, bedtime_tools
+from .focus import FocusStore, FocusWatcher, focus_tools
 from .wake import WakeService
 from .whisper import available as whisper_available
 
@@ -166,7 +167,9 @@ def main() -> None:
     lessons = LessonStore(notebook, lesson_ask, engine.plan_blocked)
     lessons.mastery = quizzes.mastery
     reviews = ReviewStore(db.conn, settings.timezone, cal, study)
-    tools += quiz_tools(quizzes, reviews, study, notebook, settings.timezone)
+    focus = FocusStore(db.conn, settings.timezone, locks, study)
+    tools += quiz_tools(quizzes, reviews, study, notebook, settings.timezone, focus=focus)
+    tools += focus_tools(focus, study, settings.timezone)
     plans = PlanStore(db.conn, settings.timezone, cal, reviews)
     if cal is not None:
         tools += plan_tools(plans, study, notebook, lambda: (agent._conversation, calling_agent.get()))
@@ -303,6 +306,7 @@ def main() -> None:
     events = EventWatcher(db.conn, settings.timezone, cal, live) if cal else None
     lock_watch = LockWatcher(db.conn, settings.timezone, locks, live)
     locks.on_change.append(lock_watch.poke)
+    focus_watch = FocusWatcher(focus, live, agent, push)
 
     async def plan_limit(paused: dict) -> None:
         """The plan's limit, mid-job: asked in the job's course chat (Professor), with a push."""
@@ -351,6 +355,7 @@ def main() -> None:
             *([leave.run()] if leave else []),
             *([events.run()] if events else []),
             lock_watch.run(),
+            focus_watch.run(),
             bedtime.run(),
             *([errands.run()] if errands else []),
             videos.run(),
@@ -365,7 +370,8 @@ def main() -> None:
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off,
                              weights=weights, videos=videos, lessons=lessons, finance=finance,
-                             banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime)
+                             banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
+                             focus=focus, focus_watch=focus_watch)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

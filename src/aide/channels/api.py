@@ -58,6 +58,7 @@ from ..wake import WakeService
 from ..weight import WeightStore
 from ..banks import Banks, BankError
 from ..bedtime import Bedtime
+from ..focus import PRESETS as FOCUS_PRESETS, FocusStore, FocusWatcher
 from ..finance import CATEGORIES as FINANCE_CATEGORIES, NOT_SPENDING, FinanceStore, parse_amount
 
 log = logging.getLogger(__name__)
@@ -518,6 +519,27 @@ class UnlockIn(BaseModel):
     use_pass: bool = Field(False, alias="pass")  # an emergency pass, for a strict lock
 
 
+class FocusIn(BaseModel):
+    course_id: int
+    focus_min: int = 25
+    break_min: int = 5
+    rounds: int = 4
+    topic: str | None = None  # a notebook topic's id (t_…)
+    topic_title: str | None = None
+    strict: bool = True
+    review: str | None = None  # the review session it's started from
+
+
+class FocusEnd(BaseModel):
+    reason: str | None = None  # needed in a focus round
+    use_pass: bool = Field(False, alias="pass")  # an emergency pass, for a strict session's round
+
+
+class FocusCheck(BaseModel):
+    right: int
+    total: int
+
+
 class LimitIn(BaseModel):
     title: str
     minutes: int
@@ -585,6 +607,7 @@ class LiveSettingsPatch(BaseModel):
     events: bool | None = None
     locks: bool | None = None
     bedtime: bool | None = None
+    focus: bool | None = None
 
 
 class LiveActivityIn(BaseModel):
@@ -642,7 +665,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                weights: WeightStore | None = None, videos: VideoWorker | None = None,
                lessons: LessonStore | None = None, finance: FinanceStore | None = None,
                banks: Banks | None = None, bank_redirect: str | None = None,
-               bedtime: Bedtime | None = None) -> FastAPI:
+               bedtime: Bedtime | None = None, focus: FocusStore | None = None,
+               focus_watch: FocusWatcher | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -666,6 +690,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
     quizzes = quizzes or QuizStore(notebook)
+    focus = focus or FocusStore(db.conn, tz, locks, study)
 
     async def lesson_ask(system: str, content: list[dict], max_tokens: int, fast: bool, live: bool) -> str:
         """A lesson's model call: through the engine (the Claude plan first, when it writes notes), never waiting at
@@ -2796,6 +2821,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/locks/{lock_id}/unlock", dependencies=[Depends(auth)])
     async def unlock(lock_id: int, body: UnlockIn):
         lock = lock_or_404(lock_id)
+        if lock.get("focus") and focus is not None:  # a focus round: the whole session ends
+            await end_focus(lock["focus"], FocusEnd(reason=body.reason, **{"pass": body.use_pass}))
+            return {"lock": None}
         after = locks.unlock(lock_id, body.reason, use_pass=body.use_pass)
         used = " with an emergency pass" if lock["strict"] else ""
         activity.record(db.conn, "coach", "action", f"You unlocked '{lock['title']}' early{used}", body.reason)
@@ -2806,6 +2834,59 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         lock_or_404(lock_id)
         locks.delete(lock_id)
         return {"ok": True}
+
+    # -- focus sessions (#54) ---------------------------------------------------
+
+    def focus_or_404(public_id: str) -> dict:
+        if focus is None:
+            raise HTTPException(404, "focus sessions are off")
+        try:
+            return focus.get(public_id)
+        except KeyError:
+            raise HTTPException(404, f"no focus session {public_id}") from None
+
+    @app.get("/v1/focus", dependencies=[Depends(auth)])
+    async def focus_now(days: int = 7, course: int | None = None):
+        if focus is None:
+            raise HTTPException(404, "focus sessions are off")
+        now = datetime.now(timezone.utc)
+        focus.finish_due(now)
+        since = now - timedelta(days=max(1, min(days, 400)))
+        current = focus.current(now)
+        return {"current": focus.as_json(current, now) if current else None, "presets": FOCUS_PRESETS,
+                "sessions": [focus.as_json(s, now) for s in focus.sessions(since, course)],
+                "totals": focus.totals(since, now), "passes": locks.passes(now)}
+
+    @app.post("/v1/focus", dependencies=[Depends(auth)])
+    async def start_focus(body: FocusIn):
+        if focus is None:
+            raise HTTPException(404, "focus sessions are off")
+        s = focus.start(body.course_id, body.focus_min, body.break_min, body.rounds, topic=body.topic,
+                        topic_title=body.topic_title, strict=body.strict, review=body.review)
+        return focus.as_json(s)
+
+    @app.get("/v1/focus/{public_id}", dependencies=[Depends(auth)])
+    async def focus_session(public_id: str):
+        return focus.as_json(focus_or_404(public_id))
+
+    @app.post("/v1/focus/{public_id}/end", dependencies=[Depends(auth)])
+    async def end_focus(public_id: str, body: FocusEnd):
+        s = focus_or_404(public_id)
+        held = focus.round_lock(s, datetime.now(timezone.utc)) is not None
+        after = focus.end(public_id, body.reason, use_pass=body.use_pass)
+        used = " with an emergency pass" if held and s["strict"] else ""
+        activity.record(db.conn, "professor", "action",
+                        f"You ended the focus session on {focus.course_name(s['course_id'])} early{used}",
+                        body.reason or None)
+        return focus.as_json(after)
+
+    @app.post("/v1/focus/{public_id}/check", dependencies=[Depends(auth)])
+    async def focus_checked(public_id: str, body: FocusCheck):
+        first = focus_or_404(public_id)["check_total"] is None
+        s = focus.set_check(public_id, body.right, body.total)
+        if first and focus_watch is not None:
+            await focus_watch.checked(s)
+        return focus.as_json(s)
 
     def limit_or_404(limit_id: int) -> dict:
         try:
@@ -3214,7 +3295,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.patch("/v1/live/settings", dependencies=[Depends(auth)])
     async def edit_live_settings(body: LiveSettingsPatch):
-        return live.update_settings(events=body.events, locks=body.locks, bedtime=body.bedtime)
+        return live.update_settings(events=body.events, locks=body.locks, bedtime=body.bedtime, focus=body.focus)
 
     @app.post("/v1/live/activities", dependencies=[Depends(auth)])
     async def live_activity(body: LiveActivityIn):

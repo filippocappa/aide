@@ -43,7 +43,11 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
         return "\n".join(lines)
 
     async def screen_usage(days: int = 14) -> str:
-        return store.usage_text(utcnow(), max(1, min(int(days), 90)))
+        now, days = utcnow(), max(1, min(int(days), 90))
+        text = store.usage_text(now, days)
+        if store.focus is not None:
+            text += "\n\n" + store.focus.text(now, days)
+        return text
 
     async def lock_now(title: str, minutes: int | None = None, until: str | None = None,
                        start: str | None = None, strict: bool = False) -> str:

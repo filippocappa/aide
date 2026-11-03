@@ -43,7 +43,8 @@ STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
          "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
          "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
-         "cancel_review_session", "course_dates", "add_course_date", "edit_course_date", "hide_course_date")
+         "cancel_review_session", "course_dates", "add_course_date", "edit_course_date", "hide_course_date",
+         "start_focus", "focus_status")
 
 
 @dataclass(frozen=True)
@@ -164,8 +165,9 @@ then locked until midnight"): add_limit when the user asks for one (a title nami
 update_limit to change it; it does nothing until they pick its apps on the phone, so say so (the card under your \
 reply opens the page). list_locks shows them and whether they were reached today; ending a reached one early \
 (end_limit, their reason) and deleting one are queued, and a strict one reached today can only be tightened. screen_usage has their phone time day by day (at least \
-so much: it comes in 15-minute steps) against their usual; bring it in when it matters (a late night on the phone, \
-a study day that went to the screen), not as a lecture."""
+so much: it comes in 15-minute steps) against their usual, and their focus sessions (study rounds with everything \
+else locked, Professor's); bring it in when it matters (a late night on the phone, a study day that went to the \
+screen, a good focus day), not as a lecture."""
 
 _SETTINGS = """- Settings: settings lists Aide's own (digest times and which are on, the Live Activities, tram alerts for \
 events, who writes notes and does background work); change_setting changes one at once when the user asks. A few \
@@ -359,7 +361,13 @@ the exam: the card under your reply shows them on a week view, and the user adds
 line; they aren't in the calendar until then). add_review_session is for one session they asked for outright. \
 They go in the timetable calendar as "Review: <course>", and when one starts you offer a quiz on its topics in \
 this chat. Cancelling one is queued; to move one, the user drags it in their \
-calendar (it's followed)."""
+calendar (it's followed).
+- Focus sessions: when the user wants to sit down and study ("50 minutes on macro", "a pomodoro on IS-LM", \
+"2 rounds of 50/10"), start_focus starts one now: rounds of focus with breaks between, every app but the few \
+allowed for focus locked during the rounds, a countdown in the Dynamic Island. 25/5 × 4 is a pomodoro session; \
+"50 minutes" is one round of 50. Strict unless they say otherwise. Ending it early is theirs, in the app. When it \
+ends you post it here with a 5-question check; focus_status and study_progress have the minutes and rounds per \
+course, and the planner can make "4 rounds of macro this week" an objective."""
 
 _FOOD_ELSEWHERE = """- Food: you don't keep the food log; Coach does. If the user sends a meal, say so in a line \
 (they can send it to Coach, or log it from the Health tab)."""
