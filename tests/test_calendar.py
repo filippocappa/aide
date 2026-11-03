@@ -191,6 +191,19 @@ async def test_confirmation_is_recorded_in_history(tools):
     assert db.history(conv)[-1]["content"].startswith("[The user tapped Confirm.")
 
 
+async def test_confirmation_shows_in_the_chat(tools):
+    agent, db = agent_with(tools, [("tool_use", call("delete_event", event_id="d1")), done(),
+                                   ("tool_use", call("delete_event", event_id="d1")), done()])
+    await agent.reply("discord", "delete")
+    result = await agent.confirm("discord")
+    shown = agent.visible_history("discord")
+    assert shown[-1] == {**shown[-1], "role": "assistant", "text": result}
+    assert result.startswith("✓ ")
+    await agent.reply("discord", "delete it again")
+    await agent.cancel("discord")
+    assert agent.visible_history("discord")[-1]["text"] == "Cancelled. Nothing was changed."
+
+
 # -- iCalendar parsing ------------------------------------------------------------
 
 
