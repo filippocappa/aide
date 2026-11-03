@@ -304,3 +304,67 @@ async def test_free_time_leaves_room_around_events(cal, tools):
     ]
     assert await tools.call("free_time", {"start_date": "2026-10-20", "end_date": "2026-10-20", "minutes": 600}) == \
         "No free stretch of 600 min in those days."
+
+
+class _DavCal:
+    """A caldav.Calendar stand-in: search() returns objects, or raises what it's given."""
+
+    def __init__(self, events=(), error=None):
+        self._events, self._error = events, error
+
+    def search(self, **_):
+        if self._error:
+            raise self._error
+        return [SimpleNamespace(icalendar_component=c, url=f"https://x/{c['UID']}.ics") for c in self._events]
+
+
+def _icloud(cals: dict):
+    import threading
+    from aide.icloud import ICloudCalendar
+    c = ICloudCalendar.__new__(ICloudCalendar)  # no client: _discover is replaced below
+    c._calendars, c._colors, c._first, c._where, c._failing = None, {}, threading.Lock(), {}, set()
+    c.discovered = 0
+
+    def discover():
+        c.discovered += 1
+        return dict(cals)
+    c._discover = discover
+    return c
+
+
+def _vevent(uid, title):
+    ev = icalendar.Event()
+    ev.add("uid", uid)
+    ev.add("summary", title)
+    ev.add("dtstart", at(20, 10))
+    ev.add("dtend", at(20, 11))
+    return ev
+
+
+def test_one_calendar_404_leaves_the_others_and_finds_the_list_again():
+    import caldav
+    from aide.icloud import unread
+    c = _icloud({"Home": _DavCal([_vevent("h1", "Dentist")]),
+                 "Gone": _DavCal(error=caldav.lib.error.NotFoundError("404")),
+                 "Work": _DavCal([_vevent("w1", "Standup")])})
+    found = c.events(at(20, 0), at(21, 0))
+    assert sorted(e.title for e in found) == ["Dentist", "Standup"]
+    assert unread(found) == {"Gone"}
+    c.events(at(20, 0), at(21, 0))
+    assert c.discovered == 2  # the 404 dropped the cached list
+
+
+def test_another_dav_error_skips_the_calendar_but_keeps_the_list():
+    import caldav
+    c = _icloud({"Home": _DavCal([_vevent("h1", "Dentist")]),
+                 "Flaky": _DavCal(error=caldav.lib.error.ReportError("500"))})
+    assert [e.title for e in c.events(at(20, 0), at(21, 0))] == ["Dentist"]
+    c.events(at(20, 0), at(21, 0))
+    assert c.discovered == 1
+
+
+def test_every_calendar_failing_still_raises():
+    import caldav
+    c = _icloud({"Home": _DavCal(error=caldav.lib.error.NotFoundError("404"))})
+    with pytest.raises(caldav.lib.error.DAVError):
+        c.events(at(20, 0), at(21, 0))

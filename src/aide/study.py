@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 from . import fts, usage
 from .db import Database, utcnow
 from .engine import course_var
-from .icloud import CalendarBackend, CalEvent
+from .icloud import CalendarBackend, CalEvent, unread
 from .material import FileStore
 from .photos import PhotoStore
 from .whisper import cuda_libs
@@ -161,6 +161,9 @@ class StudyStore:
             found = await asyncio.to_thread(self.calendar.events, now - COURSE_RANGE, now + COURSE_RANGE)
         except Exception:
             log.exception("couldn't read the calendar for courses")
+            return self._cached[1] if self._cached else []
+        if unread(found) & {self.study_calendar, self.exam_calendar}:  # the courses' own calendars: keep the last look
+            log.warning("the study or exam calendar couldn't be read; courses from the last look")
             return self._cached[1] if self._cached else []
         events = [e if e.start.tzinfo else replace(e, start=e.start.replace(tzinfo=self.tz),
                                                    end=e.end.replace(tzinfo=self.tz))  # floating times are local

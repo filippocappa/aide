@@ -40,6 +40,20 @@ class RecurringEventError(Exception):
     pass
 
 
+class Events(list):
+    """A listing of events, with the calendars that couldn't be read this time (`unread`). A caller that tells
+    "not in the calendar" from what's missing should check it: those calendars' events aren't absent, just unknown."""
+
+    def __init__(self, events=(), unread=()):
+        super().__init__(events)
+        self.unread = frozenset(unread)
+
+
+def unread(found) -> frozenset[str]:
+    """The calendars a listing couldn't read (none for backends that don't say)."""
+    return getattr(found, "unread", frozenset())
+
+
 class CalendarBackend(Protocol):
     def calendars(self) -> list[str]: ...
     def events(self, start: datetime, end: datetime) -> list[CalEvent]: ...
@@ -93,6 +107,7 @@ class ICloudCalendar:
         # uid -> (calendar name, URL), remembered from listings. iCloud rejects lookups by UID
         # (412 on the REPORT that event_by_uid sends), so events are fetched by URL instead.
         self._where: dict[str, tuple[str, str]] = {}
+        self._failing: set[str] = set()  # calendars whose last read failed, logged once until they work again
 
     def _cals(self) -> dict[str, caldav.Calendar]:
         # Cached for the process lifetime; restart Aide after adding a calendar.
@@ -128,18 +143,38 @@ class ICloudCalendar:
     def _ev(self, comp, calendar: str) -> CalEvent:
         return _event_from_component(comp, calendar, self._colors.get(calendar, ""))
 
-    def events(self, start: datetime, end: datetime) -> list[CalEvent]:
-        def one(name: str, cal: caldav.Calendar) -> list[CalEvent]:
-            found = cal.search(event=True, start=start, end=end, expand=True)
+    def events(self, start: datetime, end: datetime) -> Events:
+        """Every calendar's events in the window. One calendar iCloud won't answer for (gone, moved: a 404) doesn't
+        fail the rest: it's left out and named in `unread`, and the calendar list is found again next time. Raises
+        only when no calendar could be read."""
+        def one(name: str, cal: caldav.Calendar) -> list[CalEvent] | caldav.error.DAVError:
+            try:
+                found = cal.search(event=True, start=start, end=end, expand=True)
+            except caldav.error.DAVError as e:
+                return e
             events = [self._ev(obj.icalendar_component, name) for obj in found]
             for ev, obj in zip(events, found):
                 self._where[ev.uid] = (name, str(obj.url))
             return events
 
+        cals = self._cals()
         # One request per calendar; in parallel, since iCloud users often have a dozen.
         with ThreadPoolExecutor(max_workers=8) as pool:
-            results = pool.map(lambda item: one(*item), self._cals().items())
-            return [ev for evs in results for ev in evs]
+            results = dict(zip(cals, pool.map(lambda item: one(*item), cals.items())))
+        failed = {name: r for name, r in results.items() if isinstance(r, caldav.error.DAVError)}
+        for name, err in failed.items():
+            if name not in self._failing:
+                log.warning("calendar %r couldn't be read (%s: %s); the others' events still come back",
+                            name, type(err).__name__, err)
+        self._failing = set(failed)
+        if any(isinstance(e, caldav.error.NotFoundError) for e in failed.values()):
+            with self._first:
+                if self._calendars is cals:
+                    self._calendars = None  # gone or moved in iCloud: discover them again on the next read
+        if failed and len(failed) == len(results):
+            raise next(iter(failed.values()))
+        return Events((ev for r in results.values() if not isinstance(r, caldav.error.DAVError) for ev in r),
+                      unread=failed)
 
     def _fetch(self, name: str, url) -> caldav.Event | None:
         try:
