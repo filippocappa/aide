@@ -626,6 +626,18 @@ opened only on a tap (`OpenLinksCard` in `ChatView.swift`). New links: `aide://s
 (`StudyLink`, followed by `StudyView`) and `aide://settings[/<page>]` (followed by `SettingsView`; the Mac opens its
 Settings section, without the phone's pages). Debug builds: `-previewRoute <aide:// link>`.
 
+**Done, both sides (2026-11-02), live:** objectives as plans and activity grouped (contract "Objectives", "Approvals",
+"Activity and approvals"). A period's proposals are one plan (`plans` in approvals) that starts by itself at
+`starts_at` (midday, at least an hour after it's made, never before the period; lazily, on the first read after) unless
+something is dropped (`drop` on accept); a proposal with a `due` lapses once that's passed. Day objectives link to the
+week goal they're a step of (`parent`); week ones with a measure carry `days` for dots; `measure.source` says where
+progress comes from. App (`Views/PlanViews.swift`): `ObjectivePlanCard` in Waiting for you (Not this on each goal,
+Start all now), Today as the week (`WeekGoalCard` with day dots and today's steps inside, Also today, habits, the month
+as bars; no Today/Week/Month picker). `/v1/activity?grouped=true` folds a run (same agent and kind, one chat or one
+title, 45 min), an errand's lines, a plan's objectives (10 min, any agent) and a day's quiet checks into rows with
+`count`, `agents`, `children` (`activity.grouped`); the Activity sheet has agent chips, rows with ×N that fold open
+(`ActivityLine`), quiet checks as one grey line.
+
 **Next** (GitHub issues):
 1. Voice redesign (#34, the only open issue): talking with an agent and quizzes by voice are too slow. Multiple-choice
    answers marked with no model call first, then an overlapped pipeline (streamed audio, end of turn on the server,
