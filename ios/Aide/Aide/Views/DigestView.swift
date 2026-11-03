@@ -31,6 +31,7 @@ struct DigestView: View {
                     group(section.title) { DigestObjectiveRows(objectives: objectives, period: period) }
                 case .replies(let drafts): group(section.title) { DigestDraftRows(drafts: drafts) }
                 case .weather(let weather): group(section.title) { WeatherCard(weather: weather) }
+                case .bedtime(let plan): group(section.title) { BedtimeCard(plan: plan) }
                 case .text, .unknown: EmptyView() // the greeting already says it
                 }
             }

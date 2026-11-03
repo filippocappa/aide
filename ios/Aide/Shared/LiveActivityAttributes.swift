@@ -209,3 +209,28 @@ struct LockActivityAttributes: ActivityAttributes {
     var key: String
     var title: String
 }
+
+/// The evening's countdown to bedtime (docs/API.md, "Live Activities", `bedtime`), started by the server a while
+/// before it and ended at the bedtime.
+struct BedtimeActivityAttributes: ActivityAttributes {
+    struct ContentState: Codable, Hashable {
+        /// When to be in bed: the countdown.
+        var bedtime: Double
+        /// The planned wake time.
+        var wake: Double
+        /// When the nudge went: the bar fills from here to `bedtime`.
+        var since: Double
+        /// The night's sleep need, minutes.
+        var need_min: Int
+        /// Bedtime has come (the last update, sent with the end).
+        var over: Bool
+
+        var bedtimeDate: Date { Date(timeIntervalSince1970: bedtime) }
+        var wakeDate: Date { Date(timeIntervalSince1970: wake) }
+        var sinceDate: Date { Date(timeIntervalSince1970: since) }
+    }
+
+    /// `bedtime:<the morning's date>`
+    var key: String
+    var title: String
+}

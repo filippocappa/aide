@@ -13,6 +13,7 @@ struct AideWidgets: WidgetBundle {
         AgentLiveActivity()
         EventLiveActivity()
         LockLiveActivity()
+        BedtimeLiveActivity()
         if #available(iOS 18.0, *) {
             HabitControl()
             MealPhotoControl()

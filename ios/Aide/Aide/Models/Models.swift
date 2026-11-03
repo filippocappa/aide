@@ -137,6 +137,7 @@ struct OpenLink: Decodable, Hashable, Identifiable {
             case "notifications": return "bell.badge"
             case "voice": return "waveform"
             case "nutrition": return "fork.knife"
+            case "bedtime": return "bed.double"
             case "digests": return "sun.horizon"
             case "location": return "tram"
             case "health": return "heart"
@@ -1505,6 +1506,7 @@ struct DigestSection: Decodable, Identifiable {
         case objectives([Objective], period: String)
         case replies([MailDraft])
         case weather(DigestWeather)
+        case bedtime(BedtimePlan)
         case text(String)
         case unknown // a section type this app version doesn't know: skipped
     }
@@ -1528,13 +1530,14 @@ struct DigestSection: Decodable, Identifiable {
                                                  period: try c.decodeIfPresent(String.self, forKey: .period) ?? "day")
         case "replies": content = .replies(try c.decode([MailDraft].self, forKey: .drafts))
         case "weather": content = (try? c.decode(DigestWeather.self, forKey: .weather)).map { .weather($0) } ?? .unknown
+        case "bedtime": content = (try? c.decode(BedtimePlan.self, forKey: .bedtime)).map { .bedtime($0) } ?? .unknown
         case "text": content = .text(try c.decode(String.self, forKey: .text))
         default: content = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
         case type, title, events, items, reminders, habits, sleep, usualAsleepMin, score, text, objectives, period, drafts
-        case weather
+        case weather, bedtime
     }
 }
 
@@ -2646,6 +2649,82 @@ struct LiveSettings: Codable {
     var events: Bool
     /// The Screen Time lock countdown; nil from an older server (and, sent, leaves it as it is).
     var locks: Bool? = nil
+    /// The bedtime countdown; nil from an older server (and, sent, leaves it as it is).
+    var bedtime: Bool? = nil
+}
+
+// MARK: Bedtime (docs/API.md, "Apple Health", "Bedtime")
+
+/// How the bedtime is worked out. `wakeWeekdays`/`wakeWeekends` nil: learnt from the nights. Sent whole: the nils
+/// go as nulls.
+struct BedtimeSettings: Codable, Equatable {
+    var enabled: Bool
+    var wakeWeekdays: String?
+    var wakeWeekends: String?
+    var readyMin: Int
+    var leadMin: Int
+    var windDown: Bool
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(wakeWeekdays, forKey: .wakeWeekdays)
+        try c.encode(wakeWeekends, forKey: .wakeWeekends)
+        try c.encode(readyMin, forKey: .readyMin)
+        try c.encode(leadMin, forKey: .leadMin)
+        try c.encode(windDown, forKey: .windDown)
+    }
+    private enum CodingKeys: String, CodingKey { case enabled, wakeWeekdays, wakeWeekends, readyMin, leadMin, windDown }
+}
+
+/// Tonight's plan: the wake time it's worked back from, and the bedtime.
+struct BedtimePlan: Decodable, Hashable {
+    struct Event: Decodable, Hashable {
+        let title: String
+        let start: String
+        let leave: String?
+        let how: String?
+    }
+    let date: String
+    let bedtime: String
+    let asleepBy: String
+    let wake: String
+    let usualWake: String?
+    let wakeSource: String
+    let earlierMin: Int
+    let event: Event?
+    let needMin: Int
+    let awakeMin: Int
+    let nudgeAt: String
+    let windDown: Bool
+    let why: String
+
+    var bedtimeDate: Date? { Wire.parse(bedtime) }
+    var asleepDate: Date? { Wire.parse(asleepBy) }
+    var wakeDate: Date? { Wire.parse(wake) }
+    var nudgeDate: Date? { Wire.parse(nudgeAt) }
+}
+
+/// A night against its plan; `*OffMin` positive is late.
+struct BedtimeNight: Decodable, Hashable, Identifiable {
+    let date: String
+    let plannedAsleep: String
+    let plannedWake: String
+    let asleep: String?
+    let wake: String?
+    let asleepOffMin: Int?
+    let wakeOffMin: Int?
+    let needMin: Int?
+    let asleepMin: Int?
+    var id: String { date }
+}
+
+struct BedtimeOverview: Decodable {
+    struct Usual: Decodable { let weekdays: String?; let weekends: String? }
+    let tonight: BedtimePlan?
+    let settings: BedtimeSettings
+    let usual: Usual?
+    var nights: [BedtimeNight]?
 }
 
 /// Only what changes. `minutes: .some(nil)` sends `"minutes": null`: back to when it's time to leave.
