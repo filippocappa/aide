@@ -1975,7 +1975,8 @@ class NotebookWorker:
         now = datetime.now(timezone.utc)
         try:
             found = await asyncio.to_thread(cal.events, now - timedelta(days=1), now + timedelta(days=400))
-        except Exception:
+        except Exception:  # the card goes without them, but it's logged
+            log.exception("the calendar didn't answer for the course dates' card")
             return []
         return [event_json(e, self.study.tz) | {"change": "found"} for e in found if e.uid in uids]
 

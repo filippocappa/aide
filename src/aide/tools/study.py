@@ -2,6 +2,7 @@
 course notebooks (notebook.py). Reading and changing notes run immediately; deleting a lecture waits for the user's OK. A notebook is read the way code is searched: its outline first, then one section, never the whole of it."""
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -10,6 +11,8 @@ from ..engine import Engine
 from ..notebook import NotebookStore, date_line, exercises, sections
 from ..study import StudyStore
 from . import Tool
+
+log = logging.getLogger(__name__)
 
 TRANSCRIPT_CHARS = 60_000  # read_lecture's transcript, at most
 FILE_CHARS = 40_000  # read_file's text, at most
@@ -287,8 +290,8 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         """As the API does after the user's change: the calendar checked again, and a missing exam proposed."""
         try:
             await notebook.calendar_check(cid)
-        except Exception:  # the calendar being down doesn't undo the change
-            pass
+        except Exception:  # the calendar being down doesn't undo the change, but it's logged
+            log.exception("course %s: the calendar check after a date change failed", cid)
         notebook.reread_dates(cid)
         return done
 

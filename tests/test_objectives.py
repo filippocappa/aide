@@ -578,3 +578,12 @@ def test_approvals_show_each_plan_once(env, tmp_path):
     week = api.post("/v1/objectives/accept", json={"period": "week", "drop": [walk]}, headers=AUTH).json()
     assert [o["title"] for o in week["objectives"]] == ["Run twice"] and week["starts_at"] is None
     assert api.get("/v1/approvals", headers=AUTH).json()["plans"] == []
+
+
+def test_only_a_missing_table_is_quiet():
+    import sqlite3
+
+    from aide.objectives import _no_table
+    assert _no_table(sqlite3.OperationalError("no such table: quizzes"), 0) == 0
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        _no_table(sqlite3.OperationalError("database is locked"), 0)
