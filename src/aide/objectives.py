@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 from . import activity
 from .agents import AGENTS, SPECIALISTS, check_agent
 from .db import utcnow
+from .focus import studied as focus_studied
 from .food import FOOD_METRICS
 from .notebook import date_line, max_points
 from .quiz import correct
@@ -48,7 +49,7 @@ def _no_table(error: sqlite3.OperationalError, empty):
 PERIODS = ("day", "week", "month")
 MOST = {"day": 2, "week": 3, "month": 2}  # proposals per specialist
 DAY_TOTAL = 6  # proposals for a day, all specialists together
-MEASURES = ("habit", "practice", "notes", "food", "sleep", "steps", "reminder")
+MEASURES = ("habit", "practice", "notes", "focus", "food", "sleep", "steps", "reminder")
 COURSE_DATES_AHEAD = 120  # days: a course's exams and deadlines the planner sees
 NEW_NOTES_DAYS = 7  # the planner sees the notebook topics changed in this many days
 MISSED_QUIZZES = 10  # ... and the topics most missed in this many recent practice exams
@@ -221,6 +222,11 @@ class ObjectiveStore:
             if not self.conn.execute("SELECT 1 FROM courses WHERE id = ?", (course,)).fetchone():
                 raise ValueError(f"no course {measure.get('course')}")
             return {"type": "notes", "course": course}
+        if kind == "focus":
+            course = int(measure.get("course") or 0)
+            if not self.conn.execute("SELECT 1 FROM courses WHERE id = ?", (course,)).fetchone():
+                raise ValueError(f"no course {measure.get('course')}")
+            return {"type": "focus", "course": course}
         if kind == "food":
             metric = measure.get("metric")
             if metric not in FOOD_METRICS:
@@ -417,6 +423,15 @@ class ObjectiveStore:
                     (m["course"], self._utc(first), self._utc(last + timedelta(days=1)))).fetchone()[0]
             except sqlite3.OperationalError as e:  # no notebooks: the table isn't there
                 return _no_table(e, 0)
+        if m["type"] == "focus":  # focus rounds finished (focus.py)
+            try:
+                rows = self.conn.execute(
+                    "SELECT * FROM focus_sessions WHERE course_id = ? AND started_at >= ? AND started_at < ?",
+                    (m["course"], self._utc(first), self._utc(last + timedelta(days=1)))).fetchall()
+            except sqlite3.OperationalError as e:  # no focus sessions yet: the table isn't there
+                return _no_table(e, 0)
+            now = datetime.now(timezone.utc)
+            return sum(focus_studied(dict(r), now)[0] for r in rows)
         if m["type"] == "food":
             return len(self.food.met_days(m["metric"], first, last)) if self.food else 0
         if self.health is None:
@@ -441,6 +456,9 @@ class ObjectiveStore:
             case "notes":
                 row = self.conn.execute("SELECT name FROM courses WHERE id = ?", (m["course"],)).fetchone()
                 return f"{row[0] if row else 'a course'} notebook topics written or revised"
+            case "focus":
+                row = self.conn.execute("SELECT name FROM courses WHERE id = ?", (m["course"],)).fetchone()
+                return f"focus rounds on {row[0] if row else 'a course'}"
             case "food":
                 return {"logged": "days with meals logged", "protein_g": "days at the protein goal",
                         "calories": "days at the calorie goal"}[m["metric"]]
@@ -460,7 +478,7 @@ class ObjectiveStore:
         if m["type"] == "habit":
             habit = self.habits and self.habits.get(m["habit"])
             return habit.name if habit else "Habits"
-        return {"practice": "Practice exams", "notes": "Notebook", "food": "Food log", "sleep": "Apple Health",
+        return {"practice": "Practice exams", "notes": "Notebook", "focus": "Focus sessions", "food": "Food log", "sleep": "Apple Health",
                 "steps": "Apple Health", "reminder": "Reminders"}.get(m["type"])
 
     # -- shapes -------------------------------------------------------------------------
@@ -581,6 +599,8 @@ ended within its limit); target = how many. Week and month only.
 how many.
 - {{"type": "notes", "course": <course id>}}: notebook topics written or revised in the period (the notes Aide \
 writes once the user OKs them, and the user's own edits in Obsidian); target = how many topics.
+- {{"type": "focus", "course": <course id>}}: focus rounds finished on the course (pomodoros, the app's focus \
+sessions with everything else locked; a round is 25 or 50 min); target = rounds ("4 rounds of macro this week").
 - {{"type": "food", "metric": "logged" | "protein_g" | "calories"}}: days with meals logged, or at that goal (only \
 if the goal is set); target = days.
 - {{"type": "sleep", "hours": 7.5}} or {{"type": "steps", "steps": 8000}}: nights or days at or above it (only with \

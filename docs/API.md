@@ -410,10 +410,11 @@ the data.
 - `measure` says what ticks it, with a readable `label`; `null` means you tick it. Types:
   `habit` {`habit`}: check-ins in the period (days done, for a limit or food habit). `practice` {`course`, `score`?}: practice exams finished (at
   `score`% or more). `notes` {`course`}: notebook topics written or revised (notes Aide wrote after your OK, or
-  your edits in Obsidian; a topic counts once, added figures don't count). `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
+  your edits in Obsidian; a topic counts once, added figures don't count). `focus` {`course`} (since 2026-11-03):
+  focus rounds finished on the course (Focus sessions). `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
   goal (calories within 10%). `sleep` {`hours`}: nights at or over. `steps` {`steps`}: days at or over.
   `reminder` {`reminder`}: that reminder done (target 1). An unknown type is fine: show `label`. `source` (since
-  2026-11-02) is where it comes from in a word or two: the habit's name, `Practice exams`, `Notebook`, `Food log`,
+  2026-11-02) is where it comes from in a word or two: the habit's name, `Practice exams`, `Notebook`, `Focus sessions`, `Food log`,
   `Apple Health`, `Reminders`.
 - `progress` of `target` is worked out on every read (only days of the period so far count). `done` is true when
   `progress` reaches `target`, or when you ticked it (for one without a measure, `progress` is then 1).
@@ -1369,6 +1370,55 @@ carries a `review` card (Chat, attachments) with the session's time, length and 
 Session: `{"id": "v_…", "course": 2, "start": "2026-10-28T15:00:00+01:00", "minutes": 90, "topics": ["The IS-LM
 model", "Phillips curve"]}`.
 
+### Focus sessions
+
+Since 2026-11-03 (`focus.py`, #54): study blocks with breaks (pomodoro), everything else locked while you study.
+Started from a course page, a topic, a review session, or by asking Professor ("50 minutes on macro", its
+`start_focus`). A session is a course (a topic optional), a rhythm and a number of rounds: 25/5 × 4 and 50/10 × 2 are
+the `presets`, or the user's own (a round 15–120 min, Screen Time's floor being 15; a break 1–30; 1–8 rounds; one
+round has no break, `break_min` 0). It starts now.
+
+- **Locked:** each focus round is a one-off Screen Time lock (see Screen Time) made when the session starts, titled
+  "Focus · Macroeconomics", with `focus` set to the session's id; a break is the gap between two. So the phone sets
+  them with the rest and they hold with the app closed. A focus lock covers every app but the ones allowed for focus
+  (picked on the phone, `LockBook`; Aide stays open), on the Mac too (`MacShield`, Aide's window staying open).
+  `strict` by default.
+- **Ending early** (`POST …/end`): in a focus round it's unlocking the round's lock, so a reason, or for a strict
+  session an emergency pass (`"pass": true`, reason optional); in a break nothing holds, so nothing is asked. Every
+  round still to come goes too. `POST /v1/locks/{id}/unlock` on a focus round ends its session the same way. A round
+  lock removed some other way ends the session early.
+- **The Live Activity** `focus` (see Live Activities): the phase, its time left, the topic, round 2 of 4; each switch
+  of focus and break is an update with an alert and a sound.
+- **At the end** Professor posts the session in the course chat (also one ended early) with an `open` card, "Check
+  what stuck", to `check_url`: `aide://study/<course>/quiz?focus=<id>[&topic=<t_…>&title=<topic title>]`. The app
+  opens the Study page in Learn: a study session (`POST /v1/quizzes`, `"kind": "study"`, `"count": 5`, the topic as
+  `topics`), multiple choice only, no model call, then sends `POST …/check` and Professor says how it went.
+- **Counted:** minutes and rounds finished per course in Professor's `study_progress` and `focus_status`, the `focus`
+  objective measure (rounds), and Coach's `screen_usage` beside the phone's time.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/focus?days=7&course=` | | `{"current": session \| null, "presets": [{"name": "25/5", "focus_min": 25, "break_min": 5, "rounds": 4}, …], "sessions": [session] (started in the last `days`, newest first), "totals": [{"course_id", "name", "sessions", "rounds", "minutes"}], "passes": {…}}` (`passes` as on `/v1/locks`) |
+| `POST /v1/focus` | `{"course_id": 3, "focus_min": 25, "break_min": 5, "rounds": 4, "topic"?: "t_…", "topic_title"?: "IS-LM", "strict"?: true, "review"?: "<review session id>"}` | the session; `400` for a rhythm out of bounds, an unknown course, or while another session is on |
+| `GET /v1/focus/{id}` | | the session |
+| `POST /v1/focus/{id}/end` | `{"reason"?: "a call"}`; strict, in a round: `{"pass": true}` | the session (`ended: "early"`); `400` when it's over, a round without a reason, strict without a pass, no passes left |
+| `POST /v1/focus/{id}/check` | `{"right": 4, "total": 5}` | the session with `check`; the first one is posted in the course chat |
+
+```json
+{
+  "id": "f_3a9c01d2e4b5", "course_id": 3, "course": "Macroeconomics", "topic": "t_islm", "topic_title": "IS-LM",
+  "focus_min": 25, "break_min": 5, "rounds": 4, "strict": true, "agent": null, "review": null,
+  "started_at": "2026-11-03T15:00:00+01:00", "ends_at": "2026-11-03T16:55:00+01:00",
+  "ended_at": null, "ended": null, "reason": null,
+  "phase": {"kind": "break", "round": 2, "since": "2026-11-03T15:55:00+01:00", "ends": "2026-11-03T16:00:00+01:00"},
+  "rounds_done": 2, "minutes": 50, "check": null,
+  "check_url": "aide://study/3/quiz?focus=f_3a9c01d2e4b5&topic=t_islm&title=IS-LM"
+}
+```
+- `phase.kind`: `focus`, `break` or `done`; `round` counts from 1. `ended`: `done` or `early`, with `reason`.
+  `rounds_done` counts whole rounds; `minutes` the focus minutes (a round cut short counts what was done).
+  `agent`: who started it (`professor`), null for the user.
+
 ## Habits
 
 Habits are what you always do: they never end, and they keep a streak and a grid. (What a day, week or month is
@@ -2053,9 +2103,10 @@ chat (`lock_now`, `add_lock_schedule`); ending one early there is queued and nee
   "id": 2, "title": "Bedtime", "once": false, "start": "23:00", "end": "07:00", "days": [7, 1, 2, 3, 4],
   "starts_at": null, "ends_at": null, "enabled": true, "strict": false, "agent": "coach",
   "locked": true, "until": "2026-10-28T07:00:00+01:00", "open_until": null, "next": "2026-10-28T23:00:00+01:00",
-  "summary": "Sun, Mon, Tue, Wed, Thu 23:00–07:00"
+  "summary": "Sun, Mon, Tue, Wed, Thu 23:00–07:00", "focus": null
 }
 ```
+- `focus` (since 2026-11-03): a focus session's round, its id (see Study, Focus sessions); null for any other lock.
 - `locked` and `until`: on right now, until then. `open_until`: unlocked early, open until then. `next`: the next
   start (null for a one-off already started, or a schedule that's off). `agent`: who set it, null for the user.
 - Every change (from chat or the app) sends a silent `sync` push; the app fetches the list and sets the device's
@@ -2614,7 +2665,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 
 ## Live Activities
 
-Five kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's widget extension:
+Six kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's widget extension:
 
 - **`tram`**: a tram alert's countdown. When an alert fires, the server starts it (APNs push-to-start) instead of
   the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left,
@@ -2634,6 +2685,12 @@ failed, the activity goes at once and one normal push takes its place. A chat re
   ("Bedtime · Locked until 07:00"), counting down to when it opens.
 - **`bedtime`** (since 2026-11-03): the evening's countdown to bedtime (see Apple Health, Bedtime), started by the
   server `lead_min` before it.
+- **`focus`** (since 2026-11-03): a focus session (see Study, Focus sessions), started by the server when it
+  starts, key `focus:<id>`, attributes `{"key", "title": "Macroeconomics", "topic": "IS-LM" or ""}`, state
+  `{"phase": "focus" | "break" | "done", "since", "ends" (unix seconds), "round", "rounds", "strict", "minutes" (of
+  focus so far), "over"}`. Each switch is an update with an alert (`"sound": "default"`), so the phone plays a sound
+  and a haptic; the end is an `end` with `over` true, dismissed 5 minutes later. Focus rounds' locks get no `lock`
+  activity of their own.
 
 The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as before.
 
@@ -2641,11 +2698,11 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent" \| "event" \| "lock" \| "bedtime", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
+| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent" \| "event" \| "lock" \| "bedtime" \| "focus", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
 | `DELETE /v1/live/tokens/{kind}` | | `{"ok": true}` |
 | `POST /v1/live/activities` | `{"key": "agent:3f2a…", "token": "a91c…", "environment": "sandbox"}` | `{"ok": true}` |
 | `DELETE /v1/live/activities/{key}` | | `{"ok": true}`, also for an unknown key |
-| `GET /v1/live/settings` | | `{"events": true, "locks": true, "bedtime": true}` |
+| `GET /v1/live/settings` | | `{"events": true, "locks": true, "bedtime": true, "focus": true}` |
 | `PATCH /v1/live/settings` | `{"events": false}` (either field, or both) | the settings |
 
 - `/v1/live/tokens`: a **push-to-start** token (`Activity<…>.pushToStartTokenUpdates`), one per kind; a new one
@@ -2658,7 +2715,8 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
   and ended before its token came (a short job) is ended as soon as the token comes, within an hour.
 - `/v1/live/settings` (since 2026-10-27): `events` (default true) turns the `event` countdowns on or off.
   `locks` (since 2026-11-01, default true) turns the `lock` countdowns on or off. `bedtime` (since 2026-11-03,
-  default true) the `bedtime` one (off: a plain `bedtime` push instead).
+  default true) the `bedtime` one (off: a plain `bedtime` push instead). `focus` (since 2026-11-03, default true)
+  the `focus` one.
 - Tokens are hex, like device tokens; `environment` as for devices. A token APNs refuses (`410`, `BadDeviceToken`)
   is deleted.
 - Since 2026-10-27 every `start` push carries `"input-push-token": 1`, so iOS gives the new activity an update token

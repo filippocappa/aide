@@ -85,6 +85,8 @@ class LockWatcher:
             return
         began = {(r["lock"], r["starts"]) for r in self.conn.execute("SELECT lock, starts FROM lock_activities")}
         for lock in locks.values():
+            if lock.get("focus"):
+                continue  # a focus round: the focus activity shows it (focus.FocusWatcher)
             until = self.locks.locked_until(lock, now)
             if until is None or until - now < LEAST:
                 continue

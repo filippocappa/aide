@@ -2,7 +2,7 @@
 flashcards (quiz.py), mock exams written for the app, and review sessions in the calendar (reviews.py). Answers are
 recorded as they come; adding a session runs at once, cancelling one waits for the user's OK."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from ..notebook import NotebookStore
@@ -17,7 +17,7 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 
 def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStore, notebook: NotebookStore,
-               tz: ZoneInfo) -> list[Tool]:
+               tz: ZoneInfo, focus=None) -> list[Tool]:
     async def course_row(name: str) -> dict:
         await study.courses()
         course = study.course_by_name(name)
@@ -109,6 +109,13 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
             else:
                 line += "not taken yet"
             out.append(line)
+        if focus is not None:
+            week = focus.totals(datetime.now(timezone.utc) - timedelta(days=7))
+            if t := next((t for t in week if t["course_id"] == c["id"]), None):
+                out.append(f"Focus sessions, the last 7 days: {t['sessions']}, {t['rounds']} rounds, "
+                           f"{t['minutes']} min of focus (focus_status has each).")
+            else:
+                out.append("Focus sessions, the last 7 days: none.")
         if reviews is not None:
             coming = reviews.upcoming(c["id"])
             out.append("Review sessions coming: " + ("\n" + "\n".join(reviews.line(s) for s in coming) if coming

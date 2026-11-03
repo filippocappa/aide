@@ -101,7 +101,10 @@ class LockStore:
             self.conn.execute("ALTER TABLE screen_unlocks ADD COLUMN pass INTEGER NOT NULL DEFAULT 0")
         if "limit_id" not in {r[1] for r in self.conn.execute("PRAGMA table_info(screen_unlocks)")}:
             self.conn.execute("ALTER TABLE screen_unlocks ADD COLUMN limit_id INTEGER")  # lock_id 0 then
+        if "focus" not in {r[1] for r in self.conn.execute("PRAGMA table_info(screen_locks)")}:
+            self.conn.execute("ALTER TABLE screen_locks ADD COLUMN focus TEXT")  # a focus session's round (focus.py)
         self.on_change: list[Callable[[], None]] = []  # the sync push, so the phone picks the change up
+        self.focus = None  # focus.FocusStore, which sets itself here: its sessions go with the screen time
 
     def _changed(self) -> None:
         for hook in self.on_change:
@@ -130,8 +133,9 @@ class LockStore:
 
     def lock_for(self, title: str, minutes: int | None = None, until: datetime | None = None,
                  start: datetime | None = None, agent: str | None = None, strict: bool = False,
-                 now: datetime | None = None) -> dict:
-        """A one-off: from `start` (default now) for `minutes`, or until `until`."""
+                 now: datetime | None = None, focus: str | None = None, quiet: bool = False) -> dict:
+        """A one-off: from `start` (default now) for `minutes`, or until `until`. `focus`: a focus session's round
+        (focus.py). `quiet`: no change hooks (the caller makes several and calls them once)."""
         now = (now or utcnow()).replace(microsecond=0)
         start = max(start or now, now)
         if (minutes is None) == (until is None):
@@ -144,10 +148,12 @@ class LockStore:
         if start - now > AHEAD:
             raise ValueError("a one-off starts within the next 7 days")
         cur = self.conn.execute(
-            "INSERT INTO screen_locks (title, starts_at, ends_at, agent, strict, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO screen_locks (title, starts_at, ends_at, agent, strict, focus, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (_title(title), start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat(),
-             agent, int(strict), now.isoformat()))
-        self._changed()
+             agent, int(strict), focus, now.isoformat()))
+        if not quiet:
+            self._changed()
         return self.get(cur.lastrowid)
 
     def schedule(self, title: str, start: str, end: str, days: list[int] | None = None, agent: str | None = None,
@@ -518,7 +524,8 @@ class LockStore:
                 "enabled": lock["enabled"], "strict": lock["strict"], "agent": lock["agent"],
                 "locked": until is not None, "until": self._local(until),
                 "open_until": self._local(window[1]) if opened else None,
-                "next": self._local(self.next_start(lock, now)), "summary": self.summary(lock, now)}
+                "next": self._local(self.next_start(lock, now)), "summary": self.summary(lock, now),
+                "focus": lock.get("focus")}
 
     def line(self, lock: dict, now: datetime) -> str:
         """'[3] Bedtime · every day 22:30–07:00 · on now, until 07:00 · set by Coach', for the agents."""
