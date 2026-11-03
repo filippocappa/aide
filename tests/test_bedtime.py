@@ -86,6 +86,7 @@ def test_the_usual_wake_is_learnt_weekdays_and_weekends_apart(env):
     assert usual_wake(days, WED, ROME) == "07:15"
     assert usual_wake(days, date(2026, 11, 7), ROME) == "09:00"
     assert usual_wake({}, WED, ROME) is None
+    assert make(env).usual(datetime(2026, 11, 3, 20, 0, tzinfo=ROME)) == {"weekdays": "07:15", "weekends": "09:00"}
 
 
 async def test_tonights_bedtime_is_the_wake_less_the_need_awake_and_falling_asleep(env):
