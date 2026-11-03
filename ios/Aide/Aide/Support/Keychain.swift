@@ -32,22 +32,56 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
+    /// Writes to the keychain so far (adds and updates), for the tests.
+    private(set) static var writes = 0
+
+    /// Saves in place: the item is updated where it is, and added only when there's none, so a failed write never
+    /// leaves the key without its old value. The same value isn't written again. An empty value deletes the key.
     static func set(_ value: String, for key: String) {
-        SecItemDelete(query(key) as CFDictionary)
-        guard !value.isEmpty else { return }
+        guard !value.isEmpty else {
+            SecItemDelete(query(key) as CFDictionary)
+            return
+        }
+        guard get(key) != value else { return }
+        let data = Data(value.utf8)
+        writes += 1
+        let status = SecItemUpdate(query(key) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        guard status == errSecItemNotFound else { return }
+        add(data, for: key, group: group)
+    }
+
+    private static func add(_ data: Data, for key: String, group: String?) {
         var q = query(key)
-        q[kSecValueData as String] = Data(value.utf8)
+        q[kSecValueData as String] = data
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         if let group { q[kSecAttrAccessGroup as String] = group }
-        if SecItemAdd(q as CFDictionary, nil) == errSecMissingEntitlement {
+        if SecItemAdd(q as CFDictionary, nil) == errSecMissingEntitlement, group != nil {
             // Signed without the App Group: keep it the app's own rather than lose it.
             q.removeValue(forKey: kSecAttrAccessGroup as String)
             SecItemAdd(q as CFDictionary, nil)
         }
     }
 
-    /// Items saved before the App Group, moved into it (saving again puts them there).
+    /// Items saved before the App Group, copied into it so the widgets read them. Only when the App Group has no
+    /// copy yet: nothing is deleted or written on a launch where they're already there. Later saves update both.
     static func share(_ keys: [String]) {
-        for key in keys { if let value = get(key) { set(value, for: key) } }
+        guard let group else { return }
+        for key in keys {
+            var q = query(key)
+            q[kSecAttrAccessGroup as String] = group
+            guard SecItemCopyMatching(q as CFDictionary, nil) == errSecItemNotFound, let value = get(key) else { continue }
+            writes += 1
+            add(Data(value.utf8), for: key, group: group)
+        }
+    }
+
+    /// How many items hold the key, in every group this process has (the tests).
+    static func count(_ key: String) -> Int {
+        var q = query(key)
+        q[kSecMatchLimit as String] = kSecMatchLimitAll
+        q[kSecReturnAttributes as String] = true
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess else { return 0 }
+        return (out as? [Any])?.count ?? 0
     }
 }

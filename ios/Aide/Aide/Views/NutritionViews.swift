@@ -125,7 +125,8 @@ struct DayScoreCard: View {
     static func bonusLine(_ bonus: FoodBonus) -> String? {
         guard bonus.kcal > 0, !bonus.planned else { return nil }
         let names = bonus.workouts.map { workoutName($0.type) }
-        let list = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names.last!
+        guard let last = names.last else { return "+\(bonus.kcal) kcal from your workouts" }
+        let list = names.count == 1 ? last : names.dropLast().joined(separator: ", ") + " and " + last
         return "+\(bonus.kcal) kcal from your \(list)"
     }
 

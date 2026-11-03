@@ -446,7 +446,7 @@ private struct LessonRun: View {
             if let explained {
                 if !explained.got.isEmpty { points("What you got", explained.got, "checkmark.circle.fill", Theme.study) }
                 if !explained.missing.isEmpty { points("To work on", explained.missing, "exclamationmark.circle.fill", .orange) }
-                let review = explained.review.filter { (1...steps.count).contains($0) }
+                let review = explained.review.filter { $0 >= 1 && $0 <= steps.count }
                 if !review.isEmpty {
                     DetailCard("Look at again", padding: 0) {
                         ForEach(Array(review.enumerated()), id: \.offset) { i, n in

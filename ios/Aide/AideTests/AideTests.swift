@@ -4,6 +4,53 @@ import XCTest
 @testable import Aide
 
 final class ModelTests: XCTestCase {
+    /// The decoder's snake-case rule renames dictionary keys too: the budget's category ids come back as sent (#42).
+    func testBudgetKeepsTheServersCategoryIds() throws {
+        let budget = try JSONDecoder.api.decode(FinanceBudget.self, from: Data("""
+        {"monthly": null, "categories": {"eating_out": 50, "groceries": 200}}
+        """.utf8))
+        XCTAssertNil(budget.monthly)
+        XCTAssertEqual(budget.categories, ["eating_out": 50, "groceries": 200])
+        XCTAssertEqual(FinanceBudget.snakeCase("eating_out"), "eating_out")
+    }
+
+    /// Odd values from the server don't crash (#43).
+    func testCrashGuardsOnOddValues() throws {
+        XCTAssertEqual(Schedule.weekdayIndex(7), 0)  // Sunday
+        XCTAssertEqual(Schedule.weekdayIndex(1), 1)
+        XCTAssertEqual(Schedule.weekdayIndex(-1), 6)
+        XCTAssertEqual(Schedule.weekdayIndex(-15), 6)
+        XCTAssertFalse(Schedule.label(time: "09:00", days: [-1]).isEmpty)
+        XCTAssertFalse(Schedule.label(time: "09:00", days: [-3, 2]).isEmpty)
+        let food = try JSONDecoder.api.decode(SavedFood.self, from: Data("""
+        {"id": 1, "name": "Pasta", "brand": "", "barcode": null, "kcal_100g": 350, "protein_100g": 12,
+         "carbs_100g": 70, "fat_100g": 2, "serving_g": null, "usual_g": 80, "source": "off"}
+        """.utf8))
+        XCTAssertEqual(food.portion(1e300).calories, food.portion(FoodPortionLimit.most).calories)
+        XCTAssertEqual(food.portion(.infinity).calories, 0)
+        XCTAssertEqual(food.portion(-50).calories, 0)
+        XCTAssertEqual(food.portion(100).calories, 350)
+        var bonus = FoodBonus()
+        bonus.kcal = 300
+        XCTAssertEqual(DayScoreCard.bonusLine(bonus), "+300 kcal from your workouts")
+    }
+
+    /// Saving updates the item in place, and the same value isn't written again (#46).
+    func testKeychainSavesInPlace() {
+        let key = "test.keychain.\(UUID().uuidString)"
+        defer { Keychain.set("", for: key) }
+        Keychain.set("one", for: key)
+        Keychain.set("two", for: key)
+        XCTAssertEqual(Keychain.get(key), "two")
+        XCTAssertEqual(Keychain.count(key), 1)
+        let writes = Keychain.writes
+        Keychain.set("two", for: key)
+        Keychain.share([key])
+        XCTAssertEqual(Keychain.writes, writes)
+        Keychain.set("", for: key)
+        XCTAssertNil(Keychain.get(key))
+    }
+
     func testReminderDecodesNullsAndMissingFields() throws {
         let json = #"{"id":"a","title":"Call","due_at":null,"completed":false,"apple_id":null,"modified_at":"2026-10-18T11:20:00Z"}"#
         let r = try JSONDecoder.api.decode(Reminder.self, from: Data(json.utf8))
