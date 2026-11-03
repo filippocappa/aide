@@ -23,7 +23,7 @@ struct LessonView: View {
         _topic = State(initialValue: topic)
     }
 
-    /// Out of it: on the Mac it's a window of its own, which `dismiss` doesn't close (`coverClose`).
+    /// Out of it: on the Mac it's a card in Aide's window, which `dismiss` doesn't close (`coverClose`).
     private func close() {
         if let coverClose { coverClose() } else { dismiss() }
     }
@@ -54,7 +54,7 @@ struct LessonView: View {
                 if let fresh = try? await env.api.lesson(topic: topic.id) { withAnimation { lesson = fresh } }
             }
         }
-        .macWindowCover(item: $practising, closable: true) { target in
+        .macWindowCover(item: $practising) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
     }
@@ -186,13 +186,14 @@ private struct LessonRun: View {
                     Button("Close", systemImage: "xmark") { voice.stop(); close() }
                 }
             }
+            #if os(iOS)
             ToolbarItem(placement: .principal) {
                 Text(lesson.topic.title).font(.subheadline.weight(.semibold)).lineLimit(1)
             }
+            #endif
         }
+        .macSheetTitle(lesson.topic.title)
         .bottomBar { bottom.padding(.horizontal, 16).padding(.vertical, 8) }
-        // Closed by the window's red button too: stop reading aloud.
-        .onDisappear { voice.stop() }
         .sensoryFeedback(trigger: result) { _, new in
             guard let correct = new?.correct else { return nil }
             return correct ? .success : .error
@@ -771,7 +772,7 @@ struct LearnPathView: View {
 
     private var next: LessonPathTopic? { path?.topics.first { $0.id == path?.next } }
 
-    /// Out of it: on the Mac it's a window of its own, which `dismiss` doesn't close (`coverClose`).
+    /// Out of it: on the Mac it's a card in Aide's window, which `dismiss` doesn't close (`coverClose`).
     private func close() {
         if let coverClose { coverClose() } else { dismiss() }
     }
@@ -808,7 +809,7 @@ struct LearnPathView: View {
         }
         .tint(Theme.study)
         .task { await load() }
-        .macWindowCover(item: $learning, onDismiss: { Task { await load() } }, closable: true) { topic in
+        .macWindowCover(item: $learning, onDismiss: { Task { await load() } }) { topic in
             LessonView(topic: topic, course: course.id, courseName: course.title)
         }
     }

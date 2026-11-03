@@ -14,6 +14,7 @@
 		03B01F505920F1FA05E66BCA /* ErrandViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4B434BFB9F5B347D240B333 /* ErrandViews.swift */; };
 		058C1D6DDCF73028E25DB202 /* WeightViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7DDCAD5B02A385C9E492CEB /* WeightViews.swift */; };
 		0688E1FF26A515CF635002C6 /* UsageReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F41469809377FE5BEAF0871 /* UsageReportView.swift */; };
+		081EDF5A922731382E6CB26B /* MacCoverLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B902AB51C6C96B3ED29DD39F /* MacCoverLayer.swift */; };
 		089CB209C2B169E594A84579 /* MacGlance.swift in Sources */ = {isa = PBXBuildFile; fileRef = D22CC0EC44582B201436684C /* MacGlance.swift */; };
 		08A5571E8EB41AB9C395DF84 /* LineBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2712472C5856CDCD16C4FAB /* LineBadge.swift */; };
 		08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5F1E3C560D08D523718D2F /* DigestView.swift */; };
@@ -162,7 +163,6 @@
 		9B8791810EE9DED24ECBA53A /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
 		9E964C66BAD175385D222CD3 /* ScreenTimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA213D456FF8A690E35B36F /* ScreenTimeService.swift */; };
 		9FB906D2A531CC060C95C877 /* BodyViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD7E67230FC828BB66C66EC /* BodyViews.swift */; };
-		A0CE873F4E95E35C1154EB20 /* MacCoverWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 848CB00B00F5042EC8BEB505 /* MacCoverWindow.swift */; };
 		A6148BC6CEF952AC9FEFF97C /* WidgetSamples.swift in Sources */ = {isa = PBXBuildFile; fileRef = B767930966E7CE68008A6BC6 /* WidgetSamples.swift */; };
 		A6494043BE2E86935829D09F /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		A64F18F5DFCD213FB10D90B3 /* LockLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F9E8C3E31A8B6A5875AE324 /* LockLiveActivity.swift */; };
@@ -390,7 +390,6 @@
 		7EE4431CF529BAD1BA4486C7 /* MacServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServices.swift; sourceTree = "<group>"; };
 		802C85723F931456FE9FA77B /* AideShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AideShare.entitlements; sourceTree = "<group>"; };
 		81B15B4A9C146D208E461D58 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
-		848CB00B00F5042EC8BEB505 /* MacCoverWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCoverWindow.swift; sourceTree = "<group>"; };
 		87320B5BA6327928E4CC8A7D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		87678035748931339F27CC91 /* Photos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photos.swift; sourceTree = "<group>"; };
 		8B681840D8379B92E739C78A /* MacUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUsage.swift; sourceTree = "<group>"; };
@@ -422,6 +421,7 @@
 		B3F5BA78CC232D7EBE0E321B /* WakeUpIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeUpIntent.swift; sourceTree = "<group>"; };
 		B7510E58A67A58DB9D0E7725 /* MacShield.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacShield.swift; sourceTree = "<group>"; };
 		B767930966E7CE68008A6BC6 /* WidgetSamples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSamples.swift; sourceTree = "<group>"; };
+		B902AB51C6C96B3ED29DD39F /* MacCoverLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCoverLayer.swift; sourceTree = "<group>"; };
 		B9FC43C842297C98B8EC0DAE /* AideTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AideTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC045FC4847C746FA98D8C55 /* ScanViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanViews.swift; sourceTree = "<group>"; };
 		BCA7B69273B0FB7E574AC3DB /* ScoreViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoreViews.swift; sourceTree = "<group>"; };
@@ -694,7 +694,7 @@
 				38F0E0A30B4DF8F0F6F9D585 /* MacAppDelegate.swift */,
 				5E3809ACCFFA12ABB54F30E6 /* MacAssets.xcassets */,
 				5C2632A04AC09C5B2F3DB4C2 /* MacBrowser.swift */,
-				848CB00B00F5042EC8BEB505 /* MacCoverWindow.swift */,
+				B902AB51C6C96B3ED29DD39F /* MacCoverLayer.swift */,
 				E18F516CEE4E57ACE6B7713F /* MacFonts.swift */,
 				D22CC0EC44582B201436684C /* MacGlance.swift */,
 				3D3CFB8E6C336BE4768DB561 /* MacList.swift */,
@@ -1177,7 +1177,7 @@
 				8D81285E7C306998D23CDF93 /* LockClock.swift in Sources */,
 				CACCC83A44CB8718FB4A36C7 /* MacAppDelegate.swift in Sources */,
 				86BC72CD9352AE2184F5B2B3 /* MacBrowser.swift in Sources */,
-				A0CE873F4E95E35C1154EB20 /* MacCoverWindow.swift in Sources */,
+				081EDF5A922731382E6CB26B /* MacCoverLayer.swift in Sources */,
 				029ECB5468639E54D5ADA3A2 /* MacFonts.swift in Sources */,
 				089CB209C2B169E594A84579 /* MacGlance.swift in Sources */,
 				560B7380C6D9D3882D360581 /* MacList.swift in Sources */,

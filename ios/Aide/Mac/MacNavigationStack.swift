@@ -13,6 +13,8 @@ struct NavigationStack<Root: View>: View {
     @Environment(\.macInStack) private var inSheet
     @Environment(\.dismiss) private var dismiss
     @Environment(\.macWindowSize) private var window
+    /// A cover card's own stack (`MacCoverLayer`): the close button takes the card off, and full screen sits opposite.
+    @Environment(\.macCoverRoot) private var coverRoot
 
     init(@ViewBuilder root: () -> Root) {
         stack = AnyView(SwiftUI.NavigationStack(root: root))
@@ -36,6 +38,7 @@ struct NavigationStack<Root: View>: View {
             stack
                 .environment(\.macInStack, true)
                 .environment(\.macInSheet, true)
+                .environment(\.macCoverRoot, nil)
                 .toggleStyle(.phoneSwitch)
                 .formStyle(.grouped)
                 .onPreferenceChange(MacSheetTitleKey.self) { title = $0 }
@@ -53,8 +56,9 @@ struct NavigationStack<Root: View>: View {
 
     private var closeRow: some View {
         HStack {
-            SheetCloseButton { dismiss() }
+            SheetCloseButton { if let coverRoot { coverRoot() } else { dismiss() } }
             Spacer()
+            if coverRoot != nil { MacFullScreenButton() }
         }
         .overlay {
             if let title { Text(title).font(.headline).lineLimit(1).padding(.horizontal, 56) }
@@ -100,6 +104,8 @@ enum MacSheetSize {
 /// A cover's size, from the window.
 struct MacCoverFrame: ViewModifier {
     @Environment(\.macWindowSize) private var window
+    /// A cover card's own stack (`MacCoverLayer`): the close button takes the card off, and full screen sits opposite.
+    @Environment(\.macCoverRoot) private var coverRoot
 
     func body(content: Content) -> some View {
         content.frame(minWidth: MacSheetSize.cover(window).width, maxWidth: .infinity,
@@ -169,8 +175,8 @@ private struct CloseBackground: ViewModifier {
     }
 }
 
-/// Its window in and out of full screen (⌃⌘F): the practice exam's, which is a window of its own for this
-/// (`MacCoverWindow.swift`; a window with a sheet on it can't go full screen).
+/// Aide's window in and out of full screen (⌃⌘F), from a cover card (`MacCoverLayer.swift`): a practice exam, a lesson,
+/// a quiz. The card fills the screen with it.
 struct MacFullScreenButton: View {
     @State private var window: NSWindow?
     @State private var full = false

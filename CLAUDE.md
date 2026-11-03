@@ -175,11 +175,13 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   grouped form again. A Mac `Button` centres its label's lines: give multi-line rows `.multilineTextAlignment(.leading)`. `.pageColumn()` keeps a ScrollView page's column at 860 pt;
   `List` (a `Form`) is 820 pt wide in the middle. On the Mac, `Theme.toggle` is the accent (ivory), not green.
   `.toolbar(.hidden, for: .navigationBar)` hides the back chevron there (`MacPhoneBar`).
-- A practice exam opens in a window of its own (`macWindowCover`, `Mac/MacCoverWindow.swift`; `fullScreenCover` on the
-  phone), over Aide's and a little smaller (the sheet's size), in full screen when Aide is: macOS won't take a window with a sheet into full screen. `dismiss`
-  doesn't close it; the exam closes through `coverClose`, and its red button is off (Quit asks first).
-  Lessons, the Learn path and the Study page (quizzes) open the same way with `closable: true` (the red button closes
-  them, no X of their own); a cover opened from inside a cover window is a sheet in it, and cover windows never tab.
+- A practice exam, a lesson, the Learn path and the Study page (quizzes) open as a card over the page inside Aide's
+  one window (`macWindowCover`, `Mac/MacCoverLayer.swift`; `fullScreenCover` on the phone): not a sheet, since macOS
+  won't take a window with a sheet into full screen, and not a window of their own (they piled up, 2026-11-03). The
+  card is the sheet's size and fills the screen when Aide is in full screen (its ⤢ button or ⌃⌘F); one opened from a
+  card goes on top. `dismiss` doesn't close a card: `coverClose` does (the views' Close), and so does the X its
+  `NavigationStack` puts in the corner (`macCoverRoot`). Toolbar items in a card would land in Aide's window toolbar, so
+  the cover views keep theirs to the phone (`coverClose == nil`, titles through `.macSheetTitle`).
 - `Mac/iOSCompat.swift`: lets the shared views build unchanged: `UIColor`/`UIImage`/`UIPasteboard` as their AppKit
   twins, `navigationBarTitleDisplayMode`, `topBarTrailing`, `keyboardType`, `fullScreenCover` (a sheet) and the like.
 

@@ -24,7 +24,7 @@ struct PracticeExamView: View {
     @State private var timed = true
     @State private var minutes = 30
 
-    /// Out of the exam: on the Mac it's a window of its own, which `dismiss` doesn't close (`coverClose`).
+    /// Out of the exam: on the Mac it's a card in Aide's window, which `dismiss` doesn't close (`coverClose`).
     private func close() {
         if let coverClose { coverClose() } else { dismiss() }
     }
@@ -34,7 +34,7 @@ struct PracticeExamView: View {
             Group {
                 if let result {
                     PracticeResults(quiz: result, again: mock == nil ? { again() } : nil)
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { close() } } }
+                        .toolbar { if coverClose == nil { ToolbarItem(placement: .confirmationAction) { Button("Done") { close() } } } }
                         .task(id: result.id) { await followMarking() }
                 } else if let quiz {
                     PracticeTaking(quiz: quiz, revealNow: settings.studyRevealNow && quiz.kind != "mock", error: error,
@@ -79,7 +79,7 @@ struct PracticeExamView: View {
             .padding(.bottom, 16)
         }
         .pageGlow(Theme.study)
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } } }
+        .toolbar { if coverClose == nil { ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } } } }
         .bottomBar {
             if mock != nil || (bank.map { $0.questions + $0.cards + $0.exercises } ?? 0) > 0 {
                 Button { Task { await start() } } label: {
@@ -1290,7 +1290,7 @@ struct ReviewStartCard: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .macWindowCover(item: $studying, closable: true) { target in
+        .macWindowCover(item: $studying) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
     }
