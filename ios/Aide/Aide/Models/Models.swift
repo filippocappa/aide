@@ -1113,6 +1113,54 @@ struct FoodPortion: Encodable {
 }
 struct LoggedMeal: Decodable { let meal: Meal }
 
+/// `GET /v1/food/recent`: what the user eats, to log it again with no model call (docs/API.md, "Food").
+struct RecentFoods: Decodable {
+    var foods: [RecentFood] = []
+    var meals: [RecentMeal] = []
+}
+
+/// A saved food with how often it's eaten; its emoji guessed from the name.
+struct RecentFood: Decodable, Identifiable, Hashable {
+    let food: SavedFood
+    let emoji: String
+    let uses: Int
+    var id: Int { food.id }
+
+    private enum Keys: String, CodingKey { case emoji, uses }
+
+    init(from decoder: Decoder) throws {
+        food = try SavedFood(from: decoder)
+        let c = try decoder.container(keyedBy: Keys.self)
+        emoji = try c.decodeIfPresent(String.self, forKey: .emoji) ?? "🍽️"
+        uses = try c.decodeIfPresent(Int.self, forKey: .uses) ?? 0
+    }
+}
+
+/// A meal of several items had before (the latest of the same items), to have again.
+struct RecentMeal: Decodable, Identifiable, Hashable {
+    struct Item: Decodable, Hashable {
+        let foodId: Int?
+        let name: String
+        let grams: Double?
+    }
+    let id: Int
+    let name: String
+    let emoji: String
+    let calories: Int
+    let times: Int
+    let lastEaten: String?
+    let items: [Item]
+}
+
+/// `POST /v1/food/foods/log`: several saved foods as one meal; grams nil is the usual portion.
+struct FoodsLogRequest: Encodable {
+    struct Item: Encodable { let foodId: Int; var grams: Double? }
+    let items: [Item]
+    var name: String?
+    var date: String?
+    var conversationId: String?
+}
+
 private extension KeyedDecodingContainer {
     /// A whole number the server might send as 650 or 650.0; nil when missing or null.
     func number(_ key: Key) throws -> Int? {

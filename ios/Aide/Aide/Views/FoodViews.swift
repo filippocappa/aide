@@ -369,7 +369,11 @@ struct MealPage: View {
     let delete: () async -> String?
     /// Opens Coach's Food log chat (the sheet closes first).
     let askCoach: () -> Void
+    /// Logs the same meal again now (an error message, or nil when done); nil hides it.
+    var again: (() async -> String?)?
     @Environment(\.dismiss) private var dismiss
+    @State private var loggingAgain = false
+    @State private var againError: String?
 
     var body: some View {
         NavigationStack {
@@ -383,6 +387,35 @@ struct MealPage: View {
                         DetailCard("Coach's notes") {
                             Text(meal.notes).font(.callout).textSelection(.enabled)
                         }
+                    }
+                    if let again {
+                        Button {
+                            Task {
+                                loggingAgain = true
+                                againError = await again()
+                                loggingAgain = false
+                                if againError == nil { dismiss() }
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(coach.tint)
+                                    .frame(width: 28, height: 28)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(loggingAgain ? "Logging…" : "Have it again").font(.subheadline.weight(.semibold))
+                                    Text(againError ?? "The same, logged now: \(meal.calories) kcal")
+                                        .font(.caption).foregroundStyle(againError == nil ? .secondary : Color.red)
+                                }
+                                .multilineTextAlignment(.leading)
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(.primary)
+                            .card(padding: 14)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(CardPress())
+                        .disabled(loggingAgain)
                     }
                     Button {
                         dismiss()

@@ -357,6 +357,12 @@ dual wide…) with lens buttons as in the Camera app (0.5, 1, 2, the telephoto),
 switched on by the phone up close (a Macro badge), the preview kept upright by following the rotation coordinator.
 Barcodes are read by Vision on the live frames (~8 a second, 10–20 ms each), not `AVCaptureMetadataOutput`: asking it
 for any barcode type held the camera's start up exactly 9 s on the 15 Pro Max; now it runs in ~0.15 s.
+Food history (2026-11-03, both sides, contract "Food"): `GET /v1/food/recent` (foods eaten in 90 days, or any saved
+food matching `q`; meals of several items, the same items once; by how often, times near now's time of day counting
+double), `POST /v1/food/foods/log` (several saved foods as one meal) and `POST /v1/food/meals/{id}/again`, no model call,
+posted in Coach's chat like a scan. App: Recent, the fourth way in on Health → Food (`Views/RecentFoodViews.swift`: search,
+a meal again, a food opens the packet page on it, + builds one meal of several), Have it again on a meal's page.
+Not yet tried on the phone.
 Weight (2026-10-29, both sides, contract "Apple Health", Weight; `weight.py`, `tools/weight.py`): readings logged in
 chat (`log_weight`) or the app plus Health's, the 7-day average, the change over 3 weeks and the rate a week (28 days)
 against the goal's pace (gain +0.25–0.5% a month), with a verdict. The phone writes Aide's readings to Health as Body

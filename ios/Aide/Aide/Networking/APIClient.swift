@@ -561,6 +561,24 @@ final class APIClient {
         return logged.meal
     }
 
+    /// What the user eats (with `query`, any saved food matching it) and meals of several items, most had first.
+    func recentFoods(query: String = "") async throws -> RecentFoods {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try await send("GET", "/v1/food/recent", query: q.isEmpty ? [] : [URLQueryItem(name: "q", value: q)])
+    }
+
+    /// Several saved foods as one meal; the server adds them up, no model call.
+    func logFoods(_ request: FoodsLogRequest) async throws -> Meal {
+        let logged: LoggedMeal = try await send("POST", "/v1/food/foods/log", body: request)
+        return logged.meal
+    }
+
+    /// The same meal again, now (or on the portion's date); grams are ignored.
+    func mealAgain(_ id: Int, _ when: FoodPortion) async throws -> Meal {
+        let logged: LoggedMeal = try await send("POST", "/v1/food/meals/\(id)/again", body: when)
+        return logged.meal
+    }
+
     func updateMeal(_ id: Int, _ changes: MealChanges) async throws -> Meal {
         try await send("PATCH", "/v1/food/meals/\(id)", body: changes)
     }

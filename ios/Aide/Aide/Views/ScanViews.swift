@@ -22,6 +22,8 @@ struct ScanSheet: View {
     let logged: (Meal) -> Void
     /// The photo goes to Coach instead (there's more in it than the packet); nil when there's no photo.
     var askCoach: (() -> Void)?
+    /// A saved food picked from what you eat (no barcode to look up): straight to how much.
+    var preset: SavedFood?
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
 
@@ -70,7 +72,7 @@ struct ScanSheet: View {
             .scrollDismissesKeyboard(.interactively)
             .background(Theme.grouped)
             .safeAreaInset(edge: .bottom) { bottomBar }
-            .navigationTitle(phase == .missing ? "" : "Packet")
+            .navigationTitle(phase == .missing ? "" : preset == nil ? "Packet" : "How much")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -88,7 +90,9 @@ struct ScanSheet: View {
             .photoSources(camera: $showCamera, library: $showLibrary, limit: 1) { photos in
                 if let photo = photos.first { Task { await read(photo) } }
             }
-            .task { await lookUp() }
+            .task {
+                if let preset { phase = .found(preset, justRead: false) } else { await lookUp() }
+            }
         }
         .presentationDetents([.large])
         .presentationCornerRadius(28)
@@ -132,7 +136,8 @@ struct ScanSheet: View {
                             .padding(.vertical, 3)
                             .background(.orange.opacity(0.14), in: Capsule())
                     }
-                    Text((justRead ? "Read off the label just now" : Self.origin(food.source)) + " · \(barcode)")
+                    Text((justRead ? "Read off the label just now" : Self.origin(food.source))
+                         + (barcode.isEmpty ? "" : " · \(barcode)"))
                         .font(.caption)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
