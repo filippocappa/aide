@@ -82,7 +82,7 @@ def test_measures_tick_themselves(env):
     with pytest.raises(ValueError, match="calories goal"):
         store.add("coach", "day", TODAY, "Eat right", measure={"type": "food", "metric": "calories"})
 
-    store.health.save([{"date": TODAY.isoformat(), "sleep": {"asleep_min": 460}, "steps": 9000}])
+    store.health.save([{"date": TODAY.isoformat(), "sleep": {"bedtime": f"{TODAY - timedelta(days=1)}T23:00:00+01:00", "wake": f"{TODAY}T07:00:00+01:00", "asleep_min": 460}, "steps": 9000}])
     sleep = store.add("coach", "day", TODAY, "Sleep 7h30", measure={"type": "sleep", "hours": 7.5})
     steps = store.add("coach", "day", TODAY, "Walk 10k", measure={"type": "steps", "steps": 10000})
     assert store.as_json(sleep)["done"] and not store.as_json(steps)["done"]
@@ -209,7 +209,7 @@ async def test_a_plan_proposes_from_the_data_within_limits(env):
 async def test_a_proposal_already_met_is_left_out(env):
     store, planner, engine, *_ = env
     start = bounds("month", TODAY)[0]
-    store.health.save([{"date": (start + timedelta(days=i)).isoformat(), "sleep": {"asleep_min": 480}}
+    store.health.save([{"date": (start + timedelta(days=i)).isoformat(), "sleep": {"bedtime": "2026-01-01T23:00:00+01:00", "wake": "2026-01-02T07:00:00+01:00", "asleep_min": 480}}
                        for i in range((TODAY - start).days + 1)])
     nights = (TODAY - start).days + 1
     engine.replies.append(json.dumps([

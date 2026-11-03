@@ -104,6 +104,22 @@ def test_upload_replaces_by_date_and_drops_nulls(world):
         "days": [{"date": TODAY.isoformat(), "steps": 8432, "workouts": []}]}
 
 
+def test_a_bad_sleep_or_workout_is_dropped_and_the_rest_kept(world):
+    w = world()
+    day = {**night(TODAY, 400), "steps": 5000, "hr_hourly": [61.6] + [None] * 23,
+           "workouts": [workout("a"), {"id": "b", "minutes": 10}]}
+    day["sleep"]["asleep_min"] = 400.4
+    stored = w.health.save([day])[0]
+    assert stored["sleep"]["asleep_min"] == 400 and stored["sleep"]["in_bed_min"] == 420  # bedtime to wake
+    assert stored["hr_hourly"][0] == 62 and [x["id"] for x in stored["workouts"]] == ["a"]
+    for bad in ({"wake": "x", "bedtime": "y", "asleep_min": 400}, {"asleep_min": 400}, {"bedtime": "", "wake": ""},
+                {**night(TODAY)["sleep"], "asleep_min": "lots"}):
+        stored = w.health.save([{"date": TODAY.isoformat(), "steps": 5000, "sleep": bad}])[0]
+        assert "sleep" not in stored and stored["steps"] == 5000
+    assert w.http.get("/v1/health/days", headers=AUTH).json()["days"][0] == {
+        "date": TODAY.isoformat(), "steps": 5000}
+
+
 def test_get_range_newest_first_and_limits(world):
     w = world()
     days = [{"date": (TODAY - timedelta(days=i)).isoformat(), "steps": i} for i in range(40)]
