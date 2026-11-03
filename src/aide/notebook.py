@@ -34,6 +34,7 @@ from typing import Callable
 from .db import utcnow
 from . import fts
 from .engine import course_var
+from .icloud import unread
 from .material import PdfError, page_image, visual_pages
 from .shapes import event_json
 from .study import StudyStore, summary, tidy_math
@@ -677,6 +678,8 @@ class NotebookStore:
             found = await asyncio.to_thread(cal.events, now - timedelta(days=1), now + timedelta(days=400))
         except Exception:
             log.exception("couldn't read the calendar for %s's exams", course["name"])
+            return self.date_calendar(course_id)
+        if self.study.exam_calendar in unread(found):  # its exams aren't missing, just unknown this time
             return self.date_calendar(course_id)
         name = course["name"].casefold()
         events = [(e, (e.start.astimezone(self.tz).date() if isinstance(e.start, datetime) else e.start),
