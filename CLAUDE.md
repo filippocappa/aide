@@ -636,7 +636,7 @@ Start all now), Today as the week (`WeekGoalCard` with day dots and today's step
 as bars; no Today/Week/Month picker). `/v1/activity?grouped=true` folds a run (same agent and kind, one chat or one
 title, 45 min), an errand's lines, a plan's objectives (10 min, any agent) and a day's quiet checks into rows with
 `count`, `agents`, `children` (`activity.grouped`); the Activity sheet has agent chips, rows with ×N that fold open
-(`ActivityLine`), quiet checks as one grey line.
+(`ActivityLine`), quiet checks as one grey line, and every day before the newest folded to one row ("Yesterday · 52 things from…").
 
 **Next** (GitHub issues):
 1. Voice redesign (#34, the only open issue): talking with an agent and quizzes by voice are too slow. Multiple-choice

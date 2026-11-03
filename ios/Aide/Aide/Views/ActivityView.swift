@@ -38,6 +38,8 @@ struct ActivitySheet: View {
     @State private var error: String?
     /// The grouped rows opened to show their lines.
     @State private var unfolded: Set<Int> = []
+    /// The earlier days opened (the newest day is always open).
+    @State private var openDays: Set<Date> = []
     /// False on Today, which shows what's waiting above its own link here.
     var showsWaiting = true
 
@@ -54,9 +56,14 @@ struct ActivitySheet: View {
                     WaitingSection(approvals: approvals, agent: agent, reload: { await load() }, open: go)
                 }
                 upcomingSection
-                ForEach(ActivityDays.group(items), id: \.day) { group in
-                    Section(ActivityDays.title(group.day)) {
-                        ForEach(group.items) { item in rows(item) }
+                let days = ActivityDays.group(items)
+                ForEach(days, id: \.day) { group in
+                    if group.day == days.first?.day {
+                        Section(ActivityDays.title(group.day)) {
+                            ForEach(group.items) { item in rows(item) }
+                        }
+                    } else {
+                        Section { day(group) }
                     }
                 }
                 if let next {
@@ -134,6 +141,34 @@ struct ActivitySheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    /// An earlier day, folded to one row ("Yesterday · 14 things from Coach, Aide and Secretary"); a tap opens its
+    /// rows under it.
+    @ViewBuilder private func day(_ group: ActivityDays.Group) -> some View {
+        let open = openDays.contains(group.day)
+        Button {
+            withAnimation(.snappy) { if open { openDays.remove(group.day) } else { openDays.insert(group.day) } }
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ActivityDays.title(group.day)).font(.headline).foregroundStyle(.primary)
+                    Text(ActivityDays.summary(group, names: { chat.agent($0).name }))
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(open ? 180 : 0))
+            }
+            .contentShape(Rectangle())
+            .multilineTextAlignment(.leading)
+        }
+        .listRowBackground(Theme.row)
+        .accessibilityHint(open ? "Folds the day" : "Shows the day")
+        if open {
+            ForEach(group.items) { item in rows(item) }
+        }
     }
 
     /// A row, and its lines under it while it's open. A row that folds lines opens on a tap; a line opens its chat.
@@ -620,6 +655,21 @@ enum ActivityDays {
             byDay[day, default: []].append(item)
         }
         return days.map { Group(day: $0, items: byDay[$0] ?? []) }
+    }
+
+    /// "14 things from Coach, Aide and Secretary": every line the day's rows fold, and who, most first.
+    static func summary(_ group: Group, names: (String) -> String) -> String {
+        var lines = 0
+        var byAgent: [String: Int] = [:]
+        for item in group.items {
+            let n = item.count ?? 1
+            lines += n
+            for a in item.agents ?? [item.agent] { byAgent[a, default: 0] += n }
+        }
+        let who = byAgent.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map { names($0.key) }
+        let list = who.count <= 1 ? (who.first ?? "") : who.dropLast().joined(separator: ", ") + " and " + who.last!
+        let things = lines == 1 ? "1 thing" : "\(lines) things"
+        return list.isEmpty ? things : "\(things) from \(list)"
     }
 
     /// "Today", "Yesterday", else "Monday 19 October".
