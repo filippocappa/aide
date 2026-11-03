@@ -224,7 +224,7 @@ def day_summary(fc: Forecast, d: date, now: datetime | None = None) -> dict | No
     hours = [h for h in fc.hours_of(d) if now is None or h.at >= now.replace(minute=0, second=0, microsecond=0)]
     spell = rain_spell(hours)
     high, low = (max(h.temp for h in hours), min(h.temp for h in hours)) if now and hours else (day.high, day.low)
-    parts = [f"{round(low)}–{_deg(high)}"]
+    parts = [f"{round(low)}–{_deg(high)}" if round(low) != round(high) else _deg(high)]
     flags = []
     if spell:
         what = "snow" if spell["snow"] else "storms" if spell["thunder"] else "rain"
