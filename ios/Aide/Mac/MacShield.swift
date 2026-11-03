@@ -51,7 +51,7 @@ final class MacShield {
             guard let hold = screenTime.covering(entry) else { continue }
             let browser = NSRunningApplication.runningApplications(withBundleIdentifier: tab.app).first
             let icon = browser.flatMap(DockIcon.top(of:))
-            MacBrowser.closeTab(tab)
+            Task { await MacBrowser.closeTab(tab) }
             closedTabs[entry] = tab
             if let lastTry, lastTry.bundleID == entry, Date().timeIntervalSince(lastTry.at) < 1.5 { continue }
             lastTry = (entry, Date())

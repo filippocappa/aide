@@ -22,18 +22,20 @@ enum MacBrowser {
 
     static func isBrowser(_ id: String) -> Bool { safari.contains(id) || chromium.contains(id) }
 
-    /// The front tab of a running browser, nil when it isn't one, isn't allowed, or shows no website.
-    static func tab(of app: NSRunningApplication) -> Tab? {
+    /// The front tab of a running browser, nil when it isn't one, isn't allowed, or shows no website. The browser is
+    /// asked off the main thread (a busy one takes up to a second), so the app doesn't stall while it answers.
+    static func tab(of app: NSRunningApplication) async -> Tab? {
         guard let id = app.bundleIdentifier, isBrowser(id), !app.isTerminated, permitted(id),
-              let text = run(id, read: true), let url = URL(string: text), let site = site(of: url) else { return nil }
+              let text = await Scripts.shared.run(id, read: true, safari: safari.contains(id)),
+              let url = URL(string: text), let site = site(of: url) else { return nil }
         return Tab(app: id, site: site, url: url)
     }
 
     /// Closes the browser's front tab, if it still shows that site.
-    static func closeTab(_ tab: Tab) {
+    static func closeTab(_ tab: Tab) async {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: tab.app).first,
-              self.tab(of: app)?.site == tab.site else { return }
-        _ = run(tab.app, read: false)
+              await self.tab(of: app)?.site == tab.site else { return }
+        _ = await Scripts.shared.run(tab.app, read: false, safari: safari.contains(tab.app))
     }
 
     /// The site of an address: its host without "www." or "m.", for web pages only.
@@ -81,17 +83,29 @@ enum MacBrowser {
         let target = NSAppleEventDescriptor(bundleIdentifier: id)
         return AEDeterminePermissionToAutomateTarget(target.aeDesc, typeWildCard, typeWildCard, ask)
     }
+}
 
-    private static var scripts: [String: NSAppleScript] = [:]
+/// The browsers' scripts, compiled once and run one at a time on their own queue (NSAppleScript isn't safe on two
+/// threads at once), never on the main thread.
+private final class Scripts: @unchecked Sendable {
+    static let shared = Scripts()
+    private let queue = DispatchQueue(label: "aide.browser-scripts", qos: .utility)
+    private var compiled: [String: NSAppleScript] = [:]  // only touched on `queue`
+
+    func run(_ id: String, read: Bool, safari: Bool) async -> String? {
+        await withCheckedContinuation { done in
+            queue.async { done.resume(returning: self.runNow(id, read: read, safari: safari)) }
+        }
+    }
 
     /// Reads the front tab's address, or closes the front tab. At most a second: a busy browser is skipped.
-    private static func run(_ id: String, read: Bool) -> String? {
+    private func runNow(_ id: String, read: Bool, safari: Bool) -> String? {
         let key = "\(id) \(read)"
         let script: NSAppleScript
-        if let compiled = scripts[key] {
-            script = compiled
+        if let made = compiled[key] {
+            script = made
         } else {
-            let tab = safari.contains(id) ? "current tab" : "active tab"
+            let tab = safari ? "current tab" : "active tab"
             let body = read
                 ? "return URL of \(tab) of front window"
                 : "close \(tab) of front window"
@@ -109,7 +123,7 @@ enum MacBrowser {
             guard let made = NSAppleScript(source: source) else { return nil }
             var error: NSDictionary?
             guard made.compileAndReturnError(&error) else { return nil }
-            scripts[key] = made
+            compiled[key] = made
             script = made
         }
         var error: NSDictionary?

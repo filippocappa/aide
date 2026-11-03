@@ -68,6 +68,8 @@ final class MacUsage: ObservableObject {
     private var dirty = false
     private var timer: Timer?
     private var lastTick = Date()
+    /// A tick is waiting for the browsers' tabs.
+    private var readingTabs = false
     private var lastSave = Date()
     /// Since when nobody's been here (nil: someone is).
     private var awaySince: Date?
@@ -119,16 +121,33 @@ final class MacUsage: ObservableObject {
     // MARK: Counting
 
     private func tick() {
+        guard !readingTabs else { return }  // the last tick's browsers haven't answered: its time comes next tick
         let now = Date()
         let elapsed = min(now.timeIntervalSince(lastTick), Self.interval * 2)
         lastTick = now
-        defer { saveIfDue(now) }
-        guard !screenAsleep, !screenLocked else { return away(now, since: now) }
+        guard !screenAsleep, !screenLocked else {
+            away(now, since: now)
+            return saveIfDue(now)
+        }
         let front = NSWorkspace.shared.frontmostApplication
-        let frontID = front?.bundleIdentifier.flatMap { Self.ignored.contains($0) ? nil : $0 }
         let idle = Self.idleSeconds()
         let playing = idle < Self.watchingLimit ? Self.playing() : [:]
-        let tabs = idle < Self.watchingLimit ? Self.tabs(front: front, playing: Set(playing.keys)) : [:]
+        guard idle < Self.watchingLimit else {
+            return count(now: now, elapsed: elapsed, front: front, idle: idle, playing: playing, tabs: [:])
+        }
+        // The browsers answer off the main thread; the tick is counted when they have.
+        readingTabs = true
+        Task {
+            let tabs = await Self.tabs(front: front, playing: Set(playing.keys))
+            readingTabs = false
+            count(now: now, elapsed: elapsed, front: front, idle: idle, playing: playing, tabs: tabs)
+        }
+    }
+
+    private func count(now: Date, elapsed: TimeInterval, front: NSRunningApplication?, idle: TimeInterval,
+                       playing: [String: String], tabs: [String: MacBrowser.Tab]) {
+        defer { saveIfDue(now) }
+        let frontID = front?.bundleIdentifier.flatMap { Self.ignored.contains($0) ? nil : $0 }
         onTabs?(Array(tabs.values))
         // What plays on the side, for the limits: the apps and their sites.
         let alongside = Set(playing.keys).union(playing.keys.compactMap { tabs[$0].map { MacSites.entry($0.site) } })
@@ -158,7 +177,7 @@ final class MacUsage: ObservableObject {
     }
 
     /// The browsers' front tabs: the app in front's, and those of the apps playing a video.
-    private static func tabs(front: NSRunningApplication?, playing: Set<String>) -> [String: MacBrowser.Tab] {
+    private static func tabs(front: NSRunningApplication?, playing: Set<String>) async -> [String: MacBrowser.Tab] {
         var apps = NSWorkspace.shared.runningApplications.filter { app in
             app.bundleIdentifier.map { playing.contains($0) && MacBrowser.isBrowser($0) } == true
         }
@@ -166,7 +185,7 @@ final class MacUsage: ObservableObject {
             apps.append(front)
         }
         var tabs: [String: MacBrowser.Tab] = [:]
-        for app in apps { if let tab = MacBrowser.tab(of: app) { tabs[tab.app] = tab } }
+        for app in apps { if let tab = await MacBrowser.tab(of: app) { tabs[tab.app] = tab } }
         return tabs
     }
 
