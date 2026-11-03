@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import secrets
+import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -35,6 +36,14 @@ from .notebook import date_line, max_points
 from .quiz import correct
 
 log = logging.getLogger(__name__)
+
+
+def _no_table(error: sqlite3.OperationalError, empty):
+    """`empty` when the error is only a table not made yet (no practice exams, no notebooks); any other database error
+    is raised, so it reaches the log instead of quietly making progress wrong."""
+    if "no such table" in str(error):
+        return empty
+    raise error
 
 PERIODS = ("day", "week", "month")
 MOST = {"day": 2, "week": 3, "month": 2}  # proposals per specialist
@@ -396,8 +405,8 @@ class ObjectiveStore:
                     "SELECT score, questions, scoring FROM quizzes WHERE course_id = ? AND kind IN ('exam', 'mock') "
                     "AND finished_at >= ? AND finished_at < ?",
                     (m["course"], self._utc(first), self._utc(last + timedelta(days=1)))).fetchall()
-            except Exception:  # no practice exams yet: the table isn't there
-                return 0
+            except sqlite3.OperationalError as e:  # no practice exams yet: the table isn't there
+                return _no_table(e, 0)
             need = m.get("score", 0) / 100
             return sum(1 for r in rows if (r[0] or 0) >= need * max_points(json.loads(r[1]),
                                                                            r[2] and json.loads(r[2])))
@@ -406,8 +415,8 @@ class ObjectiveStore:
                 return self.conn.execute(
                     "SELECT COUNT(DISTINCT topic_id) FROM topic_changes WHERE course_id = ? AND at >= ? AND at < ?",
                     (m["course"], self._utc(first), self._utc(last + timedelta(days=1)))).fetchone()[0]
-            except Exception:  # no notebooks: the table isn't there
-                return 0
+            except sqlite3.OperationalError as e:  # no notebooks: the table isn't there
+                return _no_table(e, 0)
         if m["type"] == "food":
             return len(self.food.met_days(m["metric"], first, last)) if self.food else 0
         if self.health is None:
@@ -802,8 +811,8 @@ class ObjectivePlanner:
                     "SELECT finished_at, score, questions, scoring, kind FROM quizzes WHERE course_id = ? "
                     "AND kind IN ('exam', 'mock') AND finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 5",
                     (c["id"],)).fetchall()
-            except Exception:
-                rows = []
+            except sqlite3.OperationalError as e:  # no practice exams yet: the table isn't there
+                rows = _no_table(e, [])
             if rows:
                 line += "; recent practice exams: " + ", ".join(
                     f"{datetime.fromisoformat(r[0]).astimezone(self.tz):%d %b} "
@@ -835,8 +844,8 @@ class ObjectivePlanner:
             rows = self.store.conn.execute(
                 "SELECT questions, answers FROM quizzes WHERE course_id = ? AND finished_at IS NOT NULL "
                 "ORDER BY finished_at DESC LIMIT ?", (course_id, MISSED_QUIZZES)).fetchall()
-        except Exception:
-            return ""
+        except sqlite3.OperationalError as e:  # no quizzes yet: the table isn't there
+            return _no_table(e, "")
         topics: dict[str, list[int]] = {}  # title → [right, asked]
         for questions, answers in rows:
             given = json.loads(answers or "{}")
