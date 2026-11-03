@@ -244,9 +244,18 @@ private struct MiniChart: View {
         }
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
-        .chartYScale(domain: .automatic(includesZero: metric.bars))
+        .chartYScale(domain: Self.domain(points.map(\.1), bars: metric.bars))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    /// Bars from zero to the week's highest day, so the high day fills the tile (the automatic scale rounds the top
+    /// up to a round number, which left even the highest bar at half height). Lines from the lowest to the highest.
+    static func domain(_ values: [Double], bars: Bool) -> ClosedRange<Double> {
+        guard let hi = values.max(), let lo = values.min() else { return 0...1 }
+        if bars { return 0...max(hi, 1) }
+        let pad = hi > lo ? (hi - lo) * 0.15 : max(abs(hi) * 0.05, 1)
+        return (lo - pad)...(hi + pad)
     }
 }
 
