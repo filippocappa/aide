@@ -30,47 +30,74 @@ struct LogPaymentIntent: AppIntent {
         do {
             _ = try await AppEnvironment.shared.api.logPayment(payment)
             await PaymentInbox.flush(AppEnvironment.shared.api)
-        } catch let error as APIError {
-            if case .server(let status, _) = error, status == 400 { return .result() } // nothing to keep
-            PaymentInbox.keep(payment)
         } catch {
-            PaymentInbox.keep(payment)
+            if !PaymentInbox.isRefused(error) { PaymentInbox.keep(payment) } // a refused one would never go
         }
         return .result()
     }
 }
 
-/// Wallet taps the server didn't get yet, oldest first, in this app's defaults.
+/// Wallet taps the server didn't get yet, oldest first, in this app's defaults (#36: none lost, none stuck).
 enum PaymentInbox {
     private static let key = "paymentInbox"
-    private struct Waiting: Codable { let amount: String; let merchant: String; let card: String?; let at: String? }
+    /// A runaway guard only: months of taps with no connection.
+    static let limit = 1000
 
-    @MainActor static func keep(_ p: PaymentIn) {
-        var list = waiting
+    struct Waiting: Codable, Equatable {
+        /// Tells two identical taps apart, so a flush removes the one it sent. Nil in taps kept before it.
+        var id: String? = UUID().uuidString
+        let amount: String
+        let merchant: String
+        let card: String?
+        let at: String?
+
+        var payment: PaymentIn { PaymentIn(amount: amount, merchant: merchant, card: card, at: at) }
+    }
+
+    /// One flush at a time: the app coming forward and a tap's intent can both start one.
+    @MainActor private static var flushing = false
+
+    @MainActor static func keep(_ p: PaymentIn, in defaults: UserDefaults = .standard) {
+        var list = waiting(defaults)
         list.append(Waiting(amount: p.amount, merchant: p.merchant, card: p.card, at: p.at))
-        save(Array(list.suffix(200)))
+        save(Array(list.suffix(limit)), defaults)
     }
 
     @MainActor static func flush(_ api: APIClient) async {
-        var list = waiting
-        while let first = list.first {
+        await flush(defaults: .standard) { _ = try await api.logPayment($0) }
+    }
+
+    /// Sends the waiting taps oldest first. Each sent (or refused) tap is taken off a fresh read of the list, so
+    /// a tap kept meanwhile stays. Stops at the first that can't go now (offline, the token, the server down).
+    @MainActor static func flush(defaults: UserDefaults, send: (PaymentIn) async throws -> Void) async {
+        guard !flushing else { return }
+        flushing = true
+        defer { flushing = false }
+        while let first = waiting(defaults).first {
             do {
-                _ = try await api.logPayment(PaymentIn(amount: first.amount, merchant: first.merchant, card: first.card,
-                                                       at: first.at))
-            } catch let error as APIError {
-                if case .server(let status, _) = error, status == 400 {} else { break } // a bad one is dropped
-            } catch { break }
-            list.removeFirst()
-            save(list)
+                try await send(first.payment)
+            } catch {
+                if !isRefused(error) { break }
+            }
+            var list = waiting(defaults)
+            if let i = list.firstIndex(of: first) { list.remove(at: i) }
+            save(list, defaults)
         }
     }
 
-    private static var waiting: [Waiting] {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
+    /// The server read the tap and won't take it, ever: a 4xx other than a timeout or too many requests
+    /// (a 401 is the token, `.unauthorized`, and waits for it to be fixed).
+    static func isRefused(_ error: Error) -> Bool {
+        guard case .server(let status, _) = error as? APIError else { return false }
+        return (400..<500).contains(status) && status != 408 && status != 429
+    }
+
+    static func waiting(_ defaults: UserDefaults = .standard) -> [Waiting] {
+        guard let data = defaults.data(forKey: key) else { return [] }
         return (try? JSONDecoder().decode([Waiting].self, from: data)) ?? []
     }
 
-    private static func save(_ list: [Waiting]) {
-        UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: key)
+    private static func save(_ list: [Waiting], _ defaults: UserDefaults) {
+        defaults.set(try? JSONEncoder().encode(list), forKey: key)
     }
 }
