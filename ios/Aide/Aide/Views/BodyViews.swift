@@ -180,7 +180,31 @@ struct MetricTile: View {
                 Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
             }
             .font(.footnote.weight(.semibold))
-            if let latest {
+            // A wide tile (the Mac) puts the week beside the number, as tall as the tile allows; a narrow one
+            // (the phone) under it.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 16) {
+                    numbers(latest)
+                    chart.frame(minWidth: 160, maxWidth: .infinity).frame(height: 64)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    numbers(latest)
+                    chart.frame(height: 40)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Shows the chart")
+    }
+
+    private var chart: some View { MiniChart(metric: metric, days: Array(days.prefix(7))) }
+
+    @ViewBuilder private func numbers(_ latest: (day: HealthDayReading, value: Double, usual: Double?)?) -> some View {
+        if let latest {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(metric.format(latest.value))
                     .font(.title2.weight(.semibold))
                     .monospacedDigit()
@@ -192,14 +216,7 @@ struct MetricTile: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            MiniChart(metric: metric, days: Array(days.prefix(7)))
-                .frame(height: 30)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Shows the chart")
     }
 
     private func compare(_ l: (day: HealthDayReading, value: Double, usual: Double?)) -> String {
