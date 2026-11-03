@@ -60,7 +60,7 @@ EMOJI = [
     ("🥕", r"carot carrot verdur vegetabl zucchin broccol spinac"),
     ("🍫", r"chocolate cioccolat nutella nocciolata bar\b barrett"), ("🍪", r"biscuit biscott cookie"),
     ("🍰", r"cake torta tiramis"), ("🍦", r"ice\s?cream gelato"),
-    ("🥜", r"nuts?\b noci mandorle almond peanut arachidi"), ("🍌", r"banana"), ("🍎", r"apple mela\b mele\b"),
+    ("🥜", r"nuts?\b noci mandorle almond peanut arachidi"), ("🫒", r"olio oil\b olive\b oliv"), ("🍌", r"banana"), ("🍎", r"apple mela\b mele\b"),
     ("🍊", r"orange arancia mandarin"), ("🍓", r"fruit frutta berries fragol"),
     ("🥤", r"shake protein whey frullato smoothie coke cola\b soda"), ("🧃", r"juice succo"),
     ("☕", r"coffee caff espresso cappuccino tea\b tè\b"), ("🍺", r"beer birra"),

@@ -242,3 +242,73 @@ def test_a_label_that_cant_be_read_says_why(app_env):
     assert r.status_code == 422 and "another photo" in r.json()["error"]
     assert api.post("/v1/food/label", json={"barcode": "8000000000001", "photo": "p_nope"},
                     headers=AUTH).status_code == 400
+
+
+def test_what_you_eat_is_listed_searched_and_logged_again_without_the_model(app_env):
+    api, food, foods, rec, model = app_env()
+    yogurt = foods.save("Yogurt greco 0%", 54, 10, 3, 0, "label", brand="Fage")
+    granola = foods.save("Granola", 450, 10, 60, 18, "estimate")
+    cola = foods.save("Coca-Cola", 42, 0, 10.6, 0, "off")
+    never = foods.save("Nocciolata", 544, 8.1, 54, 32, "off", brand="Rigoni di Asiago")
+    assert api.get("/v1/food/recent", headers=AUTH).json() == {"foods": [], "meals": []}
+
+    # Several foods as one meal: the server adds them up and names it after them.
+    out = api.post("/v1/food/foods/log", json={"items": [{"food_id": yogurt["id"], "grams": 170},
+                                                         {"food_id": granola["id"], "grams": 40}]}, headers=AUTH)
+    meal = out.json()["meal"]
+    assert (meal["name"], meal["calories"], meal["protein_g"]) == ("Yogurt greco 0% and Granola", 270, 21)
+    api.post("/v1/food/foods/log", json={"items": [{"food_id": cola["id"], "grams": 330}]}, headers=AUTH)
+    assert api.post("/v1/food/foods/log", json={"items": [{"food_id": cola["id"], "grams": 330}],
+                                                "name": "Cola at lunch"}, headers=AUTH).json()["meal"]["name"] \
+        == "Cola at lunch"
+    assert model.requests == []
+
+    recent = api.get("/v1/food/recent", headers=AUTH).json()
+    names = [f["name"] for f in recent["foods"]]  # eaten most first; never-eaten foods only when searched
+    assert names[0] == "Coca-Cola" and sorted(names[1:]) == ["Granola", "Yogurt greco 0%"]
+    assert recent["foods"][0]["usual_g"] == 330 and recent["foods"][0]["uses"] == 2
+    assert [m["name"] for m in recent["meals"]] == ["Yogurt greco 0% and Granola"]  # only meals of several items
+    assert recent["meals"][0]["items"] == [{"food_id": yogurt["id"], "name": "Yogurt greco 0%", "grams": 170},
+                                           {"food_id": granola["id"], "name": "Granola", "grams": 40}]
+    # Searching finds any saved food, eaten or not; meals by their name or items.
+    found = api.get("/v1/food/recent?q=rigoni", headers=AUTH).json()
+    assert [f["id"] for f in found["foods"]] == [never["id"]] and found["meals"] == []
+    assert [m["name"] for m in api.get("/v1/food/recent?q=granola", headers=AUTH).json()["meals"]] \
+        == ["Yogurt greco 0% and Granola"]
+
+    # The same meal again: its items and grams, its emoji, a new meal now.
+    again = api.post(f"/v1/food/meals/{meal['id']}/again", json={}, headers=AUTH).json()["meal"]
+    assert (again["name"], again["calories"], again["emoji"]) == (meal["name"], 270, meal["emoji"])
+    assert again["id"] != meal["id"] and foods.items(again["id"])[1]["grams"] == 40
+    # Two meals of the same items are one entry, said twice.
+    assert api.get("/v1/food/recent", headers=AUTH).json()["meals"][0]["times"] == 2
+    # A meal logged before items: its totals again.
+    old = food.add("Pizza", 800, 30, 90, 30, emoji="🍕")
+    assert api.post(f"/v1/food/meals/{old['id']}/again", json={}, headers=AUTH).json()["meal"]["calories"] == 800
+
+    said = api.get(f"/v1/history?conversation_id={food.chat()}", headers=AUTH).json()["messages"]
+    assert said[0]["text"] == "Logged Yogurt greco 0% and Granola: 270 kcal."
+    assert api.post("/v1/food/foods/log", json={"items": [{"food_id": 999}]}, headers=AUTH).status_code == 404
+    assert api.post("/v1/food/foods/log", json={"items": []}, headers=AUTH).status_code == 400
+    tomorrow = (food.today() + timedelta(days=1)).isoformat()
+    assert api.post("/v1/food/foods/log", json={"items": [{"food_id": cola["id"]}], "date": tomorrow},
+                    headers=AUTH).status_code == 400
+    assert api.post("/v1/food/meals/999/again", json={}, headers=AUTH).status_code == 404
+
+
+def test_what_you_eat_at_this_time_of_day_comes_first(env):
+    from datetime import datetime
+    _, food, foods, _ = env()
+    now = datetime.now(ROME)
+    coffee = foods.save("Caffè", 2, 0, 0, 0, "estimate")
+    pizza = foods.save("Pizza", 250, 10, 30, 10, "estimate")
+    for days, f, hours in ((1, pizza, 6), (2, pizza, 6), (3, pizza, 6), (1, coffee, 0)):
+        rows, sums, notes = foods.from_items([{"food_id": f["id"], "grams": 100}], "")
+        meal = food.add(f["name"], **sums, eaten_at=now - timedelta(days=days, hours=hours), notes=notes)
+        foods.keep_items(meal["id"], rows, count=True)
+    # Pizza three times, six hours from now's time of day; coffee once, at this time of day: 3 against 1 + 1.
+    assert [f["name"] for f in foods.recent(ROME)["foods"]] == ["Pizza", "Caffè"]
+    rows, sums, notes = foods.from_items([{"food_id": coffee["id"], "grams": 100}], "")
+    meal = food.add("Caffè", **sums, eaten_at=now - timedelta(days=4), notes=notes)
+    foods.keep_items(meal["id"], rows, count=True)
+    assert [f["name"] for f in foods.recent(ROME)["foods"]] == ["Caffè", "Pizza"]  # 2 + 2 against 3
