@@ -10,8 +10,8 @@ from aide.agents import AGENTS, connectors
 from aide.browser import Browser, BrowserError, site_of
 from aide.channels.api import create_app
 from aide.db import Database
-from aide.errands import (ErrandRunner, ErrandStore, Phase, commits, errand_tools, parse_money, picture_for,
-                          purchase_tools, _same_total)
+from aide.errands import (ErrandRunner, ErrandStore, Phase, commit_reason, commits, errand_tools, parse_money,
+                          picture_for, placed, purchase_tools, _same_total)
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
@@ -78,8 +78,8 @@ class FakeBrowser:
         if ref not in els:
             raise BrowserError(f"There's no [{ref}] on the page now: read_page again.")
         e = els[ref]
-        return {"tag": "button", "type": "", "text": e["text"], "sensitive": e.get("sensitive", False),
-                "submits": e.get("submits", "")}
+        return {"tag": e.get("tag", "button"), "type": "", "text": e["text"], "sensitive": e.get("sensitive", False),
+                "submits": e.get("submits", ""), "hints": e.get("hints", ""), "submit_hints": "", "in_form": False}
 
     async def focused(self, owner):
         return {"submits": ""}
@@ -225,6 +225,61 @@ def test_commit_words():
     for text in ("Aggiungi al carrello", "Procedi all'ordine", "Proceed to checkout", "Continua", "Cerca",
                  "Elimina", "Accedi", "Libro: The Book of Tea, copertina flessibile, edizione 2024 tascabile"):
         assert not commits(text), text
+
+
+def test_commit_reason_beyond_the_text():
+    review = "https://shop.test/checkout/review"
+    total = "Metodo di pagamento: Visa. Totale ordine: 30,00 €"
+    assert commit_reason({"tag": "button", "text": "Acquista ora"}, "https://shop.test/p/1", "") == "its text"
+    # An icon-only button the page calls place-order, anywhere.
+    assert commit_reason({"tag": "button", "text": "", "hints": "btn place-order-cta"}, "https://shop.test/x", "")
+    # On a checkout, a button that only says to go on, or nothing.
+    for text in ("Procedi all'ordine", "Continua", "→", ""):
+        assert commit_reason({"tag": "button", "text": text}, review, total), text
+        assert commit_reason({"tag": "button", "text": text}, "https://shop.test/cart", "Subtotale 9,99 €") is None
+    assert commit_reason({"tag": "a", "text": "Procedi"}, "https://shop.test/step2", total)  # the page says checkout
+    # Not a quantity's + or a close button, nor a field or a product name.
+    assert commit_reason({"tag": "button", "text": "+", "hints": "qty-increment"}, review, total) is None
+    assert commit_reason({"tag": "input", "type": "text", "text": ""}, review, total) is None
+    assert commit_reason({"tag": "a", "text": "Cavo USB-C Anker 2 m"}, review, total) is None
+    assert placed("https://shop.test/order/thank-you", "") and placed("https://x.test/a", "Grazie per il tuo ordine!")
+    assert not placed("https://shop.test/cart", "Carrello")
+
+
+async def test_an_icon_only_pay_button_and_procedi_wait_for_confirm(env):
+    make, db, browser = env
+    review = "https://www.amazon.it/checkout/review"
+    browser.pages[review] = ("Riepilogo", "Metodo di pagamento: Visa. Totale ordine: 12,98 €", {
+        "8": {"text": "", "hints": "a-button-input submitOrderButtonId", "goes": THANKS},
+        "9": {"text": "Procedi all'ordine", "goes": THANKS}})
+    runner, _, _ = make([
+        calls(("open_page", {"url": review})),
+        calls(("click", {"ref": "8"})),  # refused
+        calls(("click", {"ref": "9"})),  # refused
+        calls(("open_page", {"url": "https://www.amazon.it/gp/buy/placeorder/handlers/display.html"})),  # refused
+        calls(("ask_confirm", {"summary": "Order the cable", "ref": "9", "total": "12,98 €", "items": [ITEM],
+                               "delivery": None, "address": None})),
+    ])
+    runner.start("A cable", "Cable", "amazon.it", CONVERSATION)
+    e = await next_phase(runner)
+    assert e["status"] == "waiting_confirm" and browser.clicked == []
+    for i in (2, 3, 4):
+        [r] = [r for r in runner.client.requests[i]["messages"][-1]["content"] if r["type"] == "tool_result"]
+        assert r["is_error"], i
+    assert db.pending_actions(CONVERSATION, runner_ttl())[0]["detail"]["button"] == "Procedi all'ordine"
+
+
+async def test_an_order_page_after_an_unconfirmed_click_stops_the_errand(env):
+    make, db, browser = env
+    browser.pages["https://www.amazon.it/dp/B0X"] = ("Cavo", "Cavo 9,99 €", {"10": {"text": "Vai", "goes": THANKS}})
+    runner, _, _ = make([
+        calls(("open_page", {"url": "https://www.amazon.it/dp/B0X"})),
+        calls(("click", {"ref": "10"})),
+        calls(("finish", {"result": "All good", "ok": True})),
+    ])
+    runner.start("A cable", "Cable", "amazon.it", CONVERSATION)
+    e = await next_phase(runner)
+    assert browser.clicked == ["Vai"] and "without your Confirm" in e["result"]
 
 
 async def test_an_order_waits_for_confirm_then_goes_through(env):
