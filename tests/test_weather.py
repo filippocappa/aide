@@ -149,6 +149,7 @@ async def test_maps_is_biased_to_near_the_user():
 def test_rest_of_today_is_the_hours_left():
     fc = parse(payload(rain_hours=()), ROME, "", 0, 0)
     assert day_summary(fc, D, datetime(2026, 11, 4, 20, 0, tzinfo=ROME))["summary"].startswith("15–16°")
+    assert day_summary(fc, D, datetime(2026, 11, 4, 23, 0, tzinfo=ROME))["summary"].startswith("16°,")
 
 
 async def test_here_without_a_fix_says_why():
