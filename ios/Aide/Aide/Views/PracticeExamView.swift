@@ -908,8 +908,8 @@ private struct OpenQuestionPage: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .photoSources(camera: $camera, library: $library, limit: most - draft.photos.count) { picked in
-            for photo in picked.prefix(most - draft.photos.count) { add(photo) }
+        .photoSources(camera: $camera, library: $library, limit: max(0, most - draft.photos.count)) { picked in
+            for photo in picked.prefix(max(0, most - draft.photos.count)) { add(photo) }
         }
     }
 

@@ -76,7 +76,7 @@ struct TeamWidgetView: View {
     private var grid: some View {
         HStack(alignment: .top, spacing: 4) {
             ForEach(entry.agents.prefix(5)) { agent in
-                Link(destination: URL(string: "aide://agent/\(agent.id)")!) {
+                Link(destination: URL(string: "aide://agent/\(agent.id)") ?? URL(string: "aide://team")!) {
                     VStack(spacing: 6) {
                         AgentMark(agent: agent, size: 46)
                         Text(agent.name).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)

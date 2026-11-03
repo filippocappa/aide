@@ -384,6 +384,10 @@ enum Schedule {
         return String(text[..<end.lowerBound]) + "."
     }
 
+    /// An ISO weekday (1 Monday … 7 Sunday) as an index into `weekdaySymbols` (Sunday first), for any Int: Swift's
+    /// `%` keeps the sign, so a stray negative day would index out of range.
+    static func weekdayIndex(_ day: Int) -> Int { ((day % 7) + 7) % 7 }
+
     /// "Every day at 09:00", "Weekdays at 09:00", "Sundays at 18:00", "Mon, Wed and Fri at 07:30".
     static func label(time: String, days: [Int], joiner: String = "at") -> String {
         let set = Set(days)
@@ -395,8 +399,8 @@ enum Schedule {
         default:
             // The symbols start on Sunday, so ISO 7 (Sunday) % 7 lands on 0.
             let names = DateFormatter(), sorted = set.sorted()
-            when = sorted.count == 1 ? names.weekdaySymbols[sorted[0] % 7] + "s"
-                : sorted.map { names.shortWeekdaySymbols[$0 % 7] }.formatted(.list(type: .and))
+            when = sorted.count == 1 ? names.weekdaySymbols[weekdayIndex(sorted[0])] + "s"
+                : sorted.map { names.shortWeekdaySymbols[weekdayIndex($0)] }.formatted(.list(type: .and))
         }
         return "\(when) \(joiner) \(time)"
     }
@@ -1050,6 +1054,9 @@ struct MealList: Decodable {
 
 /// A saved food (`GET /v1/food/barcode/{code}`): its numbers per 100 g (100 ml for a drink), one serving as the
 /// packet says, and the portion the user had last time. `source`: off (Open Food Facts), label, web, estimate, user.
+/// The most grams a portion is worked out for: 100 kg is more than any meal, and keeps `Int` from overflowing.
+enum FoodPortionLimit { static let most = 100_000.0 }
+
 struct SavedFood: Decodable, Identifiable, Hashable {
     let id: Int
     let name: String
@@ -1071,7 +1078,8 @@ struct SavedFood: Decodable, Identifiable, Hashable {
 
     /// Calories and macros for `grams`, rounded like the server's (calories to 10, grams to 1).
     func portion(_ grams: Double) -> (calories: Int, protein: Int, carbs: Int, fat: Int) {
-        let k = grams / 100
+        // Clamped so a huge typed amount can't overflow Int (100 kg is more than any meal).
+        let k = (grams.isFinite ? min(max(grams, 0), FoodPortionLimit.most) : 0) / 100
         return (Int((kcal100g * k / 10).rounded()) * 10, Int((protein100g * k).rounded()),
                 Int((carbs100g * k).rounded()), Int((fat100g * k).rounded()))
     }
@@ -3318,6 +3326,31 @@ struct SubscriptionIn: Encodable {
 struct FinanceBudget: Codable, Hashable {
     var monthly: Double?
     var categories: [String: Double] = [:]
+
+    init(monthly: Double? = nil, categories: [String: Double] = [:]) {
+        self.monthly = monthly
+        self.categories = categories
+    }
+
+    /// The decoder's snake-case rule renames dictionary keys too (`eating_out` comes in as `eatingOut`), so the
+    /// category ids are put back as the server sends them (they're lowercase snake case, docs/API.md, "Finance").
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        monthly = try c.decodeIfPresent(Double.self, forKey: .monthly)
+        let raw = try c.decodeIfPresent([String: Double].self, forKey: .categories) ?? [:]
+        categories = Dictionary(raw.map { (Self.snakeCase($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// "eatingOut" → "eating_out"; a key already in snake case stays as it is.
+    static func snakeCase(_ key: String) -> String {
+        var out = ""
+        for ch in key {
+            if ch.isUppercase { out += "_" + ch.lowercased() } else { out.append(ch) }
+        }
+        return out
+    }
+
+    private enum CodingKeys: String, CodingKey { case monthly, categories }
 }
 
 /// `monthly` is always sent (nil removes it); a category's nil removes its budget.
