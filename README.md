@@ -21,7 +21,7 @@ Aide is a Python server that runs on a home machine and an app for iPhone and Ma
 |---|---|
 | **Aide** | the orchestrator: web, maps, memory, routines, errands in its own browser; asks the others |
 | **Secretary** | calendar (iCloud), reminders (Apple Reminders), mail (Gmail), trams and buses (GTT, Turin) |
-| **Professor** | courses, lectures, study files, course notebooks, quizzes and practice exams |
+| **Professor** | courses, lectures, study files, course notebooks, quizzes and practice exams, focus sessions |
 | **Coach** | Apple Health, sleep and recovery, habits, food, Screen Time locks |
 | **Finance** | money: linked bank accounts (balances, money in, every payment), Apple Pay taps, budget, subscriptions, the orders Aide placed |
 
@@ -32,7 +32,8 @@ On the phone the app has four tabs, one per area, each opening with a line from 
 
 - **Team:** the chats with Aide and the specialists, the briefing, what's waiting for you, and Today (habits and
   objectives). Settings is behind the gear in the corner.
-- **Study:** Professor's courses, with notebooks, lessons, quizzes and practice exams.
+- **Study:** Professor's courses, with notebooks, lessons, quizzes and practice exams, and focus sessions that
+  lock the phone and the Mac while you study (see [Focus sessions](#focus-sessions)).
 - **Health:** Coach's Body, Food and Screen. Body has the Strain, Recovery and Sleep scores and last night's numbers
   against your usual (see [Health scores](#health-scores)). Food has meals from a photo, a description or a
   barcode. Screen has screen time and its locks and limits.
@@ -41,7 +42,7 @@ On the phone the app has four tabs, one per area, each opening with a line from 
 
 Around them are routines and watches (an agent's scheduled job, or a check that posts only when something needs
 you), widgets, and Live Activities on the Lock Screen and in the Dynamic Island (the next tram, the next event, an
-agent at work).
+agent at work, a focus session's round).
 
 The **Mac app** is the same app in a window. It has the sections in a sidebar, the day at a glance under them, and
 Pebble in the menu bar for a quick look. It also has its own screen time: the Mac counts its apps and websites and
@@ -297,6 +298,26 @@ these are guesses. Check `/usage` in Claude Code on the server for the real pict
 The plan is shared with your own Claude use: a notebook written while you code in Claude Code takes from the
 same window.
 
+## Focus sessions
+
+A focus session is study in rounds with breaks between them: 25/5 × 4, 50/10 × 2, or your own (rounds of 15–120 min,
+up to 8). Start one with **Focus** on a course or topic page, from a review session, or by asking Professor
+("focus on chapter 3 for an hour").
+
+- **Rounds lock.** Each round is a strict Screen Time lock over everything except what you study with. On the phone
+  that's the apps picked in Settings → Screen Time → During focus (pick Aide, so the Study page stays open). On the
+  Mac, Aide closes every app you switch to except its focus apps (Notes, Preview, Obsidian… in Settings → This Mac →
+  Screen Time). Breaks unlock both.
+- **Ending early** a strict round takes an emergency pass (3 a month), else a reason that Professor and Coach see.
+  A break ends freely.
+- **On the Lock Screen and in the Dynamic Island**, a Live Activity shows the round or break, the time left and the
+  topic, with a sound at each switch.
+- **At the end**, Professor posts the session in the course chat (rounds, minutes, why it ended early if it did), and
+  the app offers five quick multiple-choice questions on what you studied (no model call). Professor adds how they
+  went.
+- **It counts.** Minutes per course go into Professor's study progress and plans, the `focus` objectives measure, and
+  what Coach sees of your day.
+
 ## Layout
 
 ```
@@ -325,6 +346,7 @@ src/aide/
   live.py, upcoming.py   Live Activities (trams, the next event, agents at work)
   routines.py            routines and watches; activity.py: the feed of what the agents did
   locks.py               Screen Time locks
+  focus.py               focus sessions: rounds as strict locks, the Live Activity, the check and Professor's post
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
 ios/Aide/                the app (SwiftUI): iPhone (iOS 17+) and Mac (target AideMac, macOS 14+)
 brand/                   Pebble, the logo
