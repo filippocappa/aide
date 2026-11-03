@@ -29,7 +29,7 @@ class Tool:
     description: str
     input_schema: dict
     handler: ToolHandler
-    # confirm=True: the agent queues the call and runs it only after the user's !yes.
+    # confirm=True: the agent queues the call and runs it only after the user's OK.
     # describe(**args) says in one line what will happen, and raises if it can't happen.
     confirm: bool = False
     describe: ToolHandler | None = None

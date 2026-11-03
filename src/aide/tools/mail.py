@@ -1,4 +1,4 @@
-"""Mail tools. Reading runs immediately; sending and replying wait for the user's !yes."""
+"""Mail tools. Reading runs immediately; sending and replying wait for the user's OK."""
 
 import re
 from datetime import datetime
@@ -157,13 +157,13 @@ def mail_tools(gmail: Gmail, tz: ZoneInfo) -> list[Tool]:
         Tool("read_thread", "Read a whole conversation, by thread id, oldest message first.",
              _obj({"thread_id": {"type": "string"}}, ["thread_id"]), read_thread),
         Tool("send_mail", "Send a new email as the user. Needs the user's confirmation: it is queued, and runs only "
-             "when the user replies !yes. Plain text body; write it the way the user would.",
+             "when the user taps Confirm in the app. Plain text body; write it the way the user would.",
              _obj({"to": {"type": "string", "description": "Comma-separated addresses"},
                    "subject": {"type": "string"}, "body": {"type": "string"},
                    "cc": {"type": "string", "description": "Comma-separated addresses"}}, ["to", "subject", "body"]),
              send_mail, confirm=True, describe=describe_send),
         Tool("reply_mail", "Reply to a message, in its thread. Needs the user's confirmation: it is queued, and runs "
-             "only when the user replies !yes. Goes to the sender (or Reply-To); reply_all adds the other recipients.",
+             "only when the user taps Confirm in the app. Goes to the sender (or Reply-To); reply_all adds the other recipients.",
              _obj({"message_id": {"type": "string"}, "body": {"type": "string"},
                    "reply_all": {"type": "boolean"}}, ["message_id", "body"]),
              reply_mail, confirm=True, describe=describe_reply, target_arg="message_id"),

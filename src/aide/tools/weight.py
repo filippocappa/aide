@@ -51,7 +51,7 @@ def weight_tools(store: WeightStore) -> list[Tool]:
                                                          "days back (default 28)"}},
               "additionalProperties": False}, weight_trend),
         Tool("delete_weight", "Delete a weight logged through Aide by mistake ([weight N] from weight_trend). Needs "
-             "the user's confirmation: it is queued, and runs only when the user replies !yes.",
+             "the user's confirmation: it is queued, and runs only when the user taps Confirm in the app.",
              {"type": "object", "properties": {"weight_id": {"type": "integer"}}, "required": ["weight_id"],
               "additionalProperties": False}, delete_weight, confirm=True, describe=describe_delete,
              target_arg="weight_id"),

@@ -1,6 +1,6 @@
 """Quiz and review tools, for Professor (#4): quizzes in a chat, by text or voice, from a notebook's questions and
 flashcards (quiz.py), mock exams written for the app, and review sessions in the calendar (reviews.py). Answers are
-recorded as they come; adding a session runs at once, cancelling one waits for the user's !yes."""
+recorded as they come; adding a session runs at once, cancelling one waits for the user's OK."""
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -187,7 +187,7 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
                        "topics": {"type": "array", "items": {"type": "string"}, "description": "Topic titles or ids"}},
                       ["course", "start", "minutes", "topics"]), add_review_session),
             Tool("cancel_review_session", "Take a review session off the calendar. Needs the user's confirmation: "
-                 "it is queued, and runs only when the user replies !yes.",
+                 "it is queued, and runs only when the user taps Confirm in the app.",
                  _obj({"session": {"type": "string", "description": "Its id in brackets, v_…"}}, ["session"]),
                  cancel_review_session, confirm=True, describe=describe_cancel, target_arg="session"),
         ]

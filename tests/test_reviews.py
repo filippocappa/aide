@@ -48,7 +48,7 @@ async def test_a_review_session_goes_in_the_timetable_calendar(nb, reviews):
     assert "Next exam: " in progress and "The IS-LM model: 3 questions and cards; 3 never asked" in progress
     assert progress.endswith(f"Review sessions coming: \n{store.line(s)}")
 
-    assert tools["cancel_review_session"].confirm  # queued for the user's !yes
+    assert tools["cancel_review_session"].confirm  # queued for the user's OK
     assert await tools["cancel_review_session"].describe(session=s["public_id"]) == \
         f"Take the review session off the calendar: {store.line(s)}"
     await tools["cancel_review_session"].handler(session=s["public_id"])

@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, id);
 
--- Tool calls that wait for the user's !yes before running.
+-- Tool calls that wait for the user's OK before running.
 CREATE TABLE IF NOT EXISTS pending_actions (
     id         INTEGER PRIMARY KEY,
     channel    TEXT NOT NULL,

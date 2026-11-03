@@ -1,4 +1,4 @@
-"""Calendar tools. Changing and deleting events wait for the user's !yes."""
+"""Calendar tools. Changing and deleting events wait for the user's OK."""
 
 import asyncio
 from datetime import date, datetime, time, timedelta
@@ -226,7 +226,7 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
                   ["title", "start", "end", "calendar"]), create_event),
         Tool("edit_event", "Change an event: its time, its calendar (moves it to another calendar), title, "
              "place or notes. Give only what changes. Needs the user's confirmation: it is queued, and runs only "
-             "when the user replies !yes.",
+             "when the user taps Confirm in the app.",
              _obj({"event_id": {"type": "string"},
                    "new_start": {"type": "string", "description": DATETIME_HELP + " With new_end."},
                    "new_end": {"type": "string", "description": DATETIME_HELP + " With new_start."},
@@ -237,7 +237,7 @@ def calendar_tools(cal: CalendarBackend, tz: ZoneInfo, default_calendar: str | N
                   ["event_id"]),
              edit_event, confirm=True, describe=describe_edit, target_arg="event_id"),
         Tool("delete_event", "Delete an event. Needs the user's confirmation: it is queued, "
-             "and runs only when the user replies !yes.",
+             "and runs only when the user taps Confirm in the app.",
              _obj({"event_id": {"type": "string"}}, ["event_id"]),
              delete_event, confirm=True, describe=describe_delete, target_arg="event_id"),
     ]

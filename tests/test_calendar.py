@@ -188,7 +188,7 @@ async def test_confirmation_is_recorded_in_history(tools):
     await agent.reply("discord", "delete")
     await agent.confirm("discord")
     conv = db.current_conversation("discord", timedelta(hours=1))
-    assert db.history(conv)[-1]["content"].startswith("[The user replied !yes.")
+    assert db.history(conv)[-1]["content"].startswith("[The user tapped Confirm.")
 
 
 # -- iCalendar parsing ------------------------------------------------------------

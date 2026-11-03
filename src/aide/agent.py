@@ -253,7 +253,7 @@ class Agent:
             if role == "user":
                 if not isinstance(content, str) or content.startswith(("[The user replied", "[The user tapped", _OPENED)):
                     continue  # tool results, confirm/cancel and plan notes, the note before a digest greeting
-                text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0].split(_READ_MARK, 1)[0]
+                text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0].split(_OLD_QUEUE_MARK, 1)[0].split(_READ_MARK, 1)[0]
                 if _NOTE.match(text):
                     continue  # a note for the model: a routine's prompt, the one before a post, a quiz's result
                 if photos := _PHOTO.findall(text):
@@ -270,7 +270,7 @@ class Agent:
         return out
 
     def pending(self, channel: str) -> list[str]:
-        """One line per action waiting for the user's !yes, written by code, not the model."""
+        """One line per action waiting for the user's OK, written by code, not the model."""
         return [p["summary"] for p in self.db.pending_actions(channel, PENDING_TTL)]
 
     async def confirm(self, channel: str, ids: list[int] | None = None) -> str:
@@ -290,7 +290,7 @@ class Agent:
             # Each chat that queued something learns how its own actions went.
             for conversation in dict.fromkeys(a["conversation"] for a in actions):
                 own = "\n".join(line for a, line in zip(actions, lines) if a["conversation"] == conversation)
-                self._note(channel, conversation, f"[The user replied !yes. Results:\n{own}]")
+                self._note(channel, conversation, f"[The user tapped Confirm. Results:\n{own}]")
             return result
 
     async def cancel(self, channel: str, ids: list[int] | None = None) -> str:
@@ -303,7 +303,7 @@ class Agent:
                 activity.record(self.db.conn, a["agent"] or ORCHESTRATOR, "cancelled", a["summary"],
                                 conversation=a["conversation"] or channel)
             for conversation in dict.fromkeys(a["conversation"] for a in actions):
-                self._note(channel, conversation, "[The user replied !no. The queued actions were cancelled.]")
+                self._note(channel, conversation, "[The user tapped Cancel. The queued actions were cancelled.]")
             return "Cancelled. Nothing was changed."
 
     def note(self, conversation: str | None, text: str) -> None:
@@ -850,7 +850,7 @@ class Agent:
         self.db.audit(name, args, f"queued #{action_id}: {summary}")
         activity.record(self.db.conn, agent, "queued", summary, conversation=self._conversation or channel)
         note = " This replaces the change queued earlier for it." if replaced else ""
-        return f"Queued, waiting for the user's !yes: {summary}.{note}", False
+        return f"Queued, waiting for the user's OK: {summary}.{note}", False
 
     def _step(self, agent: str, tool, args: dict) -> None:
         """Tell the app what the tool is doing while it runs; a failing label never stops the call."""
@@ -899,7 +899,8 @@ _CHANGES = (None, "found", "created", "proposed")  # an event card item's change
 
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
-_QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"
+_QUEUE_MARK = "\n[Queued, waiting for the user's OK:"
+_OLD_QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"  # messages stamped before 2026-11-03
 _READ_MARK = "\n[What the photos show, read by the photo reader]"
 READ_PROMPT = """You look at photos for Coach, an assistant that logs the user's meals and talks about their health \
 and training, and can't see images. Write what the photos show so Coach can act without them.

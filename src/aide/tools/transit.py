@@ -1,5 +1,5 @@
 """GTT tools: stops, live arrivals and tram alerts (docs/API.md, "Transit"). Reading and setting alerts run
-immediately; deleting an alert waits for the user's !yes."""
+immediately; deleting an alert waits for the user's OK."""
 
 import re
 from datetime import datetime, timedelta
@@ -228,7 +228,7 @@ def transit_tools(transit: Transit, alerts: AlertStore, location: Location, boar
              _obj({**aid, "stop": {"type": "string", "description": stop_help}, "line": {"type": "string"},
                    **timing, "enabled": {"type": "boolean"}}, ["alert_id"]), update_transit_alert),
         Tool("delete_transit_alert", "Delete a tram alert. Needs the user's confirmation: it is queued, and runs only "
-             "when the user replies !yes.", _obj(aid, ["alert_id"]), delete_transit_alert, confirm=True,
+             "when the user taps Confirm in the app.", _obj(aid, ["alert_id"]), delete_transit_alert, confirm=True,
              describe=describe_delete, target_arg="alert_id"),
     ]
 

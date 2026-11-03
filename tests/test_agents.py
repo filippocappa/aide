@@ -492,7 +492,7 @@ def test_streamed_chat_sends_team_then_the_reply(env):
                                         {"delta": " it.", "restart": False}]
     reply = got[5][1]
     assert reply["reply"] == "Secretary queued it." and reply["team"] == [got[0][1], got[1][1]]
-    assert len(reply["pending"]) == 1  # the usual queue: nothing deleted until !yes
+    assert len(reply["pending"]) == 1  # the usual queue: nothing deleted until Confirm
     assert store.get(rem.id) and not store.get(rem.id).deleted
 
 
