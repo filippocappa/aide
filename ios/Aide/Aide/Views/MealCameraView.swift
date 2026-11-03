@@ -433,22 +433,22 @@ final class MealCamera: NSObject, ObservableObject {
         super.init()
         let center = NotificationCenter.default
         watchers = [
-            center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: .main) { note in
+            center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: .main) { [weak self] note in
                 let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int)
                     .flatMap(AVCaptureSession.InterruptionReason.init(rawValue:))
-                MainActor.assumeIsolated { self.interrupted(reason) }
+                MainActor.assumeIsolated { self?.interrupted(reason) }
             },
-            center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: .main) { _ in
+            center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     Self.log.note("interruption ended")
-                    self.paused = nil
+                    self?.paused = nil
                 }
             },
-            center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: .main) { note in
+            center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: .main) { [weak self] note in
                 let error = note.userInfo?[AVCaptureSessionErrorKey] as? Error
                 MainActor.assumeIsolated {
                     Self.log.note("runtime error: \(error.map { String(describing: $0) } ?? "?")")
-                    self.resume()
+                    self?.resume()
                 }
             },
         ]
