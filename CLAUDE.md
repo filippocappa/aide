@@ -54,6 +54,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `transit.py`: GTT (Turin's buses and trams): the GTFS timetable (rebuilt nightly into `data/gtt.db`), the live
   feed, the phone's location, and tram alerts with their watcher. `tools/transit.py`: the agents' transit tools.
   `leave.py`: leave-now for calendar events (the event's GTT ride from Maps becomes a one-off tram alert).
+- `weather.py`: Open-Meteo forecasts (no key, 30 min cache): the `weather` tool, the one-day digests' section, rain
+  in a leave-now tram alert.
 - `plans.py`: events an agent proposes together (`propose_events`), added when the user taps Add on the week card.
 - `upcoming.py`: the next calendar event's Live Activity (a countdown from 30 min before; `live.py` sends it).
 - `lockwatch.py`: a Screen Time lock's Live Activity while it holds (a countdown to when it opens).
@@ -647,6 +649,12 @@ as bars; no Today/Week/Month picker). `/v1/activity?grouped=true` folds a run (s
 title, 45 min), an errand's lines, a plan's objectives (10 min, any agent) and a day's quiet checks into rows with
 `count`, `agents`, `children` (`activity.grouped`); the Activity sheet has agent chips, rows with ×N that fold open
 (`ActivityLine`), quiet checks as one grey line, and every day before the newest folded to one row ("Yesterday · 52 things from…").
+
+**Done, both sides (2026-11-03), not yet tried on the phone:** weather (#51, contract "Weather"; `weather.py`).
+Open-Meteo where the phone is (a fix under 2 h old), else home; a `weather` section in `wake`, `daily` and `evening`
+(the greeting names it only when it changes plans), the `weather` tool for Aide, Secretary and Coach (Coach flags a
+run in rain or heat), "Rain likely (70%): take an umbrella." on a leave-now tram alert. App: `WeatherCard` in the
+digest Details, a line on Today's digest card.
 
 **Next** (GitHub issues):
 0. The code check (2026-11-03) filed #35–#50, one finding each. First the ones that can lose data: #35

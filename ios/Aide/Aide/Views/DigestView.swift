@@ -30,6 +30,7 @@ struct DigestView: View {
                 case .objectives(let objectives, let period):
                     group(section.title) { DigestObjectiveRows(objectives: objectives, period: period) }
                 case .replies(let drafts): group(section.title) { DigestDraftRows(drafts: drafts) }
+                case .weather(let weather): group(section.title) { WeatherCard(weather: weather) }
                 case .text, .unknown: EmptyView() // the greeting already says it
                 }
             }
@@ -410,6 +411,72 @@ struct ScorePill: View {
 }
 
 /// How rested the numbers say you are, compared with your own usual. Not medical advice.
+/// The digest's day of weather: now (today only), the low and high, what's worth knowing, then the hours.
+struct WeatherCard: View {
+    let weather: DigestWeather
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: Self.icon(weather.now?.symbol ?? weather.symbol))
+                    .symbolRenderingMode(.multicolor)
+                    .font(.system(size: 34))
+                    .frame(width: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    if let now = weather.now {
+                        Text("\(now.temp)°").font(.title.weight(.semibold)).monospacedDigit()
+                        Text(now.words + (now.feels.map { abs($0 - now.temp) >= 2 ? " · feels \($0)°" : "" } ?? ""))
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    } else {
+                        Text(weather.words).font(.title3.weight(.semibold))
+                    }
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("H \(weather.high)°  L \(weather.low)°").font(.subheadline.weight(.medium)).monospacedDigit()
+                    if let place = weather.place, !place.isEmpty {
+                        Text(place).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
+            Text(Self.sentence(weather.summary)).font(.subheadline)
+                .foregroundStyle(weather.flags?.isEmpty == false ? .primary : .secondary)
+            if let hours = weather.hours, hours.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 18) {
+                        ForEach(hours) { hour in
+                            VStack(spacing: 6) {
+                                Text(Wire.parse(hour.at)?.formatted(.dateTime.hour(.twoDigits(amPM: .omitted))) ?? "")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Image(systemName: Self.icon(hour.symbol)).symbolRenderingMode(.multicolor)
+                                    .font(.body).frame(height: 22)
+                                Text("\(hour.temp)°").font(.subheadline.weight(.medium)).monospacedDigit()
+                                Text(hour.rainChance >= 30 ? "\(hour.rainChance)%" : " ")
+                                    .font(.caption2.weight(.semibold)).foregroundStyle(.cyan)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// "8–14°, rain from 17:00 (70%)" -> "8–14°, rain from 17:00 (70%)." with a capital where it starts with a word.
+    private static func sentence(_ s: String) -> String {
+        (s.first.map { String($0).uppercased() + s.dropFirst() } ?? s) + "."
+    }
+
+    /// The server's symbol, filled; one it may add later that this app doesn't know is a cloud.
+    static func icon(_ symbol: String) -> String {
+        known.contains(symbol) ? symbol + ".fill" : "cloud.fill"
+    }
+
+    private static let known: Set<String> = [
+        "sun.max", "moon.stars", "cloud.sun", "cloud.moon", "cloud", "cloud.fog", "cloud.drizzle", "cloud.sleet",
+        "cloud.rain", "cloud.heavyrain", "cloud.snow", "cloud.sun.rain", "cloud.moon.rain", "cloud.bolt.rain",
+    ]
+}
+
 struct RecoveryRow: View {
     let recovery: Recovery
 

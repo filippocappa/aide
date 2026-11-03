@@ -240,6 +240,7 @@ private struct ConnectorRow: View {
         case "food": "fork.knife"
         case "web": "globe"
         case "maps": "map"
+        case "weather": "cloud.sun"
         case "memory": "brain"
         case "routines": "alarm"
         case "team": "person.3"

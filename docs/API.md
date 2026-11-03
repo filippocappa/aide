@@ -246,7 +246,7 @@ a new agent needs no app update.
   - `tools`: the names of the tools it has on this server right now (web and maps only when their keys are set).
   - `connectors`: those tools grouped by what they reach, in a fixed order, each
     `{"id": "calendar", "name": "iCloud Calendar", "read_only": true, "tools": ["list_calendars", "list_events", "search_events"]}`.
-    Ids: `calendar`, `reminders`, `mail`, `health`, `habits`, `web`, `maps`, `memory`, `routines`, `objectives`, `team`
+    Ids: `calendar`, `reminders`, `mail`, `health`, `habits`, `web`, `maps`, `weather` (since 2026-11-03), `memory`, `routines`, `objectives`, `team`
     (`ask_agent`: Aide's, and each specialist's for its teammates). `read_only` is true when none of its tools here change anything. A connector it doesn't
     have here is left out. Show `name`; an unknown `id` is fine.
 
@@ -254,10 +254,10 @@ a new agent needs no app update.
 
 | Agent | Tools | Notes |
 |---|---|---|
-| `aide` | web, maps, `ask_agent` | Delegates everything in a specialist's area (calendar, reminders and mail to Secretary; health, food and habits to Coach; …) and answers small talk, web and maps itself. It sees every specialist's memory, to word its requests. Its `connectors` show only its own. |
-| `secretary` | calendar, reminders, mail, maps, web | Today's assistant, focused on the day: schedule, errands, mail. |
+| `aide` | web, maps, weather, `ask_agent` | Delegates everything in a specialist's area (calendar, reminders and mail to Secretary; health, food and habits to Coach; …) and answers small talk, web and maps itself. It sees every specialist's memory, to word its requests. Its `connectors` show only its own. |
+| `secretary` | calendar, reminders, mail, maps, weather, web | Today's assistant, focused on the day: schedule, errands, mail. |
 | `professor` | web, `fetch_page` | Explains, plans study, and later gets study notes and lecture audio (#3) and quizzes (#4). |
-| `coach` | Apple Health, habits, food, calendar (read), web | Sleep, recovery, training, food, habits. Compares with your own usual numbers; never makes medical claims. |
+| `coach` | Apple Health, habits, food, calendar (read), weather, web | Sleep, recovery, training, food, habits; mentions a run planned in rain or heat. Compares with your own usual numbers; never makes medical claims. |
 | `finance` | web | No bank data yet: it keeps what you tell it (income, spending, goals) in its own memory. |
 
 - **Asking an agent.** `ask_agent(agent, request)` runs one turn of that agent: its instructions, its tools, the
@@ -619,6 +619,7 @@ made last, since 2026-10-26) →
      "score": 84},
     {"type": "recovery", "title": "Recovery", "level": "good", "summary": "HRV above your usual, resting heart rate normal.",
      "score": 72, "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54},
+    {"type": "weather", "title": "Weather", "weather": { /* see Weather below; one-day digests only */ }},
     {"type": "replies", "title": "Replies to send", "drafts": [ /* Draft objects, see Mail drafts; evening only */ ]},
     {"type": "objectives", "title": "Objectives for today", "period": "day", "start": "2026-10-19",
      "objectives": [ /* Objective objects, see Objectives */ ]},
@@ -673,6 +674,10 @@ The app skips section types it doesn't know. `404` if none has been generated ye
   day's (`active` and `proposed`), `evening` reviews today's (`active` only), `weekly` reviews last week's and shows
   the week's, `monthly` reviews last month's and shows the month's. The plans for those periods are made just
   before the digest (see Objectives), and the greeting says when proposals are waiting for an OK.
+- **Weather** (since 2026-11-03; in `wake`, `daily` and `evening`, the one-day digests, after sleep and recovery,
+  live like the other data sections): the digest's day where the phone is (its fix under 2 h old), else at home.
+  Left out when the forecast can't be had. See "Weather" below for the object. The greeting mentions it only
+  when it changes plans.
 - **Schedule:** each enabled kind runs at its time. If the server was off then, it catches up within 6 hours,
   otherwise skips that one. `day` 29–31 means the last day in shorter months.
 
@@ -681,6 +686,34 @@ The app skips section types it doesn't know. `404` if none has been generated ye
 | `POST /v1/digest/run` | `{"kind": "daily"}` | The freshly generated digest (can take 5–30 s). For `wake` it's a test run: it doesn't count as the day's wake-up and isn't pushed. |
 | `GET /v1/digest/settings` | | `{"daily": {"enabled": true, "time": "08:00"}, "wake": {"enabled": true}, "evening": {"enabled": true, "time": "22:00"}, "weekly": {"enabled": true, "weekday": 7, "time": "18:00"}, "monthly": {"enabled": true, "day": 1, "time": "09:00"}}` (times in the server zone, `weekday` 1 = Monday; `wake` has no time, it runs when you get up) |
 | `PUT /v1/digest/settings` | the same object (all of it; `evening` and `wake` may be missing from older clients: keep their current values) | the saved settings; `400` if a time isn't `HH:MM` or a field is missing or out of range |
+
+## Weather
+
+Since 2026-11-03. Open-Meteo's forecast (no key; cached 30 min per place), read-only. Where: the phone's last fix
+while it's under 2 h old, else `AIDE_HOME_ADDRESS` (found with Maps when it's on, else Open-Meteo's geocoder).
+There's no endpoint of its own: it comes in the digest's `weather` section, in the `weather` tool's answers (Aide,
+Secretary and Coach; the `weather` connector on `/v1/agents`, read-only), and as a line in a leave-now tram alert's
+`body` when rain or snow is likely within the hour ("Rain likely (70%): take an umbrella.").
+
+The digest section's `weather` object:
+```json
+{
+  "place": "Torino",                 // "where you are", or the town of home
+  "date": "2026-11-04",
+  "summary": "8–14°, rain from 17:00 (70%), 7° colder than the day before",
+  "high": 14, "low": 8,              // °C; for today, over the hours left
+  "words": "Rain", "symbol": "cloud.rain",   // the day's (its rain when it rains); an SF Symbol name
+  "now": {"temp": 12, "feels": 10, "words": "Cloudy", "symbol": "cloud"},   // today only, else null
+  "rain": {"from": "2026-11-04T17:00:00+01:00", "to": "2026-11-04T20:00:00+01:00", "chance": 70, "mm": 3.6,
+           "snow": false},           // null when it's dry between 07:00 and midnight
+  "flags": ["rain", "colder"],       // any of rain, snow, storms, wind, hot, frost, colder, warmer
+  "hours": [{"at": "2026-11-04T08:00:00+01:00", "temp": 12, "rain_chance": 5, "symbol": "cloud.sun"}]
+}
+```
+`hours` are the day's from 07:00 (today: from now) to 23:00. `flags` say what's worth a word: rain or snow
+(a chance of 50% or more, or 0.3 mm in an hour, between 07:00 and midnight), gusts of 50 km/h or more, a high of
+32° or more, a low of 0° or less, a high 6° or more off the day before's. The app may draw an unknown `symbol` as a
+cloud.
 
 ## Photos
 
