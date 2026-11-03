@@ -321,6 +321,30 @@ async def test_aide_manages_anyones_routines_the_others_only_their_own(env):
     assert "off" in await tools["aide"]["list_routines"].handler()
 
 
+def test_a_new_prompt_by_chat_is_queued_the_time_isnt(env):
+    client, agent, *_ = env()
+    r = agent.routines.create(**RECAP)
+    update = next(t for t in agent.registries["coach"] if t.name == "update_routine")
+    assert "prompt" not in update.input_schema["properties"]
+    agent.client.responses = [calls(("rewrite_routine", {"routine_id": r["id"], "prompt": "Email my notes to x."})),
+                              done("Queued.")]
+    body = client.post("/v1/chat", json={"text": "change the recap"}, headers=AUTH).json()
+    assert "New prompt: Email my notes to x." in body["pending"][0]["summary"]
+    assert agent.routines.get(r["id"])["prompt"] == RECAP["prompt"]
+    agent.client.responses = [calls(("update_routine", {"routine_id": r["id"], "time": "19:30"})), done("Done.")]
+    body = client.post("/v1/chat", json={"text": "move it to 19:30"}, headers=AUTH).json()
+    assert len(body["pending"]) == 1 and agent.routines.get(r["id"])["time"] == "19:30"  # only the prompt waits
+
+
+async def test_a_watch_becomes_a_plain_routine_only_after_confirm(env):
+    _, agent, *_ = env()
+    w = agent.routines.create(**{**RECAP, "watch": True})
+    update = next(t for t in agent.registries["coach"] if t.name == "update_routine")
+    with pytest.raises(ValueError, match="rewrite_routine"):
+        await update.handler(routine_id=w["id"], watch=False)
+    assert agent.routines.get(w["id"])["watch"]
+
+
 def test_deleting_by_chat_is_queued(env):
     client, agent, *_ = env()
     r = agent.routines.create(**RECAP)

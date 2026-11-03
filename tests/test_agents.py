@@ -141,7 +141,7 @@ def test_each_agent_has_its_own_stable_prompt(env):
 def test_tool_sets_follow_the_table(env):
     _, agent, _ = env()
     names = {a: {t.name for t in agent.registries[a]} for a in AGENTS}
-    routines = {"list_routines", "create_routine", "update_routine", "delete_routine"}
+    routines = {"list_routines", "create_routine", "update_routine", "rewrite_routine", "delete_routine"}
     # Aide delegates: besides the common tools, only the web, maps and ask_agent.
     assert names["aide"] == {"web_search", "fetch_page", "find_places", "ask_agent", "get_current_time", "remember",
                              "forget", "cancel_queued", *routines}

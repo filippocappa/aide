@@ -379,6 +379,8 @@ workout; a streak about to break.
   (every day 09:00) and "Habits tonight" (every day 20:30). Professor and Finance have none yet: no data of
   their own to watch.
 - **By chat.** `create_routine` and `update_routine` take `watch` ("Coach, keep an eye on my sleep").
+  A new prompt (`rewrite_routine`), or a watch turned back into a plain routine, is a queued action: it runs only
+  after Confirm, since the routine then runs that prompt unattended. Time, days, title and on/off stay direct.
 - A routine object without `watch` (an older server) is not a watch.
 
 ## Objectives
