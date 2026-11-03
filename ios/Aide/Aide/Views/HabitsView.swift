@@ -112,38 +112,7 @@ struct HabitsScreen: View {
     @State private var editing: Habit?
 
     var body: some View {
-        List {
-            if let error {
-                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
-                    .listRowBackground(Theme.row)
-            }
-            Section {
-                if habits.isEmpty {
-                    Text("No habits yet. Tap + to add one, or tell Coach in chat: \"add a gym habit, three times a week\".")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(habits) { habit in
-                    HabitRow(habit: habit, toggle: { Task { await HabitActions.toggle(habit, in: $habits, env: env, error: $error) } },
-                             count: { n in Task { await HabitActions.count(habit, n, in: $habits, env: env, error: $error) } },
-                             edit: { editing = habit })
-                }
-                .onDelete { offsets in
-                    let doomed = offsets.map { habits[$0] }
-                    Task {
-                        for h in doomed {
-                            do { try await env.api.deleteHabit(h.id); habits.removeAll { $0.id == h.id } }
-                            catch { self.error = error.localizedDescription }
-                        }
-                    }
-                }
-            } footer: {
-                Text("Habits are what you always do. What this day, week or month is about goes in objectives.")
-            }
-            .listRowBackground(Theme.row)
-        }
-        .scrollContentBackground(.hidden)
-        .background(Theme.grouped)
+        page
         .navigationTitle("Habits")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -167,6 +136,80 @@ struct HabitsScreen: View {
             }
         }
     }
+
+    private func row(_ habit: Habit) -> HabitRow {
+        HabitRow(habit: habit, toggle: { Task { await HabitActions.toggle(habit, in: $habits, env: env, error: $error) } },
+                 count: { n in Task { await HabitActions.count(habit, n, in: $habits, env: env, error: $error) } },
+                 edit: { editing = habit })
+    }
+
+    private func delete(_ doomed: [Habit]) {
+        Task {
+            for h in doomed {
+                do { try await env.api.deleteHabit(h.id); habits.removeAll { $0.id == h.id } }
+                catch { self.error = error.localizedDescription }
+            }
+        }
+    }
+
+    #if os(macOS)
+    /// The Mac: each habit a card with its 26 weeks, two across; Delete in a card's menu.
+    private var page: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+                }
+                if habits.isEmpty {
+                    Text("No habits yet. Click + to add one, or tell Coach in chat: \"add a gym habit, three times a week\".")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .card()
+                }
+                Columns(max: 2, minWidth: 400) {
+                    ForEach(habits) { habit in
+                        row(habit)
+                            .frame(maxHeight: .infinity, alignment: .top)
+                            .card()
+                            .contextMenu {
+                                Button("Edit", systemImage: "pencil") { editing = habit }
+                                Button("Delete", systemImage: "trash", role: .destructive) { delete([habit]) }
+                            }
+                    }
+                }
+                Text("Habits are what you always do. What this day, week or month is about goes in objectives.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .pageColumn(1100)
+        }
+        .background(Theme.grouped)
+    }
+    #else
+    private var page: some View {
+        List {
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
+                    .listRowBackground(Theme.row)
+            }
+            Section {
+                if habits.isEmpty {
+                    Text("No habits yet. Tap + to add one, or tell Coach in chat: \"add a gym habit, three times a week\".")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(habits) { habit in row(habit) }
+                    .onDelete { offsets in delete(offsets.map { habits[$0] }) }
+            } footer: {
+                Text("Habits are what you always do. What this day, week or month is about goes in objectives.")
+            }
+            .listRowBackground(Theme.row)
+        }
+        .scrollContentBackground(.hidden)
+        .background(Theme.grouped)
+    }
+    #endif
 }
 
 /// Ticking and counting a habit in a list of them, shared by Today and the Habits screen.

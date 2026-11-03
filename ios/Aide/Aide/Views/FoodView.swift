@@ -73,31 +73,23 @@ struct FoodPage: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                         .card()
                 } else {
-                    // The day and how to log it beside the meals when the page is wide (the Mac).
+                    #if os(macOS)
+                    // A wide page: the score and Coach's line beside the totals, then the meals as cards across.
                     Columns(max: 2, minWidth: 420) {
                         VStack(alignment: .leading, spacing: 12) {
-                            if let food {
-                                NavigationLink { NutritionDayView(day: food, tint: coach.tint).macPageBack() } label: {
-                                    HStack(spacing: 8) {
-                                        DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
-                                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                                    }
-                                    .foregroundStyle(.primary)
-                                    .card(padding: 14)
-                                }
-                                .buttonStyle(CardPress())
-                                // Coach's line, as on Body: what to do with the rest of the day (tap: the Food log chat).
-                                if let line = food.line {
-                                    AgentLine(agent: coach, text: line) {
-                                        push.route = foodChat.map { .conversation($0) } ?? .agent(coach.id)
-                                    }
-                                }
-                            }
-                            foodCard
-                            logButton
+                            scoreCard
+                            coachLine
                         }
-                        mealsCard
+                        foodCard
                     }
+                    mealsCard
+                    #else
+                    scoreCard
+                    coachLine
+                    foodCard
+                    logButton
+                    mealsCard
+                    #endif
                 }
             }
             .padding(.horizontal, 16)
@@ -203,6 +195,30 @@ struct FoodPage: View {
         }
     }
 
+    /// The day's score, opening its page (targets, grades, the weeks).
+    @ViewBuilder private var scoreCard: some View {
+        if let food {
+            NavigationLink { NutritionDayView(day: food, tint: coach.tint).macPageBack() } label: {
+                HStack(spacing: 8) {
+                    DayScoreCard(day: food, isToday: isToday, tint: coach.tint)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(.primary)
+                .card(padding: 14)
+            }
+            .buttonStyle(CardPress())
+        }
+    }
+
+    /// Coach's line, as on Body: what to do with the rest of the day (tap: the Food log chat).
+    @ViewBuilder private var coachLine: some View {
+        if let line = food?.line {
+            AgentLine(agent: coach, text: line) {
+                push.route = foodChat.map { .conversation($0) } ?? .agent(coach.id)
+            }
+        }
+    }
+
     /// The day's calories and macros, what Coach said of the last meal, and the way to the targets and the chat.
     private var foodCard: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -217,6 +233,7 @@ struct FoodPage: View {
             if let foodError {
                 Label(foodError, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
             }
+            Spacer(minLength: 0)
             Divider()
             HStack {
                 if let id = foodChat {
@@ -282,18 +299,50 @@ struct FoodPage: View {
         .disabled(!settings.isConfigured || logging)
     }
 
-    /// The day's meals, newest first, on one card; the one being logged on top.
-    /// Under the log buttons on the phone; at the top of its own column on the Mac.
-    #if os(macOS)
-    private static let mealsTop: CGFloat = 0
-    #else
-    private static let mealsTop: CGFloat = 8
-    #endif
-
+    /// The day's meals, newest first, on one card; the one being logged on top. On the Mac the log buttons sit by
+    /// the title and the meals are cards side by side.
     private var mealsCard: some View {
         let meals = Meal.newestFirst(food?.meals ?? [])
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Meals").font(.title3.weight(.bold)).padding(.horizontal, 4).padding(.top, Self.mealsTop)
+            #if os(macOS)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Meals").font(.title3.weight(.bold))
+                if !isToday {
+                    Text("Logging for \(day.formatted(.dateTime.weekday(.wide).day().month(.wide)))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                logPills
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 8)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 12)], spacing: 12) {
+                if let pending {
+                    LoggingMealRow(photo: pending.photo, text: pending.text, coach: coach)
+                        .card(padding: 12)
+                        .transition(.opacity)
+                }
+                ForEach(meals) { meal in
+                    Button { editingMeal = meal } label: {
+                        MealRow(meal: meal).card(padding: 12)
+                    }
+                    .buttonStyle(CardPress())
+                    .accessibilityHint("Opens the meal")
+                    .contextMenu {
+                        Button("Delete", systemImage: "trash", role: .destructive) {
+                            Task { if let message = await remove(meal) { foodError = message } }
+                        }
+                    }
+                }
+            }
+            if pending == nil, meals.isEmpty {
+                Text(isToday ? "Nothing logged yet today. Add a photo of what you eat, describe it, or tell Coach in chat."
+                     : "Nothing logged that day.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .card()
+            }
+            #else
+            Text("Meals").font(.title3.weight(.bold)).padding(.horizontal, 4).padding(.top, 8)
             VStack(spacing: 0) {
                 if let pending {
                     LoggingMealRow(photo: pending.photo, text: pending.text, coach: coach)
@@ -324,8 +373,24 @@ struct FoodPage: View {
             }
             .background(Theme.row)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            #endif
         }
     }
+
+    #if os(macOS)
+    /// The Mac's ways in, by the Meals title: a photo from the Mac's files, a few words, a barcode typed, or
+    /// something had before.
+    private var logPills: some View {
+        HStack(spacing: 8) {
+            Button { showLibrary = true } label: { LogPill(title: "Photo", systemImage: "photo", filled: true) }
+            Button { describing = true } label: { LogPill(title: "Describe", systemImage: "text.cursor", filled: false) }
+            Button { typingBarcode = true } label: { LogPill(title: "Barcode", systemImage: "barcode", filled: false) }
+            Button { showRecent = true } label: { LogPill(title: "Recent", systemImage: "clock.arrow.circlepath", filled: false) }
+        }
+        .buttonStyle(.plain)
+        .disabled(!settings.isConfigured || logging)
+    }
+    #endif
 
     /// The chat the last log went to, else the one called "Food log" in the chat list.
     private var foodChat: String? {
@@ -436,6 +501,23 @@ private struct PendingMeal: Equatable {
 }
 
 /// One of the Log buttons: an icon over a word, the photo one filled in the accent colour.
+/// A log button as a small capsule (the Mac's, by the Meals title).
+private struct LogPill: View {
+    let title: String
+    let systemImage: String
+    let filled: Bool
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(filled ? Theme.onAccent : Theme.accent)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(filled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.accent.opacity(0.14)), in: Capsule())
+            .contentShape(Capsule())
+    }
+}
+
 private struct LogTile: View {
     let title: String
     let systemImage: String

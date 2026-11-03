@@ -29,6 +29,8 @@ struct UsageReportView: View {
     @State private var showAll = false
     @State private var openSite: String?
     @State private var showAllSites = false
+    /// Room for the apps and the picked one side by side (the Mac's wide page).
+    @State private var wide = false
     /// The report waited this long with nothing from iOS, so the phone truly has no usage: shown anyway.
     @State private var gaveUp = false
     /// The number this page rolls from as it comes into view: the one on screen before (another page's).
@@ -46,16 +48,24 @@ struct UsageReportView: View {
     private var total: TimeInterval { apps.reduce(0) { $0 + $1.seconds } }
     /// The websites (the Mac only), part of their browsers' time.
     private var sites: [UsageSite] { data.kind == .day ? day.sites : UsageMath.mergedSites(periodDays) }
+    /// The app shown beside the list on a wide page: the one clicked, else the most used.
+    private var picked: UsageApp? { apps.first { $0.id == openApp } ?? apps.first }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
                 summary
-                // Apps beside websites when the page is wide (the Mac), else one under the other.
+                // On a wide page (the Mac) the apps beside the one picked: its hours and, for a browser, its websites.
+                // Narrow, an app opens in its row. Websites are part of their browser's time, so never a list of
+                // their own beside it.
                 if total >= 60 {
-                    Columns(max: 2, minWidth: 380) {
+                    if wide, let app = picked {
+                        Columns(max: 2, minWidth: 380) {
+                            mostUsed
+                            appPanel(app)
+                        }
+                    } else {
                         mostUsed
-                        if !sites.isEmpty { websites }
                     }
                 }
                 if let device = data.device, !data.leftOut.isEmpty {
@@ -68,6 +78,7 @@ struct UsageReportView: View {
             .padding(.horizontal, 16)
             .padding(.top, 4)
             .padding(.bottom, 32)
+            .onGeometryChange(for: Bool.self) { $0.size.width >= 2 * 380 + 12 + 32 } action: { wide = $0 }
         }
         .scrollContentBackground(.hidden)
         .background(UsageColors.page)
@@ -270,11 +281,19 @@ struct UsageReportView: View {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, app in
                 VStack(spacing: 0) {
                     if index > 0 { Rectangle().fill(UsageColors.line).frame(height: 1).padding(.leading, 44) }
-                    Button { withAnimation(UsageMotion.snappy) { openApp = openApp == app.id ? nil : app.id } } label: {
+                    Button {
+                        withAnimation(UsageMotion.snappy) {
+                            if wide { openApp = app.id; openSite = nil } else { openApp = openApp == app.id ? nil : app.id }
+                        }
+                    } label: {
                         AppRow(app: app, share: app.seconds / top, average: data.kind == .day ? nil : app.seconds / Double(max(1, begun.count)))
+                            .padding(.horizontal, wide ? 8 : 0)
+                            .background(wide && picked?.id == app.id ? Color.primary.opacity(0.07) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .padding(.horizontal, wide ? -8 : 0)
                     }
                     .buttonStyle(.plain)
-                    if openApp == app.id { appDetail(app) }
+                    if !wide, openApp == app.id { appDetail(app) }
                 }
             }
             if !rest.isEmpty {
@@ -304,16 +323,10 @@ struct UsageReportView: View {
 
     /// One app, opened: its hours (a day) or days (a week or month), its pickups and notifications.
     private func appDetail(_ app: UsageApp) -> some View {
-        let values: [TimeInterval] = data.kind == .day ? (app.hourly.count == 24 ? app.hourly : [])
-            : periodDays.map { d in d.apps.first { $0.id == app.id }?.seconds ?? 0 }
-        let labels: [String] = switch data.kind {
-        case .day: ["00", "06", "12", "18", "24"]
-        case .week: periodDays.map { $0.date.formatted(.dateTime.weekday(.narrow)) }
-        case .month: ["1", "8", "15", "22", "29"]
-        }
+        let values = appValues(app)
         return VStack(alignment: .leading, spacing: 10) {
             if !values.isEmpty, values.contains(where: { $0 > 0 }) {
-                UsageBars(values: values, now: data.kind == .day ? currentHour : currentDayIndex, labels: labels,
+                UsageBars(values: values, now: data.kind == .day ? currentHour : currentDayIndex, labels: barLabels,
                           height: 56, labelsUnder: data.kind == .week)
             }
             Text(appLine(app)).font(.footnote).foregroundStyle(.secondary)
@@ -338,73 +351,115 @@ struct UsageReportView: View {
         .transition(.opacity)
     }
 
-    // MARK: Websites
+    // MARK: The picked app (a wide page)
 
-    private var websites: some View {
-        let shown = showAllSites ? sites : Array(sites.prefix(6))
-        let rest = sites.dropFirst(6)
-        let top = sites.first?.seconds ?? 1
+    /// An app's hours (a day) or days (a week or month).
+    private func appValues(_ app: UsageApp) -> [TimeInterval] {
+        data.kind == .day ? (app.hourly.count == 24 ? app.hourly : [])
+            : periodDays.map { d in d.apps.first { $0.id == app.id }?.seconds ?? 0 }
+    }
+
+    private var barLabels: [String] {
+        switch data.kind {
+        case .day: ["00", "06", "12", "18", "24"]
+        case .week: periodDays.map { $0.date.formatted(.dateTime.weekday(.narrow)) }
+        case .month: ["1", "8", "15", "22", "29"]
+        }
+    }
+
+    /// The websites open in this browser, with their time in it; none for an app that isn't one.
+    private func sites(in app: UsageApp) -> [UsageSite] {
+        sites.compactMap { site in
+            site.browsers[app.id].map { UsageSite(id: site.id, seconds: $0, hourly: site.hourly, browsers: site.browsers) }
+        }
+        .filter { $0.seconds >= 30 }
+        .sorted { $0.seconds > $1.seconds }
+    }
+
+    /// The app picked in Most used, beside it: its time, its hours or days, and in a browser what it was spent on.
+    private func appPanel(_ app: UsageApp) -> some View {
+        let values = appValues(app)
+        let inside = sites(in: app)
+        let shown = showAllSites ? inside : Array(inside.prefix(8))
+        let rest = inside.dropFirst(8)
+        let top = inside.first?.seconds ?? 1
         return VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Websites").font(.headline)
-                Spacer()
-                Text("in your browsers").font(.subheadline).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                AppIcon(app: app)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(app.name).font(.headline).lineLimit(1)
+                    Text(appLine(app)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text(UsageMath.duration(app.seconds)).font(.title2.bold().monospacedDigit())
             }
-            .padding(.bottom, 6)
-            ForEach(Array(shown.enumerated()), id: \.element.id) { index, site in
-                VStack(spacing: 0) {
-                    if index > 0 { Rectangle().fill(UsageColors.line).frame(height: 1).padding(.leading, 44) }
-                    Button { withAnimation(UsageMotion.snappy) { openSite = openSite == site.id ? nil : site.id } } label: {
-                        SiteRow(site: site, share: site.seconds / top,
-                                average: data.kind == .day ? nil : site.seconds / Double(max(1, begun.count)))
+            .padding(.bottom, 14)
+            if values.contains(where: { $0 > 0 }) {
+                UsageBars(values: values, now: data.kind == .day ? currentHour : currentDayIndex, labels: barLabels,
+                          average: data.kind == .day ? nil : app.seconds / Double(max(1, begun.count)),
+                          height: 72, labelsUnder: data.kind == .week)
+                    .padding(.bottom, 14)
+            }
+            if !inside.isEmpty {
+                HStack {
+                    Text("Websites").font(.headline)
+                    Spacer()
+                    Text("\(inside.count) in \(app.name)").font(.subheadline).foregroundStyle(.secondary)
+                }
+                .padding(.top, 12)
+                .padding(.bottom, 2)
+                .overlay(alignment: .top) { Rectangle().fill(UsageColors.line).frame(height: 1) }
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, site in
+                    VStack(spacing: 0) {
+                        if index > 0 { Rectangle().fill(UsageColors.line).frame(height: 1).padding(.leading, 44) }
+                        Button { withAnimation(UsageMotion.snappy) { openSite = openSite == site.id ? nil : site.id } } label: {
+                            SiteRow(site: site, share: site.seconds / top,
+                                    average: data.kind == .day ? nil : site.seconds / Double(max(1, begun.count)))
+                        }
+                        .buttonStyle(.plain)
+                        if openSite == site.id { siteDetail(site) }
+                    }
+                }
+                if !rest.isEmpty {
+                    Rectangle().fill(UsageColors.line).frame(height: 1)
+                    Button { withAnimation(UsageMotion.snappy) { showAllSites.toggle() } } label: {
+                        HStack {
+                            Text(showAllSites ? "Show fewer" : "\(rest.count) other website\(rest.count == 1 ? "" : "s")")
+                            Spacer()
+                            if !showAllSites {
+                                Text(UsageMath.duration(rest.reduce(0) { $0 + $1.seconds })).foregroundStyle(.secondary)
+                            }
+                            Image(systemName: showAllSites ? "chevron.up" : "chevron.down")
+                                .font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .padding(.vertical, 13)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    if openSite == site.id { siteDetail(site) }
                 }
-            }
-            if !rest.isEmpty {
-                Rectangle().fill(UsageColors.line).frame(height: 1)
-                Button { withAnimation(UsageMotion.snappy) { showAllSites.toggle() } } label: {
-                    HStack {
-                        Text(showAllSites ? "Show fewer" : "\(rest.count) other website\(rest.count == 1 ? "" : "s")")
-                        Spacer()
-                        if !showAllSites {
-                            Text(UsageMath.duration(rest.reduce(0) { $0 + $1.seconds })).foregroundStyle(.secondary)
-                        }
-                        Image(systemName: showAllSites ? "chevron.up" : "chevron.down")
-                            .font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .padding(.vertical, 13)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, rest.isEmpty ? 6 : 0)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(UsageColors.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .id(app.id)
     }
 
     /// One website, opened: its hours or days, and which browsers it was in.
     private func siteDetail(_ site: UsageSite) -> some View {
         let values: [TimeInterval] = data.kind == .day ? (site.hourly.count == 24 ? site.hourly : [])
             : periodDays.map { d in d.sites.first { $0.id == site.id }?.seconds ?? 0 }
-        let labels: [String] = switch data.kind {
-        case .day: ["00", "06", "12", "18", "24"]
-        case .week: periodDays.map { $0.date.formatted(.dateTime.weekday(.narrow)) }
-        case .month: ["1", "8", "15", "22", "29"]
-        }
         let browsers = site.browsers.sorted { $0.value > $1.value }.map { id, seconds in
             "\(apps.first { $0.id == id }?.name ?? id) \(UsageMath.duration(seconds))"
         }
         return VStack(alignment: .leading, spacing: 10) {
             if !values.isEmpty, values.contains(where: { $0 > 0 }) {
-                UsageBars(values: values, now: data.kind == .day ? currentHour : currentDayIndex, labels: labels,
+                UsageBars(values: values, now: data.kind == .day ? currentHour : currentDayIndex, labels: barLabels,
                           height: 56, labelsUnder: data.kind == .week)
             }
-            Text("In " + browsers.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
+            if browsers.count > 1 {
+                Text("In " + browsers.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
+            }
         }
         .padding(.leading, 44)
         .padding(.bottom, 12)
@@ -582,7 +637,7 @@ private struct AppRow: View {
     }
 }
 
-/// A website in Websites: a globe, the site, its time and a bar against the most used one.
+/// A website in a browser's Websites: a globe, the site, its time and a bar against the most used one.
 private struct SiteRow: View {
     let site: UsageSite
     let share: Double
