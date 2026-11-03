@@ -116,7 +116,7 @@ struct ChatView: View {
         }) {
             if let course = chat.course { PracticeExamView(course: course.id, courseName: course.name) }
         }
-        .fullScreenCover(item: $studying) { target in
+        .macWindowCover(item: $studying) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
         .sheet(isPresented: $showPastChats, onDismiss: {

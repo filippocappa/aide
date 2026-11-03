@@ -12,6 +12,7 @@ struct StudySessionView: View {
     var focus: [String] = []
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.coverClose) private var coverClose
     @State private var bank: QuizBank?
     @State private var error: String?
     @State private var mode: StudyMode = .flashcards
@@ -24,11 +25,16 @@ struct StudySessionView: View {
 
     enum Scope: Hashable { case all, weakest, picked }
 
+    /// Out of it: on the Mac it's a window of its own, which `dismiss` doesn't close (`coverClose`).
+    private func close() {
+        if let coverClose { coverClose() } else { dismiss() }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
                 if let quiz {
-                    StudyRunView(quiz: quiz, again: { withAnimation { self.quiz = nil } }, close: { dismiss() })
+                    StudyRunView(quiz: quiz, again: { withAnimation { self.quiz = nil } }, close: { close() })
                         .id(quiz.id)
                 } else {
                     setup
@@ -66,7 +72,7 @@ struct StudySessionView: View {
             .padding(.bottom, 16)
         }
         .pageGlow(Theme.study)
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } } }
         .bottomBar {
             if bank != nil, available.total > 0 {
                 Button { Task { await start() } } label: {
