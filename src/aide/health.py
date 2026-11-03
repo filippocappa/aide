@@ -41,6 +41,31 @@ def _clean(value):
     return value
 
 
+def _minutes(value) -> int | None:
+    return round(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _sleep(sleep: dict) -> dict | None:
+    """The night as the app reads it (bedtime, wake, asleep_min and in_bed_min are needed there), or None when it's
+    not usable: one bad night stored would stop the app reading any day. Minute counts are whole minutes; a missing
+    in_bed_min is the time from bedtime to wake."""
+    try:
+        bedtime, wake = datetime.fromisoformat(sleep["bedtime"]), datetime.fromisoformat(sleep["wake"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    out = dict(sleep)
+    for key, value in sleep.items():
+        if key.endswith("_min"):
+            if (n := _minutes(value)) is None:
+                del out[key]
+            else:
+                out[key] = n
+    if "asleep_min" not in out:
+        return None
+    out.setdefault("in_bed_min", max(0, round((wake - bedtime).total_seconds() / 60)))
+    return out
+
+
 def check_day(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("each day must be an object")
@@ -51,13 +76,21 @@ def check_day(raw: dict) -> dict:
         raise ValueError(f"date must be YYYY-MM-DD, not {raw.get('date')!r}") from None
     if "sleep" in day and not isinstance(day["sleep"], dict):
         raise ValueError(f"{day['date']}: sleep must be an object")
+    if "sleep" in day and (sleep := _sleep(day["sleep"])) is None:
+        del day["sleep"]  # the rest of the day is kept
+    elif "sleep" in day:
+        day["sleep"] = sleep
     hourly = day.get("hr_hourly")
     if hourly is not None and (not isinstance(hourly, list) or len(hourly) != 24
                                or not all(h is None or isinstance(h, (int, float)) for h in hourly)):
         raise ValueError(f"{day['date']}: hr_hourly must be 24 numbers or nulls")
+    if hourly is not None:
+        day["hr_hourly"] = [None if h is None else round(h) for h in hourly]
     workouts = day.get("workouts", [])
     if not isinstance(workouts, list) or not all(isinstance(w, dict) and w.get("id") for w in workouts):
         raise ValueError(f"{day['date']}: workouts must be a list of objects with an id")
+    if "workouts" in day:  # one without a type can't be shown: dropped
+        day["workouts"] = [w for w in workouts if isinstance(w.get("type"), str) and w["type"]]
     return day
 
 
