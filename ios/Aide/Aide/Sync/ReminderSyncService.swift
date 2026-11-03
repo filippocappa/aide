@@ -22,6 +22,48 @@ struct SyncState: Codable, Equatable {
     /// Unused since every list syncs; kept so older saved state still decodes.
     var listID: String?
     var entries: [String: SnapshotEntry] = [:]
+    /// Deletions held back because one pass would have deleted too many at once (#35).
+    var held: HeldDeletes?
+}
+
+struct HeldDeletes: Codable, Equatable {
+    var ids: Set<String>
+    var since: Date
+}
+
+/// Which snapshot entries missing from a fetch go up as deleted (#35). A fetch can miss reminders that are still
+/// there (an iCloud list briefly unavailable), and the server deletes for good, so: nothing in a list the phone
+/// can't see right now, and a pass that would delete many at once is held until a later pass sees the same.
+struct DeletePlan: Equatable {
+    /// Sent as deleted now.
+    var send: Set<String>
+    /// Missing but kept: their list is absent, or they're held.
+    var kept: Set<String>
+    var held: HeldDeletes?
+
+    static let massCount = 5
+    /// A held deletion goes up only on a pass at least this much later (not the same sync's quick extra passes).
+    static let confirmAfter: TimeInterval = 60
+
+    static func make(entries: [String: SnapshotEntry], seen: Set<String>, lists: Set<String>,
+                     held: HeldDeletes?, now: Date) -> DeletePlan {
+        let missing = Set(entries.keys).subtracting(seen)
+        // An entry from before lists were recorded can't be checked; the mass rule still covers it.
+        let eligible = missing.filter { entries[$0]?.list.map(lists.contains) ?? true }
+        let mass = eligible.count > massCount && eligible.count * 3 > entries.count
+        guard mass else { return DeletePlan(send: eligible, kept: missing.subtracting(eligible), held: nil) }
+
+        var send: Set<String> = []
+        var nextHeld: HeldDeletes?
+        if let held, now.timeIntervalSince(held.since) >= confirmAfter {
+            send = eligible.intersection(held.ids)
+            let rest = eligible.subtracting(send)
+            nextHeld = rest.isEmpty ? nil : HeldDeletes(ids: rest, since: now)
+        } else {
+            nextHeld = HeldDeletes(ids: eligible, since: held?.since ?? now)
+        }
+        return DeletePlan(send: send, kept: missing.subtracting(send), held: nextHeld)
+    }
 }
 
 enum SyncError: LocalizedError {
@@ -96,15 +138,17 @@ final class ReminderSyncService: ObservableObject {
             resyncRequested = false
             passes += 1
             do {
-                try await syncPass()
-                lastError = nil
+                let again = try await syncPass()
+                lastError = state.held.map {
+                    "Holding \($0.ids.count) deletions from Apple Reminders until the next sync sees them gone too."
+                }
                 lastSync = Date()
+                // Reminders just created on the phone must report their apple_id back.
+                if again { resyncRequested = true }
             } catch {
                 lastError = error.localizedDescription
                 return
             }
-            // Reminders just created on the phone must report their apple_id back.
-            if state.entries.values.contains(where: \.needsReport) { resyncRequested = true }
         } while resyncRequested && passes < 3
     }
 
@@ -132,9 +176,12 @@ final class ReminderSyncService: ObservableObject {
         return appleID.flatMap(findReminder)
     }
 
-    private func syncPass() async throws {
+    /// One round trip. The state is worked on as a copy and kept only when the whole pass worked, so a throw
+    /// leaves the last good snapshot. Returns whether a reminder still has to report back (another pass).
+    private func syncPass() async throws -> Bool {
         guard let fallback = resolveCalendar() else { throw SyncError.noList }
         let calendars = store.calendars(for: .reminder)
+        var state = self.state
 
         let local = try await fetchReminders()
         var localByID: [String: EKReminder] = [:]
@@ -157,11 +204,15 @@ final class ReminderSyncService: ObservableObject {
             if let entry, entry.list != nil, moved, !edited { c.modifiedAt = Wire.utc(Date()) }
             changes.append(c)
         }
-        for (ext, entry) in state.entries where localByID[ext] == nil {
+        let deletes = DeletePlan.make(entries: state.entries, seen: Set(localByID.keys),
+                                      lists: Set(calendars.map(\.title)), held: state.held, now: Date())
+        for ext in deletes.send {
+            guard let entry = state.entries[ext] else { continue }
             changes.append(ReminderChange(
                 id: entry.serverID, appleId: ext, title: "", notes: "", dueAt: nil,
                 completed: false, modifiedAt: Wire.utc(Date()), deleted: true))
         }
+        state.held = deletes.held
 
         let response = try await api.syncReminders(cursor: state.cursor, changes: changes,
                                                    lists: calendars.map(\.title), defaultList: fallback.title)
@@ -170,28 +221,39 @@ final class ReminderSyncService: ObservableObject {
 
         // Server → phone
         var touched: [(ek: EKReminder, serverID: String, serverAppleID: String?, serverList: String?)] = []
-        for server in response.reminders {
-            let known = server.appleId
-                ?? state.entries.first(where: { $0.value.serverID == server.id })?.key
-            var ek = known.flatMap { localByID[$0] ?? findReminder($0) }
+        do {
+            for server in response.reminders {
+                let known = server.appleId
+                    ?? state.entries.first(where: { $0.value.serverID == server.id })?.key
+                var ek = known.flatMap { localByID[$0] ?? findReminder($0) }
 
-            if server.deleted {
-                if let ek { try store.remove(ek, commit: false) }
-                state.entries = state.entries.filter { $0.value.serverID != server.id }
-                continue
+                if server.deleted {
+                    if let ek { try store.remove(ek, commit: false) }
+                    state.entries = state.entries.filter { $0.value.serverID != server.id }
+                    continue
+                }
+                // Missing from this fetch but not deleted (its list is away, or the delete is held): making it
+                // again would be a duplicate. Report it when it's back, so the server's newer version comes down.
+                if ek == nil, let known, deletes.kept.contains(known) {
+                    state.entries[known]?.needsReport = true
+                    continue
+                }
+                if ek == nil {
+                    if server.completed { continue } // don't resurrect finished history
+                    ek = EKReminder(eventStore: store)
+                }
+                guard let ek else { continue }
+                let calendar = list(named: server.list, in: calendars) ?? fallback
+                let moved = ek.calendar?.calendarIdentifier != calendar.calendarIdentifier
+                if moved { ek.calendar = calendar }
+                if apply(server, to: ek) || moved || ek.isNew { try store.save(ek, commit: false) }
+                touched.append((ek, server.id, server.appleId, server.list))
             }
-            if ek == nil {
-                if server.completed { continue } // don't resurrect finished history
-                ek = EKReminder(eventStore: store)
-            }
-            guard let ek else { continue }
-            let calendar = list(named: server.list, in: calendars) ?? fallback
-            let moved = ek.calendar?.calendarIdentifier != calendar.calendarIdentifier
-            if moved { ek.calendar = calendar }
-            if apply(server, to: ek) || moved || ek.isNew { try store.save(ek, commit: false) }
-            touched.append((ek, server.id, server.appleId, server.list))
+            try store.commit()
+        } catch {
+            store.reset() // nothing half-staged for the next pass's commit
+            throw error
         }
-        try store.commit()
 
         // Record what the phone looks like now, so our own writes don't echo back as phone changes.
         for t in touched {
@@ -203,7 +265,9 @@ final class ReminderSyncService: ObservableObject {
                 needsReport: t.serverAppleID != ext || t.serverList != list, list: list)
         }
         state.cursor = response.cursor
-        persist()
+        self.state = state
+        try persist()
+        return state.entries.contains { $0.value.needsReport && !deletes.kept.contains($0.key) }
     }
 
     // MARK: EventKit helpers
@@ -280,7 +344,7 @@ final class ReminderSyncService: ObservableObject {
         return changed
     }
 
-    private func persist() {
-        if let data = try? JSONEncoder().encode(state) { try? data.write(to: Self.stateURL, options: .atomic) }
+    private func persist() throws {
+        try JSONEncoder().encode(state).write(to: Self.stateURL, options: .atomic)
     }
 }

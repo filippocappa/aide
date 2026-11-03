@@ -227,6 +227,7 @@
 		EA7898D2B9F95FC9F72530FD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */; };
 		EB6BE3F5468E8439B148575C /* iOSCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A9F5F8A8D6464DACCB6EB02 /* iOSCompat.swift */; };
 		EBAB39137C9D647DB457D91E /* StudyCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 031232FED72D4C9A787D8843 /* StudyCards.swift */; };
+		EC0A504DBB02F8F14B747CBB /* ReminderSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 353816F15681ED315F71639A /* ReminderSyncTests.swift */; };
 		EC4367366F1C80C9EE522308 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
 		EDEC57973F1B779661439B68 /* FinanceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CE86F8FED7A90934C84B6A /* FinanceViews.swift */; };
 		EE7CC3F0646FABF4F63B420B /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */; };
@@ -338,6 +339,7 @@
 		2FF2F172DF24BB3119602573 /* HabitControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HabitControl.swift; sourceTree = "<group>"; };
 		31033B32F4A37807EB1A7190 /* ErrandStageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrandStageViews.swift; sourceTree = "<group>"; };
 		31E717ACC950E43DC53B945E /* RichText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichText.swift; sourceTree = "<group>"; };
+		353816F15681ED315F71639A /* ReminderSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSyncTests.swift; sourceTree = "<group>"; };
 		36387E8AE9A51ED3851F3281 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		36C0EE858E22DBEE68990F44 /* AideMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AideMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		38F0E0A30B4DF8F0F6F9D585 /* MacAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAppDelegate.swift; sourceTree = "<group>"; };
@@ -760,6 +762,7 @@
 			isa = PBXGroup;
 			children = (
 				0D0E327019026782069A1BA0 /* AideTests.swift */,
+				353816F15681ED315F71639A /* ReminderSyncTests.swift */,
 				CBA4EB2AB198C146DEC3FBE8 /* UsageMathTests.swift */,
 			);
 			path = AideTests;
@@ -1053,6 +1056,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				097F7BCA07F7A5285EB983E7 /* AideTests.swift in Sources */,
+				EC0A504DBB02F8F14B747CBB /* ReminderSyncTests.swift in Sources */,
 				E2D25A324352CC8BE6057E32 /* UsageMathTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
