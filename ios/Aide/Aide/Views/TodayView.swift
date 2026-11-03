@@ -542,6 +542,10 @@ private struct DigestCard: View {
                     text += night.asleepMin < usual ? " · \(gap) under your usual" : " · \(gap) over your usual"
                 }
                 out.append(Line(icon: "moon.zzz.fill", color: .indigo, text: text))
+            case .weather(let weather):
+                let now = weather.now.map { "\($0.temp)° now · " } ?? ""
+                out.append(Line(icon: WeatherCard.icon(weather.now?.symbol ?? weather.symbol), color: .cyan,
+                                text: now + weather.summary))
             case .calendar(let events):
                 let upcoming = events.filter { $0.allDay || ($0.startDate ?? .distantFuture) > Date() }
                 for event in upcoming.prefix(2) {

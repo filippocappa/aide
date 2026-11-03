@@ -1132,6 +1132,7 @@ class AlertWatcher:
                  live: "LiveActivities | None" = None):
         self.store, self.transit, self.location, self.walks, self.push = store, transit, location, walks, push
         self.live = live
+        self.weather = None  # weather.Weather, set by the app: rain when it's time to leave goes in the alert
         # Trams with a Live Activity, by its key: {"trip", "day", "stop", "line", "leave_by", "walk", "state",
         # "started", "at", "shift", "seq", "to"}, and once the user is on board "riding", "told", "board_at", "to_seq".
         # Saved after each tick (tram_follows), so a restart doesn't leave an activity on the phone that nothing updates.
@@ -1215,6 +1216,8 @@ class AlertWatcher:
         at_stop = bool(fix and now - fix["at"] <= FIX_FRESH and metres(fix["lat"], fix["lon"], stop["lat"], stop["lon"])
                        <= max(AT_THE_STOP, fix["accuracy"] or 0))
         title, body = alert_text(tram, after, stop, walk, leave, now, a["event"], where, self.transit.live.down, at_stop)
+        if leave and self.weather and (note := await self.weather.note_for(stop["lat"], stop["lon"], now)):
+            body += f" {note}"
         if await self.start_live(a, tram, after, stop, walk, leave, title, body, now, where, at_stop):
             log.info("tram alert %s: Live Activity started", a["id"])
         elif not (self.push and await self.push.send_transit(a["id"], title, body)):

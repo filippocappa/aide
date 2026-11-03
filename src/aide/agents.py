@@ -21,6 +21,7 @@ REMINDERS = ("create_reminder", "list_reminders", "update_reminder", "complete_r
 MAIL = ("search_mail", "list_unread", "read_mail", "read_thread", "send_mail", "reply_mail", "list_drafts",
         "draft_reply", "discard_draft")
 MAPS = ("find_places", "travel_time")
+WEATHER = ("weather",)
 TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alerts", "add_transit_alert",
            "update_transit_alert", "delete_transit_alert")
 WEB = ("web_search", "research", "fetch_page")
@@ -215,6 +216,15 @@ start from the user's home unless you pass near or origin: "here" is where their
 "near me"; if your memory has a home address, pass it, since it's newer than the configured one. The app shows \
 travel_time's route as a card (time, traffic, rides and a button to open it in Maps), so answer in a line and don't \
 paste the link."""
+
+_WEATHER = """- Weather: the weather tool gives the forecast (now, the next hours, 7 days; a day hour by hour with \
+`day`), where the phone is or else at home, or at a `place`. Use it rather than guessing when the user asks, or \
+when it matters to what they're planning (going out, a trip, what to wear). Say it in a line, with what it means \
+for them ("rain from 17:00, so take an umbrella for the walk home"), not a table of numbers."""
+
+_WEATHER_TRAINING = """- Weather and training: before planning or suggesting an outdoor session (a run, a ride), check the \
+weather for when it's planned. If a run in the calendar falls during rain, a storm, strong wind or heat (32° or \
+more), say so and suggest a better hour that day or an indoor session; otherwise don't mention the weather."""
 
 _TRANSIT = """- GTT (Turin's trams, buses and metro): transit_arrivals says when the next ones come, live; with no stop it \
 looks near the user's phone. When you know where the user is going (they say, or memory has their usual places), \
@@ -419,7 +429,7 @@ AIDE_PROMPT = _prompt(
     "You are Aide, a personal assistant for one person, and the one they talk to first. Like an executive "
     "assistant with a team behind them, you understand what they want, hand it to the specialist whose work it "
     "is, and report back. You look things up on the web and on maps yourself.",
-    _BASICS, _CARDS, _PAGES, _SETTINGS, _PHOTOS, _MEMORY_SHARED, _WEB, _VIDEO, _MAPS, _TRANSIT, _BROWSER, _DELEGATE,
+    _BASICS, _CARDS, _PAGES, _SETTINGS, _PHOTOS, _MEMORY_SHARED, _WEB, _VIDEO, _MAPS, _WEATHER, _TRANSIT, _BROWSER, _DELEGATE,
     _ROUTINES, _WATCHES,
     _ROUTINES_ANY, _OBJECTIVES, _OBJECTIVES_ANY,
 )
@@ -428,7 +438,7 @@ SECRETARY_PROMPT = _prompt(
     "You are Secretary, one of the user's assistants: their calendar, reminders and mail. You are efficient: "
     "you get the day organised in as few words as possible, notice clashes and loose ends, and propose the "
     "next step instead of asking open questions.",
-    _BASICS, _CALENDAR, _MAIL, _CARDS, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _TRANSIT, _ASKED, _ROUTINES,
+    _BASICS, _CALENDAR, _MAIL, _CARDS, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _WEATHER, _TRANSIT, _ASKED, _ROUTINES,
     _WATCHES, _OBJECTIVES,
 )
 
@@ -446,7 +456,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day; to put a session in it, ask Secretary.",
-    _BASICS, _QUEUE, _HEALTH, _HABITS, _LOCKS, _CARDS, _PAGES, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _HEALTH, _HABITS, _LOCKS, _CARDS, _PAGES, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _WEATHER, _WEATHER_TRAINING, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 FINANCE_PROMPT = _prompt(
@@ -502,13 +512,13 @@ LATER_WATCHES = tuple((n, a, dict(i, days=list(i["days"]))) for n, a, i in _LATE
 
 AGENTS: dict[str, AgentDef] = {a.id: a for a in (
     AgentDef("aide", "Aide", "Talks to all of them", "#34413F",
-             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *VIDEO, *MAPS, *TRANSIT, *BROWSER, *SETTINGS),
+             ("What's on today?", "Plan my week", "Remind me to "), AIDE_PROMPT, (*WEB, *VIDEO, *MAPS, *WEATHER, *TRANSIT, *BROWSER, *SETTINGS),
              orchestrator=True,
              routine_ideas=(_idea("Plan my week", "Look at my calendar, reminders and habits for the coming week and "
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
     AgentDef("secretary", "Secretary", "Calendar, reminders and mail", "#3B6FD8",
              ("What's on my calendar today?", "Any mail I need to answer?", "Remind me to "),
-             SECRETARY_PROMPT, (*CALENDAR, *PLANS, *REMINDERS, *MAIL, *MAPS, *TRANSIT, *WEB),
+             SECRETARY_PROMPT, (*CALENDAR, *PLANS, *REMINDERS, *MAIL, *MAPS, *WEATHER, *TRANSIT, *WEB),
              routine_ideas=(_idea("Mail sweep", "Go through my unread mail: what needs an answer from me today, what "
                                   "can wait, and anything with a date to put in the calendar.", "09:00",
                                   (1, 2, 3, 4, 5)),
@@ -520,7 +530,7 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training, food and habits", "#23A26D",
              ("How did I sleep this week?", "Should I train hard today?", "What have I eaten today?"),
-             COACH_PROMPT, (*HEALTH, *WEIGHT, *HABITS, *FOOD, *LOCKS, *CALENDAR_READ, *WEB),
+             COACH_PROMPT, (*HEALTH, *WEIGHT, *HABITS, *FOOD, *LOCKS, *CALENDAR_READ, *WEATHER, *WEB),
              routine_ideas=(_idea("Weekly recap", "Recap my sleep, training and habits for the week, and suggest one "
                                   "thing for next week.", "18:00", (7,)),
                             *(i for a, i in _STARTING_WATCHES if a == "coach"),
@@ -558,6 +568,7 @@ _CONNECTORS = (
     ("web", "Web search", WEB, set()),
     ("youtube", "YouTube", VIDEO, {"summarize_video"}),
     ("maps", "Google Maps", MAPS, set()),
+    ("weather", "Weather", WEATHER, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
     ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand"}),
     ("payments", "Payments", FINANCE, {"log_payment", "recategorize", "set_budget", "set_subscription",

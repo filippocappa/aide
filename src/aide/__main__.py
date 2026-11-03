@@ -76,6 +76,7 @@ from .tools.transit import leave_tools, transit_tools
 from .tools.videos import video_tools
 from .leave import LeaveWatcher
 from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts
+from .weather import Weather, weather_tools
 from .upcoming import EventWatcher
 from .lockwatch import LockWatcher
 from .wake import WakeService
@@ -206,6 +207,8 @@ def main() -> None:
             log.warning("AIDE_HOME_ADDRESS not set: Maps tools need an explicit origin")
     else:
         log.warning("GOOGLE_MAPS_API_KEY not set: Maps tools disabled")
+    weather = Weather(settings.timezone, settings.home_address, location, maps.locate if maps else None)  # (q, near)
+    tools += weather_tools(weather, settings.timezone)
     transit = alerts = watcher = boards = walks = None
     if settings.gtt:
         timetable = Timetable(settings.db_path.parent / "gtt.db", settings.timezone)
@@ -213,6 +216,7 @@ def main() -> None:
         alerts = AlertStore(db.conn, settings.timezone, timetable)
         walks = Walks(maps)
         watcher = AlertWatcher(alerts, transit, location, walks, push, live)
+        watcher.weather = weather
         boards = Boards(transit, location, walks)
         tools += transit_tools(transit, alerts, location, boards, watcher)
     else:
@@ -267,6 +271,7 @@ def main() -> None:
                            health, maps, settings.home_address)
     digest.objectives, digest.planner, digest.engine = objectives, planner, engine
     digest.whereabouts = whereabouts
+    digest.weather = weather
     digest.drafts = drafts if gmail else None
 
     if not whisper_available():

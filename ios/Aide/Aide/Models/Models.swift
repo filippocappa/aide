@@ -1504,6 +1504,7 @@ struct DigestSection: Decodable, Identifiable {
         case recovery(Recovery)
         case objectives([Objective], period: String)
         case replies([MailDraft])
+        case weather(DigestWeather)
         case text(String)
         case unknown // a section type this app version doesn't know: skipped
     }
@@ -1526,13 +1527,49 @@ struct DigestSection: Decodable, Identifiable {
         case "objectives": content = .objectives(try c.decode([Objective].self, forKey: .objectives),
                                                  period: try c.decodeIfPresent(String.self, forKey: .period) ?? "day")
         case "replies": content = .replies(try c.decode([MailDraft].self, forKey: .drafts))
+        case "weather": content = (try? c.decode(DigestWeather.self, forKey: .weather)).map { .weather($0) } ?? .unknown
         case "text": content = .text(try c.decode(String.self, forKey: .text))
         default: content = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
         case type, title, events, items, reminders, habits, sleep, usualAsleepMin, score, text, objectives, period, drafts
+        case weather
     }
+}
+
+/// The day's weather in a one-day digest (docs/API.md, "Weather"). Temperatures in °C.
+struct DigestWeather: Decodable, Hashable {
+    struct Now: Decodable, Hashable {
+        let temp: Int
+        let feels: Int?
+        let words: String
+        let symbol: String
+    }
+    struct Rain: Decodable, Hashable {
+        let from: String
+        let to: String
+        let chance: Int
+        let mm: Double?
+        let snow: Bool?
+    }
+    struct Hour: Decodable, Hashable, Identifiable {
+        let at: String
+        let temp: Int
+        let rainChance: Int
+        let symbol: String
+        var id: String { at }
+    }
+    let place: String?
+    let summary: String
+    let high: Int
+    let low: Int
+    let words: String
+    let symbol: String
+    let now: Now?
+    let rain: Rain?
+    let flags: [String]?
+    let hours: [Hour]?
 }
 
 struct Digest: Decodable {
