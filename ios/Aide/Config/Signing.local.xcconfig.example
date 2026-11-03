@@ -6,8 +6,10 @@ DEVELOPMENT_TEAM = XXXXXXXXXX
 // server's .env to the same.
 // AIDE_BUNDLE_ID = com.example.aide
 
-// Push notifications (docs/API.md, Push), plus Apple Health. Only with the paid team; leave it out for a
-// Personal Team. (If a Personal Team won't sign Apple Health either, set AIDE_ENTITLEMENTS = to turn it off.)
+// Push notifications (docs/API.md, Push), plus Apple Health, Screen Time and the App Group. Only with the paid
+// team; leave it out for a Personal Team (then Config/Base.xcconfig's Default.entitlements: no push). If a Personal
+// Team won't sign Health or Screen Time either, use only the App Group, so the widgets keep the keychain:
+// AIDE_ENTITLEMENTS = Aide/AppGroup.entitlements
 AIDE_ENTITLEMENTS = Aide/Aide.entitlements
 
 // Push to the Mac app too (docs/API.md, Push: `app` "mac"). Same rule: only with the paid team.
