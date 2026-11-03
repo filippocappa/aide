@@ -53,6 +53,8 @@ struct MacCoverWindowContent: View {
                     // The exam has its own ways out (Close, Quit that asks first, Done); the red button and ⌘W
                     // would just drop it.
                     window.standardWindowButton(.closeButton)?.isEnabled = false
+                    // Its own window over Aide's, never a tab beside another.
+                    window.tabbingMode = .disallowed
                     if let frame = entry.frame { window.setFrame(Self.popUp(over: frame), display: true) }
                     if entry.fullScreen, !window.styleMask.contains(.fullScreen) {
                         DispatchQueue.main.async { window.toggleFullScreen(nil) }
@@ -102,8 +104,21 @@ private struct MacWindowCover: ViewModifier {
     @State private var open: UUID?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    /// Set inside a cover window: one opened from there (the Learn path's lesson, a lesson's quiz) is a sheet in that
+    /// window, not a window over it (macOS would put the two in tabs), and closes only itself.
+    @Environment(\.coverClose) private var inCover
 
-    func body(content: Content) -> some View {
+    @ViewBuilder func body(content: Content) -> some View {
+        if inCover != nil {
+            content.sheet(isPresented: $isPresented, onDismiss: onDismiss) {
+                cover().macCoverSize().environment(\.coverClose, nil)
+            }
+        } else {
+            windowed(content)
+        }
+    }
+
+    private func windowed(_ content: Content) -> some View {
         content.onChange(of: isPresented, initial: true) { _, on in
             if on, open == nil {
                 let id = UUID()
