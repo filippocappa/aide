@@ -57,6 +57,7 @@ from ..videos import VideoWorker, find_link
 from ..wake import WakeService
 from ..weight import WeightStore
 from ..banks import Banks, BankError
+from ..bedtime import Bedtime
 from ..finance import CATEGORIES as FINANCE_CATEGORIES, NOT_SPENDING, FinanceStore, parse_amount
 
 log = logging.getLogger(__name__)
@@ -583,6 +584,7 @@ class LiveTokenIn(BaseModel):
 class LiveSettingsPatch(BaseModel):
     events: bool | None = None
     locks: bool | None = None
+    bedtime: bool | None = None
 
 
 class LiveActivityIn(BaseModel):
@@ -639,7 +641,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                foods: FoodDB | None = None, off: OpenFoodFacts | None = None,
                weights: WeightStore | None = None, videos: VideoWorker | None = None,
                lessons: LessonStore | None = None, finance: FinanceStore | None = None,
-               banks: Banks | None = None, bank_redirect: str | None = None) -> FastAPI:
+               banks: Banks | None = None, bank_redirect: str | None = None,
+               bedtime: Bedtime | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -2438,6 +2441,25 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(502, f"Coach couldn't answer: {e}") from None
         return {"kind": body.kind, "date": day.isoformat(), "text": answer.strip()}
 
+    @app.get("/v1/health/bedtime", dependencies=[Depends(auth)])
+    async def health_bedtime():
+        """Tonight's plan, the settings, the learnt wake times and the last week's nights against their plans."""
+        if bedtime is None:
+            raise HTTPException(404, "bedtime isn't set up")
+        today = datetime.now(tz).date()
+        return {"tonight": await bedtime.tonight(), "settings": bedtime.settings(), "usual": bedtime.usual(),
+                "nights": bedtime.nights(today)}
+
+    @app.patch("/v1/health/bedtime/settings", dependencies=[Depends(auth)])
+    async def edit_health_bedtime(body: dict = Body(...)):
+        if bedtime is None:
+            raise HTTPException(404, "bedtime isn't set up")
+        try:
+            settings = bedtime.update_settings(**body)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        return {"tonight": await bedtime.tonight(), "settings": settings, "usual": bedtime.usual()}
+
     @app.get("/v1/health/weight", dependencies=[Depends(auth)])
     async def weight(days: int = Query(90, ge=1, le=366)):
         today = weights.today()
@@ -3192,7 +3214,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.patch("/v1/live/settings", dependencies=[Depends(auth)])
     async def edit_live_settings(body: LiveSettingsPatch):
-        return live.update_settings(events=body.events, locks=body.locks)
+        return live.update_settings(events=body.events, locks=body.locks, bedtime=body.bedtime)
 
     @app.post("/v1/live/activities", dependencies=[Depends(auth)])
     async def live_activity(body: LiveActivityIn):

@@ -105,8 +105,8 @@ from the tools the assistant used in that turn, not parsed from its text:
     `…/quiz`: the Study page for the course, or one topic with `?topic=<t_…>&title=<title>`. `…/lesson?topic=<t_…>
     &title=<title>`: that topic's lesson.
   - `aide://settings`: Settings. `aide://settings/<page>`, `<page>` one of `digests`, `memory`, `voice`, `plan`
-    (Claude plan), `browser`, `nutrition`, `videos`, `notifications`, `reminders`, `health`, `location` (location and
-    trams), `screentime`, `payments`, `moodle`, `obsidian`. A page the device doesn't have (the Mac has no
+    (Claude plan), `browser`, `nutrition`, `videos`, `notifications`, `reminders`, `health`, `bedtime` (since
+    2026-11-03), `location` (location and trams), `screentime`, `payments`, `moodle`, `obsidian`. A page the device doesn't have (the Mac has no
     `notifications`, `reminders`, `health`, `location`, `payments`) opens Settings.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
@@ -620,6 +620,7 @@ made last, since 2026-10-26) →
     {"type": "recovery", "title": "Recovery", "level": "good", "summary": "HRV above your usual, resting heart rate normal.",
      "score": 72, "hrv_ms": 61.5, "hrv_usual_ms": 55.0, "resting_hr": 52, "resting_hr_usual": 54},
     {"type": "weather", "title": "Weather", "weather": { /* see Weather below; one-day digests only */ }},
+    {"type": "bedtime", "title": "Tonight", "bedtime": { /* a Plan, see Apple Health, Bedtime; evening only */ }},
     {"type": "replies", "title": "Replies to send", "drafts": [ /* Draft objects, see Mail drafts; evening only */ ]},
     {"type": "objectives", "title": "Objectives for today", "period": "day", "start": "2026-10-19",
      "objectives": [ /* Objective objects, see Objectives */ ]},
@@ -632,8 +633,8 @@ The app skips section types it doesn't know. `404` if none has been generated ye
 - **Morning and evening:** `daily` is the morning digest (the app calls it
   "Morning"). `evening` is for before bed: tomorrow's calendar ("Tomorrow"), reminders due by the end of tomorrow,
   habits not yet done today (`habits` section, only the undone ones), today's mail, the replies Secretary drafted
-  just before it (`replies`, live: only those still waiting; since 2026-10-22, see Mail drafts), and a short `text`
-  wrap-up (titled "Wrap-up"). It always looks at tomorrow, whatever the clock says. Default time 22:00.
+  just before it (`replies`, live: only those still waiting; since 2026-10-22, see Mail drafts), tonight's
+  bedtime (`bedtime`, since 2026-11-03, unless it's off), and a short `text` wrap-up (titled "Wrap-up"). It always looks at tomorrow, whatever the clock says. Default time 22:00.
 - **What it covers:** daily = one day, weekly = 7 days, monthly = to the end of the month. The period starts today,
   or tomorrow if the digest is made after 17:00 (so the Sunday 18:00 weekly covers Monday to Sunday). Section
   titles say which ("Today", "Tomorrow", "Next 7 days", "October"; reminders "Due today", "Due in October", …).
@@ -1664,6 +1665,59 @@ through Aide that day, else Health's. The phone writes Aide's readings to Health
 - **Coach** has `log_weight`, `weight_trend` and `delete_weight` (queued). A starting watch, "Weigh-in" (Mondays at
   08:30), speaks up only when there's no reading in the last 7 days or the trend is off the goal.
 
+### Bedtime
+
+Since 2026-11-03 (#53). A steady wake time is the anchor and the bedtime is what moves: waking at about the same
+time every day counts as much as the hours.
+
+- **The wake time.** One set in the settings, else the median wake of the last 28 mornings of the same kind
+  (weekdays, Saturday and Sunday mornings apart; both kinds when one has fewer than 5), rounded to 5 minutes, else
+  07:30. Wakes after 14:00 aren't counted.
+- **An early start.** The first timed calendar event before noon that morning: when to leave for it (the wake
+  briefing's way: Maps from home, arriving 10 minutes early; without Maps, the event's start) less `ready_min`. If
+  that's before the usual wake, the wake moves to it (3 hours at most). A late start never moves it later.
+- **The bedtime** is the wake less the night's sleep need (`need`, as in the sleep score: learnt from the nights,
+  plus the day's strain and recent shortfall), less the usual minutes awake during the night (the median of the
+  last 30 nights, at most 60; 20 before there are 5), less 15 minutes to fall asleep; rounded down to 5 minutes.
+- **The evening.** `lead_min` before the bedtime the server starts the `bedtime` Live Activity (see Live
+  Activities), or sends a `bedtime` push when there's no start token or `bedtime` is off in `/v1/live/settings`.
+  One a night; a nudge more than 30 minutes late (the server was off) isn't sent. With `wind_down` on it also adds a
+  one-off Screen Time lock titled "Bedtime" from the bedtime to the wake time (by Coach; not when another lock
+  already holds then), which then behaves like any lock (its own `lock` countdown, the Mac enforces it).
+- **The plan** is worked out again every 30 minutes until the nudge goes, then kept as it was. From noon it's for
+  tomorrow morning, before noon for this one (still up at 1:00 is still last night).
+- **The morning after.** The wake briefing's greeting may say how close the night came to the plan (only when
+  well off); Coach's `sleep_plan` sees the last 7 nights against theirs, to notice a drift. A plan worked out
+  after its bedtime isn't judged.
+- **The evening digest** has a `bedtime` section (see Digest).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/health/bedtime` | | `{"tonight": Plan \| null, "settings": Settings, "usual": {"weekdays": "07:15", "weekends": "09:00"}, "nights": [Night]}` |
+| `PATCH /v1/health/bedtime/settings` | any of the settings | `{"tonight": Plan \| null, "settings": Settings, "usual": …}`; 422 for a bad value or an unknown key |
+
+- **Settings:** `{"enabled": true, "wake_weekdays": null, "wake_weekends": "09:00", "ready_min": 45,
+  "lead_min": 45, "wind_down": false}`. `wake_*` are "HH:MM", or null to learn them; `ready_min` (getting up to
+  leaving) and `lead_min` (the nudge before the bedtime) are 0–180. `tonight` is null while `enabled` is false.
+  `usual` is what was learnt (null with too few nights).
+- **Plan:**
+  ```json
+  {"date": "2026-11-04", "bedtime": "2026-11-03T22:30:00+01:00", "asleep_by": "2026-11-03T22:45:00+01:00",
+   "wake": "2026-11-04T06:35:00+01:00", "usual_wake": "07:15", "wake_source": "learnt", "earlier_min": 40,
+   "event": {"title": "Exam", "start": "2026-11-04T08:00:00+01:00", "leave": "2026-11-04T07:20:00+01:00",
+             "how": "tram, 30 min"},
+   "need_min": 450, "need": {"need": 450, "base": 450, "strain": 0, "debt": 0}, "awake_min": 20,
+   "nudge_at": "2026-11-03T21:45:00+01:00", "wind_down": false,
+   "why": "In bed by 22:30 to get 7h30 asleep before 8:00 Exam: up at 6:35, 40 min earlier than usual."}
+  ```
+  `date` is the morning it ends on. `wake_source` is `set`, `learnt` or `default`. `event` is the morning's first
+  timed event before noon, or null (`leave` and `how` null without Maps). `earlier_min` is how much it moved the
+  wake (0: it didn't).
+- **Night:** `{"date": "2026-11-03", "planned_bedtime": "…", "planned_asleep": "…", "planned_wake": "…",
+  "asleep": "…", "wake": "…", "asleep_off_min": 25, "wake_off_min": 5, "need_min": 450, "asleep_min": 432}`, newest
+  first, the last 7 mornings with a plan and a night; `*_off_min` positive is late.
+- **Coach** has `sleep_plan` and `set_sleep_plan`.
+
 ### Wake-up briefing
 
 A digest of kind `wake`, sent once per day when the user gets up. It comes **in addition to** the scheduled
@@ -2539,6 +2593,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `location` | silent (like `sync`) | a tram alert wants to know where the phone is | | (not shown) the app sends a fresh fix to `POST /v1/location` |
 | `errand` | alert; `interruption-level: time-sensitive` when it needs you in the live view or waits for a Confirm | a browser errand needs you (a login, a code, a card step), asks something, waits for a Confirm (since 2026-10-30 only when its Live Activity didn't say it), is done or failed (since 2026-10-27). Not shown while the app is on that errand's chat or live view | `errand_id`, `conversation_id` | needing you in the live view: opens it (`aide://errand/<id>`); else the conversation |
 | `finance` | alert | money came into a linked bank account (€10 or more, read while the app wasn't open: "Money in", "€250 from Borsa di studio"), or a bank's consent ends within a week ("Renew Intesa Sanpaolo"); since 2026-11-01 | `payment_id` or `bank_id` | `payment_id`: Money on that payment; `bank_id`: Money's accounts (Renew there) |
+| `bedtime` | alert | the bedtime nudge when no `bedtime` Live Activity could start ("Bedtime at 23:10", the plan's `why`); since 2026-11-03 | `date` (the morning) | the bedtime page (`aide://settings/bedtime`) |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
 ```json
@@ -2559,7 +2614,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 
 ## Live Activities
 
-Four kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's widget extension:
+Five kinds on the Lock Screen and in the Dynamic Island, all drawn by the app's widget extension:
 
 - **`tram`**: a tram alert's countdown. When an alert fires, the server starts it (APNs push-to-start) instead of
   the `transit` push, then keeps it live (the tram's expected time, its delay, the next one) until the tram has left,
@@ -2577,6 +2632,8 @@ failed, the activity goes at once and one normal push takes its place. A chat re
   timed event on the Work calendar ("Macroeconomics in 10 min · Aula 5"), unless leave-now has set a tram alert for it.
 - **`lock`** (since 2026-11-01): a Screen Time lock while it holds, started by the server when the lock comes on
   ("Bedtime · Locked until 07:00"), counting down to when it opens.
+- **`bedtime`** (since 2026-11-03): the evening's countdown to bedtime (see Apple Health, Bedtime), started by the
+  server `lead_min` before it.
 
 The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as before.
 
@@ -2584,11 +2641,11 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent" \| "event" \| "lock", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
+| `POST /v1/live/tokens` | `{"kind": "tram" \| "agent" \| "event" \| "lock" \| "bedtime", "token": "80f1…", "environment": "sandbox" \| "production"}` | `{"ok": true}` |
 | `DELETE /v1/live/tokens/{kind}` | | `{"ok": true}` |
 | `POST /v1/live/activities` | `{"key": "agent:3f2a…", "token": "a91c…", "environment": "sandbox"}` | `{"ok": true}` |
 | `DELETE /v1/live/activities/{key}` | | `{"ok": true}`, also for an unknown key |
-| `GET /v1/live/settings` | | `{"events": true, "locks": true}` |
+| `GET /v1/live/settings` | | `{"events": true, "locks": true, "bedtime": true}` |
 | `PATCH /v1/live/settings` | `{"events": false}` (either field, or both) | the settings |
 
 - `/v1/live/tokens`: a **push-to-start** token (`Activity<…>.pushToStartTokenUpdates`), one per kind; a new one
@@ -2600,7 +2657,8 @@ The app needs iOS 17.2 for push-to-start; older phones get the plain pushes as b
   stops pushing (and, for a tram, stops following it). Keys and tokens older than 12 hours are dropped. Since 2026-10-27, an activity the server started
   and ended before its token came (a short job) is ended as soon as the token comes, within an hour.
 - `/v1/live/settings` (since 2026-10-27): `events` (default true) turns the `event` countdowns on or off.
-  `locks` (since 2026-11-01, default true) turns the `lock` countdowns on or off.
+  `locks` (since 2026-11-01, default true) turns the `lock` countdowns on or off. `bedtime` (since 2026-11-03,
+  default true) the `bedtime` one (off: a plain `bedtime` push instead).
 - Tokens are hex, like device tokens; `environment` as for devices. A token APNs refuses (`410`, `BadDeviceToken`)
   is deleted.
 - Since 2026-10-27 every `start` push carries `"input-push-token": 1`, so iOS gives the new activity an update token
@@ -2773,6 +2831,21 @@ per time a lock holds), `title` (the lock's). Content state:
 - A server restart doesn't end it: it's followed again, like trams and events.
 - The phone only: limits that run out aren't shown (the phone tells the server about those at its next sync).
 - Tapping it opens Health's Screen half (`aide://screen`).
+
+**`bedtime`** (`BedtimeActivityAttributes`, since 2026-11-03). Attributes: `key` (`bedtime:<the morning's date>`),
+`title` ("Bedtime"). Content state:
+
+| Field | Meaning |
+|---|---|
+| `bedtime` | when to be in bed (Unix seconds): the countdown |
+| `wake` | the planned wake time |
+| `since` | when the nudge went: a bar fills from here to `bedtime` |
+| `need_min` | the night's sleep need, minutes |
+| `over` | bedtime has come (the last update, sent with `end`) |
+
+- Started at the nudge with an alert (title "Bedtime at 23:10", body the plan's `why`); `stale-date` is `bedtime`
+  plus 15 minutes. `end` with `over` true at the bedtime, dismissed 15 minutes later.
+- Tapping it opens the bedtime page (`aide://settings/bedtime`).
 
 ## Widgets
 

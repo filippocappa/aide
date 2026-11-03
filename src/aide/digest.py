@@ -35,6 +35,7 @@ from .tools.maps import GoogleMaps
 from .transit import metres
 
 if TYPE_CHECKING:
+    from .bedtime import Bedtime
     from .drafts import Drafts
     from .objectives import ObjectivePlanner, ObjectiveStore
     from .transit import Whereabouts
@@ -234,6 +235,7 @@ class DigestService:
         self.drafts: "Drafts | None" = None  # set by the app when mail is connected: the evening drafts replies
         self.whereabouts: "Whereabouts | None" = None  # where the phone is; set by the app when Maps is on
         self.weather: "Weather | None" = None  # weather.Weather: the day's weather in the one-day digests
+        self.bedtime: "Bedtime | None" = None  # bedtime.Bedtime: tonight's plan in the evening, last night's at wake
         self._spots: dict[str, tuple[float, float] | None] = {}  # an address (home, a place) -> where it is
         self.conn.executescript(SCHEMA)
 
@@ -362,6 +364,8 @@ class DigestService:
         if due:
             sections.append({"type": "reminders", "title": p.reminders_title, "reminders": [
                 {**reminder_json(r, self.tz), "overdue": r.due_at < now} for r in due]})
+        if kind == "evening" and self.bedtime and (night := await self._bedtime()):
+            sections.append(night)
         if kind == "evening" and self.drafts and (drafts := self.drafts.waiting()):
             sections.append({"type": "replies", "title": "Replies to send", "drafts": drafts})
         habits = self.habits.all()
@@ -501,6 +505,33 @@ class DigestService:
         near = await self.whereabouts.address(fix["lat"], fix["lon"])
         return (f"near {near}, " if near else "") + f"{distance / 1000:.0f} km from {home}", None
 
+    async def _bedtime(self) -> dict | None:
+        try:
+            return self.bedtime.section(await self.bedtime.tonight())
+        except Exception:
+            log.warning("digest: no bedtime plan", exc_info=True)
+            return None
+
+    async def _trips(self, event: dict, start: datetime, origin: dict, mode: str | None) -> dict[str, tuple[timedelta, str]]:
+        """mode -> (how long, what to call it: walk, tram, car…) for arriving 10 minutes early."""
+        arrive = start - ARRIVE_EARLY
+        modes = [mode] if mode else ["walk", "transit"]
+        routes = dict(zip(modes, await asyncio.gather(*(self._route(origin, event["location"], m, arrive)
+                                                         for m in modes))))
+        trips = {m: timedelta(seconds=int(float(r["duration"].rstrip("s")))) for m, r in routes.items() if r}
+        if not mode and "transit" in trips and trips.get("walk", MAX_WALK + timedelta(1)) > MAX_WALK:
+            trips.pop("walk", None)  # too far to walk: transit only
+        out = {}
+        for m, trip in trips.items():
+            name = {"walk": "walk", "drive": "car", "bicycle": "bike"}.get(m)
+            if m == "transit":
+                rides = [st["transitDetails"] for leg in routes[m].get("legs", []) for st in leg.get("steps", [])
+                         if st.get("transitDetails")]
+                vehicle = rides[0].get("transitLine", {}).get("vehicle", {}).get("name", {}).get("text") if rides else None
+                name = (vehicle or "public transport").lower()
+            out[m] = (trip, name)
+        return out
+
     async def _leave_by(self, event: dict, start: datetime, home: str | None, mode: str | None,
                         fix: dict | None = None) -> str:
         """' Walk: leave by 8:50, tram: leave by 9:05.' for arriving 10 minutes early, or '' if unknown. From home,
@@ -510,25 +541,27 @@ class DigestService:
         origin = ({"location": {"latLng": {"latitude": fix["lat"], "longitude": fix["lon"]}}} if fix
                   else {"address": home})
         arrive = start - ARRIVE_EARLY
-        modes = [mode] if mode else ["walk", "transit"]
-        routes = dict(zip(modes, await asyncio.gather(*(self._route(origin, event["location"], m, arrive)
-                                                         for m in modes))))
-        trips = {m: timedelta(seconds=int(float(r["duration"].rstrip("s")))) for m, r in routes.items() if r}
-        if not mode and "transit" in trips and trips.get("walk", MAX_WALK + timedelta(1)) > MAX_WALK:
-            trips.pop("walk", None)  # too far to walk: transit only
-        parts = []
-        for m, trip in trips.items():
-            name = {"walk": "walk", "drive": "car", "bicycle": "bike"}.get(m)
-            if m == "transit":
-                rides = [st["transitDetails"] for leg in routes[m].get("legs", []) for st in leg.get("steps", [])
-                         if st.get("transitDetails")]
-                vehicle = rides[0].get("transitLine", {}).get("vehicle", {}).get("name", {}).get("text") if rides else None
-                name = (vehicle or "public transport").lower()
-            parts.append(f"{name}: leave by {_clock_text(_round_down(arrive - trip))} "
-                         f"({round(trip.total_seconds() / 60)} min)")
+        parts = [f"{name}: leave by {_clock_text(_round_down(arrive - trip))} ({round(trip.total_seconds() / 60)} min)"
+                 for trip, name in (await self._trips(event, start, origin, mode)).values()]
         if not parts:
             return ""
         return f" To be there 10 min early, from {'where their phone is' if fix else 'home'}: {', '.join(parts)}."
+
+    async def leave_at(self, event: dict) -> tuple[datetime, str] | None:
+        """When to leave home for the event (the latest of the ways there, to be 10 min early) and how ("tram, 25
+        min"); None without Maps, a home or a place. For the bedtime plan (bedtime.py)."""
+        if self.maps is None:
+            return None
+        plan = await self.travel_plan(event)
+        place = event["location"] or plan.place
+        if not (plan.home and place):
+            return None
+        start = datetime.fromisoformat(event["start"]).astimezone(self.tz)
+        trips = await self._trips({**event, "location": place}, start, {"address": plan.home}, plan.mode)
+        if not trips:
+            return None
+        trip, name = min(trips.values(), key=lambda t: t[0])  # walk or tram: the quicker
+        return _round_down(start - ARRIVE_EARLY - trip), f"{name}, {round(trip.total_seconds() / 60)} min"
 
     async def _wake_lines(self, now: datetime, sections: list[dict], wake_at: datetime | None) -> list[str]:
         """What the wake greeting needs beyond the cards: when they got up, and when to leave for what's next."""
@@ -538,6 +571,8 @@ class DigestService:
         out = [f"They got up at {(wake_at or now).astimezone(self.tz):%H:%M}."]
         if not sleep:
             out.append("No sleep data for last night yet.")
+        elif self.bedtime and (review := self.bedtime.review_line(now.astimezone(self.tz).date())):
+            out.append(review)
         events = next((s["events"] for s in sections if s["type"] == "calendar"), [])
         nxt = next((e for e in events if not e["all_day"] and datetime.fromisoformat(e["start"]) > now), None)
         if nxt is None:
@@ -649,6 +684,8 @@ def to_text(greeting: str | None, sections: list[dict], tz: ZoneInfo) -> str:
                 w = s["weather"]
                 rows = [(f"Now {w['now']['temp']}°, {w['now']['words'].lower()}. " if w.get("now") else "")
                         + f"{w['summary'][:1].upper()}{w['summary'][1:]}" + (f" ({w['place']})" if w.get("place") else "")]
+            case "bedtime":
+                rows = [s["bedtime"]["why"]]
             case "objectives":
                 rows = [f"{o['agent'].capitalize()}: {o['title']}"
                         + (f" ({o['progress']}/{o['target']})" if o["measure"] and o["target"] > 1 else "")

@@ -32,6 +32,7 @@ FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budg
            "set_subscription", "accounts", "card_owed", "delete_payment")
 HABITS = ("add_habit", "list_habits", "check_habit", "count_habit", "fill_habit_days", "update_habit", "delete_habit")
 HEALTH = ("health",)
+BEDTIME = ("sleep_plan", "set_sleep_plan")
 WEIGHT = ("log_weight", "weight_trend", "delete_weight")
 FOOD = ("log_meal", "update_meal", "list_meals", "set_food_goals", "food_targets", "delete_meal", "find_food", "save_food",
         "update_food")
@@ -255,6 +256,14 @@ or diagnoses; if something looks worrying, suggest they talk to a doctor.
 gives the 7-day average and the trend a week against the pace their food goal wants; one reading says little, so \
 talk about the average and the trend, not a day's number."""
 
+_BEDTIME = """- Bedtime: waking at about the same time every day matters as much as the hours, so the plan keeps the wake \
+time steady (their usual, learnt from their nights, or one they set) and works the bedtime back from it and the \
+night's sleep need; an early start moves the wake earlier only when it has to. In the evening the phone tells them \
+when to be in bed. sleep_plan shows tonight's plan and the last week's nights against theirs: when they keep going \
+to bed well after the plan, or getting up at different times, say so once, kindly, with one small change (a nudge \
+earlier, the wind-down lock: set_sleep_plan wind_down, a Screen Time lock from bedtime to the wake time). \
+set_sleep_plan when they ask for a different wake time or nudge."""
+
 _PHOTOS = """- Photos: the user can send photos. Their message then has a [Photo p_…] line for each, and you see the \
 latest photos as images; an older one is only that line. Look at what the photo shows and answer what they ask, \
 or say briefly what you see and what you can do with it."""
@@ -456,7 +465,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day; to put a session in it, ask Secretary.",
-    _BASICS, _QUEUE, _HEALTH, _HABITS, _LOCKS, _CARDS, _PAGES, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _WEATHER, _WEATHER_TRAINING, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _HEALTH, _BEDTIME, _HABITS, _LOCKS, _CARDS, _PAGES, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _WEATHER, _WEATHER_TRAINING, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 FINANCE_PROMPT = _prompt(
@@ -530,7 +539,7 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training, food and habits", "#23A26D",
              ("How did I sleep this week?", "Should I train hard today?", "What have I eaten today?"),
-             COACH_PROMPT, (*HEALTH, *WEIGHT, *HABITS, *FOOD, *LOCKS, *CALENDAR_READ, *WEATHER, *WEB),
+             COACH_PROMPT, (*HEALTH, *BEDTIME, *WEIGHT, *HABITS, *FOOD, *LOCKS, *CALENDAR_READ, *WEATHER, *WEB),
              routine_ideas=(_idea("Weekly recap", "Recap my sleep, training and habits for the week, and suggest one "
                                   "thing for next week.", "18:00", (7,)),
                             *(i for a, i in _STARTING_WATCHES if a == "coach"),
@@ -552,7 +561,7 @@ _CONNECTORS = (
      {"create_event", "edit_event", "delete_event", "propose_events"}),
     ("reminders", "Reminders", REMINDERS, {"create_reminder", "update_reminder", "complete_reminder", "delete_reminder"}),
     ("mail", "Gmail", MAIL, {"send_mail", "reply_mail", "draft_reply", "discard_draft"}),
-    ("health", "Apple Health", (*HEALTH, *WEIGHT), {"log_weight", "delete_weight"}),
+    ("health", "Apple Health", (*HEALTH, *BEDTIME, *WEIGHT), {"log_weight", "delete_weight", "set_sleep_plan"}),
     ("habits", "Habits", HABITS, {"add_habit", "check_habit", "count_habit", "fill_habit_days",
                                           "update_habit", "delete_habit"}),
     ("food", "Food log", FOOD, {"log_meal", "update_meal", "set_food_goals", "food_targets",

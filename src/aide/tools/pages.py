@@ -32,6 +32,7 @@ PAGES = {
     "settings_notifications": ("Notifications", "aide://settings/notifications"),
     "settings_reminders": ("Reminders", "aide://settings/reminders"),
     "settings_apple_health": ("Apple Health", "aide://settings/health"),
+    "settings_bedtime": ("Bedtime", "aide://settings/bedtime"),
     "settings_location_and_trams": ("Location and trams", "aide://settings/location"),
     "settings_screen_time": ("Screen Time", "aide://settings/screentime"),
     "settings_payments": ("Payments", "aide://settings/payments"),

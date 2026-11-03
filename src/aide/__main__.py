@@ -79,6 +79,8 @@ from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable
 from .weather import Weather, weather_tools
 from .upcoming import EventWatcher
 from .lockwatch import LockWatcher
+from .shapes import event_json
+from .bedtime import Bedtime, bedtime_tools
 from .wake import WakeService
 from .whisper import available as whisper_available
 
@@ -230,6 +232,18 @@ def main() -> None:
     elif transit:
         log.info("leave-now alerts for events need the calendar and GOOGLE_MAPS_API_KEY: off")
 
+    async def calendar_events(start: datetime, end: datetime) -> list[dict] | None:
+        try:
+            return [event_json(e, settings.timezone) for e in await asyncio.to_thread(cal.events, start, end)]
+        except Exception:
+            log.warning("bedtime: calendar lookup failed", exc_info=True)
+            return None
+
+    # How long to the first place in the morning comes from the digest service (made below), as in the wake briefing.
+    bedtime = Bedtime(db.conn, settings.timezone, health, push, live, locks,
+                      calendar_events if cal else None, lambda event: digest.leave_at(event))
+    tools += bedtime_tools(bedtime)
+
     # Made below (digest) or maybe not at all (leave): the settings tools find them when called.
     tools += settings_tools(lambda: digest, live, lambda: leave, engine)
     tools += page_tools(study, notebook)
@@ -272,6 +286,7 @@ def main() -> None:
     digest.objectives, digest.planner, digest.engine = objectives, planner, engine
     digest.whereabouts = whereabouts
     digest.weather = weather
+    digest.bedtime = bedtime
     digest.drafts = drafts if gmail else None
 
     if not whisper_available():
@@ -336,6 +351,7 @@ def main() -> None:
             *([leave.run()] if leave else []),
             *([events.run()] if events else []),
             lock_watch.run(),
+            bedtime.run(),
             *([errands.run()] if errands else []),
             videos.run(),
             lessons.run(),
@@ -349,7 +365,7 @@ def main() -> None:
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off,
                              weights=weights, videos=videos, lessons=lessons, finance=finance,
-                             banks=banks, bank_redirect=settings.enable_banking_redirect)
+                             banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
