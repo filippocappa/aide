@@ -53,6 +53,7 @@ def settings_tools(digest: Callable, live, leave: Callable, engine) -> list[Tool
         s = live.settings()
         out["live.events"] = ("on" if s["events"] else "off", "Live Activity counting down to the next event")
         out["live.locks"] = ("on" if s["locks"] else "off", "Live Activity while a Screen Time lock holds")
+        out["live.bedtime"] = ("on" if s["bedtime"] else "off", "Live Activity counting down to bedtime")
         if (lv := leave()) is not None:
             out["leave.calendar"] = ("on" if lv.settings()["calendar"] else "off",
                                      "tram alerts to leave for calendar events")

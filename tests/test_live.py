@@ -719,11 +719,13 @@ def test_live_settings(env):
     db, push, live, _ = env
     agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", delegate=False, tz=ROME)
     c = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN, push=push, live=live))
-    assert c.get("/v1/live/settings", headers=AUTH).json() == {"events": True, "locks": True}
-    assert c.patch("/v1/live/settings", json={"events": False}, headers=AUTH).json() == {"events": False, "locks": True}
-    assert c.patch("/v1/live/settings", json={}, headers=AUTH).json() == {"events": False, "locks": True}
+    assert c.get("/v1/live/settings", headers=AUTH).json() == {"events": True, "locks": True, "bedtime": True}
+    assert c.patch("/v1/live/settings", json={"events": False}, headers=AUTH).json() == \
+        {"events": False, "locks": True, "bedtime": True}
+    assert c.patch("/v1/live/settings", json={}, headers=AUTH).json() == {"events": False, "locks": True, "bedtime": True}
     assert c.patch("/v1/live/settings", json={"locks": False}, headers=AUTH).json()["locks"] is False
-    assert live.settings() == {"events": False, "locks": False}
+    assert c.patch("/v1/live/settings", json={"bedtime": False}, headers=AUTH).json()["bedtime"] is False
+    assert live.settings() == {"events": False, "locks": False, "bedtime": False}
 
 
 # -- the next event ----------------------------------------------------------------------------------

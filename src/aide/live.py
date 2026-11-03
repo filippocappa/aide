@@ -28,7 +28,7 @@ from .routines import first_line
 log = logging.getLogger(__name__)
 
 KINDS = {"tram": "TramActivityAttributes", "agent": "AgentActivityAttributes", "event": "EventActivityAttributes",
-         "lock": "LockActivityAttributes"}
+         "lock": "LockActivityAttributes", "bedtime": "BedtimeActivityAttributes"}
 TOKEN_AGE = timedelta(hours=12)
 THROTTLE = 2.0  # seconds between an agent activity's updates
 SETTLE = 3.0  # seconds after a turn before its last update: the app, if open, ends the activity itself first
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS live_done (  -- agent activities showing a finished r
     state TEXT NOT NULL                 -- the done content-state, JSON
 );
 """
-SETTINGS = {"events": True, "locks": True}
+SETTINGS = {"events": True, "locks": True, "bedtime": True}
 
 
 def unix(dt: datetime) -> int:
@@ -214,7 +214,7 @@ class LiveActivities:
         none stays on "working" for hours. Trams, events and locks are picked up again from their own tables."""
         keys = [r["key"] for r in self.conn.execute(
             "SELECT key FROM live_tokens WHERE key NOT LIKE 'start:%' AND key NOT LIKE 'tram:%' "
-            "AND key NOT LIKE 'event:%' AND key NOT LIKE 'lock:%'")]
+            "AND key NOT LIKE 'event:%' AND key NOT LIKE 'lock:%' AND key NOT LIKE 'bedtime:%'")]
         interrupted = {"status": "failed", "detail": "Interrupted", "text": "", "since": int(time.time())}
         done = {r["key"]: json.loads(r["state"]) for r in self.conn.execute("SELECT * FROM live_done")}
         self.conn.execute("DELETE FROM live_done")

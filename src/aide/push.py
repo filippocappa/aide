@@ -247,6 +247,10 @@ class Push:
         # Time-sensitive: it's worth breaking through a Focus, and stale a few minutes later.
         return await self._alert("transit", title, body, level="time-sensitive", alert_id=alert_id)
 
+    async def send_bedtime(self, title: str, body: str, day: str) -> bool:
+        """The evening's bedtime nudge (bedtime.py) when no countdown could start."""
+        return await self._alert("bedtime", title, body, collapse=f"bedtime-{day}", date=day)
+
     async def send_finance(self, title: str, body: str, **extra) -> bool:
         """Money in, or a bank's consent to renew (`bank_id`)."""
         return await self._alert("finance", title, body, **extra)
