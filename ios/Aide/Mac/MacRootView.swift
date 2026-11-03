@@ -341,7 +341,7 @@ private struct GlassPanel<S: Shape>: ViewModifier {
 
 /// The window toolbar over the page: no background of its own, and the page fading out softly under it instead of a
 /// band with a line at its bottom.
-private struct SoftTitleBar: ViewModifier {
+struct SoftTitleBar: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 26, *) {
             content
