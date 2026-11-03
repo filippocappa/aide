@@ -180,49 +180,42 @@ struct MetricTile: View {
                 Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
             }
             .font(.footnote.weight(.semibold))
-            // A wide tile (the Mac) puts the week beside the number, as tall as the tile allows; a narrow one
-            // (the phone) under it.
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .bottom, spacing: 16) {
-                    numbers(latest)
-                    chart.frame(minWidth: 160, maxWidth: .infinity).frame(height: 64)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    numbers(latest)
-                    chart.frame(height: 40)
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Shows the chart")
-    }
-
-    private var chart: some View { MiniChart(metric: metric, days: Array(days.prefix(7))) }
-
-    @ViewBuilder private func numbers(_ latest: (day: HealthDayReading, value: Double, usual: Double?)?) -> some View {
-        if let latest {
-            VStack(alignment: .leading, spacing: 8) {
+            if let latest {
                 Text(metric.format(latest.value))
                     .font(.title2.weight(.semibold))
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text(compare(latest))
-                    .font(.caption)
-                    .foregroundStyle(tone(latest))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                if let line = compare(latest) {
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(tone(latest))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
             }
+            Spacer(minLength: 0)
+            MiniChart(metric: metric, days: Array(days.prefix(7)))
+                .frame(height: Self.chartHeight)
         }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.row, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Shows the chart")
     }
 
-    private func compare(_ l: (day: HealthDayReading, value: Double, usual: Double?)) -> String {
+    #if os(macOS)
+    private static let chartHeight: CGFloat = 64
+    #else
+    private static let chartHeight: CGFloat = 44
+    #endif
+
+    /// How the day sits next to usual; nothing for today's half day (never judged).
+    private func compare(_ l: (day: HealthDayReading, value: Double, usual: Double?)) -> String? {
         var when = HealthDayName.of(l.day.date)
         if metric.nightly && when == "Today" { when = "Last night" }
-        if !metric.nightly && when == "Today" { return "Today so far" } // half a day, never judged
+        if !metric.nightly && when == "Today" { return nil }
         guard let usual = l.usual else { return when }
         let d = l.value - usual
         return metric.isUsual(d) ? "\(when) · usual" : "\(when) · \(metric.difference(d))"
@@ -552,7 +545,6 @@ struct HealthMetricView: View {
     /// Newest first: what the Health page had, then ~8 months fetched on open.
     @State private var days: [HealthDayReading]
     @State private var period: MetricPeriod
-    @State private var selected: Date?
     @State private var showAll = false
 
     init(metric: HealthMetric, days: [HealthDayReading], day: Date, vitals: HealthScores.Vitals?) {
@@ -592,12 +584,6 @@ struct HealthMetricView: View {
         }
     }
 
-    private var periodAverage: Double? { MetricMath.average(points.map(\.value)) }
-
-    private var picked: MetricMath.Point? {
-        guard let selected else { return nil }
-        return points.min { abs($0.date.timeIntervalSince(selected)) < abs($1.date.timeIntervalSince(selected)) }
-    }
 
     /// "Last night", "Today", "Yesterday" or "Thursday 29 October".
     private var dayWord: String {
@@ -619,24 +605,33 @@ struct HealthMetricView: View {
                 if period == .day {
                     dayCards
                 } else {
-                    chartCard
+                    // Its own view, holding the finger's (or the pointer's) day: moving along the chart redraws the
+                    // chart alone, not the whole page with its windows over eight months.
+                    let points = points
+                    MetricChartCard(metric: metric, period: period, points: points, band: band, domain: domain,
+                                    average: MetricMath.average(points.map(\.value)), note: sinceNote(points))
+                        .id(period)
                 }
-                againstUsual
-                if metric == .sleep { nightCard }
-                DetailCard("About") {
-                    Text(metric.about).font(.subheadline).foregroundStyle(.secondary)
+                // How it compares, what it is and the sleep beside the days on a wide page (the Mac).
+                Columns(max: 2, minWidth: 400) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        againstUsual
+                        if metric == .sleep { nightCard }
+                        DetailCard("About") {
+                            Text(metric.about).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                    dayByDay
                 }
-                dayByDay
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
+            .pageColumn(1180)
         }
         .previewAnchor()
         .pageGlow(metric.color)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .sensoryFeedback(.selection, trigger: picked?.date)
-        .onChange(of: period) { selected = nil }
         .task { await load() }
     }
 
@@ -677,56 +672,14 @@ struct HealthMetricView: View {
 
     // MARK: W, M, 6M
 
-    private var chartCard: some View {
-        DetailCard(note: sinceNote) {
-            VStack(alignment: .leading, spacing: 14) {
-                headline
-                chart.frame(height: 220)
-            }
-        }
-    }
-
     /// "Since 21 Aug" when the data starts after the six months' first week.
-    private var sinceNote: String? {
+    private func sinceNote(_ points: [MetricMath.Point]) -> String? {
         guard period == .half, let first = points.first?.date,
               let start = Calendar.current.date(byAdding: .weekOfYear, value: -25, to: day),
               first > Calendar.current.date(byAdding: .day, value: 7, to: start) ?? start,
               let oldest = days.last(where: { metric.value($0) != nil }).flatMap({ Wire.day($0.date) }) else { return nil }
         return "Since \(oldest.formatted(.dateTime.day().month(.abbreviated))): weekly averages."
     }
-
-    private var headline: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if let picked {
-                Text(pickedLabel(picked.date).uppercased())
-                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(metric.format(picked.value)).font(.largeTitle.weight(.semibold)).monospacedDigit()
-            } else if let periodAverage {
-                Text(averageLabel).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(metric.format(periodAverage)).font(.largeTitle.weight(.semibold)).monospacedDigit()
-            } else {
-                Text("No data in these days").foregroundStyle(.secondary)
-            }
-        }
-        .frame(height: 64, alignment: .bottomLeading)
-        .contentTransition(.numericText())
-        .animation(.snappy, value: picked?.date)
-    }
-
-    private var averageLabel: String {
-        switch period {
-        case .week: "AVERAGE OF THESE 7 DAYS"
-        case .month: "AVERAGE OF THESE 30 DAYS"
-        default: "AVERAGE OF THESE 6 MONTHS"
-        }
-    }
-
-    private func pickedLabel(_ date: Date) -> String {
-        period == .half ? "Week of " + date.formatted(.dateTime.day().month(.wide))
-                        : date.formatted(.dateTime.weekday(.wide).day().month(.wide))
-    }
-
-    private var unit: Calendar.Component { period == .half ? .weekOfYear : .day }
 
     /// The chart's span: the window's first day (or week) to the end of the chosen day (or its week).
     private var domain: ClosedRange<Date> {
@@ -741,70 +694,6 @@ struct HealthMetricView: View {
             let start = cal.date(byAdding: .day, value: 1 - count, to: day) ?? day
             return start...(cal.date(byAdding: .day, value: 1, to: day) ?? day)
         }
-    }
-
-    private var chart: some View {
-        Chart {
-            if let band {
-                RectangleMark(xStart: .value("From", domain.lowerBound), xEnd: .value("To", domain.upperBound),
-                              yStart: .value("Low", band.lowerBound), yEnd: .value("High", band.upperBound))
-                    .foregroundStyle(metric.color.opacity(0.12))
-            }
-            ForEach(points, id: \.date) { p in
-                let faded = picked != nil && picked?.date != p.date
-                if metric.bars {
-                    BarMark(x: .value("Day", p.date, unit: unit), y: .value(metric.name, p.value), width: .ratio(0.6))
-                        .foregroundStyle(metric.color.opacity(faded ? 0.3 : 0.85))
-                        .cornerRadius(4)
-                } else {
-                    LineMark(x: .value("Day", p.date, unit: unit), y: .value(metric.name, p.value))
-                        .foregroundStyle(metric.color)
-                        .interpolationMethod(.monotone)
-                    PointMark(x: .value("Day", p.date, unit: unit), y: .value(metric.name, p.value))
-                        .foregroundStyle(metric.color.opacity(faded ? 0.3 : 1))
-                        .symbolSize(period == .week ? 40 : 18)
-                }
-            }
-            if let periodAverage, picked == nil {
-                RuleMark(y: .value("Average", periodAverage))
-                    .foregroundStyle(.secondary)
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-            }
-            if let goal = metric.goal {
-                RuleMark(y: .value("Goal", goal))
-                    .foregroundStyle(metric.color.opacity(0.6))
-                    .lineStyle(StrokeStyle(lineWidth: 1))
-                    .annotation(position: .top, alignment: .leading) {
-                        Text("\(Int(goal))h").font(.caption2).foregroundStyle(metric.color)
-                    }
-            }
-            if let picked {
-                RuleMark(x: .value("Day", picked.date, unit: unit))
-                    .foregroundStyle(Color.secondary.opacity(0.4))
-            }
-        }
-        .chartXScale(domain: domain)
-        .chartYScale(domain: .automatic(includesZero: metric.bars))
-        .chartXAxis {
-            switch period {
-            case .week:
-                AxisMarks(values: .stride(by: .day)) { _ in
-                    AxisGridLine()
-                    AxisValueLabel(format: .dateTime.weekday(.narrow), centered: true)
-                }
-            case .month:
-                AxisMarks(values: .stride(by: .day, count: 7)) { _ in
-                    AxisGridLine()
-                    AxisValueLabel(format: .dateTime.day().month(.abbreviated))
-                }
-            default:
-                AxisMarks(values: .stride(by: .month)) { _ in
-                    AxisGridLine()
-                    AxisValueLabel(format: .dateTime.month(.abbreviated))
-                }
-            }
-        }
-        .chartXSelection(value: $selected)
     }
 
     // MARK: Against your usual
@@ -907,5 +796,131 @@ struct HealthMetricView: View {
         guard settings.isConfigured,
               let from = Calendar.current.date(byAdding: .day, value: -240, to: day) else { return }
         if let loaded = try? await env.api.healthDays(from: from), !loaded.isEmpty { days = loaded }
+    }
+}
+
+/// A metric's W, M or 6M chart with its headline: the period's average, or the day (or week) under the finger or the
+/// pointer. The chosen day lives here, so moving along the chart redraws only this card.
+private struct MetricChartCard: View {
+    let metric: HealthMetric
+    let period: MetricPeriod
+    let points: [MetricMath.Point]
+    let band: ClosedRange<Double>?
+    let domain: ClosedRange<Date>
+    let average: Double?
+    let note: String?
+
+    @State private var selected: Date?
+
+    var body: some View {
+        let picked = picked
+        DetailCard(note: note) {
+            VStack(alignment: .leading, spacing: 14) {
+                headline(picked)
+                chart(picked).frame(height: 220)
+            }
+        }
+        .sensoryFeedback(.selection, trigger: picked?.date)
+    }
+
+    /// The point nearest the finger or the pointer.
+    private var picked: MetricMath.Point? {
+        guard let selected else { return nil }
+        return points.min { abs($0.date.timeIntervalSince(selected)) < abs($1.date.timeIntervalSince(selected)) }
+    }
+
+    private func headline(_ picked: MetricMath.Point?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let picked {
+                Text(pickedLabel(picked.date).uppercased())
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(metric.format(picked.value)).font(.largeTitle.weight(.semibold)).monospacedDigit()
+            } else if let average {
+                Text(averageLabel).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(metric.format(average)).font(.largeTitle.weight(.semibold)).monospacedDigit()
+            } else {
+                Text("No data in these days").foregroundStyle(.secondary)
+            }
+        }
+        .frame(height: 64, alignment: .bottomLeading)
+    }
+
+    private var averageLabel: String {
+        switch period {
+        case .week: "AVERAGE OF THESE 7 DAYS"
+        case .month: "AVERAGE OF THESE 30 DAYS"
+        default: "AVERAGE OF THESE 6 MONTHS"
+        }
+    }
+
+    private func pickedLabel(_ date: Date) -> String {
+        period == .half ? "Week of " + date.formatted(.dateTime.day().month(.wide))
+                        : date.formatted(.dateTime.weekday(.wide).day().month(.wide))
+    }
+
+    private var unit: Calendar.Component { period == .half ? .weekOfYear : .day }
+
+    private func chart(_ picked: MetricMath.Point?) -> some View {
+        Chart {
+            if let band {
+                RectangleMark(xStart: .value("From", domain.lowerBound), xEnd: .value("To", domain.upperBound),
+                              yStart: .value("Low", band.lowerBound), yEnd: .value("High", band.upperBound))
+                    .foregroundStyle(metric.color.opacity(0.12))
+            }
+            ForEach(points, id: \.date) { p in
+                let faded = picked != nil && picked?.date != p.date
+                if metric.bars {
+                    BarMark(x: .value("Day", p.date, unit: unit), y: .value(metric.name, p.value), width: .ratio(0.6))
+                        .foregroundStyle(metric.color.opacity(faded ? 0.3 : 0.85))
+                        .cornerRadius(4)
+                } else {
+                    LineMark(x: .value("Day", p.date, unit: unit), y: .value(metric.name, p.value))
+                        .foregroundStyle(metric.color)
+                        .interpolationMethod(.monotone)
+                    PointMark(x: .value("Day", p.date, unit: unit), y: .value(metric.name, p.value))
+                        .foregroundStyle(metric.color.opacity(faded ? 0.3 : 1))
+                        .symbolSize(period == .week ? 40 : 18)
+                }
+            }
+            if let average, picked == nil {
+                RuleMark(y: .value("Average", average))
+                    .foregroundStyle(.secondary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            }
+            if let goal = metric.goal {
+                RuleMark(y: .value("Goal", goal))
+                    .foregroundStyle(metric.color.opacity(0.6))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                    .annotation(position: .top, alignment: .leading) {
+                        Text("\(Int(goal))h").font(.caption2).foregroundStyle(metric.color)
+                    }
+            }
+            if let picked {
+                RuleMark(x: .value("Day", picked.date, unit: unit))
+                    .foregroundStyle(Color.secondary.opacity(0.4))
+            }
+        }
+        .chartXScale(domain: domain)
+        .chartYScale(domain: .automatic(includesZero: metric.bars))
+        .chartXAxis {
+            switch period {
+            case .week:
+                AxisMarks(values: .stride(by: .day)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel(format: .dateTime.weekday(.narrow), centered: true)
+                }
+            case .month:
+                AxisMarks(values: .stride(by: .day, count: 7)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                }
+            default:
+                AxisMarks(values: .stride(by: .month)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel(format: .dateTime.month(.abbreviated))
+                }
+            }
+        }
+        .chartXSelection(value: $selected)
     }
 }

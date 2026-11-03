@@ -158,7 +158,7 @@ struct HealthView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
-            .pageColumn()
+            .pageColumn(1180)
         }
         .previewAnchor()
         .pageGlow(glow, reach: 900)
@@ -206,6 +206,33 @@ struct HealthView: View {
                 .font(.subheadline).foregroundStyle(.secondary)
                 .card()
         }
+        // Last night beside the day's heart rate and workouts when the page is wide (the Mac), else one under another.
+        Columns(max: 2, minWidth: 420) {
+            lastNight
+            let heart = reading?.hrHourly?.contains(where: { $0 != nil }) == true
+            let workouts = reading?.workouts ?? []
+            if heart || !workouts.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    if heart, let reading { heartCard(reading) }
+                    if !workouts.isEmpty { workoutsCard(workouts) }
+                }
+            }
+        }
+        let activity: [HealthMetric] = [.steps, .exercise, .activeKcal, .totalKcal].filter { m in reading.flatMap(m.value) != nil }
+        if !activity.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Activity").font(.title3.weight(.bold)).padding(.horizontal, 4)
+                Columns(max: 4, minWidth: 150) {
+                    ForEach(activity) { m in
+                        Button { metric = m } label: { MetricTile(metric: m, days: daysUpTo) }
+                            .buttonStyle(CardPress())
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var lastNight: some View {
         let vitals = vitalRows
         if !vitals.isEmpty {
             DetailCard("Last night", note: "The middle of each gauge is your usual range, from the 60 days before.", padding: 0) {
@@ -221,40 +248,25 @@ struct HealthView: View {
                 }
             }
         }
-        if let reading, reading.hrHourly?.contains(where: { $0 != nil }) == true {
-            DetailCard("Heart rate") {
-                Button { metric = .restingHr } label: {
-                    DayHeartChart(day: reading, next: nextReading).contentShape(Rectangle())
-                }
-                .buttonStyle(CardPress())
-                .accessibilityHint("Shows resting heart rate")
+    }
+
+    private func heartCard(_ reading: HealthDayReading) -> some View {
+        DetailCard("Heart rate") {
+            Button { metric = .restingHr } label: {
+                DayHeartChart(day: reading, next: nextReading).contentShape(Rectangle())
             }
+            .buttonStyle(CardPress())
+            .accessibilityHint("Shows resting heart rate")
         }
-        if let workouts = reading?.workouts, !workouts.isEmpty {
-            DetailCard("Workouts", padding: 0) {
-                ForEach(Array(workouts.enumerated()), id: \.offset) { i, w in
-                    if i > 0 { RowDivider(leading: 62) }
-                    WorkoutRow(date: reading?.date ?? "", workout: w,
-                               strain: scores?.strain?.workouts.first { $0.id == w.id }?.strain)
-                        .padding(.horizontal, 16).padding(.vertical, 11)
-                }
-            }
-        }
-        let activity: [HealthMetric] = [.steps, .exercise, .activeKcal, .totalKcal].filter { m in reading.flatMap(m.value) != nil }
-        if !activity.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Activity").font(.title3.weight(.bold)).padding(.horizontal, 4)
-                Grid(horizontalSpacing: 12, verticalSpacing: 12) {
-                    ForEach(Array(stride(from: 0, to: activity.count, by: 2)), id: \.self) { i in
-                        GridRow {
-                            ForEach(activity[i..<min(i + 2, activity.count)]) { m in
-                                Button { metric = m } label: { MetricTile(metric: m, days: daysUpTo) }
-                                    .buttonStyle(CardPress())
-                            }
-                            if i + 1 == activity.count { Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
-                        }
-                    }
-                }
+    }
+
+    private func workoutsCard(_ workouts: [HealthDayReading.Workout]) -> some View {
+        DetailCard("Workouts", padding: 0) {
+            ForEach(Array(workouts.enumerated()), id: \.offset) { i, w in
+                if i > 0 { RowDivider(leading: 62) }
+                WorkoutRow(date: reading?.date ?? "", workout: w,
+                           strain: scores?.strain?.workouts.first { $0.id == w.id }?.strain)
+                    .padding(.horizontal, 16).padding(.vertical, 11)
             }
         }
     }

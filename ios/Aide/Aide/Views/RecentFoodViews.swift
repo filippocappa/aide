@@ -33,14 +33,11 @@ struct RecentFoodsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Picker("Order", selection: $order) {
-                    Text("Usual").tag(Order.usual)
-                    Text("Latest").tag(Order.latest)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                #if os(iOS)
+                orderPicker
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                #endif
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote)
                 }
@@ -69,13 +66,16 @@ struct RecentFoodsSheet: View {
             #if os(iOS)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search your foods")
             #else
-            .searchable(text: $query, prompt: "Search your foods")
+            // The Mac: the search and Usual · Latest in one bar over the list, not in the window's toolbar.
+            .safeAreaInset(edge: .top, spacing: 0) { macBar }
             #endif
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom) { if !picked.isEmpty { together } }
             .animation(.snappy, value: picked)
+            #if os(iOS)
             .navigationTitle("Recent")
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .macSheetTitle("Recent")
             .toolbar {
                 #if os(iOS)
@@ -106,6 +106,41 @@ struct RecentFoodsSheet: View {
         }
         .presentationDetents([.large])
     }
+
+    private var orderPicker: some View {
+        Picker("Order", selection: $order) {
+            Text("Usual").tag(Order.usual)
+            Text("Latest").tag(Order.latest)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+    }
+
+    #if os(macOS)
+    private var macBar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search your foods", text: $query)
+                    .textFieldStyle(.plain)
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Theme.row, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.line))
+            orderPicker.frame(width: 170)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+    }
+    #endif
 
     /// Usual: meals of several items, then foods, by how often you have them.
     @ViewBuilder private func usual(_ recent: RecentFoods) -> some View {
