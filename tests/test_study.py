@@ -319,6 +319,9 @@ def test_a_pdf_is_read_page_by_page_and_searched(env):
     found = study.files.search("crowding interest", law)
     assert [(x["public_id"], x["page"]) for x in found] == [(f["id"], 3)] and "«Crowding»" in found[0]["snippet"]
     assert study.files.search("crowding", law + 1) == []
+    reworded = study.files.search("what happens when the government spends more?", law)  # not every word is there
+    assert [x["page"] for x in reworded][0] == 3 and sorted(x["page"] for x in study.files.search("slides")) == [1, 2] \
+        and [x["page"] for x in study.files.search("invest")] == [1]
     assert api.get(f"/v1/files?course={law}", headers=AUTH).json()["files"][0]["id"] == f["id"]
     assert {c["name"]: c["files"] for c in api.get("/v1/study", headers=AUTH).json()["courses"]}["business law"] == 1
     assert add_pdf(api, b"not a pdf").status_code == 400

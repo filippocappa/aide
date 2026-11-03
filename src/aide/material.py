@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from . import fts
 from .db import Database, utcnow
 from .engine import course_var
 
@@ -87,7 +88,6 @@ translate, summarise, correct or add anything.
 Answer with the transcription only, no preface. A blank page: answer (blank)."""
 
 _ID = re.compile(r"^f_[0-9a-f]{12}$")
-_WORD = re.compile(r"\w+")
 _BLOCKED = re.compile(r"content filtering|recitation", re.I)  # the model's answer withheld: a copyrighted text
 
 
@@ -296,17 +296,14 @@ class FileStore:
         return "\n\n".join(f"[p. {n}]\n{t}" for n, t in self.pages(f, first, last))
 
     def search(self, query: str, course_id: int | None = None, limit: int = 8) -> list[dict]:
-        """Pages matching every word of `query`, best first: the file's row with `page` and `snippet`."""
-        words = _WORD.findall(query)
-        if not words:
-            return []
-        match = " ".join(f'"{w}"' for w in words)
-        rows = self.conn.execute(
+        """Pages with the words of `query`, all of them first, then any (`fts.search`): the file's row with `page`
+        and `snippet`."""
+        return fts.search(
+            self.conn,
             "SELECT f.*, p.page AS page, snippet(study_pages_fts, 0, '«', '»', '…', 24) AS snippet "
             "FROM study_pages_fts p JOIN study_files f ON f.id = p.file_id WHERE study_pages_fts MATCH ? "
             + ("AND f.course_id = ? " if course_id is not None else "") + "ORDER BY rank LIMIT ?",
-            (match, *((course_id,) if course_id is not None else ()), limit)).fetchall()
-        return [dict(r) for r in rows]
+            query, (course_id,) if course_id is not None else (), limit, lambda r: (r["id"], r["page"]))
 
     def slides_for(self, course_id: int, recorded_at: datetime) -> list[dict]:
         """Moodle files of the course, not yet anyone's slides, put up within SLIDES_WINDOW of the lecture."""

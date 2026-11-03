@@ -32,6 +32,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
 from .db import utcnow
+from . import fts
 from .engine import course_var
 from .material import PdfError, page_image, visual_pages
 from .shapes import event_json
@@ -171,7 +172,6 @@ _DATE_FIELDS = ("what", "kind", "date", "time", "end", "room", "you", "details",
 _ID = re.compile(r"^t_[0-9a-f]{12}$")
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _PID = re.compile(r"^p_[0-9a-f]{12}$")
-_WORD = re.compile(r"\w+")
 _HEADING = re.compile(r"^(#{2,3}) +(.+?) *#*$")
 # Words of a page about how the course and its exam run, in English and Italian (counted by their first four letters).
 _INFO_WORD = re.compile(r"\b(exam(s|ination)?|esam[ei]|mid-?terms?|multiple[- ]choice|scelta multipla|open "
@@ -498,16 +498,14 @@ class NotebookStore:
         return "\n".join(out)
 
     def search(self, query: str, course_id: int | None = None, limit: int = 6) -> list[dict]:
-        """Topic sections matching every word, best first: the topic's row with `heading` and `snippet`."""
-        words = _WORD.findall(query)
-        if not words:
-            return []
-        rows = self.conn.execute(
+        """Topic sections with the words of `query`, all of them first, then any (`fts.search`): the topic's row with
+        `heading` and `snippet`."""
+        return fts.search(
+            self.conn,
             "SELECT t.*, s.heading AS heading, snippet(topic_sections, 1, '«', '»', '…', 20) AS snippet "
             "FROM topic_sections s JOIN topics t ON t.id = s.topic_id WHERE topic_sections MATCH ? "
             + ("AND t.course_id = ? " if course_id is not None else "") + "ORDER BY rank LIMIT ?",
-            (" ".join(f'"{w}"' for w in words), *((course_id,) if course_id is not None else ()), limit))
-        return [dict(r) for r in rows]
+            query, (course_id,) if course_id is not None else (), limit, lambda r: (r["id"], r["heading"]))
 
     # -- the introduction ----------------------------------------------------------------
 

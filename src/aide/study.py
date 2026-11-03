@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 from zoneinfo import ZoneInfo
 
-from . import usage
+from . import fts, usage
 from .db import Database, utcnow
 from .engine import course_var
 from .icloud import CalendarBackend, CalEvent
@@ -82,7 +82,6 @@ CACHE = 600  # seconds the calendar's courses and exams are kept
 WHISPER_TIMEOUT = 3600
 
 _ID = re.compile(r"^l_[0-9a-f]{12}$")
-_WORD = re.compile(r"\w+")
 
 Transcribe = Callable[[Path], Awaitable[tuple[str, str | None, int | None]]]
 
@@ -403,17 +402,14 @@ class StudyStore:
                           (lecture["id"], lecture["title"], lecture["notes"], lecture["transcript"]))
 
     def search(self, query: str, course_id: int | None = None, limit: int = 8) -> list[dict]:
-        """Lectures matching every word of `query` (any order, accents ignored), best first, each with a snippet."""
-        words = _WORD.findall(query)
-        if not words:
-            return []
-        match = " ".join(f'"{w}"' for w in words)  # quoted, so words like AND or NEAR aren't operators
-        rows = self.conn.execute(
+        """Lectures with the words of `query` (accents ignored), all of them first, then any (`fts.search`), each
+        with a snippet."""
+        return fts.search(
+            self.conn,
             "SELECT l.*, snippet(lectures_fts, -1, '«', '»', '…', 24) AS snippet FROM lectures_fts f "
             "JOIN lectures l ON l.id = f.rowid WHERE lectures_fts MATCH ? "
             + ("AND l.course_id = ? " if course_id is not None else "") + "ORDER BY rank LIMIT ?",
-            (match, *((course_id,) if course_id is not None else ()), limit)).fetchall()
-        return [dict(r) for r in rows]
+            query, (course_id,) if course_id is not None else (), limit, lambda r: r["id"])
 
     # -- shapes ------------------------------------------------------------------
 

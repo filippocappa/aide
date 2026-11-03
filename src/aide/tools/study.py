@@ -398,7 +398,7 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         Tool("read_lecture", "Read a lecture's notes, and with transcript true its transcript too (time marks like "
              "[12:30]).", _obj({**lid, "transcript": {"type": "boolean"}}, ["lecture_id"]), read_lecture),
         Tool("search_study", "Search every lecture's notes and transcript, and the course files page by page, for "
-             "words (all must appear), best matches first, each with a snippet.",
+             "words (the ones with all of them first, then any), best matches first, each with a snippet.",
              _obj({"query": {"type": "string"}, **course}, ["query"]), search_study),
         Tool("list_files", "List the course files (slides, handouts, the professor's notes: PDFs from the user or "
              "Moodle), each with its id in brackets.", _obj(course, []), list_files),
