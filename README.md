@@ -34,15 +34,19 @@ On the phone the app has four tabs, one per area, each opening with a line from 
   objectives). Settings is behind the gear in the corner.
 - **Study:** Professor's courses, with notebooks, lessons, quizzes and practice exams, and focus sessions that
   lock the phone and the Mac while you study (see [Focus sessions](#focus-sessions)).
-- **Health:** Coach's Body, Food and Screen. Body has the Strain, Recovery and Sleep scores and last night's numbers
-  against your usual (see [Health scores](#health-scores)). Food has meals from a photo, a description or a
+- **Health:** Coach's Body, Food and Screen. Body has the Strain, Recovery and Sleep scores, last night's numbers
+  against your usual (see [Health scores](#health-scores)) and weight against its goal; Coach works out tonight's
+  bedtime back from a steady wake time and nudges you in the evening. Food has meals from a photo, a description or a
   barcode. Screen has screen time and its locks and limits.
 - **Money:** Finance's month: what's left of the budget (or this month against last), categories, payments by day,
   subscriptions, and the accounts with their balances from your bank (see [Banks](#banks)).
 
+The briefings (the wake-up one, evening, week, month) bring the day's calendar, reminders, mail, sleep and the
+weather where you are; Secretary drafts replies to mail that asks something of you, sent only from the app.
+
 Around them are routines and watches (an agent's scheduled job, or a check that posts only when something needs
 you), widgets, and Live Activities on the Lock Screen and in the Dynamic Island (the next tram, the next event, an
-agent at work, a focus session's round).
+agent at work, a focus session's round, the time to bedtime).
 
 The **Mac app** is the same app in a window. It has the sections in a sidebar, the day at a glance under them, and
 Pebble in the menu bar for a quick look. It also has its own screen time: the Mac counts its apps and websites and
@@ -331,19 +335,36 @@ src/aide/
   channels/api.py        the HTTP API the app uses (FastAPI)
   scheduler.py           background jobs; routines.py: scheduled agent jobs and watches
   digest.py              daily, weekly and monthly digests; objectives.py: each specialist's objectives
-  reminders.py, habits.py, food.py, photos.py
+  reminders.py, habits.py, photos.py
+  food.py, foods.py      meals and food goals; saved foods per 100 g
+  nutrition.py           the day's food targets, Nutri-Score, NOVA and the day score
+  reader.py              the photo reader: what a meal photo shows, for Coach
+  weight.py              weigh-ins, the 7-day average and the trend against the goal
   health.py, wake.py     Apple Health days and usual numbers; the wake-up briefing
   scores.py              Strain, Recovery and Sleep scores from the Health days
+  bedtime.py             the steady wake time and tonight's bedtime, the evening nudge, the wind-down lock
+  weather.py             Open-Meteo forecasts for the digests, the weather tool and tram alerts
   gmail.py, gmail_auth.py  Gmail API client; one-time OAuth sign-in script
+  drafts.py              Secretary's mail drafts, sent only from the app
+  icloud.py              iCloud CalDAV, under tools/calendar.py
+  transcribe.py          voice chat's speech to text (OpenRouter)
   push.py                APNs pushes and the devices table
   study.py, whisper.py   courses, lectures and their notes; transcription on the GPU
   material.py, moodle.py study files (PDFs) and the Moodle sync
   notebook.py, quiz.py   course notebooks; practice exams
+  lessons.py, reviews.py lessons a topic at a time; quizzes in chat and review sessions in the calendar
+  fts.py                 full-text search over notes and study files
   engine.py              who writes the notes: OpenRouter or the Claude plan
   vault.py, webdav.py    the Obsidian vault and its WebDAV server
   browser.py, errands.py Aide's Chromium (pages read for the model, scenes and the live view for the app); errands
   transit.py, leave.py   GTT timetable and live feed, tram alerts; leave-now for calendar events
   live.py, upcoming.py   Live Activities (trams, the next event, agents at work)
+  lockwatch.py           a Screen Time lock's Live Activity while it holds
+  plans.py               events an agent proposes together, added on a tap
+  videos.py              YouTube videos: captions or Whisper, the brief, the frames
+  finance.py, banks.py   payments, categories, budget, subscriptions; bank accounts through Enable Banking
+  usage.py               what every model call and paid API call cost
+  shapes.py              JSON shapes the API and the digest both send
   routines.py            routines and watches; activity.py: the feed of what the agents did
   locks.py               Screen Time locks
   focus.py               focus sessions: rounds as strict locks, the Live Activity, the check and Professor's post
