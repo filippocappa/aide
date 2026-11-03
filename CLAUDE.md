@@ -645,7 +645,10 @@ title, 45 min), an errand's lines, a plan's objectives (10 min, any agent) and a
 (`ActivityLine`), quiet checks as one grey line, and every day before the newest folded to one row ("Yesterday · 52 things from…").
 
 **Next** (GitHub issues):
-1. Voice redesign (#34, the only open issue): talking with an agent and quizzes by voice are too slow. Multiple-choice
+0. The code check (2026-11-03) filed #35–#50, one finding each. First the ones that can lose data: #35
+   (reminders sync deletes what one fetch missed), #36 (a waiting Wallet tap lost), #37 (one calendar's 404 breaks
+   every calendar read). Then the confirm rule's gaps (#38–#41), app bugs and crashes (#42–#46), hardening (#47–#50).
+1. Voice redesign (#34): talking with an agent and quizzes by voice are too slow. Multiple-choice
    answers marked with no model call first, then an overlapped pipeline (streamed audio, end of turn on the server,
    speaking from the first words) and a streaming voice; a realtime speech-to-speech model as a spike.
 2. Recording a lecture in the app. Notebooks for the other courses.
