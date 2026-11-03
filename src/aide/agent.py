@@ -251,8 +251,12 @@ class Agent:
         out = []
         for role, content, ts, attachments, consulted, team, routine in self.db.history_with_ts(conversation_id):
             if role == "user":
+                if isinstance(content, str) and (shown := _answered(content)):
+                    out.append({"role": "assistant", "text": shown, "ts": ts, "attachments": [], "consulted": [],
+                                "team": []})
+                    continue  # how a Confirm or Cancel went, said in the chat that queued it
                 if not isinstance(content, str) or content.startswith(("[The user replied", "[The user tapped", _OPENED)):
-                    continue  # tool results, confirm/cancel and plan notes, the note before a digest greeting
+                    continue  # tool results, plan notes, the note before a digest greeting
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0].split(_OLD_QUEUE_MARK, 1)[0].split(_READ_MARK, 1)[0]
                 if _NOTE.match(text):
                     continue  # a note for the model: a routine's prompt, the one before a post, a quiz's result
@@ -286,7 +290,7 @@ class Agent:
                 lines.append(("✗ " if err else "✓ ") + out)
                 activity.record(self.db.conn, action["agent"] or ORCHESTRATOR, "failed" if err else "confirmed",
                                 action["summary"], out, action["conversation"] or channel)
-            result = "\n".join(lines)
+            result = _hide_ids("\n".join(lines))
             # Each chat that queued something learns how its own actions went.
             for conversation in dict.fromkeys(a["conversation"] for a in actions):
                 own = "\n".join(line for a, line in zip(actions, lines) if a["conversation"] == conversation)
@@ -900,6 +904,24 @@ _CHANGES = (None, "found", "created", "proposed")  # an event card item's change
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
 _QUEUE_MARK = "\n[Queued, waiting for the user's OK:"
+_CONFIRMED = re.compile(r"^\[The user (?:replied !yes|tapped Confirm)\. Results:\n(.*)\]$", re.S)
+_CANCELLED = ("[The user replied !no.", "[The user tapped Cancel.")
+_EVENT_ID = re.compile(r"\[[^\]\s]{8,}\] ")  # "Changed: [D839FD47-…] Tue 03 Nov …": the id is for the model
+
+
+def _hide_ids(text: str) -> str:
+    return _EVENT_ID.sub("", text)
+
+
+def _answered(note: str) -> str | None:
+    """The chat line for a Confirm or Cancel note, as /v1/confirm and /v1/cancel answered it; None for other text."""
+    if m := _CONFIRMED.match(note):
+        return _hide_ids(m.group(1))
+    if note.startswith(_CANCELLED):
+        return "Cancelled. Nothing was changed."
+    return None
+
+
 _OLD_QUEUE_MARK = "\n[Queued, waiting for the user's !yes:"  # messages stamped before 2026-11-03
 _READ_MARK = "\n[What the photos show, read by the photo reader]"
 READ_PROMPT = """You look at photos for Coach, an assistant that logs the user's meals and talks about their health \
