@@ -189,7 +189,7 @@ on with `/v1/chat` as usual. 400 for an empty body, 413 over 10 MB, 415 for anot
 `GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}], "smart": false}` (`smart`: Think harder is on in that chat, since 2026-10-30)
 (`attachments`, `consulted` and `team` as in `/v1/chat`, `[]` on user messages and plain replies; a user message
 sent with photos also has `"photos": ["p_…"]`, absent otherwise; reminders in them are reloaded as they are now,
-so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said before. Tool calls and internal notes are left out.
+so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said before. Tool calls and internal notes are left out. Since 2026-11-03 a Confirm or Cancel shows as an assistant message in the chat that queued it: `/v1/confirm`'s `result` ("✓ Deleted: …", event ids left out) or "Cancelled. Nothing was changed."
 
 While a turn runs in that chat (since 2026-10-29), the history also has `"working": {"agent": "aide", "text":
 "plan my week", "photos": [], "since": "2026-10-29T15:03:12+01:00"}`: the message being answered, which isn't in
