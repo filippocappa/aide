@@ -1,9 +1,9 @@
 // Your signing team lives in Signing.local.xcconfig (git-ignored) so regenerating the project keeps it.
 
-// Apple Health is on by default (Health.entitlements). Push needs the paid team: a Personal Team can't sign
-// the aps-environment entitlement. So push is off unless Signing.local.xcconfig switches to Aide.entitlements,
-// which has both (see the .example file).
-AIDE_ENTITLEMENTS = Aide/Health.entitlements
+// By default (Default.entitlements): Apple Health, Screen Time (Family Controls) and the App Group. Push needs the
+// paid team: a Personal Team can't sign the aps-environment entitlement. So push is off unless
+// Signing.local.xcconfig switches to Aide.entitlements, which has all of them (see the .example file).
+AIDE_ENTITLEMENTS = Aide/Default.entitlements
 // The Mac app the same way: no push unless Signing.local.xcconfig picks Mac/AideMacPush.entitlements.
 AIDE_MAC_ENTITLEMENTS = Mac/AideMac.entitlements
 

@@ -261,6 +261,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).tests
         GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: ""  # not the app's (Config/Base.xcconfig sets them for every target)
 schemes:
   Aide:
     build:

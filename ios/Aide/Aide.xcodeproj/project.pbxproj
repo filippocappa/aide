@@ -409,6 +409,7 @@
 		9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideApp.swift; sourceTree = "<group>"; };
 		9F02CCB66A67DA8AD790FF51 /* ObjectivesWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectivesWidget.swift; sourceTree = "<group>"; };
 		9F41469809377FE5BEAF0871 /* UsageReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageReportView.swift; sourceTree = "<group>"; };
+		9F8EEE348C3BB16776A000F3 /* AppGroup.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AppGroup.entitlements; sourceTree = "<group>"; };
 		9FFC7D2BBFEF73430F661C02 /* AideShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AideShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A30691E2ED29BB030AC1CC08 /* UsageReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageReport.swift; sourceTree = "<group>"; };
 		A9B460E43DC41726DAA0D2B8 /* HeartSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartSummary.swift; sourceTree = "<group>"; };
@@ -454,13 +455,13 @@
 		E82E2D2F31C60F70DB974B92 /* MacNavigationStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacNavigationStack.swift; sourceTree = "<group>"; };
 		E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeExamView.swift; sourceTree = "<group>"; };
 		E8AF59CFC82A621514126B85 /* ShareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareView.swift; sourceTree = "<group>"; };
-		E8BFC1DAA6E43241677C8730 /* Health.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Health.entitlements; sourceTree = "<group>"; };
 		E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSettingsView.swift; sourceTree = "<group>"; };
 		EBA213D456FF8A690E35B36F /* ScreenTimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeService.swift; sourceTree = "<group>"; };
 		ED75A40C75D31819393889F1 /* MacLoginItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLoginItem.swift; sourceTree = "<group>"; };
 		F052E49EFFBA77932E41460B /* StudySessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudySessionView.swift; sourceTree = "<group>"; };
 		F2884A9E5CE8EFF2BA09F5D5 /* RecentFoodViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentFoodViews.swift; sourceTree = "<group>"; };
 		F32DFE4D7AD03B872AE8A96C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		F3D59FFBA8C212081C4DD3EA /* Default.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Default.entitlements; sourceTree = "<group>"; };
 		F4B434BFB9F5B347D240B333 /* ErrandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrandViews.swift; sourceTree = "<group>"; };
 		F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DigestSheet.swift; sourceTree = "<group>"; };
 		F7010333B02FB2C5C4B8EC49 /* LessonViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LessonViews.swift; sourceTree = "<group>"; };
@@ -746,9 +747,10 @@
 			children = (
 				605B384AB6649D33C15F6172 /* Aide.entitlements */,
 				9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */,
+				9F8EEE348C3BB16776A000F3 /* AppGroup.entitlements */,
 				6E1B259BBCE24A81EE5735B1 /* AppIcon.icon */,
 				CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */,
-				E8BFC1DAA6E43241677C8730 /* Health.entitlements */,
+				F3D59FFBA8C212081C4DD3EA /* Default.entitlements */,
 				87320B5BA6327928E4CC8A7D /* Info.plist */,
 				4FE6C5EFCDAF271AC45911B4 /* Health */,
 				49327BF300E149686FF8BF47 /* Models */,
@@ -1643,6 +1645,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_ENTITLEMENTS = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1677,6 +1680,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_ENTITLEMENTS = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

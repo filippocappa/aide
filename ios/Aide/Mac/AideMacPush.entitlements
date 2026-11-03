@@ -6,16 +6,11 @@
 	<string>development</string>
 	<!-- Not sandboxed (2026-11-01): Screen Time (Mac/MacShield.swift) quits whichever apps a lock covers and finds
 	     their Dock icons, which the App Sandbox allows only for apps named in advance. Quitting is an Apple Event,
-	     hence automation (hardened runtime). -->
+	     hence automation (hardened runtime). The hardened runtime's keys only: the sandbox's (network, files) mean
+	     nothing on an app that isn't sandboxed. -->
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
-	<key>com.apple.security.network.client</key>
-	<true/>
 	<key>com.apple.security.device.audio-input</key>
-	<true/>
-	<key>com.apple.security.files.user-selected.read-only</key>
-	<true/>
-	<key>com.apple.security.files.downloads.read-write</key>
 	<true/>
 </dict>
 </plist>
