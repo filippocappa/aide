@@ -184,6 +184,7 @@ targets:
     sources:
       - UsageReport
       - Usage
+      - Aide/Support/Columns.swift
     info:
       path: UsageReport/Info.plist
       properties:
