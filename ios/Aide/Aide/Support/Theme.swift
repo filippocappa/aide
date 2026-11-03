@@ -486,11 +486,11 @@ extension View {
     /// The Mac's back button on a pushed page (`Mac/MacNavigationStack.swift`); the phone has its navigation bar's.
     func macPageBack() -> some View { self }
     /// The Mac's cover in a window of its own (`Mac/MacCoverWindow.swift`), so it can go full screen.
-    func macWindowCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil,
+    func macWindowCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil, closable: Bool = false,
                                        @ViewBuilder content: @escaping () -> Content) -> some View {
         fullScreenCover(isPresented: isPresented, onDismiss: onDismiss, content: content)
     }
-    func macWindowCover<Item: Identifiable, Content: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil,
+    func macWindowCover<Item: Identifiable, Content: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil, closable: Bool = false,
                                                            @ViewBuilder content: @escaping (Item) -> Content) -> some View {
         fullScreenCover(item: item, onDismiss: onDismiss, content: content)
     }

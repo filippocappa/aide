@@ -72,7 +72,7 @@ struct StudySessionView: View {
             .padding(.bottom, 16)
         }
         .pageGlow(Theme.study)
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } } }
+        .toolbar { if coverClose == nil { ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } } } }
         .bottomBar {
             if bank != nil, available.total > 0 {
                 Button { Task { await start() } } label: {
@@ -315,6 +315,7 @@ private struct StudyRunView: View {
     let quiz: Quiz
     let again: () -> Void
     let close: () -> Void
+    @Environment(\.coverClose) private var coverClose
     @EnvironmentObject private var env: AppEnvironment
 
     enum Phase { case asking, roundDone, done }
@@ -376,8 +377,10 @@ private struct StudyRunView: View {
         }
         .pageGlow(Theme.study)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Close", systemImage: "xmark") { close() }
+            if coverClose == nil {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", systemImage: "xmark") { close() }
+                }
             }
             ToolbarItem(placement: .principal) {
                 Text(phase == .done ? "Done" : "Round \(round)").font(.subheadline.weight(.semibold))

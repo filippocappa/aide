@@ -14,6 +14,9 @@ final class MacCovers {
         /// Aide's window when it opened: the cover opens over it, a little smaller, and in full screen when it is.
         let frame: NSRect?
         let fullScreen: Bool
+        /// The red button and ⌘W close it (a lesson, a quiz: saved as they go). Off for an exam, which has its own
+        /// ways out, so a click doesn't drop it.
+        let closable: Bool
         let closed: () -> Void
     }
 
@@ -50,9 +53,9 @@ struct MacCoverWindowContent: View {
                 .frame(minWidth: 720, minHeight: 540)
                 .background(MacWindowReader { window in
                     box.window = window
-                    // The exam has its own ways out (Close, Quit that asks first, Done); the red button and ⌘W
+                    // An exam has its own ways out (Close, Quit that asks first, Done); the red button and ⌘W
                     // would just drop it.
-                    window.standardWindowButton(.closeButton)?.isEnabled = false
+                    if !entry.closable { window.standardWindowButton(.closeButton)?.isEnabled = false }
                     // Its own window over Aide's, never a tab beside another.
                     window.tabbingMode = .disallowed
                     if let frame = entry.frame { window.setFrame(Self.popUp(over: frame), display: true) }
@@ -100,6 +103,7 @@ struct MacWindowReader: NSViewRepresentable {
 private struct MacWindowCover: ViewModifier {
     @Binding var isPresented: Bool
     let onDismiss: (() -> Void)?
+    let closable: Bool
     let cover: () -> AnyView
     @State private var open: UUID?
     @Environment(\.openWindow) private var openWindow
@@ -125,7 +129,8 @@ private struct MacWindowCover: ViewModifier {
                 open = id
                 let host = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first { $0.isVisible && $0.title == "Aide" }
                 MacCovers.shared.entries[id] = .init(
-                    view: cover(), frame: host?.frame, fullScreen: host?.styleMask.contains(.fullScreen) ?? false
+                    view: cover(), frame: host?.frame, fullScreen: host?.styleMask.contains(.fullScreen) ?? false,
+                    closable: closable
                 ) {
                     open = nil
                     if isPresented { isPresented = false }
@@ -140,15 +145,16 @@ private struct MacWindowCover: ViewModifier {
 }
 
 extension View {
-    func macWindowCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil,
+    func macWindowCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil, closable: Bool = false,
                                        @ViewBuilder content: @escaping () -> Content) -> some View {
-        modifier(MacWindowCover(isPresented: isPresented, onDismiss: onDismiss, cover: { AnyView(content()) }))
+        modifier(MacWindowCover(isPresented: isPresented, onDismiss: onDismiss, closable: closable,
+                                cover: { AnyView(content()) }))
     }
 
-    func macWindowCover<Item: Identifiable, Content: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil,
+    func macWindowCover<Item: Identifiable, Content: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil, closable: Bool = false,
                                                            @ViewBuilder content: @escaping (Item) -> Content) -> some View {
         let shown = Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
-        return macWindowCover(isPresented: shown, onDismiss: onDismiss) {
+        return macWindowCover(isPresented: shown, onDismiss: onDismiss, closable: closable) {
             if let value = item.wrappedValue { content(value) }
         }
     }

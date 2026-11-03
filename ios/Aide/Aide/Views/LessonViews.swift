@@ -54,7 +54,7 @@ struct LessonView: View {
                 if let fresh = try? await env.api.lesson(topic: topic.id) { withAnimation { lesson = fresh } }
             }
         }
-        .macWindowCover(item: $practising) { target in
+        .macWindowCover(item: $practising, closable: true) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics)
         }
     }
@@ -81,7 +81,7 @@ struct LessonView: View {
             .padding(.bottom, 16)
         }
         .pageGlow(Theme.study)
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { close() } } }
+        .toolbar { if coverClose == nil { ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { close() } } } }
     }
 
     private var building: some View {
@@ -125,6 +125,7 @@ private struct LessonRun: View {
     let restart: () -> Void
     let practise: () -> Void
     let close: () -> Void
+    @Environment(\.coverClose) private var coverClose
     @EnvironmentObject private var env: AppEnvironment
     @StateObject private var voice = LessonVoice()
 
@@ -180,14 +181,18 @@ private struct LessonRun: View {
         }
         .pageGlow(Theme.study)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Close", systemImage: "xmark") { voice.stop(); close() }
+            if coverClose == nil {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", systemImage: "xmark") { voice.stop(); close() }
+                }
             }
             ToolbarItem(placement: .principal) {
                 Text(lesson.topic.title).font(.subheadline.weight(.semibold)).lineLimit(1)
             }
         }
         .bottomBar { bottom.padding(.horizontal, 16).padding(.vertical, 8) }
+        // Closed by the window's red button too: stop reading aloud.
+        .onDisappear { voice.stop() }
         .sensoryFeedback(trigger: result) { _, new in
             guard let correct = new?.correct else { return nil }
             return correct ? .success : .error
@@ -798,12 +803,12 @@ struct LearnPathView: View {
             }
             .pageGlow(Theme.study)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { close() } } }
+            .toolbar { if coverClose == nil { ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { close() } } } }
             .refreshable { await load() }
         }
         .tint(Theme.study)
         .task { await load() }
-        .macWindowCover(item: $learning, onDismiss: { Task { await load() } }) { topic in
+        .macWindowCover(item: $learning, onDismiss: { Task { await load() } }, closable: true) { topic in
             LessonView(topic: topic, course: course.id, courseName: course.title)
         }
     }
