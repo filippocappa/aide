@@ -10,7 +10,7 @@ from dataclasses import dataclass
 ORCHESTRATOR = "aide"
 
 # Tools every agent gets, whatever its domain.
-ROUTINES = ("list_routines", "create_routine", "update_routine", "delete_routine")
+ROUTINES = ("list_routines", "create_routine", "update_routine", "rewrite_routine", "delete_routine")
 OBJECTIVES = ("list_objectives", "add_objective", "update_objective", "accept_objectives", "plan_objectives")
 COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", "open_page", *ROUTINES, *OBJECTIVES)
 SETTINGS = ("settings", "change_setting", "run_digest")
@@ -383,7 +383,7 @@ did it ("Secretary added the six sessions to your calendar.")."""
 
 _ROUTINES = """- Routines: jobs you run on a schedule ("every Sunday at 18 recap my week"), each with its own chat. \
 Manage yours with list_routines, create_routine and update_routine; they run straight away, so say what you set \
-(days and time). Deleting one is queued. Write the prompt as the instruction for each run. A message that starts \
+(days and time). A new prompt for one (rewrite_routine) and deleting one are queued. Write the prompt as the instruction for each run. A message that starts \
 with "[Scheduled routine" is one of those runs: the user isn't in the chat then, so write the message they'll read \
 there, and don't ask questions you need answered before going on."""
 
@@ -564,7 +564,7 @@ _CONNECTORS = (
                                                    "card_owed", "delete_payment"}),
     ("purchases", "Purchases", PURCHASES, set()),
     ("memory", "Memory", ("remember", "forget"), {"remember", "forget"}),
-    ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "delete_routine"}),
+    ("routines", "Routines", ROUTINES, {"create_routine", "update_routine", "rewrite_routine", "delete_routine"}),
     ("objectives", "Objectives", OBJECTIVES, {"add_objective", "update_objective", "accept_objectives",
                                               "plan_objectives"}),
     ("settings", "Settings", SETTINGS, {"change_setting", "run_digest"}),
