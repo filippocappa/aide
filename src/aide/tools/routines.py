@@ -1,4 +1,4 @@
-"""Routine tools. Listing, creating and changing run immediately; deleting waits for the user's !yes.
+"""Routine tools. Listing, creating and changing run immediately; deleting waits for the user's OK.
 
 Each agent gets its own set: Aide manages every agent's routines (and picks the agent when creating one), the
 others only their own (docs/API.md, "Routines").
@@ -72,6 +72,6 @@ def routine_tools(store: RoutineStore, agent: str, any_agent: bool = False) -> l
              _obj({**rid, "title": {"type": "string"}, "prompt": {"type": "string"}, **schedule,
                    "enabled": {"type": "boolean"}}, ["routine_id"]), update_routine),
         Tool("delete_routine", "Delete a routine (its chat stays). Needs the user's confirmation: it is queued, "
-             "and runs only when the user replies !yes.", _obj(rid, ["routine_id"]),
+             "and runs only when the user taps Confirm in the app.", _obj(rid, ["routine_id"]),
              delete_routine, confirm=True, describe=describe_delete, target_arg="routine_id"),
     ]

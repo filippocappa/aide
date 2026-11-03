@@ -1,4 +1,4 @@
-"""Habit tools. Adding, checking and counting run immediately; deleting waits for the user's !yes."""
+"""Habit tools. Adding, checking and counting run immediately; deleting waits for the user's OK."""
 
 import datetime
 
@@ -141,6 +141,6 @@ def habit_tools(store: HabitStore) -> list[Tool]:
                    "health": {"type": "string", "enum": [*HEALTH_COUNTS, "none"]},
                    "workouts": {"type": "array", "items": {"type": "string"}}}, ["habit_id"]), update_habit),
         Tool("delete_habit", "Stop tracking a habit and drop its history. Needs the user's confirmation: it is "
-             "queued, and runs only when the user replies !yes.", _obj(hid, ["habit_id"]),
+             "queued, and runs only when the user taps Confirm in the app.", _obj(hid, ["habit_id"]),
              delete_habit, confirm=True, describe=describe_delete, target_arg="habit_id"),
     ]

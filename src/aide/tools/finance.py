@@ -235,7 +235,7 @@ def finance_tools(store: FinanceStore, banks=None) -> list[Tool]:
              "older than 2 minutes) and the bank link's state. Read-only: Aide can't move money.",
              {"type": "object", "properties": {}, "additionalProperties": False}, accounts),
         Tool("delete_payment", "Delete a payment logged by mistake or twice ([payment N]). Needs the user's "
-             "confirmation: it is queued, and runs only when the user replies !yes.",
+             "confirmation: it is queued, and runs only when the user taps Confirm in the app.",
              {"type": "object", "properties": {"payment_id": {"type": "integer"}}, "required": ["payment_id"],
               "additionalProperties": False}, delete_payment, confirm=True, describe=describe_delete,
              target_arg="payment_id"),

@@ -1,6 +1,5 @@
 """Study tools, for Professor: courses, lectures and their notes, the course files (slides, handouts), and the
-course notebooks (notebook.py). Reading and changing notes run immediately; deleting a lecture waits for the user's
-!yes. A notebook is read the way code is searched: its outline first, then one section, never the whole of it."""
+course notebooks (notebook.py). Reading and changing notes run immediately; deleting a lecture waits for the user's OK. A notebook is read the way code is searched: its outline first, then one section, never the whole of it."""
 
 import json
 from datetime import datetime
@@ -411,7 +410,7 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
              "or fix something the user asked for. Keep everything else as it was. Runs immediately; the previous "
              "version is kept.", _obj({**lid, "notes": {"type": "string"}}, ["lecture_id", "notes"]), update_notes),
         Tool("delete_lecture", "Delete a lecture with its notes and recording. Needs the user's confirmation: it is "
-             "queued, and runs only when the user replies !yes.", _obj(lid, ["lecture_id"]), delete_lecture,
+             "queued, and runs only when the user taps Confirm in the app.", _obj(lid, ["lecture_id"]), delete_lecture,
              confirm=True, describe=describe_delete, target_arg="lecture_id"),
         *notebook_tools,
     ]

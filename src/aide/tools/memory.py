@@ -1,4 +1,4 @@
-"""Memory tools. Remembering runs immediately; forgetting waits for the user's !yes.
+"""Memory tools. Remembering runs immediately; forgetting waits for the user's OK.
 
 Each agent gets its own pair: a specialist sees and dedupes against the shared items plus its own, and picks the
 scope; Aide sees everything and saves shared items only (docs/API.md, "Memory").
@@ -79,7 +79,7 @@ def memory_tools(db: Database, agent: str = "aide", scoped: bool = False) -> lis
              {"type": "object", "properties": properties, "required": list(properties),
               "additionalProperties": False}, remember),
         Tool("forget", "Delete a remembered fact, by the id shown in the memory list. Needs the user's confirmation: "
-             "it is queued, and runs only when the user replies !yes.",
+             "it is queued, and runs only when the user taps Confirm in the app.",
              {"type": "object", "properties": {"memory_id": {"type": "integer"}}, "required": ["memory_id"],
               "additionalProperties": False},
              forget, confirm=True, describe=describe_forget, target_arg="memory_id"),

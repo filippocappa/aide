@@ -1,4 +1,4 @@
-"""Reminder tools. Deleting waits for the user's !yes; everything else runs immediately."""
+"""Reminder tools. Deleting waits for the user's OK; everything else runs immediately."""
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -104,6 +104,6 @@ def reminder_tools(store: ReminderStore, tz: ZoneInfo) -> list[Tool]:
         Tool("complete_reminder", "Mark a reminder as done. Runs immediately.", _obj(rid, ["reminder_id"]),
              complete_reminder),
         Tool("delete_reminder", "Delete a reminder. Needs the user's confirmation: it is queued, and runs only "
-             "when the user replies !yes.", _obj(rid, ["reminder_id"]),
+             "when the user taps Confirm in the app.", _obj(rid, ["reminder_id"]),
              delete_reminder, confirm=True, describe=describe_delete, target_arg="reminder_id"),
     ]

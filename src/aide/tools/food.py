@@ -1,4 +1,4 @@
-"""Food log tools. Logging, changing and goals run immediately; deleting a meal waits for the user's !yes.
+"""Food log tools. Logging, changing and goals run immediately; deleting a meal waits for the user's OK.
 
 A meal is logged from its items: saved foods (foods.py) with grams, or new foods with the model's numbers per 100 g,
 saved as they're logged; the server works out the totals. Meals logged before items only have their totals.
@@ -206,7 +206,7 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
                    "workout_carbs_pct": {"type": "integer"}, "goal": {"type": "string", "enum": list(GOALS)},
                    "note": {"type": "string"}}, []), food_targets),
         Tool("delete_meal", "Delete a logged meal. Needs the user's confirmation: it is queued, and runs only "
-             "when the user replies !yes.", _obj(mid, ["meal_id"]),
+             "when the user taps Confirm in the app.", _obj(mid, ["meal_id"]),
              delete_meal, confirm=True, describe=describe_delete, target_arg="meal_id"),
         *nutrition_tools(foods, off or OpenFoodFacts()),
     ]
