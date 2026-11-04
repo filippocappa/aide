@@ -326,6 +326,51 @@ _MAIN_IMAGE_JS = r"""
 }
 """
 
+# A shoe's (or a garment's) size grid on a product page: [{size: "EU 44.5", in_stock}], in the page's order; [] when
+# the page has no grid (fewer than 4 sizes). A size is out when it, its input or a parent up to 3 levels is disabled,
+# marked sold out / unavailable by class, aria or its own words, or struck through (Nike greys and strikes them).
+_SIZES_JS = r"""
+() => {
+  const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+  const SIZE = /^(?:(?:EU|EUR|IT)\s*)?(\d{2})((?:[.,]5)|\s?½|\s1\/2|\s?⅓|\s?⅔|\s1\/3|\s2\/3)?(?![\d.,])\s*(.{0,24})$/i;
+  const GONE = /sold.?out|out.?of.?stock|esaurit|non disponibil|unavailable|not.?available|\boos\b|disabled|avvisami|notify/i;
+  const gone = (el) => {
+    for (let e = el, i = 0; e && e !== document.body && i < 4; e = e.parentElement, i++) {
+      if (e.disabled || e.getAttribute('aria-disabled') === 'true') return true;
+      const cls = typeof e.className === 'string' ? e.className : (e.getAttribute('class') || '');
+      if (GONE.test(cls) || GONE.test(e.getAttribute('aria-label') || '') || GONE.test(e.getAttribute('title') || '')) return true;
+      if (e.dataset && /false|0|out|sold/i.test(e.dataset.available || e.dataset.inStock || e.dataset.instock || '')) return true;
+      const st = getComputedStyle(e);
+      if ((st.textDecorationLine || '').includes('line-through')) return true;
+      if (i === 0) for (const c of e.querySelectorAll('*')) {
+        if ((getComputedStyle(c).textDecorationLine || '').includes('line-through')) return true;
+      }
+    }
+    return false;
+  };
+  const found = new Map();
+  for (const el of document.querySelectorAll('input[type=radio],button,[role=radio],[role=option],option,label,li')) {
+    if (el.tagName === 'LI' && el.querySelector('input,button,[role=radio],[role=option],label')) continue;
+    const said = el.tagName === 'INPUT'
+      ? (el.labels && el.labels[0] ? el.labels[0].innerText : el.value) : (el.innerText || el.getAttribute('aria-label') || el.value);
+    const m = clean(said).match(SIZE);
+    if (!m) continue;
+    const n = +m[1];
+    if (n < 30 || n > 52) continue;
+    const frac = (m[2] || '').replace(/\s/g, '').replace(',', '.').replace('½', '.5').replace('1/2', '.5')
+      .replace('⅓', ' 1/3').replace('⅔', ' 2/3');
+    if (m[3] && !GONE.test(m[3]) && !/^[-–(·|]?\s*(\(?\d+[^)]*\)?)?$/.test(m[3])) continue;
+    const size = 'EU ' + n + frac;
+    let out = gone(el) || (m[3] && GONE.test(m[3]));
+    if (el.tagName === 'LABEL' && el.control) out = out || gone(el.control);
+    if (el.tagName === 'INPUT' && el.labels && el.labels[0]) out = out || gone(el.labels[0]);
+    found.set(size, found.has(size) ? found.get(size) && !out : !out);
+  }
+  if (found.size < 4) return [];
+  return [...found].map(([size, in_stock]) => ({size, in_stock}));
+}
+"""
+
 # Is this element a dialling-code field ("Prefisso" +34, a country-code <select>)? The scene's test, for one element.
 _IS_DIAL_JS = r"""
 e => {
@@ -1037,6 +1082,22 @@ class Browser:
             return await self._page(owner).evaluate(_MAIN_IMAGE_JS)
         except Exception:
             return None
+
+    async def product(self, owner: str, url: str) -> dict:
+        """Opens a product page: {image, sizes} (sizes as _SIZES_JS gives them; [] when the page shows no grid)."""
+        await self.open(owner, url)
+        page = self._page(owner)
+        await self._settle(page)
+        out = {"image": None, "sizes": []}
+        try:
+            out["image"] = await page.evaluate(_MAIN_IMAGE_JS)
+        except Exception:
+            pass
+        try:
+            out["sizes"] = await page.evaluate(_SIZES_JS) or []
+        except Exception:
+            pass
+        return out
 
     async def screenshot(self, owner: str, sharp: bool = False) -> bytes:
         """The visible part of the page as a JPEG: CSS pixels for the model, device pixels with `sharp`."""

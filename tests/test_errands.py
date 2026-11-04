@@ -46,6 +46,7 @@ class FakeBrowser:
         self.pictures: dict[str, list[dict]] = {}  # a page's pictures by link
         self.acts: dict[str, dict] = {}
         self.product_pages: list[str] = []
+        self.size_grids: dict[str, list[dict]] = {}  # a product page's sizes by address (none: no grid)
         self.scenes: dict[str, dict] = {}  # a page's scene by address (none: the live view sends none)
         self.notes, self.put_in, self.pressed = [], [], []
 
@@ -137,6 +138,10 @@ class FakeBrowser:
     async def main_image(self, owner, url):
         self.product_pages.append(url)
         return f"https://img.test/{url.rsplit('/', 1)[-1]}.jpg"
+
+    async def product(self, owner, url):
+        self.product_pages.append(url)
+        return {"image": f"https://img.test/{url.rsplit('/', 1)[-1]}.jpg", "sizes": self.size_grids.get(url, [])}
 
     async def text(self, owner):
         return self._here(owner)[1]

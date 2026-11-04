@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from aide.agent import CONVERSATION
 from aide.channels.api import create_app
-from aide.releases import Releases, clean_colourway, merge, release_tools
+from aide.releases import Releases, clean_colourway, clean_size, merge, release_tools, size_key
 from aide.reminders import ReminderStore
 from aide.tools import Tool
 from test_agents import AUTH, ROME, FakeClient, calls, done
@@ -44,10 +44,15 @@ def tracker(runner, agent, looks=()):
     return rel
 
 
-async def researched(make, *colourways):
+def grid(*in_stock, sizes=("38.5", "39", "40", "42", "43", "43.5", "44", "44.5", "45")):
+    return [{"size": f"EU {x}", "in_stock": x in in_stock} for x in sizes]
+
+
+async def researched(make, *colourways, grids=None):
     runner, agent, _ = make([calls(("open_page", {"url": CALENDAR})),
                              calls(("report_release", report(*colourways)))])
     runner.browser.pages[CALENDAR] = ("Alphafly 4 release dates", "Nike Alphafly 4 Volt/Black HF7356-700", {})
+    runner.browser.size_grids.update(grids or {})
     rel = tracker(runner, agent)
     r = rel.start("Nike Alphafly 4", CONVERSATION)
     assert r["status"] == "researching"
@@ -159,17 +164,18 @@ async def test_tools_and_api(env):  # noqa: F811
     make, db, browser = env
     runner, agent, rel, r = await researched(make, colourway("Volt/Black", "HF7356-700", date=day(5), time="10:00"))
     tools = {t.name: t for t in release_tools(rel, lambda: CONVERSATION)}
-    out = await tools["set_release_picks"].handler(release=r["id"], colourways=["Volt/Black"], size="EU 43",
+    out = await tools["set_release_picks"].handler(release=r["id"], colourways=["Volt/Black"], sizes=["EU 43"],
                                                    max_total="300 €", shops=None, mode="buy")
     assert "Set up now" in out and out.attachment["type"] == "releases"
-    assert "picked Volt/Black (buy, size EU 43)" in await tools["list_releases"].handler()
+    assert "picked Volt/Black (buy, sizes EU 43)" in await tools["list_releases"].handler()
 
     client = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, "t", errands=runner, releases=rel))
     got = client.get("/v1/releases", headers=AUTH).json()
     assert got["enabled"] and got["releases"][0]["colourways"][0]["plan"]["what"] == "drop"
     body = {"colourways": [r["colourways"][0]["key"]], "size": "EU 44", "max_total": 310, "shops": [], "mode": "buy"}
     r2 = client.put(f"/v1/releases/{r['id']}/picks", json=body, headers=AUTH).json()
-    assert r2["picks"]["size"] == "EU 44" and r2["picks"]["max_total_text"] == "310,00 €"
+    assert r2["picks"]["size"] == "EU 44" and r2["picks"]["sizes"] == ["EU 44"]  # the old field still works
+    assert r2["picks"]["max_total_text"] == "310,00 €"
     assert "EU 44" in runner.store.get(r2["colourways"][0]["plan"]["errand_id"])["task"]  # the drop was redone
     assert client.put(f"/v1/releases/{r['id']}/picks", json={**body, "colourways": ["nope"]},
                       headers=AUTH).status_code == 422
@@ -177,3 +183,44 @@ async def test_tools_and_api(env):  # noqa: F811
     assert client.post(f"/v1/releases/{r['id']}/resume", headers=AUTH).json()["status"] == "tracking"
     assert client.delete(f"/v1/releases/{r['id']}", headers=AUTH).json() == {"ok": True}
     assert client.get(f"/v1/releases/{r['id']}", headers=AUTH).status_code == 404
+
+
+def test_sizes_are_read_one_way():
+    assert [size_key(x) for x in ("EU 44.5", "44,5", "44 ½", "EU 44 2/3", "taglia 43")] == \
+        ["44.5", "44.5", "44.5", "44 2/3", "43"]
+    assert [clean_size(x) for x in ("44,5", "EU44", "US 10", "M")] == ["EU 44.5", "EU 44", "US 10", "M"]
+
+
+WHITE = "https://www.nike.com/it/t/alphafly-4-hf7356-100"
+
+
+async def test_available_means_in_the_users_sizes(env):  # noqa: F811
+    make, db, browser = env
+    # Out on Nike, but its grid has only the small sizes: sold out as far as the user goes (`mine`).
+    runner, agent, rel, r = await researched(make, colourway("White", "HF7356-100", status="out"),
+                                             grids={WHITE: grid("38.5", "39")})
+    white = r["colourways"][0]
+    assert white["status"] == "out" and white["sizes_site"] == "nike.com"  # out: small sizes are left
+    assert [x["size"] for x in white["sizes"] if x["in_stock"]] == ["EU 38.5", "EU 39"]
+
+    r = rel.set_picks(r["id"], ["White"], None, "320 €", [], "buy", sizes=["44", "43.5", "44.5"])
+    assert r["picks"]["sizes"] == ["EU 44", "EU 43.5", "EU 44.5"] and r["picks"]["size"] == "EU 44"
+    [act] = await rel._act(r)
+    assert "sold out in your sizes (44, 43.5, 44.5): only 38.5, 39 left" in act
+    assert not runner.store.recent()[:1] or runner.store.recent()[0]["id"] == r["errand_id"]  # nothing bought
+    r = rel._get(r["id"])
+    assert r["acted"][white["key"]]["what"] == "sizes"
+    assert rel.as_json(r)["colourways"][0]["mine"] == []
+    assert [x[1] for x in rel.restock_due()] == []  # just read: not again for 3 hours
+
+    # 44.5 comes back: bought in that one, the first of the user's sizes in stock.
+    runner.browser.size_grids[WHITE] = grid("38.5", "44.5")
+    r = await rel.restock(r["id"], {white["key"]})
+    assert r["colourways"][0]["status"] == "out"
+    e = runner.store.get(r["acted"][white["key"]]["errand_id"])
+    assert "size EU 44.5 (else EU 44, EU 43.5" in e["task"]
+    last = agent.visible_history(CONVERSATION)[-1]["text"]
+    assert "back in EU 44.5" in last and "available on nike.com in 44.5" in last
+
+    # The next tracker starts with these sizes.
+    assert rel.as_json(rel._get(r["id"]))["usual_sizes"] == ["EU 44", "EU 43.5", "EU 44.5"]

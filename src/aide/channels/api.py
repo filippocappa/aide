@@ -634,7 +634,8 @@ class ReleaseIn(BaseModel):
 
 class ReleasePicksIn(BaseModel):
     colourways: list[str]
-    size: str | None = None
+    sizes: list[str] = []  # the sizes the user would take, the one they'd rather have first
+    size: str | None = None  # the old field: one size
     max_total: float | None = None
     currency: str | None = None
     shops: list[str] = []
@@ -3213,7 +3214,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         release_or_404(release_id)
         try:
             r = releases.set_picks(release_id, body.colourways, body.size, body.max_total, body.shops, body.mode,
-                                   body.currency)
+                                   body.currency, sizes=body.sizes or None)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         await releases._act(r)

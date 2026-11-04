@@ -1703,9 +1703,14 @@ final class ErrandTests: XCTestCase {
                        "reminder_id": null, "text": "Volt/Black: a timed drop on nike.com"}},
              {"key": "HF7356-100", "name": "White", "code": null, "price": null, "status": "rumoured", "date": "2030-12-01",
               "time": null, "opens_at": null, "method": "unknown", "url": null, "shops": [], "note": null, "image": null,
-              "new": true, "picked": false, "plan": null}],
+              "new": true, "picked": false, "plan": null},
+             {"key": "IU4686-002", "name": "Sea Glass", "status": "out", "picked": false, "plan": null,
+              "sizes": [{"size": "EU 38.5", "in_stock": true}, {"size": "EU 44", "in_stock": false},
+                        {"size": "EU 44.5", "in_stock": false}],
+              "sizes_at": "2030-11-04T10:00:00+01:00", "sizes_site": "nike.com", "mine": []}],
            "sources": [{"title": "Sole Retriever", "url": "https://www.soleretriever.com"}],
-           "picks": {"colourways": ["HF7356-700"], "size": "EU 43", "max_total": 320.0, "currency": "EUR",
+           "usual_sizes": ["EU 44", "EU 44.5"],
+           "picks": {"colourways": ["HF7356-700"], "sizes": ["EU 44", "EU 44.5"], "size": "EU 44", "max_total": 320.0, "currency": "EUR",
                      "shops": ["nike.com"], "mode": "buy", "max_total_text": "320,00 €"},
            "shops": ["nike.com"], "errand_id": 9, "error": null,
            "log": [{"ts": "2030-11-04T10:00:00+01:00", "text": "Volt/Black drops 2030-11-20 09:00"}],
@@ -1721,6 +1726,16 @@ final class ErrandTests: XCTestCase {
         XCTAssertNotNil(r.colourways[0].opens)
         XCTAssertTrue(r.colourways[1].when.hasSuffix("time not out yet"), r.colourways[1].when)
         XCTAssertTrue(r.state.hasPrefix("Tracking 1 colourway"), r.state)
+        // Out on Nike, but only in 38.5: sold out as far as the user's sizes go.
+        let sea = r.colourways[2]
+        XCTAssertEqual(sea.mine, [])
+        XCTAssertEqual(sea.when, "Sold out in your sizes")
+        XCTAssertTrue(sea.soldOutForMe(sea.inStock(of: ["44", "44,5"])))
+        XCTAssertEqual(sea.inStock(of: ["38.5", "44"]), ["38.5"])
+        XCTAssertEqual(sea.when(sea.inStock(of: ["38.5"])), "Available in 38.5")
+        XCTAssertNil(r.colourways[0].inStock(of: ["44"]))  // no grid read: not known
+        XCTAssertEqual(r.picks?.sizes, ["EU 44", "EU 44.5"])
+        XCTAssertEqual(r.usualSizes, ["EU 44", "EU 44.5"])
         let sent = try JSONSerialization.jsonObject(with: JSONEncoder.api.encode(try XCTUnwrap(r.picks))) as? [String: Any]
         XCTAssertEqual(sent?["max_total"] as? Double, 320)
         XCTAssertEqual(sent?["mode"] as? String, "buy")

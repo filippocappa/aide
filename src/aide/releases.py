@@ -11,8 +11,12 @@ Three steps:
    it's about a picked colourway or a new one. When a picked colourway gets a date and a time, the tracker acts:
    buy: a timed drop on the first of the user's shops that sells it (the errand gets ready ahead and asks to confirm
    the limits, as any drop), tell: a reminder 10 minutes before (Apple Reminders notifies) and a post. A draw is
-   always told (a browser can't enter one for you); a colourway out of stock gets a price watch for when it's back;
-   one available now is bought through a normal errand, with its Confirm, or told.
+   always told (a browser can't enter one for you); one available now is bought through a normal errand, with its
+   Confirm, or told.
+Sizes: each colourway's page is read for its size grid (`Browser.product`, no model) after the research and at each
+look. "Available" means one of the user's sizes is in stock: with none of them in stock (or the colourway sold out)
+the page is read again every 3 hours and the picks act once one is back. Without a grid (not yet out, a page that
+can't be read) a sold-out colourway gets a price watch for when it's back.
 Nothing here buys by itself: every order goes through an errand and the user's Confirm (or a drop's confirmed limits).
 """
 
@@ -57,7 +61,8 @@ FAILS = 5  # looks in a row that failed: it stops and says so
 CHECK_ROUNDS = 10  # the fast model's tool calls in one look
 CHECK_SECONDS = 150
 REMIND_BEFORE = timedelta(minutes=10)
-PICTURE_SECONDS = 25  # a look's time for new colourways' pictures
+STOCK_SECONDS = 60  # a look's time for reading the colourways' pages (pictures, size grids)
+STOCK_EVERY = timedelta(hours=3)  # a picked colourway waiting for one of the user's sizes: its page again
 
 COLOURWAY = {"type": "object", "properties": {
     "name": {"type": "string", "description": "the colourway's name as the shops write it: \"Volt/Black\""},
@@ -128,6 +133,36 @@ def _hm(value) -> str | None:
     return f"{int(m.group(1)):02d}:{m.group(2)}"
 
 
+_FRACTIONS = {".5": ".5", ",5": ".5", "½": ".5", "1/2": ".5", "1/3": " 1/3", "⅓": " 1/3", "2/3": " 2/3", "⅔": " 2/3"}
+
+
+def size_key(text) -> str | None:
+    """A shoe size compared across shops: "EU 44.5", "44,5", "44 ½" → "44.5"; "EU 44 2/3" → "44 2/3"."""
+    m = re.search(r"(?<!\d)(\d{2})\s*([.,]5|½|1/2|1/3|⅓|2/3|⅔)?(?![\d/])", str(text or ""))
+    return m.group(1) + _FRACTIONS.get(m.group(2) or "", "") if m else None
+
+
+def clean_size(text) -> str | None:
+    """A size as the user or a page gave it, written the one way: "EU 44.5"; other systems kept as written."""
+    text = " ".join(str(text or "").split())[:20]
+    key = size_key(text)
+    if key and 30 <= int(key[:2]) <= 52 and not re.search(r"\b(US|UK|M|W)\b", text, re.I):
+        return f"EU {key}"
+    return text or None
+
+
+def clean_sizes(sizes) -> list[dict]:
+    out: list[dict] = []
+    for x in sizes or []:
+        size = clean_size(x.get("size") if isinstance(x, dict) else x)
+        if size and all(o["size"] != size for o in out):
+            out.append({"size": size, "in_stock": bool(x.get("in_stock")) if isinstance(x, dict) else True})
+    return out[:40]
+
+
+STATUS_WORDS = {"out": "available now", "sold_out": "sold out", "upcoming": "announced", "rumoured": "rumoured"}
+
+
 def clean_colourway(c: dict) -> dict:
     """One colourway as the model gave it, checked: the enums, the day and the time, the links."""
     link = lambda u: str(u)[:500] if str(u or "").startswith(("https://", "http://")) else None  # noqa: E731
@@ -144,7 +179,9 @@ def clean_colourway(c: dict) -> dict:
             "method": c.get("method") if c.get("method") in METHODS else "unknown",
             "url": link(c.get("url")) or next((s["url"] for s in shops if s["url"]), None),
             "shops": shops[:8], "note": (str(c["note"])[:100] if c.get("note") else None),
-            "image": c.get("image") if str(c.get("image") or "").startswith("https://") else None}
+            "image": c.get("image") if str(c.get("image") or "").startswith("https://") else None,
+            "sizes": clean_sizes(c.get("sizes")), "sizes_at": c.get("sizes_at"),
+            "sizes_site": c.get("sizes_site")}
 
 
 def merge(old: list[dict], new: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -162,6 +199,10 @@ def merge(old: list[dict], new: list[dict]) -> tuple[list[dict], list[dict]]:
         else:
             c = {**c, "key": was["key"], "image": c["image"] or was.get("image"), "new": False,
                  "code": c["code"] or was.get("code")}
+            if not c["sizes"] and was.get("sizes"):  # the page's grid is read in code; a look doesn't give one
+                c.update(sizes=was["sizes"], sizes_at=was.get("sizes_at"), sizes_site=was.get("sizes_site"))
+                if was.get("status") in ("out", "sold_out") and c["status"] in ("out", "sold_out"):
+                    c["status"] = was["status"]  # the grid knows better than a search
             seen.add(was["key"])
             if c["date"] != was.get("date") and c["date"]:
                 changes.append({"key": c["key"], "kind": "date", "text": f"{c['name']}: drops {c['date']}"
@@ -169,8 +210,7 @@ def merge(old: list[dict], new: list[dict]) -> tuple[list[dict], list[dict]]:
             elif c["time"] != was.get("time") and c["time"]:
                 changes.append({"key": c["key"], "kind": "time", "text": f"{c['name']}: at {c['time']} on {c['date']}"})
             if c["status"] != was.get("status"):
-                words = {"out": "available now", "sold_out": "sold out", "upcoming": "announced", "rumoured": "rumoured"}
-                changes.append({"key": c["key"], "kind": "status", "text": f"{c['name']}: {words[c['status']]}"})
+                changes.append({"key": c["key"], "kind": "status", "text": f"{c['name']}: {STATUS_WORDS[c['status']]}"})
             if c["price"] and was.get("price") and parse_money(c["price"])[0] != parse_money(was["price"])[0]:
                 changes.append({"key": c["key"], "kind": "price", "text": f"{c['name']}: {c['price']} (was {was['price']})"})
         if c["key"] not in {x["key"] for x in out}:
@@ -179,6 +219,29 @@ def merge(old: list[dict], new: list[dict]) -> tuple[list[dict], list[dict]]:
         if c["key"] not in seen and c["key"] not in {x["key"] for x in out}:
             out.append({**c, "new": False})
     return out[:MAX_COLOURWAYS], changes
+
+
+def status_changes(old: list[dict], new: list[dict]) -> list[dict]:
+    """A colourway's status that isn't what it was, once the look and the page's grid are both in."""
+    was = {c["key"]: c["status"] for c in old}
+    return [{"key": c["key"], "kind": "status", "text": f"{c['name']}: {STATUS_WORDS[c['status']]}"}
+            for c in new if c["key"] in was and was[c["key"]] != c["status"]]
+
+
+def picked_sizes(picks: dict | None) -> list[str]:
+    """The sizes the user picked, the first the one they'd rather have (old picks have one `size`)."""
+    if not picks:
+        return []
+    return list(picks.get("sizes") or ([picks["size"]] if picks.get("size") else []))
+
+
+def mine_in_stock(c: dict, sizes: list[str]) -> list[str] | None:
+    """Which of these sizes the colourway's page has in stock, in the user's order; None when it isn't known (no grid
+    read, or no sizes)."""
+    if not c.get("sizes") or not sizes:
+        return None
+    stock = {size_key(x["size"]): x["size"] for x in c["sizes"] if x["in_stock"]}
+    return [stock[k] for k in (size_key(x) for x in sizes) if k in stock]
 
 
 class Releases:
@@ -192,7 +255,8 @@ class Releases:
         summary      TEXT,
         colourways   TEXT NOT NULL DEFAULT '[]',  -- JSON, see clean_colourway
         sources      TEXT NOT NULL DEFAULT '[]',  -- JSON [{title, url}]
-        picks        TEXT,              -- JSON {colourways: [key], size, max_total, currency, shops: [site], mode}
+        picks        TEXT,              -- JSON {colourways: [key], sizes: [size], size (the first), max_total,
+                                        --       currency, shops: [site], mode}
         acted        TEXT NOT NULL DEFAULT '{}',  -- JSON {key: {what, at, errand_id, reminder_id, watch_id, site}}
         log          TEXT NOT NULL DEFAULT '[]',  -- JSON [{ts, text}]: what changed, newest last
         fails        INTEGER NOT NULL DEFAULT 0,
@@ -274,6 +338,7 @@ class Releases:
         picks = r["picks"]
         picked = set(picks["colourways"]) if picks else set()
         errands = self.errands.store if self.errands is not None else None
+        usual = picked_sizes(picks) or self.usual_sizes()
         colourways = []
         for c in r["colourways"]:
             acted = r["acted"].get(c["key"])
@@ -284,11 +349,15 @@ class Releases:
                 "date": c["date"], "time": c["time"], "opens_at": opens.isoformat() if opens else None,
                 "method": c["method"], "url": c["url"], "shops": c["shops"], "note": c["note"], "image": c["image"],
                 "new": bool(c.get("new")), "picked": c["key"] in picked,
+                "sizes": c.get("sizes") or [], "sizes_at": local(c.get("sizes_at")),
+                "sizes_site": c.get("sizes_site"), "mine": mine_in_stock(c, usual),
                 "plan": self._plan_json(acted, errand)})
         return {"id": r["id"], "query": r["query"], "title": r["title"], "status": r["status"],
                 "summary": r["summary"], "colourways": colourways, "sources": r["sources"],
-                "picks": ({**picks, "max_total_text": format_amount(picks["max_total"], picks.get("currency"))
+                "picks": ({**picks, "sizes": picked_sizes(picks),
+                           "max_total_text": format_amount(picks["max_total"], picks.get("currency"))
                            if picks.get("max_total") else None} if picks else None),
+                "usual_sizes": usual,
                 "shops": self.shops(r), "errand_id": r["errand_id"], "error": r["error"],
                 "log": [{**x, "ts": local(x["ts"])} for x in r["log"][-20:]][::-1],
                 "checked_at": local(r["checked_at"]),
@@ -301,6 +370,14 @@ class Releases:
         return {"what": acted["what"], "site": acted.get("site"), "errand_id": acted.get("errand_id"),
                 "errand_status": errand["status"] if errand else None, "watch_id": acted.get("watch_id"),
                 "reminder_id": acted.get("reminder_id"), "text": acted.get("text")}
+
+    def usual_sizes(self) -> list[str]:
+        """The sizes of the last tracker the user picked for: a new one's page starts with them."""
+        for (picks,) in self.conn.execute(
+                "SELECT picks FROM releases WHERE picks IS NOT NULL ORDER BY updated_at DESC LIMIT 10"):
+            if sizes := picked_sizes(json.loads(picks)):
+                return sizes
+        return []
 
     def shops(self, r: dict) -> list[str]:
         """Every shop the colourways name, most named first."""
@@ -363,6 +440,10 @@ class Releases:
             return []
         if e["id"] == r["errand_id"]:
             if args.get("release"):
+                try:  # the size grids, so the card says what's really in stock
+                    await asyncio.wait_for(self.read_stock(r["id"]), STOCK_SECONDS + 15)
+                except Exception:
+                    log.exception("release %s: couldn't read the sizes", r["id"])
                 return [self.card(self._get(r["id"]))]
             self.research_failed(r["id"], args.get("result") or "The research didn't find the release.")
             return []
@@ -370,13 +451,17 @@ class Releases:
             if a.get("errand_id") == e["id"]:
                 name = next((c["name"] for c in r["colourways"] if c["key"] == key), key)
                 ok = args.get("ok", True) and bool((e.get("confirm") or {}).get("purchase_id"))
+                if ok:
+                    self.update(r["id"], acted={**r["acted"], key: {**a, "bought": True}})
                 self._log(r["id"], f"{name}: bought on {a.get('site')}" if ok else f"{name}: not bought ({a.get('site')})")
         return [self.card(self._get(r["id"]))]
 
     # -- 2. picks -------------------------------------------------------------------
 
     def set_picks(self, release_id: int, colourways: list[str], size: str | None, max_total: float | str | None,
-                  shops: list[str] | None, mode: str, currency: str | None = None) -> dict:
+                  shops: list[str] | None, mode: str, currency: str | None = None,
+                  sizes: list[str] | None = None) -> dict:
+        """`sizes`: the sizes the user would take, the one they'd rather have first (`size` alone: the old field)."""
         r = self._get(release_id)
         if r["status"] == "researching":
             raise ValueError("the research isn't done yet")
@@ -403,21 +488,25 @@ class Releases:
                 currency = currency or cur
             if amount is None or amount <= 0:
                 raise ValueError("max_total is the most it may cost, with shipping, more than 0")
-        size = " ".join((size or "").split())[:20] or None
-        if mode == "buy" and (amount is None or not size):
+        sizes = list(dict.fromkeys(x for x in (clean_size(v) for v in (sizes or ([size] if size else []))) if x))[:8]
+        if mode == "buy" and (amount is None or not sizes):
             raise ValueError("to buy, Aide needs the size and the most it may cost with shipping")
         shops = [site_of(s) for s in shops or [] if s and s.strip()]
-        picks = {"colourways": keys, "size": size, "max_total": amount, "currency": (currency or "EUR").upper(),
+        picks = {"colourways": keys, "sizes": sizes, "size": sizes[0] if sizes else None, "max_total": amount,
+                 "currency": (currency or "EUR").upper(),
                  "shops": list(dict.fromkeys(shops)), "mode": mode}
         was = r["picks"]
         r = self.update(release_id, picks=picks, status="tracking", next_at=r["next_at"] or utcnow().isoformat(),
                         fails=0, error=None)
         if was and was != picks:  # what was set up for the old picks is undone where it no longer fits
             for key in list(r["acted"]):
-                if key not in keys or [was.get(k) for k in ("mode", "size", "max_total", "shops")] != \
-                        [picks[k] for k in ("mode", "size", "max_total", "shops")]:
+                if r["acted"][key].get("bought"):
+                    continue
+                if key not in keys or [was.get(k) for k in ("mode", "max_total", "shops")] != \
+                        [picks[k] for k in ("mode", "max_total", "shops")] or picked_sizes(was) != sizes:
                     r = self._undo(r, key)
-        bits = f"{len(keys)} colourway{'s' if len(keys) > 1 else ''}" + (f", size {size}" if size else "") + \
+        bits = f"{len(keys)} colourway{'s' if len(keys) > 1 else ''}" + \
+            (f", size {', '.join(x.removeprefix('EU ') for x in sizes)}" if sizes else "") + \
             (f", up to {format_amount(amount, picks['currency'])}" if amount else "")
         self._log(release_id, f"Tracking {bits}: {'buy' if mode == 'buy' else 'tell'}")
         return self._get(release_id)
@@ -442,7 +531,45 @@ class Releases:
                     await self.check(r["id"])
                 except Exception:
                     log.exception("release %s: the look failed", r["id"])
+            for r, keys in self.restock_due():
+                try:
+                    await self.restock(r["id"], keys)
+                except Exception:
+                    log.exception("release %s: reading the sizes failed", r["id"])
             await asyncio.sleep(TICK)
+
+    def restock_due(self) -> list[tuple[dict, set[str]]]:
+        """Trackers with a picked colourway waiting for one of the user's sizes, its page not read for 3 hours."""
+        out = []
+        now = utcnow()
+        for r in self.all():
+            if r["status"] != "tracking":
+                continue
+            keys = {c["key"] for c in r["colourways"] if (r["acted"].get(c["key"]) or {}).get("what") == "sizes"
+                    and (not c.get("sizes_at") or now - datetime.fromisoformat(c["sizes_at"]) >= STOCK_EVERY)}
+            if keys:
+                out.append((r, keys))
+        return out
+
+    async def restock(self, release_id: int, keys: set[str] | None = None, post: bool = True) -> dict:
+        """The colourways' pages again (only `keys`), with no model: the sizes in stock, and acting on them."""
+        async with self._lock:
+            r = self._get(release_id)
+            colourways = [dict(c) for c in r["colourways"]]
+            changes = await self._stock(r, colourways, keys)
+            now = utcnow()
+            if keys:  # read or not, wait 3 hours before the next try
+                for c in colourways:
+                    if c["key"] in keys and not c.get("sizes_at"):
+                        c["sizes_at"] = now.isoformat()
+            r = self.update(release_id, colourways=colourways,
+                            log=[*r["log"], *({"ts": now.isoformat(), "text": c["text"]} for c in changes)])
+        picked = set(r["picks"]["colourways"]) if r["picks"] else set()
+        told = [c["text"] for c in changes if c["key"] in picked]
+        acts = await self._act(r) if r["status"] == "tracking" else []
+        if post and (told or acts):
+            await self._post(self._get(release_id), told, acts)
+        return self._get(release_id)
 
     async def check(self, release_id: int, post: bool = True) -> dict:
         """One look: the list as it is now, what changed, and acting on the picks."""
@@ -458,7 +585,8 @@ class Releases:
             except (asyncio.TimeoutError, TimeoutError, ValueError, RuntimeError) as ex:
                 return await self._failed(r, str(ex) or "the look took too long")
             colourways, changes = merge(r["colourways"], fresh)
-            await self._pictures(r["id"], colourways)
+            stock = await self._stock(r, colourways)
+            changes = [c for c in changes if c["kind"] != "status"] + status_changes(r["colourways"], colourways) + stock
             now = utcnow()
             entries = [{"ts": now.isoformat(), "text": c["text"]} for c in changes]
             r = self.update(release_id, colourways=colourways, checked_at=now.isoformat(), fails=0, error=None,
@@ -519,25 +647,61 @@ class Releases:
             raise ValueError("the look didn't report")
         return report
 
-    async def _pictures(self, release_id: int, colourways: list[dict]) -> None:
-        """New colourways without a picture: their page's main image, in the time there is."""
+    async def _stock(self, r: dict, colourways: list[dict], only: set[str] | None = None) -> list[dict]:
+        """Each colourway's page in the time there is (only `only`): its picture when it has none, and its size grid,
+        which sets "available" or "sold out". What changed in the user's sizes: [{key, kind: sizes, text}]."""
         if self.browser is None:
-            return
-        owner = f"release:{release_id}"
-        started = asyncio.get_running_loop().time()
+            return []
+        owner = f"release:{r['id']}"
+        mine = {size_key(x) for x in picked_sizes(r["picks"])} - {None}
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        changes: list[dict] = []
         try:
             for c in colourways:
-                if c["image"] or not c["url"] or asyncio.get_running_loop().time() - started > PICTURE_SECONDS:
+                if (only is not None and c["key"] not in only) or not c["url"] or loop.time() - started > STOCK_SECONDS:
                     continue
+                if only is None and c["status"] in ("upcoming", "rumoured") and c["image"] and not c.get("sizes"):
+                    continue  # not out yet: no grid to read
                 try:
-                    c["image"] = await asyncio.wait_for(self.browser.main_image(owner, c["url"]), 12)
+                    got = await asyncio.wait_for(self.browser.product(owner, c["url"]), 25)
                 except (BrowserError, asyncio.TimeoutError, TimeoutError):
-                    pass
+                    continue
+                c["image"] = c["image"] or got.get("image")
+                sizes = clean_sizes(got.get("sizes"))
+                if not sizes:
+                    continue
+                before = {x["size"]: x["in_stock"] for x in c.get("sizes") or []}
+                c.update(sizes=sizes, sizes_at=utcnow().isoformat(), sizes_site=site_of(c["url"]))
+                any_in = any(x["in_stock"] for x in sizes)
+                if c["status"] == "out" and not any_in:
+                    c["status"] = "sold_out"
+                elif c["status"] in ("sold_out", "upcoming", "rumoured") and any_in:
+                    c["status"] = "out"
+                if not before or not mine:
+                    continue
+                back = [x["size"] for x in sizes if x["in_stock"] and size_key(x["size"]) in mine and before.get(x["size"]) is False]
+                gone = [x["size"] for x in sizes if not x["in_stock"] and size_key(x["size"]) in mine and before.get(x["size"])]
+                if back:
+                    changes.append({"key": c["key"], "kind": "sizes",
+                                    "text": f"{c['name']}: back in {', '.join(back)} on {c['sizes_site']}"})
+                if gone:
+                    changes.append({"key": c["key"], "kind": "sizes",
+                                    "text": f"{c['name']}: sold out in {', '.join(gone)} on {c['sizes_site']}"})
         finally:
             try:
                 await self.browser.close(owner)
             except Exception:
                 pass
+        return changes
+
+    async def read_stock(self, release_id: int) -> dict:
+        """Every colourway's page once, after the research: the pictures it lacks and the size grids."""
+        async with self._lock:
+            r = self._get(release_id)
+            colourways = [dict(c) for c in r["colourways"]]
+            await self._stock(r, colourways)
+            return self.update(release_id, colourways=colourways)
 
     async def _failed(self, r: dict, error: str) -> dict:
         fails = r["fails"] + 1
@@ -565,7 +729,7 @@ class Releases:
             opens = self.opens_at(c)
             want = self._wanted(c, opens, now, picks)
             done = r["acted"].get(c["key"])
-            if want is None or (done and done.get("plan") == want):
+            if want is None or (done and (done.get("plan") == want or done.get("bought"))):
                 continue
             if done:
                 r = self._undo(r, c["key"])
@@ -582,9 +746,12 @@ class Releases:
 
     def _wanted(self, c: dict, opens: datetime | None, now: datetime, picks: dict) -> str | None:
         """What a picked colourway calls for, as a plan string (a new one replaces the old: a moved drop)."""
+        mine = mine_in_stock(c, picked_sizes(picks))
         if c["status"] == "sold_out":
-            return "watch"
+            return "sizes" if mine is not None else "watch"
         if c["status"] == "out" and (opens is None or opens <= now):
+            if mine == []:
+                return "sizes"
             return "buy-now" if picks["mode"] == "buy" else "told-out"
         if opens is not None and opens > now:
             if c["method"] == "draw" or picks["mode"] == "tell":
@@ -604,10 +771,21 @@ class Releases:
 
     async def _do(self, r: dict, c: dict, want: str, opens: datetime | None, picks: dict) -> dict:
         name = f"{r['title']} “{c['name']}”"
-        size = f", size {picks['size']}" if picks.get("size") else ""
+        wanted = picked_sizes(picks)
+        mine = mine_in_stock(c, wanted)
+        order = (mine or []) + [x for x in wanted if x not in (mine or [])]
+        size = (f", size {order[0]}" + (f" (else {', '.join(order[1:])}, in that order)" if order[1:] else "")) if order else ""
+        short = lambda xs: ", ".join(x.removeprefix("EU ") for x in xs)  # noqa: E731
         limit = format_amount(picks["max_total"], picks["currency"]) if picks.get("max_total") else None
         shop = self._shop(c, picks)
         where = shop["site"] if shop else None
+        if want == "sizes":
+            left = [x["size"] for x in c.get("sizes") or [] if x["in_stock"]]
+            site = c.get("sizes_site") or where or "the shop"
+            return {"what": "sizes", "site": site,
+                    "text": f"{name} is sold out in your size{'s' if len(wanted) > 1 else ''} ({short(wanted)})"
+                            + (f": only {short(left[:6])} left" if left else "")
+                            + f". I'm checking {site} every 3 hours and I'll tell you when one is back."}
         if want == "watch":
             url = (shop or {}).get("url") or c["url"]
             if self.watches is None or not url:
@@ -618,7 +796,8 @@ class Releases:
                     "text": f"{name} is sold out: I'm watching {w['site']} for when it's back."}
         if want == "told-out":
             return {"what": "told", "site": where,
-                    "text": f"{name} is available now" + (f" on {where}" if where else "") + (f", {c['price']}" if c["price"] else "") + "."}
+                    "text": f"{name} is available now" + (f" in {short(mine)}" if mine else "")
+                            + (f" on {where}" if where else "") + (f", {c['price']}" if c["price"] else "") + "."}
         if want == "buy-now":
             if self.errands is None or shop is None or not (shop.get("url") or c["url"]):
                 return {"what": "told", "text": f"{name} is available now, but I don't have a shop's page to buy it from."}
@@ -627,7 +806,8 @@ class Releases:
                                    "shipping: ask instead. Use the account's saved address and card.",
                                    f"{r['title']} {c['name']}"[:60], shop["site"], r["conversation"], release=r["id"])
             return {"what": "errand", "errand_id": e["id"], "site": shop["site"],
-                    "text": f"{name} is available on {shop['site']}: I'm getting it ready; you confirm at checkout."}
+                    "text": f"{name} is available on {shop['site']}" + (f" in {short(mine)}" if mine else "")
+                            + ": I'm getting it ready; you confirm at checkout."}
         when = f"{opens:%a %d %b at %H:%M}" if opens else ""
         if want.startswith("remind@"):
             draw = c["method"] == "draw"
@@ -721,9 +901,9 @@ def release_tools(releases: Releases, current_conversation) -> list[Tool]:
                           "calendars and the shops and posts the colourways in this chat with a card where the user "
                           "picks what they want. Tell them in a line; don't list anything yet.")
 
-    async def set_release_picks(release: int, colourways: list[str], size: str | None, max_total: str | None,
+    async def set_release_picks(release: int, colourways: list[str], sizes: list[str] | None, max_total: str | None,
                                 shops: list[str] | None, mode: str) -> ToolOutput:
-        r = releases.set_picks(release, colourways, size, max_total, shops, mode)
+        r = releases.set_picks(release, colourways, None, max_total, shops, mode, sizes=sizes)
         acts = await releases._act(r)
         r = releases._get(release)
         return ToolOutput(f"Tracking {r['title']}: {', '.join(c['name'] for c in r['colourways'] if c['key'] in r['picks']['colourways'])}."
@@ -739,12 +919,15 @@ def release_tools(releases: Releases, current_conversation) -> list[Tool]:
             picks = r["picks"]
             names = [c["name"] for c in r["colourways"] if picks and c["key"] in picks["colourways"]]
             out.append(f"#{r['id']} {r['title']}: {r['status']}, {len(r['colourways'])} colourways"
-                       + (f"; picked {', '.join(names)} ({picks['mode']}, size {picks['size'] or '?'})" if names else ""))
+                       + (f"; picked {', '.join(names)} ({picks['mode']}, sizes {', '.join(picked_sizes(picks)) or '?'})"
+                          if names else ""))
         return "\n".join(out)
 
     async def release_status(release: int) -> ToolOutput:
         r = releases._get(release)
         lines = [f"{c['name']} ({c['code'] or 'no code'}): {c['status']}"
+                 + (f", in stock in {', '.join(x['size'] for x in c['sizes'] if x['in_stock']) or 'no size'}"
+                    if c.get("sizes") else "")
                  + (f", {c['date']}" + (f" {c['time']}" if c["time"] else "") if c["date"] else "")
                  + f", {c['method']}, {c['price'] or 'no price'}, shops: {', '.join(s['site'] for s in c['shops']) or '?'}"
                  for c in r["colourways"]]
@@ -764,15 +947,16 @@ def release_tools(releases: Releases, current_conversation) -> list[Tool]:
              {"type": "object", "properties": {"query": {"type": "string", "description": "the product, as the user said it"}},
               "required": ["query"], "additionalProperties": False}, track_release),
         Tool("set_release_picks", "What the user wants from a tracked release, when they say it in chat instead of on "
-             "the card: the colourways (names or codes), the size (\"EU 43\"), the most it may cost with shipping, the "
+             "the card: the colourways (names or codes), the sizes they'd take, the one they'd rather have first "
+             "(\"EU 44\", \"EU 43.5\"), the most it may cost with shipping, the "
              "shops in their order of preference (empty: any), and `mode` tell (a reminder before each drop) or buy "
              "(a timed drop, its limits confirmed by the user).",
              {"type": "object", "properties": {
                  "release": rid, "colourways": {"type": "array", "items": {"type": "string"}},
-                 "size": {"type": ["string", "null"]}, "max_total": {"type": ["string", "null"]},
+                 "sizes": {"type": ["array", "null"], "items": {"type": "string"}}, "max_total": {"type": ["string", "null"]},
                  "shops": {"type": ["array", "null"], "items": {"type": "string"}},
                  "mode": {"type": "string", "enum": list(MODES)}},
-              "required": ["release", "colourways", "size", "max_total", "shops", "mode"], "additionalProperties": False},
+              "required": ["release", "colourways", "sizes", "max_total", "shops", "mode"], "additionalProperties": False},
              set_release_picks),
         Tool("list_releases", "The release trackers and what's picked.",
              {"type": "object", "properties": {}, "additionalProperties": False}, list_releases),

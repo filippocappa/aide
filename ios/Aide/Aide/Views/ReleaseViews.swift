@@ -123,6 +123,7 @@ func planIcon(_ plan: ReleasePlan?) -> String {
     case "watch": "eye.fill"
     case "errand": "cart.fill"
     case "told": "checkmark"
+    case "sizes": "arrow.triangle.2.circlepath"
     default: "hourglass"
     }
 }
@@ -179,7 +180,8 @@ struct ReleaseSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var release: Release
     @State private var chosen: Set<String>
-    @State private var size: String?
+    /// The sizes you'd take ("44.5"), the one you'd rather have first.
+    @State private var wanted: [String]
     @State private var maxText: String
     @State private var shops: Set<String>
     @State private var buy: Bool
@@ -196,7 +198,8 @@ struct ReleaseSheet: View {
         _release = State(initialValue: release)
         let picks = release.picks
         _chosen = State(initialValue: Set(release.picked.map(\.key)))
-        _size = State(initialValue: picks?.size.map { $0.replacingOccurrences(of: "EU", with: "").trimmingCharacters(in: .whitespaces) })
+        let saved = picks?.sizes ?? picks?.size.map { [$0] } ?? []
+        _wanted = State(initialValue: (saved.isEmpty ? release.usualSizes : saved).map(ReleaseSize.short))
         _maxText = State(initialValue: picks?.maxTotal.map { $0.formatted(.number.precision(.fractionLength(0...2))) } ?? "")
         _shops = State(initialValue: Set(picks?.shops ?? []))
         _buy = State(initialValue: picks?.mode == "buy")
@@ -240,7 +243,7 @@ struct ReleaseSheet: View {
     private var carousel: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let c = current {
-                ColourwayPage(colourway: c, chosen: chosen.contains(c.key)) { toggle(c.key) }
+                ColourwayPage(colourway: c, chosen: chosen.contains(c.key), wanted: wanted) { toggle(c.key) }
                     .id(c.key)
                     .transition(.opacity)
                     .overlay(alignment: .top) {
@@ -324,25 +327,66 @@ struct ReleaseSheet: View {
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
+    /// The sizes on the shown colourway's page (crossed out: sold out there), else the usual EU run. Tap every size
+    /// you'd take; the first tapped is the one you'd rather have (its number on the chip).
     private var sizes: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let grid = current?.sizes ?? []
+        let shown = grid.isEmpty ? Self.sizes : grid.map { ReleaseSize.short($0.size) }
+        let all = shown + wanted.filter { w in !shown.contains { ReleaseSize.key($0) == ReleaseSize.key(w) } }
+        let stock = Dictionary(grid.map { (ReleaseSize.key($0.size), $0.inStock) }, uniquingKeysWith: { a, _ in a })
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                heading("Size")
+                heading(wanted.count > 1 ? "Sizes" : "Size")
                 Spacer()
-                Text("EU").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(grid.isEmpty ? "EU" : "EU · on \(current?.sizesSite ?? "the shop")")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 58), spacing: 8)], spacing: 8) {
-                ForEach(Self.sizes, id: \.self) { s in
-                    Button { size = size == s ? nil : s } label: {
+                ForEach(all, id: \.self) { s in
+                    let rank = wanted.firstIndex { ReleaseSize.key($0) == ReleaseSize.key(s) }
+                    let gone = stock[ReleaseSize.key(s)] == false
+                    Button { toggleSize(s) } label: {
                         Text(s).font(.subheadline.weight(.medium)).monospacedDigit()
+                            .strikethrough(gone && rank == nil)
                             .frame(maxWidth: .infinity).frame(height: 40)
-                            .foregroundStyle(size == s ? Theme.onAccent : .primary)
-                            .background(size == s ? Theme.accent : Theme.chip,
+                            .foregroundStyle(rank != nil ? Theme.onAccent : gone ? .secondary : .primary)
+                            .background(rank != nil ? (gone ? Theme.accent.opacity(0.55) : Theme.accent) : Theme.chip,
                                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(alignment: .topTrailing) {
+                                if let rank, wanted.count > 1 {
+                                    Text("\(rank + 1)").font(.system(size: 9, weight: .heavy))
+                                        .foregroundStyle(Theme.onAccent.opacity(0.8)).padding(4)
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
                 }
             }
+            if let line = sizeLine {
+                Text(line).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var sizeLine: String? {
+        guard let c = current, !c.sizes.isEmpty else {
+            return wanted.count > 1 ? "Aide buys the first of these in stock, in this order." : nil
+        }
+        let site = c.sizesSite ?? "the shop"
+        guard !wanted.isEmpty, let mine = c.inStock(of: wanted) else { return "Crossed out: sold out on \(site)." }
+        if mine.isEmpty {
+            let left = c.sizes.filter(\.inStock).map { ReleaseSize.short($0.size) }
+            return "None of your sizes is in stock on \(site)" + (left.isEmpty ? "." : " (only \(left.prefix(6).joined(separator: ", ")) left).")
+                + " Aide looks again every 3 hours and acts when one is back."
+        }
+        return "In stock on \(site) in \(mine.joined(separator: ", "))." + (buy ? " Aide buys \(mine[0]) first." : "")
+    }
+
+    private func toggleSize(_ s: String) {
+        if let i = wanted.firstIndex(where: { ReleaseSize.key($0) == ReleaseSize.key(s) }) {
+            wanted.remove(at: i)
+        } else {
+            wanted.append(s)
         }
     }
 
@@ -467,7 +511,7 @@ struct ReleaseSheet: View {
     private var saveTitle: String {
         let n = chosen.count
         if n == 0 { return "Pick a colourway" }
-        if buy && size == nil { return "Pick a size" }
+        if buy && wanted.isEmpty { return "Pick a size" }
         if buy && maxValue == nil { return "Set the most you'd pay" }
         let what = "\(n) colourway\(n == 1 ? "" : "s")"
         return release.status == "tracking" ? "Save · \(what)" : "Start tracking · \(what)"
@@ -478,7 +522,7 @@ struct ReleaseSheet: View {
             .trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil }
     }
 
-    private var canSave: Bool { !chosen.isEmpty && (!buy || (size != nil && maxValue != nil)) }
+    private var canSave: Bool { !chosen.isEmpty && (!buy || (!wanted.isEmpty && maxValue != nil)) }
 
     private func toggle(_ key: String) {
         if chosen.contains(key) { chosen.remove(key) } else { chosen.insert(key) }
@@ -487,7 +531,8 @@ struct ReleaseSheet: View {
     private func save() async {
         let ordered = release.shops.filter(shops.contains)
         let picks = ReleasePicks(colourways: release.colourways.map(\.key).filter(chosen.contains),
-                                 size: size.map { "EU \($0)" }, maxTotal: buy ? maxValue : nil, currency: "EUR",
+                                 sizes: wanted.map { "EU \($0)" }, size: wanted.first.map { "EU \($0)" },
+                                 maxTotal: buy ? maxValue : nil, currency: "EUR",
                                  shops: ordered, mode: buy ? "buy" : "tell")
         await run { try await env.api.setReleasePicks(release.id, picks) }
         if error == nil { dismiss() }
@@ -554,7 +599,11 @@ struct ColourwayPage: View {
     @Environment(\.openURL) private var openURL
     let colourway: ReleaseColourway
     let chosen: Bool
+    /// The sizes picked on the page ("44.5"), for "Available in 44.5" or "Sold out in your sizes".
+    var wanted: [String] = []
     let toggle: () -> Void
+
+    private var mine: [String]? { colourway.inStock(of: wanted) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -578,7 +627,7 @@ struct ColourwayPage: View {
                 Spacer(minLength: 8)
                 if let price = colourway.price { Text(price).font(.title3.weight(.bold)).monospacedDigit() }
             }
-            Label(colourway.when, systemImage: "calendar").font(.subheadline.weight(.medium))
+            Label(colourway.when(mine), systemImage: "calendar").font(.subheadline.weight(.medium))
             if let note = colourway.note, !note.isEmpty {
                 Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
             }
@@ -599,7 +648,8 @@ struct ColourwayPage: View {
     }
 
     private var status: String {
-        switch colourway.status {
+        if colourway.soldOutForMe(mine) { return "Sold out in your size" + (wanted.count == 1 ? "" : "s") }
+        return switch colourway.status {
         case "out": "Available"
         case "sold_out": "Sold out"
         case "upcoming": "Coming"
@@ -608,7 +658,8 @@ struct ColourwayPage: View {
     }
 
     private var statusColour: Color {
-        switch colourway.status {
+        if colourway.soldOutForMe(mine) { return .gray }
+        return switch colourway.status {
         case "out": .green
         case "sold_out": .gray
         case "upcoming": .blue
