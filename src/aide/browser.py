@@ -449,6 +449,18 @@ _FOCUS_JS = r"""
 # the site itself) and its own login screen: {kind, site, title, url, icon, query, items, product, cart, form,
 # captcha}. kind: captcha, login, code, checkout, confirmation, cart, product, results or page. Refs are the page
 # listing's (data-aide-ref), so the model's and the app's are the same. Password values are never read.
+# A code's boxes from this one on (one-character inputs in its form or box, in page order), marked data-aide-box.
+_MARK_BOXES_JS = r"""(e, n) => {
+  document.querySelectorAll('[data-aide-box]').forEach(b => b.removeAttribute('data-aide-box'));
+  if (e.maxLength !== 1) return false;
+  const root = e.closest('form') || e.parentElement.parentElement || document.body;
+  const all = [...root.querySelectorAll('input')].filter(b => b.maxLength === 1 && b.offsetParent !== null);
+  const mine = all.slice(all.indexOf(e), all.indexOf(e) + n);
+  if (mine.length < n) return false;
+  mine.forEach(b => b.setAttribute('data-aide-box', ''));
+  return true;
+}"""
+
 _SCENE_JS = r"""
 () => {
   let next = Number(document.documentElement.dataset.aideNext || 1);
@@ -496,6 +508,12 @@ _SCENE_JS = r"""
     return 'text';
   };
   const inputs = [...document.querySelectorAll('input,textarea,select')].filter(visible).map(el => ({el, kind: kindOf(el)})).filter(f => f.kind);
+  // A code in boxes, a digit each (an SMS code): one field, the first box (put types the code across them all).
+  const boxes = inputs.filter(f => f.el.tagName === 'INPUT' && f.el.maxLength === 1 && ['code', 'text', 'phone'].includes(f.kind));
+  if (boxes.length >= 4) {
+    boxes[0].kind = 'code';
+    boxes.slice(1).forEach(f => { f.kind = 'box'; });
+  }
   const search = inputs.find(f => f.kind === 'search');
   const query = clean((search && search.el.value) || params.get('k') || params.get('q') || params.get('query') ||
     params.get('search') || params.get('keywords') || '').slice(0, 80) || null;
@@ -523,11 +541,24 @@ _SCENE_JS = r"""
   }
 
   // A login or a code: the fields, the button that sends them, the choices and "stay logged in".
-  const pw = inputs.find(f => f.kind === 'password'), code = inputs.find(f => f.kind === 'code');
+  // A second step: the page says a code (or a link) was sent, though its field doesn't say "code".
+  const SENT = /abbiamo inviato|ti (è stato|abbiamo) (inviato|mandato)|we('ve| have| just)? sent|check your (phone|messages|email|inbox)|controlla (il (tuo )?telefono|i messaggi|la (tua )?(email|casella))|inserisci il codice|enter the (code|\d.digit)|codice di verifica|verification code|codice (a|di) \d cifre|\d.digit code/;
+  const sent = !search && SENT.test(lower.slice(0, 3000));
+  const pw = inputs.find(f => f.kind === 'password');
+  if (sent && !inputs.some(f => f.kind === 'code')) {
+    const typed = inputs.find(f => f.kind === 'text');
+    if (typed) typed.kind = 'code';
+  }
+  const code = inputs.find(f => f.kind === 'code');
   const user = inputs.find(f => f.kind === 'username' || f.kind === 'phone');
   const loginish = /sign.?in|log.?in|signin|accedi|accesso|anmelden|connexion|iniciar|\/ap\/|auth|account/.test(path + ' ' + out.title.toLowerCase());
-  const codeish = code && (code.el.autocomplete === 'one-time-code' || (code.el.maxLength > 0 && code.el.maxLength <= 8) ||
+  const codeish = code && (sent || code.el.autocomplete === 'one-time-code' || (code.el.maxLength > 0 && code.el.maxLength <= 8) ||
     /codice|code|otp|verifica|verification|sms/.test(lower.slice(0, 3000)));
+  if (out.kind === 'page' && sent && !pw && !code && !user && !inputs.length) {
+    // Nothing to type here: a link to tap, or the site's app to approve in. Still the user's turn, on the real page.
+    out.kind = 'code';
+    out.form = {fields: [], submit: null, choices: [], remember: null, remembered: null, error: null, sent: true};
+  }
   if (out.kind === 'page' && (pw || codeish || (user && loginish && !search))) {
     const first = (pw || (codeish && code) || user).el;
     const root = first.form || first.closest('form,[role=dialog],main') || document.body;
@@ -1178,6 +1209,12 @@ class Browser:
         locator = self._ref(page, ref)
         if _DIAL_CODE.match(text.strip()) and await locator.evaluate(_IS_DIAL_JS):
             await self._dial(page, locator, text)
+        elif len(text) > 1 and await locator.evaluate(_MARK_BOXES_JS, len(text)):
+            # A code in boxes, a digit each: each digit typed into its box, as a keyboard would.
+            boxes = page.locator("[data-aide-box]")
+            for i, digit in enumerate(text):
+                await boxes.nth(i).click(timeout=ACTION_TIMEOUT)
+                await page.keyboard.press(digit)
         else:
             await locator.fill(text, timeout=ACTION_TIMEOUT)
 

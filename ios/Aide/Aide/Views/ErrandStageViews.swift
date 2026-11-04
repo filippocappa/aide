@@ -72,6 +72,8 @@ struct PageScene: Decodable, Equatable {
         var remember: String?
         var remembered: Bool?
         var error: String?
+        /// The page says a code or a link was sent, with nothing to type here (a link to tap, the site's app).
+        var sent: Bool?
     }
 
     struct Field: Decodable, Equatable, Identifiable {
@@ -924,6 +926,8 @@ struct StageSheet: View {
     /// You sent something on a login, a code or a CAPTCHA (so leaving them means it worked).
     @State private var tried = false
     @State private var loggedIn = false
+    /// Counts each time the page left your part: only the last one, if it stays away, means you're in.
+    @State private var leaving = 0
     @State private var realPage = false
     @State private var finishing = false
     /// How tall the card's content is: the card fits it.
@@ -1079,7 +1083,10 @@ struct StageSheet: View {
             } else if let form = scene.form, !form.fields.isEmpty || form.submit != nil || !form.choices.isEmpty {
                 formView(form)
             } else {
-                Text("This one needs the real page.").font(.subheadline)
+                Text(scene.form?.sent == true
+                     ? "\(scene.siteName) sent you a code or a link. If it's a code, finish on the real page; if it's a link or the site's app, tap it there, then come back."
+                     : "This one needs the real page.")
+                    .font(.subheadline).multilineTextAlignment(.leading)
                 Button("Open the real page") { realPage = true }.buttonStyle(.borderedProminent)
                     .foregroundStyle(Theme.onAccent)
             }
@@ -1293,12 +1300,20 @@ struct StageSheet: View {
         } else if new.form?.error != old?.form?.error {
             sending = false
         }
-        if tried && !new.isYourTurn && live.control && !loggedIn {
-            withAnimation(.spring(duration: 0.4)) { loggedIn = true }
+        // Leaving the login after you sent it means you're in, once the page stays away from it: a login in steps
+        // (your number, then a code by SMS) goes through a page in between first.
+        if tried && !new.isYourTurn && live.control && !loggedIn && old?.isYourTurn != false {
+            leaving += 1
+            let mine = leaving
             Task {
+                try? await Task.sleep(for: .seconds(4))
+                guard mine == leaving, !loggedIn, live.control, live.scene.map({ !$0.isYourTurn }) ?? false else { return }
+                withAnimation(.spring(duration: 0.4)) { loggedIn = true }
                 try? await Task.sleep(for: .seconds(1.5))
                 await finish()
             }
+        } else if new.isYourTurn {
+            leaving += 1 // another step came: wait for that one
         }
     }
 
