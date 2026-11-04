@@ -1845,7 +1845,9 @@ final class ErrandTests: XCTestCase {
            "rating": null, "reviews": null, "note": "6 left", "image": null}]}]
         """
         let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
-        guard case .products(let products) = attachments[0] else { return XCTFail("expected products") }
+        guard case .products(let products, let errand, let site) = attachments[0] else { return XCTFail("expected products") }
+        XCTAssertEqual(errand, 3)
+        XCTAssertEqual(site, "amazon.it")
         XCTAssertEqual(products.count, 2)
         XCTAssertEqual(products[0].link?.host, "www.amazon.it")
         XCTAssertNotNil(products[0].stars)
@@ -1857,6 +1859,13 @@ final class ErrandTests: XCTestCase {
         XCTAssertEqual(Product.amount("$5.00"), 5)
         XCTAssertEqual(products[0].off, "−96%")
         XCTAssertNil(products[1].off)  // no was: no discount
+        var nike = products[1]
+        nike.note = "EU 43, 44, 44.5"
+        XCTAssertEqual(nike.mySizes, ["43", "44", "44.5"])  // a card from before sizes
+        nike.note = "EU 44 and 44.5 sold out"
+        XCTAssertEqual(nike.mySizes, [])
+        nike.sizes = ["44"]
+        XCTAssertEqual(nike.mySizes, ["44"])
         // An errand from before products has none.
         XCTAssertNil(try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand.utf8)).products)
     }

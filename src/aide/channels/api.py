@@ -618,6 +618,14 @@ class PriceWatchIn(BaseModel):
     below: float | None = None
     stock: bool = False
     every_hours: float | None = None
+    conversation_id: str | None = None  # where it posts; none: the errand's chat, else Aide's main chat
+    errand_id: int | None = None  # set up from one of this errand's product cards
+
+
+class ProductBuyIn(BaseModel):
+    url: str  # one of the errand's product cards
+    size: str | None = None
+    max_total: float | None = None
 
 
 class PriceWatchPatch(BaseModel):
@@ -3065,6 +3073,15 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         e = errand_or_404(errand_id)
         return {**errand_store.as_json(e), "steps": [{**s, "ts": errand_store._local(s["ts"])} for s in e["steps"]]}
 
+    @app.post("/v1/errands/{errand_id}/buy", dependencies=[Depends(auth)])
+    async def buy_product(errand_id: int, body: ProductBuyIn):
+        errand_or_404(errand_id)
+        try:
+            e = await runner().buy_product(errand_id, body.url, body.size, body.max_total)
+        except ValueError as ex:
+            raise HTTPException(422, str(ex)) from None
+        return errand_store.as_json(e)
+
     @app.post("/v1/errands/{errand_id}/done", dependencies=[Depends(auth)])
     async def errand_done(errand_id: int):
         errand_or_404(errand_id)
@@ -3149,7 +3166,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/pricewatches", dependencies=[Depends(auth)])
     async def add_price_watch(body: PriceWatchIn):
         try:
-            w = watch_store().add(body.url, body.title, body.below, body.stock, body.every_hours, CONVERSATION)
+            source = errand_store.get(body.errand_id) if body.errand_id else None
+            w = watch_store().add(body.url, body.title, body.below, body.stock, body.every_hours,
+                                  body.conversation_id or (source or {}).get("conversation") or CONVERSATION)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         return watches.as_json(await watches.check(w["id"], post=False))

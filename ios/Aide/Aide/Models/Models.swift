@@ -72,7 +72,8 @@ enum Attachment: Decodable, Hashable {
     case proposal(NotebookProposal)
     case errands([Errand])
     case purchases([Purchase])
-    case products([Product])
+    /// The cards of errand `errand` (Buy it for me starts from it), from `site`.
+    case products([Product], errand: Int?, site: String?)
     /// Price watches: set up, changed, or the one whose line was crossed.
     case priceWatches([PriceWatch])
     /// Release trackers: the research's colourways to pick from, or what a look found.
@@ -97,7 +98,10 @@ enum Attachment: Decodable, Hashable {
         case "proposal": self = .proposal(try c.decode(NotebookProposal.self, forKey: .proposal))
         case "errands": self = .errands(try c.decode([Errand].self, forKey: .errands))
         case "purchases": self = .purchases(try c.decode([Purchase].self, forKey: .purchases))
-        case "products": self = .products(try c.decode([Product].self, forKey: .products))
+        case "products":
+            self = .products(try c.decode([Product].self, forKey: .products),
+                             errand: try c.decodeIfPresent(Int.self, forKey: .errandId),
+                             site: try c.decodeIfPresent(String.self, forKey: .site))
         case "price_watches": self = .priceWatches(try c.decode([PriceWatch].self, forKey: .priceWatches))
         case "releases": self = .releases(try c.decode([Release].self, forKey: .releases))
         case "videos": self = .videos(try c.decode([VideoCard].self, forKey: .videos))
@@ -110,7 +114,7 @@ enum Attachment: Decodable, Hashable {
     }
     private enum CodingKeys: String, CodingKey {
         case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
-        case quiz, review, payments, open, priceWatches, releases
+        case quiz, review, payments, open, priceWatches, releases, errandId, site
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
@@ -3009,6 +3013,16 @@ struct Product: Decodable, Hashable, Identifiable {
     var was: String?
     /// "men", "women", "kids", "unisex": who the shop sells it for.
     var audience: String?
+    /// The user's sizes in stock ("44", "44.5"), when the errand had them.
+    var sizes: [String]?
+
+    /// The user's sizes in stock: `sizes`, else read from the note of a card from before it ("EU 43, 44, 44.5").
+    var mySizes: [String] {
+        if let sizes { return sizes }
+        guard let note, !note.lowercased().contains("sold"), !note.lowercased().contains("esaurit") else { return [] }
+        let found = note.matches(of: /\b\d{2}(?:[.,]5)?\b/).map { String($0.output).replacingOccurrences(of: ",", with: ".") }
+        return found.count == Set(found).count ? found : []
+    }
 
     var id: String { url }
     var link: URL? { URL(string: url) }
@@ -3231,6 +3245,22 @@ struct PricePoint: Decodable, Hashable {
 struct PriceWatchList: Decodable {
     let priceWatches: [PriceWatch]
     var enabled: Bool = true
+}
+
+struct PriceWatchIn: Encodable {
+    var url: String
+    var title: String
+    var below: Double?
+    var stock = false
+    /// From one of this errand's product cards: it posts in that chat.
+    var errandId: Int?
+}
+
+/// Buy it for me, from one of an errand's product cards.
+struct ProductBuy: Encodable {
+    var url: String
+    var size: String?
+    var maxTotal: Double?
 }
 
 struct PriceWatchPatch: Encodable {

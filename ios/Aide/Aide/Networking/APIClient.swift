@@ -412,6 +412,16 @@ final class APIClient {
         try await send("POST", "/v1/pricewatches/\(id)/check", body: EmptyBody(), timeout: 90)
     }
 
+    /// Watches a product page: posts when it's under `below` (or back in stock).
+    func addPriceWatch(_ watch: PriceWatchIn) async throws -> PriceWatch {
+        try await send("POST", "/v1/pricewatches", body: watch, timeout: 90)
+    }
+
+    /// Buy it for me from a product card: a new errand in the card's chat, with its Confirm before paying.
+    func buyProduct(errand: Int, _ buy: ProductBuy) async throws -> Errand {
+        try await send("POST", "/v1/errands/\(errand)/buy", body: buy)
+    }
+
     /// Starts an errand to buy it, with its own Confirm.
     func buyPriceWatch(_ id: Int) async throws -> Errand {
         try await send("POST", "/v1/pricewatches/\(id)/buy", body: EmptyBody())

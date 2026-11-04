@@ -751,8 +751,10 @@ struct AttachmentCard: View {
             PaymentsCard(payments: payments)
         case .purchases(let purchases):
             VStack(spacing: 10) { ForEach(purchases) { PurchaseCard(purchase: $0) } }
-        case .products(let products):
-            if !products.isEmpty { ProductsCard(products: products) }
+        case .products(let products, let errand, let site):
+            if !products.isEmpty {
+                ProductsCard(products: products, errand: errand, site: site) { await chat.loadHistory() }
+            }
         case .priceWatches(let watches):
             VStack(spacing: 10) {
                 ForEach(watches) { w in

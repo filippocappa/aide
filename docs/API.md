@@ -2233,14 +2233,16 @@ Errand:
 Product:
 ```json
 {"title": "Lodge L8SK3, 26 cm", "url": "https://www.amazon.it/dp/B00006JSUA", "price": "49,15 €", "rating": 4.4,
- "reviews": 72015, "was": "59,90 €", "audience": null, "note": "Arriva domani",
+ "reviews": 72015, "was": "59,90 €", "audience": null, "sizes": null, "note": "Arriva domani",
  "image": "https://m.media-amazon.com/images/I/81q….jpg"}
 ```
-`url` is always a full http(s) link (open it on tap). `price`, `rating` (out of 5), `reviews` (how many ratings),
+`url` is always a full http(s) link. Since 2026-11-04 a tap opens the product's page in the app (drawn like a release's
+page: Buy it for me in one of `sizes`, the most you'd pay, Watch the price, Open on the site); `url` is for that last one. `price`, `rating` (out of 5), `reviews` (how many ratings),
 `note` (one short line: the user's sizes in stock, "44, 44.5", when the errand had them, else delivery or a catch)
 and `image` may be null. Since 2026-11-04: `was` (the price before a discount, as the site writes it; only when
 it's higher than `price`, else null) and `audience` (`men`, `women`, `kids`, `unisex` or null: who the shop sells it
-for). When the user's sizes were in the task, only products in one of them are cards. `image` is a picture from the site itself,
+for), and `sizes` (the user's sizes in stock, `["44", "44.5"]`, when the task gave them; else null; older cards
+have them only in `note`). When the user's sizes were in the task, only products in one of them are cards. `image` is a picture from the site itself,
 taken from the page where the errand saw the product, else from the product's own page.
 
 The Confirm's `detail` (on that action in `/v1/approvals` and `pending`):
@@ -2266,6 +2268,7 @@ page. Finance reads these (`list_purchases`).
 |---|---|---|
 | `GET /v1/errands?open=true&limit=30` | | `{"errands": [Errand], "enabled": true}`, newest first; `open` leaves out finished ones. `enabled` false: no browser on the server |
 | `GET /v1/errands/{id}` | | the Errand with all its `steps` |
+| `POST /v1/errands/{id}/buy` | `{"url": "https://www.nike.com/…", "size": "EU 44", "max_total": 180}` (`size`, `max_total` optional) | the new Errand (`queued`, since 2026-11-04): Buy it for me from one of this errand's product cards (`url` must be one of them, else `422`), in the same chat and site. It picks the size (stops if it's sold out in it), stops and asks above `max_total`, and asks the usual Confirm with the order's `detail` before paying. The chat gets "Buying …" with its errands card |
 | `POST /v1/errands/{id}/done` | | the Errand (`queued`): you finished in the live view. `409` unless it's `needs_you` or `interrupted` |
 | `POST /v1/errands/{id}/reply` | `{"answer": "the 2 m one"}` | the Errand (`queued`). `409` unless it's `needs_you` or `interrupted`, or with an empty answer |
 | `POST /v1/errands/{id}/cancel` | | the Errand (`cancelled`); also drops its queued Confirm. Nothing is ordered |
@@ -2343,7 +2346,7 @@ PriceWatch:
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/pricewatches?status=active` | | `{"price_watches": [PriceWatch], "enabled": true}`, active first, newest first |
-| `POST /v1/pricewatches` | `{"url", "title", "below": 150, "stock": false, "every_hours": 4}` | the PriceWatch after its first look. One per page: the same `url` again updates it. `422` without `below` or `stock`, or a bad url |
+| `POST /v1/pricewatches` | `{"url", "title", "below": 150, "stock": false, "every_hours": 4, "conversation_id": null, "errand_id": null}` | the PriceWatch after its first look. It posts in `conversation_id`, else (since 2026-11-04) the chat of `errand_id` (set up from that errand's product card), else Aide's main chat. One per page: the same `url` again updates it. `422` without `below` or `stock`, or a bad url |
 | `PATCH /v1/pricewatches/{id}` | any of `title`, `below`, `stock`, `every_hours`, `status` (`active`, `ended`) | the PriceWatch. `active` again: a look now |
 | `DELETE /v1/pricewatches/{id}` | | `{"ok": true}` |
 | `POST /v1/pricewatches/{id}/check` | | the PriceWatch after a look now (posts if the line is crossed) |
