@@ -441,6 +441,32 @@ class ErrandRunner:
         self.queue.put_nowait(errand["id"])
         return self.store.get(errand["id"])
 
+    async def buy_product(self, errand_id: int, url: str, size: str | None = None,
+                          max_total: float | None = None) -> dict:
+        """Buy it for me, from a product card: a new errand on that product's page in the same chat, with its
+        Confirm before anything is paid."""
+        e = self.store.get(errand_id)
+        if e is None:
+            raise LookupError(f"no errand {errand_id}")
+        p = next((p for p in e["products"] or [] if p.get("url") == url), None)
+        if p is None:
+            raise ValueError("that product isn't one of the errand's cards")
+        from .pricewatch import format_money  # it imports this module
+        size = (size or "").strip()[:20] or None
+        if max_total is not None and max_total <= 0:
+            raise ValueError("the most you'd pay is a price, more than 0")
+        task = (f"Buy one {p['title']}" + (f" in size {size}" if size else "") + f" from this page: {url}."
+                + (f" The search saw it at {p['price']}." if p.get("price") else "")
+                + (f" Pick size {size} on the page; if it's sold out in it, stop and say so." if size else "")
+                + (f" Don't buy it above {format_money(max_total, 'EUR')} (before shipping): ask instead."
+                   if max_total is not None else "")
+                + " Use the account's saved address and card.")
+        new = self.start(task, f"Buy {p['title']}"[:60], e["site"] or site_of(url), e["conversation"])
+        await self._post(new, "The user tapped Buy it for me on a product card; the errand is buying it",
+                         f"Buying {p['title']}" + (f" in {size}" if size else "")
+                         + ". I'll ask you to confirm the total before anything is paid.", card=True)
+        return self.store.get(new["id"])
+
     def done(self, errand_id: int) -> dict:
         """The user did their part in the live view (logged in, solved the CAPTCHA, entered the code)."""
         e = self._get(errand_id)
@@ -1223,6 +1249,9 @@ class Phase:
             "price": {"type": ["string", "null"], "description": "as the page shows it, like \"49,15 €\""},
             "rating": {"type": ["number", "null"], "description": "out of 5, like 4.6"},
             "reviews": {"type": ["integer", "null"], "description": "how many ratings, like 12463"},
+            "sizes": {"type": ["array", "null"], "items": {"type": "string"},
+                      "description": "the user's sizes in stock, like [\"44\", \"44.5\"], when the task gives "
+                                     "them; else null"},
             "was": {"type": ["string", "null"], "description": "the price before a discount, as the page shows it "
                                                                "struck through, like \"309,99 €\"; else null"},
             "audience": {"type": ["string", "null"], "enum": ["men", "women", "kids", "unisex", None],
@@ -1230,7 +1259,7 @@ class Phase:
             "note": {"type": ["string", "null"], "description": "the user's sizes in stock (\"44, 44.5\") when the "
                                                                 "task gives them, else a few words worth knowing: "
                                                                 "\"6 left\", \"arrives Fri\""}},
-            "required": ["title", "url", "price", "rating", "reviews", "was", "audience", "note"],
+            "required": ["title", "url", "price", "rating", "reviews", "sizes", "was", "audience", "note"],
             "additionalProperties": False}
         return [
             Tool("need_user", "Hand the browser to the user for a step only they can do: log in (login), a CAPTCHA "
@@ -1428,6 +1457,8 @@ class Phase:
                         "price": p.get("price"), "rating": _number(p.get("rating")),
                         "reviews": _number(p.get("reviews"), int), "note": p.get("note"),
                         "was": _was(p.get("was"), p.get("price")),
+                        "sizes": [str(x).strip()[:12] for x in p["sizes"] if str(x).strip()][:12]
+                        if isinstance(p.get("sizes"), list) else None,
                         "audience": p.get("audience") if p.get("audience") in AUDIENCES else None,
                         "image": picture_for(url, p.get("title"), images)})
         started = time.monotonic()

@@ -559,6 +559,8 @@ struct ReleaseBar: View {
     let title: String
     let busy: Bool
     let close: () -> Void
+    /// What the address shows; else "releases · <title>".
+    var address: String?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -577,7 +579,7 @@ struct ReleaseBar: View {
             }
             HStack(spacing: 5) {
                 Image(systemName: "lock.fill").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
-                Text("releases · \(title.lowercased())").lineLimit(1)
+                Text(address ?? "releases · \(title.lowercased())").lineLimit(1)
             }
             .font(.caption.weight(.medium))
             .padding(.horizontal, 10).frame(height: 24)

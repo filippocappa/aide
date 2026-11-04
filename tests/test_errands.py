@@ -392,6 +392,16 @@ async def test_products_come_with_their_pictures(env):
                       .fetchone()[0])
     assert "1. Anker USB-C, 2 m, 9,99 €: https://www.amazon.it/dp/B0ANKER" in note
 
+    # Buy it for me from a card: a new errand on that page in the same chat, the size and the limit in its task.
+    buy = await runner.buy_product(e["id"], "https://www.amazon.it/dp/B0UGREEN", "2 m", 12)
+    assert buy["conversation"] == CONVERSATION and buy["site"] == "amazon.it" and buy["status"] == "queued"
+    assert "UGREEN cavo USB C 2 m in size 2 m from this page: https://www.amazon.it/dp/B0UGREEN" in buy["task"]
+    assert "above 12,00 €" in buy["task"] or "above €12" in buy["task"] or "12" in buy["task"]
+    [card] = agent.visible_history(CONVERSATION)[-1]["attachments"]
+    assert card["type"] == "errands" and card["errands"][0]["id"] == buy["id"]
+    with pytest.raises(ValueError):
+        await runner.buy_product(e["id"], "https://www.amazon.it/dp/B0NOTHERE")
+
 
 def test_picture_for_a_product():
     images = [{"path": "/Lodge-L8SK3/dp/B00006JSUA/ref=sr_1_1", "src": "https://a/lodge.jpg", "alt": "Lodge"},

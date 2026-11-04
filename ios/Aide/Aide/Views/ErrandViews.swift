@@ -1232,6 +1232,12 @@ struct PurchasesView: View {
 /// (the shop's app when it's installed).
 struct ProductsCard: View {
     let products: [Product]
+    /// The errand the cards came from: Buy it for me starts from it.
+    var errand: Int?
+    var site: String?
+    /// After Buy it for me or a watch (the chat loads again).
+    var changed: (() async -> Void)?
+    @State private var opened: Product?
     /// Men's, Women's or every product, when the cards are both; the last choice is kept.
     @AppStorage("products.audience") private var audience = ""
 
@@ -1256,12 +1262,17 @@ struct ProductsCard: View {
             }
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 10) {
-                    ForEach(Array(shown.enumerated()), id: \.element.id) { ProductTile(product: $0.element) }
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { item in
+                        ProductTile(product: item.element) { opened = item.element }
+                    }
                 }
                 .scrollTargetLayout()
             }
             .scrollIndicators(.hidden)
             .scrollTargetBehavior(.viewAligned)
+        }
+        .sheet(item: $opened) { p in
+            ProductSheet(products: shown, start: p, errand: errand, site: site, changed: changed)
         }
     }
 
@@ -1289,15 +1300,13 @@ struct ProductsCard: View {
 }
 
 struct ProductTile: View {
-    @Environment(\.openURL) private var openURL
     let product: Product
+    let open: () -> Void
 
     var body: some View {
-        Button {
-            if let link = product.link { openURL(link) }
-        } label: {
+        Button(action: open) {
             VStack(alignment: .leading, spacing: 8) {
-                picture
+                ProductPicture(product: product)
                     .frame(width: 168, height: 150)
                     .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1337,14 +1346,18 @@ struct ProductTile: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens it on the site")
+        .accessibilityHint("Opens its page")
     }
+}
 
-    @ViewBuilder
-    private var picture: some View {
+struct ProductPicture: View {
+    let product: Product
+    var padding: CGFloat = 8
+
+    var body: some View {
         AsyncImage(url: product.image.flatMap(URL.init(string:))) { phase in
             switch phase {
-            case .success(let image): image.resizable().aspectRatio(contentMode: .fit).padding(8)
+            case .success(let image): image.resizable().aspectRatio(contentMode: .fit).padding(padding)
             case .failure: placeholder
             default: if product.image == nil { placeholder } else { ProgressView() }
             }
@@ -1353,6 +1366,328 @@ struct ProductTile: View {
 
     private var placeholder: some View {
         Image(systemName: "bag").font(.title).foregroundStyle(.tertiary)
+    }
+}
+
+/// A product card opened: its page drawn in Aide, as a shop shows it, with what Aide can do from here: buy it in
+/// one of your sizes (an errand, which asks you to confirm the total before paying), or watch its price.
+struct ProductSheet: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    let products: [Product]
+    let errand: Int?
+    let site: String?
+    let changed: (() async -> Void)?
+    @State private var page: String
+    @State private var size: String?
+    @State private var typedSize = ""
+    @State private var maxText = ""
+    @State private var watchText = ""
+    @State private var busy = false
+    @State private var done: String?
+    @State private var error: String?
+
+    init(products: [Product], start: Product, errand: Int?, site: String?, changed: (() async -> Void)?) {
+        self.products = products.contains(start) ? products : [start] + products
+        self.errand = errand
+        self.site = site
+        self.changed = changed
+        _page = State(initialValue: start.id)
+        _size = State(initialValue: start.mySizes.count == 1 ? start.mySizes[0] : nil)
+        _maxText = State(initialValue: Self.money(start.price.flatMap(Product.amount)))
+        _watchText = State(initialValue: Self.money(start.price.flatMap(Product.amount).map { ($0 * 0.9).rounded(.down) }))
+    }
+
+    private var current: Product { products.first { $0.id == page } ?? products[0] }
+
+    private var shop: String {
+        site ?? current.link?.host?.replacingOccurrences(of: "www.", with: "") ?? "the shop"
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                ReleaseBar(title: current.title, busy: busy, close: { dismiss() },
+                           address: "\(shop) · \(current.title.lowercased())")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        gallery
+                        info
+                        sizes
+                        limit
+                        watch
+                        if let error {
+                            Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
+                        }
+                    }
+                    .padding(16)
+                    .pageColumn()
+                }
+                .background(Theme.background)
+            }
+            .safeAreaInset(edge: .bottom) { bottomBar }
+            .toolbar(.hidden, for: .navigationBar)
+            .macSheetHidesClose()
+        }
+        .onChange(of: page) {
+            size = current.mySizes.count == 1 ? current.mySizes[0] : nil
+            maxText = Self.money(current.price.flatMap(Product.amount))
+            watchText = Self.money(current.price.flatMap(Product.amount).map { ($0 * 0.9).rounded(.down) })
+            error = nil
+        }
+    }
+
+    // The picture, as big as a shop's, with the discount and who it's for; swipe, the arrows or a thumbnail to move.
+    private var gallery: some View {
+        VStack(spacing: 12) {
+            ProductPicture(product: current, padding: 18)
+                .id(current.id)
+                .transition(.opacity)
+                .frame(maxWidth: .infinity).frame(height: 260)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(alignment: .topLeading) {
+                    HStack(spacing: 6) {
+                        if let off = current.off { pill(off, colour: .red) }
+                        if let a = current.audience, a != "unisex" { pill(ProductsCard.label(a), colour: .black.opacity(0.6)) }
+                    }
+                    .padding(10)
+                }
+                .overlay {
+                    if products.count > 1 {
+                        HStack { arrow("chevron.left", by: -1); Spacer(); arrow("chevron.right", by: 1) }
+                            .padding(.horizontal, 8)
+                    }
+                }
+                .gesture(DragGesture(minimumDistance: 24).onEnded { v in
+                    guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                    move(v.translation.width < 0 ? 1 : -1)
+                })
+            if products.count > 1 {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(products) { p in
+                            Button { withAnimation(.easeInOut(duration: 0.2)) { page = p.id } } label: {
+                                ProductPicture(product: p, padding: 4)
+                                    .frame(width: 52, height: 52)
+                                    .background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .strokeBorder(p.id == page ? Theme.accent : Theme.line,
+                                                          lineWidth: p.id == page ? 2.5 : 0.5)
+                                    }
+                                    .opacity(p.id == page ? 1 : 0.6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+    }
+
+    private var info: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(current.title).font(.title3.weight(.semibold)).multilineTextAlignment(.leading)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if let price = current.price { Text(price).font(.title2.weight(.bold)).monospacedDigit() }
+                if let was = current.was, current.off != nil {
+                    Text(was).font(.subheadline).monospacedDigit().strikethrough().foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let saved { Text("You save \(saved)").font(.footnote.weight(.semibold)).foregroundStyle(.green) }
+            }
+            if let stars = current.stars { Text(stars).font(.footnote).foregroundStyle(.secondary) }
+            if current.mySizes.isEmpty, let note = current.note, !note.isEmpty {
+                Text(note).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var saved: String? {
+        guard current.off != nil, let was = current.was.flatMap(Product.amount),
+              let now = current.price.flatMap(Product.amount) else { return nil }
+        return Self.money(was - now) + " €"
+    }
+
+    // Your sizes in stock, from Aide's look; one to buy. A product without them: type one if it has sizes.
+    @ViewBuilder
+    private var sizes: some View {
+        let mine = current.mySizes
+        if mine.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Size").font(.headline)
+                TextField("If it comes in sizes", text: $typedSize)
+                    .padding(.horizontal, 12).frame(height: 40)
+                    .background(Theme.chip, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Your sizes in stock").font(.headline)
+                    Spacer()
+                    Text("EU · on \(shop)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 58), spacing: 8)], spacing: 8) {
+                    ForEach(mine, id: \.self) { s in
+                        Button { size = size == s ? nil : s } label: {
+                            Text(s).font(.subheadline.weight(.medium)).monospacedDigit()
+                                .frame(maxWidth: .infinity).frame(height: 40)
+                                .foregroundStyle(size == s ? Theme.onAccent : .primary)
+                                .background(size == s ? Theme.accent : Theme.chip,
+                                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private var limit: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Most you'd pay").font(.headline)
+                Spacer()
+                TextField("Any", text: $maxText)
+                    .multilineTextAlignment(.trailing).monospacedDigit()
+                    .keyboardType(.decimalPad)
+                    .frame(width: 90)
+                Text("€").foregroundStyle(.secondary)
+            }
+            Text("Aide fills the bag on \(shop) and asks you to confirm the total before anything is paid. Above this it stops and asks.")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private var watch: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Not yet?").font(.headline)
+            HStack(spacing: 8) {
+                Text("Tell me when it's under").font(.subheadline)
+                TextField("", text: $watchText)
+                    .multilineTextAlignment(.trailing).monospacedDigit()
+                    .keyboardType(.decimalPad)
+                    .frame(width: 70)
+                Text("€").foregroundStyle(.secondary)
+                Spacer()
+                Button("Watch") { Task { await addWatch() } }
+                    .buttonStyle(.bordered)
+                    .disabled(busy || Self.value(watchText) == nil)
+            }
+        }
+    }
+
+    private var bottomBar: some View {
+        VStack(spacing: 10) {
+            if let done {
+                Label(done, systemImage: "checkmark.circle.fill")
+                    .font(.subheadline).foregroundStyle(.green)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button { dismiss() } label: { Text("Done").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent).foregroundStyle(Theme.onAccent)
+            } else {
+                Button { Task { await buy() } } label: {
+                    HStack {
+                        Text(buyTitle)
+                        if busy { ProgressView().tint(Theme.onAccent) }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .foregroundStyle(Theme.onAccent)
+                .disabled(!canBuy || busy)
+                if let link = current.link {
+                    Button { openURL(link) } label: {
+                        Label("Open on \(shop)", systemImage: "safari").font(.footnote.weight(.medium))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .controlSize(.large)
+        .padding(16)
+        .background(.bar)
+    }
+
+    private var chosenSize: String? {
+        if let size { return "EU \(size)" }
+        let typed = typedSize.trimmingCharacters(in: .whitespaces)
+        return typed.isEmpty ? nil : typed
+    }
+
+    private var canBuy: Bool { errand != nil && (current.mySizes.isEmpty || size != nil) }
+
+    private var buyTitle: String {
+        if errand == nil { return "Ask Aide in the chat to buy it" }
+        if !current.mySizes.isEmpty && size == nil { return "Pick a size" }
+        return "Buy it for me" + (chosenSize.map { " · \($0)" } ?? "")
+    }
+
+    private func buy() async {
+        guard let errand else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await env.api.buyProduct(errand: errand, ProductBuy(url: current.url, size: chosenSize,
+                                                                        maxTotal: Self.value(maxText)))
+            done = "Aide is on it. It'll ask you to confirm the total in the chat before paying."
+            error = nil
+            await changed?()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func addWatch() async {
+        guard let below = Self.value(watchText) else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await env.api.addPriceWatch(PriceWatchIn(url: current.url, title: current.title, below: below,
+                                                             errandId: errand))
+            done = "Watching it. Aide posts in the chat when it's under \(Self.money(below)) €."
+            error = nil
+            await changed?()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func move(_ by: Int) {
+        guard let i = products.firstIndex(where: { $0.id == page }), products.indices.contains(i + by) else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { page = products[i + by].id }
+    }
+
+    private func arrow(_ symbol: String, by: Int) -> some View {
+        let i = products.firstIndex { $0.id == page } ?? 0
+        let can = products.indices.contains(i + by)
+        return Button { move(by) } label: {
+            Image(systemName: symbol).font(.footnote.weight(.bold))
+                .frame(width: 30, height: 30)
+                .foregroundStyle(.black.opacity(0.7))
+                .background(.white.opacity(0.85), in: Circle())
+                .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+        }
+        .buttonStyle(.plain)
+        .opacity(can ? 1 : 0)
+        .disabled(!can)
+    }
+
+    private func pill(_ text: String, colour: Color) -> some View {
+        Text(text).font(.caption.weight(.bold)).monospacedDigit()
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .foregroundStyle(.white)
+            .background(colour, in: Capsule())
+    }
+
+    static func value(_ text: String) -> Double? {
+        Double(text.replacingOccurrences(of: "€", with: "").replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    static func money(_ amount: Double?) -> String {
+        amount.map { $0.formatted(.number.precision(.fractionLength(0...2))) } ?? ""
     }
 }
 
