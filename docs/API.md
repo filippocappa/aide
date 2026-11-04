@@ -78,6 +78,9 @@ from the tools the assistant used in that turn, not parsed from its text:
   question, ready to confirm, failed). A message's card is the errand as it was then; fetch
   `GET /v1/errands/{id}` for now. Since 2026-10-28 the closing message of a finished errand carries no card of its
   own: the first one follows the errand to its end.
+- `price_watches`: a price watch (since 2026-11-04; see Browser errands, Price watches), `{"type": "price_watches",
+  "price_watches": [PriceWatch]}`: when Aide sets one up, changes one, and on the message it posts when the line is
+  crossed (with Buy it, `POST /v1/pricewatches/{id}/buy`). The card is the watch as it was then.
 - `purchases`: an order an errand placed (since 2026-10-27; see Browser errands), `{"type": "purchases",
   "purchases": [Purchase]}`, on the errand's last message and when Finance lists them.
 - `payments`: payments Finance logged, listed or re-sorted (since 2026-11-01; see Finance), `{"type": "payments",
@@ -527,7 +530,11 @@ A meal scanned in the app is "Logged a meal" with the food in `detail` (before 2
 - `actions`: the confirmation queue, with who queued it and from which chat. An action expires 30 min after it's
   queued. Confirm or cancel one with `POST /v1/confirm` / `/v1/cancel` and `{"ids": [42]}`. Since 2026-10-27 an
   action can carry a `detail` object to draw instead of the plain summary (absent otherwise); so far only an errand's
-  order, `{"kind": "purchase", …}` (see Browser errands). `detail` is on `pending` rows too.
+  order, `{"kind": "purchase", …}`, and since 2026-11-04 a timed drop's limits, `{"kind": "drop", …}` (see Browser
+  errands, Timed drops). `detail` is on `pending` rows too. Since 2026-11-04 `expires_at` is the action's own when it
+  has one (a drop waits until its sale closes), else 30 min after it was queued. A drop is a **standing** action:
+  confirmed only by its own id (its card's Confirm), never by Confirm all, a chat's "yes" or `/v1/confirm` without
+  `ids`.
 - `errands` (since 2026-10-27): Errand objects that need you (log in, answer, or go on after a restart); open the
   live view, answer with `POST /v1/errands/{id}/reply`, or cancel.
 - `plans`: start one now with `POST /v1/objectives/accept` (`period`, `date` = the Block's `start`, and `drop` for
@@ -2192,9 +2199,10 @@ One errand runs at a time (others are `queued`). Each has at most 80 browser act
 It runs on the Claude plan when the notes run there, else on OpenRouter; at the plan's limit it asks (`why`
 `plan_limit`): "Wait for the reset" or "Finish on OpenRouter", as a reply.
 
-Statuses: `queued`, `running`, `needs_you`, `waiting_confirm`, `done`, `failed`, `cancelled`, `interrupted` (the
-server restarted while it ran: the profile keeps you logged in, the page is opened again; reply "go on" or tap "I'm
-done" to carry on). An unanswered Confirm expires after 30 minutes and cancels the errand; so does Cancel.
+Statuses: `queued`, `running`, `needs_you`, `waiting_confirm`, `scheduled` (since 2026-11-04: a timed drop
+confirmed, waiting for its sale), `done`, `failed`, `cancelled`, `interrupted` (the server restarted while it ran: the
+profile keeps you logged in, the page is opened again; reply "go on" or tap "I'm done" to carry on). An unanswered
+Confirm expires after 30 minutes (a drop's, when its sale closes) and cancels the errand; so does Cancel.
 
 Errand:
 ```json
@@ -2202,7 +2210,7 @@ Errand:
  "url": "https://www.amazon.it/gp/buy/spc/handlers/display.html", "status": "waiting_confirm",
  "why": null, "reason": "Order the Anker USB-C cable", "options": null,
  "step": "Waiting for your Confirm", "steps": [{"ts": "2026-10-27T18:02:11+01:00", "text": "Opened amazon.it"}],
- "result": null, "action_id": 42, "conversation_id": "c_91f…", "purchase_id": null, "products": [],
+ "result": null, "action_id": 42, "conversation_id": "c_91f…", "purchase_id": null, "products": [], "drop": null,
  "created_at": "2026-10-27T18:01:50+01:00", "updated_at": "2026-10-27T18:03:20+01:00"}
 ```
 - `why` (only on `needs_you`): `login`, `captcha`, `code`, `card` or `other` (take over in the live view, then "I'm
@@ -2215,6 +2223,7 @@ Errand:
 - `result`: on `done` or `failed`, what it says. `purchase_id`: the order it placed, if any.
 - `products` (since 2026-10-28): what it found, as Product cards, best first (up to 10); `[]` when there's nothing
   to show.
+- `drop` (since 2026-11-04): null, or a timed drop's plan (see Timed drops).
 
 Product:
 ```json
@@ -2259,6 +2268,75 @@ page. Finance reads these (`list_purchases`).
 
 Without the browser (Playwright's Chromium not installed) the errand endpoints answer `503`, the lists are empty with
 `enabled` false, and Aide has no `start_errand`.
+
+### Timed drops
+
+Since 2026-11-04 (#57): "buy the Switch 2 on Amazon the moment it goes on sale on Thursday at 10, up to €500". Aide
+starts the errand with the sale's time (`drop_at`, local; the window closes 2 h later unless `drop_until` says, at
+most 24 h) and your ceiling (`max_total`). Ahead of the sale it **gets ready**: logs in (yours, in the live view),
+finds the product and the variant, checks the saved address and card, and then asks you **once** for the limits:
+a queued `errand_drop` action with this `detail`:
+```json
+{"kind": "drop", "errand_id": 9, "site": "amazon.it", "summary": "1 Nintendo Switch 2, black",
+ "item": "Nintendo Switch 2", "variant": "Nero", "quantity": 1, "max_total": "480,00 €",
+ "opens_at": "2026-11-06T10:00:00+01:00", "closes_at": "2026-11-06T12:00:00+01:00",
+ "address": "Via Roma 1, Torino", "card": "Visa ending 6411", "screenshot": "p_3f2a…",
+ "url": "https://www.amazon.it/dp/B0…"}
+```
+`max_total` is with shipping and never above what you told Aide. `variant`, `address`, `card`, `screenshot` and
+`url` may be null. The action waits until `closes_at` (its `expires_at`) and is confirmed only on its own card.
+
+Confirmed, the errand is `scheduled` and its page closed. 5 minutes before `opens_at` it opens again by itself,
+waits for the product to go on sale (reloading every few seconds), adds it, checks out, and clicks the order button
+only if, on that page, the window is open, the item and the variant are named, there's an order total, it's in the
+currency of `max_total` and at or under it. Anything else (sold out, another variant, a higher total) stops and asks,
+time-sensitively. A login, a queue, a CAPTCHA or a card check at the sale is yours in the live view, as always: be
+around at the sale's time. A window that closes before it bought ends the errand `failed` ("Missed the drop").
+
+The Errand's `drop`:
+```json
+{"opens_at": "2026-11-06T10:00:00+01:00", "closes_at": "2026-11-06T12:00:00+01:00", "max_total": "480,00 €",
+ "item": "Nintendo Switch 2", "variant": "Nero", "quantity": 1, "armed": true}
+```
+`armed`: the limits are confirmed. `item`, `variant` and `quantity` are null until Aide got ready.
+
+Shops whose terms forbid automated buying (Ticketmaster, TicketOne, Vivaticket, Nike, Adidas, Supreme, the Pokémon
+Center) refuse a timed drop: Aide says so and leaves it to you. Other errands there (finding, comparing) still work.
+
+### Price watches
+
+Since 2026-11-04 (#57): "tell me when the AirPods Pro go under €150", "tell me when it's back in stock". A watch reads
+a product page every few hours (default 4, 1–24) in Aide's browser, with the site's profile, from what the page says
+about itself (schema.org, the product meta tags, Amazon's price box; the fast model reads the text only when none of
+those has a price), counting a coupon the page offers. It posts once in the chat it was asked from, with a push, when
+the price (after the coupon) is at or under `below`, or it's back in stock after being out (`stock`); then it's `met`
+until you watch again. Four looks in a row with no price stop it (`failed`), with a note. It isn't a routine (no
+model, no daily cap). Buy it starts a normal errand on the page, with its Confirm.
+
+PriceWatch:
+```json
+{"id": 3, "title": "AirPods Pro 3", "url": "https://www.amazon.it/dp/B0…", "site": "amazon.it", "below": 150.0,
+ "below_text": "150,00 €", "currency": "EUR", "stock": false, "every_hours": 4.0, "status": "active",
+ "price": "169,00 €", "amount": 169.0, "effective": 149.0, "in_stock": true, "coupon": "Applica coupon da 20 €",
+ "error": null, "checked_at": "2026-11-04T10:02:11+01:00", "next_at": "2026-11-04T14:02:11+01:00", "met_at": null,
+ "conversation_id": "c_91f…", "history": [{"ts": "…", "amount": 169.0, "effective": 149.0, "in_stock": true}],
+ "lowest": 149.0, "created_at": "2026-11-03T18:01:50+01:00"}
+```
+- `status`: `active`, `met` (it told you), `ended` (stopped), `failed` (couldn't read the page; `error` says why).
+- `below` (and `below_text`) or `stock`, or both; `below` null: only stock. `price` is as the page wrote it, `amount`
+  its number, `effective` after the coupon; any of them null before a price was read. `in_stock` null: unknown.
+- `next_at`: only while `active`. `history`: the last 60 looks, oldest first. `lowest`: the lowest `effective` seen.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/pricewatches?status=active` | | `{"price_watches": [PriceWatch], "enabled": true}`, active first, newest first |
+| `POST /v1/pricewatches` | `{"url", "title", "below": 150, "stock": false, "every_hours": 4}` | the PriceWatch after its first look. One per page: the same `url` again updates it. `422` without `below` or `stock`, or a bad url |
+| `PATCH /v1/pricewatches/{id}` | any of `title`, `below`, `stock`, `every_hours`, `status` (`active`, `ended`) | the PriceWatch. `active` again: a look now |
+| `DELETE /v1/pricewatches/{id}` | | `{"ok": true}` |
+| `POST /v1/pricewatches/{id}/check` | | the PriceWatch after a look now (posts if the line is crossed) |
+| `POST /v1/pricewatches/{id}/buy` | | the Errand it started (`queued`) |
+
+Without the browser: the list is empty with `enabled` false, the rest answer `503`.
 
 ### Live view
 

@@ -41,8 +41,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-STATUSES = ("queued", "running", "needs_you", "waiting_confirm", "done", "failed", "cancelled", "interrupted")
-OPEN = ("queued", "running", "needs_you", "waiting_confirm", "interrupted")  # not over yet
+STATUSES = ("queued", "running", "needs_you", "waiting_confirm", "scheduled", "done", "failed", "cancelled",
+            "interrupted")
+OPEN = ("queued", "running", "needs_you", "waiting_confirm", "scheduled", "interrupted")  # not over yet
 WHY = ("login", "captcha", "code", "card", "question", "plan_limit", "other")
 MAX_ACTIONS = 80  # browser actions in one errand
 MAX_SECONDS = 20 * 60  # model time in one errand, all its phases together
@@ -55,6 +56,27 @@ COMMIT_TEXT = 48  # characters: longer texts aren't buttons
 PICTURE_SECONDS = 30  # at the end, opening product pages for the pictures no page showed
 CONFIRM_TTL = timedelta(minutes=30)  # agent.PENDING_TTL: an unanswered Confirm expires
 WAITING_FOR = timedelta(minutes=30)  # live.WAITING_FOR: an errand waiting for the user keeps its activity this long
+# Timed drops: the sale's phase starts DROP_LEAD before it opens (the page open, logged in), and may buy until the
+# window closes (DROP_WINDOW after it opens, unless the user said otherwise).
+DROP_LEAD = timedelta(minutes=5)
+DROP_WINDOW = timedelta(hours=2)
+DROP_MAX_WINDOW = timedelta(hours=24)
+DROP_TICK = 15  # seconds between looks for a drop that's due
+DROP_POLL = 4  # seconds between reloads while waiting for the sale
+# Shops whose terms forbid buying with automated tools (bots), most of all at a limited release: Aide doesn't buy
+# a drop there, and says why. Price watches and ordinary errands (finding, comparing) still work.
+NO_BOTS = {
+    "ticketmaster": "Ticketmaster's terms forbid buying tickets with automated tools, and the queue is meant for people",
+    "ticketone.it": "TicketOne's terms forbid buying tickets with automated tools, and the queue is meant for people",
+    "vivaticket": "Vivaticket's terms forbid buying tickets with automated tools",
+    "nike.com": "Nike's terms forbid buying with bots or other automated means, and it cancels orders placed that way",
+    "adidas": "adidas' terms forbid buying with bots or other automated means, and it cancels orders placed that way",
+    "supreme.com": "Supreme's terms forbid buying with bots, and it cancels orders placed that way",
+    "pokemoncenter.com": "Pokémon Center's terms forbid buying with bots, and it cancels orders placed that way",
+}
+# The order's total as a checkout labels it ("Totale ordine: 162,40 €").
+TOTAL_LINE = re.compile(r"\b(?:totale(?: dell'?ordine| ordine| da pagare| complessivo| \(iva inclusa\))?|"
+                        r"order total|grand total|total(?: to pay| due)?)\b[^\n\d]{0,24}?(\d[\d.,]*\d|\d)", re.I)
 
 # What a committing element is called in the page's code (ids, classes, test ids, form actions), whatever its text
 # says: an icon-only pay button, or one worded unusually.
@@ -168,6 +190,7 @@ class ErrandStore:
         seconds      REAL NOT NULL DEFAULT 0,
         conversation TEXT,              -- the chat it reports in (a public id)
         products     TEXT,              -- JSON: what finish showed [{title, url, price, rating, reviews, image, note}]
+        timed_drop   TEXT,              -- JSON: a timed drop {opens_at, closes_at, max_total, limits, armed}
         created_at   TEXT NOT NULL,
         updated_at   TEXT NOT NULL
     );
@@ -190,17 +213,21 @@ class ErrandStore:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo):
         self.conn, self.tz = conn, tz
         conn.executescript(self.SCHEMA)
-        if "products" not in {r[1] for r in conn.execute("PRAGMA table_info(errands)")}:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(errands)")}
+        if "products" not in columns:
             conn.execute("ALTER TABLE errands ADD COLUMN products TEXT")
+        if "timed_drop" not in columns:  # databases created before timed drops
+            conn.execute("ALTER TABLE errands ADD COLUMN timed_drop TEXT")
 
     # -- errands ---------------------------------------------------------------
 
-    def create(self, task: str, title: str, site: str | None, conversation: str | None) -> dict:
+    def create(self, task: str, title: str, site: str | None, conversation: str | None,
+               drop: dict | None = None) -> dict:
         now = utcnow().isoformat()
         cur = self.conn.execute(
-            "INSERT INTO errands (task, title, site, status, step, conversation, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'queued', 'Waiting to start', ?, ?, ?)",
-            (task, title, site, conversation, now, now))
+            "INSERT INTO errands (task, title, site, status, step, conversation, timed_drop, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'queued', 'Waiting to start', ?, ?, ?, ?)",
+            (task, title, site, conversation, json.dumps(drop) if drop else None, now, now))
         return self.get(cur.lastrowid)
 
     def get(self, errand_id: int) -> dict | None:
@@ -220,7 +247,7 @@ class ErrandStore:
         return [self._row(r) for r in rows]
 
     def update(self, errand_id: int, **changes) -> dict:
-        for key in ("options", "confirm", "products"):
+        for key in ("options", "confirm", "products", "timed_drop"):
             if key in changes and changes[key] is not None:
                 changes[key] = json.dumps(changes[key])
         changes["updated_at"] = utcnow().isoformat()
@@ -253,6 +280,7 @@ class ErrandStore:
         e["options"] = json.loads(e["options"]) if e["options"] else None
         e["confirm"] = json.loads(e["confirm"]) if e["confirm"] else None
         e["products"] = json.loads(e["products"]) if e.get("products") else []
+        e["timed_drop"] = json.loads(e["timed_drop"]) if e.get("timed_drop") else None
         return e
 
     def as_json(self, e: dict) -> dict:
@@ -265,7 +293,16 @@ class ErrandStore:
                 "result": e["result"],
                 "action_id": confirm.get("action_id") if e["status"] == "waiting_confirm" else None,
                 "conversation_id": e["conversation"], "purchase_id": confirm.get("purchase_id"),
-                "products": e["products"], "created_at": self._local(e["created_at"]), "updated_at": self._local(e["updated_at"])}
+                "products": e["products"], "drop": self._drop(e["timed_drop"]),
+                "created_at": self._local(e["created_at"]), "updated_at": self._local(e["updated_at"])}
+
+    def _drop(self, d: dict | None) -> dict | None:
+        if not d:
+            return None
+        limits = d.get("limits") or {}
+        return {"opens_at": self._local(d["opens_at"]), "closes_at": self._local(d["closes_at"]),
+                "max_total": limits.get("max_total") or d.get("max_total"), "item": limits.get("item"),
+                "variant": limits.get("variant"), "quantity": limits.get("quantity"), "armed": bool(d.get("armed"))}
 
     def _local(self, ts: str) -> str:
         return datetime.fromisoformat(ts).astimezone(self.tz).isoformat(timespec="seconds")
@@ -361,16 +398,25 @@ class ErrandRunner:
         self._runs: dict[int, "ErrandRun"] = {}
         self._images: dict[int, list[dict]] = {}  # an errand's pages' pictures by link, for its products
         self._cancelled: set[int] = set()
+        self._dropping: dict[int, asyncio.Task] = {}  # armed drops' phases, run beside the queue's errand
 
     # -- what the user and Aide do --------------------------------------------
 
-    def start(self, task: str, title: str, site: str | None = None, conversation: str | None = None) -> dict:
+    def start(self, task: str, title: str, site: str | None = None, conversation: str | None = None,
+              drop_at: str | None = None, drop_until: str | None = None, max_total: str | None = None) -> dict:
+        """An errand; with `drop_at`, a timed drop: it gets ready now and buys when the sale opens."""
         task, title = task.strip(), (title or task).strip()[:60]
         if not task:
             raise ValueError("an errand needs a task")
         if site:
             site = site_of(site)
-        errand = self.store.create(task, title, site, conversation)
+        drop = None
+        if drop_at:
+            if site and (why := no_bots(site)):
+                raise ValueError(f"{why}, so I won't buy there at the drop. I can remind the user a few minutes "
+                                 "before it opens, or watch the price.")
+            drop = plan_drop(drop_at, drop_until, max_total, self.store.tz)
+        errand = self.store.create(task, title, site, conversation, drop)
         if conversation and self.live is not None:
             self.live.handed_over(conversation)
         self.store.log(errand["id"], "Waiting to start" if self.current else "Starting", counts=False)
@@ -415,7 +461,7 @@ class ErrandRunner:
             self.store.conn.execute("UPDATE pending_actions SET status = 'cancelled' WHERE id = ? AND "
                                     "status = 'pending'", (action,))
         e = self.store.update(errand_id, status="cancelled", step="Cancelled", result="Cancelled: nothing changed.")
-        if self.current != errand_id:
+        if self.current != errand_id and errand_id not in self._dropping:
             self._close(errand_id, failed=False, text="Cancelled")
             asyncio.get_running_loop().create_task(self.browser.close(_owner(errand_id)))
         activity.record(self.store.conn, "aide", "errand", e["title"], "Cancelled", e["conversation"])
@@ -436,6 +482,25 @@ class ErrandRunner:
                         "ask_confirm again with what the page shows now.")
         return f"Confirmed. Aide is doing it now on {e['site'] or 'the site'}: the result comes in this chat."
 
+    def drop_confirmed(self, errand_id: int) -> str:
+        """errand_drop, once the user confirmed a drop's limits ahead: the errand waits for the sale's time."""
+        e = self._get(errand_id)
+        d, confirm = e["timed_drop"] or {}, e["confirm"] or {}
+        if e["status"] != "waiting_confirm" or confirm.get("kind") != "drop" or not d.get("limits"):
+            return f"Errand {errand_id} isn't waiting for a drop's Confirm any more ({e['status']})."
+        opens, closes = _utc(d["opens_at"]), _utc(d["closes_at"])
+        if utcnow() >= closes:
+            return f"The sale's window closed at {closes.astimezone(self.store.tz):%H:%M}: nothing was bought."
+        wake = max(utcnow(), opens - DROP_LEAD)
+        when = f"{opens.astimezone(self.store.tz):%a %d %b %H:%M}"
+        self.store.update(errand_id, status="scheduled", timed_drop={**d, "armed": True}, wake_at=wake.isoformat(),
+                          confirm={**confirm, "go": True}, why=None, reason=None, step=f"Buying at {when}")
+        self.store.log(errand_id, f"Confirmed ahead: buy at {when}, up to {d['limits']['max_total']}", counts=False)
+        self._close(errand_id, failed=False, text=f"Buying at {when}")
+        asyncio.get_running_loop().create_task(self.browser.close(_owner(errand_id)))
+        return (f"Set: at {when} Aide buys {d['limits']['summary']}, up to {d['limits']['max_total']} with shipping, "
+                f"on {d['limits']['site']}. Anything different and it asks first.")
+
     def _get(self, errand_id: int) -> dict:
         e = self.store.get(errand_id)
         if e is None:
@@ -445,8 +510,27 @@ class ErrandRunner:
     def _resume(self, e: dict, answer: str) -> dict:
         self.store.update(e["id"], status="queued", answer=answer, why=None, reason=None, options=None,
                           wake_at=None, step="Going on")
-        self.queue.put_nowait(e["id"])
+        if _armed(e):  # a drop doesn't wait behind another errand
+            self._spawn(e["id"])
+        else:
+            self.queue.put_nowait(e["id"])
         return self.store.get(e["id"])
+
+    def _spawn(self, errand_id: int) -> None:
+        if errand_id in self._dropping:
+            return
+
+        async def phase() -> None:
+            try:
+                e = self.store.get(errand_id)
+                if e is not None and e["status"] == "queued" and errand_id not in self._cancelled:
+                    await self._phase(e)
+            except Exception:
+                log.exception("drop %s failed", errand_id)
+                self._fail(errand_id, "Something went wrong in the browser at the drop: I stopped.")
+            finally:
+                self._dropping.pop(errand_id, None)
+        self._dropping[errand_id] = asyncio.get_running_loop().create_task(phase())
 
     # -- the worker ------------------------------------------------------------
 
@@ -454,6 +538,9 @@ class ErrandRunner:
         """The worker, for the app's jobs: errands a restart interrupted are said so first."""
         for e in self.store.interrupt_running():
             log.info("errand %s was interrupted by a restart", e["id"])
+            if _armed(e) and utcnow() < _utc(e["timed_drop"]["closes_at"]):  # the sale's still on: back to it
+                self.store.update(e["id"], status="scheduled", wake_at=utcnow().isoformat(), step="Going on")
+                continue
             asyncio.get_running_loop().create_task(self._post(
                 e, "The server restarted in the middle of this errand",
                 f"I was interrupted while doing \"{e['title']}\" (the server restarted). Say \"go on\" and I'll "
@@ -461,9 +548,38 @@ class ErrandRunner:
         for e in self.store.by_status("queued"):
             self.queue.put_nowait(e["id"])
         try:
-            await self._work()
+            await asyncio.gather(self._work(), self._drops())
         finally:
+            for task in list(self._dropping.values()):
+                task.cancel()
             await self.browser.stop()
+
+    async def _drops(self) -> None:
+        """Armed drops whose time has come start their phase; one whose window closed while the server was down
+        is said so."""
+        while True:
+            await asyncio.sleep(DROP_TICK)
+            try:
+                await self._due_drops()
+            except Exception:
+                log.exception("drops: the check failed")
+
+    async def _due_drops(self) -> None:
+        now = utcnow()
+        for e in self.store.by_status("scheduled"):
+            closes = _utc(e["timed_drop"]["closes_at"])
+            if now >= closes:
+                text = (f"The sale for \"{e['title']}\" closed at {closes.astimezone(self.store.tz):%H:%M} before I "
+                        "could buy (the server was down): nothing was bought.")
+                e = self.store.update(e["id"], status="failed", result=text, step="Missed the drop")
+                activity.record(self.store.conn, "aide", "errand", e["title"], text, e["conversation"])
+                await self._post(e, "A timed drop was missed", text, card=True, push=f"Aide · {e['title']}")
+            elif e["wake_at"] and e["wake_at"] <= now.isoformat() and e["id"] not in self._dropping:
+                d = e["timed_drop"]
+                self.store.update(e["id"], status="queued", wake_at=None, step="Getting ready for the drop",
+                                  answer=None)
+                log.info("drop %s: starting, the sale opens at %s", e["id"], d["opens_at"])
+                self._spawn(e["id"])
 
     async def _work(self) -> None:
         while True:
@@ -497,8 +613,9 @@ class ErrandRunner:
                 self._close(e["id"], failed=False, text=f"{why}: nothing was ordered")
                 await self.browser.close(_owner(e["id"]))
                 if status == "expired":
-                    await self._post(e, "An errand's Confirm expired", f"\"{e['title']}\": you didn't confirm in "
-                                     "30 minutes, so nothing was ordered. Ask again whenever you like.", card=True)
+                    late = "before the sale closed" if (e["confirm"] or {}).get("kind") == "drop" else "in 30 minutes"
+                    await self._post(e, "An errand's Confirm expired", f"\"{e['title']}\": you didn't confirm "
+                                     f"{late}, so nothing was ordered. Ask again whenever you like.", card=True)
         now = utcnow()
         for e in self.store.by_status("needs_you"):
             if e["wake_at"] and e["wake_at"] <= now.isoformat():
@@ -524,6 +641,8 @@ class ErrandRunner:
             left = MAX_SECONDS - e["seconds"]
             if left <= 0 or e["actions"] >= MAX_ACTIONS:
                 raise TimeoutError
+            if _armed(e):  # waiting for the sale to open isn't the errand's time: the window is added
+                left += max(0.0, (_utc(e["timed_drop"]["closes_at"]) - utcnow()).total_seconds())
             await asyncio.wait_for(self._loop(phase, prompt), left)
             if phase.outcome is None:  # the model stopped without finish: its last words are the report
                 phase.outcome = ("finish", {"result": phase.last_text or "I stopped without finishing.",
@@ -535,7 +654,7 @@ class ErrandRunner:
                                         f"({MAX_ACTIONS} steps or {MAX_SECONDS // 60} minutes) and stopped. "
                                         f"I'd got this far: {e['step'] or 'nowhere yet'}."})
         finally:
-            spent = time.monotonic() - started
+            spent = max(0.0, time.monotonic() - started - phase.waited)
             self.store.conn.execute("UPDATE errands SET seconds = seconds + ? WHERE id = ?", (spent, errand_id))
             if where := self.browser.where(_owner(errand_id)):
                 self.store.update(errand_id, url=where["url"], site=self.store.get(errand_id)["site"] or where["site"])
@@ -569,7 +688,8 @@ class ErrandRunner:
             return out, err
 
         text = None
-        if self.engine is not None and phase.errand["engine"] != "openrouter":
+        # A drop at its sale runs on OpenRouter: no plan limit to stop it at the wrong moment, and no tool timeout.
+        if self.engine is not None and phase.errand["engine"] != "openrouter" and not _armed(phase.errand):
             if (until := self.engine.plan_blocked()) is not None:
                 raise PlanLimit(until, None, "the plan's limit")  # ask before going to OpenRouter
             if self.engine.plan_now():
@@ -652,9 +772,20 @@ class ErrandRunner:
             covered = await run.needs_you(question) if run else False
             lines = "\n".join(f"- {o}" for o in options)
             await self._post(e, "An errand asks the user something", question + (f"\n{lines}" if lines else ""),
-                             card=True, push=None if covered else f"Aide · {e['title']}")
+                             card=True, push=None if covered else f"Aide · {e['title']}",
+                             level="time-sensitive" if _armed(e) else None)
+        elif kind == "ask_confirm" and (e := self.store.get(errand_id))["confirm"].get("kind") == "drop":
+            d = e["timed_drop"]
+            limits, opens = d["limits"], _utc(d["opens_at"]).astimezone(self.store.tz)
+            covered = await run.needs_you(f"Confirm the drop: {limits['summary']}") if run else False
+            await self._post(e, "A timed drop waits for the user's Confirm of its limits",
+                             f"Ready for the drop. At {opens:%a %d %b %H:%M} I'll buy {limits['summary']} on "
+                             f"{limits['site']}, up to {limits['max_total']} with shipping, until "
+                             f"{_utc(d['closes_at']).astimezone(self.store.tz):%H:%M}. If the cart or the total "
+                             "differs, I stop and ask. Confirm the limits now and I'll do it then.", card=True,
+                             push=None if covered else f"Aide · confirm the drop on {limits['site']}",
+                             body=f"{limits['summary']}, up to {limits['max_total']}, at {opens:%a %H:%M}")
         elif kind == "ask_confirm":
-            e = self.store.get(errand_id)
             covered = await run.needs_you(f"Confirm: {e['confirm']['summary']}") if run else False
             c = e["confirm"]
             await self._post(e, "An errand waits for the user's Confirm",
@@ -730,7 +861,7 @@ class ErrandRunner:
         if self.browser.page(owner) is not None:
             return True
         e = self.store.get(errand_id)
-        if e and e["url"] and e["status"] in OPEN and self.current != errand_id:
+        if e and e["url"] and e["status"] in OPEN and self.current != errand_id and errand_id not in self._dropping:
             try:
                 await self.browser.open(owner, e["url"])
                 return True
@@ -753,6 +884,7 @@ class Phase:
         self.outcome: tuple[str, dict] | None = None
         self.last_text = ""
         self.calls = 0
+        self.waited = 0.0  # seconds spent waiting for a drop's sale, not counted as the errand's time
         self.registry: dict[str, Tool] = {}
 
     async def prompt(self) -> str:
@@ -780,13 +912,44 @@ class Phase:
                 parts.append(f"The page couldn't be read: {ex}")
         else:
             parts.append("No page is open yet.")
+        if d := e["timed_drop"]:
+            parts.append(self._drop_brief(d))
         left = MAX_ACTIONS - e["actions"]
         parts.append(f"You have {left} browser actions left for this errand.")
         parts.append("Write for the user in English (each `doing`, questions, finish), though the page is Italian.")
         return "\n\n".join(parts)
 
+    def _drop_brief(self, d: dict) -> str:
+        tz = self.store.tz
+        opens, closes = _utc(d["opens_at"]).astimezone(tz), _utc(d["closes_at"]).astimezone(tz)
+        when = f"{opens:%a %d %b %H:%M}, until {closes:%a %H:%M}"
+        if not d.get("armed"):
+            limit = f" The user's limit: {d['max_total']} in all." if d.get("max_total") else ""
+            return (f"This is a timed drop: the sale opens {when}.{limit} Get ready now, without buying: open the "
+                    "product, log in if needed (need_user), pick the variant and size, and check the delivery address "
+                    "and the saved card at checkout if the site lets you see them before the sale. Then call arm_drop "
+                    "with the limits; the user confirms them once, ahead, and you buy at the sale within them.")
+        limits = d["limits"]
+        return (f"This is the timed drop, confirmed ahead by the user: the sale opens {when}. Buy "
+                f"{limits['summary']} ({limits['item']}" + (f", {limits['variant']}" if limits.get("variant") else "")
+                + f", quantity {limits.get('quantity') or 1}) on {limits['site']}, for at most {limits['max_total']} "
+                "with shipping. Open the product page, call wait_for_drop until it can be bought, add it to the cart, go "
+                "to checkout and click the button that places the order: it's allowed only inside the window, with the "
+                "item and variant on the page and the order's total at or under the limit. If the cart, the variant or "
+                "the total differ, or anything else is off, don't place it: ask_confirm with what the page shows. If "
+                "it's sold out, finish and say so.")
+
+    def _drop(self) -> dict | None:
+        """The armed drop's limits while its window is open, else None."""
+        d = self.store.get(self.errand_id)["timed_drop"]
+        if not d or not d.get("armed") or not d.get("limits"):
+            return None
+        return d
+
     def tools(self) -> list[Tool]:
         tools = [*self._browser_tools(), *self._control_tools(), *self.runner.extra_tools]
+        if d := self.errand["timed_drop"]:
+            tools += self._drop_tools(d)
         self.registry = {t.name: t for t in tools}
         return tools
 
@@ -827,8 +990,17 @@ class Phase:
         return c if c and c.get("go") and not c.get("used") else None
 
     async def _commit_ok(self, text: str) -> bool:
-        """A committing element may be clicked only once the user confirmed it, with the same total on the page."""
+        """A committing element may be clicked only once the user confirmed it, with the same total on the page.
+        At a timed drop the user confirmed limits instead: any order button, inside them."""
         c = self._confirm()
+        if c is not None and c.get("kind") == "drop":
+            d = self._drop()
+            if d is None:
+                return False
+            if (why := drop_mismatch(d, await self.browser.text(self.owner), utcnow())) is not None:
+                raise ValueError(f"Not inside the confirmed limits: {why}. Don't click: ask_confirm with what the page "
+                                 "shows now, or finish if it can't be bought.")
+            return True
         if c is None or _norm(text) != _norm(c["label"]):
             return False
         if not _same_total(c["total"], await self.browser.text(self.owner)):
@@ -1046,6 +1218,124 @@ class Phase:
                       ["result", "ok", "products"]), finish),
         ]
 
+    # -- timed drops -------------------------------------------------------------
+
+    def _drop_tools(self, d: dict) -> list[Tool]:
+        if not d.get("armed"):
+            async def arm_drop(summary: str, item: str, variant: str | None, quantity: int | None, max_total: str,
+                               address: str | None = None, card: str | None = None) -> str:
+                return await self._arm(summary, item, variant, quantity, max_total, address, card)
+
+            return [Tool(
+                "arm_drop", "Once ready for a timed drop (logged in, the variant picked): the limits the user confirms "
+                "ahead, for buying at the sale. `item` and `variant` as the site writes them (they must be on the "
+                "checkout page at the sale), the most the order may cost in all with shipping, and the address and "
+                "card the site will use when you saw them.",
+                _obj({"summary": {"type": "string", "description": "e.g. \"1 Nintendo Switch 2, black\""},
+                      "item": {"type": "string", "description": "the product's name as the page shows it"},
+                      "variant": {"type": ["string", "null"], "description": "colour, size, edition as the page writes it"},
+                      "quantity": {"type": ["integer", "null"]},
+                      "max_total": {"type": "string", "description": "e.g. \"480,00 €\""},
+                      "address": {"type": ["string", "null"]}, "card": {"type": ["string", "null"],
+                                                                         "description": "e.g. \"Visa ending 6411\""}},
+                     ["summary", "item", "variant", "quantity", "max_total", "address", "card"]), arm_drop)]
+
+        async def wait_for_drop(text: str | None = None, doing: str | None = None) -> str:
+            return await self._wait(text, doing)
+
+        return [Tool(
+            "wait_for_drop", "Wait for the sale: until it opens, then reload the page every few seconds (up to two "
+            "minutes a call) until `text` shows (e.g. \"Aggiungi al carrello\"), or once with no text. Returns the "
+            "page. Call it again if it isn't on sale yet.",
+            _obj({"doing": {"type": ["string", "null"]}, "text": {"type": ["string", "null"]}}, ["text"]),
+            wait_for_drop)]
+
+    async def _arm(self, summary: str, item: str, variant: str | None, quantity: int | None, max_total: str,
+                   address: str | None, card: str | None) -> str:
+        runner, e = self.runner, self.store.get(self.errand_id)
+        d = e["timed_drop"]
+        if runner.agent is None:
+            raise ValueError("Confirm isn't available.")
+        amount, currency = parse_money(max_total)
+        if amount is None or amount <= 0:
+            raise ValueError("max_total must be an amount, like \"480,00 €\".")
+        if d.get("max_total"):  # the user's own limit stands; the errand can only go lower
+            cap, _ = parse_money(d["max_total"])
+            if cap is not None and amount > cap + 0.005:
+                raise ValueError(f"The user said at most {d['max_total']}: max_total can't be higher.")
+        if not item.strip():
+            raise ValueError("item is the product's name as the page shows it.")
+        if utcnow() >= _utc(d["closes_at"]):
+            raise ValueError("The sale's window is over: finish and say so.")
+        site = e["site"] or (self.browser.where(self.owner) or {}).get("site") or ""
+        if why := no_bots(site):
+            self._end("finish", {"result": f"{why}, so I won't buy there at the drop. I can remind you a few minutes "
+                                 "before it opens, or watch the price.", "ok": False, "products": []})
+        screenshot = None
+        if runner.photos is not None:
+            try:
+                screenshot = runner.photos.save(await self.browser.screenshot(self.owner, sharp=True), "image/jpeg")
+            except Exception:
+                log.warning("errand %s: no screenshot for the drop's Confirm", self.errand_id, exc_info=True)
+        limits = {"summary": summary.strip()[:120], "item": item.strip()[:160],
+                  "variant": (variant or "").strip()[:80] or None, "quantity": quantity or 1,
+                  "max_total": max_total.strip(), "amount": amount, "currency": currency, "site": site}
+        tz = self.store.tz
+        opens, closes = _utc(d["opens_at"]), _utc(d["closes_at"])
+        detail = {"kind": "drop", "errand_id": self.errand_id, "site": site, "summary": limits["summary"],
+                  "item": limits["item"], "variant": limits["variant"], "quantity": limits["quantity"],
+                  "max_total": limits["max_total"], "opens_at": opens.astimezone(tz).isoformat(),
+                  "closes_at": closes.astimezone(tz).isoformat(), "address": address, "card": card,
+                  "screenshot": screenshot, "url": (self.browser.where(self.owner) or {}).get("url")}
+        text = f"At the drop ({opens.astimezone(tz):%a %d %b %H:%M}): {limits['summary']}, up to {limits['max_total']}"
+        action_id, _ = runner.agent.db.add_pending(
+            runner.channel, "errand_drop", {"errand": self.errand_id}, text, f"errand:{self.errand_id}",
+            e["conversation"], "aide", detail=detail, expires_at=closes)
+        activity.record(self.store.conn, "aide", "queued", text, conversation=e["conversation"])
+        self.store.update(self.errand_id, status="waiting_confirm", reason=text, step="Waiting for your Confirm",
+                          timed_drop={**d, "limits": limits},
+                          confirm={"kind": "drop", "action_id": action_id, "summary": limits["summary"],
+                                   "total": limits["max_total"]})
+        self.store.log(self.errand_id, f"Asked to confirm the drop: {text}", counts=False)
+        self.outcome = ("ask_confirm", {})
+        raise Stop()
+
+    async def _wait(self, text: str | None, doing: str | None) -> str:
+        """Until the sale opens (no reloads), then reloading every DROP_POLL s until `text` is on the page."""
+        d = self._drop()
+        if d is None:
+            raise ValueError("wait_for_drop is for a confirmed drop.")
+        opens, closes = _utc(d["opens_at"]), _utc(d["closes_at"])
+        self._step("Waiting for the sale", counts=False, doing=doing or "Waiting for the sale to open")
+        started = time.monotonic()
+        try:
+            budget = 120.0
+            ahead = (opens - utcnow()).total_seconds() - 1
+            if ahead > 0:
+                pause = min(ahead, budget)
+                await asyncio.sleep(pause)
+                budget -= pause
+                if utcnow() < opens - timedelta(seconds=1):
+                    left = int((opens - utcnow()).total_seconds())
+                    return f"Not open yet: the sale opens in {left // 60} min {left % 60} s. Call wait_for_drop again."
+            url = (self.browser.where(self.owner) or {}).get("url") or self.store.get(self.errand_id)["url"]
+            if not url:
+                raise ValueError("No page is open: open the product's page first.")
+            while True:
+                if utcnow() >= closes:
+                    return "The sale's window is over: finish and say what the page showed."
+                await self.browser.open(self.owner, url)
+                page = await self.browser.text(self.owner)
+                if not text or _norm(text) in _norm(page):
+                    return await self.browser.read(self.owner)
+                if budget <= 0:
+                    return (f"\"{text}\" isn't on the page yet (reloaded for two minutes). Call wait_for_drop again, "
+                            "or read_page to look.")
+                await asyncio.sleep(DROP_POLL)
+                budget -= DROP_POLL
+        finally:
+            self.waited += time.monotonic() - started
+
     # -- pictures ----------------------------------------------------------------
 
     async def _collect_images(self) -> None:
@@ -1120,6 +1410,75 @@ class Phase:
 
 
 KEYS = ("Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "Backspace")
+
+
+def no_bots(site: str | None) -> str | None:
+    """Why Aide doesn't buy at a drop on this site (its terms forbid bots), or None."""
+    site = (site or "").lower()
+    return next((why for key, why in NO_BOTS.items() if key in site), None)
+
+
+def plan_drop(drop_at: str, drop_until: str | None, max_total: str | None, tz: ZoneInfo) -> dict:
+    """A drop's window from local times ("2026-11-07T10:00"), stored in UTC."""
+    def parse(text: str) -> datetime:
+        try:
+            when = datetime.fromisoformat(text.strip())
+        except ValueError:
+            raise ValueError(f"{text!r} isn't a date and time like 2026-11-07T10:00") from None
+        return (when if when.tzinfo else when.replace(tzinfo=tz)).astimezone(timezone.utc)
+    opens = parse(drop_at)
+    closes = parse(drop_until) if drop_until else opens + DROP_WINDOW
+    if closes <= opens:
+        raise ValueError("The drop's window must end after it opens.")
+    if closes - opens > DROP_MAX_WINDOW:
+        raise ValueError("A drop's window is at most 24 hours.")
+    if closes <= utcnow():
+        raise ValueError("That sale is already over.")
+    if max_total is not None:
+        amount, _ = parse_money(max_total)
+        if amount is None or amount <= 0:
+            raise ValueError("max_total must be an amount, like \"480 €\".")
+    return {"opens_at": opens.isoformat(), "closes_at": closes.isoformat(), "max_total": max_total, "armed": False}
+
+
+def order_total(page_text: str) -> float | None:
+    """The order's total on a checkout page: the highest amount labelled as a total (a grand total is never below
+    the lines added up in it), or None when the page labels none."""
+    amounts = [parse_money(m.group(1))[0] for m in TOTAL_LINE.finditer(page_text or "")]
+    amounts = [a for a in amounts if a is not None]
+    return max(amounts) if amounts else None
+
+
+def drop_mismatch(d: dict, page_text: str, now: datetime) -> str | None:
+    """Why the page isn't inside an armed drop's limits, or None when the order may be placed."""
+    limits = d["limits"]
+    if now < _utc(d["opens_at"]) - timedelta(seconds=5):
+        return "the sale hasn't opened yet"
+    if now >= _utc(d["closes_at"]):
+        return "the sale's window is over"
+    page = _norm(page_text or "")
+    if _norm(limits["item"]) not in page:
+        return f"\"{limits['item']}\" isn't on the page"
+    if limits.get("variant") and _norm(limits["variant"]) not in page:
+        return f"the variant \"{limits['variant']}\" isn't on the page"
+    total = order_total(page_text)
+    if total is None:
+        return "the page shows no order total"
+    if total > limits["amount"] + 0.005:
+        return f"the total {total:.2f} is over the limit {limits['max_total']}"
+    _, currency = parse_money(limits["max_total"])
+    if currency and currency.lower() not in page and not (currency == "EUR" and "€" in page_text):
+        return f"the page isn't in {currency}"
+    return None
+
+
+def _armed(e: dict) -> bool:
+    return bool((e.get("timed_drop") or {}).get("armed"))
+
+
+def _utc(text: str) -> datetime:
+    when = datetime.fromisoformat(text)
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
 def at_checkout(url: str | None, text: str | None) -> bool:
@@ -1257,8 +1616,13 @@ def errand_tools(runner: ErrandRunner, current_conversation: Callable[[], str | 
     """Aide's: start an errand, see how it goes, answer it, cancel it. `errand_go` (Confirm's) is in the registry
     for confirmed actions only: no agent is given it."""
 
-    async def start_errand(task: str, title: str, site: str | None = None) -> ToolOutput:
-        e = runner.start(task, title, site, current_conversation())
+    async def start_errand(task: str, title: str, site: str | None = None, drop_at: str | None = None,
+                           drop_until: str | None = None, max_total: str | None = None) -> ToolOutput:
+        e = runner.start(task, title, site, current_conversation(), drop_at, drop_until, max_total)
+        if e["timed_drop"]:
+            return ToolOutput(f"Errand #{e['id']} started: it gets ready now and asks the user to confirm the limits "
+                              "ahead; then it buys when the sale opens. Tell the user in a line.",
+                              {"type": "errands", "errands": [runner.store.as_json(e)]})
         return ToolOutput(f"Errand #{e['id']} started: it runs in the background and reports in this chat. Tell the "
                           "user in a line; don't wait for it.",
                           {"type": "errands", "errands": [runner.store.as_json(e)]})
@@ -1290,6 +1654,9 @@ def errand_tools(runner: ErrandRunner, current_conversation: Callable[[], str | 
     async def errand_go(errand: int) -> str:
         return runner.confirmed(errand)
 
+    async def errand_drop(errand: int) -> str:
+        return runner.drop_confirmed(errand)
+
     return [
         Tool("start_errand", "Do something on a website for the user, in Aide's own browser (logged in to their "
              "accounts): find and order a product, book a train, order food, look something up behind a login. "
@@ -1297,9 +1664,16 @@ def errand_tools(runner: ErrandRunner, current_conversation: Callable[[], str | 
              "changes something, and hands them the browser for a login or a code. Give the whole request in `task` "
              "(what they asked, how many, limits, preferences from memory; nothing they didn't ask for), a short "
              "`title`, and the site when known. Write `task` and `title` in English: the errand writes to them in "
-             "English.",
+             "English. For a timed drop (a sale that opens at a set time: \"goes on sale Friday 10:00, buy one\"), give "
+             "`drop_at` (local time, 2026-11-07T10:00), `drop_until` when the sale has an end, and the user's "
+             "`max_total` if they gave one: it gets ready ahead, the user confirms the limits once, and it buys at the "
+             "sale. Not on shops whose terms forbid bots (Ticketmaster, Nike, adidas…): it says so.",
              _obj({"task": {"type": "string"}, "title": {"type": "string", "description": "e.g. \"USB-C cable\""},
-                   "site": {"type": ["string", "null"], "description": "e.g. amazon.it"}}, ["task", "title", "site"]),
+                   "site": {"type": ["string", "null"], "description": "e.g. amazon.it"},
+                   "drop_at": {"type": ["string", "null"], "description": "a timed drop: when the sale opens"},
+                   "drop_until": {"type": ["string", "null"]},
+                   "max_total": {"type": ["string", "null"], "description": "e.g. \"480 €\""}},
+                  ["task", "title", "site", "drop_at", "drop_until", "max_total"]),
              start_errand),
         Tool("errand_status", "How an errand is going (its steps, what it waits for), or the latest errands.",
              _obj({"errand": {"type": ["integer", "null"]}}, ["errand"]), errand_status),
@@ -1312,6 +1686,8 @@ def errand_tools(runner: ErrandRunner, current_conversation: Callable[[], str | 
         Tool("errand_go", "Place what an errand asked to confirm.", _obj({"errand": {"type": "integer"}},
                                                                          ["errand"]), errand_go,
              confirm=True, target_arg="errand"),
+        Tool("errand_drop", "Buy at a timed drop within the limits the user confirmed.",
+             _obj({"errand": {"type": "integer"}}, ["errand"]), errand_drop, confirm=True, target_arg="errand"),
     ]
 
 

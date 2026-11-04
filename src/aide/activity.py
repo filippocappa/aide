@@ -45,7 +45,8 @@ LABELS = {
     "update_lock": "Changed a Screen Time lock", "end_lock": "Ended a lock early", "delete_lock": "Deleted a lock",
     "cancel_queued": "Cancelled queued actions",
     "start_errand": "Started an errand", "reply_errand": "Answered an errand", "cancel_errand": "Cancelled an errand",
-    "errand_go": "Went on with an errand",
+    "errand_go": "Went on with an errand", "errand_drop": "Set a timed drop",
+    "watch_price": "Watched a price", "update_price_watch": "Changed a price watch",
 }
 
 DIGESTS = {"daily": "Morning digest", "wake": "Wake-up briefing", "evening": "Evening digest",

@@ -35,6 +35,13 @@ SHARED_TITLE = "First chat"
 
 MAX_TOOL_ROUNDS = 12
 PENDING_TTL = timedelta(minutes=30)  # an unconfirmed action expires after this
+
+
+def _standing(action: dict) -> bool:
+    """An action confirmed ahead of time with limits (a timed drop): answered only by its own id."""
+    return (action.get("detail") or {}).get("kind") == "drop"
+
+
 EPHEMERAL = {"type": "ephemeral"}
 # The agent's prompt and memory (and the tools before them) stay cached an hour: messages are often more than the
 # 5 minutes apart, and each first call of a turn wrote the whole prefix again. An hour's write costs 2× instead
@@ -278,10 +285,16 @@ class Agent:
         """One line per action waiting for the user's OK, written by code, not the model."""
         return [p["summary"] for p in self.db.pending_actions(channel, PENDING_TTL)]
 
+    def _answerable(self, channel: str, ids: list[int] | None) -> list[dict]:
+        """The pending actions a Confirm or Cancel answers. Without ids (a chat's "yes", Confirm all) that's every
+        one but a standing one (a timed drop's limits, confirmed hours ahead): those only on their own card."""
+        return [a for a in self.db.pending_actions(channel, PENDING_TTL)
+                if (a["id"] in ids if ids is not None else not _standing(a))]
+
     async def confirm(self, channel: str, ids: list[int] | None = None) -> str:
         """Run every pending action, or only those with the given ids."""
         async with self._lock:
-            actions = [a for a in self.db.pending_actions(channel, PENDING_TTL) if ids is None or a["id"] in ids]
+            actions = self._answerable(channel, ids)
             if not actions:
                 return "Nothing is waiting for confirmation."
             lines = []
@@ -301,8 +314,8 @@ class Agent:
     async def cancel(self, channel: str, ids: list[int] | None = None) -> str:
         """Cancel every pending action, or only those with the given ids."""
         async with self._lock:
-            actions = [a for a in self.db.pending_actions(channel, PENDING_TTL) if ids is None or a["id"] in ids]
-            if not self.db.cancel_pending(channel, ids):
+            actions = self._answerable(channel, ids)
+            if not self.db.cancel_pending(channel, [a["id"] for a in actions]):
                 return "Nothing to cancel."
             for a in actions:
                 activity.record(self.db.conn, a["agent"] or ORCHESTRATOR, "cancelled", a["summary"],

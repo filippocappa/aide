@@ -549,7 +549,8 @@ async def test_only_aide_starts_errands_and_finance_reads_purchases(env):
                    for t in agent.registries[a])
     aide = connectors(list(AGENTS["aide"].tools))
     assert {"id": "browser", "name": "Browser", "read_only": False,
-            "tools": ["start_errand", "errand_status", "reply_errand", "cancel_errand"]} in aide
+            "tools": ["start_errand", "errand_status", "reply_errand", "cancel_errand", "watch_price",
+                      "list_price_watches", "update_price_watch"]} in aide
     assert {"id": "purchases", "name": "Purchases", "read_only": True, "tools": ["list_purchases"]} in \
         connectors(list(AGENTS["finance"].tools))
 
@@ -579,7 +580,7 @@ async def test_errands_api(env):
     assert got["enabled"] and got["errands"][0]["id"] == e["id"]
     assert set(got["errands"][0]) == {"id", "title", "task", "site", "url", "status", "why", "reason", "options",
                                       "step", "steps", "result", "action_id", "conversation_id", "purchase_id", "products",
-                                      "created_at", "updated_at"}
+                                      "drop", "created_at", "updated_at"}
     assert client.post(f"/v1/errands/{e['id']}/done", headers=AUTH).status_code == 409  # not waiting for you
     assert client.get(f"/v1/errands/{e['id']}/frame", headers=AUTH).status_code == 404  # no page yet
     await browser.open(f"errand:{e['id']}", CART)

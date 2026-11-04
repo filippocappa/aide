@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     created_at TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'pending',  -- pending, done, failed, cancelled, expired, replaced
     agent      TEXT,  -- the agent that queued it
-    detail     TEXT   -- JSON the app shows with it (a purchase's items and total); NULL for a summary alone
+    detail     TEXT,  -- JSON the app shows with it (a purchase's items and total); NULL for a summary alone
+    expires_at TEXT   -- UTC: its own deadline (a timed drop's Confirm, given ahead); NULL: the usual TTL
 );
 
 -- What the agents did, newest last (activity.py).
@@ -181,6 +182,8 @@ class Database:
             self.conn.execute("ALTER TABLE pending_actions ADD COLUMN agent TEXT")
         if "detail" not in columns:  # databases created before browser errands
             self.conn.execute("ALTER TABLE pending_actions ADD COLUMN detail TEXT")
+        if "expires_at" not in columns:  # databases created before timed drops
+            self.conn.execute("ALTER TABLE pending_actions ADD COLUMN expires_at TEXT")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(routines)")}
         if "watch" not in columns:  # databases created before watches
             self.conn.execute("ALTER TABLE routines ADD COLUMN watch INTEGER NOT NULL DEFAULT 0")
@@ -346,8 +349,9 @@ class Database:
 
     def add_pending(self, channel: str, tool: str, args: dict, summary: str, target: str | None = None,
                     conversation: str | None = None, agent: str | None = None,
-                    detail: dict | None = None) -> tuple[int, int]:
-        """Queue an action. Returns (new id, number of older actions on the same target it replaced)."""
+                    detail: dict | None = None, expires_at: datetime | None = None) -> tuple[int, int]:
+        """Queue an action. Returns (new id, number of older actions on the same target it replaced).
+        `expires_at`: its own deadline instead of the usual TTL (a drop confirmed hours ahead)."""
         with self.conn:
             self.conn.execute("BEGIN")
             replaced = 0
@@ -359,31 +363,39 @@ class Database:
                 ).rowcount
             cur = self.conn.execute(
                 "INSERT INTO pending_actions (channel, tool, args, summary, target, conversation, created_at, agent, "
-                "detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "detail, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (channel, tool, json.dumps(args), summary, target, conversation, utcnow().isoformat(), agent,
-                 json.dumps(detail) if detail is not None else None),
+                 json.dumps(detail) if detail is not None else None,
+                 expires_at.astimezone(timezone.utc).isoformat() if expires_at else None),
             )
         return cur.lastrowid, replaced
 
+    # An action is past it at its own deadline, or `ttl` after it was queued when it has none.
+    _EXPIRED = "((expires_at IS NULL AND created_at < ?) OR expires_at < ?)"
+
+    def _expire(self, ttl: timedelta, action_id: int | None = None) -> None:
+        now = utcnow()
+        sql = f"UPDATE pending_actions SET status = 'expired' WHERE status = 'pending' AND {self._EXPIRED}"
+        params: list = [(now - ttl).isoformat(), now.isoformat()]
+        if action_id is not None:
+            sql, params = sql + " AND id = ?", [*params, action_id]
+        self.conn.execute(sql, params)
+
     def pending_actions(self, channel: str, ttl: timedelta) -> list[dict]:
-        cutoff = (utcnow() - ttl).isoformat()
-        self.conn.execute(
-            "UPDATE pending_actions SET status = 'expired' WHERE status = 'pending' AND created_at < ?",
-            (cutoff,),
-        )
+        self._expire(ttl)
         rows = self.conn.execute(
-            "SELECT id, tool, args, summary, conversation, agent, created_at, detail FROM pending_actions "
+            "SELECT id, tool, args, summary, conversation, agent, created_at, detail, expires_at FROM pending_actions "
             "WHERE channel = ? AND status = 'pending' ORDER BY id",
             (channel,),
         ).fetchall()
         return [{"id": r["id"], "tool": r["tool"], "args": json.loads(r["args"]), "summary": r["summary"],
                  "conversation": r["conversation"], "agent": r["agent"], "created_at": r["created_at"],
+                 "expires_at": r["expires_at"],
                  "detail": json.loads(r["detail"]) if r["detail"] else None} for r in rows]
 
     def pending_status(self, action_id: int, ttl: timedelta) -> str | None:
-        """An action's status (expired once it's older than `ttl`), or None if there's no such action."""
-        self.conn.execute("UPDATE pending_actions SET status = 'expired' WHERE id = ? AND status = 'pending' "
-                          "AND created_at < ?", (action_id, (utcnow() - ttl).isoformat()))
+        """An action's status (expired once past its deadline), or None if there's no such action."""
+        self._expire(ttl, action_id)
         row = self.conn.execute("SELECT status FROM pending_actions WHERE id = ?", (action_id,)).fetchone()
         return row["status"] if row else None
 
