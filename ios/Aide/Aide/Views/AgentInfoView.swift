@@ -166,8 +166,7 @@ struct AgentInfoSheet: View {
                 .foregroundStyle(filled ? .white : .primary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 13)
-                .background(filled ? AnyShapeStyle(agent.orchestrator ? Theme.slate : agent.tint) : AnyShapeStyle(Theme.row),
-                            in: Capsule())
+                .infoButtonSurface(filled ? (agent.orchestrator ? Theme.slate : agent.tint) : nil)
                 .contentShape(Capsule())
         }
         .buttonStyle(CardPress())
@@ -245,6 +244,19 @@ private struct ConnectorRow: View {
         case "routines": "alarm"
         case "team": "person.3"
         default: "puzzlepiece.extension"
+        }
+    }
+}
+
+private extension View {
+    /// New chat in the agent's colour as tinted Liquid Glass, Past chats as clear glass; flat where there's no glass.
+    @ViewBuilder func infoButtonSurface(_ color: Color?) -> some View {
+        if let color {
+            tintedGlass(color, in: Capsule())
+        } else if MessageBoxGlass.isOn {
+            glass(in: Capsule())
+        } else {
+            background(Theme.row, in: Capsule())
         }
     }
 }

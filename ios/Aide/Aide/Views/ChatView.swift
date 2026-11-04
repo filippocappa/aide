@@ -42,8 +42,8 @@ struct ChatView: View {
         return composerFocused ? "awake" : "calm"
     }
 
-    private static let headerPebble: CGFloat = 44
-    private static let headerHeight: CGFloat = 56
+    private static let headerPebble: CGFloat = 58
+    private static let headerHeight: CGFloat = 66
     private static let voicePebble: CGFloat = 250
 
     private var isEmpty: Bool { chat.messages.isEmpty && !chat.isSending && !chat.isOpening && !chat.isLoadingHistory }
@@ -194,7 +194,7 @@ struct ChatView: View {
                 // a little bigger while it answers
                 .scaleEffect((voice.isActive ? 1 : Self.headerPebble / Self.voicePebble) * (replying ? 1.3 : 1), anchor: .top)
                 // level with the buttons
-                .offset(y: voice.isActive ? 40 : 4)
+                .offset(y: voice.isActive ? 40 : 0)
                 .frame(maxWidth: .infinity)
                 .frame(height: voice.isActive ? Self.voiceHeader : Self.headerHeight, alignment: .top)
                 .opacity(isEmpty && !voice.isActive ? 0 : 1)
@@ -568,7 +568,7 @@ private extension View {
         if #available(iOS 26, macOS 26, *) {
             // Glass with a hint of the agent's colour, a little more while you type, and its glow underneath.
             glassEffect(.regular.tint(tint.opacity(focused ? 0.26 : 0.18)).interactive(), in: shape)
-                .shadow(color: tint.opacity(focused ? 0.34 : 0.20), radius: focused ? 22 : 16, y: 6)
+                .shadow(color: tint.opacity(focused ? 0.18 : 0.09), radius: focused ? 14 : 10, y: 4)
                 .animation(.easeOut(duration: 0.25), value: focused)
         } else {
             background(Theme.card, in: shape).overlay(shape.stroke(Theme.line, lineWidth: 0.5))
