@@ -393,6 +393,30 @@ final class APIClient {
         try await send("GET", "/v1/purchases", query: days.map { [URLQueryItem(name: "days", value: String($0))] } ?? [])
     }
 
+    // MARK: Price watches (docs/API.md, "Browser errands", Price watches)
+
+    func priceWatches() async throws -> PriceWatchList {
+        try await send("GET", "/v1/pricewatches")
+    }
+
+    func updatePriceWatch(_ id: Int, _ patch: PriceWatchPatch) async throws -> PriceWatch {
+        try await send("PATCH", "/v1/pricewatches/\(id)", body: patch, timeout: 60)
+    }
+
+    func deletePriceWatch(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/pricewatches/\(id)", body: EmptyBody())
+    }
+
+    /// A look at the page now (it posts if the line is crossed).
+    func checkPriceWatch(_ id: Int) async throws -> PriceWatch {
+        try await send("POST", "/v1/pricewatches/\(id)/check", body: EmptyBody(), timeout: 90)
+    }
+
+    /// Starts an errand to buy it, with its own Confirm.
+    func buyPriceWatch(_ id: Int) async throws -> Errand {
+        try await send("POST", "/v1/pricewatches/\(id)/buy", body: EmptyBody())
+    }
+
     // MARK: Videos (docs/API.md, "Videos")
 
     /// Starts reading a YouTube video; without `conversationId` in a new chat with Aide.

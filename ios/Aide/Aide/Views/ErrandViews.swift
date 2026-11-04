@@ -520,7 +520,8 @@ struct ErrandCard: View {
         case "queued": "Waiting to start"
         case "running": "Working"
         case "needs_you": e.needsAnswer ? "Asks you" : "Needs you"
-        case "waiting_confirm": "Waiting for your Confirm"
+        case "waiting_confirm": e.drop != nil ? "Waiting for your limits" : "Waiting for your Confirm"
+        case "scheduled": "Waiting for the sale"
         case "done": "Done"
         case "failed": "Couldn't finish"
         case "cancelled": "Cancelled"
@@ -533,7 +534,7 @@ struct ErrandCard: View {
     private func follow() async {
         await refresh()
         while !Task.isCancelled && !errand.isOver {
-            try? await Task.sleep(for: .seconds(errand.isWorking ? 4 : 15))
+            try? await Task.sleep(for: .seconds(errand.isWorking ? 4 : errand.status == "scheduled" ? 60 : 15))
             guard !Task.isCancelled else { return }
             await refresh()
         }
@@ -591,7 +592,7 @@ struct ErrandLiveBox: View {
 
     /// While there's a page to show: not before it starts, not after it's over, not after a restart closed it.
     static func shows(_ e: Errand) -> Bool {
-        !e.isOver && e.status != "interrupted" && (e.status != "queued" || e.url != nil)
+        !e.isOver && !["interrupted", "scheduled"].contains(e.status) && (e.status != "queued" || e.url != nil)
     }
 
     /// The line under it: what Aide says it's doing, else what it did, else the errand's step.
@@ -698,6 +699,7 @@ struct ErrandIcon: View {
         switch errand.status {
         case "needs_you": errand.needsAnswer ? "questionmark" : "hand.raised.fill"
         case "waiting_confirm": "checkmark.shield.fill"
+        case "scheduled": "clock.fill"
         case "done": "checkmark"
         case "failed": "exclamationmark.triangle.fill"
         case "cancelled": "xmark"
@@ -753,7 +755,7 @@ struct ErrandButtons: View {
 
     private var primaryTitle: String? {
         if errand.needsLiveView { return Self.yourPart(errand) }
-        if errand.status == "waiting_confirm" { return "Review and confirm" }
+        if errand.status == "waiting_confirm" { return errand.drop != nil ? "Review the limits" : "Review and confirm" }
         if errand.status == "interrupted" { return "Go on" }
         return nil
     }
@@ -877,6 +879,60 @@ struct PurchaseSummary: View {
     }
 }
 
+/// A timed drop's limits, as you confirm them once before the sale.
+struct DropSummary: View {
+    let detail: PurchaseDetail
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let item = detail.item {
+                HStack(alignment: .firstTextBaseline) {
+                    Text([item, detail.variant].compactMap { $0 }.joined(separator: " · "))
+                        .font(.subheadline.weight(.medium)).lineLimit(3)
+                    Spacer(minLength: 6)
+                    if let q = detail.quantity, q != 1 { Text("× \(q)").font(.subheadline).foregroundStyle(.secondary) }
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                if let window = Self.window(detail) { Label(window, systemImage: "clock") }
+                if let address = detail.address { Label(address, systemImage: "mappin.and.ellipse") }
+                if let card = detail.card ?? detail.site.map({ "The card saved on \($0)" }) {
+                    Label(card, systemImage: "creditcard")
+                }
+            }
+            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            if let max = detail.maxTotal {
+                HStack {
+                    Text("Up to").font(.headline)
+                    Spacer()
+                    Text(max).font(.title3.weight(.bold)).monospacedDigit()
+                }
+                Text("With shipping").font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+
+    /// "Thu 6 Nov 10:00 – 12:00"
+    static func window(_ d: PurchaseDetail) -> String? {
+        guard let opens = d.opensAt.flatMap(Wire.parse) else { return nil }
+        let start = DropTime.text(opens).capitalizingFirst
+        guard let closes = d.closesAt.flatMap(Wire.parse) else { return start }
+        return "\(start) – \(closes.formatted(date: .omitted, time: .shortened))"
+    }
+
+    static func rule(_ d: PurchaseDetail) -> String {
+        let max = d.maxTotal ?? "your limit"
+        return "At the sale Aide buys on \(d.site ?? "the site") only if the page names this item\(d.variant == nil ? "" : " and variant") "
+            + "and the total is \(max) or less. Anything else stops and asks you. A login, a queue or a card check "
+            + "is yours, so be around then."
+    }
+}
+
+private extension String {
+    var capitalizingFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
 /// An order to confirm, full size: the items, the checkout page, and Confirm.
 struct PurchaseConfirmSheet: View {
     @EnvironmentObject private var env: AppEnvironment
@@ -890,7 +946,18 @@ struct PurchaseConfirmSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text(action.purchase?.summary ?? action.summary).font(.title3.weight(.semibold))
+                    Text(action.detail?.summary ?? action.summary).font(.title3.weight(.semibold))
+                    if let drop = action.drop {
+                        DropSummary(detail: drop)
+                            .padding(14)
+                            .background(Theme.row, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        Text(DropSummary.rule(drop)).font(.footnote).foregroundStyle(.secondary)
+                        if let shot = drop.screenshot {
+                            Text("The product page").font(.headline)
+                            ServerPhoto(id: shot, fit: true)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                    }
                     if let detail = action.purchase {
                         PurchaseSummary(detail: detail)
                             .padding(14)
@@ -919,7 +986,7 @@ struct PurchaseConfirmSheet: View {
                     }
                     .buttonStyle(.bordered)
                     Button { Task { await answer(confirm: true) } } label: {
-                        Text(action.purchase?.total.map { "Confirm · \($0)" } ?? "Confirm").frame(maxWidth: .infinity)
+                        Text(confirmTitle).frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .foregroundStyle(Theme.onAccent)
@@ -929,10 +996,15 @@ struct PurchaseConfirmSheet: View {
                 .padding(16)
                 .background(.bar)
             }
-            .navigationTitle("Confirm the order")
+            .navigationTitle(action.drop != nil ? "Confirm the limits" : "Confirm the order")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
         }
+    }
+
+    private var confirmTitle: String {
+        if let drop = action.drop { return drop.maxTotal.map { "Confirm · up to \($0)" } ?? "Confirm" }
+        return action.purchase?.total.map { "Confirm · \($0)" } ?? "Confirm"
     }
 
     private func answer(confirm: Bool) async {
@@ -1050,9 +1122,10 @@ struct BrowserSettingsView: View {
                 Text("Opens the site in Aide's browser and its login here, on Aide's own screen. Your passwords and codes go to the page, never to Aide.")
             }
             Section {
+                NavigationLink("Price watches") { PriceWatchesView().macPageBack() }
                 NavigationLink("Purchases") { PurchasesView().macPageBack() }
             } footer: {
-                Text("Errands never buy, book or send anything without your Confirm, and never type card numbers.")
+                Text("Price watches read a page every few hours and tell you once. Errands never buy, book or send anything without your Confirm, and never type card numbers.")
             }
             if let error {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }
@@ -1220,5 +1293,192 @@ struct ProductTile: View {
 
     private var placeholder: some View {
         Image(systemName: "bag").font(.title).foregroundStyle(.tertiary)
+    }
+}
+
+// MARK: - Price watches
+
+/// A price watch: the price now, the line, and what you can do (buy it, look now, stop, watch again).
+struct PriceWatchCard: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @State private var watch: PriceWatch
+    @State private var busy = false
+    @State private var note: String?
+    @State private var error: String?
+    /// After Buy it starts an errand (in the watch's chat).
+    var bought: ((Errand) async -> Void)?
+    /// Gone from the server (Settings' list drops it).
+    var deleted: (() -> Void)?
+    /// In a chat the card is the watch as it was: load it fresh once.
+    private let refreshes: Bool
+
+    init(watch: PriceWatch, refreshes: Bool = true, bought: ((Errand) async -> Void)? = nil, deleted: (() -> Void)? = nil) {
+        _watch = State(initialValue: watch)
+        self.refreshes = refreshes
+        self.bought = bought
+        self.deleted = deleted
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(watch.status == "met" ? Color.white : Theme.onAccent)
+                    .frame(width: 42, height: 42)
+                    .background(watch.status == "met" ? Color.green : watch.status == "failed" ? Color.red.opacity(0.8) : Theme.accent,
+                                in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(watch.title).font(.headline).lineLimit(2)
+                    Text([watch.site, watch.state].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                if let price = watch.shownPrice {
+                    Text(price).font(.title3.weight(.bold)).monospacedDigit()
+                        .foregroundStyle(watch.status == "met" ? Color.green : Color.primary)
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Label(watch.goal, systemImage: "target")
+                if let coupon = watch.coupon { Label(coupon, systemImage: "ticket") }
+                if let lowest = watch.lowest, watch.history.count > 1 {
+                    Label("Lowest seen \(PriceWatch.money(lowest, watch.currency))", systemImage: "arrow.down.right")
+                }
+            }
+            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            buttons.disabled(busy)
+            if let note { Text(note).font(.footnote).foregroundStyle(.secondary) }
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contextMenu {
+            if let link = watch.link { Link(destination: link) { Label("Open the page", systemImage: "safari") } }
+            Button("Delete", systemImage: "trash", role: .destructive) { Task { await delete() } }
+        }
+        .task(id: watch.id) { if refreshes { await refresh() } }
+    }
+
+    private var icon: String {
+        switch watch.status {
+        case "met": "checkmark"
+        case "failed": "exclamationmark.triangle.fill"
+        case "ended": "pause.fill"
+        default: watch.below == nil ? "shippingbox.fill" : "tag.fill"
+        }
+    }
+
+    @ViewBuilder private var buttons: some View {
+        HStack(spacing: 10) {
+            switch watch.status {
+            case "met":
+                prominent("Buy it") { await buy() }
+                plain("Watch again") { await act { try await env.api.updatePriceWatch(watch.id, PriceWatchPatch(status: "active")) } }
+            case "active":
+                plain("Check now") { await act { try await env.api.checkPriceWatch(watch.id) } }
+                Button(role: .destructive) {
+                    Task { await act { try await env.api.updatePriceWatch(watch.id, PriceWatchPatch(status: "ended")) } }
+                } label: { Text("Stop").frame(maxWidth: .infinity) }
+                .buttonStyle(.bordered)
+            default:
+                plain("Watch again") { await act { try await env.api.updatePriceWatch(watch.id, PriceWatchPatch(status: "active")) } }
+            }
+        }
+    }
+
+    private func prominent(_ title: String, _ run: @escaping () async -> Void) -> some View {
+        Button { Task { await run() } } label: { Text(title).frame(maxWidth: .infinity) }
+            .buttonStyle(.borderedProminent)
+            .foregroundStyle(Theme.onAccent)
+    }
+
+    private func plain(_ title: String, _ run: @escaping () async -> Void) -> some View {
+        Button { Task { await run() } } label: { Text(title).frame(maxWidth: .infinity) }
+            .buttonStyle(.bordered)
+    }
+
+    private func refresh() async {
+        guard let list = try? await env.api.priceWatches() else { return }
+        if let fresh = list.priceWatches.first(where: { $0.id == watch.id }) { watch = fresh } else if list.enabled {
+            note = "This watch was deleted."
+        }
+    }
+
+    private func act(_ call: () async throws -> PriceWatch) async {
+        busy = true
+        defer { busy = false }
+        do { watch = try await call(); error = nil; note = nil } catch { self.error = error.localizedDescription }
+    }
+
+    private func buy() async {
+        busy = true
+        defer { busy = false }
+        do {
+            let errand = try await env.api.buyPriceWatch(watch.id)
+            note = "Aide's on it in its chat. Nothing is bought without your Confirm."
+            error = nil
+            await bought?(errand)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func delete() async {
+        do { try await env.api.deletePriceWatch(watch.id); deleted?() ; note = "Deleted." }
+        catch { self.error = error.localizedDescription }
+    }
+}
+
+/// Settings → Browser → Price watches: every watch, active first.
+struct PriceWatchesView: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @State private var list: PriceWatchList?
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            if let list {
+                if !list.enabled {
+                    Text("The server has no browser yet, so it can't watch prices.").foregroundStyle(.secondary)
+                } else if list.priceWatches.isEmpty {
+                    Text("None yet. Ask Aide: \u{201C}tell me when the AirPods Pro go under 150 €\u{201D}, or \u{201C}tell me when it's back in stock\u{201D}.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Section {
+                        ForEach(list.priceWatches) { w in
+                            PriceWatchCard(watch: w, refreshes: false, deleted: { Task { await load() } })
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
+                        .onDelete { offsets in Task { await delete(offsets.map { list.priceWatches[$0] }) } }
+                    } footer: {
+                        Text("Each page is read every few hours with no model, and you're told once. Touch and hold one to open its page or delete it.")
+                    }
+                }
+            } else if let error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+            } else {
+                ProgressView()
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Theme.grouped)
+        .navigationTitle("Price watches")
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do { list = try await env.api.priceWatches(); error = nil } catch { self.error = error.localizedDescription }
+    }
+
+    private func delete(_ gone: [PriceWatch]) async {
+        for w in gone {
+            do { try await env.api.deletePriceWatch(w.id) } catch { self.error = error.localizedDescription }
+        }
+        await load()
     }
 }
