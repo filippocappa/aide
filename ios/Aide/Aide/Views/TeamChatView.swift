@@ -130,7 +130,7 @@ struct TeamChatView: View {
                 mentionSuggestions.transition(.opacity.combined(with: .offset(y: 10)))
             }
             MessageBox("Message the team, @ to mention", text: $draft, focused: $focused, reset: sent,
-                       onReturn: { if canPost { post() } }) {
+                       tint: Theme.glow, onReturn: { if canPost { post() } }) {
                 SendButton(enabled: canPost, action: post)
             }
         }

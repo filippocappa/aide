@@ -153,6 +153,15 @@ extension View {
         }
     }
 
+    /// Liquid Glass tinted with a colour (the accent's Send and Talk, an agent's message box); else the colour itself.
+    @ViewBuilder func tintedGlass<S: Shape>(_ color: Color, in shape: S) -> some View {
+        if #available(iOS 26, macOS 26, *) {
+            glassEffect(.regular.tint(color).interactive(), in: shape)
+        } else {
+            background(color, in: shape)
+        }
+    }
+
     /// A floating control: Liquid Glass where the system has it, else a frosted material with a soft shadow.
     @ViewBuilder func glass<S: Shape>(in shape: S) -> some View {
         if #available(iOS 26, macOS 26, *) {
