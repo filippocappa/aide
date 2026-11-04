@@ -2971,6 +2971,8 @@ struct Errand: Decodable, Identifiable, Hashable {
     var purchaseId: Int?
     /// What it found, as cards: nil from a server before them.
     var products: [Product]?
+    /// A question's answers as picture cards (a kind of food, a restaurant, a dish): a tap answers with its title.
+    var choices: [ErrandChoice]?
     /// A timed drop's plan; nil for the rest (and from a server before them).
     var drop: ErrandDrop?
     var createdAt: String?
@@ -2999,6 +3001,19 @@ struct Errand: Decodable, Identifiable, Hashable {
 }
 
 /// Something an errand found: a product to compare, the item it put in the cart, a train.
+/// One answer to an errand's question, as the site shows it: a kind of food, a restaurant, a dish.
+struct ErrandChoice: Decodable, Hashable, Identifiable {
+    let title: String
+    var url: String?
+    var price: String?
+    var rating: Double?
+    var note: String?
+    var image: String?
+
+    var id: String { title }
+    var stars: String? { rating.map { "\($0.formatted(.number.precision(.fractionLength(1)))) ★" } }
+}
+
 struct Product: Decodable, Hashable, Identifiable {
     let title: String
     let url: String

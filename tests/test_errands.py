@@ -507,6 +507,37 @@ async def test_a_question_is_answered_through_aide(env):
     assert e["status"] == "done"
 
 
+GLOVO = "https://glovoapp.com/it/it/torino/"
+
+
+async def test_a_question_with_pictures_answers_with_a_card(env):
+    make, _, browser = env
+    browser.pages[GLOVO] = ("Glovo Torino", "Cosa vuoi mangiare?", {})
+    browser.pictures[GLOVO] = [{"path": None, "src": "https://cdn.glovo.com/sushi.jpg", "alt": "Sushi"},
+                        {"path": "/it/it/torino/sushi-ko/", "src": "https://cdn.glovo.com/ko.jpg", "alt": "Sushi Ko"}]
+    sushi = {"title": "Sushi", "url": None, "price": None, "rating": None, "note": None, "image": None}
+    ko = {"title": "Sushi Ko", "url": "https://glovoapp.com/it/it/torino/sushi-ko/", "price": None,
+          "rating": "4.7", "note": "25–35 min · 1,49 € delivery", "image": None}
+    runner, agent, _ = make([
+        calls(("open_page", {"url": GLOVO})),
+        calls(("ask_user", {"question": "What do you feel like?", "options": None,
+                            "choices": [sushi, {**sushi}, {**sushi, "title": "Pizza"}]})),
+        calls(("ask_user", {"question": "Which one?", "options": None, "choices": [ko]})),
+    ])
+    e = runner.start("Dinner on Glovo; they haven't decided", "Dinner", "glovoapp.com", CONVERSATION)
+    e = await next_phase(runner)
+    shown = runner.store.as_json(e)
+    assert shown["options"] == ["Sushi", "Pizza"]  # the cards' names, for an app that draws no cards
+    assert [c["title"] for c in shown["choices"]] == ["Sushi", "Pizza"]
+    assert shown["choices"][0]["image"] == "https://cdn.glovo.com/sushi.jpg" and shown["choices"][1]["image"] is None
+    runner.reply(e["id"], "Sushi")
+    assert runner.store.as_json(runner.store.get(e["id"]))["choices"] is None
+    e = await next_phase(runner)
+    assert "The user answered: Sushi" in prompt_of(runner.client.requests[2])
+    c = runner.store.as_json(e)["choices"][0]
+    assert (c["image"], c["rating"], c["note"]) == ("https://cdn.glovo.com/ko.jpg", 4.7, "25–35 min · 1,49 € delivery")
+
+
 async def test_a_cancelled_confirm_cancels_the_errand(env):
     make, db, _ = env
     runner, agent, _ = make([
@@ -598,7 +629,7 @@ async def test_errands_api(env):
     got = client.get("/v1/errands", headers=AUTH).json()
     assert got["enabled"] and got["errands"][0]["id"] == e["id"]
     assert set(got["errands"][0]) == {"id", "title", "task", "site", "url", "status", "why", "reason", "options",
-                                      "step", "steps", "result", "action_id", "conversation_id", "purchase_id", "products",
+                                      "choices", "step", "steps", "result", "action_id", "conversation_id", "purchase_id", "products",
                                       "drop", "release_id", "created_at", "updated_at"}
     assert client.post(f"/v1/errands/{e['id']}/done", headers=AUTH).status_code == 409  # not waiting for you
     assert client.get(f"/v1/errands/{e['id']}/frame", headers=AUTH).status_code == 404  # no page yet

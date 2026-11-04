@@ -2219,6 +2219,12 @@ Errand:
 - `why` (only on `needs_you`): `login`, `captcha`, `code`, `card` or `other` (take over in the live view, then "I'm
   done"), `question` (answer with a reply; `options` may list answers), `plan_limit` (reply with one of `options`).
 - `reason`: on `needs_you`, what you're asked; on `waiting_confirm`, what waits for the Confirm. Else null.
+- `choices` (since 2026-11-04): on a `question`, null or its answers as picture cards (up to 8): a kind of food, a
+  restaurant, a dish, a product. `{"title": "Sushi Ko", "url": "https://glovoapp.com/it/it/torino/sushi-ko/" or null,
+  "price": "12,50 €" or null, "rating": 4.7 or null, "note": "25–35 min · 1,49 € delivery" or null, "image": "https://…"
+  or null}`. A tap replies with its `title`; `options` holds the same titles, for an app that draws no cards. Typed
+  answers still work ("something light"). A food order the user hasn't decided asks this way: the kinds of food,
+  then restaurants, then dishes.
 - `step`: what it's doing now, in Aide's own words when it gave them ("Guardo le recensioni della Lodge", since
   2026-10-28), else a plain line ("Clicked [12] …"). `steps`: the last 10 (all of them, up to 60, on
   `GET /v1/errands/{id}`); each `{ts, text}` with `doing` (Aide's line) when it gave one.

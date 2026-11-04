@@ -142,6 +142,17 @@ in the header), log in first with need_user (why login): a logged-out browser's 
 Searching and comparing prices don't need a login.
 - When there's a real choice you can't make from the request (two sizes, two delivery days at different prices, \
 an item that's out of stock), call ask_user with the options. Small things you decide yourself.
+- Food delivery (Glovo, Deliveroo, Just Eat): it's the user's account and address, so log in first, and deliver \
+to the saved address (home) unless the task says where. Look only at what delivers there now. When the task says \
+what (a dish, a kind of food, a restaurant), go straight to it. When the user hasn't decided ("something for \
+dinner", "idk what"), help them choose, one ask_user at a time, each with `choices` and the site's own names: \
+first the kinds of food the site offers there now (its categories: Pizza, Sushi, Burger, Poke…), up to 8, the \
+likeliest for the time of day first; then 4 to 6 restaurants of the kind they pick, open now, well rated and \
+quick (rating, and in `note` the delivery time and fee); then that restaurant's dishes, its popular ones first, \
+with their prices. An answer may come in words instead ("something light", "sushi but cheap", "you pick"): follow \
+it. Never choose the restaurant or the dish yourself when the task leaves it open. Then add what they picked, \
+choosing a dish's options the usual way (ask only when it matters: a size, a sauce they'd care about), go to the \
+checkout and ask_confirm with the total and the delivery time.
 - Anything that changes something needs the user's Confirm first: buying, ordering, paying, booking, sending a \
 message or a form, signing up, subscribing, cancelling, deleting, changing the account. Adding to a cart, \
 choosing options, going to the checkout page and reading are fine. At the last step, on the page with the final \
@@ -193,6 +204,7 @@ class ErrandStore:
         why          TEXT,              -- needs_you: see WHY
         reason       TEXT,              -- needs_you: what the user is asked to do or answer
         options      TEXT,              -- JSON: an ask_user question's answers
+        choices      TEXT,              -- JSON: its answers as picture cards [{title, url, price, rating, note, image}]
         step         TEXT,              -- what it's doing now, one line
         steps        TEXT NOT NULL DEFAULT '[]',  -- JSON [{ts, text}], the last STEPS_KEPT
         result       TEXT,              -- done / failed: the message for the user
@@ -234,6 +246,8 @@ class ErrandStore:
             conn.execute("ALTER TABLE errands ADD COLUMN timed_drop TEXT")
         if "release" not in columns:  # the release tracker it works for (releases.py)
             conn.execute("ALTER TABLE errands ADD COLUMN release INTEGER")
+        if "choices" not in columns:  # databases created before picture answers
+            conn.execute("ALTER TABLE errands ADD COLUMN choices TEXT")
 
     # -- errands ---------------------------------------------------------------
 
@@ -263,7 +277,7 @@ class ErrandStore:
         return [self._row(r) for r in rows]
 
     def update(self, errand_id: int, **changes) -> dict:
-        for key in ("options", "confirm", "products", "timed_drop"):
+        for key in ("options", "choices", "confirm", "products", "timed_drop"):
             if key in changes and changes[key] is not None:
                 changes[key] = json.dumps(changes[key])
         changes["updated_at"] = utcnow().isoformat()
@@ -294,6 +308,7 @@ class ErrandStore:
         e = dict(row)
         e["steps"] = json.loads(e["steps"])
         e["options"] = json.loads(e["options"]) if e["options"] else None
+        e["choices"] = json.loads(e["choices"]) if e.get("choices") else None
         e["confirm"] = json.loads(e["confirm"]) if e["confirm"] else None
         e["products"] = json.loads(e["products"]) if e.get("products") else []
         e["timed_drop"] = json.loads(e["timed_drop"]) if e.get("timed_drop") else None
@@ -305,6 +320,7 @@ class ErrandStore:
                 "status": e["status"], "why": e["why"] if e["status"] == "needs_you" else None,
                 "reason": e["reason"] if e["status"] in ("needs_you", "waiting_confirm") else None,
                 "options": e["options"] if e["status"] == "needs_you" else None,
+                "choices": e["choices"] if e["status"] == "needs_you" else None,
                 "step": e["step"], "steps": [{**s, "ts": self._local(s["ts"])} for s in e["steps"][-10:]],
                 "result": e["result"],
                 "action_id": confirm.get("action_id") if e["status"] == "waiting_confirm" else None,
@@ -553,7 +569,7 @@ class ErrandRunner:
 
     def _resume(self, e: dict, answer: str) -> dict:
         self.store.update(e["id"], status="queued", answer=answer, why=None, reason=None, options=None,
-                          wake_at=None, step="Going on")
+                          choices=None, wake_at=None, step="Going on")
         if _armed(e):  # a drop doesn't wait behind another errand
             self._spawn(e["id"])
         else:
@@ -817,10 +833,12 @@ class ErrandRunner:
                              level="time-sensitive")
         elif kind == "ask_user":
             question, options = args["question"].strip(), args.get("options") or []
+            choices = args.get("choices") or []
             e = self.store.update(errand_id, status="needs_you", why="question", reason=question,
-                                  options=options or None, step="Waiting for your answer")
+                                  options=options or None, choices=choices or None, step="Waiting for your answer")
             covered = await run.needs_you(question) if run else False
-            lines = "\n".join(f"- {o}" for o in options)
+            lines = "\n".join(f"- {c['title']}" + (f" ({c['note']})" if c.get("note") else "") for c in choices) \
+                if choices else "\n".join(f"- {o}" for o in options)
             await self._post(e, "An errand asks the user something", question + (f"\n{lines}" if lines else ""),
                              card=True, push=None if covered else f"Aide · {e['title']}",
                              level="time-sensitive" if _armed(e) else None)
@@ -1202,8 +1220,13 @@ class Phase:
                 raise ValueError("why must be login, captcha, code, card or other")
             self._end("need_user", {"why": why, "reason": reason})
 
-        async def ask_user(question: str, options: list[str] | None = None) -> str:
-            self._end("ask_user", {"question": question, "options": [o for o in (options or []) if o][:6]})
+        async def ask_user(question: str, options: list[str] | None = None,
+                           choices: list[dict] | None = None) -> str:
+            shown = await self._choices(choices or [])
+            # The answers are the cards' names too: an app that doesn't draw cards shows them as buttons.
+            self._end("ask_user", {"question": question, "choices": shown,
+                                   "options": [c["title"] for c in shown]
+                                   or [o for o in (options or []) if o][:6]})
 
         async def ask_confirm(summary: str, ref: str, total: str, items: list[dict], delivery: str | None = None,
                               address: str | None = None) -> str:
@@ -1261,6 +1284,17 @@ class Phase:
                                                                 "\"6 left\", \"arrives Fri\""}},
             "required": ["title", "url", "price", "rating", "reviews", "sizes", "was", "audience", "note"],
             "additionalProperties": False}
+        choice = {"type": "object", "properties": {
+            "title": {"type": "string", "description": "its name as the site writes it: \"Sushi\", \"Pizzeria Da "
+                                                       "Michele\", \"Margherita\""},
+            "url": {"type": ["string", "null"], "description": "its page, when it has one (the site's address plus "
+                                                              "the path its line ends with)"},
+            "price": {"type": ["string", "null"], "description": "a dish's or product's price as the page shows it"},
+            "rating": {"type": ["number", "null"], "description": "out of 5, like 4.6 (a percentage: 92% is 4.6)"},
+            "note": {"type": ["string", "null"], "description": "a few words: \"25–35 min · 1,49 € delivery\", "
+                                                               "\"with buffalo mozzarella\""},
+            "image": {"type": ["string", "null"], "description": "its picture's URL, if the page has one"}},
+            "required": ["title", "url", "price", "rating", "note", "image"], "additionalProperties": False}
         return [
             Tool("need_user", "Hand the browser to the user for a step only they can do: log in (login), a CAPTCHA "
                  "(captcha), a code from an SMS or an app (code), a card form or 3-D Secure (card), or something "
@@ -1269,9 +1303,13 @@ class Phase:
                        "reason": {"type": "string", "description": "e.g. \"Log in to Amazon.\""}},
                       ["why", "reason"]), need_user),
             Tool("ask_user", "Ask the user a real choice you can't make from the request (their answer comes back "
-                 "in the next phase). Give the options when there are a few.",
+                 "in the next phase). Give the options when there are a few, as `options` (short answers), or as "
+                 "`choices` when each is something the site shows with a picture (a kind of food, a restaurant, a "
+                 "dish, a product): the user taps a card, and its title comes back as the answer.",
                  _obj({"question": {"type": "string"},
-                       "options": {"type": ["array", "null"], "items": {"type": "string"}}}, ["question", "options"]),
+                       "options": {"type": ["array", "null"], "items": {"type": "string"}},
+                       "choices": {"type": ["array", "null"], "items": choice}},
+                      ["question", "options", "choices"]),
                  ask_user),
             Tool("ask_confirm", "At the step that commits (buy, book, send, sign up, delete): ask the user to confirm, "
                  "with the ref of the button that commits, the total exactly as the page shows it, the items, and "
@@ -1472,6 +1510,28 @@ class Phase:
             p["image"] = sharp_image(p["image"])
         return out
 
+    async def _choices(self, choices: list[dict]) -> list[dict]:
+        """An ask_user's answers as cards (at most 8), each with its picture when a page the errand saw has one. No
+        page is opened for them: the user is waiting."""
+        await self._collect_images()
+        images = self.runner._images.get(self.errand_id, [])
+        out, seen = [], set()
+        for c in choices:
+            title = " ".join(str(c.get("title") or "").split())[:80]
+            if not title or title.lower() in seen:
+                continue
+            seen.add(title.lower())
+            url = str(c.get("url") or "")
+            url = url[:500] if url.startswith(("https://", "http://")) else None
+            image = c.get("image") if str(c.get("image") or "").startswith(("https://", "http://")) else None
+            out.append({"title": title, "url": url, "price": c.get("price") or None,
+                        "rating": _number(c.get("rating")), "note": c.get("note") or None,
+                        "image": sharp_image(image or picture_for(url, title, images)
+                                             or named_picture(title, images))})
+            if len(out) == 8:
+                break
+        return out
+
     async def _pictured(self, items: list[dict]) -> list[dict]:
         """Order lines with the pictures the checkout page shows (matched by their alt text)."""
         await self._collect_images()
@@ -1648,6 +1708,19 @@ def picture_for(url: str | None, title: str | None, images: list[dict]) -> str |
             alt = _plain(i.get("alt") or "")
             if len(alt) >= 12 and (alt.startswith(name[:30]) or name.startswith(alt[:30])):
                 return i["src"]
+    return None
+
+
+def named_picture(title: str, images: list[dict]) -> str | None:
+    """A picture whose alt text is the name, or starts with it as a word ("Sushi", "Margherita"): for the short
+    names picture_for won't match on (a menu's dishes have no link of their own)."""
+    name = _plain(title)
+    if len(name) < 3:
+        return None
+    for i in images:
+        alt = _plain(i.get("alt") or "")
+        if alt == name or (len(name) >= 5 and alt.startswith(name + " ")):
+            return i["src"]
     return None
 
 
