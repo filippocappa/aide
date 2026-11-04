@@ -272,6 +272,7 @@ struct ChatView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                .pageColumn(MessageBoxGlass.column + 16)
                 .animation(.easeOut(duration: 0.28), value: chat.messages)
             }
             .scrollDismissesKeyboard(.immediately)
@@ -363,7 +364,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             if !photos.isEmpty { photoStrip }
             MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused, reset: sent,
-                       onReturn: { if canSend { sendDraft() } }) {
+                       tint: chat.agent.tint, onReturn: { if canSend { sendDraft() } }) {
                 attachMenu
                 sendOrTalk
             }
@@ -456,7 +457,7 @@ struct ChatView: View {
                         .foregroundStyle(Theme.onAccent)
                         .padding(.horizontal, 14)
                         .frame(height: 34)
-                        .background(Theme.accent, in: Capsule())
+                        .tintedGlass(Theme.accent, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(voice.isActive ? "Stop voice chat" : "Talk to \(chat.agent.name)")
@@ -493,16 +494,19 @@ struct MessageBox<Buttons: View>: View {
     /// Changed by the chat on every send: the text field is made anew, so the keyboard has nothing left to write a
     /// pending prediction or autocorrection back into (it put the sent message back in the box).
     var reset = 0
+    /// The agent's colour, a hint of it in the glass and a soft glow under the box.
+    var tint: Color = Theme.accent
     /// Return on the Mac sends (Option-, Shift- or Cmd-Return starts a new line); on the phone Return is a new line.
     var onReturn: (() -> Void)?
     let buttons: Buttons
 
     init(_ placeholder: String, text: Binding<String>, focused: FocusState<Bool>.Binding, reset: Int = 0,
-         onReturn: (() -> Void)? = nil, @ViewBuilder buttons: () -> Buttons) {
+         tint: Color = Theme.accent, onReturn: (() -> Void)? = nil, @ViewBuilder buttons: () -> Buttons) {
         self.placeholder = placeholder
         _text = text
         self.focused = focused
         self.reset = reset
+        self.tint = tint
         self.onReturn = onReturn
         self.buttons = buttons()
     }
@@ -528,7 +532,7 @@ struct MessageBox<Buttons: View>: View {
             buttons
         }
         .padding(7)
-        .messageBoxSurface()
+        .messageBoxSurface(tint, focused: focused.wrappedValue)
         .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .onTapGesture { focused.wrappedValue = true } // the whole box, not just the line of text
         .onChange(of: reset) {
@@ -537,8 +541,15 @@ struct MessageBox<Buttons: View>: View {
         }
         // No background of its own around the box: the page's shows through, and an opaque band here would fade
         // out over the voice panel's End button as a visible stripe.
+        #if os(macOS)
+        .frame(maxWidth: MessageBoxGlass.column) // floating in the middle, as the messages above it
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 16)
+        #else
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        #endif
     }
 }
 
@@ -547,15 +558,33 @@ enum MessageBoxGlass {
     static var isOn: Bool {
         if #available(iOS 26, macOS 26, *) { return true } else { return false }
     }
+    /// The chat's column on the Mac: the messages and the box under them.
+    static let column: CGFloat = 780
 }
 
 private extension View {
-    @ViewBuilder func messageBoxSurface() -> some View {
+    @ViewBuilder func messageBoxSurface(_ tint: Color, focused: Bool) -> some View {
         let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
         if #available(iOS 26, macOS 26, *) {
-            glassEffect(.regular, in: shape)
+            // Glass with a hint of the agent's colour, a little more while you type, and its glow underneath.
+            glassEffect(.regular.tint(tint.opacity(focused ? 0.26 : 0.18)).interactive(), in: shape)
+                .shadow(color: tint.opacity(focused ? 0.34 : 0.20), radius: focused ? 22 : 16, y: 6)
+                .animation(.easeOut(duration: 0.25), value: focused)
         } else {
             background(Theme.card, in: shape).overlay(shape.stroke(Theme.line, lineWidth: 0.5))
+        }
+    }
+}
+
+private extension View {
+    /// Send: accent glass once there's something to send, plain glass (or the chip) before.
+    @ViewBuilder func sendSurface(_ enabled: Bool) -> some View {
+        if enabled {
+            tintedGlass(Theme.accent, in: Circle())
+        } else if MessageBoxGlass.isOn {
+            glass(in: Circle())
+        } else {
+            background(Theme.chip, in: Circle())
         }
     }
 }
@@ -583,7 +612,7 @@ struct SendButton: View {
                 .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(enabled ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.tertiary))
                 .frame(width: 34, height: 34)
-                .background(enabled ? Theme.accent : Theme.chip, in: Circle())
+                .sendSurface(enabled)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
