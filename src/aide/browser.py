@@ -327,7 +327,7 @@ _IMAGES_JS = r"""
     }
   }
   for (const img of document.querySelectorAll('img[alt]')) {
-    if (!img.closest('a[href]') && img.alt.trim().length >= 12 && src(img)) {
+    if (!img.closest('a[href]') && img.alt.trim().length >= 3 && src(img)) {  // short ones: a dish (named_picture)
       out.push({path: null, src: src(img), alt: img.alt.trim().slice(0, 200)});
     }
   }

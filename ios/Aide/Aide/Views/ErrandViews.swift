@@ -729,7 +729,16 @@ struct ErrandButtons: View {
     var body: some View {
         if !errand.isOver {
             VStack(spacing: 8) {
-                if errand.needsAnswer, let options = errand.options, !options.isEmpty {
+                if errand.needsAnswer, let choices = errand.choices, !choices.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 10) {
+                            ForEach(choices) { choice in
+                                ChoiceTile(choice: choice) { answer(choice.title) }
+                            }
+                        }
+                    }
+                    .scrollClipDisabled()
+                } else if errand.needsAnswer, let options = errand.options, !options.isEmpty {
                     ForEach(options, id: \.self) { option in
                         Button { answer(option) } label: { Text(option).frame(maxWidth: .infinity) }
                             .buttonStyle(.bordered)
@@ -1347,6 +1356,61 @@ struct ProductTile: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens its page")
+    }
+}
+
+/// An answer to an errand's question as the site shows it (a kind of food, a restaurant, a dish): a tap answers.
+struct ChoiceTile: View {
+    let choice: ErrandChoice
+    let pick: () -> Void
+
+    var body: some View {
+        Button(action: pick) {
+            VStack(alignment: .leading, spacing: 6) {
+                picture
+                    .frame(width: 148, height: 104)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(choice.title)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    if !line.isEmpty {
+                        Text(line).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    if let note = choice.note, !note.isEmpty {
+                        Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+            .padding(6)
+            .frame(width: 160, alignment: .topLeading)
+            .background(Theme.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Answers with this")
+    }
+
+    private var line: String { [choice.price, choice.stars].compactMap { $0 }.joined(separator: " · ") }
+
+    private var picture: some View {
+        AsyncImage(url: choice.image.flatMap(URL.init(string:))) { phase in
+            switch phase {
+            case .success(let image): image.resizable().aspectRatio(contentMode: .fill)
+            case .failure: placeholder
+            default: if choice.image == nil { placeholder } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
+            }
+        }
+        .background(Color.secondary.opacity(0.12))
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "photo").font(.title2).foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
