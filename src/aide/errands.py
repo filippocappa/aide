@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from . import activity
-from .browser import Browser, BrowserError, site_of
+from .browser import Browser, BrowserError, sharp_image, site_of
 from .db import utcnow
 from .engine import PlanLimit
 from .tools import Tool, ToolOutput
@@ -1468,13 +1468,15 @@ class Phase:
                     p["image"] = await asyncio.wait_for(self.browser.main_image(self.owner, p["url"]), 12)
                 except (BrowserError, asyncio.TimeoutError, TimeoutError):
                     pass
+        for p in out:
+            p["image"] = sharp_image(p["image"])
         return out
 
     async def _pictured(self, items: list[dict]) -> list[dict]:
         """Order lines with the pictures the checkout page shows (matched by their alt text)."""
         await self._collect_images()
         images = self.runner._images.get(self.errand_id, [])
-        return [{**i, "image": i["image"] or picture_for(None, i["title"], images)} for i in items]
+        return [{**i, "image": sharp_image(i["image"] or picture_for(None, i["title"], images))} for i in items]
 
     async def _ask_confirm(self, summary: str, ref: str, total: str, items: list[dict], delivery: str | None,
                            address: str | None) -> str:

@@ -1047,3 +1047,16 @@ async def test_an_errand_waiting_too_long_puts_its_activity_away(env):
     await runner._check()
     assert run.away and e["id"] not in runner._runs
     assert runner.store.get(e["id"])["status"] == "needs_you"  # still waiting in its chat
+
+
+def test_shop_pictures_are_asked_for_big():
+    from aide.browser import sharp_image
+    nike = "https://static.nike.com/a/images/t_PDP_144_v1/f_auto,q_auto:eco/ae08/AIR+ZOOM+ALPHAFLY+NEXT%25+3.png"
+    assert sharp_image(nike) == nike.replace("t_PDP_144_v1", "t_PDP_1280_v1")
+    amazon = "https://m.media-amazon.com/images/I/61p4sgpkqKL._AC_SX296_SY426_FMwebp_QL65_.jpg"
+    assert sharp_image(amazon) == "https://m.media-amazon.com/images/I/61p4sgpkqKL._AC_SL1200_.jpg"
+    assert sharp_image("https://m.media-amazon.com/images/I/61p4sgpkqKL.jpg").endswith("61p4sgpkqKL.jpg")
+    assert sharp_image("https://shop.it/a.jpg?width=300&v=2") == "https://shop.it/a.jpg?width=1200&v=2"
+    assert sharp_image("https://shop.it/a.jpg?w=1600") == "https://shop.it/a.jpg?w=1600"
+    assert sharp_image("https://shop.it/a.jpg") == "https://shop.it/a.jpg"
+    assert sharp_image(None) is None
