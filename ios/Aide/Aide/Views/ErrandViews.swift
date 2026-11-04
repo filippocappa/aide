@@ -1127,9 +1127,10 @@ struct BrowserSettingsView: View {
             }
             Section {
                 NavigationLink("Price watches") { PriceWatchesView().macPageBack() }
+                NavigationLink("Releases") { ReleasesView().macPageBack() }
                 NavigationLink("Purchases") { PurchasesView().macPageBack() }
             } footer: {
-                Text("Price watches read a page every few hours and tell you once. Errands never buy, book or send anything without your Confirm, and never type card numbers.")
+                Text("Price watches read a page every few hours and tell you once. Releases follow a drop's dates and set it up for you. Errands never buy, book or send anything without your Confirm, and never type card numbers.")
             }
             if let error {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) }

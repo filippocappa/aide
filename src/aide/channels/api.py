@@ -28,6 +28,7 @@ from ..browser import BrowserError, check_site, full_url, site_of
 from ..engine import Engine
 from ..errands import ErrandRunner, ErrandStore
 from ..pricewatch import PriceWatches
+from ..releases import Releases
 from ..food import MACROS, MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
 from ..foods import MAX_NAME as MAX_FOOD_NAME, FoodDB, free_notes
 from ..nutrition import PROPOSE_PROMPT, PROPOSE_TOKENS, Nutrition, parse_proposal, proposal_input
@@ -627,6 +628,19 @@ class PriceWatchPatch(BaseModel):
     status: str | None = None  # active, ended
 
 
+class ReleaseIn(BaseModel):
+    query: str
+
+
+class ReleasePicksIn(BaseModel):
+    colourways: list[str]
+    size: str | None = None
+    max_total: float | None = None
+    currency: str | None = None
+    shops: list[str] = []
+    mode: Literal["tell", "buy"] = "tell"
+
+
 class LiveActivityIn(BaseModel):
     key: str = Field(min_length=1, max_length=200)
     token: str
@@ -683,7 +697,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                lessons: LessonStore | None = None, finance: FinanceStore | None = None,
                banks: Banks | None = None, bank_redirect: str | None = None,
                bedtime: Bedtime | None = None, focus: FocusStore | None = None,
-               focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None) -> FastAPI:
+               focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None,
+               releases: Releases | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -3165,6 +3180,68 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         except ValueError as ex:
             raise HTTPException(409, str(ex)) from None
         return errand_store.as_json(e)
+
+    def release_or_404(release_id: int) -> dict:
+        if releases is None:
+            raise HTTPException(503, "the browser isn't installed on the server")
+        r = releases.get(release_id)
+        if r is None:
+            raise HTTPException(404, f"no release tracker {release_id}")
+        return r
+
+    @app.get("/v1/releases", dependencies=[Depends(auth)])
+    async def list_releases():
+        if releases is None:
+            return {"releases": [], "enabled": False}
+        return {"releases": [releases.as_json(r) for r in releases.all()], "enabled": True}
+
+    @app.post("/v1/releases", dependencies=[Depends(auth)])
+    async def add_release(body: ReleaseIn):
+        if releases is None:
+            raise HTTPException(503, "the browser isn't installed on the server")
+        try:
+            return releases.as_json(releases.start(body.query, CONVERSATION))
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+
+    @app.get("/v1/releases/{release_id}", dependencies=[Depends(auth)])
+    async def get_release(release_id: int):
+        return releases.as_json(release_or_404(release_id))
+
+    @app.put("/v1/releases/{release_id}/picks", dependencies=[Depends(auth)])
+    async def set_release_picks(release_id: int, body: ReleasePicksIn):
+        release_or_404(release_id)
+        try:
+            r = releases.set_picks(release_id, body.colourways, body.size, body.max_total, body.shops, body.mode,
+                                   body.currency)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        await releases._act(r)
+        return releases.as_json(releases.get(release_id))
+
+    @app.post("/v1/releases/{release_id}/check", dependencies=[Depends(auth)])
+    async def check_release(release_id: int):
+        release_or_404(release_id)
+        try:
+            return releases.as_json(await releases.check(release_id))
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.post("/v1/releases/{release_id}/stop", dependencies=[Depends(auth)])
+    async def stop_release(release_id: int):
+        release_or_404(release_id)
+        return releases.as_json(releases.stop(release_id))
+
+    @app.post("/v1/releases/{release_id}/resume", dependencies=[Depends(auth)])
+    async def resume_release(release_id: int):
+        release_or_404(release_id)
+        return releases.as_json(releases.resume(release_id))
+
+    @app.delete("/v1/releases/{release_id}", dependencies=[Depends(auth)])
+    async def delete_release(release_id: int):
+        release_or_404(release_id)
+        releases.delete(release_id)
+        return {"ok": True}
 
     @app.websocket("/v1/browser/live")
     async def browser_live(ws: WebSocket, errand: int | None = None, site: str | None = None, frames: bool = True):

@@ -759,6 +759,8 @@ struct AttachmentCard: View {
                     PriceWatchCard(watch: w, bought: { _ in await chat.loadHistory() })
                 }
             }
+        case .releases(let releases):
+            VStack(spacing: 10) { ForEach(releases) { ReleaseCard(release: $0) } }
         case .videos(let videos):
             VStack(spacing: 10) { ForEach(videos) { VideoCardView(card: $0) } }
         case .quiz(let quiz):

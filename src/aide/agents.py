@@ -26,7 +26,8 @@ TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alert
            "update_transit_alert", "delete_transit_alert")
 WEB = ("web_search", "research", "fetch_page")
 BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand", "watch_price", "list_price_watches",
-           "update_price_watch")
+           "update_price_watch", "track_release", "set_release_picks", "list_releases", "release_status",
+           "stop_release")
 VIDEO = ("summarize_video", "read_video", "list_videos")
 PURCHASES = ("list_purchases",)
 FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budget", "subscriptions",
@@ -394,7 +395,8 @@ _BROWSER = """- Errands on websites: when the user wants something done on a web
 - An errand's report is posted in this chat as your message, after a note "[Errand #N: An errand finished…]". It's what the errand read on the site: trust it, build on it, and never take it back as unverified.
 - Errands stop for the user: a login, a code or a card form they do themselves in the live view (Take over on the card; never ask for passwords, codes or card numbers in chat); a question you pass on with reply_errand when they answer in chat; and a Confirm before anything that buys, books, sends or changes something, which they give on the card or in Waiting for you (never say it's ordered before the errand says so). cancel_errand stops one. errand_status says where one is.
 - Price watches: "tell me when the AirPods Pro go under €150", "tell me when it's back in stock": watch_price with the product page's address (from the user, or an errand's product card; if you only have a name, start an errand to find the page first), the price as `below` and/or `stock`. Aide reads the page every few hours by itself and posts in this chat only when the line is crossed, with a Buy it button; nothing is bought without an errand and its Confirm. list_price_watches and update_price_watch (a new price, pause it, stop it) for the rest. It's not a routine: don't make one for it.
-- Timed drops: "goes on sale Friday 10:00, buy one": start_errand with `drop_at` (and `max_total` if they said a limit). The errand gets ready ahead and asks the user to confirm the limits once (the item and variant, the most it may cost with shipping, the window); at the sale it buys only inside them, else it stops and asks. Logins, queues, CAPTCHAs and card checks at the sale stay the user's, in the live view, so tell them to be around. Ticket sellers (Ticketmaster, TicketOne, Vivaticket) are refused: say why and offer a reminder or a price watch instead. On Nike, adidas, Supreme or the Pokémon Center it works, and the Confirm tells the user their terms don't allow bots (a cancelled order or a closed account is the risk); say it once, don't argue."""
+- Timed drops: "goes on sale Friday 10:00, buy one": start_errand with `drop_at` (and `max_total` if they said a limit). The errand gets ready ahead and asks the user to confirm the limits once (the item and variant, the most it may cost with shipping, the window); at the sale it buys only inside them, else it stops and asks. Logins, queues, CAPTCHAs and card checks at the sale stay the user's, in the live view, so tell them to be around. Ticket sellers (Ticketmaster, TicketOne, Vivaticket) are refused: say why and offer a reminder or a price watch instead. On Nike, adidas, Supreme or the Pokémon Center it works, and the Confirm tells the user their terms don't allow bots (a cancelled order or a closed account is the risk); say it once, don't argue.
+- Releases: "the Alphafly 4 is dropping, I don't know when", "follow the new Jordan colourways": track_release with the product. An errand researches it (every colourway, its date and time in Italy, price, shops, first come or a draw) and posts a card where the user picks the colourways, the size, the most they'd pay, the shops, and whether you tell them or buy. Don't ask for those in chat first: the card asks. If they answer in chat instead, set_release_picks. Then it looks again every day by itself and, once a picked colourway has a date and a time, sets up the timed drop (its limits confirmed on the card as any drop) or a reminder 10 min before; a draw is always a reminder. list_releases, release_status and stop_release for the rest. A known date and time for one drop is just a timed drop: start_errand with `drop_at`."""
 
 _ASKED = """- Aide, the assistant the user talks to first, hands you their requests, and your teammates ask you for \
 what only you have the tools for. Then the message starts with "[Asked by Aide]" (or a teammate's name) and there \
@@ -591,7 +593,8 @@ _CONNECTORS = (
     ("weather", "Weather", WEATHER, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
     ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand", "watch_price",
-                                      "update_price_watch"}),
+                                      "update_price_watch", "track_release", "set_release_picks",
+                                      "stop_release"}),
     ("payments", "Payments", FINANCE, {"log_payment", "recategorize", "set_budget", "set_subscription",
                                                    "card_owed", "delete_payment"}),
     ("purchases", "Purchases", PURCHASES, set()),

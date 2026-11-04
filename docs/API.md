@@ -81,6 +81,9 @@ from the tools the assistant used in that turn, not parsed from its text:
 - `price_watches`: a price watch (since 2026-11-04; see Browser errands, Price watches), `{"type": "price_watches",
   "price_watches": [PriceWatch]}`: when Aide sets one up, changes one, and on the message it posts when the line is
   crossed (with Buy it, `POST /v1/pricewatches/{id}/buy`). The card is the watch as it was then.
+- `releases`: a release tracker (since 2026-11-04; see Browser errands, Release trackers), `{"type": "releases",
+  "releases": [Release]}`: on the research's last message (the colourways to pick from), when the picks are set in
+  chat, and on each post about a change. The card is the release as it was then; fetch `GET /v1/releases/{id}`.
 - `purchases`: an order an errand placed (since 2026-10-27; see Browser errands), `{"type": "purchases",
   "purchases": [Purchase]}`, on the errand's last message and when Finance lists them.
 - `payments`: payments Finance logged, listed or re-sorted (since 2026-11-01; see Finance), `{"type": "payments",
@@ -2224,6 +2227,8 @@ Errand:
 - `products` (since 2026-10-28): what it found, as Product cards, best first (up to 10); `[]` when there's nothing
   to show.
 - `drop` (since 2026-11-04): null, or a timed drop's plan (see Timed drops).
+- `release_id` (since 2026-11-04): null, or the release tracker the errand belongs to (its research, or a drop or
+  buy it set up; see Release trackers).
 
 Product:
 ```json
@@ -2339,6 +2344,63 @@ PriceWatch:
 | `DELETE /v1/pricewatches/{id}` | | `{"ok": true}` |
 | `POST /v1/pricewatches/{id}/check` | | the PriceWatch after a look now (posts if the line is crossed) |
 | `POST /v1/pricewatches/{id}/buy` | | the Errand it started (`queued`) |
+
+Without the browser: the list is empty with `enabled` false, the rest answer `503`.
+
+### Release trackers
+
+Since 2026-11-04: "follow the Nike Alphafly 4 release". Aide starts an errand that reads release calendars and the
+shops (Italy always) and reports every colourway: its code, price, status, the date and time it drops in Italy, first
+come or a draw, the shops that sell it. That posts a `releases` card; the app draws it as a shop's page, where the user
+picks colourways, a size, the most they'd pay, shops, and Tell me or Buy it for me (`PUT …/picks`). Then the fast
+model looks every day (every 6 hours in the last 4 days before a picked drop) with web search and posts when something
+changes: a new colourway, a date, a time, a status or a price (picked ones always, others only when new). For each
+picked colourway it sets up, and redoes when the drop moves:
+- buy, first come, a date and a time: a timed drop errand (`drop_at`, `max_total`) on the first of the user's shops
+  that sells it (none picked: the first shop named), with its own Confirm of the limits. Never a draw.
+- tell, or any draw, with a date and a time: a reminder 10 minutes before (a draw is never entered for you).
+- no time yet: nothing, until a look finds one.
+- sold out: a price watch on its page for stock. On sale now: buy starts an errand (its own Confirm), tell just says so.
+Five looks in a row that fail stop it (`failed`). Stop undoes what's set up (cancels the errands, deletes the
+reminders, ends the watches).
+
+Release:
+```json
+{"id": 4, "query": "Nike Alphafly 4", "title": "Nike Alphafly 4", "status": "tracking",
+ "summary": "One colourway is out; two are coming.",
+ "colourways": [{"key": "HF7356-700", "name": "Volt/Black", "code": "HF7356-700", "price": "299,99 €",
+   "status": "upcoming", "date": "2026-11-20", "time": "09:00", "opens_at": "2026-11-20T09:00:00+01:00",
+   "method": "fcfs", "url": "https://www.nike.com/it/t/…", "shops": [{"site": "nike.com", "url": "…", "note": null}],
+   "note": null, "image": "https://…jpg", "new": false, "picked": true,
+   "plan": {"what": "drop", "site": "nike.com", "errand_id": 12, "errand_status": "queued", "watch_id": null,
+            "reminder_id": null, "text": "Volt/Black: a timed drop on nike.com, Thu 20 Nov 09:00, up to 320,00 €"}}],
+ "sources": [{"title": "Sole Retriever", "url": "https://…"}],
+ "picks": {"colourways": ["HF7356-700"], "size": "EU 43", "max_total": 320.0, "currency": "EUR",
+           "shops": ["nike.com"], "mode": "buy", "max_total_text": "320,00 €"},
+ "shops": ["nike.com", "zalando.it"], "errand_id": 9, "error": null,
+ "log": [{"ts": "2026-11-04T10:00:00+01:00", "text": "Volt/Black drops 2026-11-20 09:00 (was 2026-11-20)"}],
+ "checked_at": "2026-11-04T10:00:00+01:00", "next_at": "2026-11-05T10:00:00+01:00",
+ "conversation_id": "c_91f…", "created_at": "2026-11-03T18:01:50+01:00"}
+```
+- `status`: `researching` (the errand `errand_id` is reading), `ready` (pick), `tracking`, `stopped`, `failed`.
+- A colourway's `key` is its code, else its name; `status`: `out`, `upcoming`, `sold_out`, `rumoured`; `method`:
+  `fcfs`, `draw`, `unknown`. `date` and `time` are Italy's; `time` null: not announced. `opens_at`: both together.
+  `new`: found on the last look. `plan`: null until something is set up; `what` is `drop`, `reminder`, `watch`,
+  `errand` or `told`.
+- `picks`: null until the user picks. `mode`: `tell` or `buy` (needs `size` and `max_total`, delivery included).
+  `shops` empty: any. `shops` on the release: every shop the colourways name, most named first.
+- `log`: the last 20 changes, newest first. `next_at`: only while `tracking`.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/releases` | | `{"releases": [Release], "enabled": true}` |
+| `POST /v1/releases` | `{"query": "Nike Alphafly 4"}` | the Release (`researching`; the same query again returns the one there is) |
+| `GET /v1/releases/{id}` | | the Release |
+| `PUT /v1/releases/{id}/picks` | `{"colourways": ["HF7356-700"], "size": "EU 43", "max_total": 320, "shops": [], "mode": "buy"}` | the Release with what it set up. `422`: an unknown colourway, or buy without a size or limit |
+| `POST /v1/releases/{id}/check` | | the Release after a look now (posts what changed) |
+| `POST /v1/releases/{id}/stop` | | the Release, `stopped`, what was set up undone |
+| `POST /v1/releases/{id}/resume` | | the Release, `tracking` again |
+| `DELETE /v1/releases/{id}` | | `{"ok": true}` |
 
 Without the browser: the list is empty with `enabled` false, the rest answer `503`.
 
