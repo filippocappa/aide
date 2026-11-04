@@ -681,6 +681,16 @@ sound at each switch; off in Settings → Notifications). At the end the card an
 page in Learn mode, 5 questions, `afterFocus`, the first round's score sent back), and Professor posts the session in
 the course chat. Minutes per course count for `study_progress`, the `focus` objectives measure and Coach.
 
+**Done, both sides (2026-11-04), live on the server, not yet tried on the phone:** price watches and timed drops
+(#57, contract "Browser errands": Timed drops, Price watches; `pricewatch.py`, `errands.py`). A price watch reads a
+product page every few hours in Aide's browser with no model (schema.org, meta tags, Amazon's price box, a coupon
+counted; the fast model only when no price shows), posts once with a push when it's under the line or back in stock,
+then waits for Watch again; Buy it starts a normal errand. Not a routine (no model run, no 3-a-day cap). A timed drop
+(`start_errand` with `drop_at`, `max_total`) gets ready ahead, asks once with a standing `errand_drop` (confirmed only
+on its own card, waits until the sale closes), sits `scheduled`, opens 5 min before and buys only inside the limits
+(`drop_mismatch` in the commit guard: window, item, variant, total at or under the max). Bot-forbidding shops refuse a
+drop (`NO_BOTS`). App: the `price_watches` card, Settings → Browser → Price watches, the drop's limits sheet.
+
 **Next** (GitHub issues):
 0. The code check (2026-11-03) filed #35–#50, one finding each. First the ones that can lose data: #35
    (reminders sync deletes what one fetch missed), #36 (a waiting Wallet tap lost), #37 (one calendar's 404 breaks
