@@ -722,6 +722,7 @@ struct AttachmentCard: View {
     let attachment: Attachment
     /// Errands shown again further down: one line here.
     var foldedErrands: Set<Int> = []
+    @EnvironmentObject private var chat: ChatViewModel
     @State private var expanded = false
     private static let fold = 5
 
@@ -752,6 +753,12 @@ struct AttachmentCard: View {
             VStack(spacing: 10) { ForEach(purchases) { PurchaseCard(purchase: $0) } }
         case .products(let products):
             if !products.isEmpty { ProductsCard(products: products) }
+        case .priceWatches(let watches):
+            VStack(spacing: 10) {
+                ForEach(watches) { w in
+                    PriceWatchCard(watch: w, bought: { _ in await chat.loadHistory() })
+                }
+            }
         case .videos(let videos):
             VStack(spacing: 10) { ForEach(videos) { VideoCardView(card: $0) } }
         case .quiz(let quiz):

@@ -1689,6 +1689,45 @@ final class ErrandTests: XCTestCase {
         XCTAssertNotNil(purchases.first?.date)
     }
 
+    func testATimedDropAndAPriceWatchDecode() throws {
+        let scheduled = try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand
+            .replacingOccurrences(of: #""status": "needs_you""#, with: #""status": "scheduled""#)
+            .replacingOccurrences(of: #""purchase_id": null,"#, with: #""purchase_id": null, "drop": {"opens_at": "2030-11-07T10:00:00+01:00", "closes_at": "2030-11-07T12:00:00+01:00", "max_total": "480,00 €", "item": "Nintendo Switch 2", "variant": "Nero", "quantity": 1, "armed": true},"#).utf8))
+        XCTAssertEqual(scheduled.drop?.maxTotal, "480,00 €")
+        XCTAssertTrue(scheduled.line.hasPrefix("Buys at ") && scheduled.line.hasSuffix("up to 480,00 €"), scheduled.line)
+        XCTAssertFalse(ErrandLiveBox.shows(scheduled))
+
+        let action = #"""
+        {"id": 50, "summary": "Buy at the drop", "agent": "aide", "expires_at": "2030-11-07T12:00:00+01:00",
+         "detail": {"kind": "drop", "errand_id": 9, "site": "amazon.it", "summary": "1 Nintendo Switch 2, black",
+                    "item": "Nintendo Switch 2", "variant": "Nero", "quantity": 1, "max_total": "480,00 €",
+                    "opens_at": "2030-11-07T10:00:00+01:00", "closes_at": "2030-11-07T12:00:00+01:00",
+                    "address": null, "card": "Visa ending 6411", "screenshot": null, "url": null}}
+        """#
+        let a = try JSONDecoder.api.decode(QueuedAction.self, from: Data(action.utf8))
+        XCTAssertNil(a.purchase)
+        XCTAssertEqual(a.drop?.card, "Visa ending 6411")
+        XCTAssertTrue(a.reviewed)
+        let window = DropSummary.window(try XCTUnwrap(a.drop))
+        XCTAssertTrue(window?.contains(" – ") ?? false, window ?? "no window")
+
+        let json = #"""
+        [{"type": "price_watches", "price_watches": [
+          {"id": 3, "title": "AirPods Pro 3", "url": "https://www.amazon.it/dp/B0", "site": "amazon.it", "below": 150.0,
+           "below_text": "150,00 €", "currency": "EUR", "stock": false, "every_hours": 4.0, "status": "met",
+           "price": "169,00 €", "amount": 169.0, "effective": 149.0, "in_stock": true, "coupon": "Applica coupon da 20 €",
+           "error": null, "checked_at": "2026-11-04T10:02:11+01:00", "next_at": null, "met_at": "2026-11-04T10:02:11+01:00",
+           "conversation_id": "c_91f", "history": [{"ts": "2026-11-04T10:02:11+01:00", "amount": 169.0, "effective": 149.0,
+           "in_stock": true}], "lowest": 149.0, "created_at": "2026-11-03T18:01:50+01:00"}]}]
+        """#
+        guard case .priceWatches(let watches) = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8)).first,
+              let w = watches.first else { return XCTFail("expected a price watch") }
+        XCTAssertEqual(w.goal, "Under 150,00 €")
+        XCTAssertEqual(w.state, "Told you")
+        XCTAssertEqual(w.shownPrice?.filter(\.isNumber), "14900")
+        XCTAssertEqual(w.history.first?.inStock, true)
+    }
+
     func testVideoAttachmentDecodesWorkingAndReady() throws {
         let json = """
         [{"type": "videos", "videos": [

@@ -73,6 +73,8 @@ enum Attachment: Decodable, Hashable {
     case errands([Errand])
     case purchases([Purchase])
     case products([Product])
+    /// Price watches: set up, changed, or the one whose line was crossed.
+    case priceWatches([PriceWatch])
     case videos([VideoCard])
     case quiz(Quiz)
     case review(ReviewSession)
@@ -94,6 +96,7 @@ enum Attachment: Decodable, Hashable {
         case "errands": self = .errands(try c.decode([Errand].self, forKey: .errands))
         case "purchases": self = .purchases(try c.decode([Purchase].self, forKey: .purchases))
         case "products": self = .products(try c.decode([Product].self, forKey: .products))
+        case "price_watches": self = .priceWatches(try c.decode([PriceWatch].self, forKey: .priceWatches))
         case "videos": self = .videos(try c.decode([VideoCard].self, forKey: .videos))
         case "quiz": self = .quiz(try c.decode(Quiz.self, forKey: .quiz))
         case "review": self = .review(try c.decode(ReviewSession.self, forKey: .review))
@@ -104,7 +107,7 @@ enum Attachment: Decodable, Hashable {
     }
     private enum CodingKeys: String, CodingKey {
         case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
-        case quiz, review, payments, open
+        case quiz, review, payments, open, priceWatches
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
@@ -1825,6 +1828,10 @@ struct QueuedAction: Decodable, Identifiable, Hashable {
 
     /// An order to place: its items, total and address, with the Confirm.
     var purchase: PurchaseDetail? { detail?.kind == "purchase" ? detail : nil }
+    /// A timed drop's limits, confirmed once, before the sale.
+    var drop: PurchaseDetail? { detail?.kind == "drop" ? detail : nil }
+    /// Confirmed from its own sheet, never with Confirm all.
+    var reviewed: Bool { purchase != nil || drop != nil }
 }
 
 /// Everything waiting for your OK, and the routines coming up.
@@ -2941,7 +2948,8 @@ struct Errand: Decodable, Identifiable, Hashable {
     let task: String
     var site: String?
     var url: String?
-    /// queued, running, needs_you, waiting_confirm, done, failed, cancelled or interrupted.
+    /// queued, running, needs_you, waiting_confirm, scheduled (a confirmed drop), done, failed, cancelled or
+    /// interrupted.
     let status: String
     /// needs_you: login, captcha, code, card, other (the live view), question or plan_limit (an answer).
     var why: String?
@@ -2956,6 +2964,8 @@ struct Errand: Decodable, Identifiable, Hashable {
     var purchaseId: Int?
     /// What it found, as cards: nil from a server before them.
     var products: [Product]?
+    /// A timed drop's plan; nil for the rest (and from a server before them).
+    var drop: ErrandDrop?
     var createdAt: String?
     var updatedAt: String?
 
@@ -2974,6 +2984,7 @@ struct Errand: Decodable, Identifiable, Hashable {
         case "running": step ?? "Working"
         case "needs_you", "waiting_confirm": reason ?? step ?? "Needs you"
         case "interrupted": "Stopped by a server restart"
+        case "scheduled": drop?.line ?? "Waiting for the sale"
         case "cancelled": result ?? "Cancelled"
         default: result ?? step ?? status.prefix(1).uppercased() + status.dropFirst()
         }
@@ -3000,6 +3011,38 @@ struct Product: Decodable, Hashable, Identifiable {
         guard let rating else { return nil }
         let r = rating.formatted(.number.precision(.fractionLength(1)))
         return reviews.map { "\(r) ★ · \($0.formatted())" } ?? "\(r) ★"
+    }
+}
+
+/// A timed drop: when the sale opens and closes, and the limits Aide buys inside.
+struct ErrandDrop: Decodable, Hashable {
+    let opensAt: String
+    let closesAt: String
+    var maxTotal: String?
+    var item: String?
+    var variant: String?
+    var quantity: Int?
+    var armed: Bool = false
+
+    var opens: Date? { Wire.parse(opensAt) }
+    var closes: Date? { Wire.parse(closesAt) }
+
+    /// "Buys at Thu 10:00, up to 480,00 €"
+    var line: String {
+        let when = opens.map { DropTime.text($0) } ?? opensAt
+        return [armed ? "Buys at \(when)" : "Sale at \(when)", maxTotal.map { "up to \($0)" }]
+            .compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+enum DropTime {
+    /// "today 10:00", "tomorrow 10:00", "Thu 6 Nov 10:00".
+    static func text(_ date: Date) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "today \(time)" }
+        if cal.isDateInTomorrow(date) { return "tomorrow \(time)" }
+        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + " " + time
     }
 }
 
@@ -3049,6 +3092,15 @@ struct PurchaseDetail: Decodable, Hashable {
     var screenshot: String?
     /// The button it will press once you confirm.
     var button: String?
+    // A timed drop (`kind` "drop"): the limits it buys inside.
+    var item: String?
+    var variant: String?
+    var quantity: Int?
+    var maxTotal: String?
+    var opensAt: String?
+    var closesAt: String?
+    var card: String?
+    var url: String?
 }
 
 /// An order an errand placed.
@@ -3073,6 +3125,91 @@ struct Purchase: Decodable, Identifiable, Hashable {
 struct PurchaseList: Decodable {
     let purchases: [Purchase]
     var totals: [String: Double] = [:]
+}
+
+// MARK: - Price watches (docs/API.md, "Browser errands", Price watches)
+
+/// A product page Aide reads every few hours, telling you once the price is under a line or it's back in stock.
+struct PriceWatch: Decodable, Identifiable, Hashable {
+    let id: Int
+    let title: String
+    let url: String
+    var site: String?
+    var below: Double?
+    var belowText: String?
+    var currency: String?
+    var stock: Bool = false
+    var everyHours: Double?
+    /// active, met (it told you), ended, failed.
+    let status: String
+    var price: String?
+    var amount: Double?
+    /// After the page's coupon.
+    var effective: Double?
+    var inStock: Bool?
+    var coupon: String?
+    var error: String?
+    var checkedAt: String?
+    var nextAt: String?
+    var metAt: String?
+    var conversationId: String?
+    var history: [PricePoint] = []
+    var lowest: Double?
+    var createdAt: String?
+
+    var link: URL? { URL(string: url) }
+    var isActive: Bool { status == "active" }
+    var checked: Date? { checkedAt.flatMap(Wire.parse) }
+
+    /// The price to show: after the coupon when there is one.
+    var shownPrice: String? {
+        if let effective, let amount, effective < amount - 0.004 { return Self.money(effective, currency) }
+        return price
+    }
+
+    /// "Under 150,00 €" / "Back in stock" / both.
+    var goal: String {
+        [belowText.map { "Under \($0)" }, stock ? "back in stock" : nil].compactMap { $0 }
+            .joined(separator: " or ").capitalizedFirst
+    }
+
+    var state: String {
+        switch status {
+        case "met": return "Told you"
+        case "ended": return "Stopped"
+        case "failed": return error ?? "Couldn't read the page"
+        default:
+            if inStock == false { return "Out of stock" }
+            return checked.map { "Checked \($0.formatted(.relative(presentation: .named)))" } ?? "Not checked yet"
+        }
+    }
+
+    static func money(_ value: Double, _ currency: String?) -> String {
+        value.formatted(.currency(code: currency ?? "EUR").locale(Locale(identifier: "it_IT")))
+    }
+}
+
+struct PricePoint: Decodable, Hashable {
+    let ts: String
+    var amount: Double?
+    var effective: Double?
+    var inStock: Bool?
+}
+
+struct PriceWatchList: Decodable {
+    let priceWatches: [PriceWatch]
+    var enabled: Bool = true
+}
+
+struct PriceWatchPatch: Encodable {
+    var below: Double?
+    var stock: Bool?
+    var everyHours: Double?
+    var status: String?
+}
+
+private extension String {
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 
 /// A site Aide's browser has a profile for (so you may be logged in there).

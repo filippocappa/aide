@@ -301,7 +301,7 @@ struct WaitingSection: View {
         let writer = agent == nil || agent?.id == "professor" ? approvals?.writer : nil
         let errands = agent == nil || agent?.id == "aide" ? approvals?.errands ?? [] : []
         // Orders are confirmed one at a time, from their own page.
-        let plain = actions.filter { $0.purchase == nil }
+        let plain = actions.filter { !$0.reviewed }
         if !actions.isEmpty || !drafts.isEmpty || !objectives.isEmpty || !proposals.isEmpty || writer != nil
             || !errands.isEmpty {
             Section {
@@ -317,11 +317,11 @@ struct WaitingSection: View {
                 ForEach(actions) { action in
                     QueuedActionRow(action: action, agent: chat.agent(action.agent), busy: busy.contains("a\(action.id)"),
                                     confirm: {
-                                        if action.purchase != nil { reviewing = action } else { Task { await decide(action, confirm: true) } }
+                                        if action.reviewed { reviewing = action } else { Task { await decide(action, confirm: true) } }
                                     },
                                     cancel: { Task { await decide(action, confirm: false) } })
                         .contentShape(Rectangle())
-                        .onTapGesture { if action.purchase != nil { reviewing = action } else { go(action.conversationId) } }
+                        .onTapGesture { if action.reviewed { reviewing = action } else { go(action.conversationId) } }
                         .listRowBackground(Theme.row)
                 }
                 if plain.count > 1 {
@@ -612,7 +612,7 @@ private struct QueuedActionRow: View {
             HStack(alignment: .top, spacing: 10) {
                 AgentMark(agent: agent, size: 22).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(action.purchase?.summary ?? action.summary)
+                    Text(action.detail?.summary ?? action.summary)
                     if let expires = action.expiresAt.flatMap(Wire.parse) {
                         Text("\(agent.name) · expires \(expires.formatted(date: .omitted, time: .shortened))")
                             .font(.caption).foregroundStyle(.secondary)
@@ -620,9 +620,10 @@ private struct QueuedActionRow: View {
                 }
             }
             if let order = action.purchase { PurchaseSummary(detail: order) }
+            if let drop = action.drop { DropSummary(detail: drop) }
             HStack(spacing: 10) {
                 Button(action: confirm) {
-                    Text(action.purchase.map { _ in "Review and confirm" } ?? "Confirm").frame(maxWidth: .infinity)
+                    Text(action.reviewed ? "Review and confirm" : "Confirm").frame(maxWidth: .infinity)
                 }
                     .buttonStyle(.borderedProminent)
                     .foregroundStyle(Theme.onAccent)
