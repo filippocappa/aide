@@ -275,10 +275,34 @@ _INSPECT_JS = r"""
 # Each link's picture, for the product cards: [{path, src, alt}] (path as the page listing writes it), plus pictures
 # with a long alt text and no link (a checkout's items). The picture is the first one in the link's card: the link,
 # or an ancestor up to 6 levels that holds no picture linked somewhere else (that would be the whole list).
+def sharp_image(url: str | None) -> str | None:
+    """A shop's picture at a size worth showing big: the CDNs that take the size in the link (Nike's t_PDP_144_v1,
+    Amazon's ._AC_SX296_., a width parameter) asked for ~1200 px; any other link as it is."""
+    if not url:
+        return url
+    if "static.nike.com/a/images/" in url:
+        return re.sub(r"/a/images/t_[^/]+/", "/a/images/t_PDP_1280_v1/", url, count=1)
+    if "media-amazon.com/images/I/" in url:
+        return re.sub(r"(/images/I/[^./]+)\.[^/]*_\.(jpe?g|png|webp)$", r"\1._AC_SL1200_.\2", url)
+    def wider(m: re.Match) -> str:
+        return m.group(1) + ("1200" if int(m.group(2)) < 600 else m.group(2))
+    return re.sub(r"([?&](?:w|wid|width|imwidth)=)(\d+)", wider, url)
+
+
 _IMAGES_JS = r"""
 () => {
+  // The largest picture the img offers: its srcset's widest candidate, else what it shows.
+  const largest = img => {
+    let best = null, most = 0;
+    for (const part of (img.srcset || '').split(/,\s+(?=\S)/)) {
+      const [u, d] = part.trim().split(/\s+/);
+      const n = parseFloat(d) * (/x$/.test(d || '') ? 1000 : 1) || 1;
+      if (u && n > most) { most = n; best = new URL(u, location.href).href; }
+    }
+    return best || img.currentSrc || img.src || '';
+  };
   const src = img => {
-    const s = img.currentSrc || img.src || '';
+    const s = largest(img);
     if (!/^https?:/.test(s)) return null;
     const r = img.getBoundingClientRect();
     return (img.naturalWidth || r.width) >= 60 && (img.naturalHeight || r.height) >= 60 ? s : null;

@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from . import activity
-from .browser import BrowserError, site_of
+from .browser import BrowserError, sharp_image, site_of
 from .db import utcnow
 from .errands import parse_money
 from .pricewatch import format_money as format_amount
@@ -179,7 +179,7 @@ def clean_colourway(c: dict) -> dict:
             "method": c.get("method") if c.get("method") in METHODS else "unknown",
             "url": link(c.get("url")) or next((s["url"] for s in shops if s["url"]), None),
             "shops": shops[:8], "note": (str(c["note"])[:100] if c.get("note") else None),
-            "image": c.get("image") if str(c.get("image") or "").startswith("https://") else None,
+            "image": sharp_image(c.get("image")) if str(c.get("image") or "").startswith("https://") else None,
             "sizes": clean_sizes(c.get("sizes")), "sizes_at": c.get("sizes_at"),
             "sizes_site": c.get("sizes_site")}
 
@@ -667,7 +667,7 @@ class Releases:
                     got = await asyncio.wait_for(self.browser.product(owner, c["url"]), 25)
                 except (BrowserError, asyncio.TimeoutError, TimeoutError):
                     continue
-                c["image"] = c["image"] or got.get("image")
+                c["image"] = c["image"] or sharp_image(got.get("image"))
                 sizes = clean_sizes(got.get("sizes"))
                 if not sizes:
                     continue
