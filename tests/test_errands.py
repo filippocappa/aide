@@ -908,6 +908,10 @@ SCENE_PAGES = {
     "/it/login/code2": _html("<h2>Inserisci il codice</h2><form>"
                              + "".join(f'<input type="text" aria-label="code-{i}">' for i in range(4))
                              + '<button type="submit">Continua</button></form>', "Glovo"),
+    # Glovo after the code: ways to finish logging in, buttons only.
+    "/it/login/ways": _html("<h2>Come vuoi accedere?</h2><button>Continua con la password</button>"
+                            "<button>Continua con Facebook</button><a href='/it/it/torino/'>Torna a Glovo</a>",
+                            "Glovo"),
     # A link to tap, nothing to type.
     "/it/login/link": _html("<h2>Controlla la tua email: ti abbiamo inviato un link per accedere</h2>", "Glovo"),
 }
@@ -1022,6 +1026,10 @@ async def test_real_chromium_scenes(tmp_path):
         await browser.put(owner, scene["form"]["fields"][0]["ref"], "4821")
         assert await browser._page(owner).evaluate(
             "[...document.querySelectorAll('input')].map(b => b.value).join('')") == "4821"
+        await browser.open(owner, "https://shop.test/it/login/ways")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "login" and scene["form"]["fields"] == []
+        assert [c["text"] for c in scene["form"]["choices"]] == ["Continua con la password", "Continua con Facebook"]
         await browser.open(owner, "https://shop.test/it/login/link")
         scene = await browser.scene(owner)
         assert scene["kind"] == "code" and scene["form"]["fields"] == [] and scene["form"]["sent"]

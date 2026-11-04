@@ -104,6 +104,8 @@ struct PageScene: Decodable, Equatable {
 
     /// A login, a code or a CAPTCHA: the user's part, on the app's own screen.
     var isYourTurn: Bool { ["login", "code", "captcha"].contains(kind) }
+    /// Something the app draws (results, a timetable, a product, a cart), not just a page's title.
+    var hasDrawing: Bool { !items.isEmpty || !(rows ?? []).isEmpty || product != nil || (cart?.count ?? 0) > 0 }
     var siteName: String { site ?? url.flatMap { URL(string: $0)?.host() } ?? "the site" }
     var iconURL: URL? { icon.flatMap(URL.init(string:)) }
 
@@ -1036,11 +1038,23 @@ struct StageSheet: View {
             if live.control, let reason = live.status?.reason {
                 Label(reason, systemImage: "hand.point.up.left.fill").font(.subheadline)
             }
-            ErrandStage(scene: live.scene, action: live.action, tint: tint,
-                        confirming: live.status?.status == "waiting_confirm", large: true)
-                .frame(height: 520)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.line))
+            if let scene = live.scene, scene.hasDrawing {
+                ErrandStage(scene: scene, action: live.action, tint: tint,
+                            confirming: live.status?.status == "waiting_confirm", large: true)
+                    .frame(height: 520)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.line))
+            } else if live.control {
+                // Nothing Aide can draw here (no page inside the card): the real page is the way on.
+                Button { realPage = true } label: {
+                    Label("Open the real page", systemImage: "safari").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .foregroundStyle(Theme.onAccent)
+                .controlSize(.large)
+            } else {
+                Narration(text: "\(live.scene?.siteName ?? title) is loading…", tint: tint).frame(minHeight: 80)
+            }
             if !live.control {
                 Narration(text: live.action?.said ?? live.status?.step ?? "Opening the page…", tint: tint)
             } else if let signin = live.scene?.signin {
@@ -1133,17 +1147,19 @@ struct StageSheet: View {
             .padding(.horizontal, 12)
             .background(Theme.chip, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        Button { submit(form) } label: {
-            HStack(spacing: 8) {
-                if sending { ProgressView() }
-                Text(form.submit?.text ?? "Continue")
+        if !form.fields.isEmpty || form.submit != nil {
+            Button { submit(form) } label: {
+                HStack(spacing: 8) {
+                    if sending { ProgressView() }
+                    Text(form.submit?.text ?? "Continue")
+                }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(.borderedProminent)
+            .foregroundStyle(Theme.onAccent)
+            .controlSize(.large)
+            .disabled(sending || !Self.ready(form, values))
         }
-        .buttonStyle(.borderedProminent)
-        .foregroundStyle(Theme.onAccent)
-        .controlSize(.large)
-        .disabled(sending || !Self.ready(form, values))
     }
 
     @ViewBuilder
@@ -1424,9 +1440,10 @@ struct PageField: View {
 
 extension View {
     /// The login card (`StageSheet`) over everything, popping up in the middle instead of sliding up as a sheet.
-    func stage(item: Binding<BrowserTarget?>, tint: Color = Theme.glow,
+    /// `root`: the window's own (the Mac lays the card over the whole window there; the others hand theirs to it).
+    func stage(item: Binding<BrowserTarget?>, tint: Color = Theme.glow, root: Bool = false,
                onClose: @escaping () -> Void = {}) -> some View {
-        modifier(StagePresenter(item: item, tint: tint, onClose: onClose))
+        modifier(StagePresenter(item: item, tint: tint, root: root, onClose: onClose))
     }
 }
 
@@ -1434,19 +1451,69 @@ extension View {
 private struct StagePresenter: ViewModifier {
     @Binding var item: BrowserTarget?
     let tint: Color
+    let root: Bool
     let onClose: () -> Void
     @State private var shown: BrowserTarget?
+    #if os(macOS)
+    @EnvironmentObject private var env: AppEnvironment
+    /// A card handed to the window's presenter, to hear when it's closed.
+    @State private var handed: BrowserTarget?
+    #endif
 
     func body(content: Content) -> some View {
+        #if os(macOS)
+        if root {
+            window(content)
+        } else {
+            // A card's own (an errand card is small): the window lays it over everything.
+            content
+                .onAppear { hand(item) }
+                .onChange(of: item) { _, new in hand(new) }
+                .onChange(of: env.browser) { _, now in
+                    if now != handed, handed != nil {
+                        handed = nil
+                        item = nil
+                        onClose()
+                    }
+                }
+        }
+        #else
+        window(content)
+        #endif
+    }
+
+    #if os(macOS)
+    private func hand(_ target: BrowserTarget?) {
+        guard let target else { return }
+        handed = target
+        env.browser = target
+    }
+    #endif
+
+    private func window(_ content: Content) -> some View {
         content
             .onAppear { show(item) }
             .onChange(of: item) { _, new in show(new) }
+        #if os(macOS)
+            // Over the page itself: a Mac sheet would draw its own grey panel around the card.
+            .overlay {
+                if let target = shown {
+                    StageSheet(target: target, tint: tint, onClose: onClose) {
+                        show(nil)
+                        item = nil
+                    }
+                    .id(target)
+                    .onExitCommand { show(nil); item = nil }
+                }
+            }
+        #else
             .fullScreenCover(item: $shown) { target in
                 StageSheet(target: target, tint: tint, onClose: onClose) {
                     show(nil)
                     item = nil
                 }
             }
+        #endif
     }
 
     private func show(_ target: BrowserTarget?) {

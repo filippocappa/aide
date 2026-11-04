@@ -136,7 +136,7 @@ struct MacRootView: View {
         .onChange(of: env.showToday) { _, show in
             if show { nav.section = .today; env.showToday = false }
         }
-        .stage(item: $env.browser)
+        .stage(item: $env.browser, root: true)
     }
 
     @ViewBuilder private var detail: some View {
