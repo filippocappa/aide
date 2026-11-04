@@ -365,9 +365,9 @@ async def test_products_come_with_their_pictures(env):
             {"title": "Anker USB-C, 2 m", "url": "https://www.amazon.it/dp/B0ANKER", "price": "9,99 €",
              "rating": "4,6", "reviews": "12.463", "note": "Arriva domani"},
             {"title": "UGREEN cavo USB C 2 m", "url": "https://www.amazon.it/dp/B0UGREEN", "price": "8,49 €",
-             "rating": 4.5, "reviews": 800, "note": None},
-            {"title": "Belkin 2 m", "url": "https://www.amazon.it/dp/B0BELKIN", "price": None, "rating": None,
-             "reviews": None, "note": None},
+             "rating": 4.5, "reviews": 800, "note": None, "was": "12,99 €", "audience": "everyone"},
+            {"title": "Belkin 2 m", "url": "https://www.amazon.it/dp/B0BELKIN", "price": "9,99 €", "rating": None,
+             "reviews": None, "note": None, "was": "9,99 €", "audience": "unisex"},
             {"title": "No link", "url": "/dp/B0X", "price": None, "rating": None, "reviews": None, "note": None}]})),
     ])
     e = runner.start("Compare USB-C cables", "USB-C cables", "amazon.it", CONVERSATION)
@@ -376,6 +376,9 @@ async def test_products_come_with_their_pictures(env):
     anker, ugreen, belkin = e["products"]  # the one without a full link is left out
     assert anker["image"] == "https://m.media-amazon.com/anker.jpg"  # from its link on the results
     assert (anker["rating"], anker["reviews"]) == (4.6, 12463)
+    assert (anker["was"], anker["audience"]) == (None, None)  # older finishes have neither
+    assert (ugreen["was"], ugreen["audience"]) == ("12,99 €", None)  # a discount; not a known audience
+    assert (belkin["was"], belkin["audience"]) == (None, "unisex")  # the same price isn't a discount
     assert ugreen["image"] == "https://m.media-amazon.com/ugreen.jpg"  # by its picture's alt text
     assert belkin["image"] == "https://img.test/B0BELKIN.jpg"  # no page showed it: its own page
     assert browser.product_pages == ["https://www.amazon.it/dp/B0BELKIN"]

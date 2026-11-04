@@ -2233,10 +2233,14 @@ Errand:
 Product:
 ```json
 {"title": "Lodge L8SK3, 26 cm", "url": "https://www.amazon.it/dp/B00006JSUA", "price": "49,15 €", "rating": 4.4,
- "reviews": 72015, "note": "Arriva domani", "image": "https://m.media-amazon.com/images/I/81q….jpg"}
+ "reviews": 72015, "was": "59,90 €", "audience": null, "note": "Arriva domani",
+ "image": "https://m.media-amazon.com/images/I/81q….jpg"}
 ```
 `url` is always a full http(s) link (open it on tap). `price`, `rating` (out of 5), `reviews` (how many ratings),
-`note` (one short line: delivery, a catch) and `image` may be null. `image` is a picture from the site itself,
+`note` (one short line: the user's sizes in stock, "44, 44.5", when the errand had them, else delivery or a catch)
+and `image` may be null. Since 2026-11-04: `was` (the price before a discount, as the site writes it; only when
+it's higher than `price`, else null) and `audience` (`men`, `women`, `kids`, `unisex` or null: who the shop sells it
+for). When the user's sizes were in the task, only products in one of them are cards. `image` is a picture from the site itself,
 taken from the page where the errand saw the product, else from the product's own page.
 
 The Confirm's `detail` (on that action in `/v1/approvals` and `pending`):
