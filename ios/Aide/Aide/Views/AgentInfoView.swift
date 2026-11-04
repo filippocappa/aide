@@ -163,10 +163,10 @@ struct AgentInfoSheet: View {
         Button(action: action) {
             Text(title)
                 .font(.body.weight(.semibold))
-                .foregroundStyle(filled ? .white : .primary)
+                .foregroundStyle(filled ? Theme.onAccent : .primary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 13)
-                .infoButtonSurface(filled ? (agent.orchestrator ? Theme.slate : agent.tint) : nil)
+                .infoButtonSurface(filled ? agent.tint : nil) // Aide's is the accent, as Talk
                 .contentShape(Capsule())
         }
         .buttonStyle(CardPress())
