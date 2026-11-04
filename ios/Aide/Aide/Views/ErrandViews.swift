@@ -455,10 +455,19 @@ struct ErrandCard: View {
     @State private var error: String?
     /// The same errand's card comes again further down: just its line here.
     private let folded: Bool
+    /// The chat message above it: when that says the question already, the card doesn't say it again.
+    private let said: String
 
-    init(errand: Errand, folded: Bool = false) {
+    init(errand: Errand, folded: Bool = false, said: String = "") {
         _errand = State(initialValue: errand)
         self.folded = folded
+        self.said = said
+    }
+
+    private var saysLine: Bool {
+        guard let reason = errand.reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty,
+              errand.line == errand.reason else { return true }
+        return !said.contains(reason)
     }
 
     var body: some View {
@@ -471,7 +480,7 @@ struct ErrandCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            if !errand.isOver, !folded {
+            if !errand.isOver, !folded, saysLine {
                 Text(errand.line).font(.subheadline).foregroundStyle(.secondary).lineLimit(4)
             }
             if !folded, ErrandLiveBox.shows(errand) {
@@ -590,9 +599,11 @@ struct ErrandLiveBox: View {
     @AppStorage("errandLiveBox") private var shown = true
     @State private var caption: String?
 
-    /// While there's a page to show: not before it starts, not after it's over, not after a restart closed it.
+    /// While there's a page to show: not before it starts, not after it's over, not after a restart closed it,
+    /// and not while it asks you something (the question and its answers are the card; the page is beside the point).
     static func shows(_ e: Errand) -> Bool {
-        !e.isOver && !["interrupted", "scheduled"].contains(e.status) && (e.status != "queued" || e.url != nil)
+        !e.isOver && !e.needsAnswer && !["interrupted", "scheduled"].contains(e.status)
+            && (e.status != "queued" || e.url != nil)
     }
 
     /// The line under it: what Aide says it's doing, else what it did, else the errand's step.
