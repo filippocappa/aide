@@ -904,6 +904,10 @@ SCENE_PAGES = {
                             + "</form><script>document.querySelectorAll('input').forEach((b, i, all) => "
                               "b.addEventListener('input', () => all[i + 1] && all[i + 1].focus()))</script>",
                             "Glovo"),
+    # Glovo's as it really is: boxes named code-0 … code-3, no maxlength.
+    "/it/login/code2": _html("<h2>Inserisci il codice</h2><form>"
+                             + "".join(f'<input type="text" aria-label="code-{i}">' for i in range(4))
+                             + '<button type="submit">Continua</button></form>', "Glovo"),
     # A link to tap, nothing to type.
     "/it/login/link": _html("<h2>Controlla la tua email: ti abbiamo inviato un link per accedere</h2>", "Glovo"),
 }
@@ -1009,6 +1013,12 @@ async def test_real_chromium_scenes(tmp_path):
         await browser.open(owner, "https://shop.test/it/login/code")
         scene = await browser.scene(owner)
         assert scene["kind"] == "code" and [f["kind"] for f in scene["form"]["fields"]] == ["code"]
+        await browser.put(owner, scene["form"]["fields"][0]["ref"], "4821")
+        assert await browser._page(owner).evaluate(
+            "[...document.querySelectorAll('input')].map(b => b.value).join('')") == "4821"
+        await browser.open(owner, "https://shop.test/it/login/code2")
+        scene = await browser.scene(owner)
+        assert [(f["kind"], f["label"]) for f in scene["form"]["fields"]] == [("code", "Code")]
         await browser.put(owner, scene["form"]["fields"][0]["ref"], "4821")
         assert await browser._page(owner).evaluate(
             "[...document.querySelectorAll('input')].map(b => b.value).join('')") == "4821"

@@ -452,9 +452,11 @@ _FOCUS_JS = r"""
 # A code's boxes from this one on (one-character inputs in its form or box, in page order), marked data-aide-box.
 _MARK_BOXES_JS = r"""(e, n) => {
   document.querySelectorAll('[data-aide-box]').forEach(b => b.removeAttribute('data-aide-box'));
-  if (e.maxLength !== 1) return false;
+  const stem = el => ((el.name || el.id || el.getAttribute('aria-label') || '').match(/^(.*?)[-_\[]?\d\]?$/) || [])[1] || null;
+  const boxy = b => b.maxLength === 1 || b.getBoundingClientRect().width <= 72 || (stem(e) && stem(b) === stem(e));
+  if (!boxy(e)) return false;
   const root = e.closest('form') || e.parentElement.parentElement || document.body;
-  const all = [...root.querySelectorAll('input')].filter(b => b.maxLength === 1 && b.offsetParent !== null);
+  const all = [...root.querySelectorAll('input')].filter(b => b.offsetParent !== null && boxy(b));
   const mine = all.slice(all.indexOf(e), all.indexOf(e) + n);
   if (mine.length < n) return false;
   mine.forEach(b => b.setAttribute('data-aide-box', ''));
@@ -495,6 +497,7 @@ _SCENE_JS = r"""
   // country list, so the app shows it as a code and the server picks the country.
   const DIAL = /prefisso|prefix|country.?code|calling.?code|dial(l?ing)?.?code|codice (del )?paese|indicativo|tel-country-code/;
   const dialOf = el => { const m = (el.tagName === 'SELECT' ? clean(el.selectedOptions[0] && el.selectedOptions[0].text) : el.value || '').match(/\+\d{1,4}\b/); return m ? m[0] : null; };
+  const boxStem = el => ((el.name || el.id || el.getAttribute('aria-label') || '').match(/^(.*?)[-_\[]?\d\]?$/) || [])[1] || null;
   const kindOf = el => {
     const hint = [el.autocomplete, el.name, el.id, el.getAttribute('inputmode'), el.placeholder, labelOf(el)].join(' ').toLowerCase();
     if (el.tagName === 'SELECT') return DIAL.test(hint) || [...el.options].filter(o => /\+\d{1,4}\b/.test(o.text)).length > 5 ? 'dial' : null;
@@ -509,9 +512,17 @@ _SCENE_JS = r"""
   };
   const inputs = [...document.querySelectorAll('input,textarea,select')].filter(visible).map(el => ({el, kind: kindOf(el)})).filter(f => f.kind);
   // A code in boxes, a digit each (an SMS code): one field, the first box (put types the code across them all).
-  const boxes = inputs.filter(f => f.el.tagName === 'INPUT' && f.el.maxLength === 1 && ['code', 'text', 'phone'].includes(f.kind));
-  if (boxes.length >= 4) {
+  // Boxes: one character long, or narrow, or named in a row (Glovo's code-0 … code-3).
+  const candidates = inputs.filter(f => f.el.tagName === 'INPUT' && ['code', 'text', 'phone'].includes(f.kind));
+  let boxes = candidates.filter(f => f.el.maxLength === 1 || f.el.getBoundingClientRect().width <= 72);
+  if (boxes.length < 4) {
+    const stems = {};
+    candidates.forEach(f => { const s = boxStem(f.el); if (s) (stems[s] = stems[s] || []).push(f); });
+    boxes = Object.values(stems).sort((x, y) => y.length - x.length)[0] || [];
+  }
+  if (boxes.length >= 4 && boxes.length <= 8) {
     boxes[0].kind = 'code';
+    boxes[0].label = 'Code';
     boxes.slice(1).forEach(f => { f.kind = 'box'; });
   }
   const search = inputs.find(f => f.kind === 'search');
@@ -563,7 +574,7 @@ _SCENE_JS = r"""
     const first = (pw || (codeish && code) || user).el;
     const root = first.form || first.closest('form,[role=dialog],main') || document.body;
     const fields = inputs.filter(f => root.contains(f.el) && ['username', 'password', 'code', 'phone', 'dial', 'text'].includes(f.kind))
-      .slice(0, 4).map(f => ({ref: refOf(f.el), kind: f.kind, label: labelOf(f.el) || null, filled: !!f.el.value,
+      .slice(0, 4).map(f => ({ref: refOf(f.el), kind: f.kind, label: f.label || labelOf(f.el) || null, filled: !!f.el.value,
                               ...(f.kind === 'dial' ? {value: dialOf(f.el)} : {})}));
     const GO = /continu|accedi|sign.?in|log.?in|avanti|next|verific|verify|invia|submit|conferma|confirm|ok\b|entra/i;
     const submit = [...root.querySelectorAll('button[type=submit],input[type=submit]')].find(visible) ||
