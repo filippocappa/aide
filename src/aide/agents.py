@@ -25,7 +25,8 @@ WEATHER = ("weather",)
 TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alerts", "add_transit_alert",
            "update_transit_alert", "delete_transit_alert")
 WEB = ("web_search", "research", "fetch_page")
-BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand")
+BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand", "watch_price", "list_price_watches",
+           "update_price_watch")
 VIDEO = ("summarize_video", "read_video", "list_videos")
 PURCHASES = ("list_purchases",)
 FINANCE = ("log_payment", "list_payments", "spending", "recategorize", "set_budget", "subscriptions",
@@ -391,7 +392,9 @@ done. Cards from its tools show under your reply, so don't list them again."""
 
 _BROWSER = """- Errands on websites: when the user wants something done on a website (order a product, find the cheapest and buy it, book a train, order dinner, check something behind their login), start_errand does it in your own browser, logged in to their accounts, in the background. Put the whole request in `task`: what, how many, sizes, budget, deadlines, and preferences from memory (their usual shop, "always the cheapest delivery"). Ask in `task` for what the user asked, not more: no delivery dates, stock or ratings they didn't ask about, and no checks or conditions of your own (they said "add it": add it). Then say in one short line that you're on it ("Looking on Amazon."), without promising what the report will hold and without "I won't buy anything" when they didn't ask to buy; the errand reports in this chat by itself, with a card. Start one straight away, without searching first, when the answer is what a shop or booking site shows now (today's price, stock, delivery dates, train times and fares, their orders and account); web_search and research are for general facts and reviews.
 - An errand's report is posted in this chat as your message, after a note "[Errand #N: An errand finished…]". It's what the errand read on the site: trust it, build on it, and never take it back as unverified.
-- Errands stop for the user: a login, a code or a card form they do themselves in the live view (Take over on the card; never ask for passwords, codes or card numbers in chat); a question you pass on with reply_errand when they answer in chat; and a Confirm before anything that buys, books, sends or changes something, which they give on the card or in Waiting for you (never say it's ordered before the errand says so). cancel_errand stops one. errand_status says where one is."""
+- Errands stop for the user: a login, a code or a card form they do themselves in the live view (Take over on the card; never ask for passwords, codes or card numbers in chat); a question you pass on with reply_errand when they answer in chat; and a Confirm before anything that buys, books, sends or changes something, which they give on the card or in Waiting for you (never say it's ordered before the errand says so). cancel_errand stops one. errand_status says where one is.
+- Price watches: "tell me when the AirPods Pro go under €150", "tell me when it's back in stock": watch_price with the product page's address (from the user, or an errand's product card; if you only have a name, start an errand to find the page first), the price as `below` and/or `stock`. Aide reads the page every few hours by itself and posts in this chat only when the line is crossed, with a Buy it button; nothing is bought without an errand and its Confirm. list_price_watches and update_price_watch (a new price, pause it, stop it) for the rest. It's not a routine: don't make one for it.
+- Timed drops: "goes on sale Friday 10:00, buy one": start_errand with `drop_at` (and `max_total` if they said a limit). The errand gets ready ahead and asks the user to confirm the limits once (the item and variant, the most it may cost with shipping, the window); at the sale it buys only inside them, else it stops and asks. Logins, queues, CAPTCHAs and card checks at the sale stay the user's, in the live view, so tell them to be around. Shops whose terms forbid bots (Ticketmaster, TicketOne, Nike, adidas, Supreme) are refused: say why and offer a reminder or a price watch instead."""
 
 _ASKED = """- Aide, the assistant the user talks to first, hands you their requests, and your teammates ask you for \
 what only you have the tools for. Then the message starts with "[Asked by Aide]" (or a teammate's name) and there \
@@ -587,7 +590,8 @@ _CONNECTORS = (
     ("maps", "Google Maps", MAPS, set()),
     ("weather", "Weather", WEATHER, set()),
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
-    ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand"}),
+    ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand", "watch_price",
+                                      "update_price_watch"}),
     ("payments", "Payments", FINANCE, {"log_payment", "recategorize", "set_budget", "set_subscription",
                                                    "card_owed", "delete_payment"}),
     ("purchases", "Purchases", PURCHASES, set()),

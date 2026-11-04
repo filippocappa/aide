@@ -1045,6 +1045,13 @@ class Browser:
         return await self._page(owner).screenshot(type="jpeg", quality=70 if sharp else 60,
                                                   scale="device" if sharp else "css")
 
+    async def offer(self, owner: str) -> dict:
+        """What the page says about its product's offer, for a price watch (pricewatch.OFFER_JS)."""
+        from .pricewatch import OFFER_JS
+        page = self._page(owner)
+        await self._settle(page)
+        return await page.evaluate(OFFER_JS)
+
     async def text(self, owner: str) -> str:
         """All the page's text, for checking a total before a confirmed click."""
         return await self._page(owner).evaluate("() => document.body ? document.body.innerText : ''")

@@ -22,6 +22,7 @@ from .digest import DigestService, digest_schedule
 from .drafts import Drafts
 from .engine import Engine
 from .errands import ErrandRunner, ErrandStore, errand_tools, purchase_tools
+from .pricewatch import PriceWatches, price_watch_tools
 from .gmail import Gmail
 from .food import FoodStore
 from .foods import FoodDB
@@ -188,7 +189,7 @@ def main() -> None:
         log.warning("TAVILY_API_KEY not set: web search disabled")
     errand_store = ErrandStore(db.conn, settings.timezone)
     tools += purchase_tools(errand_store, settings.timezone)
-    errands = None
+    errands = watches = None
     if Browser.available():
         # Headed when there's a display (Xvfb): harder for a site to tell from a person's browser.
         browser = Browser(settings.db_path.parent / "browser", headed=bool(os.environ.get("DISPLAY")))
@@ -198,6 +199,10 @@ def main() -> None:
         def errand_chat() -> str:  # the chat of the turn that starts one (the Team chat's go to the first chat)
             return CONVERSATION if agent._conversation in (None, TEAM) else agent._conversation
         tools += errand_tools(errands, errand_chat)
+        # Price watches: the product page read every few hours, no model call (but a fast one when it can't parse).
+        watches = PriceWatches(db.conn, settings.timezone, browser, client, settings.model, push, CONVERSATION)
+        watches.errands = errands
+        tools += price_watch_tools(watches, errand_chat)
     else:
         log.warning("Playwright's Chromium not installed (uv run playwright install chromium): no browser errands")
     video_store = VideoStore(db.conn, settings.timezone)
@@ -278,6 +283,7 @@ def main() -> None:
         agent.reader = PhotoReader(settings.openrouter_api_key, settings.photo_read_model)  # Coach's photos
     if errands:
         errands.agent = agent
+        watches.agent = agent
     videos.agent = agent
     whereabouts = Whereabouts(location, maps) if maps is not None else None
     if whereabouts:
@@ -357,7 +363,7 @@ def main() -> None:
             lock_watch.run(),
             focus_watch.run(),
             bedtime.run(),
-            *([errands.run()] if errands else []),
+            *([errands.run(), watches.run()] if errands else []),
             videos.run(),
             lessons.run(),
             *([banks.run()] if banks.enabled else []),
@@ -368,7 +374,7 @@ def main() -> None:
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
-                             quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off,
+                             quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off, watches=watches,
                              weights=weights, videos=videos, lessons=lessons, finance=finance,
                              banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
                              focus=focus, focus_watch=focus_watch)

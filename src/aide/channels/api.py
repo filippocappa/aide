@@ -27,6 +27,7 @@ from ..drafts import Drafts
 from ..browser import BrowserError, check_site, full_url, site_of
 from ..engine import Engine
 from ..errands import ErrandRunner, ErrandStore
+from ..pricewatch import PriceWatches
 from ..food import MACROS, MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
 from ..foods import MAX_NAME as MAX_FOOD_NAME, FoodDB, free_notes
 from ..nutrition import PROPOSE_PROMPT, PROPOSE_TOKENS, Nutrition, parse_proposal, proposal_input
@@ -610,6 +611,22 @@ class LiveSettingsPatch(BaseModel):
     focus: bool | None = None
 
 
+class PriceWatchIn(BaseModel):
+    url: str
+    title: str
+    below: float | None = None
+    stock: bool = False
+    every_hours: float | None = None
+
+
+class PriceWatchPatch(BaseModel):
+    title: str | None = None
+    below: float | None = None
+    stock: bool | None = None
+    every_hours: float | None = None
+    status: str | None = None  # active, ended
+
+
 class LiveActivityIn(BaseModel):
     key: str = Field(min_length=1, max_length=200)
     token: str
@@ -666,7 +683,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                lessons: LessonStore | None = None, finance: FinanceStore | None = None,
                banks: Banks | None = None, bank_redirect: str | None = None,
                bedtime: Bedtime | None = None, focus: FocusStore | None = None,
-               focus_watch: FocusWatcher | None = None) -> FastAPI:
+               focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None) -> FastAPI:
     db: Database = agent.db
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -889,7 +906,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def approvals():
         actions = [{"id": a["id"], "summary": a["summary"], "agent": a["agent"] or "aide",
                     "conversation_id": a["conversation"] or CONVERSATION, "created_at": local(a["created_at"]),
-                    "expires_at": local((datetime.fromisoformat(a["created_at"]) + PENDING_TTL).isoformat()),
+                    "expires_at": local(a["expires_at"] or
+                                        (datetime.fromisoformat(a["created_at"]) + PENDING_TTL).isoformat()),
                     **({"detail": a["detail"]} if a["detail"] else {})}
                    for a in db.pending_actions(CONVERSATION, PENDING_TTL)]
         today = objectives.today()
@@ -3094,6 +3112,59 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             if p["amount"] is not None and p["currency"]:
                 totals[p["currency"]] = round(totals.get(p["currency"], 0) + p["amount"], 2)
         return {"purchases": rows, "totals": totals}
+
+    def watch_store() -> PriceWatches:
+        if watches is None:
+            raise HTTPException(503, "the browser isn't installed on the server")
+        return watches
+
+    def watch_or_404(watch_id: int) -> dict:
+        w = watch_store().get(watch_id)
+        if w is None:
+            raise HTTPException(404, f"no price watch {watch_id}")
+        return w
+
+    @app.get("/v1/pricewatches", dependencies=[Depends(auth)])
+    async def list_price_watches(status: str | None = None):
+        if watches is None:
+            return {"price_watches": [], "enabled": False}
+        return {"price_watches": [watches.as_json(w) for w in watches.all(status)], "enabled": True}
+
+    @app.post("/v1/pricewatches", dependencies=[Depends(auth)])
+    async def add_price_watch(body: PriceWatchIn):
+        try:
+            w = watch_store().add(body.url, body.title, body.below, body.stock, body.every_hours, CONVERSATION)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        return watches.as_json(await watches.check(w["id"], post=False))
+
+    @app.patch("/v1/pricewatches/{watch_id}", dependencies=[Depends(auth)])
+    async def edit_price_watch(watch_id: int, body: PriceWatchPatch):
+        watch_or_404(watch_id)
+        try:
+            return watches.as_json(watches.update(watch_id, **body.model_dump(exclude_unset=True)))
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+
+    @app.delete("/v1/pricewatches/{watch_id}", dependencies=[Depends(auth)])
+    async def delete_price_watch(watch_id: int):
+        watch_or_404(watch_id)
+        watches.delete(watch_id)
+        return {"ok": True}
+
+    @app.post("/v1/pricewatches/{watch_id}/check", dependencies=[Depends(auth)])
+    async def check_price_watch(watch_id: int):
+        watch_or_404(watch_id)
+        return watches.as_json(await watches.check(watch_id))
+
+    @app.post("/v1/pricewatches/{watch_id}/buy", dependencies=[Depends(auth)])
+    async def buy_price_watch(watch_id: int):
+        watch_or_404(watch_id)
+        try:
+            e = watches.buy(watch_id)
+        except ValueError as ex:
+            raise HTTPException(409, str(ex)) from None
+        return errand_store.as_json(e)
 
     @app.websocket("/v1/browser/live")
     async def browser_live(ws: WebSocket, errand: int | None = None, site: str | None = None, frames: bool = True):
