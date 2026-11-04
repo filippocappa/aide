@@ -3097,6 +3097,8 @@ struct PurchaseDetail: Decodable, Hashable {
     var variant: String?
     var quantity: Int?
     var maxTotal: String?
+    /// Why buying there with Aide may cost the order or the account (the shop's terms don't allow bots), or nil.
+    var risk: String?
     var opensAt: String?
     var closesAt: String?
     var card: String?

@@ -952,6 +952,10 @@ struct PurchaseConfirmSheet: View {
                             .padding(14)
                             .background(Theme.row, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                         Text(DropSummary.rule(drop)).font(.footnote).foregroundStyle(.secondary)
+                        if let risk = drop.risk {
+                            Label(risk + ".", systemImage: "exclamationmark.triangle.fill")
+                                .font(.footnote).foregroundStyle(.orange)
+                        }
                         if let shot = drop.screenshot {
                             Text("The product page").font(.headline)
                             ServerPhoto(id: shot, fit: true)

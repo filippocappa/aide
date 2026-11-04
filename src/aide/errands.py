@@ -63,16 +63,21 @@ DROP_WINDOW = timedelta(hours=2)
 DROP_MAX_WINDOW = timedelta(hours=24)
 DROP_TICK = 15  # seconds between looks for a drop that's due
 DROP_POLL = 4  # seconds between reloads while waiting for the sale
-# Shops whose terms forbid buying with automated tools (bots), most of all at a limited release: Aide doesn't buy
-# a drop there, and says why. Price watches and ordinary errands (finding, comparing) still work.
+# Ticket sellers: buying tickets with bots is against the law in some countries (the US BOTS Act, the UK's rules on
+# getting round purchase limits) and the queue is meant for people, so Aide doesn't buy a drop there and says why.
+# Price watches and ordinary errands (finding, comparing) still work.
 NO_BOTS = {
-    "ticketmaster": "Ticketmaster's terms forbid buying tickets with automated tools, and the queue is meant for people",
-    "ticketone.it": "TicketOne's terms forbid buying tickets with automated tools, and the queue is meant for people",
-    "vivaticket": "Vivaticket's terms forbid buying tickets with automated tools",
-    "nike.com": "Nike's terms forbid buying with bots or other automated means, and it cancels orders placed that way",
-    "adidas": "adidas' terms forbid buying with bots or other automated means, and it cancels orders placed that way",
-    "supreme.com": "Supreme's terms forbid buying with bots, and it cancels orders placed that way",
-    "pokemoncenter.com": "Pokémon Center's terms forbid buying with bots, and it cancels orders placed that way",
+    "ticketmaster": "Ticketmaster sells tickets, and buying tickets with bots is against the law in some countries",
+    "ticketone.it": "TicketOne sells tickets, and buying tickets with bots is against the law in some countries",
+    "vivaticket": "Vivaticket sells tickets, and buying tickets with bots is against the law in some countries",
+}
+# Shops whose terms don't allow automated buying: not a law, the risk is the user's own account. Aide buys a drop
+# there, and the limits' Confirm says the risk once (`risk` on the detail).
+RISKY = {
+    "nike.com": "Nike's terms don't allow automated buying: it may cancel the order or close the account",
+    "adidas": "adidas' terms don't allow automated buying: it may cancel the order or close the account",
+    "supreme.com": "Supreme's terms don't allow automated buying: it may cancel the order or close the account",
+    "pokemoncenter.com": "Pokémon Center's terms don't allow automated buying: it may cancel the order or close the account",
 }
 # The order's total as a checkout labels it ("Totale ordine: 162,40 €").
 TOTAL_LINE = re.compile(r"\b(?:totale(?: dell'?ordine| ordine| da pagare| complessivo| \(iva inclusa\))?|"
@@ -1286,7 +1291,8 @@ class Phase:
                   "item": limits["item"], "variant": limits["variant"], "quantity": limits["quantity"],
                   "max_total": limits["max_total"], "opens_at": opens.astimezone(tz).isoformat(),
                   "closes_at": closes.astimezone(tz).isoformat(), "address": address, "card": card,
-                  "screenshot": screenshot, "url": (self.browser.where(self.owner) or {}).get("url")}
+                  "screenshot": screenshot, "url": (self.browser.where(self.owner) or {}).get("url"),
+                  "risk": risky(site)}
         text = f"At the drop ({opens.astimezone(tz):%a %d %b %H:%M}): {limits['summary']}, up to {limits['max_total']}"
         action_id, _ = runner.agent.db.add_pending(
             runner.channel, "errand_drop", {"errand": self.errand_id}, text, f"errand:{self.errand_id}",
@@ -1413,9 +1419,15 @@ KEYS = ("Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "Backspace")
 
 
 def no_bots(site: str | None) -> str | None:
-    """Why Aide doesn't buy at a drop on this site (its terms forbid bots), or None."""
+    """Why Aide doesn't buy at a drop on this site (it sells tickets), or None."""
     site = (site or "").lower()
     return next((why for key, why in NO_BOTS.items() if key in site), None)
+
+
+def risky(site: str | None) -> str | None:
+    """The risk of buying a drop on this site (its terms don't allow bots), said once on the Confirm; or None."""
+    site = (site or "").lower()
+    return next((why for key, why in RISKY.items() if key in site), None)
 
 
 def plan_drop(drop_at: str, drop_until: str | None, max_total: str | None, tz: ZoneInfo) -> dict:
