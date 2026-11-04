@@ -3325,10 +3325,10 @@ struct ReleaseColourway: Decodable, Identifiable, Hashable {
         plan = try c.decodeIfPresent(ReleasePlan.self, forKey: .plan)
     }
 
-    /// "Thu 20 Nov · 09:00", "Thu 20 Nov · time not out yet", "On sale now", "Sold out", "No date yet".
+    /// "Thu 20 Nov · 09:00", "Thu 20 Nov · time not out yet", "Available now", "Sold out", "No date yet".
     var when: String {
         switch status {
-        case "out": return "On sale now"
+        case "out": return "Available now"
         case "sold_out": return "Sold out"
         default: break
         }
