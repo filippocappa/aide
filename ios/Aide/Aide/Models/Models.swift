@@ -3234,10 +3234,12 @@ struct Release: Decodable, Identifiable, Hashable {
     var checkedAt: String?
     var nextAt: String?
     var conversationId: String?
+    /// The picks' sizes, else the last tracker's: a new page starts with them ("EU 44").
+    var usualSizes: [String] = []
 
     enum CodingKeys: String, CodingKey {
         case id, query, title, status, summary, colourways, sources, picks, shops, errandId, error, log, checkedAt,
-             nextAt, conversationId
+             nextAt, conversationId, usualSizes
     }
 
     init(from decoder: Decoder) throws {
@@ -3257,6 +3259,7 @@ struct Release: Decodable, Identifiable, Hashable {
         checkedAt = try c.decodeIfPresent(String.self, forKey: .checkedAt)
         nextAt = try c.decodeIfPresent(String.self, forKey: .nextAt)
         conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
+        usualSizes = try c.decodeIfPresent([String].self, forKey: .usualSizes) ?? []
     }
 
     var picked: [ReleaseColourway] { colourways.filter(\.picked) }
@@ -3295,6 +3298,11 @@ struct ReleaseColourway: Decodable, Identifiable, Hashable {
     var new: Bool?
     var picked: Bool = false
     var plan: ReleasePlan?
+    /// The shop page's size grid, in its order (empty: not read, or no grid).
+    var sizes: [ReleaseSize] = []
+    var sizesSite: String?
+    /// Which of the user's sizes are in stock, in their order; nil when not known.
+    var mine: [String]?
 
     var id: String { key }
     var opens: Date? { opensAt.flatMap(Wire.parse) }
@@ -3302,7 +3310,8 @@ struct ReleaseColourway: Decodable, Identifiable, Hashable {
     var imageURL: URL? { image.flatMap(URL.init(string:)) }
 
     enum CodingKeys: String, CodingKey {
-        case key, name, code, price, status, date, time, opensAt, method, url, shops, note, image, new, picked, plan
+        case key, name, code, price, status, date, time, opensAt, method, url, shops, note, image, new, picked, plan,
+             sizes, sizesSite, mine
     }
 
     init(from decoder: Decoder) throws {
@@ -3323,12 +3332,32 @@ struct ReleaseColourway: Decodable, Identifiable, Hashable {
         new = try c.decodeIfPresent(Bool.self, forKey: .new)
         picked = try c.decodeIfPresent(Bool.self, forKey: .picked) ?? false
         plan = try c.decodeIfPresent(ReleasePlan.self, forKey: .plan)
+        sizes = try c.decodeIfPresent([ReleaseSize].self, forKey: .sizes) ?? []
+        sizesSite = try c.decodeIfPresent(String.self, forKey: .sizesSite)
+        mine = try c.decodeIfPresent([String].self, forKey: .mine)
     }
 
+    /// Which of these sizes ("44.5" or "EU 44.5") the shop's grid has in stock, in their order; nil when there's no
+    /// grid or no sizes. The server's `mine`, worked out here for sizes picked but not yet saved.
+    func inStock(of wanted: [String]) -> [String]? {
+        guard !sizes.isEmpty, !wanted.isEmpty else { return nil }
+        let stock = Set(sizes.filter(\.inStock).map { ReleaseSize.key($0.size) })
+        return wanted.filter { stock.contains(ReleaseSize.key($0)) }
+    }
+
+    /// Out on the shop but not in any of the user's sizes.
+    func soldOutForMe(_ mine: [String]?) -> Bool { status == "out" && mine == [] }
+
     /// "Thu 20 Nov · 09:00", "Thu 20 Nov · time not out yet", "Available now", "Sold out", "No date yet".
-    var when: String {
+    var when: String { when(mine) }
+
+    /// The same, with "Available in 44.5" or "Sold out in your sizes" when the shop's sizes are known.
+    func when(_ mine: [String]?) -> String {
         switch status {
-        case "out": return "Available now"
+        case "out":
+            guard let mine else { return "Available now" }
+            return mine.isEmpty ? "Sold out in your size\(sizes.count == 1 ? "" : "s")"
+                : "Available in " + mine.map(ReleaseSize.short).joined(separator: ", ")
         case "sold_out": return "Sold out"
         default: break
         }
@@ -3347,6 +3376,23 @@ struct ReleaseColourway: Decodable, Identifiable, Hashable {
     }()
 }
 
+/// One size on a shop's page: "EU 44.5", in stock or crossed out.
+struct ReleaseSize: Decodable, Hashable {
+    let size: String
+    let inStock: Bool
+
+    /// "EU 44.5" → "44.5".
+    static func short(_ size: String) -> String {
+        size.replacingOccurrences(of: "EU", with: "").trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The same size however it's written: "EU 44,5", "44 ½" and "44.5" are "44.5".
+    static func key(_ size: String) -> String {
+        short(size).replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: " ½", with: ".5")
+            .replacingOccurrences(of: "½", with: ".5")
+    }
+}
+
 struct ReleaseShop: Decodable, Hashable {
     let site: String
     var url: String?
@@ -3360,7 +3406,7 @@ struct ReleaseSource: Decodable, Hashable {
 
 /// What's set up for a picked colourway: a timed drop, a reminder, a price watch, an errand, or just told.
 struct ReleasePlan: Decodable, Hashable {
-    /// drop, reminder, watch, errand, told.
+    /// drop, reminder, watch, errand, told, sizes (waiting for one of the user's sizes).
     let what: String
     var site: String?
     var errandId: Int?
@@ -3372,6 +3418,9 @@ struct ReleasePlan: Decodable, Hashable {
 
 struct ReleasePicks: Codable, Hashable {
     var colourways: [String]
+    /// The sizes the user would take, the one they'd rather have first.
+    var sizes: [String]?
+    /// The first of them (the old field).
     var size: String?
     var maxTotal: Double?
     var currency: String?

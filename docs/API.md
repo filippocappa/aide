@@ -2361,6 +2361,13 @@ picked colourway it sets up, and redoes when the drop moves:
 - tell, or any draw, with a date and a time: a reminder 10 minutes before (a draw is never entered for you).
 - no time yet: nothing, until a look finds one.
 - sold out: a price watch on its page for stock. Available now (not a discount): buy starts an errand (its own Confirm), tell just says so.
+
+Sizes (since 2026-11-04): each colourway's page is read for its size grid with no model (after the research, at each
+look; crossed out, greyed or disabled is out of stock). A grid sets `status`: none in stock is `sold_out`, some is
+`out`. With the user's sizes picked, "available" means one of *them* is in stock: none is plan `sizes` (no price
+watch, which can't tell sizes apart): the page is read again every 3 hours, and when one comes back it's bought in that
+size (buy) or told (tell), with a post. Buying takes the first of the user's sizes in stock, then the others in order.
+A page without a grid (not out yet, a page that can't be read) works as before.
 Five looks in a row that fail stop it (`failed`). Stop undoes what's set up (cancels the errands, deletes the
 reminders, ends the watches).
 
@@ -2372,11 +2379,15 @@ Release:
    "status": "upcoming", "date": "2026-11-20", "time": "09:00", "opens_at": "2026-11-20T09:00:00+01:00",
    "method": "fcfs", "url": "https://www.nike.com/it/t/…", "shops": [{"site": "nike.com", "url": "…", "note": null}],
    "note": null, "image": "https://…jpg", "new": false, "picked": true,
+   "sizes": [{"size": "EU 43.5", "in_stock": false}, {"size": "EU 44", "in_stock": true}],
+   "sizes_at": "2026-11-04T10:00:00+01:00", "sizes_site": "nike.com", "mine": ["EU 44"],
    "plan": {"what": "drop", "site": "nike.com", "errand_id": 12, "errand_status": "queued", "watch_id": null,
             "reminder_id": null, "text": "Volt/Black: a timed drop on nike.com, Thu 20 Nov 09:00, up to 320,00 €"}}],
  "sources": [{"title": "Sole Retriever", "url": "https://…"}],
- "picks": {"colourways": ["HF7356-700"], "size": "EU 43", "max_total": 320.0, "currency": "EUR",
+ "picks": {"colourways": ["HF7356-700"], "sizes": ["EU 44", "EU 43.5"], "size": "EU 44", "max_total": 320.0,
+            "currency": "EUR",
            "shops": ["nike.com"], "mode": "buy", "max_total_text": "320,00 €"},
+  "usual_sizes": ["EU 44", "EU 43.5"],
  "shops": ["nike.com", "zalando.it"], "errand_id": 9, "error": null,
  "log": [{"ts": "2026-11-04T10:00:00+01:00", "text": "Volt/Black drops 2026-11-20 09:00 (was 2026-11-20)"}],
  "checked_at": "2026-11-04T10:00:00+01:00", "next_at": "2026-11-05T10:00:00+01:00",
@@ -2386,8 +2397,12 @@ Release:
 - A colourway's `key` is its code, else its name; `status`: `out`, `upcoming`, `sold_out`, `rumoured`; `method`:
   `fcfs`, `draw`, `unknown`. `date` and `time` are Italy's; `time` null: not announced. `opens_at`: both together.
   `new`: found on the last look. `plan`: null until something is set up; `what` is `drop`, `reminder`, `watch`,
-  `errand` or `told`.
-- `picks`: null until the user picks. `mode`: `tell` or `buy` (needs `size` and `max_total`, delivery included).
+  `errand`, `told` or `sizes` (waiting for one of the user's sizes).
+- `sizes`: the page's grid in its order, `[]` when not read (or no grid); `sizes_at` when, `sizes_site` where.
+  `mine`: which of the user's sizes (the picks', else `usual_sizes`) are in stock, in their order; null when not known.
+- `picks`: null until the user picks. `sizes`: the sizes the user would take, the one they'd rather have first;
+  `size` is the first (the old field, still read on `PUT`). `mode`: `tell` or `buy` (needs a size and `max_total`,
+  delivery included). `usual_sizes`: the picks' sizes, else the last tracker's, to start a new page with.
   `shops` empty: any. `shops` on the release: every shop the colourways name, most named first.
 - `log`: the last 20 changes, newest first. `next_at`: only while `tracking`.
 
@@ -2396,7 +2411,7 @@ Release:
 | `GET /v1/releases` | | `{"releases": [Release], "enabled": true}` |
 | `POST /v1/releases` | `{"query": "Nike Alphafly 4"}` | the Release (`researching`; the same query again returns the one there is) |
 | `GET /v1/releases/{id}` | | the Release |
-| `PUT /v1/releases/{id}/picks` | `{"colourways": ["HF7356-700"], "size": "EU 43", "max_total": 320, "shops": [], "mode": "buy"}` | the Release with what it set up. `422`: an unknown colourway, or buy without a size or limit |
+| `PUT /v1/releases/{id}/picks` | `{"colourways": ["HF7356-700"], "sizes": ["EU 44", "EU 43.5"], "max_total": 320, "shops": [], "mode": "buy"}` (or `"size": "EU 44"`) | the Release with what it set up. `422`: an unknown colourway, or buy without a size or limit |
 | `POST /v1/releases/{id}/check` | | the Release after a look now (posts what changed) |
 | `POST /v1/releases/{id}/stop` | | the Release, `stopped`, what was set up undone |
 | `POST /v1/releases/{id}/resume` | | the Release, `tracking` again |
