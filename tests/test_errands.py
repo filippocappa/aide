@@ -11,7 +11,7 @@ from aide.browser import Browser, BrowserError, site_of
 from aide.channels.api import create_app
 from aide.db import Database
 from aide.errands import (ErrandRunner, ErrandStore, Phase, commit_reason, commits, errand_tools, parse_money,
-                          picture_for, placed, purchase_tools, _same_total)
+                          picture_for, named_picture, placed, purchase_tools, _same_total)
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
@@ -414,6 +414,23 @@ def test_picture_for_a_product():
     assert picture_for("https://www.amazon.it/", "x", images) is None  # a bare site isn't a product
 
 
+def test_picture_for_skips_a_section_of_the_site():
+    # Glovo: the sushi circle links to the city's page, which every restaurant's link starts with.
+    images = [{"path": "/it/it/torino", "src": "https://g/sushi-icon.png", "alt": ""},
+              {"path": "/it/it/torino/stores/poke-sun-tor", "src": "https://g/poke-sun.jpg", "alt": "Poke Sun"}]
+    assert picture_for("https://glovoapp.com/it/it/torino/stores/poke-sun-tor", "Poke Sun", images) == \
+        "https://g/poke-sun.jpg"
+    assert picture_for("https://glovoapp.com/it/it/torino/stores/zj-ravioli-tor", "Zj Poke", images) is None
+
+
+def test_named_picture_prefers_the_exact_name():
+    images = [{"path": None, "src": "https://g/pizzeria.jpg", "alt": "Pizza Hut Lingotto"},
+              {"path": None, "src": "https://g/pizza-circle.png", "alt": "Pizza"}]
+    assert named_picture("Pizza", images) == "https://g/pizza-circle.png"
+    dish = [{"path": None, "src": "https://g/bologna.jpg", "alt": "BOLOGNA"}]
+    assert named_picture("BOLOGNA pizza", dish) == "https://g/bologna.jpg"  # an order line says more than the menu
+
+
 async def test_a_changed_total_isnt_clicked(env):
     make, db, browser = env
     runner, agent, _ = make([
@@ -522,7 +539,12 @@ async def test_a_question_with_pictures_answers_with_a_card(env):
         calls(("open_page", {"url": GLOVO})),
         calls(("ask_user", {"question": "What do you feel like?", "options": None,
                             "choices": [sushi, {**sushi}, {**sushi, "title": "Pizza"}]})),
-        calls(("ask_user", {"question": "Which one?", "options": None, "choices": [ko]})),
+        calls(("ask_user", {"question": "Which one?", "options": None,
+                            "choices": [{**ko, "image": "https://cdn.glovo.com/sushi-icon.png"},
+                                        {**ko, "title": "Poke Sun", "url": None,
+                                         "image": "https://cdn.glovo.com/sushi-icon.png"},
+                                        {**ko, "title": "Zj Poke", "url": None,
+                                         "image": "https://cdn.glovo.com/sushi-icon.png"}]})),
     ])
     e = runner.start("Dinner on Glovo; they haven't decided", "Dinner", "glovoapp.com", CONVERSATION)
     e = await next_phase(runner)
@@ -534,8 +556,26 @@ async def test_a_question_with_pictures_answers_with_a_card(env):
     assert runner.store.as_json(runner.store.get(e["id"]))["choices"] is None
     e = await next_phase(runner)
     assert "The user answered: Sushi" in prompt_of(runner.client.requests[2])
-    c = runner.store.as_json(e)["choices"][0]
+    c, poke, zj = runner.store.as_json(e)["choices"]
     assert (c["image"], c["rating"], c["note"]) == ("https://cdn.glovo.com/ko.jpg", 4.7, "25–35 min · 1,49 € delivery")
+    assert poke["image"] is None and zj["image"] is None  # the model's one icon for every answer: none
+
+
+async def test_plain_answers_with_pictures_become_cards(env):
+    make, _, browser = env
+    browser.pages[GLOVO] = ("I Love Poke", "Menu", {})
+    browser.pictures[GLOVO] = [{"path": None, "src": "https://cdn.glovo.com/tropical.jpg", "alt": "Tropical Salmon"},
+                               {"path": None, "src": "https://cdn.glovo.com/teriyaki.jpg", "alt": "Chicken Teriyaki"}]
+    runner, agent, _ = make([
+        calls(("open_page", {"url": GLOVO})),
+        calls(("ask_user", {"question": "Which poke?", "choices": None,
+                            "options": ["Tropical Salmon – 10,43 € (was 14,90 €)", "Chicken Teriyaki – 9,73 €"]})),
+    ])
+    e = runner.start("A poke from I Love Poke", "Poke", "glovoapp.com", CONVERSATION)
+    shown = runner.store.as_json(await next_phase(runner))
+    assert [(c["title"], c["price"], c["image"]) for c in shown["choices"]] == [
+        ("Tropical Salmon", "10,43 €", "https://cdn.glovo.com/tropical.jpg"),
+        ("Chicken Teriyaki", "9,73 €", "https://cdn.glovo.com/teriyaki.jpg")]
 
 
 async def test_a_cancelled_confirm_cancels_the_errand(env):

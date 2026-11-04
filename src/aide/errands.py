@@ -91,13 +91,14 @@ COMMIT_HINT = re.compile(
     r"confirm[-_ ]?(order|payment|purchase|booking)|complete[-_ ]?(order|purchase|checkout|booking)|"
     r"pay[-_ ]?now|\bpay\b|checkout[-_ ]?submit|order[-_ ]?submit|conferma[-_ ]?ordine|effettua[-_ ]?ordine", re.I)
 # A checkout: a page where the next button may be the one that pays.
-CHECKOUT_URL = re.compile(r"checkout|/pay(ment)?\b|pagamento|riepilogo|order[-_]?review|/buy/|/spc/|conferma", re.I)
+CHECKOUT_URL = re.compile(r"checkout|order[-_]?summary|/pay(ment)?\b|pagamento|riepilogo|order[-_]?review|/buy/|/spc/|conferma", re.I)
 CHECKOUT_TEXT = re.compile(r"metodo di pagamento|payment method|totale (dell'?)?ordine|order total|totale da pagare|"
                            r"importo totale|riepilogo (dell'?)?ordine|order summary|review your order", re.I)
 # There, a button that says only to go on (or nothing at all) may be the final one: it needs the Confirm too.
 GO_ON = re.compile(r"^(procedi|prosegui|continua|avanti|conferma|vai|fatto|ok|next|continue|proceed|confirm|done|"
                    r"submit|go)\b|^[\W_]*$", re.I)
 # Small controls that never buy: a quantity's + and −, a close button.
+OPTION_PRICE = re.compile(r"\d[\d.,]*\s?€|€\s?\d[\d.,]*")  # "10,43 €" in an answer
 STEPPER = re.compile(r"qty|quantit|increment|decrement|stepper|minus|plus|close|dismiss|chiudi", re.I)
 # A page that says an order went through.
 PLACED_URL = re.compile(r"thank|grazie|order[-_]?(confirm|placed|complete|success)|confirmation|conferma[-_]?ordine|"
@@ -141,7 +142,8 @@ when something arrives at their place, a booking) and the page shows you're logg
 in the header), log in first with need_user (why login): a logged-out browser's cart and address aren't theirs. \
 Searching and comparing prices don't need a login.
 - When there's a real choice you can't make from the request (two sizes, two delivery days at different prices, \
-an item that's out of stock), call ask_user with the options. Small things you decide yourself.
+an item that's out of stock), call ask_user with the options. Small things you decide yourself. Restaurants, \
+dishes and products to pick from are always `choices` (cards with their pictures), never `options`.
 - Food delivery (Glovo, Deliveroo, Just Eat): it's the user's account and address, so log in first, and deliver \
 to the saved address (home) unless the task says where. Look only at what delivers there now. When the task says \
 what (a dish, a kind of food, a restaurant), go straight to it. When the user hasn't decided ("something for \
@@ -1229,7 +1231,7 @@ class Phase:
 
         async def ask_user(question: str, options: list[str] | None = None,
                            choices: list[dict] | None = None) -> str:
-            shown = await self._choices(choices or [])
+            shown = await self._choices(choices or []) if choices else await self._pictured_options(options or [])
             # The answers are the cards' names too: an app that doesn't draw cards shows them as buttons.
             self._end("ask_user", {"question": question, "choices": shown,
                                    "options": [c["title"] for c in shown]
@@ -1310,9 +1312,11 @@ class Phase:
                        "reason": {"type": "string", "description": "e.g. \"Log in to Amazon.\""}},
                       ["why", "reason"]), need_user),
             Tool("ask_user", "Ask the user a real choice you can't make from the request (their answer comes back "
-                 "in the next phase). Give the options when there are a few, as `options` (short answers), or as "
-                 "`choices` when each is something the site shows with a picture (a kind of food, a restaurant, a "
-                 "dish, a product): the user taps a card, and its title comes back as the answer.",
+                 "in the next phase). Give the answers as `choices` when each is something the site shows (a kind "
+                 "of food, a restaurant, a dish, a product), always, with its name as the title and the price, "
+                 "rating and a short note in their own fields: the user taps a card with its picture, and its title "
+                 "comes back as the answer. `options` only for plain answers with nothing to show (a size, a day, "
+                 "yes or no).",
                  _obj({"question": {"type": "string"},
                        "options": {"type": ["array", "null"], "items": {"type": "string"}},
                        "choices": {"type": ["array", "null"], "items": choice}},
@@ -1530,20 +1534,40 @@ class Phase:
             seen.add(title.lower())
             url = str(c.get("url") or "")
             url = url[:500] if url.startswith(("https://", "http://")) else None
-            image = c.get("image") if str(c.get("image") or "").startswith(("https://", "http://")) else None
+            given = c.get("image") if str(c.get("image") or "").startswith(("https://", "http://")) else None
+            # The page's own picture first: the model's is a guess, often a category's icon given to every answer.
             out.append({"title": title, "url": url, "price": c.get("price") or None,
                         "rating": _number(c.get("rating")), "note": c.get("note") or None,
-                        "image": sharp_image(image or picture_for(url, title, images)
-                                             or named_picture(title, images))})
+                        "image": picture_for(url, title, images) or named_picture(title, images) or given})
             if len(out) == 8:
                 break
+        shared = {c["image"] for c in out if c["image"] and sum(o["image"] == c["image"] for o in out) > 1}
+        for c in out:  # one picture on several answers shows none of them
+            c["image"] = sharp_image(c["image"]) if c["image"] not in shared else None
         return out
+
+    async def _pictured_options(self, options: list[str]) -> list[dict]:
+        """Plain answers given where cards belong ("Tropical Salmon – 10,43 €"): cards, when the page has a picture
+        for most of them; else [] (they stay buttons)."""
+        await self._collect_images()
+        images = self.runner._images.get(self.errand_id, [])
+        cards = []
+        for option in [o for o in options if o][:8]:
+            title, _, rest = option.partition(" – ")
+            price = OPTION_PRICE.search(rest) if rest else None
+            cards.append({"title": title.strip() if price else option, "url": None, "rating": None, "note": None,
+                          "price": price.group(0) if price else None,
+                          "image": named_picture(title.strip(), images) or named_picture(option, images)})
+        if not cards or sum(bool(c["image"]) for c in cards) * 2 < len(cards):
+            return []
+        return await self._choices(cards)
 
     async def _pictured(self, items: list[dict]) -> list[dict]:
         """Order lines with the pictures the checkout page shows (matched by their alt text)."""
         await self._collect_images()
         images = self.runner._images.get(self.errand_id, [])
-        return [{**i, "image": sharp_image(i["image"] or picture_for(None, i["title"], images))} for i in items]
+        return [{**i, "image": sharp_image(i["image"] or picture_for(None, i["title"], images)
+                                           or named_picture(i["title"], images))} for i in items]
 
     async def _ask_confirm(self, summary: str, ref: str, total: str, items: list[dict], delivery: str | None,
                            address: str | None) -> str:
@@ -1707,7 +1731,7 @@ def picture_for(url: str | None, title: str | None, images: list[dict]) -> str |
                 if not path or (not path.startswith("/") and not path.startswith(parsed.netloc)):
                     continue  # a link to another site
                 have = _bare(path[path.find("/"):] if not path.startswith("/") else path)
-                if len(min(want, have, key=len)) >= 6 and (want in have or have in want):
+                if _same_page(want, have):
                     return i["src"]
     name = _plain(title or "")
     if len(name) >= 12:
@@ -1719,16 +1743,27 @@ def picture_for(url: str | None, title: str | None, images: list[dict]) -> str |
 
 
 def named_picture(title: str, images: list[dict]) -> str | None:
-    """A picture whose alt text is the name, or starts with it as a word ("Sushi", "Margherita"): for the short
-    names picture_for won't match on (a menu's dishes have no link of their own)."""
+    """A picture whose alt text is the name, else one that starts with it as a word ("Sushi", "Margherita"): for the
+    short names picture_for won't match on (a menu's dishes, a kind of food's circle)."""
     name = _plain(title)
     if len(name) < 3:
         return None
-    for i in images:
-        alt = _plain(i.get("alt") or "")
-        if alt == name or (len(name) >= 5 and alt.startswith(name + " ")):
-            return i["src"]
-    return None
+    alts = [(_plain(i.get("alt") or ""), i["src"]) for i in images]
+    return next((src for alt, src in alts if alt == name), None) or \
+        next((src for alt, src in alts if len(name) >= 5 and alt.startswith(name + " ")), None) or \
+        max(((len(alt), src) for alt, src in alts if len(alt) >= 5 and name.startswith(alt + " ")),
+            default=(0, None))[1]  # "Bologna pizza" on the menu's "Bologna": the longest such name
+
+
+def _same_page(want: str, have: str) -> bool:
+    """Two links' paths go to the same page: the same last part ("B00006JSUA", "poke-sun-tor"), or one ends with the
+    other ("/dp/B00006JSUA" in "/Lodge-L8SK3/dp/B00006JSUA"). A shorter path the other only starts with is a section
+    of the site ("/it/it/torino"), not the page."""
+    if len(min(want, have, key=len)) < 6:
+        return False
+    short, long = sorted((want, have), key=len)
+    last = lambda path: path.rstrip("/").rsplit("/", 1)[-1]
+    return long.endswith(short) or (len(last(want)) >= 6 and last(want) == last(have))
 
 
 def _bare(path: str) -> str:

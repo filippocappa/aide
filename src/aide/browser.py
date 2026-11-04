@@ -331,6 +331,15 @@ _IMAGES_JS = r"""
       out.push({path: null, src: src(img), alt: img.alt.trim().slice(0, 200)});
     }
   }
+  // A link that is one picture and a short label (a kind of food's circle: "Sushi"), by its label: such links often
+  // share one path and differ only in the query, so the loop above keeps just the first.
+  for (const a of document.querySelectorAll('a[href], button, [role=button]')) {
+    const imgs = [...a.querySelectorAll('img')].filter(src);
+    const label = (a.innerText || '').trim();
+    if (imgs.length === 1 && label.length >= 3 && label.length <= 30 && !label.includes('\n')) {
+      out.push({path: null, src: src(imgs[0]), alt: label});
+    }
+  }
   return out.slice(0, 400);
 }
 """
@@ -748,12 +757,12 @@ _SCENE_JS = r"""
   // The cart: how many and the total.
   const badge = document.querySelector('#nav-cart-count,[id*=cart-count],[class*=cart-count],[class*=cartCount],[data-cart-count]');
   const count = badge ? parseInt(clean(badge.innerText || badge.getAttribute('data-cart-count')), 10) : NaN;
-  const total = !/cart|basket|carrello|checkout|\/buy|spc|cassa|aw\/c\b/.test(path) ? null : (body.match(new RegExp('(?:subtotale|totale ordine|totale|subtotal|order total|total)[^€$£\\d]{0,40}(' + PRICE.source + ')', 'i')) || [])[1];
+  const total = !/cart|basket|carrello|checkout|order-summary|riepilogo|\/buy|spc|cassa|aw\/c\b/.test(path) ? null : (body.match(new RegExp('(?:subtotale|totale ordine|totale|subtotal|order total|total)[^€$£\\d]{0,40}(' + PRICE.source + ')', 'i')) || [])[1];
   if (!isNaN(count) || total) out.cart = {count: isNaN(count) ? null : count, total: total || null};
 
   if (out.kind === 'page') {
     if (/ordine (effettuato|confermato|ricevuto)|grazie per (il tuo |l')?ordine|order (placed|confirmed)|thank(s| you) for your order/.test(lower)) out.kind = 'confirmation';
-    else if (/checkout|\/buy\/|\/spc\b|gp\/buy|\/cassa|\/pagamento|\/payment/.test(path)) out.kind = 'checkout';
+    else if (/checkout|order-summary|riepilogo|\/buy\/|\/spc\b|gp\/buy|\/cassa|\/pagamento|\/payment/.test(path)) out.kind = 'checkout';
     else if (/\/cart\b|\/basket\b|\/carrello|\/bag\b|gp\/aw\/c\b|gp\/cart/.test(path)) out.kind = 'cart';
     else if (out.product && (ld.length || productPath || meta('og:type') === 'product')) out.kind = 'product';
     else if (rows.length >= 3 && tiles.filter(t => t.image).length < 3) out.kind = 'rows';
