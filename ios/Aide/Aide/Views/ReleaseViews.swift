@@ -48,8 +48,16 @@ struct ReleaseCard: View {
             .multilineTextAlignment(.leading)
             if !release.colourways.isEmpty {
                 ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(release.colourways) { ColourwayThumb(colourway: $0, selected: $0.picked) }
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(release.colourways) { c in
+                            VStack(alignment: .leading, spacing: 3) {
+                                ColourwayThumb(colourway: c, selected: c.picked, size: Self.thumb)
+                                Text(Self.caption(c.name))
+                                    .font(.caption.weight(.semibold)).lineLimit(1)
+                                Text(c.when).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            .frame(width: Self.thumb, alignment: .leading)
+                        }
                     }
                 }
                 .scrollIndicators(.hidden)
@@ -78,6 +86,20 @@ struct ReleaseCard: View {
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
+
+    /// "Sea Glass/Laser Crimson/Phantom (Men's)" → "Sea Glass · Men's": the first colour, and who it's for.
+    static func caption(_ name: String) -> String {
+        let first = name.components(separatedBy: "/").first?.trimmingCharacters(in: .whitespaces) ?? name
+        guard let open = name.lastIndex(of: "("), name.hasSuffix(")") else { return first }
+        let who = name[name.index(after: open)..<name.index(before: name.endIndex)]
+        return first.contains("(") ? first : "\(first) · \(who)"
+    }
+
+    #if os(macOS)
+    private static let thumb: CGFloat = 132
+    #else
+    private static let thumb: CGFloat = 108
+    #endif
 
     private var icon: String {
         switch release.status {
