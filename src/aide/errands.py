@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .live import ErrandRun, LiveActivities
     from .photos import PhotoStore
     from .push import Push
+    from .releases import Releases
 
 log = logging.getLogger(__name__)
 
@@ -223,16 +224,18 @@ class ErrandStore:
             conn.execute("ALTER TABLE errands ADD COLUMN products TEXT")
         if "timed_drop" not in columns:  # databases created before timed drops
             conn.execute("ALTER TABLE errands ADD COLUMN timed_drop TEXT")
+        if "release" not in columns:  # the release tracker it works for (releases.py)
+            conn.execute("ALTER TABLE errands ADD COLUMN release INTEGER")
 
     # -- errands ---------------------------------------------------------------
 
     def create(self, task: str, title: str, site: str | None, conversation: str | None,
-               drop: dict | None = None) -> dict:
+               drop: dict | None = None, release: int | None = None) -> dict:
         now = utcnow().isoformat()
         cur = self.conn.execute(
-            "INSERT INTO errands (task, title, site, status, step, conversation, timed_drop, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'queued', 'Waiting to start', ?, ?, ?, ?)",
-            (task, title, site, conversation, json.dumps(drop) if drop else None, now, now))
+            "INSERT INTO errands (task, title, site, status, step, conversation, timed_drop, release, created_at, "
+            "updated_at) VALUES (?, ?, ?, 'queued', 'Waiting to start', ?, ?, ?, ?, ?)",
+            (task, title, site, conversation, json.dumps(drop) if drop else None, release, now, now))
         return self.get(cur.lastrowid)
 
     def get(self, errand_id: int) -> dict | None:
@@ -298,7 +301,7 @@ class ErrandStore:
                 "result": e["result"],
                 "action_id": confirm.get("action_id") if e["status"] == "waiting_confirm" else None,
                 "conversation_id": e["conversation"], "purchase_id": confirm.get("purchase_id"),
-                "products": e["products"], "drop": self._drop(e["timed_drop"]),
+                "products": e["products"], "drop": self._drop(e["timed_drop"]), "release_id": e.get("release"),
                 "created_at": self._local(e["created_at"]), "updated_at": self._local(e["updated_at"])}
 
     def _drop(self, d: dict | None) -> dict | None:
@@ -397,6 +400,7 @@ class ErrandRunner:
         self.engine, self.photos, self.push, self.live = engine, photos, push, live
         self.extra_tools = extra_tools or []  # web_search, when there's a key
         self.audit = audit
+        self.releases: "Releases | None" = None  # release trackers' research and drops report back
         self.agent: "Agent | None" = None  # set by the app: posts in the chats, and the queue for Confirm
         self.queue: asyncio.Queue[int] = asyncio.Queue()
         self.current: int | None = None  # the errand running now
@@ -408,7 +412,8 @@ class ErrandRunner:
     # -- what the user and Aide do --------------------------------------------
 
     def start(self, task: str, title: str, site: str | None = None, conversation: str | None = None,
-              drop_at: str | None = None, drop_until: str | None = None, max_total: str | None = None) -> dict:
+              drop_at: str | None = None, drop_until: str | None = None, max_total: str | None = None,
+              release: int | None = None) -> dict:
         """An errand; with `drop_at`, a timed drop: it gets ready now and buys when the sale opens."""
         task, title = task.strip(), (title or task).strip()[:60]
         if not task:
@@ -421,7 +426,7 @@ class ErrandRunner:
                 raise ValueError(f"{why}, so I won't buy there at the drop. I can remind the user a few minutes "
                                  "before it opens, or watch the price.")
             drop = plan_drop(drop_at, drop_until, max_total, self.store.tz)
-        errand = self.store.create(task, title, site, conversation, drop)
+        errand = self.store.create(task, title, site, conversation, drop, release)
         if conversation and self.live is not None:
             self.live.handed_over(conversation)
         self.store.log(errand["id"], "Waiting to start" if self.current else "Starting", counts=False)
@@ -752,12 +757,18 @@ class ErrandRunner:
             if products:
                 e = self.store.update(errand_id, products=products)
             self._images.pop(errand_id, None)
+            extra = []
+            if e.get("release") and self.releases is not None:
+                try:
+                    extra = await self.releases.errand_finished(e, args)
+                except Exception:
+                    log.exception("errand %s: its release tracker didn't take the end", errand_id)
             # The card on Aide's first message follows the errand to its end: this one carries what it found.
             shown = "".join(f"\n{n}. {p['title']}, {p['price'] or 'no price'}: {p['url']}"
                             for n, p in enumerate(products, 1))
             await self._post(e, "An errand finished; its report, from what it read on the site, is the message "
                              "after this" + (f". Shown to the user as cards:{shown}" if shown else ""),
-                             result, purchase=purchase, products=products, push=f"Aide · {e['title']}")
+                             result, purchase=purchase, products=products, push=f"Aide · {e['title']}", extra=extra)
         elif kind == "need_user":
             why, reason = args["why"], args["reason"].strip()
             e = self.store.update(errand_id, status="needs_you", why=why, reason=reason, step=reason)
@@ -822,7 +833,7 @@ class ErrandRunner:
 
     async def _post(self, e: dict, note: str, text: str, card: bool = False, purchase: dict | None = None,
                     products: list[dict] | None = None, push: str | None = None, body: str | None = None,
-                    level: str | None = None) -> None:
+                    level: str | None = None, extra: list[dict] | None = None) -> None:
         """A message in the errand's chat (Aide's), with its card, and a push."""
         if self.agent is None or not e["conversation"]:
             return
@@ -833,6 +844,7 @@ class ErrandRunner:
             attachments.append({"type": "products", "errand_id": e["id"], "site": e["site"], "products": products})
         if purchase:
             attachments.append({"type": "purchases", "purchases": [purchase]})
+        attachments += extra or []
         try:
             await self.agent.post(e["conversation"], f"[Errand #{e['id']}: {note}]", text, attachments or None)
         except Exception:
@@ -955,6 +967,8 @@ class Phase:
         tools = [*self._browser_tools(), *self._control_tools(), *self.runner.extra_tools]
         if d := self.errand["timed_drop"]:
             tools += self._drop_tools(d)
+        elif self.errand.get("release") and self.runner.releases is not None:
+            tools += self._release_tools()
         self.registry = {t.name: t for t in tools}
         return tools
 
@@ -1222,6 +1236,26 @@ class Phase:
                        "products": {"type": ["array", "null"], "items": product}},
                       ["result", "ok", "products"]), finish),
         ]
+
+    # -- release research ----------------------------------------------------------
+
+    def _release_tools(self) -> list[Tool]:
+        from .releases import REPORT
+
+        async def report_release(title: str, summary: str, colourways: list[dict], sources: list[dict]) -> str:
+            pictured = await self._products([{"title": c.get("name"), "url": c.get("url")} for c in colourways
+                                             if str(c.get("url") or "").startswith(("https://", "http://"))])
+            by_url = {p["url"]: p["image"] for p in pictured}
+            for c in colourways:
+                c["image"] = by_url.get(c.get("url"))
+            r = self.runner.releases.found(self.errand["release"], {"title": title, "summary": summary,
+                                                                    "colourways": colourways, "sources": sources})
+            self._end("finish", {"result": summary, "ok": True, "release": r["id"]})
+
+        return [Tool("report_release", "The research is done: the release's colourways, best known first, each "
+                     "with its page as `url`, a two-sentence summary for the user and the sources. It ends the "
+                     "errand and shows the user a page to pick from: use it instead of finish.", REPORT,
+                     report_release)]
 
     # -- timed drops -------------------------------------------------------------
 

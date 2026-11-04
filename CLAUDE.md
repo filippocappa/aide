@@ -67,6 +67,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `browser.py`: Aide's own Chromium (Playwright, headless, a phone-sized page, a profile per site in `data/browser/`),
   the page listing the model reads, the live view's screencast and input. `errands.py`: browser errands (the store,
   the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
+  `pricewatch.py`: price watches. `releases.py`: release trackers (research by an errand, the user's picks, a daily
+  look by the fast model, and the timed drop, reminder or price watch each pick calls for).
 - `videos.py`: YouTube videos (yt-dlp, captions or Whisper, the brief, frames), posted back in the chat it came from.
 - `finance.py`: payments, categories, the month, subscriptions, budget, accounts. `banks.py`: bank accounts through
   Enable Banking (PSD2, read-only): linking, the reads (4 a day and when Money opens), matching taps to the bank's records.
@@ -690,6 +692,16 @@ then waits for Watch again; Buy it starts a normal errand. Not a routine (no mod
 on its own card, waits until the sale closes), sits `scheduled`, opens 5 min before and buys only inside the limits
 (`drop_mismatch` in the commit guard: window, item, variant, total at or under the max). Bot-forbidding shops refuse a
 drop (`NO_BOTS`). App: the `price_watches` card, Settings → Browser → Price watches, the drop's limits sheet.
+
+**Done, both sides (2026-11-04), not yet tried on the phone:** release trackers (contract "Browser errands", Release
+trackers; `releases.py`). "Follow the Nike Alphafly 4 release": an errand researches every colourway (code, price,
+status, the date and time in Italy, first come or draw, the shops) and posts a `releases` card. The app opens it as a
+shop's page in a drawn browser (`Views/ReleaseViews.swift`: a colourway carousel with Want this, EU sizes, shops,
+Tell me or Buy it for me with the most you'd pay). Then a daily look (every 6 h in the last 4 days) with web search
+posts what changed and sets up each pick: a timed drop on the user's shop once there's a date and time (buy, first
+come), a reminder 10 min before (tell, or any draw), a price watch when sold out; a moved drop is undone and redone.
+Settings → Browser → Releases. Aide's tools: `track_release`, `set_release_picks`, `list_releases`, `release_status`,
+`stop_release`.
 
 **Next** (GitHub issues):
 0. The code check (2026-11-03) filed #35–#50, one finding each. First the ones that can lose data: #35

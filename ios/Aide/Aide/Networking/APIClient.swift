@@ -417,6 +417,38 @@ final class APIClient {
         try await send("POST", "/v1/pricewatches/\(id)/buy", body: EmptyBody())
     }
 
+    // MARK: Release trackers (docs/API.md, "Browser errands", Release trackers)
+
+    func releases() async throws -> ReleaseList {
+        try await send("GET", "/v1/releases")
+    }
+
+    func release(_ id: Int) async throws -> Release {
+        try await send("GET", "/v1/releases/\(id)")
+    }
+
+    /// What you want from it; the server sets up what the picks call for right away.
+    func setReleasePicks(_ id: Int, _ picks: ReleasePicks) async throws -> Release {
+        try await send("PUT", "/v1/releases/\(id)/picks", body: picks, timeout: 60)
+    }
+
+    /// A look now (the fast model with web search; posts what changed).
+    func checkRelease(_ id: Int) async throws -> Release {
+        try await send("POST", "/v1/releases/\(id)/check", body: EmptyBody(), timeout: 180)
+    }
+
+    func stopRelease(_ id: Int) async throws -> Release {
+        try await send("POST", "/v1/releases/\(id)/stop", body: EmptyBody())
+    }
+
+    func resumeRelease(_ id: Int) async throws -> Release {
+        try await send("POST", "/v1/releases/\(id)/resume", body: EmptyBody())
+    }
+
+    func deleteRelease(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/releases/\(id)", body: EmptyBody())
+    }
+
     // MARK: Videos (docs/API.md, "Videos")
 
     /// Starts reading a YouTube video; without `conversationId` in a new chat with Aide.

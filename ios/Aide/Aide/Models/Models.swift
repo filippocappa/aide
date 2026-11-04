@@ -75,6 +75,8 @@ enum Attachment: Decodable, Hashable {
     case products([Product])
     /// Price watches: set up, changed, or the one whose line was crossed.
     case priceWatches([PriceWatch])
+    /// Release trackers: the research's colourways to pick from, or what a look found.
+    case releases([Release])
     case videos([VideoCard])
     case quiz(Quiz)
     case review(ReviewSession)
@@ -97,6 +99,7 @@ enum Attachment: Decodable, Hashable {
         case "purchases": self = .purchases(try c.decode([Purchase].self, forKey: .purchases))
         case "products": self = .products(try c.decode([Product].self, forKey: .products))
         case "price_watches": self = .priceWatches(try c.decode([PriceWatch].self, forKey: .priceWatches))
+        case "releases": self = .releases(try c.decode([Release].self, forKey: .releases))
         case "videos": self = .videos(try c.decode([VideoCard].self, forKey: .videos))
         case "quiz": self = .quiz(try c.decode(Quiz.self, forKey: .quiz))
         case "review": self = .review(try c.decode(ReviewSession.self, forKey: .review))
@@ -107,7 +110,7 @@ enum Attachment: Decodable, Hashable {
     }
     private enum CodingKeys: String, CodingKey {
         case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
-        case quiz, review, payments, open, priceWatches
+        case quiz, review, payments, open, priceWatches, releases
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
@@ -3208,6 +3211,184 @@ struct PriceWatchPatch: Encodable {
     var stock: Bool?
     var everyHours: Double?
     var status: String?
+}
+
+// MARK: - Release trackers (docs/API.md, "Browser errands", Release trackers)
+
+/// A product's release followed for you: every colourway with its drop in Italy, your picks, what's set up.
+struct Release: Decodable, Identifiable, Hashable {
+    let id: Int
+    let query: String
+    let title: String
+    /// researching, ready (pick), tracking, stopped, failed.
+    let status: String
+    var summary: String?
+    var colourways: [ReleaseColourway] = []
+    var sources: [ReleaseSource] = []
+    var picks: ReleasePicks?
+    /// Every shop the colourways name, most named first.
+    var shops: [String] = []
+    var errandId: Int?
+    var error: String?
+    var log: [ReleaseLogLine] = []
+    var checkedAt: String?
+    var nextAt: String?
+    var conversationId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, query, title, status, summary, colourways, sources, picks, shops, errandId, error, log, checkedAt,
+             nextAt, conversationId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        query = try c.decode(String.self, forKey: .query)
+        title = try c.decode(String.self, forKey: .title)
+        status = try c.decode(String.self, forKey: .status)
+        summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        colourways = try c.decodeIfPresent([ReleaseColourway].self, forKey: .colourways) ?? []
+        sources = try c.decodeIfPresent([ReleaseSource].self, forKey: .sources) ?? []
+        picks = try c.decodeIfPresent(ReleasePicks.self, forKey: .picks)
+        shops = try c.decodeIfPresent([String].self, forKey: .shops) ?? []
+        errandId = try c.decodeIfPresent(Int.self, forKey: .errandId)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        log = try c.decodeIfPresent([ReleaseLogLine].self, forKey: .log) ?? []
+        checkedAt = try c.decodeIfPresent(String.self, forKey: .checkedAt)
+        nextAt = try c.decodeIfPresent(String.self, forKey: .nextAt)
+        conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
+    }
+
+    var picked: [ReleaseColourway] { colourways.filter(\.picked) }
+    var checked: Date? { checkedAt.flatMap(Wire.parse) }
+
+    var state: String {
+        switch status {
+        case "researching": return "Researching the release"
+        case "ready": return "Pick what you want"
+        case "stopped": return "Stopped"
+        case "failed": return error ?? "Couldn't follow it"
+        default:
+            let n = picked.count
+            return "Tracking \(n) colourway\(n == 1 ? "" : "s")"
+                + (checked.map { " · looked \($0.formatted(.relative(presentation: .named)))" } ?? "")
+        }
+    }
+}
+
+struct ReleaseColourway: Decodable, Identifiable, Hashable {
+    let key: String
+    let name: String
+    var code: String?
+    var price: String?
+    /// out, upcoming, sold_out, rumoured.
+    let status: String
+    var date: String?
+    var time: String?
+    var opensAt: String?
+    /// fcfs, draw, unknown.
+    var method: String?
+    var url: String?
+    var shops: [ReleaseShop]?
+    var note: String?
+    var image: String?
+    var new: Bool?
+    var picked: Bool = false
+    var plan: ReleasePlan?
+
+    var id: String { key }
+    var opens: Date? { opensAt.flatMap(Wire.parse) }
+    var isDraw: Bool { method == "draw" }
+    var imageURL: URL? { image.flatMap(URL.init(string:)) }
+
+    enum CodingKeys: String, CodingKey {
+        case key, name, code, price, status, date, time, opensAt, method, url, shops, note, image, new, picked, plan
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        name = try c.decode(String.self, forKey: .name)
+        code = try c.decodeIfPresent(String.self, forKey: .code)
+        price = try c.decodeIfPresent(String.self, forKey: .price)
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "rumoured"
+        date = try c.decodeIfPresent(String.self, forKey: .date)
+        time = try c.decodeIfPresent(String.self, forKey: .time)
+        opensAt = try c.decodeIfPresent(String.self, forKey: .opensAt)
+        method = try c.decodeIfPresent(String.self, forKey: .method)
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        shops = try c.decodeIfPresent([ReleaseShop].self, forKey: .shops)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        image = try c.decodeIfPresent(String.self, forKey: .image)
+        new = try c.decodeIfPresent(Bool.self, forKey: .new)
+        picked = try c.decodeIfPresent(Bool.self, forKey: .picked) ?? false
+        plan = try c.decodeIfPresent(ReleasePlan.self, forKey: .plan)
+    }
+
+    /// "Thu 20 Nov · 09:00", "Thu 20 Nov · time not out yet", "On sale now", "Sold out", "No date yet".
+    var when: String {
+        switch status {
+        case "out": return "On sale now"
+        case "sold_out": return "Sold out"
+        default: break
+        }
+        if let opens { return opens.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute()) }
+        if let date, let day = Self.dayFormat.date(from: date) {
+            return day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + " · time not out yet"
+        }
+        return "No date yet"
+    }
+
+    private static let dayFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+}
+
+struct ReleaseShop: Decodable, Hashable {
+    let site: String
+    var url: String?
+    var note: String?
+}
+
+struct ReleaseSource: Decodable, Hashable {
+    let title: String
+    let url: String
+}
+
+/// What's set up for a picked colourway: a timed drop, a reminder, a price watch, an errand, or just told.
+struct ReleasePlan: Decodable, Hashable {
+    /// drop, reminder, watch, errand, told.
+    let what: String
+    var site: String?
+    var errandId: Int?
+    var errandStatus: String?
+    var watchId: Int?
+    var reminderId: String?
+    var text: String?
+}
+
+struct ReleasePicks: Codable, Hashable {
+    var colourways: [String]
+    var size: String?
+    var maxTotal: Double?
+    var currency: String?
+    var shops: [String] = []
+    /// tell or buy.
+    var mode: String
+    var maxTotalText: String? = nil
+}
+
+struct ReleaseLogLine: Decodable, Hashable {
+    let ts: String
+    let text: String
+}
+
+struct ReleaseList: Decodable {
+    let releases: [Release]
+    var enabled: Bool = true
 }
 
 private extension String {

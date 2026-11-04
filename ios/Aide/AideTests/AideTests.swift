@@ -1689,6 +1689,43 @@ final class ErrandTests: XCTestCase {
         XCTAssertNotNil(purchases.first?.date)
     }
 
+    func testAReleaseDecodes() throws {
+        let json = #"""
+        [{"type": "releases", "releases": [
+          {"id": 4, "query": "Nike Alphafly 4", "title": "Nike Alphafly 4", "status": "tracking",
+           "summary": "One colourway is out; two are coming.",
+           "colourways": [
+             {"key": "HF7356-700", "name": "Volt/Black", "code": "HF7356-700", "price": "299,99 €", "status": "upcoming",
+              "date": "2030-11-20", "time": "09:00", "opens_at": "2030-11-20T09:00:00+01:00", "method": "fcfs",
+              "url": "https://www.nike.com/it/t/x", "shops": [{"site": "nike.com", "url": null, "note": null}],
+              "note": null, "image": "https://img.test/a.jpg", "new": false, "picked": true,
+              "plan": {"what": "drop", "site": "nike.com", "errand_id": 12, "errand_status": "queued", "watch_id": null,
+                       "reminder_id": null, "text": "Volt/Black: a timed drop on nike.com"}},
+             {"key": "HF7356-100", "name": "White", "code": null, "price": null, "status": "rumoured", "date": "2030-12-01",
+              "time": null, "opens_at": null, "method": "unknown", "url": null, "shops": [], "note": null, "image": null,
+              "new": true, "picked": false, "plan": null}],
+           "sources": [{"title": "Sole Retriever", "url": "https://www.soleretriever.com"}],
+           "picks": {"colourways": ["HF7356-700"], "size": "EU 43", "max_total": 320.0, "currency": "EUR",
+                     "shops": ["nike.com"], "mode": "buy", "max_total_text": "320,00 €"},
+           "shops": ["nike.com"], "errand_id": 9, "error": null,
+           "log": [{"ts": "2030-11-04T10:00:00+01:00", "text": "Volt/Black drops 2030-11-20 09:00"}],
+           "checked_at": "2030-11-04T10:00:00+01:00", "next_at": "2030-11-05T10:00:00+01:00",
+           "conversation_id": "app", "created_at": "2030-11-03T10:00:00+01:00"}]}]
+        """#
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .releases(let releases) = try XCTUnwrap(attachments.first) else { return XCTFail("not releases") }
+        let r = try XCTUnwrap(releases.first)
+        XCTAssertEqual(r.picked.map(\.name), ["Volt/Black"])
+        XCTAssertEqual(r.picks?.maxTotalText, "320,00 €")
+        XCTAssertEqual(r.colourways[0].plan?.errandId, 12)
+        XCTAssertNotNil(r.colourways[0].opens)
+        XCTAssertTrue(r.colourways[1].when.hasSuffix("time not out yet"), r.colourways[1].when)
+        XCTAssertTrue(r.state.hasPrefix("Tracking 1 colourway"), r.state)
+        let sent = try JSONSerialization.jsonObject(with: JSONEncoder.api.encode(try XCTUnwrap(r.picks))) as? [String: Any]
+        XCTAssertEqual(sent?["max_total"] as? Double, 320)
+        XCTAssertEqual(sent?["mode"] as? String, "buy")
+    }
+
     func testATimedDropAndAPriceWatchDecode() throws {
         let scheduled = try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand
             .replacingOccurrences(of: #""status": "needs_you""#, with: #""status": "scheduled""#)
