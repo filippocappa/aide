@@ -650,7 +650,7 @@ private struct MessageRow: View {
                 }
                 .padding(.horizontal, 2)
                 ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
-                    AttachmentCard(attachment: attachment, foldedErrands: foldedErrands)
+                    AttachmentCard(attachment: attachment, foldedErrands: foldedErrands, said: message.text)
                 }
                 if !message.isError, !message.text.isEmpty { actions }
             }
@@ -749,8 +749,10 @@ struct OpenLinksCard: View {
 
 struct AttachmentCard: View {
     let attachment: Attachment
-    /// Errands shown again further down: one line here.
+    /// Errands shown again further down: left out here, so each errand is one card, the newest.
     var foldedErrands: Set<Int> = []
+    /// The message's text above the card (an errand's question is said there, not again in its card).
+    var said: String = ""
     @EnvironmentObject private var chat: ChatViewModel
     @State private var expanded = false
     private static let fold = 5
@@ -773,8 +775,9 @@ struct AttachmentCard: View {
         case .proposal(let proposal):
             card { ProposalAnswerCard(proposal: proposal) }
         case .errands(let errands):
-            VStack(spacing: 10) {
-                ForEach(errands) { ErrandCard(errand: $0, folded: foldedErrands.contains($0.id)) }
+            let shown = errands.filter { !foldedErrands.contains($0.id) }
+            if !shown.isEmpty {
+                VStack(spacing: 10) { ForEach(shown) { ErrandCard(errand: $0, said: said) } }
             }
         case .payments(let payments):
             PaymentsCard(payments: payments)

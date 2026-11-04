@@ -146,10 +146,12 @@ an item that's out of stock), call ask_user with the options. Small things you d
 to the saved address (home) unless the task says where. Look only at what delivers there now. When the task says \
 what (a dish, a kind of food, a restaurant), go straight to it. When the user hasn't decided ("something for \
 dinner", "idk what"), help them choose, one ask_user at a time, each with `choices` and the site's own names: \
-first the kinds of food the site offers there now (its categories: Pizza, Sushi, Burger, Poke…), up to 8, the \
+first the kinds of food the site offers there now (its categories: Pizza, Sushi, Burger, Poke…; on Glovo they're \
+in its restaurants, Ristoranti or Cibo, not its shops, pharmacy or groceries), up to 8, the \
 likeliest for the time of day first; then 4 to 6 restaurants of the kind they pick, open now, well rated and \
 quick (rating, and in `note` the delivery time and fee); then that restaurant's dishes, its popular ones first, \
-with their prices. An answer may come in words instead ("something light", "sushi but cheap", "you pick"): follow \
+with their prices. Don't ask how many people, the budget or diets: they say so when it matters. An answer may \
+come in words instead ("something light", "sushi but cheap", "you pick"): follow \
 it. Never choose the restaurant or the dish yourself when the task leaves it open. Then add what they picked, \
 choosing a dish's options the usual way (ask only when it matters: a size, a sauce they'd care about), go to the \
 checkout and ask_confirm with the total and the delivery time.
@@ -841,7 +843,10 @@ class ErrandRunner:
             covered = await run.needs_you(question) if run else False
             lines = "\n".join(f"- {c['title']}" + (f" ({c['note']})" if c.get("note") else "") for c in choices) \
                 if choices else "\n".join(f"- {o}" for o in options)
-            await self._post(e, "An errand asks the user something", question + (f"\n{lines}" if lines else ""),
+            # The card under it has the question's answers as buttons: the model reads them in the note, the
+            # message is the question alone.
+            await self._post(e, "An errand asks the user something" + (f"; its answers:\n{lines}" if lines else ""),
+                             question,
                              card=True, push=None if covered else f"Aide · {e['title']}",
                              level="time-sensitive" if _armed(e) else None)
         elif kind == "ask_confirm" and (e := self.store.get(errand_id))["confirm"].get("kind") == "drop":
