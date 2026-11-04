@@ -210,36 +210,72 @@ struct ReleaseSheet: View {
             }
             .safeAreaInset(edge: .bottom) { bottomBar }
             .toolbar(.hidden, for: .navigationBar)
+            .macSheetHidesClose()
         }
     }
 
-    // A page per colourway, as a shop shows its product, with Want this.
+    // A page per colourway, as a shop shows its product, with Want this: swipe, the arrows or a thumbnail to move.
     private var carousel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 0) {
-                    ForEach(release.colourways) { c in
-                        ColourwayPage(colourway: c, chosen: chosen.contains(c.key)) { toggle(c.key) }
-                            .containerRelativeFrame(.horizontal)
-                            .id(c.key)
+            if let c = current {
+                ColourwayPage(colourway: c, chosen: chosen.contains(c.key)) { toggle(c.key) }
+                    .id(c.key)
+                    .transition(.opacity)
+                    .overlay(alignment: .top) {
+                        if release.colourways.count > 1 {
+                            HStack {
+                                arrow("chevron.left", by: -1)
+                                Spacer()
+                                arrow("chevron.right", by: 1)
+                            }
+                            .padding(.horizontal, 8)
+                            .frame(height: 220)
+                        }
                     }
-                }
-                .scrollTargetLayout()
+                    .gesture(DragGesture(minimumDistance: 24).onEnded { v in
+                        guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                        move(v.translation.width < 0 ? 1 : -1)
+                    })
             }
-            .scrollIndicators(.hidden)
-            .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $page)
             HStack(spacing: 8) {
                 ForEach(release.colourways) { c in
-                    Button { withAnimation { page = c.key } } label: {
+                    Button { withAnimation(.easeInOut(duration: 0.2)) { page = c.key } } label: {
                         ColourwayThumb(colourway: c, selected: chosen.contains(c.key), size: 48)
-                            .opacity(page == c.key ? 1 : 0.65)
+                            .opacity(page == c.key ? 1 : 0.55)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .frame(maxWidth: .infinity)
         }
+    }
+
+    private var current: ReleaseColourway? {
+        release.colourways.first { $0.key == page } ?? release.colourways.first
+    }
+
+    private func move(_ by: Int) {
+        let keys = release.colourways.map(\.key)
+        guard let i = keys.firstIndex(of: current?.key ?? "") else { return }
+        let j = i + by
+        guard keys.indices.contains(j) else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { page = keys[j] }
+    }
+
+    private func arrow(_ symbol: String, by: Int) -> some View {
+        let keys = release.colourways.map(\.key)
+        let i = keys.firstIndex(of: current?.key ?? "") ?? 0
+        let can = keys.indices.contains(i + by)
+        return Button { move(by) } label: {
+            Image(systemName: symbol).font(.footnote.weight(.bold))
+                .frame(width: 30, height: 30)
+                .foregroundStyle(.black.opacity(0.7))
+                .background(.white.opacity(0.85), in: Circle())
+                .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+        }
+        .buttonStyle(.plain)
+        .opacity(can ? 1 : 0)
+        .disabled(!can)
     }
 
     private var plan: some View {
@@ -536,7 +572,8 @@ struct ColourwayPage: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 2)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var status: String {

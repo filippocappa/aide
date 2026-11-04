@@ -488,6 +488,8 @@ extension View {
     func macCoverSize() -> some View { self }
     /// The Mac's back button on a pushed page (`Mac/MacNavigationStack.swift`); the phone has its navigation bar's.
     func macPageBack() -> some View { self }
+    /// No close button on a Mac sheet (`Mac/MacNavigationStack.swift`); phone sheets have none to hide.
+    func macSheetHidesClose() -> some View { self }
     /// The Mac's cover as a card in Aide's window (`Mac/MacCoverLayer.swift`), so the window can go full screen.
     func macWindowCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil,
                                        @ViewBuilder content: @escaping () -> Content) -> some View {
