@@ -158,8 +158,10 @@ size: "Lodge L8SK3, 26 cm", not the whole listing title), its link (the site's a
 ends with), the price as the page shows it, and the rating and number of reviews when the page says them. When \
 the page shows a discount, `was` is the price before it (the struck-through one) and `price` the price now. \
 `audience` is men, women, kids or unisex when the shop sells it for one (shoes, clothes), else null. When the task \
-gives the user's size or sizes, show only what comes in one of them, and put which of their sizes are in stock in \
-`note` ("44, 44.5"); a product that isn't in any of them isn't a card (say in the message how many weren't). \
+gives the user's size or sizes, look at every version the shop lists (each colourway's page, up to 10; their \
+other sizes don't matter; men's or women's only when the task says which), and show only the ones in stock in one \
+of their sizes, with which of them in `note` ("44, 44.5"). \
+One sold out in all their sizes is never a card: the message says how many were. \
 `note` is otherwise one short thing worth knowing ("6 left", "arrives Fri"), never "all sizes" or "no discount". \
 The user sees them as cards with their pictures and prices, so the message never lists them again, even when the \
 task says "list": the cards are the list. It says in a sentence or two what stands out (which you'd pick and \
