@@ -5,7 +5,7 @@ import pytest
 
 from aide.agent import CONVERSATION
 from aide.db import utcnow
-from aide.errands import DROP_LEAD, drop_mismatch, no_bots, order_total, plan_drop
+from aide.errands import DROP_LEAD, drop_mismatch, no_bots, order_total, plan_drop, risky
 from test_agents import ROME, calls
 from test_errands import THANKS, env, runner_ttl  # noqa: F401  (env is a fixture)
 
@@ -67,6 +67,7 @@ async def test_a_drop_gets_ready_then_buys_inside_the_limits(env):  # noqa: F811
     assert action["tool"] == "errand_drop"
     d = action["detail"]
     assert d["kind"] == "drop" and d["max_total"] == "480,00 €" and d["variant"] == "Nero"
+    assert d["risk"] is None
     assert d["card"] == "Visa ending 6411" and d["opens_at"].startswith(local(utcnow() + timedelta(hours=1))[:13])
     # It waits past the usual 30 minutes: until the window closes.
     assert datetime.fromisoformat(action["expires_at"]) > utcnow() + timedelta(hours=2)
@@ -152,15 +153,20 @@ async def test_a_missed_drop_and_a_cancelled_one(env):  # noqa: F811
     assert e["status"] == "failed" and "nothing was bought" in e["result"]
 
 
-def test_bot_forbidding_shops_are_refused(env):  # noqa: F811
+def test_ticket_sellers_are_refused_and_bot_shy_shops_warned(env):  # noqa: F811
     make, db, browser = env
     runner, _, _ = make()
-    with pytest.raises(ValueError, match="Nike"):
-        runner.start("Buy the Dunks at the drop", "Dunks", "nike.com", CONVERSATION,
+    with pytest.raises(ValueError, match="tickets"):
+        runner.start("Buy two tickets at the drop", "Concert", "ticketmaster.it", CONVERSATION,
                      drop_at=local(utcnow() + timedelta(hours=1)))
-    assert no_bots("www.ticketmaster.it") and no_bots("adidas.it") and no_bots("amazon.it") is None
-    # An ordinary errand there (finding, comparing) is fine.
-    assert runner.start("Find the Dunks' price", "Dunks", "nike.com", CONVERSATION)["status"] == "queued"
+    assert no_bots("www.ticketone.it") and no_bots("nike.com") is None and no_bots("amazon.it") is None
+    # Nike's terms don't allow bots, but that's the user's call: the drop goes ahead, the Confirm says the risk.
+    e = runner.start("Buy the Alphafly 4 at the drop", "Alphafly 4", "nike.com", CONVERSATION,
+                     drop_at=local(utcnow() + timedelta(hours=1)))
+    assert e["status"] == "queued" and e["timed_drop"]
+    assert "cancel" in risky("www.nike.com") and risky("supreme.com") and risky("amazon.it") is None
+    # An ordinary errand on a ticket site (finding, comparing) is fine.
+    assert runner.start("Find the concert's price", "Concert", "ticketmaster.it", CONVERSATION)["status"] == "queued"
 
 
 def test_plan_drop_and_its_window():

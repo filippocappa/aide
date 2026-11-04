@@ -2281,10 +2281,12 @@ a queued `errand_drop` action with this `detail`:
  "item": "Nintendo Switch 2", "variant": "Nero", "quantity": 1, "max_total": "480,00 €",
  "opens_at": "2026-11-06T10:00:00+01:00", "closes_at": "2026-11-06T12:00:00+01:00",
  "address": "Via Roma 1, Torino", "card": "Visa ending 6411", "screenshot": "p_3f2a…",
- "url": "https://www.amazon.it/dp/B0…"}
+ "url": "https://www.amazon.it/dp/B0…", "risk": null}
 ```
 `max_total` is with shipping and never above what you told Aide. `variant`, `address`, `card`, `screenshot` and
-`url` may be null. The action waits until `closes_at` (its `expires_at`) and is confirmed only on its own card.
+`url` may be null. `risk` (since 2026-11-04, null on most shops): why buying there with Aide may cost you the order
+or the account (the shop's terms don't allow bots), shown on the Confirm. The action waits until `closes_at` (its
+`expires_at`) and is confirmed only on its own card.
 
 Confirmed, the errand is `scheduled` and its page closed. 5 minutes before `opens_at` it opens again by itself,
 waits for the product to go on sale (reloading every few seconds), adds it, checks out, and clicks the order button
@@ -2300,8 +2302,10 @@ The Errand's `drop`:
 ```
 `armed`: the limits are confirmed. `item`, `variant` and `quantity` are null until Aide got ready.
 
-Shops whose terms forbid automated buying (Ticketmaster, TicketOne, Vivaticket, Nike, Adidas, Supreme, the Pokémon
-Center) refuse a timed drop: Aide says so and leaves it to you. Other errands there (finding, comparing) still work.
+Ticket sellers (Ticketmaster, TicketOne, Vivaticket) refuse a timed drop: buying tickets with bots is against the law
+in some countries. Other errands there (finding, comparing) still work. Shops whose terms don't allow automated buying
+(Nike, adidas, Supreme, the Pokémon Center) take a drop, and its Confirm says the risk (`risk`): the shop may cancel the
+order or close the account.
 
 ### Price watches
 
