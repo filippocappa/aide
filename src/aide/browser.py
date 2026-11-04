@@ -592,6 +592,20 @@ _SCENE_JS = r"""
                 error: alert ? clean(alert.innerText).slice(0, 200) : null};
   }
 
+  // A login's ways in, with nothing to type yet (Glovo after the code: "Continua con la password", Facebook…): its
+  // buttons as choices, each pressed for the user.
+  if (out.kind === 'page' && loginish && !inputs.some(f => !['box', 'search'].includes(f.kind))) {
+    const holder = document.querySelector('[role=dialog]') || document.querySelector('main') || document.body;
+    const WAY = /continu|password|accedi|log.?in|sign.?in|facebook|google|apple|e-?mail|telefono|phone|sms|codice|code|account/i;
+    const ways = [...holder.querySelectorAll('button,[role=button],a')].filter(visible)
+      .map(b => ({el: b, text: textOf(b)})).filter(b => b.text && b.text.length <= 60 && WAY.test(b.text));
+    if (ways.length) {
+      out.kind = 'login';
+      out.form = {fields: [], submit: null, choices: ways.slice(0, 6).map(b => ({ref: refOf(b.el), text: b.text})),
+                  remember: null, remembered: null, error: null};
+    }
+  }
+
   // Result tiles: each product link's card (the biggest box around it with no other link's picture), with its
   // picture, name and price.
   const tiles = [], seen = new Set(), pictures = new Set(), names = new Set();
