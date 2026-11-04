@@ -1839,7 +1839,8 @@ final class ErrandTests: XCTestCase {
         let json = """
         [{"type": "products", "errand_id": 3, "site": "amazon.it", "products": [
           {"title": "Lodge L8SK3, 26 cm", "url": "https://www.amazon.it/dp/B00006JSUA", "price": "49,15 €",
-           "rating": 4.4, "reviews": 72015, "note": null, "image": "https://m.media-amazon.com/images/I/81q.jpg"},
+           "rating": 4.4, "reviews": 72015, "note": null, "image": "https://m.media-amazon.com/images/I/81q.jpg",
+           "was": "1.234,50 €", "audience": "men"},
           {"title": "Victoria, 30 cm", "url": "https://www.amazon.it/dp/B01726HD72", "price": null,
            "rating": null, "reviews": null, "note": "6 left", "image": null}]}]
         """
@@ -1850,6 +1851,12 @@ final class ErrandTests: XCTestCase {
         XCTAssertNotNil(products[0].stars)
         XCTAssertNil(products[1].stars)
         XCTAssertEqual(products[1].note, "6 left")
+        XCTAssertEqual(products[0].audience, "men")
+        XCTAssertEqual(Product.amount("1.234,50 €"), 1234.5)
+        XCTAssertEqual(Product.amount("216,99 €"), 216.99)
+        XCTAssertEqual(Product.amount("$5.00"), 5)
+        XCTAssertEqual(products[0].off, "−96%")
+        XCTAssertNil(products[1].off)  // no was: no discount
         // An errand from before products has none.
         XCTAssertNil(try JSONDecoder.api.decode(Errand.self, from: Data(Self.errand.utf8)).products)
     }

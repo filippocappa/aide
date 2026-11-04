@@ -1232,16 +1232,59 @@ struct PurchasesView: View {
 /// (the shop's app when it's installed).
 struct ProductsCard: View {
     let products: [Product]
+    /// Men's, Women's or every product, when the cards are both; the last choice is kept.
+    @AppStorage("products.audience") private var audience = ""
+
+    /// Who the products are for, when there's more than one kind of buyer among them ("men", "women").
+    private var audiences: [String] {
+        let kinds = Set(products.compactMap(\.audience).filter { $0 != "unisex" })
+        return ["men", "women", "kids"].filter(kinds.contains)
+    }
+
+    private var shown: [Product] {
+        guard audiences.count > 1, audiences.contains(audience) else { return products }
+        return products.filter { $0.audience == audience || $0.audience == "unisex" || $0.audience == nil }
+    }
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 10) {
-                ForEach(Array(products.enumerated()), id: \.offset) { ProductTile(product: $0.element) }
+        VStack(alignment: .leading, spacing: 10) {
+            if audiences.count > 1 {
+                HStack(spacing: 6) {
+                    chip("", "All")
+                    ForEach(audiences, id: \.self) { chip($0, Self.label($0)) }
+                }
             }
-            .scrollTargetLayout()
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { ProductTile(product: $0.element) }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollIndicators(.hidden)
+            .scrollTargetBehavior(.viewAligned)
         }
-        .scrollIndicators(.hidden)
-        .scrollTargetBehavior(.viewAligned)
+    }
+
+    private func chip(_ value: String, _ title: String) -> some View {
+        let on = value == audience || (value.isEmpty && !audiences.contains(audience))
+        let count = value.isEmpty ? products.count
+            : products.filter { $0.audience == value || $0.audience == "unisex" || $0.audience == nil }.count
+        return Button { audience = value } label: {
+            Text("\(title) \(count)").font(.footnote.weight(.semibold))
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .foregroundStyle(on ? Theme.onAccent : .primary)
+                .background(on ? Theme.accent : Theme.chip, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    static func label(_ audience: String) -> String {
+        switch audience {
+        case "men": "Men's"
+        case "women": "Women's"
+        case "kids": "Kids'"
+        default: "Everyone"
+        }
     }
 }
 
@@ -1258,19 +1301,31 @@ struct ProductTile: View {
                     .frame(width: 168, height: 150)
                     .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(alignment: .topLeading) {
+                        if let off = product.off {
+                            Text(off).font(.caption.weight(.bold)).monospacedDigit()
+                                .padding(.horizontal, 7).padding(.vertical, 3)
+                                .foregroundStyle(.white).background(Color.red, in: Capsule()).padding(6)
+                        }
+                    }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(product.title)
                         .font(.subheadline.weight(.medium))
                         .lineLimit(2, reservesSpace: true)
                         .multilineTextAlignment(.leading)
                     if let price = product.price {
-                        Text(price).font(.headline).monospacedDigit()
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(price).font(.headline).monospacedDigit()
+                            if let was = product.was, product.off != nil {
+                                Text(was).font(.caption).monospacedDigit().strikethrough().foregroundStyle(.secondary)
+                            }
+                        }
                     }
                     if let stars = product.stars {
                         Text(stars).font(.caption).foregroundStyle(.secondary)
                     }
                     if let note = product.note, !note.isEmpty {
-                        Text(note).font(.caption).foregroundStyle(.orange).lineLimit(2)
+                        Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
                 .padding(.horizontal, 4)

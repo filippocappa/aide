@@ -155,9 +155,15 @@ when it arrives), then finish.
 couldn't. Plain text, no Markdown. When you found things to show (products to compare, the item you put in the \
 cart, trains, restaurants), put them in finish's `products`, best first, each with a short name (brand, model, \
 size: "Lodge L8SK3, 26 cm", not the whole listing title), its link (the site's address plus the path its line \
-ends with), the price as the page shows it, and the rating and number of reviews when the page says them. The \
-user sees them as cards with their pictures, so the message doesn't list them again: it says in a sentence or two \
-which you'd pick and why. Answer what the task asked, and no more: a delivery date or stock only when the task asks \
+ends with), the price as the page shows it, and the rating and number of reviews when the page says them. When \
+the page shows a discount, `was` is the price before it (the struck-through one) and `price` the price now. \
+`audience` is men, women, kids or unisex when the shop sells it for one (shoes, clothes), else null. When the task \
+gives the user's size or sizes, show only what comes in one of them, and put which of their sizes are in stock in \
+`note` ("44, 44.5"); a product that isn't in any of them isn't a card (say in the message how many weren't). \
+`note` is otherwise one short thing worth knowing ("6 left", "arrives Fri"), never "all sizes" or "no discount". \
+The user sees them as cards with their pictures and prices, so the message never lists them again, even when the \
+task says "list": the cards are the list. It says in a sentence or two what stands out (which you'd pick and \
+why, a real discount, the one in short supply). Answer what the task asked, and no more: a delivery date or stock only when the task asks \
 for it or it's a problem (out of stock, arriving after a date they need). No closing lines about what you didn't do \
 ("I didn't buy anything", "I didn't check out") unless the task was to buy and you stopped short.
 
@@ -887,6 +893,17 @@ class ErrandRunner:
         return False
 
 
+AUDIENCES = ("men", "women", "kids", "unisex")
+
+
+def _was(was, price) -> str | None:
+    """The price before a discount, kept only when it's higher than the price now."""
+    if not was or not price:
+        return None
+    old, now = parse_money(str(was))[0], parse_money(str(price))[0]
+    return str(was).strip()[:30] if old is not None and now is not None and old > now else None
+
+
 def _owner(errand_id: int) -> str:
     return f"errand:{errand_id}"
 
@@ -1204,8 +1221,15 @@ class Phase:
             "price": {"type": ["string", "null"], "description": "as the page shows it, like \"49,15 €\""},
             "rating": {"type": ["number", "null"], "description": "out of 5, like 4.6"},
             "reviews": {"type": ["integer", "null"], "description": "how many ratings, like 12463"},
-            "note": {"type": ["string", "null"], "description": "a few words worth knowing: \"6 left\", \"arrives Fri\""}},
-            "required": ["title", "url", "price", "rating", "reviews", "note"], "additionalProperties": False}
+            "was": {"type": ["string", "null"], "description": "the price before a discount, as the page shows it "
+                                                               "struck through, like \"309,99 €\"; else null"},
+            "audience": {"type": ["string", "null"], "enum": ["men", "women", "kids", "unisex", None],
+                         "description": "who the shop sells it for (shoes, clothes), else null"},
+            "note": {"type": ["string", "null"], "description": "the user's sizes in stock (\"44, 44.5\") when the "
+                                                                "task gives them, else a few words worth knowing: "
+                                                                "\"6 left\", \"arrives Fri\""}},
+            "required": ["title", "url", "price", "rating", "reviews", "was", "audience", "note"],
+            "additionalProperties": False}
         return [
             Tool("need_user", "Hand the browser to the user for a step only they can do: log in (login), a CAPTCHA "
                  "(captcha), a code from an SMS or an app (code), a card form or 3-D Secure (card), or something "
@@ -1401,6 +1425,8 @@ class Phase:
             out.append({"title": str(p.get("title") or "")[:120], "url": url[:500],
                         "price": p.get("price"), "rating": _number(p.get("rating")),
                         "reviews": _number(p.get("reviews"), int), "note": p.get("note"),
+                        "was": _was(p.get("was"), p.get("price")),
+                        "audience": p.get("audience") if p.get("audience") in AUDIENCES else None,
                         "image": picture_for(url, p.get("title"), images)})
         started = time.monotonic()
         for p in out:
@@ -1708,7 +1734,8 @@ def errand_tools(runner: ErrandRunner, current_conversation: Callable[[], str | 
              "accounts): find and order a product, book a train, order food, look something up behind a login. "
              "Runs in the background; it asks the user to Confirm before anything that buys, books, sends or "
              "changes something, and hands them the browser for a login or a code. Give the whole request in `task` "
-             "(what they asked, how many, limits, preferences from memory; nothing they didn't ask for), a short "
+             "(what they asked, how many, limits, preferences from memory such as their sizes; nothing they didn't ask "
+             "for), a short "
              "`title`, and the site when known. Write `task` and `title` in English: the errand writes to them in "
              "English. For a timed drop (a sale that opens at a set time: \"goes on sale Friday 10:00, buy one\"), give "
              "`drop_at` (local time, 2026-11-07T10:00), `drop_until` when the sale has an end, and the user's "

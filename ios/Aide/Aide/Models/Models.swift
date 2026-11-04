@@ -3005,9 +3005,36 @@ struct Product: Decodable, Hashable, Identifiable {
     var reviews: Int?
     var note: String?
     var image: String?
+    /// The price before a discount, as the site writes it (only when it's higher than `price`).
+    var was: String?
+    /// "men", "women", "kids", "unisex": who the shop sells it for.
+    var audience: String?
 
     var id: String { url }
     var link: URL? { URL(string: url) }
+
+    /// "−30%" from `was` and `price`.
+    var off: String? {
+        guard let was, let price, let old = Self.amount(was), let now = Self.amount(price), old > now else { return nil }
+        let pct = Int(((old - now) / old * 100).rounded())
+        return pct >= 1 ? "−\(pct)%" : nil
+    }
+
+    /// "309,99 €" → 309.99; "€1.234,50" → 1234.5; "$5.00" → 5.
+    static func amount(_ text: String) -> Double? {
+        guard let r = text.range(of: #"\d[\d.,\s]*"#, options: .regularExpression) else { return nil }
+        var d = text[r].replacingOccurrences(of: " ", with: "")
+        while d.hasSuffix(".") || d.hasSuffix(",") { d.removeLast() }
+        if d.contains(","), d.contains(".") {
+            d = d.lastIndex(of: ",")! > d.lastIndex(of: ".")!
+                ? d.replacingOccurrences(of: ".", with: "").replacingOccurrences(of: ",", with: ".")
+                : d.replacingOccurrences(of: ",", with: "")
+        } else if let comma = d.lastIndex(of: ",") {
+            let cents = d[d.index(after: comma)...]
+            d = cents.count <= 2 ? d.replacingOccurrences(of: ",", with: ".") : d.replacingOccurrences(of: ",", with: "")
+        }
+        return Double(d)
+    }
 
     /// "4,6 ★ · 12.463"
     var stars: String? {
