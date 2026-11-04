@@ -135,7 +135,7 @@ the way a careful person would; pick what fits the request best, cheaper when th
 type a card number, a CVV, an IBAN or a password, and never ask for them.
 - When a login, a CAPTCHA, a code (2FA, an SMS), a card form or a 3-D Secure step is in the way, call need_user: \
 the user does that part on their phone, on Aide's own login screen (it types into this page for them), and you go \
-on after. For a login, open the site's sign-in form first (tap its "Accedi" or "Log in"), so that's what they see.
+on after. For a login, open the site's sign-in form first (tap its "Accedi" or "Log in"), so that's what they see. A login in steps (a phone number, then a code by SMS) is one turn: when the user is back, look before going on, and if a code, a link or another step is still asked, call need_user again (why code).
 - When the task is about the user's own account on the site (their cart, an order, their orders, their address, \
 when something arrives at their place, a booking) and the page shows you're logged out (Amazon: "Ciao, accedi" \
 in the header), log in first with need_user (why login): a logged-out browser's cart and address aren't theirs. \
@@ -489,7 +489,9 @@ class ErrandRunner:
         if e["status"] not in ("needs_you", "interrupted"):
             raise ValueError(f"the errand is {e['status'].replace('_', ' ')}, not waiting for you")
         return self._resume(e, "The user did their part in the live view and says they're done "
-                               f"({e['reason'] or e['why']}). Check the page and go on.")
+                               f"({e['reason'] or e['why']}). Check the page: if the site still asks for something (a code it sent "
+                               "by SMS or email, a link to tap, a second step), call need_user again for that. "
+                               "Else go on.")
 
     def reply(self, errand_id: int, answer: str) -> dict:
         """The user's answer to an ask_user question (or 'go on' for an interrupted errand)."""

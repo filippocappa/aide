@@ -898,6 +898,14 @@ SCENE_PAGES = {
     "/captcha": _html('<form><p>Inserisci i caratteri che vedi</p><img src="/captcha.jpg" alt="captcha" width="200" '
                       'height="70"><input type="text" name="captchacharacters"><button type="submit">Continua'
                       "</button></form>", "Amazon.it"),
+    # Glovo's second step: the SMS code in four boxes, a digit each, moving along as you type.
+    "/it/login/code": _html("<h2>Ti abbiamo inviato un codice via SMS al +39 333 1234567</h2><form>"
+                            + "".join(f'<input inputmode="numeric" maxlength="1" id="d{i}">' for i in range(4))
+                            + "</form><script>document.querySelectorAll('input').forEach((b, i, all) => "
+                              "b.addEventListener('input', () => all[i + 1] && all[i + 1].focus()))</script>",
+                            "Glovo"),
+    # A link to tap, nothing to type.
+    "/it/login/link": _html("<h2>Controlla la tua email: ti abbiamo inviato un link per accedere</h2>", "Glovo"),
 }
 
 
@@ -996,6 +1004,17 @@ async def test_real_chromium_scenes(tmp_path):
         assert (await browser.scene(owner))["form"]["fields"][0]["value"] == "+39"
         assert await browser.fill(owner, dial["ref"], "+225") == "Set the dialling code to +225."  # the model's too
         assert await browser._page(owner).locator("[aria-label=Prefisso]").input_value() == "+225"
+
+        # The SMS code in boxes: one code field, the code typed across the boxes.
+        await browser.open(owner, "https://shop.test/it/login/code")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "code" and [f["kind"] for f in scene["form"]["fields"]] == ["code"]
+        await browser.put(owner, scene["form"]["fields"][0]["ref"], "4821")
+        assert await browser._page(owner).evaluate(
+            "[...document.querySelectorAll('input')].map(b => b.value).join('')") == "4821"
+        await browser.open(owner, "https://shop.test/it/login/link")
+        scene = await browser.scene(owner)
+        assert scene["kind"] == "code" and scene["form"]["fields"] == [] and scene["form"]["sent"]
 
         await browser.open(owner, "https://shop.test/captcha")
         scene = await browser.scene(owner)
