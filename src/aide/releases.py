@@ -12,7 +12,7 @@ Three steps:
    buy: a timed drop on the first of the user's shops that sells it (the errand gets ready ahead and asks to confirm
    the limits, as any drop), tell: a reminder 10 minutes before (Apple Reminders notifies) and a post. A draw is
    always told (a browser can't enter one for you); a colourway out of stock gets a price watch for when it's back;
-   one on sale now is bought through a normal errand, with its Confirm, or told.
+   one available now is bought through a normal errand, with its Confirm, or told.
 Nothing here buys by itself: every order goes through an errand and the user's Confirm (or a drop's confirmed limits).
 """
 
@@ -64,7 +64,7 @@ COLOURWAY = {"type": "object", "properties": {
     "code": {"type": ["string", "null"], "description": "the style code, like HF7356-700"},
     "price": {"type": ["string", "null"], "description": "the price in Italy as written, like \"299,99 €\""},
     "status": {"type": "string", "enum": list(COLOURWAY_STATUSES),
-               "description": "out: on sale now; upcoming: a drop is announced; sold_out; rumoured: no date yet"},
+               "description": "out: released and can be bought now (not a discount); upcoming: a drop is announced; sold_out; rumoured: no date yet"},
     "date": {"type": ["string", "null"], "description": "the drop's day in Italy, YYYY-MM-DD, when known"},
     "time": {"type": ["string", "null"], "description": "the drop's time in Italy, HH:MM, only when a source says it"},
     "method": {"type": "string", "enum": list(METHODS), "description": "fcfs: first come; draw: a raffle"},
@@ -87,7 +87,7 @@ REPORT = {"type": "object", "properties": {
     "required": ["title", "summary", "colourways", "sources"], "additionalProperties": False}
 
 RESEARCH_TASK = """Research a product's release for the user, who buys in Italy: {query}.
-Find every colourway (or version) that's on sale now or coming: its name as the shops write it, the style code, the \
+Find every colourway (or version) that can be bought now or is coming: its name as the shops write it, the style code, the \
 price in Italy, the day and the time it drops in Italy (only a time a source gives; Nike's European launches are \
 often at 09:00 or 10:00 Italian time, but don't guess), whether it's first come or a draw, and the shops in Italy \
 that sell it, with their links. Start with web_search; then read the release calendars (Sole Retriever, Nike's \
@@ -169,7 +169,7 @@ def merge(old: list[dict], new: list[dict]) -> tuple[list[dict], list[dict]]:
             elif c["time"] != was.get("time") and c["time"]:
                 changes.append({"key": c["key"], "kind": "time", "text": f"{c['name']}: at {c['time']} on {c['date']}"})
             if c["status"] != was.get("status"):
-                words = {"out": "on sale now", "sold_out": "sold out", "upcoming": "announced", "rumoured": "rumoured"}
+                words = {"out": "available now", "sold_out": "sold out", "upcoming": "announced", "rumoured": "rumoured"}
                 changes.append({"key": c["key"], "kind": "status", "text": f"{c['name']}: {words[c['status']]}"})
             if c["price"] and was.get("price") and parse_money(c["price"])[0] != parse_money(was["price"])[0]:
                 changes.append({"key": c["key"], "kind": "price", "text": f"{c['name']}: {c['price']} (was {was['price']})"})
@@ -618,16 +618,16 @@ class Releases:
                     "text": f"{name} is sold out: I'm watching {w['site']} for when it's back."}
         if want == "told-out":
             return {"what": "told", "site": where,
-                    "text": f"{name} is on sale now" + (f" on {where}" if where else "") + (f", {c['price']}" if c["price"] else "") + "."}
+                    "text": f"{name} is available now" + (f" on {where}" if where else "") + (f", {c['price']}" if c["price"] else "") + "."}
         if want == "buy-now":
             if self.errands is None or shop is None or not (shop.get("url") or c["url"]):
-                return {"what": "told", "text": f"{name} is on sale now, but I don't have a shop's page to buy it from."}
+                return {"what": "told", "text": f"{name} is available now, but I don't have a shop's page to buy it from."}
             url = shop.get("url") or c["url"]
             e = self.errands.start(f"Buy {name}{size} on {shop['site']}: {url}. Don't buy it above {limit} with "
                                    "shipping: ask instead. Use the account's saved address and card.",
                                    f"{r['title']} {c['name']}"[:60], shop["site"], r["conversation"], release=r["id"])
             return {"what": "errand", "errand_id": e["id"], "site": shop["site"],
-                    "text": f"{name} is on sale on {shop['site']}: I'm getting it ready; you confirm at checkout."}
+                    "text": f"{name} is available on {shop['site']}: I'm getting it ready; you confirm at checkout."}
         when = f"{opens:%a %d %b at %H:%M}" if opens else ""
         if want.startswith("remind@"):
             draw = c["method"] == "draw"

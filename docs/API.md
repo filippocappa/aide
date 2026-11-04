@@ -2360,7 +2360,7 @@ picked colourway it sets up, and redoes when the drop moves:
   that sells it (none picked: the first shop named), with its own Confirm of the limits. Never a draw.
 - tell, or any draw, with a date and a time: a reminder 10 minutes before (a draw is never entered for you).
 - no time yet: nothing, until a look finds one.
-- sold out: a price watch on its page for stock. On sale now: buy starts an errand (its own Confirm), tell just says so.
+- sold out: a price watch on its page for stock. Available now (not a discount): buy starts an errand (its own Confirm), tell just says so.
 Five looks in a row that fail stop it (`failed`). Stop undoes what's set up (cancels the errands, deletes the
 reminders, ends the watches).
 
