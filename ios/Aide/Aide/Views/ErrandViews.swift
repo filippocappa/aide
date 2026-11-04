@@ -741,6 +741,16 @@ struct ErrandButtons: View {
         if !errand.isOver {
             VStack(spacing: 8) {
                 if errand.needsAnswer, let choices = errand.choices, !choices.isEmpty {
+                    #if os(macOS)
+                    // The Mac has the room: every answer in view, wrapped to the card's width.
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 160), spacing: 10, alignment: .top)],
+                              alignment: .leading, spacing: 10) {
+                        ForEach(choices) { choice in
+                            ChoiceTile(choice: choice) { answer(choice.title) }
+                        }
+                    }
+                    #else
+                    // A row to swipe, kept inside the card (unclipped it ran past the card's edge).
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 10) {
                             ForEach(choices) { choice in
@@ -748,7 +758,7 @@ struct ErrandButtons: View {
                             }
                         }
                     }
-                    .scrollClipDisabled()
+                    #endif
                 } else if errand.needsAnswer, let options = errand.options, !options.isEmpty {
                     ForEach(options, id: \.self) { option in
                         Button { answer(option) } label: { Text(option).frame(maxWidth: .infinity) }
