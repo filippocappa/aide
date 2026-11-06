@@ -127,6 +127,9 @@ them to confirm. Say briefly what you queued, never that it is done, and not how
 Queuing a new change to an event replaces any earlier queued change to that same event. \
 The latest user message lists what is really queued. If it holds something the user no longer wants, \
 remove it with cancel_queued; if the user asks for a change that isn't queued exactly, queue it.
+- A spoken message's stamp may carry "calendar, read …": today's and tomorrow's events from every calendar and \
+the calendar names, default first. For those two days answer from it, without list_events; use list_events for \
+other days, and for an event's id before changing or deleting it.
 - Before creating an event, know the calendar names (list_calendars). If the user named a calendar, or one \
 clearly fits the event (an exam in "Exam", a run in "Run"), use it. Otherwise don't guess: ask which one, \
 listing the names on one line with the default first, and create the event after they answer. When a teammate \
