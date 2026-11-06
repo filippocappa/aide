@@ -2518,6 +2518,15 @@ final class NutritionTests: XCTestCase {
 final class LiveCallTests: XCTestCase {
     private func event(_ json: String) -> LiveCall.Event? { LiveCall.parse(Data(json.utf8)) }
 
+    func testParsesTheTeamTalkOfACall() {
+        let json = #"{"type":"team","message":{"from":"aide","to":"secretary","text":"What's on tomorrow?","ts":"2026-11-06T18:19:24+01:00"}}"#
+        guard case .team(let message) = event(json) else { return XCTFail("team") }
+        XCTAssertEqual(message.from, "aide")
+        XCTAssertEqual(message.to, "secretary")
+        XCTAssertEqual(message.text, "What's on tomorrow?")
+        guard case .error("Busy") = event(#"{"type":"error","message":"Busy"}"#) else { return XCTFail("error") }
+    }
+
     func testParsesTheServersMessages() throws {
         guard case .started(let rate, let agent) = event(#"{"type":"started","rate":24000,"agent":"professor"}"#) else {
             return XCTFail("started")

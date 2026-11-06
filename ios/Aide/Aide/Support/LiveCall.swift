@@ -29,6 +29,8 @@ final class LiveCall {
         case caption(who: String, text: String, new: Bool)
         /// You talked over the voice: what it hadn't said yet is dropped.
         case interrupted
+        /// An ask or an answer between the agents while the turn works, shown as it happens.
+        case team(TeamMessage)
         case turn(Turn)
         /// A spoken yes (or no) to queued actions, and the result to show as after a tap.
         case answered(ids: [Int], confirmed: Bool, result: String?)
@@ -53,6 +55,13 @@ final class LiveCall {
             var reason: String?
             var seconds: Double?
             var message: String?
+        }
+        struct Team: Decodable {
+            let type: String
+            let message: TeamMessage
+        }
+        if let team = try? JSONDecoder.api.decode(Team.self, from: data), team.type == "team" {
+            return .team(team.message) // its `message` is an object, an error's a string
         }
         guard let head = try? JSONDecoder.api.decode(Head.self, from: data) else { return nil }
         switch head.type {

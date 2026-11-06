@@ -72,7 +72,7 @@ struct VoicePanel: View {
     @ViewBuilder
     private var exchange: some View {
         if !voice.said.isEmpty { you(voice.said) }
-        if chat.isSending, !chat.liveTeam.isEmpty {
+        if !chat.liveTeam.isEmpty { // a typed-style turn's stream or a call's team messages, while it works
             TeamThread(messages: chat.liveTeam, live: true)
         } else if let reply, !reply.consulted.isEmpty {
             ConsultedRow(agents: reply.consulted.map { chat.agent($0) })
