@@ -710,20 +710,22 @@ come), a reminder 10 min before (tell, or any draw), a price watch when sold out
 Settings → Browser → Releases. Aide's tools: `track_release`, `set_release_picks`, `list_releases`, `release_status`,
 `stop_release`.
 
+**Done, both sides (2026-11-06), live on the phone (closes #34):** the voice redesign (contract "Voice calls").
+Spoken quiz answers are marked with no model call. Live calls: cappa's own voice (`localvoice.py`, `voicemodels.py`,
+Chatterbox in `deploy/chatterbox/`) as the ears and mouth, the chat's agent doing the work, a spoken yes or no checked
+in code (money and outward actions stay on the card), a call row in the chat; GPT-Live (`gptlive.py`) is there but too
+dear (~$30 a month). The words ~0.1 s after you stop, the first sound ~0.5 s after the reply, at `AIDE_VOICE_SPEED`
+(1.15); a line ends ~0.5 s after its last words (it rambled before). A step's line ("Checking the calendar.") only
+when the answer hasn't come 1.2 s after the step, "one moment" for a slow turn, a breath before the answer. App
+(`Support/LiveCall.swift`): the voice on an engine of its own (voice processing only on the speaker or receiver),
+AirPods at full bandwidth on iOS 26; the voice screen (`Views/VoicePanel.swift`) keeps the call as a chat. The old
+turn-at-a-time voice when calls are off (Settings → Voice → Live calls). Faster answers next: #71.
+
 **Next** (GitHub issues):
 0. The code check (2026-11-03) filed #35–#50, one finding each. First the ones that can lose data: #35
    (reminders sync deletes what one fetch missed), #36 (a waiting Wallet tap lost), #37 (one calendar's 404 breaks
    every calendar read). Then the confirm rule's gaps (#38–#41), app bugs and crashes (#42–#46), hardening (#47–#50).
-1. Voice redesign (#34), built on both sides (2026-11-06), not yet tried: spoken quiz answers are marked with no
-   model call (live); live calls (contract "Voice calls"): GPT-Live through cappa as the ears and mouth, the agents
-   doing the work, status notes while they do, a spoken yes or no checked in code (money and outward actions stay on
-   the card), a call row in the chat; the app's `Support/LiveCall.swift` (one engine, voice processing on), the old
-   turn-at-a-time voice when calls are off (Settings → Voice → Live calls). GPT-Live was too dear (~$30 a month), so the
-   voice is cappa's own (2026-11-06): the words ~0.1 s after you stop, the voice ~70 ms after the reply; "one moment"
-   when a turn takes a while. Next: a first call in the Simulator and on the phone (echo on the speaker, Italian and
-   English, `VoiceLog`'s latency against the old pipeline); later Haiku's reply streamed into the voice a sentence at a
-   time.
-2. Recording a lecture in the app. Notebooks for the other courses.
+1. Recording a lecture in the app. Notebooks for the other courses.
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
