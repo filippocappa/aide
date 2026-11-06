@@ -33,7 +33,8 @@ SILENCE = 1.6  # quiet that ends an utterance whatever the turn model said
 SILENCE_NO_TURNS = 0.7  # the same without a turn model
 LONGEST = 30.0
 DONE_P = 0.5  # the turn model's "finished" above this
-BARGE_IN = 0.35  # speech this long over the voice stops it (a cough doesn't)
+BARGE_IN = 0.7  # speech this long over the voice stops it (a cough or a knock doesn't; 0.35 s did, 2026-11-06);
+# a shorter one stops it only once it's written down as words ("stop")
 ECHO_P = 0.8  # while it speaks, only this sure a start counts (what's left of its own voice after echo cancelling)
 CHUNK = RATE // 5 * 2  # audio goes out in 200 ms pieces (bytes)
 AHEAD = 1.0  # the next sentence is made when what's been sent has less than this left to play
