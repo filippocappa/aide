@@ -144,6 +144,23 @@ async def test_steps_go_to_the_voice_as_silent_notes(setup):
     await run
 
 
+async def test_the_team_talk_goes_to_the_phone_as_it_happens(setup):
+    c, voice, sent, *_ = setup([done("Nothing tomorrow.")])
+    asked = {"from": "aide", "to": "secretary", "text": "What's on tomorrow?", "ts": "2026-11-06T17:00:00+00:00"}
+
+    async def respond(*args, on_team=None, **kwargs):
+        on_team(asked)
+        await until(lambda: {"type": "team", "message": asked} in sent)  # before the turn is over
+        return await original(*args, **kwargs)
+
+    original, c.agent.respond = c.agent.respond, respond
+    run = asyncio.create_task(c.run())
+    await say(voice, "what's on tomorrow", "item_1")
+    await until(lambda: voice.answers)
+    await c.end()
+    await run
+
+
 async def test_a_spoken_yes_confirms_and_an_unclear_one_is_asked_again(setup):
     c, voice, sent, turns, agent, store, chat = setup()
     rem = store.create("Bins")

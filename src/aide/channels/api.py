@@ -3314,7 +3314,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             await send_json({"type": "turn", "text": said, **chat_json(conversation, turn)})
 
         call = LiveCall(agent, voice, calls.store, conversation, speaker, send_json, send_audio, on_turn,
-                        calls.idle_minutes)
+                        calls.idle_minutes, team_json)
         calls.active[conversation] = call
         await send_json({"type": "started", "rate": voice.rate, "agent": speaker})
 
