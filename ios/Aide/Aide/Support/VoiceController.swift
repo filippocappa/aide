@@ -41,6 +41,19 @@ final class VoiceController: ObservableObject {
     var speaksReplies: () -> Bool = { true }
     /// Set by AppEnvironment: a WAV recording to text, on the server. Nil: Apple's recogniser.
     var transcribe: ((Data) async throws -> String)?
+    /// Set by AppEnvironment: a live call's socket for the open chat (docs/API.md, "Voice calls"), or nil when there
+    /// can't be one (the server has no voice model, the setting is off, the first chat): then the turns below.
+    var callRequest: (() async -> URLRequest?)?
+    /// What a call does to the chat: a turn, a spoken yes or no, the end.
+    var onCall: ((LiveCall.Event) -> Void)?
+    /// In a call, what the agent is doing ("Checking the calendar"), while it works.
+    @Published private(set) var step: String?
+
+    private var call: LiveCall?
+    /// The agent is working on a request said in the call.
+    private var callWorking = false
+    /// A call that wouldn't start: the turns below until then, without asking the server again.
+    private var noCallsUntil = Date.distantPast
 
     /// How long a pause has to be before what you said is sent.
     private static let pauseBeforeSending: TimeInterval = 2.4
@@ -101,13 +114,22 @@ final class VoiceController: ObservableObject {
     // MARK: Listening
 
     func toggle() async {
-        if isActive { stopAll() } else { conversation = true; said = ""; await startListening() }
+        if isActive { stopAll(); return }
+        conversation = true
+        said = ""
+        if await startCall(saying: nil) { return }
+        await startListening()
     }
 
     /// A voice chat that opens as if you'd said `text` ("Quiz me"): the reply is read out, then it's your turn.
     func start(saying text: String) async {
         guard !isActive else { return }
         conversation = true
+        if await startCall(saying: text) { return }
+        await startTurns(saying: text)
+    }
+
+    private func startTurns(saying text: String) async {
         guard await authorize(speech: transcribe == nil || serverOff) else {
             error = "Allow the microphone for Aide in iOS Settings."
             stopAll()
@@ -127,6 +149,12 @@ final class VoiceController: ObservableObject {
     }
 
     func stopAll() {
+        if let call {
+            call.end()
+            endCall()
+            onCall?(.ended(reason: "hung up", seconds: 0))
+            return
+        }
         conversation = false
         finishListening(send: false)
         stopSpeaking()
@@ -314,7 +342,7 @@ final class VoiceController: ObservableObject {
 
     /// You're done: send what you've said now, without waiting for the pause.
     func sendNow() {
-        guard isListening, !isSpeaking else { return }
+        guard call == nil, isListening, !isSpeaking else { return } // in a call the server hears when you've finished
         VoiceLog.note("send now")
         finishListening(send: true, force: true)
     }
@@ -440,6 +468,108 @@ final class VoiceController: ObservableObject {
             guard allowed else { return false }
         }
         return await AVAudioApplication.requestRecordPermission()
+    }
+
+    // MARK: Live calls
+
+    /// Starts a live call when the chat can have one. False: there's none, so the turns below.
+    private func startCall(saying text: String?) async -> Bool {
+        guard Date() >= noCallsUntil, let callRequest, let request = await callRequest() else { return false }
+        guard conversation else { return true } // stopped meanwhile
+        guard await authorize(speech: false) else {
+            error = "Allow the microphone for Aide in iOS Settings."
+            stopAll()
+            return true
+        }
+        guard conversation else { return true }
+        let call = LiveCall()
+        self.call = call
+        error = nil
+        step = nil
+        callWorking = false
+        phase = .waiting
+        isListening = true
+        call.onEvent = { [weak self, weak call] event in
+            guard let self, let call, self.call === call else { return }
+            self.callEvent(event, call: call, saying: text)
+        }
+        call.onLevel = { [weak self, weak call] level in
+            guard let self, self.call === call else { return }
+            self.level = level
+        }
+        call.onSpeaking = { [weak self, weak call] speaking in
+            guard let self, self.call === call else { return }
+            self.callSpeaking(speaking)
+        }
+        VoiceLog.note("call: connecting")
+        call.connect(request)
+        return true
+    }
+
+    private func callEvent(_ event: LiveCall.Event, call: LiveCall, saying text: String?) {
+        switch event {
+        case .started(_, let agent):
+            VoiceLog.note("call: started with \(agent)")
+            if let text {
+                said = text
+                call.say(text)
+            }
+        case .state(let working, let step):
+            callWorking = working
+            self.step = working ? step : nil
+            if working { phase = .thinking } else if !isSpeaking { phase = .waiting }
+        case .caption(let who, let piece, let new):
+            guard who == "you" else { break }
+            said = new || said.isEmpty ? piece : said + piece
+            transcript = said
+            if !callWorking, !isSpeaking { phase = .hearing }
+        case .interrupted:
+            if !callWorking { phase = .hearing }
+        case .ended(let reason, let seconds):
+            VoiceLog.note("call: ended (\(reason)) after \(seconds) s")
+            endCall()
+        case .error(let message):
+            VoiceLog.note("call: \(message)")
+            guard call.isStarted else {
+                // No call after all: the turns, as before calls, and no asking again for a while.
+                noCallsUntil = Date().addingTimeInterval(10 * 60)
+                self.call = nil
+                isListening = false
+                phase = .off
+                Task {
+                    if let text { await startTurns(saying: text) } else { await startListening() }
+                }
+                return
+            }
+            endCall() // the socket is gone: the call with it
+            error = message
+            onCall?(.ended(reason: message, seconds: 0))
+            return
+        case .turn, .answered:
+            break
+        }
+        onCall?(event)
+    }
+
+    private func callSpeaking(_ speaking: Bool) {
+        isSpeaking = speaking
+        isListening = !speaking
+        if speaking {
+            phase = .speaking
+        } else if phase == .speaking {
+            phase = callWorking ? .thinking : .waiting
+        }
+    }
+
+    private func endCall() {
+        call = nil
+        callWorking = false
+        step = nil
+        conversation = false
+        isListening = false
+        isSpeaking = false
+        level = 0
+        phase = .off
     }
 
     // MARK: Audio engine

@@ -244,7 +244,11 @@ struct ChatView: View {
                             } else if !message.consulted.isEmpty {
                                 ConsultedRow(agents: message.consulted.map { chat.agent($0) })
                             }
-                            MessageRow(message: message, foldedErrands: chat.errandsAgain(after: message))
+                            if let call = message.call {
+                                CallRow(call: call, agent: chat.agent(call.agent))
+                            } else {
+                                MessageRow(message: message, foldedErrands: chat.errandsAgain(after: message))
+                            }
                             if chat.startsWithDigest, message.id == chat.messages.first?.id { digestDetails }
                         }
                         .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity))
@@ -622,6 +626,28 @@ struct SendButton: View {
 
 /// Your messages sit in soft grey bubbles; the reply is plain text on the page, like Pebble speaking, with copy
 /// and share underneath.
+/// A voice call in the chat: who, when and how long. What was said in it is in the messages after it.
+private struct CallRow: View {
+    let call: VoiceCall
+    let agent: Agent
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "phone.fill")
+            Text("Call with \(agent.name) · \(call.length)")
+            if let started = call.started {
+                Text(started, format: .dateTime.hour().minute()).foregroundStyle(.tertiary)
+            }
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.quaternary.opacity(0.6), in: Capsule())
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct MessageRow: View {
     let message: ChatViewModel.Message
     var foldedErrands: Set<Int> = []

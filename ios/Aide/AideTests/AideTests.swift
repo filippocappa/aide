@@ -2512,3 +2512,83 @@ final class NutritionTests: XCTestCase {
         XCTAssertEqual(PushRoute(url: try XCTUnwrap(URL(string: "aide://money"))), .money(payment: nil))
     }
 }
+
+/// Live calls (docs/API.md, "Voice calls"): the server's messages, the chat's rows, the microphone's frames.
+@MainActor
+final class LiveCallTests: XCTestCase {
+    private func event(_ json: String) -> LiveCall.Event? { LiveCall.parse(Data(json.utf8)) }
+
+    func testParsesTheServersMessages() throws {
+        guard case .started(let rate, let agent) = event(#"{"type":"started","rate":24000,"agent":"professor"}"#) else {
+            return XCTFail("started")
+        }
+        XCTAssertEqual(rate, 24_000)
+        XCTAssertEqual(agent, "professor")
+        guard case .state(true, "Checking the calendar") = event(#"{"type":"state","state":"working","step":"Checking the calendar"}"#),
+              case .state(false, nil) = event(#"{"type":"state","state":"listening"}"#),
+              case .caption("you", "what's on", true) = event(#"{"type":"caption","who":"you","text":"what's on","new":true}"#),
+              case .interrupted = event(#"{"type":"interrupted"}"#),
+              case .answered([12], true, "✓ Deleted: Bins") = event(#"{"type":"answered","ids":[12],"confirmed":true,"result":"✓ Deleted: Bins"}"#),
+              case .ended("goodbye", 252) = event(#"{"type":"ended","reason":"goodbye","seconds":252}"#),
+              case .error("No voice") = event(#"{"type":"error","message":"No voice"}"#)
+        else { return XCTFail("a message read wrong") }
+        XCTAssertNil(event(#"{"type":"something new"}"#))
+
+        let turn = #"{"type":"turn","text":"delete bins","reply":"Shall I?","pending":[{"id":12,"summary":"Delete Bins"}],"attachments":[],"conversation_id":"c_1"}"#
+        guard case .turn(let t) = event(turn) else { return XCTFail("turn") }
+        XCTAssertEqual(t.text, "delete bins")
+        XCTAssertEqual(t.reply.reply, "Shall I?")
+        XCTAssertEqual(t.reply.pending, [PendingAction(id: 12, summary: "Delete Bins")])
+    }
+
+    func testCallRowsGoWhereTheCallStarted() throws {
+        let json = #"""
+        {"messages":[{"role":"user","text":"hi","ts":"2026-11-06T10:00:00+01:00"},
+                     {"role":"assistant","text":"Hello","ts":"2026-11-06T10:00:05+01:00"},
+                     {"role":"user","text":"what's on","ts":"2026-11-06T10:30:10+01:00"},
+                     {"role":"assistant","text":"Nothing","ts":"2026-11-06T10:30:12+01:00"}],
+         "calls":[{"id":3,"agent":"professor","started_at":"2026-11-06T09:30:00+00:00","ended_at":"2026-11-06T09:34:12+00:00",
+                   "seconds":252,"reason":"goodbye","requests":1},
+                  {"id":4,"agent":"professor","started_at":"2026-11-06T11:00:00+00:00","ended_at":"2026-11-06T11:01:00+00:00",
+                   "seconds":60,"reason":"idle","requests":0}]}
+        """#
+        let history = try JSONDecoder.api.decode(HistoryResponse.self, from: Data(json.utf8))
+        let rows = ChatViewModel.messages(history)
+        XCTAssertEqual(rows.map { $0.call?.id ?? 0 }, [0, 0, 3, 0, 0, 4])
+        XCTAssertEqual(rows[2].call?.length, "4:12")
+        XCTAssertEqual(try JSONDecoder.api.decode(HistoryResponse.self, from: Data(#"{"messages":[]}"#.utf8)).calls, nil)
+    }
+
+    func testATurnAndASpokenYesShowAsTyped() throws {
+        let chat = ChatViewModel(api: APIClient(config: { nil }))
+        let json = #"{"text":"delete bins","reply":"Shall I?","pending":[{"id":12,"summary":"Delete Bins"},{"id":13,"summary":"Other"}],"attachments":[]}"#
+        chat.appendTurn(try JSONDecoder.api.decode(LiveCall.Turn.self, from: Data(json.utf8)))
+        XCTAssertEqual(chat.messages.map(\.text), ["delete bins", "Shall I?"])
+        XCTAssertEqual(chat.pending.map(\.id), [12, 13])
+        chat.answered(ids: [12], result: "✓ Deleted: Bins")
+        XCTAssertEqual(chat.pending.map(\.id), [13])
+        XCTAssertEqual(chat.messages.last?.text, "✓ Deleted: Bins")
+    }
+
+    func testTheMicrophoneGoesOutIn40MsFrames() throws {
+        let input = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let framer = PCMFramer(rate: 24_000)
+        XCTAssertEqual(framer.frameBytes, 1920)
+        var frames: [Data] = []
+        for _ in 0..<10 { // a second of a tone, in buffers of 100 ms
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: input, frameCapacity: 4800))
+            buffer.frameLength = 4800
+            for i in 0..<4800 { buffer.floatChannelData![0][i] = 0.5 * sin(Float(i) * 0.05) }
+            frames += framer.append(buffer)
+        }
+        XCTAssertTrue(frames.allSatisfy { $0.count == 1920 })
+        XCTAssertGreaterThanOrEqual(frames.count, 23) // ~25, less what the resampler holds back
+        XCTAssertLessThanOrEqual(frames.count, 25)
+    }
+
+    func testTheVoiceIsReadAsFloats() {
+        var pcm = Data([0xFF]) // odd start, so the samples aren't aligned
+        for v: Int16 in [0, 16384, -32768, 32767] { withUnsafeBytes(of: v.littleEndian) { pcm.append(contentsOf: $0) } }
+        XCTAssertEqual(LiveCall.floats(pcm.dropFirst()), [0, 0.5, -1, 32767.0 / 32768])
+    }
+}

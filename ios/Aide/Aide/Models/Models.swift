@@ -417,12 +417,31 @@ enum Schedule {
     }
 }
 
+/// A live call in a chat, drawn as a row among its messages (docs/API.md, "Voice calls").
+struct VoiceCall: Decodable, Equatable, Hashable {
+    let id: Int
+    let agent: String
+    let startedAt: String
+    let seconds: Int
+
+    var started: Date? { Wire.parse(startedAt) }
+    /// "4:12".
+    var length: String { "\(seconds / 60):" + String(format: "%02d", seconds % 60) }
+}
+
+/// Whether the server makes live calls.
+struct VoiceStatus: Decodable {
+    let live: Bool
+}
+
 struct HistoryResponse: Decodable {
     let messages: [HistoryMessage]
     /// A turn still running in the chat: the message being answered (not in `messages` until it's done).
     let working: Working?
     /// Think harder is on: the smarter model answers this chat. Absent from older servers.
     let smart: Bool?
+    /// Voice calls in this chat (docs/API.md, "Voice calls"), oldest first. Absent from older servers.
+    var calls: [VoiceCall]?
 
     struct Working: Decodable, Equatable {
         let agent: String

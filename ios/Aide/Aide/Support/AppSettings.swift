@@ -18,6 +18,7 @@ final class AppSettings: ObservableObject {
         static let token = "apiToken"
         static let voiceLanguage = "voiceLanguage"
         static let speakReplies = "speakReplies"
+        static let liveCalls = "liveCalls"
         static let studyRevealNow = "studyRevealNow"
     }
 
@@ -38,6 +39,10 @@ final class AppSettings: ObservableObject {
     }
     @Published var speakReplies: Bool {
         didSet { Keychain.set(speakReplies ? "1" : "0", for: Keys.speakReplies) }
+    }
+    /// Talking is a live call when the server can make one (docs/API.md, "Voice calls"); off: a turn at a time.
+    @Published var liveCalls: Bool {
+        didSet { Keychain.set(liveCalls ? "1" : "0", for: Keys.liveCalls) }
     }
     /// Practice exams: each answer shown as you go (Check), or all of them at the end.
     @Published var studyRevealNow: Bool {
@@ -64,6 +69,7 @@ final class AppSettings: ObservableObject {
         reminderListID = Keychain.get(Keys.reminderListID) ?? ""
         voiceLanguage = Keychain.get(Keys.voiceLanguage) ?? "en-US"
         speakReplies = Keychain.get(Keys.speakReplies).map { $0 == "1" } ?? true
+        liveCalls = Keychain.get(Keys.liveCalls).map { $0 == "1" } ?? true
         studyRevealNow = Keychain.get(Keys.studyRevealNow).map { $0 == "1" } ?? true
     }
 

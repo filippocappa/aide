@@ -417,6 +417,11 @@ private struct VoiceSettingsView: View {
                 Text("For the live preview of your words. Aide understands both, even mixed.")
             }
             Section {
+                Toggle("Live calls", isOn: $settings.liveCalls).tint(Theme.toggle)
+            } footer: {
+                Text("Talking is like a phone call: Aide answers as soon as you've finished, says what it's doing while it works, and stops when you talk over it. Say “bye” to hang up. Needs the server's voice model; without it Aide answers a turn at a time, as below.")
+            }
+            Section {
                 Toggle("Read replies aloud", isOn: $settings.speakReplies).tint(Theme.toggle)
             } footer: {
                 Text("Tap the microphone in a chat to talk. Aide answers out loud and keeps listening until you tap stop.")
