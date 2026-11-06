@@ -221,9 +221,10 @@ token or an unknown chat is closed with 1008, calls off with 1011. A second call
   - `{"type": "turn", "text": "what's on tomorrow", "reply": "…", "pending": [ … ], "attachments": [ … ], …}`: a
     request and its reply, the `/v1/chat` response plus `text` (what was asked). Show both in the chat; cards and
     Confirm work as for a typed turn.
-  - `{"type": "answered", "ids": [12], "confirmed": true}`: the user said yes (or no) to those queued actions. A
-    spoken yes counts only for what that request queued, never for money or mail leaving (errand orders, drops,
-    sending mail: "It's on your screen to confirm"). The chat gets the result as after a tap.
+  - `{"type": "answered", "ids": [12], "confirmed": true, "result": "✓ Deleted: Bins"}`: the user said yes (or no)
+    to those queued actions; `result` as `/v1/confirm`'s (or `/v1/cancel`'s). Drop them from the Confirm card and show
+    `result` as an assistant message, as after a tap. A spoken yes counts only for what that request queued, never
+    for money or mail leaving (errand orders, drops, sending mail: "It's on your screen to confirm").
   - `{"type": "ended", "reason": "hung up" | "goodbye" | "idle" | "replaced" | "voice closed" | "voice failed" | …,
     "seconds": 252}` last; the server then closes the socket. A goodbye ("ok bye", "basta così") ends the call; so do
     5 minutes with nothing said.

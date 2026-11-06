@@ -438,11 +438,12 @@ class LiveCall:
         answer = bool(spoken_consent(words))
         ids, self.awaiting = self.awaiting, []
         if answer:
-            said = f"Done. {speakable(await self.agent.confirm(CONVERSATION, ids, by_voice=True))}".strip()
+            result = await self.agent.confirm(CONVERSATION, ids, by_voice=True)
+            said = f"Done. {speakable(result)}".strip()
         else:
-            await self.agent.cancel(CONVERSATION, ids, by_voice=True)
+            result = await self.agent.cancel(CONVERSATION, ids, by_voice=True)
             said = "Okay, I've left it."
-        await self._send({"type": "answered", "ids": ids, "confirmed": answer})
+        await self._send({"type": "answered", "ids": ids, "confirmed": answer, "result": result})
         return said
 
     async def _request(self, words: str, delegation: str | None = None) -> None:
