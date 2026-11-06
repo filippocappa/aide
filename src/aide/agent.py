@@ -128,6 +128,7 @@ class Agent:
         self.short_chat: Callable[[str], bool] | None = None
         # Where the phone is, in words, for the stamp (transit.Whereabouts.describe); None leaves it out.
         self.whereabouts: Callable[[], Awaitable[str | None]] | None = None
+        self._titling: set[asyncio.Task] = set()  # titles written after a voice turn returned
         # What an agent should see fresh on every message, for its stamp (Coach: today's food against the day's
         # targets, which grow when a workout comes in later). None, or None for the agent, leaves it out.
         self.context: Callable[[str], str | None] | None = None
@@ -432,7 +433,12 @@ class Agent:
             self.db.append_turn(conversation_id, channel if conversation is None else "app", turn, attachments,
                                 consulted, team)
             if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
-                self.db.set_conversation_title(conversation_id, await self._title(text, reply))
+                if voice:  # a call waits for the turn to return before it speaks; the title can come after
+                    task = asyncio.create_task(self._set_title(conversation_id, text, reply))
+                    self._titling.add(task)
+                    task.add_done_callback(self._titling.discard)
+                else:  # a typed reply has already streamed to the screen
+                    await self._set_title(conversation_id, text, reply)
             times["end"] = time.monotonic()
             if voice:
                 steps = list(times.items())
@@ -679,6 +685,9 @@ class Agent:
              "required": ["agent", "request"], "additionalProperties": False},
             ask_agent,
         )
+
+    async def _set_title(self, conversation_id: int, text: str, reply: str) -> None:
+        self.db.set_conversation_title(conversation_id, await self._title(text, reply))
 
     async def _title(self, text: str, reply: str) -> str:
         """A short name for a new app chat. Falls back to the start of the first message."""
