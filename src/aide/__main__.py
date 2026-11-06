@@ -46,6 +46,7 @@ from .scheduler import reminder_fallback
 from .material import PageReader
 from .moodle import MoodleSync
 from .notebook import NotebookStore, NotebookWorker
+from .examplan import ExamPlan, examplan_tools
 from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
 from .videos import VideoStore, VideoWorker
@@ -304,12 +305,16 @@ def main() -> None:
     bedtime = Bedtime(db.conn, settings.timezone, health, push, live, locks,
                       calendar_events if cal else None, lambda event: digest.leave_at(event))
     tools += bedtime_tools(bedtime)
+    examplan = ExamPlan(db.conn, settings.timezone, study, notebook, quizzes, lessons, focus, bedtime)
+    notebook.on_change.append(examplan.invalidate)
+    tools += examplan_tools(examplan, study)
 
     # Made below (digest) or maybe not at all (leave): the settings tools find them when called.
     tools += settings_tools(lambda: digest, live, lambda: leave, engine)
     tools += page_tools(study, notebook)
     objectives = ObjectiveStore(db.conn, settings.timezone, habits, food, health, reminders)
     planner = ObjectivePlanner(objectives, engine, db, cal, study, notebook)
+    planner.examplan = examplan
     replanner = StudyReplanner(planner)  # Professor's proposals follow the notes and dates as they change
     notebook.on_change.append(replanner.changed)
     agent = Agent(
@@ -437,7 +442,7 @@ def main() -> None:
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off, watches=watches, releases=releases,
-                             weights=weights, videos=videos, lessons=lessons, finance=finance,
+                             weights=weights, videos=videos, lessons=lessons, finance=finance, examplan=examplan,
                              banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
                              focus=focus, focus_watch=focus_watch, calls=calls)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.

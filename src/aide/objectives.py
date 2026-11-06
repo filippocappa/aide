@@ -632,6 +632,7 @@ class ObjectivePlanner:
         self.calendar = calendar
         self.study = study
         self.notebook = notebook
+        self.examplan = None  # examplan.py, set after: the hours each exam still needs against the free days
         self.tz = store.tz
         self._lock = asyncio.Lock()
 
@@ -851,6 +852,15 @@ class ObjectivePlanner:
                         f"{', by the user' if t['by_user'] else ''})" for t in new[:12]))
             if missed := self._missed(c["id"]):
                 out.append(f"  - Topics most missed in recent practice exams and quizzes: {missed}")
+        if self.examplan is not None:
+            try:
+                plan = await self.examplan.plan()
+            except Exception:
+                log.warning("objectives: the exam plan failed", exc_info=True)
+            else:
+                out += ["Exam plan (hours still needed per exam against the free days; keep the day's and week's "
+                        "study objectives in line with it, and say so when a course is short):",
+                        *(f"  {line}" for line in self.examplan.text(plan).splitlines())]
         lectures = [e for e in await self._events(start, end) if self.study.calendar
                     and e.calendar == self.study.study_calendar]
         if lectures:
