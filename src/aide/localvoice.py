@@ -179,6 +179,7 @@ class LocalVoice:
         self._turn_at = time.monotonic()  # when the turn being worked on began
         self._noting: asyncio.Task | None = None  # a step waiting STEP_WAIT before it's said
         self._after_status = False  # the last line said was a status line
+        self.hushes = 0  # times you talked over it: a reply said as it's written stops at the next one (livecall)
         self._closed = False
         backend.opened()
 
@@ -297,6 +298,16 @@ class LocalVoice:
         self._stop_note()
         self._queue(text)
 
+    def say_part(self, text: str, more: bool = True) -> None:
+        """A piece of the reply while the rest is still being written (#71), said after what's queued. `more`: the
+        turn goes on (a tool may run after it), so the longer "still working" lines start again; the last piece
+        stops them."""
+        self._stop_filler()
+        self._stop_note()
+        self._queue(text)
+        if more and not self._closed:
+            self._filler = self._spawn(self._fill(first=False))
+
     def _queue(self, text: str, status: bool = False) -> None:
         if self._closed or not text.strip():
             return
@@ -349,6 +360,7 @@ class LocalVoice:
 
     def _hush(self) -> None:
         """You talked over it: what's left unsaid goes."""
+        self.hushes += 1
         self._barging = False
         self._lines.clear()
         self._stop_filler()
