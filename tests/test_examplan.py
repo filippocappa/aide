@@ -62,7 +62,7 @@ def test_spread_fills_evenly_within_each_day():
     free = {d[0]: 30, d[1]: 240, d[2]: 240, d[3]: 240}
     out = spread(free, d, 300)
     assert sum(out.values()) == 300
-    assert out[d[0]] == 30 and max(out.values()) <= 95  # 30 + 3 × 90, rounded up to steps
+    assert out == {d[0]: 30, d[1]: 90, d[2]: 90, d[3]: 90}  # to the last day before the date
     assert spread(free, d, 2000) == free  # more than fits: every free minute
     assert spread(free, d, 0) == {}
 
