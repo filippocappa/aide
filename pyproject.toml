@@ -24,13 +24,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Transcription on the GPU (study.py, whisper.py): Whisper, and NeMo for Parakeet on English (about 6 GB with torch).
-# Only the server box installs it: uv sync --extra whisper
+# The GPU (about 6 GB with torch): transcription (study.py, whisper.py: Whisper, and NeMo for Parakeet on English) and
+# the live calls' own voice (voicemodels.py: Parakeet v3, Kokoro, Silero, smart-turn). Only the server box installs
+# it: uv sync --extra whisper
 whisper = [
     "faster-whisper>=1.1",
     "nvidia-cublas-cu12",
     "nvidia-cudnn-cu12>=9,<10",
     "nemo_toolkit[asr]>=2.4",
+    "kokoro>=0.9.4",
+    "pysilero-vad>=2",
+    "en-core-web-sm",
 ]
 
 [project.scripts]
@@ -49,3 +53,6 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.uv.sources]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }

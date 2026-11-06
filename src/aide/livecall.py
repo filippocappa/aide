@@ -6,9 +6,11 @@ working); then it reads the answer back in the first person. A yes or no to what
 code (consent.py), and so is a goodbye. The chat keeps the spoken requests and the replies as normal turns, and one
 row for the call (`calls`).
 
-The voice model sits behind `LiveVoice` (gptlive.py is OpenAI's GPT-Live); this file doesn't know which it is. It
-tells us only the words as it writes them down, in pieces, and that a request was handed over (no words with it, no
-end of an utterance, no interruptions): those are worked out here from the pieces and the quiet between them."""
+The voice sits behind `LiveVoice`: localvoice.py (Parakeet, Kokoro and a turn detector on cappa's GPU, the usual one)
+or gptlive.py (OpenAI's GPT-Live); this file doesn't know which it is. It tells us only the words as it writes them
+down, in pieces, and that a request was handed over (no words with it, no end of an utterance): those are worked out
+here from the pieces and the quiet between them. A voice that knows when you start talking says so (`Speech`), and
+the phone stops playing at once."""
 
 import asyncio
 import logging
@@ -72,6 +74,11 @@ class Said:
 
 
 @dataclass
+class Speech:
+    """The user started talking (a voice that can tell before the words are written down): over the voice, it stops."""
+
+
+@dataclass
 class Delegation:
     """The voice hands a request over; its words are what was heard since the last one."""
     id: str
@@ -82,12 +89,15 @@ class Closed:
     reason: str
 
 
-Event = Audio | Heard | Said | Delegation | Closed
+Event = Audio | Heard | Said | Speech | Delegation | Closed
 
 
 class LiveVoice(Protocol):
     rate: int  # sample rate of the PCM16 mono audio, both ways
     seconds: float  # billed so far, as the provider counts it (0 when it doesn't say)
+    # Optional, read with getattr: `settle` (the quiet that ends an utterance; 0 when each Heard is a whole one),
+    # `provider`, `model` and `price_minute` (for usage), `working(delegation)` (a turn started: say "one moment" if
+    # it takes a while).
 
     async def send_audio(self, pcm: bytes) -> None: ...
 
@@ -235,12 +245,13 @@ class Ears:
     """The user's words, cut into utterances by the quiet between pieces."""
     utterances: list[Utterance] = field(default_factory=list)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
+    settle: float | None = None  # None: SETTLE
 
     def heard(self, text: str, speaking: bool) -> tuple[Utterance, bool]:
         """Add a piece; returns its utterance and whether it began one."""
         now = time.monotonic()
         current = self.utterances[-1] if self.utterances else None
-        new = current is None or current.delegated or now - current.last >= SETTLE
+        new = current is None or current.delegated or now - current.last >= self._settle()
         if new:
             current = Utterance(started=now, echo=speaking)
             self.utterances.append(current)
@@ -249,6 +260,9 @@ class Ears:
         current.last = now
         self.changed.set()
         return current, new
+
+    def _settle(self) -> float:
+        return SETTLE if self.settle is None else self.settle
 
     def waiting(self) -> list[Utterance]:
         return [u for u in self.utterances if not u.delegated and u.text.strip()]
@@ -262,8 +276,8 @@ class Ears:
                 await asyncio.wait_for(self.changed.wait(), left)
             except TimeoutError:
                 break
-        while (waiting := self.waiting()) and (quiet := time.monotonic() - waiting[-1].last) < SETTLE:
-            await asyncio.sleep(SETTLE - quiet)
+        while (waiting := self.waiting()) and (quiet := time.monotonic() - waiting[-1].last) < self._settle():
+            await asyncio.sleep(self._settle() - quiet)
         taken = self.waiting()
         for u in taken:
             u.delegated = True
@@ -283,7 +297,7 @@ class LiveCall:
         self.conversation, self.agent_id = conversation, agent_id
         self.send_json, self.send_audio, self.on_turn = send_json, send_audio, on_turn
         self.idle = idle_minutes * 60
-        self.ears = Ears()
+        self.ears = Ears(settle=getattr(voice, "settle", None))
         self.awaiting: list[int] = []  # queued actions asked about, waiting for a spoken yes or no
         self.tasks: set[asyncio.Task] = set()
         self.turns = 0  # chat turns running
@@ -334,8 +348,10 @@ class LiveCall:
                 log.warning("live call: closing the voice failed", exc_info=True)
             seconds = self.voice.seconds or time.monotonic() - self.started
             self.calls.end(call_id, seconds, self.ended or "closed", self.requests)
-            usage.record("openai", "gpt-live", cost=round(seconds / 60 * PRICE_MINUTE, 4), purpose="live",
-                         agent=self.agent_id, conversation=self.conversation, ms=round(seconds * 1000))
+            price = getattr(self.voice, "price_minute", PRICE_MINUTE)
+            usage.record(getattr(self.voice, "provider", "openai"), getattr(self.voice, "model", "gpt-live"),
+                         cost=round(seconds / 60 * price, 4), purpose="live", agent=self.agent_id,
+                         conversation=self.conversation, ms=round(seconds * 1000))
             await self._send({"type": "ended", "reason": self.ended or "closed", "seconds": round(seconds)})
             log.info("live call in %s ended (%s) after %d s, %d requests", self.conversation, self.ended,
                      seconds, self.requests)
@@ -397,6 +413,11 @@ class LiveCall:
                 self._settle = asyncio.create_task(self._settled(utterance))
             case Said(text):
                 await self._send({"type": "caption", "who": self.agent_id, "text": text})
+            case Speech():
+                self.last_activity = time.monotonic()
+                if self._speaking():
+                    self.speaking_until = 0.0
+                    await self._send({"type": "interrupted"})
             case Delegation(id):
                 self._spawn(self._delegated(id))
             case Closed(reason):
@@ -500,6 +521,8 @@ class LiveCall:
                 await self.voice.think(f"Still working ({len(steps)} steps so far{last}).", delegation)
 
         self.turns += 1
+        if working := getattr(self.voice, "working", None):
+            await working(delegation)
         status = asyncio.create_task(still_working())
         try:
             return await self.agent.respond(CONVERSATION, words, self.conversation, voice=True, on_step=on_step)

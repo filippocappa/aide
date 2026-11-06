@@ -34,9 +34,11 @@ class LiveError(Exception):
 
 class GptLive:
     rate = RATE
+    provider, price_minute = "openai", 0.05  # gpt-live-1, billed by the second (2026-11)
 
     def __init__(self, ws: ClientConnection):
         self.ws = ws
+        self.model = MODEL
         self.seconds = 0.0
         self.session: str | None = None
         self._send_lock = asyncio.Lock()
@@ -46,6 +48,7 @@ class GptLive:
         ws = await connect(URL, additional_headers={"Authorization": f"Bearer {key}"}, max_size=None,
                            open_timeout=10)
         live = cls(ws)
+        live.model = model
         try:
             await live._send({"type": "session.start", "session": {
                 "model": model, "instructions": instructions,

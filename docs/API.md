@@ -194,12 +194,12 @@ on with `/v1/chat` as usual. 400 for an empty body, 413 over 10 MB, 415 for anot
 
 ### Voice calls (since 2026-11-06, #34)
 
-A live call is a conversation by voice: a realtime voice model (OpenAI's GPT-Live) listens and speaks, the chat's
-agent does the work. Each request said in the call is a normal chat turn by voice (stamped ", by voice", with the
+A live call is a conversation by voice: a voice listens and speaks (cappa's own models on its GPU, or OpenAI's GPT-Live;
+the app can't tell and needn't), the chat's agent does the work. Each request said in the call is a normal chat turn by voice (stamped ", by voice", with the
 agent's tools, memory and confirm queue), so it's in the history like a typed one. The voice gets the agent's steps
 as private notes while it works and reads the reply back in the first person.
 
-`GET /v1/voice` → `{"live": true}` when the server can make calls (it has an OpenAI key), else `false`: then use
+`GET /v1/voice` → `{"live": true}` when the server can make calls, else `false`: then use
 `/v1/transcribe` and `/v1/chat` as above.
 
 `WS /v1/voice/call?conversation=c_91f…` with `Authorization: Bearer <token>`. An app chat only (not `main`); a bad
@@ -212,7 +212,8 @@ token or an unknown chat is closed with 1008, calls off with 1011. A second call
   voice); `{"type": "end"}` hangs up (closing the socket does too).
 - **Server → phone**, JSON:
   - `{"type": "started", "rate": 24000, "agent": "professor"}` first; then `{"type": "error", "message": "…"}` and a
-    1011 close if the voice didn't start.
+    1011 close if the voice didn't start (the local voice can't while a recording is being transcribed: use the
+    turn-at-a-time voice then).
   - `{"type": "state", "state": "listening" | "working", "step": "Checking the calendar"}` (`step` only while
     working, as the chat's `step` event).
   - `{"type": "caption", "who": "you" | "<agent id>", "text": "…", "new": true}`: the words as they're written down,

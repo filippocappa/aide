@@ -58,7 +58,12 @@ class Settings:
     enable_banking_key: Path | None = None  # its private key (PEM), copied to the server by the user
     enable_banking_redirect: str | None = None  # the callback URL registered with Enable Banking
     gtt: bool = True  # Turin's GTT: stops, live arrivals and tram alerts (AIDE_GTT=0 turns it off)
-    # Live calls (#34): OpenAI's GPT-Live is the voice; off without the key.
+    # Live calls (#34): AIDE_LIVE=local (Parakeet, Kokoro on the GPU; the default where they're installed),
+    # gpt-live (OpenAI's GPT-Live, needs the key) or off.
+    live: str | None = None  # None: local if it can, else gpt-live with a key, else off
+    live_voice_en: str = "af_heart"
+    live_voice_it: str = "if_sara"
+    live_speed: float = 1.0
     openai_api_key: str | None = None
     live_model: str = "gpt-live-1"
     live_voice: str = "marin"
@@ -137,6 +142,10 @@ def load_settings() -> Settings:
         enable_banking_key=Path(k).expanduser() if (k := os.environ.get("ENABLE_BANKING_KEY", "").strip()) else None,
         enable_banking_redirect=os.environ.get("ENABLE_BANKING_REDIRECT", "").strip() or None,
         gtt=os.environ.get("AIDE_GTT", "1").strip() not in ("0", "false", "no", "off"),
+        live=os.environ.get("AIDE_LIVE", "").strip().lower() or None,
+        live_voice_en=os.environ.get("AIDE_LIVE_VOICE_EN", "").strip() or "af_heart",
+        live_voice_it=os.environ.get("AIDE_LIVE_VOICE_IT", "").strip() or "if_sara",
+        live_speed=float(os.environ.get("AIDE_LIVE_SPEED", "").strip() or 1.0),
         openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip() or None,
         live_model=os.environ.get("AIDE_LIVE_MODEL", "").strip() or "gpt-live-1",
         live_voice=os.environ.get("AIDE_LIVE_VOICE", "").strip() or "marin",
