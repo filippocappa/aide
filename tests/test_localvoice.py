@@ -228,3 +228,20 @@ async def test_a_call_with_the_local_voice(monkeypatch):
     await c.end("hangup")
     await asyncio.wait_for(run, 2)
     db.close()
+
+
+async def test_a_voice_turn_returns_before_the_new_chats_title():
+    from aide.agent import Agent
+    from aide.db import Database
+    from aide.tools import ToolRegistry
+    from test_api import ROME, FakeClient, done
+
+    db = Database(":memory:")
+    client = FakeClient([done("Nothing tomorrow."), done("Tomorrow's plans")])
+    agent = Agent(client, db, ToolRegistry([]), model="m", delegate=False, tz=ROME)
+    chat = agent.new_conversation(agent="secretary")["id"]
+    turn = await agent.respond("app", "what's on tomorrow", chat, voice=True)
+    assert turn.reply == "Nothing tomorrow." and agent.db.app_conversation(chat)["title"] is None
+    await asyncio.gather(*agent._titling)
+    assert agent.db.app_conversation(chat)["title"] == "Tomorrow's plans"
+    db.close()

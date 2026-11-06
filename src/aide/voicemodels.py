@@ -84,11 +84,17 @@ class VoiceModels:
         from kokoro import KModel, KPipeline
         kokoro = KModel().to("cuda").eval()
         pipes = {lang: KPipeline(lang_code=code, model=kokoro) for lang, code in LANGS.items()}
-        for lang, pipe in pipes.items():  # the first sentence is slow; get it over with
-            for _ in pipe("Ciao." if lang == "it" else "Hello.", voice=self.voices[lang], speed=self.speed):
-                pass
-        with torch.inference_mode():
-            asr.transcribe([_floats16k(b"\0" * RATE)], batch_size=1, verbose=False)
+        # The first sentence and the first words are slow (~0.4 s more); get them over with, on real speech:
+        # silence doesn't warm the decoder.
+        import numpy as np
+        for lang, pipe in pipes.items():
+            said = [r.audio.detach().cpu().numpy() for r in pipe(
+                "Ciao, cosa ho domani?" if lang == "it" else "Hello, what's on tomorrow?",
+                voice=self.voices[lang], speed=self.speed) if r.audio is not None]
+            pcm = (np.clip(np.concatenate(said), -1, 1) * 32767).astype(np.int16).tobytes()
+            with torch.autocast("cuda", dtype=torch.float16), torch.inference_mode():
+                for _ in range(2):
+                    asr.transcribe([_floats16k(pcm)], batch_size=1, verbose=False)
         self._asr, self._pipes = asr, pipes
 
     def release(self) -> None:
