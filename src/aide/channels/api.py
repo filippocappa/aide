@@ -52,6 +52,7 @@ from ..quiz import MOST as MOST_QUESTIONS, QuizStore, mark as mark_answer, plain
 from ..study import AUDIO_TYPES, MAX_AUDIO as MAX_LECTURE, StudyStore, StudyWorker
 from ..transcribe import FORMATS as AUDIO_FORMATS, MAX_BYTES as MAX_AUDIO, Transcriber
 from ..leave import LeaveWatcher
+from ..livecall import LiveCall, LiveCalls, instructions as live_instructions
 from ..locks import LockStore
 from ..tools.nutrition import OpenFoodFacts, read_label, save_product
 from ..transit import AlertStore, Boards, Location
@@ -707,8 +708,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                banks: Banks | None = None, bank_redirect: str | None = None,
                bedtime: Bedtime | None = None, focus: FocusStore | None = None,
                focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None,
-               releases: Releases | None = None) -> FastAPI:
+               releases: Releases | None = None, calls: LiveCalls | None = None) -> FastAPI:
     db: Database = agent.db
+    calls = calls or LiveCalls(agent, db.conn)  # no voice to connect: calls are off
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
     foods = foods or FoodDB(db.conn)
@@ -1052,7 +1054,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             m["attachments"] = [a for a in m["attachments"] if a["type"] != "videos" or a["videos"]]
         # A turn still running here isn't in the history yet (it's saved when it ends): what was asked, and by whom.
         running = working.get(conversation_id or CONVERSATION)
-        return {"messages": messages, "smart": agent.thinking(CONVERSATION, conversation_id),
+        # The chat's live calls that ended after its first message shown (all of them when the whole chat is shown).
+        since = (datetime.fromisoformat(messages[0]["ts"]).astimezone(timezone.utc).isoformat()
+                 if messages and len(messages) >= limit and messages[0].get("ts") else None)
+        call_rows = calls.store.since(conversation_id, since) if conversation_id else []
+        return {"messages": messages, "smart": agent.thinking(CONVERSATION, conversation_id), "calls": call_rows,
                 **({"working": running} if running else {})}
 
     @app.get("/v1/team", dependencies=[Depends(auth)])
@@ -3262,6 +3268,87 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         release_or_404(release_id)
         releases.delete(release_id)
         return {"ok": True}
+
+    @app.get("/v1/voice", dependencies=[Depends(auth)])
+    async def voice_info():
+        return {"live": calls.on}
+
+    @app.websocket("/v1/voice/call")
+    async def voice_call(ws: WebSocket, conversation: str):
+        """A live call in a chat (#34): the phone's microphone in, the voice out (binary frames, PCM16 mono at
+        `rate`), and what's going on as JSON. Each spoken request is a chat turn by voice."""
+        scheme, _, given = ws.headers.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not hmac.compare_digest(given.encode(), token.encode()):
+            await ws.close(code=1008)
+            return
+        row = db.app_conversation(conversation)
+        if row is None:
+            await ws.close(code=1008)
+            return
+        if not calls.on:
+            await ws.close(code=1011)
+            return
+        await ws.accept()
+        speaker = row["agent"] or ORCHESTRATOR
+        if old := calls.active.get(conversation):  # a second call in a chat ends the first
+            await old.end("replaced")
+        try:
+            voice = await calls.connect(live_instructions(
+                AGENTS[speaker].name, agent.visible_history(CONVERSATION, 8, conversation)))
+        except Exception as e:
+            log.exception("live call: couldn't open the voice")
+            await ws.send_json({"type": "error", "message": f"The voice didn't start: {e}"})
+            await ws.close(code=1011)
+            return
+        send_lock = asyncio.Lock()
+
+        async def send_json(message: dict) -> None:
+            async with send_lock:
+                await ws.send_json(message)
+
+        async def send_audio(pcm: bytes) -> None:
+            async with send_lock:
+                await ws.send_bytes(pcm)
+
+        async def on_turn(said: str, turn: Turn) -> None:
+            await send_json({"type": "turn", "text": said, **chat_json(conversation, turn)})
+
+        call = LiveCall(agent, voice, calls.store, conversation, speaker, send_json, send_audio, on_turn,
+                        calls.idle_minutes)
+        calls.active[conversation] = call
+        await send_json({"type": "started", "rate": voice.rate, "agent": speaker})
+
+        async def listen() -> None:
+            try:
+                while True:
+                    message = await ws.receive()
+                    if message["type"] == "websocket.disconnect":
+                        break
+                    if (pcm := message.get("bytes")) is not None:
+                        await call.audio_in(pcm)
+                    elif text := message.get("text"):
+                        event = json.loads(text)
+                        if event.get("type") == "say" and (said := str(event.get("text") or "").strip()):
+                            await call.typed(said)
+                        elif event.get("type") == "end":
+                            break
+            except (WebSocketDisconnect, RuntimeError):
+                pass
+            except Exception:
+                log.exception("live call: the phone's side failed")
+            await call.end("hung up")
+
+        listener = asyncio.create_task(listen())
+        try:
+            await call.run()
+        finally:
+            listener.cancel()
+            if calls.active.get(conversation) is call:
+                del calls.active[conversation]
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
     @app.websocket("/v1/browser/live")
     async def browser_live(ws: WebSocket, errand: int | None = None, site: str | None = None, frames: bool = True):

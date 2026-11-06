@@ -192,7 +192,48 @@ it (about a second a sentence), in whatever language was spoken, Italian and Eng
 on with `/v1/chat` as usual. 400 for an empty body, 413 over 10 MB, 415 for another type, 502 if the model failed
 (try again), 503 when the server has no OpenRouter key (then use the phone's own recogniser).
 
-`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}], "smart": false}` (`smart`: Think harder is on in that chat, since 2026-10-30)
+### Voice calls (since 2026-11-06, #34)
+
+A live call is a conversation by voice: a realtime voice model (OpenAI's GPT-Live) listens and speaks, the chat's
+agent does the work. Each request said in the call is a normal chat turn by voice (stamped ", by voice", with the
+agent's tools, memory and confirm queue), so it's in the history like a typed one. The voice gets the agent's steps
+as private notes while it works and reads the reply back in the first person.
+
+`GET /v1/voice` → `{"live": true}` when the server can make calls (it has an OpenAI key), else `false`: then use
+`/v1/transcribe` and `/v1/chat` as above.
+
+`WS /v1/voice/call?conversation=c_91f…` with `Authorization: Bearer <token>`. An app chat only (not `main`); a bad
+token or an unknown chat is closed with 1008, calls off with 1011. A second call in the same chat ends the first
+(`ended` with `"replaced"`).
+
+- **Audio**, binary frames both ways: PCM16 little-endian mono at `rate` (24000). The phone sends its microphone
+  (echo-cancelled) in short frames (~20–100 ms); the server sends the voice to play in order.
+- **Phone → server**, JSON: `{"type": "say", "text": "Quiz me"}` words for the user, a request at once (Quiz me by
+  voice); `{"type": "end"}` hangs up (closing the socket does too).
+- **Server → phone**, JSON:
+  - `{"type": "started", "rate": 24000, "agent": "professor"}` first; then `{"type": "error", "message": "…"}` and a
+    1011 close if the voice didn't start.
+  - `{"type": "state", "state": "listening" | "working", "step": "Checking the calendar"}` (`step` only while
+    working, as the chat's `step` event).
+  - `{"type": "caption", "who": "you" | "<agent id>", "text": "…", "new": true}`: the words as they're written down,
+    in pieces to append; `new` (yours only) starts a new line.
+  - `{"type": "interrupted"}`: the user spoke over the voice. Drop the voice audio not played yet.
+  - `{"type": "turn", "text": "what's on tomorrow", "reply": "…", "pending": [ … ], "attachments": [ … ], …}`: a
+    request and its reply, the `/v1/chat` response plus `text` (what was asked). Show both in the chat; cards and
+    Confirm work as for a typed turn.
+  - `{"type": "answered", "ids": [12], "confirmed": true}`: the user said yes (or no) to those queued actions. A
+    spoken yes counts only for what that request queued, never for money or mail leaving (errand orders, drops,
+    sending mail: "It's on your screen to confirm"). The chat gets the result as after a tap.
+  - `{"type": "ended", "reason": "hung up" | "goodbye" | "idle" | "replaced" | "voice closed" | "voice failed" | …,
+    "seconds": 252}` last; the server then closes the socket. A goodbye ("ok bye", "basta così") ends the call; so do
+    5 minutes with nothing said.
+
+`/v1/history` (with `conversation_id`) has `calls`, the chat's calls that ended after its first message shown (all of
+them when the whole chat is shown), oldest first: `[{"id": 3, "agent": "professor", "started_at": "…", "ended_at":
+"…", "seconds": 252, "reason": "goodbye", "requests": 4}]` (UTC times). Draw a "Call with Professor · 4:12" row at
+`started_at` among the messages. `[]` in the first chat.
+
+`GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}], "smart": false, "calls": []}` (`smart`: Think harder is on in that chat, since 2026-10-30; `calls`: Voice calls, since 2026-11-06)
 (`attachments`, `consulted` and `team` as in `/v1/chat`, `[]` on user messages and plain replies; a user message
 sent with photos also has `"photos": ["p_…"]`, absent otherwise; reminders in them are reloaded as they are now,
 so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said before. Tool calls and internal notes are left out. Since 2026-11-03 a Confirm or Cancel shows as an assistant message in the chat that queued it: `/v1/confirm`'s `result` ("✓ Deleted: …", event ids left out) or "Cancelled. Nothing was changed."

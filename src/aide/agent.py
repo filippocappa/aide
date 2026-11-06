@@ -296,8 +296,9 @@ class Agent:
         return [a for a in self.db.pending_actions(channel, PENDING_TTL)
                 if (a["id"] in ids if ids is not None else not _standing(a))]
 
-    async def confirm(self, channel: str, ids: list[int] | None = None) -> str:
-        """Run every pending action, or only those with the given ids."""
+    async def confirm(self, channel: str, ids: list[int] | None = None, by_voice: bool = False) -> str:
+        """Run every pending action, or only those with the given ids. `by_voice`: a spoken yes in a live call
+        (livecall.py), not a tap."""
         async with self._lock:
             actions = self._answerable(channel, ids)
             if not actions:
@@ -308,25 +309,29 @@ class Agent:
                 self.db.set_pending_status(action["id"], "failed" if err else "done")
                 lines.append(("✗ " if err else "✓ ") + out)
                 activity.record(self.db.conn, action["agent"] or ORCHESTRATOR, "failed" if err else "confirmed",
-                                action["summary"], out, action["conversation"] or channel)
+                                action["summary"] + (" (said yes by voice)" if by_voice else ""), out,
+                                action["conversation"] or channel)
             result = _hide_ids("\n".join(lines))
             # Each chat that queued something learns how its own actions went.
             for conversation in dict.fromkeys(a["conversation"] for a in actions):
                 own = "\n".join(line for a, line in zip(actions, lines) if a["conversation"] == conversation)
-                self._note(channel, conversation, f"[The user tapped Confirm. Results:\n{own}]")
+                how = "said yes by voice" if by_voice else "tapped Confirm"
+                self._note(channel, conversation, f"[The user {how}. Results:\n{own}]")
             return result
 
-    async def cancel(self, channel: str, ids: list[int] | None = None) -> str:
-        """Cancel every pending action, or only those with the given ids."""
+    async def cancel(self, channel: str, ids: list[int] | None = None, by_voice: bool = False) -> str:
+        """Cancel every pending action, or only those with the given ids (`by_voice`: a spoken no)."""
         async with self._lock:
             actions = self._answerable(channel, ids)
             if not self.db.cancel_pending(channel, [a["id"] for a in actions]):
                 return "Nothing to cancel."
             for a in actions:
-                activity.record(self.db.conn, a["agent"] or ORCHESTRATOR, "cancelled", a["summary"],
+                activity.record(self.db.conn, a["agent"] or ORCHESTRATOR, "cancelled",
+                                a["summary"] + (" (said no by voice)" if by_voice else ""),
                                 conversation=a["conversation"] or channel)
+            how = "said no by voice" if by_voice else "tapped Cancel"
             for conversation in dict.fromkeys(a["conversation"] for a in actions):
-                self._note(channel, conversation, "[The user tapped Cancel. The queued actions were cancelled.]")
+                self._note(channel, conversation, f"[The user {how}. The queued actions were cancelled.]")
             return "Cancelled. Nothing was changed."
 
     def note(self, conversation: str | None, text: str) -> None:
@@ -920,10 +925,10 @@ class Agent:
 
     def _step(self, agent: str, tool, args: dict) -> None:
         """Tell the app what the tool is doing while it runs; a failing label never stops the call."""
-        if not (self._on_step and tool.step):
+        if not (self._on_step and (tool.step or tool.name in STEPS)):
             return
         try:
-            if label := tool.step(args):
+            if label := (tool.step or STEPS[tool.name])(args):
                 self._on_step(agent, label)
         except Exception:
             log.warning("step for %s failed", tool.name, exc_info=True)
@@ -937,6 +942,28 @@ class Agent:
             out, err = f"Error: {e}", True
         self.db.audit(name, args, out, err)
         return out, err
+
+
+# Step labels for the tools that have none of their own, so a live call (and the app) can say what's going on.
+STEPS: dict[str, Callable[[dict], str | None]] = {
+    "list_events": lambda a: "Checking the calendar",
+    "search_events": lambda a: f"Looking for \u201c{a.get('query', '')}\u201d in the calendar",
+    "free_time": lambda a: "Finding free time",
+    "create_event": lambda a: f"Adding {a.get('title', 'the event')} to the calendar",
+    "edit_event": lambda a: "Changing the event",
+    "list_reminders": lambda a: "Checking the reminders",
+    "create_reminder": lambda a: f"Adding a reminder: {a.get('title', '')}".rstrip(": "),
+    "update_reminder": lambda a: "Changing the reminder",
+    "complete_reminder": lambda a: "Ticking off the reminder",
+    "search_mail": lambda a: "Searching the mail",
+    "list_unread": lambda a: "Checking the inbox",
+    "read_mail": lambda a: "Reading the mail",
+    "read_thread": lambda a: "Reading the thread",
+    "draft_reply": lambda a: "Drafting a reply",
+    "health": lambda a: "Looking at Apple Health",
+    "transit_arrivals": lambda a: "Checking the trams",
+    "weather": lambda a: "Checking the weather",
+}
 
 
 def _quiz_turn(history: list[dict]) -> bool:
@@ -978,8 +1005,8 @@ _CHANGES = (None, "found", "created", "proposed")  # an event card item's change
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
 _QUEUE_MARK = "\n[Queued, waiting for the user's OK:"
-_CONFIRMED = re.compile(r"^\[The user (?:replied !yes|tapped Confirm)\. Results:\n(.*)\]$", re.S)
-_CANCELLED = ("[The user replied !no.", "[The user tapped Cancel.")
+_CONFIRMED = re.compile(r"^\[The user (?:replied !yes|tapped Confirm|said yes by voice)\. Results:\n(.*)\]$", re.S)
+_CANCELLED = ("[The user replied !no.", "[The user tapped Cancel.", "[The user said no by voice.")
 _EVENT_ID = re.compile(r"\[[^\]\s]{8,}\] ")  # "Changed: [D839FD47-…] Tue 03 Nov …": the id is for the model
 
 
