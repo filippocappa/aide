@@ -484,7 +484,8 @@ def test_streamed_chat_sends_team_then_the_reply(env):
                               done("Secretary queued it.")]
     r = client.post("/v1/chat", json={"text": "delete bins", "stream": True}, headers=AUTH)
     assert r.headers["content-type"].startswith("text/event-stream")
-    got = events(r)
+    step, *got = events(r)
+    assert step == ("step", {"step": "Asking Secretary", "agent": "aide"})
     assert [e for e, _ in got] == ["team", "team", "text", "text", "text", "reply"]
     assert got[0][1]["text"] == "Delete Bins\nplease" and got[1][1]["from"] == "secretary"
     # Only Aide's own reply is streamed, not Secretary's answer, and it starts a fresh draft after the ask.
