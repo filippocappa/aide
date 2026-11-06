@@ -6,8 +6,10 @@ import Foundation
 /// each request and reply comes back as a `turn` for the chat. Nothing here decides when you've finished talking or
 /// what you meant: the server does.
 ///
-/// The voice plays through the same audio engine as the microphone, with voice processing on, so echo cancellation
-/// keeps Aide from hearing itself (and from approving its own question).
+/// The voice plays through an engine of its own: voice processing on the microphone's engine made it flat and robotic
+/// when it played there too (2026-11-06). Echo cancelling stays on the microphone while the phone's speaker plays
+/// (voice processing, or the system's echo-cancelled input where the phone has it), so Aide doesn't hear itself;
+/// with headphones there's no echo and no processing.
 @MainActor
 final class LiveCall {
     /// A request said in the call and its reply: `/v1/chat`'s response plus `text`, what was asked.
@@ -86,14 +88,16 @@ final class LiveCall {
     /// The server said `started`: the voice is up and the microphone is going.
     private(set) var isStarted = false
 
+    /// The microphone's engine, and the voice's.
     private let engine = AVAudioEngine()
+    private let voice = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let mic = MicFeed()
     private var task: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
     private var rate = 24_000.0
     private var playFormat: AVAudioFormat?
-    private var configObserver: NSObjectProtocol?
+    private var configObservers: [NSObjectProtocol] = []
     /// Voice buffers scheduled and not played yet; `generation` moves on when they're dropped.
     private var queued = 0
     private var generation = 0
@@ -199,26 +203,59 @@ final class LiveCall {
     private func startAudio() throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+        var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth]
+        if #available(iOS 26, *) {
+            // AirPods with the mic on drop to HFP: phone-call sound both ways, which made the voice robotic. Those
+            // that can keep full-bandwidth audio both ways with this (HFP stays the fallback).
+            options.insert(.bluetoothHighQualityRecording)
+        }
+        try session.setCategory(.playAndRecord, mode: .default, options: options)
+        if #available(iOS 18.2, *), session.isEchoCancelledInputAvailable {
+            try? session.setPrefersEchoCancelledInput(true)
+        }
         try session.setActive(true, options: .notifyOthersOnDeactivation)
         #endif
-        if configObserver == nil {
-            configObserver = NotificationCenter.default.addObserver(
-                forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.engineChanged() }
+        if configObservers.isEmpty {
+            configObservers = [engine, voice].map { which in
+                NotificationCenter.default.addObserver(
+                    forName: .AVAudioEngineConfigurationChange, object: which, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.engineChanged() }
+                }
             }
         }
         try startEngine()
     }
 
+    /// Whether the microphone needs voice processing to keep the voice out: the phone's own speaker (or the Mac's),
+    /// unless the system already cancels the echo there.
+    private var needsProcessing: Bool {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        if #available(iOS 18.2, *), session.isEchoCancelledInputEnabled { return false }
+        let outputs = session.currentRoute.outputs.map(\.portType)
+        return outputs.contains(.builtInSpeaker) || outputs.contains(.builtInReceiver)
+        #else
+        return true
+        #endif
+    }
+
     private func startEngine() throws {
-        let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 1,
                                          interleaved: false) else { throw CallError.format }
         playFormat = format
-        if player.engine == nil { engine.attach(player) }
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        if player.engine == nil { voice.attach(player) }
+        voice.connect(player, to: voice.mainMixerNode, format: format)
+        voice.prepare()
+        try voice.start()
+        player.play()
+
+        let input = engine.inputNode
+        let processing = needsProcessing
+        try input.setVoiceProcessingEnabled(processing)
+        if processing, #available(iOS 17, macOS 14, *) {
+            // Our voice is "other audio" to it now: not turned down
+            input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+        }
 
         mic.framer = PCMFramer(rate: rate)
         let mic = mic
@@ -230,17 +267,32 @@ final class LiveCall {
         }
         engine.prepare()
         try engine.start()
-        player.play()
-        VoiceLog.note("call: microphone on, \(input.outputFormat(forBus: 0)), "
-                      + "voice processing \(input.isVoiceProcessingEnabled), voice at \(Int(rate)) Hz")
+        var echo = false
+        #if os(iOS)
+        if #available(iOS 18.2, *) { echo = AVAudioSession.sharedInstance().isEchoCancelledInputEnabled }
+        var route = ""
+        if let port = AVAudioSession.sharedInstance().currentRoute.inputs.first {
+            route = ", mic \(port.portType.rawValue)"
+            if #available(iOS 26, *), let bt = port.bluetoothMicrophoneExtension {
+                route += bt.highQualityRecording.isEnabled ? " (full bandwidth)" : " (HFP)"
+            }
+        }
+        #else
+        let route = ""
+        #endif
+        VoiceLog.note("call: microphone on, \(input.outputFormat(forBus: 0)), voice processing "
+                      + "\(input.isVoiceProcessingEnabled), echo-cancelled input \(echo), voice at \(Int(rate)) Hz"
+                      + route)
     }
 
     /// iOS changed the audio setup (a route change, voice processing coming up) and stopped the engine.
     private func engineChanged() {
-        guard isStarted, task != nil, !engine.isRunning else { return }
+        guard isStarted, task != nil, !engine.isRunning || !voice.isRunning else { return }
         VoiceLog.note("call: audio setup changed, starting again")
         engine.inputNode.removeTap(onBus: 0)
         flush()
+        if engine.isRunning { engine.stop() } // voice processing changes only while it's stopped
+        if voice.isRunning { voice.stop() }
         do { try startEngine() } catch { VoiceLog.note("call: couldn't restart the microphone: \(error.localizedDescription)") }
     }
 
@@ -251,7 +303,7 @@ final class LiveCall {
     }
 
     private func play(_ pcm: Data) {
-        guard let format = playFormat, engine.isRunning else { return }
+        guard let format = playFormat, voice.isRunning else { return }
         let samples = Self.floats(pcm)
         guard !samples.isEmpty,
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
@@ -282,18 +334,19 @@ final class LiveCall {
         let wasSpeaking = queued > 0
         queued = 0
         player.stop()
-        if engine.isRunning { player.play() }
+        if voice.isRunning { player.play() }
         if wasSpeaking { onSpeaking(false) }
     }
 
     private func stopAudio() {
         mic.framer = nil
         flush()
-        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
-        configObserver = nil
+        configObservers.forEach(NotificationCenter.default.removeObserver)
+        configObservers = []
         guard isStarted else { return }
         isStarted = false
         player.stop()
+        if voice.isRunning { voice.stop() }
         if engine.isRunning { engine.stop() }
         engine.inputNode.removeTap(onBus: 0)
         #if os(iOS)
