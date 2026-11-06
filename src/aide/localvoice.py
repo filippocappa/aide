@@ -125,6 +125,29 @@ def sentences(text: str) -> list[str]:
     return out
 
 
+_TIME = r"\b([01]?\d|2[0-3]):([0-5]\d)\b"
+_RANGE = re.compile(_TIME + r"\s*[–—-]\s*" + r"(?=\b(?:[01]?\d|2[0-3]):[0-5]\d\b)")
+_CLOCK = re.compile(_TIME + r"(\s*[ap]\.?\s?m\b\.?)?", re.I)
+
+
+def spoken(text: str, language: str) -> str:
+    """Clock times as Kokoro reads them well ("13:47" is "1 47 p.m." in English, "13 e 47" in Italian; read as it is
+    it says "thirteen zero zero")."""
+    text = _RANGE.sub(lambda m: f"{m[1]}:{m[2]} {'alle' if language == 'it' else 'to'} ", text)
+
+    def say(m: re.Match) -> str:
+        h, mins, half = int(m[1]), int(m[2]), m[3]
+        if language == "it":
+            return "mezzanotte" if h == mins == 0 else f"{h}" if not mins else f"{h} e {mins}"
+        if half:
+            return f"{h}{f' {mins:02d}' if mins >= 10 else f' oh {mins}' if mins else ''}{half}"
+        if not mins and h in (0, 12):
+            return "midnight" if h == 0 else "noon"
+        minutes = "" if not mins else f" oh {mins}" if mins < 10 else f" {mins}"
+        return f"{h % 12 or 12}{minutes} {'a.m.' if h < 12 else 'p.m.'}"
+    return _CLOCK.sub(say, text)
+
+
 # -- the voice -----------------------------------------------------------------------------------------------------
 
 class LocalVoice:
@@ -260,7 +283,7 @@ class LocalVoice:
                 if (left := self._playing_until - time.monotonic()) > AHEAD:
                     await asyncio.sleep(left - AHEAD)
                 self._put(Said(sentence + " "))
-                async for pcm in self.backend.speak(sentence, lang):
+                async for pcm in self.backend.speak(spoken(sentence, lang), lang):
                     for i in range(0, len(pcm), CHUNK):
                         piece = pcm[i:i + CHUNK]
                         now = time.monotonic()
