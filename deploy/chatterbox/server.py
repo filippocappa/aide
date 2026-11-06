@@ -38,6 +38,7 @@ STEPS = int(os.environ.get("AIDE_VOICE_STEPS", "4"))  # the decoder's flow steps
 FADE = 480  # samples crossfaded at a join (20 ms)
 SPEED = float(os.environ.get("AIDE_VOICE_SPEED", "1.15"))  # how fast it talks (the clips' pace is 1; CosyVoice's way:
 # the sound's frames squeezed before they're voiced, so the pitch stays)
+TAIL = int(os.environ.get("AIDE_VOICE_TAIL", "12"))  # tokens (40 ms each) a line may go on after its last words
 VALID = 6561  # speech tokens at or above this are special
 
 
@@ -255,6 +256,15 @@ def _analyzer():
     class Analyzer(AlignmentStreamAnalyzer):
         def _add_attention_spy(self, *args):  # Voice._spy hooks them once
             pass
+
+        def step(self, logits, next_token=None):
+            """Upstream's, plus an end: TAIL tokens after the line's last words are reached, it's over. Upstream waits
+            for the attention to pile up on them, but it wobbles over the last few, and a short line went on to the
+            cap with made-up words or a long breath ("Checking the calendar. The calendar is on the Mon…", 2026-11-06)."""
+            logits = super().step(logits, next_token)
+            if self.completed_at is not None and self.alignment.shape[0] - self.completed_at >= TAIL:
+                logits[..., self.eos_idx] = 2**15
+            return logits
     return Analyzer
 
 
