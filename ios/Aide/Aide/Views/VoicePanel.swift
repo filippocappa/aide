@@ -14,7 +14,7 @@ struct VoicePanel: View {
         case .waiting: "Listening…"
         case .hearing: "Listening"
         case .transcribing: "Writing it down…"
-        case .thinking: "Thinking…"
+        case .thinking: voice.step ?? "Thinking…"
         case .speaking: "Speaking"
         }
     }
@@ -26,7 +26,7 @@ struct VoicePanel: View {
             return ChatViewModel.Message(role: .assistant, text: live)
         }
         guard voice.phase == .speaking || voice.phase == .waiting && !voice.said.isEmpty else { return nil }
-        return chat.messages.last { $0.role == .assistant }
+        return chat.messages.last { $0.role == .assistant && $0.call == nil }
     }
 
     var body: some View {

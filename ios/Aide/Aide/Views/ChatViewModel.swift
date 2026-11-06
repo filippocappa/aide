@@ -19,6 +19,8 @@ final class ChatViewModel: ObservableObject {
         var photos: [String] = []
         /// Photos sent from here, shown before they're uploaded.
         var localPhotos: [Data] = []
+        /// A voice call's row ("Call with Professor · 4:12"), not a message.
+        var call: VoiceCall?
     }
 
     private static let conversationKey = "conversationID"
@@ -395,7 +397,7 @@ final class ChatViewModel: ObservableObject {
             func content(_ list: [Message]) -> [String] {
                 list.map {
                     "\($0.role == .user ? "u" : "a")|\($0.text)|\($0.attachments.hashValue)|\($0.team.count)"
-                        + "|\(max($0.photos.count, $0.localPhotos.count))"
+                        + "|\(max($0.photos.count, $0.localPhotos.count))|\($0.call?.id ?? 0)"
                 }
             }
             if content(loaded) != content(messages.filter { !$0.isError }) {
@@ -407,11 +409,66 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    private static func messages(_ history: HistoryResponse) -> [Message] {
-        history.messages.map {
-            Message(role: $0.role == "user" ? .user : .assistant, text: $0.text, attachments: $0.attachments,
-                    consulted: $0.consulted, team: $0.team, routine: $0.routine, photos: $0.photos)
+    /// The history's messages, each call's row where it started.
+    static func messages(_ history: HistoryResponse) -> [Message] {
+        var calls = (history.calls ?? []).compactMap { call in call.started.map { (call, $0) } }
+        var list: [Message] = []
+        for message in history.messages {
+            let at = message.ts.flatMap(Wire.parse)
+            while let first = calls.first, let at, first.1 <= at {
+                list.append(Message(role: .assistant, text: "", call: first.0))
+                calls.removeFirst()
+            }
+            list.append(Message(role: message.role == "user" ? .user : .assistant, text: message.text,
+                                attachments: message.attachments, consulted: message.consulted, team: message.team,
+                                routine: message.routine, photos: message.photos))
         }
+        list += calls.map { Message(role: .assistant, text: "", call: $0.0) }
+        return list
+    }
+
+    // MARK: Voice calls
+
+    /// This chat's id on the server, made now for a blank new chat: a call needs one before anything is said.
+    func openConversation() async -> String? {
+        if let conversationID { return conversationID }
+        guard !isSending else { return nil }
+        conversationID = try? await newConversationID()
+        return conversationID
+    }
+
+    /// What a call did to this chat (docs/API.md, "Voice calls").
+    func callEvent(_ event: LiveCall.Event) {
+        switch event {
+        case .turn(let turn):
+            appendTurn(turn)
+            Task { await onServerChange?() }
+        case .answered(let ids, _, let result):
+            answered(ids: ids, result: result)
+            Task { await onServerChange?() }
+        case .ended:
+            Task { // the server keeps the call when it closes: its row, the title, the card's last line
+                try? await Task.sleep(for: .seconds(1))
+                await loadHistory()
+                await loadConversations()
+            }
+        default:
+            break
+        }
+    }
+
+    /// A request said in a call and its reply, as a typed turn shows them; Confirm works as usual.
+    func appendTurn(_ turn: LiveCall.Turn) {
+        messages.append(Message(role: .user, text: turn.text))
+        messages.append(Message(role: .assistant, text: turn.reply.reply, attachments: turn.reply.attachments,
+                                consulted: turn.reply.consulted, team: turn.reply.team))
+        pending = turn.reply.pending
+    }
+
+    /// A spoken yes or no to queued actions: off the Confirm card, and the result as after a tap.
+    func answered(ids: [Int], result: String?) {
+        pending.removeAll { ids.contains($0.id) }
+        if let result, !result.isEmpty { messages.append(Message(role: .assistant, text: result)) }
     }
 
     /// The stream was lost after the message went out (the app in the background, the network gone), but the server

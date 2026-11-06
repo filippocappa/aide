@@ -494,6 +494,27 @@ final class APIClient {
         return req
     }
 
+    /// Whether the server makes live calls (docs/API.md, "Voice calls"). An older server has no such endpoint: no.
+    func voiceStatus() async throws -> VoiceStatus {
+        do {
+            return try await send("GET", "/v1/voice")
+        } catch APIError.server(let status, _) where status == 404 || status == 405 {
+            return VoiceStatus(live: false)
+        }
+    }
+
+    /// A live call's socket in that chat (docs/API.md, "Voice calls"). The token goes in the header.
+    func voiceCallRequest(conversationID: String) throws -> URLRequest {
+        var req = try request("GET", "/v1/voice/call", query: [URLQueryItem(name: "conversation", value: conversationID)],
+                              auth: true, timeout: 30, body: nil)
+        guard let url = req.url, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw APIError.notConfigured
+        }
+        comps.scheme = comps.scheme == "https" ? "wss" : "ws"
+        req.url = comps.url
+        return req
+    }
+
     func transitSettings() async throws -> TransitSettings {
         try await send("GET", "/v1/transit/settings")
     }

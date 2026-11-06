@@ -85,12 +85,29 @@ final class AppEnvironment: ObservableObject {
             }
         }
 
+        voice.callRequest = { [weak self, weak settings] in
+            guard let self, settings?.liveCalls ?? false, await self.serverMakesCalls(),
+                  let id = await self.chat.openConversation(), id != "main" else { return nil }
+            return try? api.voiceCallRequest(conversationID: id)
+        }
+        voice.onCall = { [weak self] event in self?.chat.callEvent(event) }
+
         chat.onServerChange = { [weak self] in
             await self?.sync.sync()
             await self?.screenTime.sync() // "no phone for an hour" said in chat holds at once
             WidgetCenter.shared.reloadAllTimelines() // a reply may have added a reminder, ticked a habit, …
         }
         digest.completeReminder = { [weak sync] reminder, done in await sync?.setCompleted(reminder, done) ?? false }
+    }
+
+    /// The server's answer to "do you make live calls?", for a few minutes: asked when you start talking.
+    private var callsChecked: (live: Bool, at: Date)?
+
+    private func serverMakesCalls() async -> Bool {
+        if let checked = callsChecked, checked.at > .now.addingTimeInterval(-300) { return checked.live }
+        guard let status = try? await api.voiceStatus() else { return false } // unreachable: the turns say why
+        callsChecked = (status.live, .now)
+        return status.live
     }
 
     /// The focus session on now, again: after one starts or ends, at each switch, on return to the app.

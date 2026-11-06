@@ -111,6 +111,7 @@
 		604B0E7F4A64D6A407C64C90 /* LineBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2712472C5856CDCD16C4FAB /* LineBadge.swift */; };
 		6050EEA9BDAD57AB18630D2E /* DigestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */; };
 		614FB8A923D0C9B65B375A44 /* FoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDFDB90CA977D76111828E4F /* FoodViews.swift */; };
+		618597A9E81865B795463D24 /* LiveCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D6F956C9FD3A0BBAEE53FD /* LiveCall.swift */; };
 		61A1F84D398D52BD6F25287F /* AideWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7399AF7109C6333CB3244BC /* AideWidgets.swift */; };
 		61D729A8CAB38BDD3EF58DB4 /* LessonViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7010333B02FB2C5C4B8EC49 /* LessonViews.swift */; };
 		63552EC65E7B19078E53817C /* FinanceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CE86F8FED7A90934C84B6A /* FinanceViews.swift */; };
@@ -236,6 +237,7 @@
 		E4BACF93150EA9F47597B833 /* DeparturesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F534E81CB6CBAEDF422485 /* DeparturesWidget.swift */; };
 		E9AD83EC0DE21B2EC59BFC73 /* MealCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3FB4B94DD1D7FF3EEAFB454 /* MealCameraView.swift */; };
 		EA7898D2B9F95FC9F72530FD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEA6FA80688CA2D3C948B8C6 /* Assets.xcassets */; };
+		EB615FA8271B3D063824F0BB /* LiveCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D6F956C9FD3A0BBAEE53FD /* LiveCall.swift */; };
 		EB6BE3F5468E8439B148575C /* iOSCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A9F5F8A8D6464DACCB6EB02 /* iOSCompat.swift */; };
 		EBAB39137C9D647DB457D91E /* StudyCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 031232FED72D4C9A787D8843 /* StudyCards.swift */; };
 		EC0A504DBB02F8F14B747CBB /* ReminderSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 353816F15681ED315F71639A /* ReminderSyncTests.swift */; };
@@ -468,6 +470,7 @@
 		E5D42096136F2F92641EAC10 /* MealIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealIntents.swift; sourceTree = "<group>"; };
 		E5EB8695757560B5E023263D /* AideMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideMacApp.swift; sourceTree = "<group>"; };
 		E6A623639391457CF5AA5349 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		E7D6F956C9FD3A0BBAEE53FD /* LiveCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveCall.swift; sourceTree = "<group>"; };
 		E82E2D2F31C60F70DB974B92 /* MacNavigationStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacNavigationStack.swift; sourceTree = "<group>"; };
 		E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeExamView.swift; sourceTree = "<group>"; };
 		E8AF59CFC82A621514126B85 /* ShareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareView.swift; sourceTree = "<group>"; };
@@ -628,6 +631,7 @@
 				77E5D11C27686D088BF88108 /* Figure.swift */,
 				63500D066A75FEEDD7B682E9 /* Keychain.swift */,
 				57E832869DBA4E90B67C6D56 /* LiveActivities.swift */,
+				E7D6F956C9FD3A0BBAEE53FD /* LiveCall.swift */,
 				BDD7CC531B6DFD14673ABD6C /* LocationService.swift */,
 				11CFF731DF48A1AB94AD7194 /* PaymentIntent.swift */,
 				87678035748931339F27CC91 /* Photos.swift */,
@@ -1201,6 +1205,7 @@
 				707BBC79D4EA16657F5EE1E0 /* Keychain.swift in Sources */,
 				0C682A1B292AA4AB212F18A1 /* LessonViews.swift in Sources */,
 				08A5571E8EB41AB9C395DF84 /* LineBadge.swift in Sources */,
+				EB615FA8271B3D063824F0BB /* LiveCall.swift in Sources */,
 				4C000D653119BA082E8C4B3A /* LivePebble.swift in Sources */,
 				8D81285E7C306998D23CDF93 /* LockClock.swift in Sources */,
 				CACCC83A44CB8718FB4A36C7 /* MacAppDelegate.swift in Sources */,
@@ -1317,6 +1322,7 @@
 				9458E33FE7340C8EDED1D46F /* LineBadge.swift in Sources */,
 				10275D194F779A427E756B09 /* LiveActivities.swift in Sources */,
 				3DDC6EFD08DE031E76848EBC /* LiveActivityAttributes.swift in Sources */,
+				618597A9E81865B795463D24 /* LiveCall.swift in Sources */,
 				DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */,
 				0BEE49E816A3DA0FB4136763 /* LocationService.swift in Sources */,
 				23CBF643A29FA97BE6CA689B /* LockBook.swift in Sources */,
