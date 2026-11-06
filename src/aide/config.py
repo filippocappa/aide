@@ -58,6 +58,11 @@ class Settings:
     enable_banking_key: Path | None = None  # its private key (PEM), copied to the server by the user
     enable_banking_redirect: str | None = None  # the callback URL registered with Enable Banking
     gtt: bool = True  # Turin's GTT: stops, live arrivals and tram alerts (AIDE_GTT=0 turns it off)
+    # Live calls (#34): OpenAI's GPT-Live is the voice; off without the key.
+    openai_api_key: str | None = None
+    live_model: str = "gpt-live-1"
+    live_voice: str = "marin"
+    live_idle_minutes: float = 5
 
 
 def save_env(env_path: Path, key: str, value: str | None) -> None:
@@ -132,4 +137,8 @@ def load_settings() -> Settings:
         enable_banking_key=Path(k).expanduser() if (k := os.environ.get("ENABLE_BANKING_KEY", "").strip()) else None,
         enable_banking_redirect=os.environ.get("ENABLE_BANKING_REDIRECT", "").strip() or None,
         gtt=os.environ.get("AIDE_GTT", "1").strip() not in ("0", "false", "no", "off"),
+        openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip() or None,
+        live_model=os.environ.get("AIDE_LIVE_MODEL", "").strip() or "gpt-live-1",
+        live_voice=os.environ.get("AIDE_LIVE_VOICE", "").strip() or "marin",
+        live_idle_minutes=float(os.environ.get("AIDE_LIVE_IDLE_MIN", "").strip() or 5),
     )

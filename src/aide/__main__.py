@@ -16,7 +16,7 @@ from .browser import Browser
 from .channels.api import create_app
 from .reader import PhotoReader
 from .transcribe import Transcriber
-from .config import OPENROUTER_BASE_URL, load_settings, save_env
+from .config import OPENROUTER_BASE_URL, Settings, load_settings, save_env
 from .db import Database
 from .digest import DigestService, digest_schedule
 from .drafts import Drafts
@@ -85,10 +85,22 @@ from .lockwatch import LockWatcher
 from .shapes import event_json
 from .bedtime import Bedtime, bedtime_tools
 from .focus import FocusStore, FocusWatcher, focus_tools
+from .livecall import LiveCalls
 from .wake import WakeService
 from .whisper import available as whisper_available
 
 log = logging.getLogger(__name__)
+
+
+def live_voice(settings: Settings):
+    """Opens GPT-Live for a call, or None (calls off) without OPENAI_API_KEY."""
+    if not settings.openai_api_key:
+        return None
+
+    async def connect(instructions: str):
+        from .gptlive import GptLive
+        return await GptLive.open(settings.openai_api_key, instructions, settings.live_model, settings.live_voice)
+    return connect
 
 
 def main() -> None:
@@ -380,13 +392,14 @@ def main() -> None:
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
+            calls = LiveCalls(agent, db.conn, live_voice(settings), settings.live_idle_minutes)
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off, watches=watches, releases=releases,
                              weights=weights, videos=videos, lessons=lessons, finance=finance,
                              banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
-                             focus=focus, focus_watch=focus_watch)
+                             focus=focus, focus_watch=focus_watch, calls=calls)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
