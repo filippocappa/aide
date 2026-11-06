@@ -22,7 +22,6 @@ import asyncio
 import copy
 import json
 import logging
-import math
 import re
 import statistics
 from datetime import date, datetime, time, timedelta, timezone
@@ -94,7 +93,7 @@ def credits(text: str | None) -> int | None:
 
 def spread(free: dict[date, int], days: list[date], need: int) -> dict[date, int]:
     """`need` minutes over `days` as evenly as each day's free minutes allow: the lowest daily level that holds
-    them (in STEP minutes), the last day trimmed. All of it when they don't fit."""
+    them, the last day trimmed. All of it when they don't fit."""
     total = sum(free[d] for d in days)
     if need <= 0 or not days:
         return {}
@@ -107,7 +106,7 @@ def spread(free: dict[date, int], days: list[date], need: int) -> dict[date, int
             hi = mid
         else:
             lo = mid + 1
-    level, left, out = math.ceil(lo / STEP) * STEP, need, {}
+    level, left, out = lo, need, {}  # to the minute: rounded up, the work ran out days before the date
     for d in days:
         if (m := min(free[d], level, left)) > 0:
             out[d] = m
