@@ -513,9 +513,11 @@ class Agent:
         where = await self.whereabouts() if self.whereabouts else None
         stamped = (f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{', ' + where if where else ''}"
                    f"{_spoken(text) if voice else ''}{self._context(agent)}] {text}")
-        if queued := self.db.pending_actions(channel, PENDING_TTL):
+        # Not on a spoken turn: Haiku brought the queue up in every spoken reply ("the move still waits for your
+        # OK"), and a call asks the yes or no itself (livecall.py); what it queued is in the turns before.
+        if not voice and (queued := self.db.pending_actions(channel, PENDING_TTL)):
             lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
-            stamped += f"{_QUEUE_MARK}\n{lines}]"
+            stamped += f"{_QUEUE_MARK}\n{lines}\n{_QUEUE_NOTE}]"
         return stamped
 
     def _context(self, agent: str | None) -> str:
@@ -977,6 +979,9 @@ class Agent:
         self.db.audit(name, args, f"queued #{action_id}: {summary}")
         activity.record(self.db.conn, agent, "queued", summary, conversation=self._conversation or channel)
         note = " This replaces the change queued earlier for it." if replaced else ""
+        if self._voice:  # a call asks the yes or no right after the reply (livecall.py)
+            return (f"Queued, waiting for the user's OK: {summary}.{note} The user is asked for it right after "
+                    "your reply: say what will happen, and nothing about confirming or the app."), False
         return f"Queued, waiting for the user's OK: {summary}.{note}", False
 
     def _step(self, agent: str, tool, args: dict) -> None:
@@ -1068,6 +1073,8 @@ _CHANGES = (None, "found", "created", "proposed")  # an event card item's change
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
 _QUEUE_MARK = "\n[Queued, waiting for the user's OK:"
+# Without it Haiku brought the queue up in every reply, by voice too ("the move is still waiting for your OK").
+_QUEUE_NOTE = "(On the user's screen already: bring these up only if the user asks or they change your answer.)"
 _CONFIRMED = re.compile(r"^\[The user (?:replied !yes|tapped Confirm|said yes by voice)\. Results:\n(.*)\]$", re.S)
 _CANCELLED = ("[The user replied !no.", "[The user tapped Cancel.", "[The user said no by voice.")
 _EVENT_ID = re.compile(r"\[[^\]\s]{8,}\] ")  # "Changed: [D839FD47-…] Tue 03 Nov …": the id is for the model
@@ -1181,7 +1188,7 @@ def _cut_old_results(history: list[dict]) -> list[dict]:
 def _spoken(text: str) -> str:
     """The stamp's "by voice", with the language the words were in when that's clear (the reply is said in it)."""
     lang = {"it": "Italian", "en": "English"}.get(language(text, ""))
-    return ", by voice" + (f", in {lang}" if lang else "")
+    return ", by voice" + (f", in {lang}: answer in {lang}" if lang else "")
 
 
 def _drop_old_thinking(history: list[dict]) -> list[dict]:

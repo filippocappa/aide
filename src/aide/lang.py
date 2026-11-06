@@ -4,7 +4,9 @@ import re
 
 _IT = set("il lo la le gli di del della delle dei che è non per una sono hai ho alle allo alla con mi ti ci si sì "
           "domani oggi grazie ciao cosa quando dove anche ma poi questo questa quello fatto fare va bene vuoi "
-          "puoi devo c'è perché adesso dopo prima ancora ok".split())
+          "puoi devo c'è perché adesso dopo prima ancora lascia stare perdere fallo annulla procedi conferma "
+          "certo esatto aspetta allora sposta metti aggiungi cancella ricordami quanto quanti sto stai mattina "
+          "sera stasera stanotte sabato domenica lunedì martedì mercoledì giovedì venerdì settimana".split())
 _EN = set("the and is are you to of it that for on with have has what when where tomorrow today yes please "
           "thanks thank at can will your my this was there done want would could should then now let i'll i'm "
           "you're it's".split())
