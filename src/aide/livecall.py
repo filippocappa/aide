@@ -292,8 +292,10 @@ class LiveCall:
 
     def __init__(self, agent: Agent, voice: LiveVoice, calls: CallStore, conversation: str, agent_id: str,
                  send_json: Callable[[dict], Awaitable[None]], send_audio: Callable[[bytes], Awaitable[None]],
-                 on_turn: Callable[[str, Turn], Awaitable[None]] | None = None, idle_minutes: float = 5):
+                 on_turn: Callable[[str, Turn], Awaitable[None]] | None = None, idle_minutes: float = 5,
+                 team_json: Callable[[dict], dict] = lambda t: t):
         self.agent, self.voice, self.calls = agent, voice, calls
+        self.team_json = team_json
         self.conversation, self.agent_id = conversation, agent_id
         self.send_json, self.send_audio, self.on_turn = send_json, send_audio, on_turn
         self.idle = idle_minutes * 60
@@ -530,7 +532,8 @@ class LiveCall:
             await working(delegation)
         status = asyncio.create_task(still_working())
         try:
-            return await self.agent.respond(CONVERSATION, words, self.conversation, voice=True, on_step=on_step)
+            return await self.agent.respond(CONVERSATION, words, self.conversation, voice=True, on_step=on_step,
+                                            on_team=self._team)
         except Exception as e:
             log.exception("live call: the turn failed")
             await self._send({"type": "error", "message": str(e)})
@@ -539,6 +542,10 @@ class LiveCall:
             status.cancel()
             self.turns -= 1
             self.last_activity = time.monotonic()
+
+    def _team(self, message: dict) -> None:
+        """An ask or an answer between the agents, shown on the phone as it happens (the chat's `team` events)."""
+        self._spawn(self._send({"type": "team", "message": self.team_json(message)}))
 
     async def _goodbye(self) -> None:
         if self.bye:

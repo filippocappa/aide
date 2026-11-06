@@ -275,3 +275,16 @@ async def test_a_step_after_a_quiet_while(monkeypatch):
     await it.step("Asking Coach")
     await asyncio.sleep(0.05)
     assert [t for t, _ in it.backend.spoken] == ["Chiedo a Coach."]
+
+
+async def test_one_moment_once_a_call(monkeypatch):
+    monkeypatch.setattr(localvoice, "FILLER_AFTER", 0.02)
+    monkeypatch.setattr(localvoice, "STILL_EVERY", 10)
+    backend = FakeBackend(speech_seconds=0.01)
+    voice = LocalVoice(backend, language="it")
+    for _ in range(2):
+        await voice.working("u1")
+        await asyncio.sleep(0.08)
+        await voice.say("Fatto.")
+        await asyncio.sleep(0.05)
+    assert [t for t, _ in backend.spoken] == ["Un attimo.", "Fatto.", "Fatto."]

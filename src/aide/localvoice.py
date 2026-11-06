@@ -5,7 +5,7 @@ finished (a longer quiet ends it anyway), and Parakeet v3 writes the utterance d
 utterance is handed over as a request (`Heard`, then `Delegation`), so every one is a chat turn. The mouth: Kokoro,
 a sentence at a time, in the reply's language (Heart in English, Sara in Italian). Talking over it stops it.
 
-There's no model in between that chats: a request taking a while gets a short "one moment" (or "I'm asking
+There's no model in between that chats: a request taking a while gets a short "one moment" once a call (or "I'm asking
 Secretary for you" when Aide hands it on, and the other steps when it's been quiet a while) and, every 20 s,
 "still on it". The models themselves are in voicemodels.py (`Backend` here), loaded once and kept."""
 
@@ -36,7 +36,7 @@ BARGE_IN = 0.35  # speech this long over the voice stops it (a cough doesn't)
 ECHO_P = 0.8  # while it speaks, only this sure a start counts (what's left of its own voice after echo cancelling)
 CHUNK = RATE // 5 * 2  # audio goes out in 200 ms pieces (bytes)
 AHEAD = 1.0  # the next sentence is made when what's been sent has less than this left to play
-FILLER_AFTER = 1.5
+FILLER_AFTER = 3.0  # a turn this slow gets "one moment", once a call; an ask usually comes first and is said instead
 STILL_EVERY = 20.0
 
 FILLERS = {"en": ("One moment.", "Still on it."), "it": ("Un attimo.", "Ci sto ancora lavorando.")}
@@ -178,6 +178,7 @@ class LocalVoice:
         self._playing_until = 0.0
         self._last_word = time.monotonic()  # when the voice last started a sentence (or the call began)
         self._steps_said: set[str] = set()  # this turn's steps already said
+        self._fillered = False  # "one moment" said already in this call: once is enough
         self._closed = False
         backend.opened()
 
@@ -291,7 +292,8 @@ class LocalVoice:
         opening, still = FILLERS.get(self.lang, FILLERS["en"])
         if first:
             await asyncio.sleep(FILLER_AFTER)
-            if not self._talking():
+            if not self._talking() and not self._fillered:
+                self._fillered = True
                 self._queue(opening)
         while True:
             await asyncio.sleep(STILL_EVERY)
