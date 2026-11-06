@@ -48,6 +48,7 @@ from .notebook import NotebookStore, NotebookWorker
 from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
 from .videos import VideoStore, VideoWorker
+from .voicequiz import VoiceQuiz
 from .weight import WeightStore
 from .banks import Banks, EnableBanking
 from .finance import FinanceStore
@@ -279,6 +280,7 @@ def main() -> None:
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
+    agent.voice_quiz = VoiceQuiz(quizzes, study)  # "B" by voice in a quiz: marked with no model call
     agent.short_chat = lambda conversation: conversation == food.chat()  # the Food log reads its last few meals
     # Coach sees today's food against the day's targets on every message: a run uploaded after the last meal was
     # logged raises them, and an old tool result in the chat would still say the lower ones.

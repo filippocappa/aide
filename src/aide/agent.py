@@ -7,6 +7,7 @@ import asyncio
 import base64
 import logging
 import re
+import secrets
 import time
 from contextvars import ContextVar
 from datetime import datetime, timedelta
@@ -25,6 +26,7 @@ from .routines import RoutineStore
 from .tools import Tool, ToolRegistry
 from .tools.memory import memory_tools
 from .tools.routines import routine_tools
+from .voicequiz import VoiceQuiz, spoken_reply
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +131,9 @@ class Agent:
         # What an agent should see fresh on every message, for its stamp (Coach: today's food against the day's
         # targets, which grow when a workout comes in later). None, or None for the agent, leaves it out.
         self.context: Callable[[str], str | None] | None = None
+        # Marks a spoken answer to a chat quiz's multiple-choice question with no model call (voicequiz.py); None: the
+        # model answers every voice turn.
+        self.voice_quiz: VoiceQuiz | None = None
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued, and
         # `agent_tools(agent id, any agent)` for other per-agent sets (objectives).
         # Aide delegates: it has only its own few tools and ask_agent, and the specialists do the work. A specialist
@@ -402,17 +407,15 @@ class Agent:
             self._plan = self._plan_tools = (agent in PLAN_CHATS and not voice and self.engine is not None
                                              and self.engine.plan_now())
             try:
-                with usage.labels(purpose="photo chat" if photos else "chat", conversation=conversation or channel):
-                    try:
-                        reply = await self._run(agent, channel, self.smart_model if self._plan else model, history,
-                                                turn, on_text)
-                    except Exception as e:
-                        if not self._plan or self._plan_calls:
-                            raise  # nothing ran on the plan, or a tool already ran: not run twice
-                        log.warning("chat: the Claude plan failed (%s); on OpenRouter instead", e)
-                        self._plan = False
-                        del turn[1:]
-                        reply = await self._run(agent, channel, model, history, turn, on_text)
+                # A spoken answer to a voice quiz's question is marked in code, with no model call (#34).
+                reply = (await self._quiz_answer(agent, conversation, history, text, turn)
+                         if voice and not photos else None)
+                if reply is not None:
+                    if on_text:
+                        on_text(reply, False)
+                else:
+                    reply = await self._chat_turn(agent, channel, conversation, model, history, turn, on_text,
+                                                  bool(photos))
             finally:
                 self._on_team = None
             attachments, consulted, team = _merge(self._attachments), list(self._consulted), list(self._team)
@@ -422,6 +425,49 @@ class Agent:
             if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
                 self.db.set_conversation_title(conversation_id, await self._title(text, reply))
             return Turn(reply, attachments, consulted, team)
+
+    async def _chat_turn(self, agent: str, channel: str, conversation: str | None, model: str, history: list[dict],
+                         turn: list[dict], on_text, photos: bool) -> str:
+        """The model's turn: on the Claude plan when chosen (OpenRouter if the plan fails before a tool ran)."""
+        with usage.labels(purpose="photo chat" if photos else "chat", conversation=conversation or channel):
+            try:
+                return await self._run(agent, channel, self.smart_model if self._plan else model, history, turn,
+                                       on_text)
+            except Exception as e:
+                if not self._plan or self._plan_calls:
+                    raise  # nothing ran on the plan, or a tool already ran: not run twice
+                log.warning("chat: the Claude plan failed (%s); on OpenRouter instead", e)
+                self._plan = False
+                del turn[1:]
+                return await self._run(agent, channel, model, history, turn, on_text)
+
+    async def _quiz_answer(self, agent: str, conversation: str | None, history: list[dict], text: str,
+                           turn: list[dict]) -> str | None:
+        """A spoken answer to the chat quiz's multiple-choice question, marked in code (#34): quiz_answer is called as
+        the model would have (the call and its result go into the turn, so the next turn sees the next question's
+        hidden answer), and its result is the reply. None, with `turn` untouched, when this isn't one: no quiz turn
+        just before, no clear answer, or the agent has no quiz_answer."""
+        if self.voice_quiz is None or not _quiz_turn(history):
+            return None
+        try:
+            self.registries[agent].get("quiz_answer")
+        except KeyError:
+            return None
+        if (found := self.voice_quiz.match(conversation, text)) is None:
+            return None
+        quiz, answer = found
+        call = {"type": "tool_use", "id": f"toolu_voice_{secrets.token_hex(8)}", "name": "quiz_answer",
+                "input": {"quiz": quiz, "answer": answer}}
+        out, err = await self._execute("quiz_answer", call["input"], self.registries[agent])
+        if err:
+            return None  # the model takes it, and sees what went wrong itself
+        reply = spoken_reply(out)
+        turn += [{"role": "assistant", "content": [call]},
+                 {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call["id"], "content": out,
+                                               "is_error": False}]},
+                 {"role": "assistant", "content": [{"type": "text", "text": reply}]}]
+        log.info("voice quiz: %s answered %s in code", quiz, answer)
+        return reply
 
     def check_photos(self, photos: list[str] | tuple[str, ...]) -> None:
         """ValueError (a 400 in the API) unless every id is a stored photo."""
@@ -891,6 +937,18 @@ class Agent:
             out, err = f"Error: {e}", True
         self.db.audit(name, args, out, err)
         return out, err
+
+
+def _quiz_turn(history: list[dict]) -> bool:
+    """The chat's last turn asked a quiz question: a quiz_me or quiz_answer call after the last message the user
+    wrote. A quiz left open days ago doesn't catch a later "B"."""
+    for m in reversed(history):
+        if m["role"] == "user" and isinstance(m["content"], str):
+            return False
+        if m["role"] == "assistant" and isinstance(m["content"], list) and any(
+                b.get("type") == "tool_use" and b.get("name") in ("quiz_me", "quiz_answer") for b in m["content"]):
+            return True
+    return False
 
 
 def _merge(attachments: list[dict]) -> list[dict]:
