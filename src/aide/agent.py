@@ -437,7 +437,7 @@ class Agent:
             if voice:
                 steps = list(times.items())
                 log.info("voice turn %s: %s", conversation_id, ", ".join(
-                    f"{name} {round((at - steps[i][1]) * 1000)} ms" for i, (name, at) in enumerate(steps) if i))
+                    f"{name} {round((at - steps[i - 1][1]) * 1000)} ms" for i, (name, at) in enumerate(steps) if i))
             return Turn(reply, attachments, consulted, team)
 
     async def _chat_turn(self, agent: str, channel: str, conversation: str | None, model: str, history: list[dict],
