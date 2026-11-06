@@ -160,7 +160,8 @@ async def test_a_spoken_yes_confirms_and_an_unclear_one_is_asked_again(setup):
     await say(voice, "sì, fallo", "item_3")
     await until(lambda: len(voice.answers) == 3)
     assert voice.answers[-1][1].startswith("Done. ✓ Deleted reminder: Bins") and store.open() == []
-    assert {"type": "answered", "ids": [1], "confirmed": True} in sent
+    answered = next(m for m in sent if m.get("type") == "answered")
+    assert answered["ids"] == [1] and answered["confirmed"] and answered["result"].startswith("✓")
     assert agent.client.responses == []  # no model call for the yes
     assert agent.visible_history("app", conversation=chat)[-1]["text"] == "✓ Deleted reminder: Bins"
     await c.end()
