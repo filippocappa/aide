@@ -8,7 +8,7 @@ from aide.agent import Agent
 from aide.channels.api import create_app
 from aide.db import Database
 from aide.livecall import (Audio, CallStore, Delegation, Heard, LiveCall, LiveCalls, instructions, pieces,
-                           speakable)
+                           speakable, unconfirmed)
 from aide.reminders import ReminderStore
 from aide.tools import Tool, ToolRegistry
 from aide.tools.reminders import reminder_tools
@@ -174,13 +174,28 @@ async def test_a_spoken_yes_confirms_and_an_unclear_one_is_asked_again(setup):
     await until(lambda: len(voice.answers) == 2)
     assert "clear yes or no" in voice.answers[-1][1] and store.open() and c.awaiting
 
-    await say(voice, "sì, fallo", "item_3")
+    await say(voice, "yes, do it", "item_3")
     await until(lambda: len(voice.answers) == 3)
     assert voice.answers[-1][1].startswith("Done. ✓ Deleted reminder: Bins") and store.open() == []
     answered = next(m for m in sent if m.get("type") == "answered")
     assert answered["ids"] == [1] and answered["confirmed"] and answered["result"].startswith("✓")
     assert agent.client.responses == []  # no model call for the yes
     assert agent.visible_history("app", conversation=chat)[-1]["text"] == "✓ Deleted reminder: Bins"
+    await c.end()
+    await run
+
+
+async def test_an_italian_call_hears_its_own_lines_in_italian(setup):
+    c, voice, sent, turns, agent, store, chat = setup()
+    rem = store.create("Bins")
+    agent.client.responses = [call("delete_reminder", reminder_id=rem.id), done("Cancello il promemoria Bins.")]
+    run = asyncio.create_task(c.run())
+    await say(voice, "cancella il promemoria della spazzatura", "item_1")
+    await until(lambda: voice.answers)
+    assert voice.answers[-1] == ("item_1", "Cancello il promemoria Bins. Procedo?")
+    await say(voice, "sì, fallo", "item_2")
+    await until(lambda: len(voice.answers) == 2)
+    assert voice.answers[-1][1] == "Fatto." and store.open() == []
     await c.end()
     await run
 
@@ -195,7 +210,7 @@ async def test_a_no_cancels_and_a_yes_nobody_handed_over_is_read_after_the_quiet
     await until(lambda: voice.answers)
     await say(voice, "no, lascia stare", "item_2")
     await until(lambda: len(voice.answers) == 2)
-    assert voice.answers[-1][1] == "Okay, I've left it." and [r.title for r in store.open()] == ["Bins", "Milk"]
+    assert voice.answers[-1][1] == "Va bene, lascio stare." and [r.title for r in store.open()] == ["Bins", "Milk"]
 
     await say(voice, "delete milk", "item_3")
     await until(lambda: len(voice.answers) == 3)
@@ -311,3 +326,11 @@ def test_the_call_endpoint(monkeypatch):
     assert client.get(f"/v1/history?conversation_id={chat}&limit=2", headers=AUTH).json()["calls"] == []
     assert len(client.get(f"/v1/history?conversation_id={chat}&limit=4", headers=AUTH).json()["calls"]) == 1
     db.close()
+
+
+def test_a_queued_reply_loses_how_to_confirm_it():
+    """The call asks right after, so "confirm it in the app" is dropped (Haiku kept saying it)."""
+    assert unconfirmed("Ho preparato lo spostamento della corsa alle 18. Ti chiedo conferma nell'app per applicarlo.") \
+        == "Ho preparato lo spostamento della corsa alle 18."
+    assert unconfirmed("I'll move the run to 18:00. Tap Confirm in the app.") == "I'll move the run to 18:00."
+    assert unconfirmed("Confermi?") == "Confermi?"  # nothing left: kept as it was

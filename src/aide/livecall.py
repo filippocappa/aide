@@ -23,6 +23,7 @@ from . import usage
 from .agent import CONVERSATION, PENDING_TTL, Agent, Turn
 from .consent import spoken_consent, spoken_goodbye
 from .db import utcnow
+from .lang import language
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,26 @@ PROGRESS_EVERY = 4.0  # at most one step note this often
 GOODBYE_SECONDS = 4.0  # the voice says goodbye, then the call ends
 IDLE_TICK = 15.0
 PRICE_MINUTE = 0.05  # gpt-live-1, billed by the second (OpenAI, 2026-11)
+
+# What the call says itself, in the language last spoken.
+LINES = {
+    "en": {"go_ahead": "Shall I go ahead?", "on_screen": "It's on your screen to confirm.",
+           "unclear": "I didn't catch a clear yes or no. Shall I go ahead?", "done": "Done.",
+           "left": "Okay, I've left it.", "again": "Sorry, I didn't catch that. Could you say it again?",
+           "bye": "Bye!", "failed": "Something went wrong on my side, sorry. It didn't work.",
+           "in_chat": "Done, it's in the chat.", "hang_up": "I'll hang up now. Call me back any time.",
+           "rest": "The rest is in the chat."},
+    "it": {"go_ahead": "Procedo?", "on_screen": "Te l'ho messo sullo schermo da confermare.",
+           "unclear": "Non ho capito se è un sì o un no. Procedo?", "done": "Fatto.",
+           "left": "Va bene, lascio stare.", "again": "Scusa, non ho capito. Puoi ripetere?",
+           "bye": "Ciao!", "failed": "Qualcosa è andato storto da parte mia, scusa. Non ha funzionato.",
+           "in_chat": "Fatto, è nella chat.", "hang_up": "Chiudo la chiamata. Richiamami quando vuoi.",
+           "rest": "Il resto è nella chat."},
+}
+
+
+def line(key: str, lang: str) -> str:
+    return LINES.get(lang, LINES["en"])[key]
 
 
 # -- what the voice model sends ------------------------------------------------------------------------------------
@@ -162,10 +183,21 @@ def speakable(text: str) -> str:
     return " ".join(line if line[-1] in ".!?:;," else line + "." for line in lines)
 
 
-def pieces(text: str) -> list[str]:
+_HOW_TO_CONFIRM = re.compile(r"conferm|confirm|nell'app|in the app|\btap|tocca", re.I)
+
+
+def unconfirmed(said: str) -> str:
+    """A reply that queued something without its sentences on how to confirm it ("Ti chiedo conferma nell'app."):
+    the call asks itself, right after. The prompt says so, but Haiku kept saying it."""
+    sentences = re.split(r"(?<=[.!?])\s+", said.strip())
+    kept = [s for s in sentences if not _HOW_TO_CONFIRM.search(s)]
+    return " ".join(kept) if kept else said
+
+
+def pieces(text: str, lang: str = "en") -> list[str]:
     """The answer in up to PIECES pieces of PIECE_CHARS, cut between sentences (or words); a longer one is cut and
     ends with a pointer to the chat."""
-    rest = " The rest is in the chat."
+    rest = " " + line("rest", lang)
     out, current = [], ""
     for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
         while len(sentence) > PIECE_CHARS:  # one sentence too long for a piece: cut it at a word
@@ -301,6 +333,7 @@ class LiveCall:
         self.idle = idle_minutes * 60
         self.ears = Ears(settle=getattr(voice, "settle", None))
         self.awaiting: list[int] = []  # queued actions asked about, waiting for a spoken yes or no
+        self.lang = getattr(voice, "lang", "en")  # of the last words heard: the call's own lines are in it
         self.tasks: set[asyncio.Task] = set()
         self.turns = 0  # chat turns running
         self.requests = 0
@@ -405,6 +438,7 @@ class LiveCall:
             case Heard(text):
                 speaking = self._speaking()
                 utterance, new = self.ears.heard(text, speaking)
+                self.lang = language(text, self.lang)
                 self.last_activity = time.monotonic()
                 if new and speaking:
                     # Words over the voice: it stops for them, so what the phone hasn't played yet goes.
@@ -450,10 +484,10 @@ class LiveCall:
             return
         if self.awaiting and not any(u.echo for u in taken):
             if spoken_consent(words) is not None:
-                await self.voice.answer(delegation, pieces(await self._consent(words)))
+                await self.voice.answer(delegation, pieces(await self._consent(words), self.lang))
                 return
             if len(words.split()) <= 3 and _UNSURE.search(words.lower()):  # "okay", "va bene": not clear enough
-                await self.voice.answer(delegation, ["I didn't catch a clear yes or no. Shall I go ahead?"])
+                await self.voice.answer(delegation, [line("unclear", self.lang)])
                 return
         await self._request(words, delegation)
 
@@ -463,25 +497,26 @@ class LiveCall:
         ids, self.awaiting = self.awaiting, []
         if answer:
             result = await self.agent.confirm(CONVERSATION, ids, by_voice=True)
-            said = f"Done. {speakable(result)}".strip()
+            # The tool's result is in English: an Italian call hears just "Fatto."
+            said = line("done", "it") if self.lang == "it" else f"Done. {speakable(result)}".strip()
         else:
             result = await self.agent.cancel(CONVERSATION, ids, by_voice=True)
-            said = "Okay, I've left it."
+            said = line("left", self.lang)
         await self._send({"type": "answered", "ids": ids, "confirmed": answer, "result": result})
         return said
 
     async def _request(self, words: str, delegation: str | None = None) -> None:
         async def reply(said: str) -> None:
             if delegation:
-                await self.voice.answer(delegation, pieces(said))
+                await self.voice.answer(delegation, pieces(said, self.lang))
             else:
                 await self.voice.say(said)
 
         if not words:
-            await reply("Sorry, I didn't catch that. Could you say it again?")
+            await reply(line("again", self.lang))
             return
         if spoken_goodbye(words):
-            await reply("Bye!")
+            await reply(line("bye", self.lang))
             await self._goodbye()
             return
         self.awaiting = []  # asked something else instead: the card stays on the screen to tap
@@ -490,20 +525,23 @@ class LiveCall:
         started = time.monotonic()
         turn = await self._turn(words, delegation)
         if turn is None:
-            await reply("Something went wrong on my side, sorry. It didn't work.")
+            await reply(line("failed", self.lang))
             return
         took = time.monotonic() - started
         if self.on_turn:
             await self.on_turn(words, turn)
         log.info("live call turn: %d ms, sent after %d ms", took * 1000, (time.monotonic() - started) * 1000)
         queued = [a for a in self._pending() if a["id"] not in before]
-        said = speakable(turn.reply) or "Done, it's in the chat."
+        lang = language(words, self.lang)
+        said = speakable(turn.reply) or line("in_chat", lang)
+        if queued:
+            said = unconfirmed(said)
         if any(a["tool"] in SCREEN_ONLY for a in queued):
-            said += " It's on your screen to confirm."
+            said += " " + line("on_screen", lang)
         if spoken := [a for a in queued if a["tool"] not in SCREEN_ONLY]:
             self.awaiting = [a["id"] for a in spoken]
             if not said.endswith("?"):
-                said += " Shall I go ahead?"
+                said += " " + line("go_ahead", lang)
         await self._send({"type": "state", "state": "listening"})
         await reply(said)
 
@@ -559,7 +597,7 @@ class LiveCall:
         while True:
             await asyncio.sleep(IDLE_TICK)
             if not self.turns and not self._speaking() and time.monotonic() - self.last_activity > self.idle:
-                await self.voice.say("I'll hang up now. Call me back any time.")
+                await self.voice.say(line("hang_up", self.lang))
                 await asyncio.sleep(GOODBYE_SECONDS)
                 await self.end("idle")
                 return

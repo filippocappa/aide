@@ -733,7 +733,7 @@ def test_a_spoken_turn_and_its_asks_dont_think(env):
     agent.client.responses = [ask("secretary", "What's on tomorrow?"), done("Nothing."), done("Niente domani.")]
     client.post("/v1/chat", json={"text": "che cosa ho domani", "voice": True}, headers=AUTH)
     assert len(sent) == 3 and all(r["thinking"] == {"type": "disabled"} and "output_config" not in r for r in sent)
-    assert ", by voice, in Italian]" in str(sent[0]["messages"])
+    assert ", by voice, in Italian: answer in Italian]" in str(sent[0]["messages"])
     agent.client.responses = [done("hi")]
     client.post("/v1/chat", json={"text": "what's on tomorrow"}, headers=AUTH)  # typed: thinks as usual
     assert sent[-1]["output_config"] == {"effort": "medium"} and "thinking" not in sent[-1]
@@ -776,3 +776,22 @@ def test_a_call_warms_the_spoken_prompt(env):
     assert "create_reminder" in tool_names(sent[0]) and agent._voice is False
     asyncio.run(agent.warm_voice("coach"))  # only Aide's spoken turns change
     assert len(sent) == 1
+
+
+def test_a_spoken_turn_isnt_shown_the_queue(env):
+    """Haiku brought the queue up in every spoken reply; a call asks the yes or no itself."""
+    client, agent, _ = env()
+    sent = []
+    create = agent.client.beta.messages.create
+
+    async def recording(**kwargs):
+        sent.append(kwargs)
+        return await create(**kwargs)
+
+    agent.client.beta.messages.create = recording
+    agent.db.add_pending("main", "delete_reminder", {"id": "r1"}, "Delete the reminder 'Bins'", "r1", None, "aide")
+    agent.client.responses = [done("Ciao!"), done("Hi.")]
+    client.post("/v1/chat", json={"text": "ciao come stai", "voice": True}, headers=AUTH)
+    assert "Queued, waiting" not in str(sent[-1]["messages"])
+    client.post("/v1/chat", json={"text": "hi"}, headers=AUTH)  # typed: the queue is there
+    assert "Queued, waiting for the user's OK:" in str(sent[-1]["messages"][-1])
