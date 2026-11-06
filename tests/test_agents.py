@@ -2,6 +2,7 @@ import sqlite3
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
@@ -758,3 +759,20 @@ def test_spoken_aide_uses_every_tool_itself(env):
     agent.client.responses = [done("ok")]
     client.post("/v1/chat", json={"text": "hi"}, headers=AUTH)  # typed: Aide delegates as before
     assert "ask_agent" in tool_names(sent[-1]) and "create_reminder" not in tool_names(sent[-1])
+
+
+def test_a_call_warms_the_spoken_prompt(env):
+    _, agent, _ = env([done("")])
+    sent = []
+    create = agent.client.beta.messages.create
+
+    async def recording(**kwargs):
+        sent.append(kwargs)
+        return await create(**kwargs)
+
+    agent.client.beta.messages.create = recording
+    asyncio.run(agent.warm_voice("aide"))
+    assert sent[0]["max_tokens"] == 1 and "There's no one to ask" in sent[0]["system"][0]["text"]
+    assert "create_reminder" in tool_names(sent[0]) and agent._voice is False
+    asyncio.run(agent.warm_voice("coach"))  # only Aide's spoken turns change
+    assert len(sent) == 1

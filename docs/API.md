@@ -218,7 +218,9 @@ token or an unknown chat is closed with 1008, calls off with 1011. A second call
     working, as the chat's `step` event).
   - `{"type": "team", "message": {"from": "aide", "to": "secretary", "text": "…", "ts": "…"}}` (since 2026-11-06): an
     ask or an answer between the agents as it happens, as the chat's `team` events. Show them live while the turn
-    works; the `turn` that follows carries them all in its `team`.
+    works; the `turn` that follows carries them all in its `team`. Rare since 2026-11-06: on a call Aide does the
+    work itself with every tool instead of asking (half the wait; `AIDE_VOICE_DIRECT=0` brings the asks back), so
+    they come only from a specialist's call that asks a teammate.
   - `{"type": "caption", "who": "you" | "<agent id>", "text": "…", "new": true}`: the words as they're written down,
     in pieces to append; `new` (yours only) starts a new line.
   - `{"type": "interrupted"}`: the user spoke over the voice. Drop the voice audio not played yet.
