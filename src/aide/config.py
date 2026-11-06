@@ -65,6 +65,7 @@ class Settings:
     live_voice_it: str = "if_sara"
     live_speed: float = 1.1
     voice_thinking: bool = False
+    voice_direct: bool = True
     openai_api_key: str | None = None
     live_model: str = "gpt-live-1"
     live_voice: str = "marin"
@@ -148,6 +149,7 @@ def load_settings() -> Settings:
         live_voice_it=os.environ.get("AIDE_LIVE_VOICE_IT", "").strip() or "if_sara",
         live_speed=float(os.environ.get("AIDE_LIVE_SPEED", "").strip() or 1.1),
         voice_thinking=os.environ.get("AIDE_VOICE_THINKING", "").strip().lower() in ("1", "true", "on", "yes"),
+        voice_direct=os.environ.get("AIDE_VOICE_DIRECT", "").strip().lower() not in ("0", "false", "off", "no"),
         openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip() or None,
         live_model=os.environ.get("AIDE_LIVE_MODEL", "").strip() or "gpt-live-1",
         live_voice=os.environ.get("AIDE_LIVE_VOICE", "").strip() or "marin",

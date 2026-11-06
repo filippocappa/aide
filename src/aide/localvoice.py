@@ -38,9 +38,15 @@ ECHO_P = 0.8  # while it speaks, only this sure a start counts (what's left of i
 CHUNK = RATE // 5 * 2  # audio goes out in 200 ms pieces (bytes)
 AHEAD = 1.0  # the next sentence is made when what's been sent has less than this left to play
 FILLER_AFTER = 3.0  # a turn this slow gets "one moment", once a call; an ask usually comes first and is said instead
-STILL_EVERY = 20.0
+LONG_AFTER = 8.0  # a longer turn gets a few more lines from then on, a different one each time,
+STILL_EVERY = 7.0  # this far apart,
+QUIET = 3.0  # and only after this long without a word
 
-FILLERS = {"en": ("One moment.", "Still on it."), "it": ("Un attimo.", "Ci sto ancora lavorando.")}
+FILLERS = {"en": "One moment.", "it": "Un attimo."}
+STILL = {"en": ("Just a moment more.", "A few more seconds.", "Still working on it.",
+                "Bear with me, this one's taking a little longer."),
+         "it": ("Ancora un attimo.", "Qualche secondo e ci sono.", "Ci sto ancora lavorando.",
+                "Abbi pazienza, ci vuole un po' di più.")}
 ASKING = {"en": "I'm asking {name} for you.", "it": "Chiedo a {name}."}  # an ask_agent step, always said
 STEP_GAP = 4.0  # any other step is said only after this long without a word (English only: the labels are)
 
@@ -165,6 +171,8 @@ class LocalVoice:
         self._last_word = time.monotonic()  # when the voice last started a sentence (or the call began)
         self._steps_said: set[str] = set()  # this turn's steps already said
         self._fillered = False  # "one moment" said already in this call: once is enough
+        self._stills = 0  # the longer lines said in this call, so the next is a different one
+        self._turn_at = time.monotonic()  # when the turn being worked on began
         self._closed = False
         backend.opened()
 
@@ -242,6 +250,7 @@ class LocalVoice:
     async def working(self, delegation: str | None) -> None:
         self._stop_filler()
         self._steps_said = set()
+        self._turn_at = time.monotonic()
         self._filler = self._spawn(self._fill())
 
     async def step(self, label: str) -> None:
@@ -255,7 +264,7 @@ class LocalVoice:
         else:
             return
         self._steps_said.add(label)
-        self._stop_filler()  # said instead of "one moment"; "still on it" carries on
+        self._stop_filler()  # said instead of "one moment"; the longer lines carry on
         self._queue(note)
         self._filler = self._spawn(self._fill(first=False))
 
@@ -275,15 +284,21 @@ class LocalVoice:
             self._mouth = self._spawn(self._speak())
 
     async def _fill(self, first: bool = True) -> None:
-        opening, still = FILLERS.get(self.lang, FILLERS["en"])
+        """"One moment" for a slow turn (once a call), then for a long one a different line every few seconds."""
         if first:
             await asyncio.sleep(FILLER_AFTER)
             if not self._talking() and not self._fillered:
                 self._fillered = True
-                self._queue(opening)
+                self._queue(FILLERS.get(self.lang, FILLERS["en"]))
+        await asyncio.sleep(max(0.0, self._turn_at + LONG_AFTER - time.monotonic()))
         while True:
-            await asyncio.sleep(STILL_EVERY)
-            self._queue(still)
+            if not self._talking() and time.monotonic() - self._last_word >= QUIET:
+                lines = STILL.get(self.lang, STILL["en"])
+                self._queue(lines[self._stills % len(lines)])
+                self._stills += 1
+                await asyncio.sleep(STILL_EVERY)
+            else:
+                await asyncio.sleep(0.5)
 
     async def _speak(self) -> None:
         while self._lines:
