@@ -245,3 +245,33 @@ async def test_a_voice_turn_returns_before_the_new_chats_title():
     await asyncio.gather(*agent._titling)
     assert agent.db.app_conversation(chat)["title"] == "Tomorrow's plans"
     db.close()
+
+
+async def test_handing_it_on_is_said_instead_of_one_moment(monkeypatch):
+    monkeypatch.setattr(localvoice, "FILLER_AFTER", 0.05)
+    monkeypatch.setattr(localvoice, "STILL_EVERY", 10)
+    backend = FakeBackend(speech_seconds=0.01)
+    voice = LocalVoice(backend)
+    await voice.working("u1")
+    await voice.step("Asking Secretary")
+    await voice.step("Asking Secretary")  # once a turn
+    await voice.step("Checking the calendar")  # just spoke: not said
+    await asyncio.sleep(0.15)
+    assert [t for t, _ in backend.spoken] == ["I'm asking Secretary for you."]
+
+
+async def test_a_step_after_a_quiet_while(monkeypatch):
+    monkeypatch.setattr(localvoice, "FILLER_AFTER", 10)
+    monkeypatch.setattr(localvoice, "STEP_GAP", 0.0)
+    backend = FakeBackend(speech_seconds=0.01)
+    voice = LocalVoice(backend)
+    await voice.working("u1")
+    await voice.step("Checking the calendar")
+    await asyncio.sleep(0.05)
+    assert [t for t, _ in backend.spoken] == ["Checking the calendar."]
+    it = LocalVoice(FakeBackend(speech_seconds=0.01), language="it")
+    await it.working("u1")
+    await it.step("Checking the calendar")  # English labels aren't read out in Italian
+    await it.step("Asking Coach")
+    await asyncio.sleep(0.05)
+    assert [t for t, _ in it.backend.spoken] == ["Chiedo a Coach."]
