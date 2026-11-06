@@ -69,6 +69,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
   `pricewatch.py`: price watches. `releases.py`: release trackers (research by an errand, the user's picks, a daily
   look by the fast model, and the timed drop, reminder or price watch each pick calls for).
+- `livecall.py`: live voice calls (#34): a realtime voice model (`gptlive.py`, OpenAI GPT-Live, behind an adapter)
+  listens and speaks over `WS /v1/voice/call`; each spoken request is a normal turn for the chat's agent, a spoken yes or
+  no to queued actions is decided in code (`consent.py`), the call kept in `calls`. Off without `OPENAI_API_KEY`.
+  `voicequiz.py`: a spoken multiple-choice answer in a course chat's quiz marked with no model call.
 - `videos.py`: YouTube videos (yt-dlp, captions or Whisper, the brief, frames), posted back in the chat it came from.
 - `finance.py`: payments, categories, the month, subscriptions, budget, accounts. `banks.py`: bank accounts through
   Enable Banking (PSD2, read-only): linking, the reads (4 a day and when Money opens), matching taps to the bank's records.
@@ -707,9 +711,13 @@ Settings → Browser → Releases. Aide's tools: `track_release`, `set_release_p
 0. The code check (2026-11-03) filed #35–#50, one finding each. First the ones that can lose data: #35
    (reminders sync deletes what one fetch missed), #36 (a waiting Wallet tap lost), #37 (one calendar's 404 breaks
    every calendar read). Then the confirm rule's gaps (#38–#41), app bugs and crashes (#42–#46), hardening (#47–#50).
-1. Voice redesign (#34): talking with an agent and quizzes by voice are too slow. Multiple-choice
-   answers marked with no model call first, then an overlapped pipeline (streamed audio, end of turn on the server,
-   speaking from the first words) and a streaming voice; a realtime speech-to-speech model as a spike.
+1. Voice redesign (#34), built on both sides (2026-11-06), not yet tried: spoken quiz answers are marked with no
+   model call (live); live calls (contract "Voice calls"): GPT-Live through cappa as the ears and mouth, the agents
+   doing the work, status notes while they do, a spoken yes or no checked in code (money and outward actions stay on
+   the card), a call row in the chat; the app's `Support/LiveCall.swift` (one engine, voice processing on), the old
+   turn-at-a-time voice when calls are off (Settings → Voice → Live calls). Waiting on `OPENAI_API_KEY` in `.env` on
+   cappa; then a first call in the Simulator and on the phone (echo on the speaker, Italian and English, `VoiceLog`'s
+   latency against the old pipeline).
 2. Recording a lecture in the app. Notebooks for the other courses.
 
 Later: Later for health: bedtime nudge in the evening digest,
