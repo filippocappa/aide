@@ -72,7 +72,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `livecall.py`: live voice calls (#34): a voice behind an adapter listens and speaks over `WS /v1/voice/call`: the
   local one (`localvoice.py`: Silero and the smart-turn model hear when you're done, Parakeet v3 writes it down,
   Kokoro speaks, Heart in English and Sara in Italian; `voicemodels.py` loads them in the service at start, ~25 s and
-  ~5 GB of the GPU, and lets them go while Whisper has a recording) or OpenAI's GPT-Live (`gptlive.py`, `AIDE_LIVE`); each spoken request is a normal turn for the chat's agent, a spoken yes or
+  ~5 GB of the GPU, and lets them go while Whisper has a recording) or OpenAI's GPT-Live (`gptlive.py`, `AIDE_LIVE`); each spoken request is a normal turn for the chat's agent (Aide on a call, or in the voice mode, uses every tool itself, with the specialists' rules in `AIDE_VOICE_PROMPT`, instead of asking: ~2.5–3 s against ~5 s; no thinking in spoken turns; the cache warmed when a call opens), a spoken yes or
   no to queued actions is decided in code (`consent.py`), the call kept in `calls`. Off with `AIDE_LIVE=off`, or with neither a GPU nor the key.
   `voicequiz.py`: a spoken multiple-choice answer in a course chat's quiz marked with no model call.
 - `videos.py`: YouTube videos (yt-dlp, captions or Whisper, the brief, frames), posted back in the chat it came from.

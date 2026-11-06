@@ -798,6 +798,22 @@ class Agent:
             return SHORT_TURNS
         return CHAT_TURNS
 
+    async def warm_voice(self, agent: str) -> None:
+        """At a call's start: put Aide's spoken-turn prompt and tools (~46k tokens) in the prompt cache with a
+        one-token request, so the first question doesn't wait ~2 s for it to be written (it lasts 5 min; each turn
+        keeps it). Built with no await in between, so a turn running meanwhile never sees `_voice` changed."""
+        if agent != ORCHESTRATOR or not self.voice_direct or self.voice_thinking:
+            return
+        voice, self._voice = self._voice, True
+        try:
+            request = self._request(agent, self.model, [], [{"role": "user", "content": "(a call is starting)"}])
+        finally:
+            self._voice = voice
+        try:
+            await self.client.beta.messages.create(**{**request, "max_tokens": 1})
+        except Exception:
+            log.warning("warming the cache for a call failed", exc_info=True)
+
     async def _create(self, agent: str, model: str, history: list[dict], turn: list[dict]):
         return await self.client.beta.messages.create(**self._request(agent, model, history, turn))
 

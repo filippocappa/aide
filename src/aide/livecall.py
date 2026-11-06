@@ -332,6 +332,7 @@ class LiveCall:
 
     async def run(self) -> str:
         call_id = self.calls.start(self.conversation, self.agent_id)
+        self._spawn(self.agent.warm_voice(self.agent_id))  # ready by the first question
         await self._send({"type": "state", "state": "listening"})
         pump = asyncio.create_task(self._pump())
         idle = asyncio.create_task(self._watch_idle())
