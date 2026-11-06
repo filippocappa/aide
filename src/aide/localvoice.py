@@ -49,7 +49,10 @@ STILL = {"en": ("Just a moment more.", "A few more seconds.", "Still working on 
          "it": ("Ancora un attimo.", "Qualche secondo e ci sono.", "Ci sto ancora lavorando.",
                 "Abbi pazienza, ci vuole un po' di più.")}
 ASKING = {"en": "I'm asking {name} for you.", "it": "Chiedo a {name}."}  # an ask_agent step, always said
-STEP_GAP = 4.0  # any other step is said only after this long without a word (English only: the labels are)
+STEP_GAP = 4.0  # any other step is said only after this long without a word (English only: the labels are),
+STEP_WAIT = 1.2  # and only if the answer hasn't come this long after the step started: a quick tool needs no
+# "Checking the calendar." right before its answer (2026-11-06)
+BREATH = 0.4  # silence between a status line ("One moment.", "Checking the calendar.") and the answer after it
 
 
 class Backend(Protocol):
@@ -162,7 +165,7 @@ class LocalVoice:
         self._utterance: bytearray | None = None
         self._barging = False  # started over the voice, not long enough yet to stop it
         self._events: asyncio.Queue[Event | None] = asyncio.Queue()
-        self._lines: collections.deque[str] = collections.deque()
+        self._lines: collections.deque[tuple[str, bool]] = collections.deque()  # (text, a status line)
         self._mouth: asyncio.Task | None = None
         self._filler: asyncio.Task | None = None
         self._ears = asyncio.Lock()  # utterances written down in the order they were said
@@ -174,6 +177,8 @@ class LocalVoice:
         self._fillered = False  # "one moment" said already in this call: once is enough
         self._stills = 0  # the longer lines said in this call, so the next is a different one
         self._turn_at = time.monotonic()  # when the turn being worked on began
+        self._noting: asyncio.Task | None = None  # a step waiting STEP_WAIT before it's said
+        self._after_status = False  # the last line said was a status line
         self._closed = False
         backend.opened()
 
@@ -250,6 +255,7 @@ class LocalVoice:
 
     async def working(self, delegation: str | None) -> None:
         self._stop_filler()
+        self._stop_note()
         self._steps_said = set()
         self._turn_at = time.monotonic()
         self._filler = self._spawn(self._fill())
@@ -265,9 +271,22 @@ class LocalVoice:
         else:
             return
         self._steps_said.add(label)
+        if self._noting is None or self._noting.done():
+            self._noting = self._spawn(self._note(note))
+
+    async def _note(self, note: str) -> None:
+        """A step's line, unless the answer comes first or the voice is already talking by then."""
+        await asyncio.sleep(STEP_WAIT)
+        if self._closed or self._talking():
+            return
         self._stop_filler()  # said instead of "one moment"; the longer lines carry on
-        self._queue(note)
+        self._queue(note, status=True)
         self._filler = self._spawn(self._fill(first=False))
+
+    def _stop_note(self) -> None:
+        if self._noting and not self._noting.done():
+            self._noting.cancel()
+        self._noting = None
 
     async def answer(self, delegation: str, pieces: list[str]) -> None:
         for piece in pieces:
@@ -275,12 +294,13 @@ class LocalVoice:
 
     async def say(self, text: str) -> None:
         self._stop_filler()
+        self._stop_note()
         self._queue(text)
 
-    def _queue(self, text: str) -> None:
+    def _queue(self, text: str, status: bool = False) -> None:
         if self._closed or not text.strip():
             return
-        self._lines.append(text)
+        self._lines.append((text, status))
         if self._mouth is None or self._mouth.done():
             self._mouth = self._spawn(self._speak())
 
@@ -290,12 +310,12 @@ class LocalVoice:
             await asyncio.sleep(FILLER_AFTER)
             if not self._talking() and not self._fillered:
                 self._fillered = True
-                self._queue(FILLERS.get(self.lang, FILLERS["en"]))
+                self._queue(FILLERS.get(self.lang, FILLERS["en"]), status=True)
         await asyncio.sleep(max(0.0, self._turn_at + LONG_AFTER - time.monotonic()))
         while True:
             if not self._talking() and time.monotonic() - self._last_word >= QUIET:
                 lines = STILL.get(self.lang, STILL["en"])
-                self._queue(lines[self._stills % len(lines)])
+                self._queue(lines[self._stills % len(lines)], status=True)
                 self._stills += 1
                 await asyncio.sleep(STILL_EVERY)
             else:
@@ -303,13 +323,20 @@ class LocalVoice:
 
     async def _speak(self) -> None:
         while self._lines:
-            text = self._lines.popleft()
+            text, status = self._lines.popleft()
             lang = language(text, self.lang)
+            breath = self._after_status and not status and time.monotonic() < self._playing_until + BREATH
+            self._after_status = status
             for sentence in sentences(text):
                 if (left := self._playing_until - time.monotonic()) > AHEAD:
                     await asyncio.sleep(left - AHEAD)
                 self._put(Said(sentence + " "))
                 self._last_word = time.monotonic()
+                if breath:  # a moment between "Checking the calendar." and the answer, as a person would
+                    breath = False
+                    gap = bytes(int(BREATH * RATE) * 2)
+                    self._playing_until = max(time.monotonic(), self._playing_until) + BREATH
+                    self._put(Audio(gap))
                 async for pcm in self.backend.speak(spoken(sentence, lang), lang):
                     for i in range(0, len(pcm), CHUNK):
                         piece = pcm[i:i + CHUNK]
@@ -325,6 +352,7 @@ class LocalVoice:
         self._barging = False
         self._lines.clear()
         self._stop_filler()
+        self._stop_note()
         if self._mouth and not self._mouth.done():
             self._mouth.cancel()
         self._mouth = None
