@@ -65,7 +65,9 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `focus.py`: focus sessions (study rounds and breaks, each round a strict lock over all but the focus apps), the
   watcher (the Live Activity at each switch, the end), the check at the end and Professor's post in the course chat.
 - `browser.py`: Aide's own Chromium (Playwright, headless, a phone-sized page, a profile per site in `data/browser/`),
-  the page listing the model reads, the live view's screencast and input. `errands.py`: browser errands (the store,
+  the page listing the model reads, the live view's screencast and input. `read_whole`: a page as it shows, folded parts opened, every
+  tab, the pages behind Next or Load more, for `fetch_page` (`tools/search.py`; its own profiles in `data/reading/`,
+  closed after each read; Tavily when it fails; long pages in parts of 30k). `errands.py`: browser errands (the store,
   the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
   `pricewatch.py`: price watches. `releases.py`: release trackers (research by an errand, the user's picks, a daily
   look by the fast model, and the timed drop, reminder or price watch each pick calls for).
