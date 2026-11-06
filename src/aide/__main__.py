@@ -101,7 +101,8 @@ def live_voice(settings: Settings):
     if engine is None:
         engine = "local" if voicemodels.available() else "gpt-live" if settings.openai_api_key else "off"
     if engine == "local":
-        models = voicemodels.shared({"en": settings.live_voice_en, "it": settings.live_voice_it}, settings.live_speed)
+        models = voicemodels.shared({"en": settings.live_voice_en, "it": settings.live_voice_it}, settings.live_speed,
+                                    settings.voice_url)
 
         async def connect(instructions: str):
             from .localvoice import LocalVoice

@@ -1,13 +1,16 @@
 """The models behind a live call's local voice (localvoice.Backend), in the service's own process on cappa's GPU.
 
 Silero (speech or not, ONNX on the CPU), smart-turn v3.2 (finished or not, ONNX on the CPU), Parakeet v3 (the
-words, GPU) and Kokoro (the voice, GPU). Loading them all takes ~25 s, so they're loaded when the service starts and
-kept (~5 GB of the 2080's 8). A lecture or a video for Whisper borrows the GPU: it waits for any call to end, the GPU
+words, GPU) and the voice: Chatterbox, cloned from a clip per language, in a service of its own
+(`deploy/chatterbox/server.py`, ~3 GB of the GPU, streamed over HTTP on 127.0.0.1), with Kokoro on the CPU while
+that's not there; or Kokoro on the GPU without it (AIDE_VOICE_URL=off). Loading takes ~25 s, so it's done when the
+service starts and kept. A lecture or a video for Whisper borrows the GPU: it waits for any call to end, the GPU
 models are let go, and they're loaded again after (`lend_gpu`); a call asked for meanwhile doesn't start, and the
 phone uses its turn-at-a-time voice."""
 
 import asyncio
 import contextlib
+import json
 import logging
 import threading
 import time
@@ -32,12 +35,60 @@ def _floats16k(pcm: bytes):
     return resample_poly(np.frombuffer(pcm, np.int16).astype(np.float32) / 32768, 2, 3).astype(np.float32)
 
 
+class Speaker:
+    """The Chatterbox voice service (deploy/chatterbox/server.py): PCM16 at 24 kHz streamed back for each sentence."""
+
+    def __init__(self, url: str):
+        self.url = url.rstrip("/")
+        self.up = False
+
+    def _client(self, timeout: float):
+        import httpx
+        return httpx.AsyncClient(base_url=self.url, timeout=httpx.Timeout(timeout, connect=1.0))
+
+    async def check(self) -> bool:
+        """Whether it answers, loading its model (~15 s) if it has let it go."""
+        try:
+            async with self._client(120) as client:
+                health = (await client.get("/health")).json()
+                if not health.get("loaded"):
+                    (await client.post("/load")).raise_for_status()
+            if not self.up:
+                log.info("live call voice: Chatterbox at %s", self.url)
+            self.up = True
+        except Exception as e:
+            if self.up:
+                log.warning("live call voice: Chatterbox isn't answering (%s); Kokoro speaks", e)
+            self.up = False
+        return self.up
+
+    async def release(self) -> None:
+        try:
+            async with self._client(30) as client:
+                await client.post("/release")
+        except Exception:
+            pass
+
+    async def speak(self, text: str, language: str) -> AsyncIterator[bytes]:
+        carry = b""
+        async with self._client(30) as client:
+            async with client.stream("POST", "/speak", content=json.dumps({"text": text, "lang": language})) as r:
+                r.raise_for_status()
+                async for chunk in r.aiter_raw():
+                    chunk, carry = carry + chunk, b""
+                    if len(chunk) % 2:  # whole samples only
+                        chunk, carry = chunk[:-1], chunk[-1:]
+                    if chunk:
+                        yield chunk
+
+
 class VoiceModels:
     turns = True
 
-    def __init__(self, voices: dict[str, str] | None = None, speed: float = 1.0):
+    def __init__(self, voices: dict[str, str] | None = None, speed: float = 1.0, speaker_url: str | None = None):
         self.voices = voices or {"en": "af_heart", "it": "if_sara"}
         self.speed = speed
+        self.speaker = Speaker(speaker_url) if speaker_url else None
         self.calls = 0
         self.lent = 0
         self._asr = self._pipes = None
@@ -61,6 +112,8 @@ class VoiceModels:
                 started = time.monotonic()
                 await asyncio.to_thread(self._load)
                 log.info("live call voice loaded in %.1f s", time.monotonic() - started)
+        if self.speaker and not self.speaker.up:
+            await self.speaker.check()
 
     def _load(self) -> None:
         import logging as stdlog
@@ -82,7 +135,7 @@ class VoiceModels:
         nemo_log.setLevel(stdlog.ERROR)
         asr = ASRModel.from_pretrained(ASR_MODEL).cuda().eval()
         from kokoro import KModel, KPipeline
-        kokoro = KModel().to("cuda").eval()
+        kokoro = KModel().to("cpu" if self.speaker else "cuda").eval()  # with Chatterbox, only its stand-in
         pipes = {lang: KPipeline(lang_code=code, model=kokoro) for lang, code in LANGS.items()}
         # The first sentence and the first words are slow (~0.4 s more); get them over with, on real speech:
         # silence doesn't warm the decoder.
@@ -117,6 +170,9 @@ class VoiceModels:
                 async with self._loading:
                     await asyncio.to_thread(self.release)
                 log.info("live call voice let go for a transcription")
+            if self.speaker:
+                await self.speaker.release()
+                self.speaker.up = False
             yield
         finally:
             self.lent -= 1
@@ -173,7 +229,23 @@ class VoiceModels:
 
     async def speak(self, text: str, language: str) -> AsyncIterator[bytes]:
         lang = language if language in LANGS else "en"
+        if self.speaker and self.speaker.up:
+            said = False
+            try:
+                async for pcm in self.speaker.speak(text, lang):
+                    said = True
+                    yield pcm
+                return
+            except Exception as e:
+                if said:  # half a sentence: the rest goes, the next one tries again
+                    log.warning("live call voice: Chatterbox stopped mid-sentence (%s)", e)
+                    return
+                log.warning("live call voice: Chatterbox failed (%s); Kokoro speaks until the next call", e)
+                self.speaker.up = False
+        async for pcm in self._kokoro(text, lang):
+            yield pcm
 
+    async def _kokoro(self, text: str, lang: str) -> AsyncIterator[bytes]:
         def run() -> list[bytes]:
             import numpy as np
 
@@ -202,11 +274,11 @@ def available() -> bool:
         return False
 
 
-def shared(voices: dict[str, str] | None = None, speed: float = 1.0) -> VoiceModels:
+def shared(voices: dict[str, str] | None = None, speed: float = 1.0, speaker_url: str | None = None) -> VoiceModels:
     """The service's one set of models."""
     global _shared
     if _shared is None:
-        _shared = VoiceModels(voices, speed)
+        _shared = VoiceModels(voices, speed, speaker_url)
     return _shared
 
 

@@ -1,0 +1,9 @@
+# The voice service's own venv (Python 3.11; Chatterbox pins torch and transformers apart from Aide's):
+#   uv venv -p 3.11 deploy/chatterbox/.venv && uv pip install -p deploy/chatterbox/.venv -r deploy/chatterbox/requirements.txt
+chatterbox-tts==0.1.7
+torch==2.6.0
+torchaudio==2.6.0
+transformers==5.2.0
+diffusers==0.29.0
+resemble-perth==1.0.1
+setuptools<81  # perth's watermarker imports pkg_resources

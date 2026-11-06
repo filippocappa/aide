@@ -656,6 +656,26 @@ journalctl --user -u aide -f          # live logs
 
 The database is `data/aide.db` in this folder. `deploy/aide.service` is a hardened system-wide alternative (dedicated `aide` user, `/opt/aide`) if you ever want that instead.
 
+## Live calls' voice
+
+On a call the local voice hears with Parakeet in the Aide service and speaks with
+[Chatterbox](https://github.com/resemble-ai/chatterbox) (Resemble AI, MIT) in a service of its own, since it pins
+torch and transformers apart from Aide's. Each language speaks with the voice of a clip: `data/voices/en.wav` and
+`data/voices/it.wav`, 10–20 s of one voice talking in that language (the clip's accent carries over). It streams:
+the first sound ~0.6 s after a sentence is asked for, ~3 GB of the GPU. While it isn't running, Kokoro speaks (on the
+CPU); `AIDE_VOICE_URL=off` puts Kokoro back on the GPU and leaves the service out.
+
+```bash
+uv venv -p 3.11 deploy/chatterbox/.venv
+uv pip install -p deploy/chatterbox/.venv -r deploy/chatterbox/requirements.txt
+ln -sf "$PWD/deploy/aide-voice.service" ~/.config/systemd/user/aide-voice.service
+systemctl --user daemon-reload && systemctl --user enable --now aide-voice
+journalctl --user -u aide-voice -f    # each sentence: time to the first sound
+```
+
+A new voice: put the clip in `data/voices/` (24 kHz mono WAV) and `systemctl --user restart aide-voice`.
+`AIDE_VOICE_STEPS` (4) is the decoder's steps: Chatterbox's own 10 sound a little cleaner but start ~0.3 s later.
+
 ## Backups
 
 Every night at about 03:30 a user-level timer copies `data/` to `~/aide-backups/YYYY-MM-DD/`. Databases are
@@ -727,6 +747,8 @@ back with it.
   - [Whisper](https://github.com/openai/whisper) (through
     [faster-whisper](https://github.com/SYSTRAN/faster-whisper)) and NVIDIA's
     [Parakeet](https://github.com/NVIDIA/NeMo) for lectures.
+  - On calls: [Chatterbox](https://github.com/resemble-ai/chatterbox) speaks (Kokoro when it can't), Silero and
+    smart-turn hear when you're done.
 - **Libraries and tools:**
   - On the server: [FastAPI](https://fastapi.tiangolo.com), [Uvicorn](https://www.uvicorn.org), the
     [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-python), the
