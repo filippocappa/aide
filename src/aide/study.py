@@ -30,6 +30,7 @@ from .engine import course_var
 from .icloud import CalendarBackend, CalEvent, unread
 from .material import FileStore
 from .photos import PhotoStore
+from .voicemodels import lend_gpu
 from .whisper import cuda_libs
 
 log = logging.getLogger(__name__)
@@ -97,15 +98,16 @@ async def whisper_transcribe(path: Path) -> tuple[str, str | None, int | None]:
     env = dict(os.environ)
     if libs := cuda_libs():
         env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, [libs, env.get("LD_LIBRARY_PATH")]))
-    started = clock.monotonic()
-    proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "aide.whisper", str(path), env=env,
-                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), WHISPER_TIMEOUT)
-    except asyncio.TimeoutError:
-        proc.kill()
-        raise RuntimeError("transcription took over an hour")
-    ms = round((clock.monotonic() - started) * 1000)
+    async with lend_gpu():  # a live call's voice steps aside
+        started = clock.monotonic()
+        proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "aide.whisper", str(path), env=env,
+                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), WHISPER_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError("transcription took over an hour")
+        ms = round((clock.monotonic() - started) * 1000)
     if proc.returncode != 0:
         log.error("whisper failed: %s", err.decode(errors="replace")[-2000:])
         usage.record("gpu", "whisper", ms=ms, ok=False)

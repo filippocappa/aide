@@ -69,9 +69,11 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
   `pricewatch.py`: price watches. `releases.py`: release trackers (research by an errand, the user's picks, a daily
   look by the fast model, and the timed drop, reminder or price watch each pick calls for).
-- `livecall.py`: live voice calls (#34): a realtime voice model (`gptlive.py`, OpenAI GPT-Live, behind an adapter)
-  listens and speaks over `WS /v1/voice/call`; each spoken request is a normal turn for the chat's agent, a spoken yes or
-  no to queued actions is decided in code (`consent.py`), the call kept in `calls`. Off without `OPENAI_API_KEY`.
+- `livecall.py`: live voice calls (#34): a voice behind an adapter listens and speaks over `WS /v1/voice/call`: the
+  local one (`localvoice.py`: Silero and the smart-turn model hear when you're done, Parakeet v3 writes it down,
+  Kokoro speaks, Heart in English and Sara in Italian; `voicemodels.py` loads them in the service at start, ~25 s and
+  ~5 GB of the GPU, and lets them go while Whisper has a recording) or OpenAI's GPT-Live (`gptlive.py`, `AIDE_LIVE`); each spoken request is a normal turn for the chat's agent, a spoken yes or
+  no to queued actions is decided in code (`consent.py`), the call kept in `calls`. Off with `AIDE_LIVE=off`, or with neither a GPU nor the key.
   `voicequiz.py`: a spoken multiple-choice answer in a course chat's quiz marked with no model call.
 - `videos.py`: YouTube videos (yt-dlp, captions or Whisper, the brief, frames), posted back in the chat it came from.
 - `finance.py`: payments, categories, the month, subscriptions, budget, accounts. `banks.py`: bank accounts through
@@ -715,9 +717,11 @@ Settings → Browser → Releases. Aide's tools: `track_release`, `set_release_p
    model call (live); live calls (contract "Voice calls"): GPT-Live through cappa as the ears and mouth, the agents
    doing the work, status notes while they do, a spoken yes or no checked in code (money and outward actions stay on
    the card), a call row in the chat; the app's `Support/LiveCall.swift` (one engine, voice processing on), the old
-   turn-at-a-time voice when calls are off (Settings → Voice → Live calls). Waiting on `OPENAI_API_KEY` in `.env` on
-   cappa; then a first call in the Simulator and on the phone (echo on the speaker, Italian and English, `VoiceLog`'s
-   latency against the old pipeline).
+   turn-at-a-time voice when calls are off (Settings → Voice → Live calls). GPT-Live was too dear (~$30 a month), so the
+   voice is cappa's own (2026-11-06): the words ~0.1 s after you stop, the voice ~70 ms after the reply; "one moment"
+   when a turn takes a while. Next: a first call in the Simulator and on the phone (echo on the speaker, Italian and
+   English, `VoiceLog`'s latency against the old pipeline); later Haiku's reply streamed into the voice a sentence at a
+   time.
 2. Recording a lecture in the app. Notebooks for the other courses.
 
 Later: Later for health: bedtime nudge in the evening digest,

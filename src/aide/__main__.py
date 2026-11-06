@@ -93,14 +93,39 @@ log = logging.getLogger(__name__)
 
 
 def live_voice(settings: Settings):
-    """Opens GPT-Live for a call, or None (calls off) without OPENAI_API_KEY."""
-    if not settings.openai_api_key:
-        return None
+    """Opens a call's voice: the local one on the GPU (its models loaded now, in the background), or GPT-Live with
+    OPENAI_API_KEY; None (calls off) when neither can or AIDE_LIVE=off."""
+    from . import voicemodels
 
-    async def connect(instructions: str):
-        from .gptlive import GptLive
-        return await GptLive.open(settings.openai_api_key, instructions, settings.live_model, settings.live_voice)
-    return connect
+    engine = settings.live
+    if engine is None:
+        engine = "local" if voicemodels.available() else "gpt-live" if settings.openai_api_key else "off"
+    if engine == "local":
+        models = voicemodels.shared({"en": settings.live_voice_en, "it": settings.live_voice_it}, settings.live_speed)
+
+        async def connect(instructions: str):
+            from .localvoice import LocalVoice
+            await models.warm()
+            return LocalVoice(models)
+        connect.warm = models.warm
+        return connect
+    if engine == "gpt-live" and settings.openai_api_key:
+        async def connect(instructions: str):
+            from .gptlive import GptLive
+            return await GptLive.open(settings.openai_api_key, instructions, settings.live_model, settings.live_voice)
+        return connect
+    if engine != "off":
+        log.warning("live calls are off: AIDE_LIVE=%s can't run here", engine)
+    return None
+
+
+async def warm_voice(warm) -> None:
+    """Loads the live call's local voice once the service is up (~25 s), so the first call doesn't wait."""
+    await asyncio.sleep(5)
+    try:
+        await warm()
+    except Exception:
+        log.exception("live call voice: loading failed; calls will try again")
 
 
 def main() -> None:
@@ -392,7 +417,10 @@ def main() -> None:
         if settings.api_token:
             transcriber = (Transcriber(settings.openrouter_api_key, settings.transcribe_model)
                            if settings.openrouter_api_key else None)
-            calls = LiveCalls(agent, db.conn, live_voice(settings), settings.live_idle_minutes)
+            voice = live_voice(settings)
+            calls = LiveCalls(agent, db.conn, voice, settings.live_idle_minutes)
+            if warm := getattr(voice, "warm", None):
+                jobs.append(warm_voice(warm))
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
