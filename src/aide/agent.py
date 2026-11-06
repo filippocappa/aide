@@ -850,8 +850,10 @@ class Agent:
         written = False
         async with self.client.beta.messages.stream(**self._request(agent, model, history, turn)) as stream:
             async for event in stream:
-                if event.type == "content_block_start" and event.content_block.type == "text" and written:
-                    on_text("\n\n", False)
+                if event.type == "content_block_start" and written:
+                    # A tool call after text: that text is finished, so a call's voice says its last sentence now
+                    # ("Let me check your calendar.", #71); the next round's text starts the draft over anyway.
+                    on_text("\n\n" if event.content_block.type == "text" else "\n", False)
                 elif event.type == "text" and event.text:
                     on_text(event.text, restart and not written)
                     written = True

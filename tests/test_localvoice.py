@@ -218,12 +218,13 @@ async def test_a_call_with_the_local_voice(monkeypatch):
     from aide.reminders import ReminderStore
     from aide.tools import ToolRegistry
     from aide.tools.reminders import reminder_tools
-    from test_api import ROME, FakeClient, done
+    from test_agents import FakeClient as StreamingClient, done
+    from test_api import ROME
 
     for name, value in (("GRACE", 0.2), ("IDLE_TICK", 0.05), ("PROGRESS_EVERY", 0), ("STATUS_EVERY", 5)):
         monkeypatch.setattr(livecall, name, value)
     db = Database(":memory:")
-    agent = Agent(FakeClient([done("You've got nothing tomorrow.")]), db,
+    agent = Agent(StreamingClient([done("You've got nothing tomorrow.")]), db,
                   ToolRegistry(reminder_tools(ReminderStore(db.conn), ROME)), model="m", delegate=False, tz=ROME)
     chat = agent.new_conversation(agent="secretary")["id"]
     backend = FakeBackend(speech_seconds=0.05)
@@ -348,3 +349,143 @@ async def test_one_moment_once_a_call(monkeypatch):
         await voice.say("Fatto.")
         await asyncio.sleep(0.05)
     assert [t for t, _ in backend.spoken] == ["Un attimo.", "Fatto.", "Fatto."]
+
+
+# -- the reply said as it's written (#71) --
+
+class PartVoice:
+    def __init__(self):
+        self.parts, self.hushes = [], 0
+
+    def say_part(self, text, more=True):
+        self.parts.append((text, more))
+
+
+class PartCall:
+    def __init__(self, voice, queued=()):
+        self.voice, self.queued, self.sent = voice, list(queued), []
+
+    def _queued_since(self, before):
+        return [q for q in self.queued if q not in before]
+
+    async def _send(self, m):
+        self.sent.append(m)
+
+    def _spawn(self, coro):
+        return asyncio.create_task(coro)
+
+
+def written(stream, text, restart=False):
+    for i, word in enumerate(text.split(" ")):
+        stream.feed(word if i == 0 else " " + word, restart and i == 0)
+
+
+async def test_each_finished_sentence_is_said_while_the_rest_is_written():
+    from aide.livecall import Spoken
+    voice = PartVoice()
+    stream = Spoken(PartCall(voice), set(), "en")
+    stream.feed("Sure.", False)
+    stream.feed(" Tomorrow", False)
+    assert voice.parts == []  # "Sure." alone waits for the next sentence
+    written(stream, " you have the gym at 7:00. Then lunch with Ale at 13:30, and")
+    assert voice.parts == [("Sure. Tomorrow you have the gym at 7:00.", True)]
+    written(stream, " nothing after.")
+    stream.end("")
+    assert voice.parts[1:] == [("Then lunch with Ale at 13:30, and nothing after.", False)]
+    await asyncio.sleep(0)
+    assert stream.call.sent == [{"type": "state", "state": "listening"}]
+
+
+async def test_a_list_is_said_line_by_line_and_its_numbers_are_not_sentences():
+    from aide.livecall import Spoken
+    voice = PartVoice()
+    stream = Spoken(PartCall(voice), set(), "en")
+    written(stream, "Tomorrow you have:\n1. **Gym** at 7\n2. Lunch at 13:30\n")
+    stream.end("")
+    assert " ".join(t for t, _ in voice.parts) == "Tomorrow you have: Gym at 7. Lunch at 13:30."
+    assert voice.parts[-1][1] is False
+
+
+async def test_text_before_a_tool_is_said_and_its_unfinished_end_dropped():
+    from aide.livecall import Spoken
+    voice = PartVoice()
+    stream = Spoken(PartCall(voice), set(), "en")
+    written(stream, "Let me check your calendar for tomorrow. One sec")
+    written(stream, "You're free all day tomorrow.", restart=True)
+    stream.end("")
+    assert [t for t, _ in voice.parts] == ["Let me check your calendar for tomorrow.", "You're free all day tomorrow."]
+    assert stream.last == "You're free all day tomorrow."
+
+
+async def test_once_something_is_queued_the_call_asks_itself():
+    from aide.livecall import Spoken
+    voice = PartVoice()
+    call = PartCall(voice)
+    stream = Spoken(call, {1}, "en")
+    written(stream, "I'll put the dentist in for Friday at 3.")
+    stream.feed("\n", False)  # the tool call starts
+    call.queued = [1, 2]  # the tool round queued action 2
+    written(stream, "The dentist is ready for Friday at 15:00. Tap Confirm in the app to add it.", restart=True)
+    stream.end("Shall I go ahead?")
+    assert [t for t, _ in voice.parts] == ["I'll put the dentist in for Friday at 3.",
+                                           "The dentist is ready for Friday at 15:00.", "Shall I go ahead?"]
+
+
+async def test_talked_over_the_rest_is_not_said():
+    from aide.livecall import Spoken
+    voice = PartVoice()
+    stream = Spoken(PartCall(voice), set(), "en")
+    written(stream, "Tomorrow you have the gym at seven. ")
+    voice.hushes += 1
+    written(stream, "Then lunch with Ale at half past one. ")
+    stream.end("")
+    assert voice.parts == [("Tomorrow you have the gym at seven.", True)]
+
+
+async def test_a_long_reply_stops_with_the_rest_in_the_chat(monkeypatch):
+    from aide.livecall import Spoken
+    monkeypatch.setattr(livecall, "PIECE_CHARS", 30)
+    monkeypatch.setattr(livecall, "PIECES", 2)
+    voice = PartVoice()
+    stream = Spoken(PartCall(voice), set(), "en")
+    written(stream, "This is the first long sentence here. This is the second long sentence here. A third one. ")
+    stream.end("")
+    assert [t for t, _ in voice.parts] == ["This is the first long sentence here.", "The rest is in the chat.", ""]
+
+
+async def test_a_call_says_the_text_before_a_tool_then_the_answer(monkeypatch):
+    from aide.agent import Agent
+    from aide.db import Database
+    from aide.livecall import CallStore
+    from aide.reminders import ReminderStore
+    from aide.tools import ToolRegistry
+    from aide.tools.reminders import reminder_tools
+    from test_agents import FakeClient as StreamingClient, Block, done
+    from test_api import ROME
+
+    for name, value in (("GRACE", 0.2), ("IDLE_TICK", 0.05), ("PROGRESS_EVERY", 0), ("STATUS_EVERY", 5)):
+        monkeypatch.setattr(livecall, name, value)
+    db = Database(":memory:")
+    first = ("tool_use", [Block(type="text", text="Let me check your reminders for tomorrow."),
+                          Block(type="tool_use", id="t1", name="list_reminders", input={})])
+    agent = Agent(StreamingClient([first, done("Nothing's due tomorrow, you're free.")]), db,
+                  ToolRegistry(reminder_tools(ReminderStore(db.conn), ROME)), model="m", delegate=False, tz=ROME)
+    chat = agent.new_conversation(agent="secretary")["id"]
+    backend = FakeBackend(speech_seconds=0.02)
+    voice = LocalVoice(backend)
+
+    async def send(m):
+        pass
+
+    c = LiveCall(agent, voice, CallStore(db.conn), chat, "secretary", send, send, idle_minutes=60)
+    run = asyncio.create_task(c.run())
+    await voice.send_audio(frames(1.0, SPEECH) + frames(2.0, QUIET))
+    for _ in range(300):
+        if len(backend.spoken) >= 2:
+            break
+        await asyncio.sleep(0.01)
+    assert [t for t, _ in backend.spoken] == ["Let me check your reminders for tomorrow.",
+                                              "Nothing's due tomorrow, you're free."]
+    await c.end("hangup")
+    await asyncio.wait_for(run, 2)
+    db.close()

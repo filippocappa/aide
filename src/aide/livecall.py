@@ -319,6 +319,87 @@ class Ears:
 _UNSURE = re.compile(r"\b(?:yes|yeah|ok|okay|sure|si|va bene|certo|fine|alright)\b")
 
 
+# -- the reply said as it's written (#71) -------------------------------------------------------------------------
+
+FIRST_PIECE = 20  # a piece shorter than this waits for the next sentence ("Sure." alone sounds choppy)
+_END = re.compile(r"(?<=[.!?…:;])\s+|\n")
+_LIST_MARK = re.compile(r"\s*\d+[.)]")
+
+
+def _finished(text: str) -> int:
+    """How much of the text being written is whole sentences or lines: the index after the last end ("1." starting
+    a list line isn't one)."""
+    last = 0
+    for m in _END.finditer(text):
+        start = text.rfind("\n", 0, m.start()) + 1
+        if m.group() != "\n" and _LIST_MARK.fullmatch(text[start:m.start()]):
+            continue
+        last = m.end()
+    return last
+
+
+class Spoken:
+    """A turn's reply said while the model writes it: each finished sentence goes to the voice as the next one is
+    written, so the first is heard ~0.5 s after Haiku starts, not after the whole reply. Every model round's text is
+    said, the one before a tool call too ("Let me check your calendar.", said instead of a step line); a round's
+    unfinished end is dropped when a tool call follows it. Once the turn has queued an action, the model's sentences
+    on how to confirm it are left out (the call asks itself). Talked over: the rest isn't said (it's in the chat)."""
+
+    def __init__(self, call: "LiveCall", before: set[int], lang: str):
+        self.call, self.voice, self.before, self.lang = call, call.voice, before, lang
+        self.unsaid = ""  # written, not said yet
+        self.last = ""  # the last model round's text: the reply
+        self.chars = 0
+        self.started = False  # something was said
+        self.hushes = 0
+        self.queued = False
+        self.hushed = self.cut = False
+
+    def feed(self, piece: str, restart: bool) -> None:
+        if restart:  # tools ran: what was left unsaid came before them
+            self.unsaid, self.last = "", ""
+            self.queued = self.queued or bool(self.call._queued_since(self.before))
+        self.unsaid += piece
+        self.last += piece
+        if self.started and self.voice.hushes != self.hushes:
+            self.hushed = True
+        if self.hushed or self.cut:
+            return
+        end = _finished(self.unsaid)
+        if end and len(self.unsaid[:end].strip()) >= FIRST_PIECE:
+            self._say(self.unsaid[:end])
+            self.unsaid = self.unsaid[end:]
+
+    def end(self, after: str) -> None:
+        """The turn is over: the rest of the reply, then the call's own lines (`after`: "Shall I go ahead?")."""
+        if self.started and self.voice.hushes != self.hushes:
+            self.hushed = True
+        if self.hushed:
+            return
+        rest = "" if self.cut else self._words(self.unsaid)
+        self.unsaid = ""
+        self.voice.say_part(f"{rest} {after}".strip(), more=False)
+
+    def _say(self, text: str) -> None:
+        if not (text := self._words(text)):
+            return
+        if not self.started:
+            self.started, self.hushes = True, self.voice.hushes
+            self.call._spawn(self.call._send({"type": "state", "state": "listening"}))
+        self.voice.say_part(text)
+
+    def _words(self, text: str) -> str:
+        text = speakable(text)
+        if self.queued:
+            text = " ".join(s for s in re.split(r"(?<=[.!?])\s+", text) if not _HOW_TO_CONFIRM.search(s))
+        if not text.strip():
+            return ""
+        if self.chars + len(text) > PIECE_CHARS * PIECES:
+            text, self.cut = line("rest", self.lang), True
+        self.chars += len(text)
+        return text
+
+
 class LiveCall:
     """One call in one chat. `send_json` and `send_audio` go to the phone; run() returns when the call is over."""
 
@@ -409,6 +490,9 @@ class LiveCall:
         self.tasks.discard(task)
         if not task.cancelled() and (e := task.exception()):
             log.error("live call: a task failed", exc_info=e)
+
+    def _queued_since(self, before: set[int]) -> list[dict]:
+        return [a for a in self._pending() if a["id"] not in before]
 
     def _pending(self) -> list[dict]:
         return [a for a in self.agent.db.pending_actions(CONVERSATION, PENDING_TTL)
@@ -522,8 +606,10 @@ class LiveCall:
         self.awaiting = []  # asked something else instead: the card stays on the screen to tap
         self.requests += 1
         before = {a["id"] for a in self._pending()}
+        lang = language(words, self.lang)
+        stream = Spoken(self, before, lang) if hasattr(self.voice, "say_part") else None
         started = time.monotonic()
-        turn = await self._turn(words, delegation)
+        turn = await self._turn(words, delegation, stream.feed if stream else None)
         if turn is None:
             await reply(line("failed", self.lang))
             return
@@ -532,20 +618,26 @@ class LiveCall:
             await self.on_turn(words, turn)
         log.info("live call turn: %d ms, sent after %d ms", took * 1000, (time.monotonic() - started) * 1000)
         queued = [a for a in self._pending() if a["id"] not in before]
-        lang = language(words, self.lang)
-        said = speakable(turn.reply) or line("in_chat", lang)
+        streamed = stream is not None and stream.started
+        said = speakable(stream.last if streamed else turn.reply) or ("" if streamed else line("in_chat", lang))
         if queued:
             said = unconfirmed(said)
+        after = ""
         if any(a["tool"] in SCREEN_ONLY for a in queued):
-            said += " " + line("on_screen", lang)
+            after += " " + line("on_screen", lang)
         if spoken := [a for a in queued if a["tool"] not in SCREEN_ONLY]:
             self.awaiting = [a["id"] for a in spoken]
-            if not said.endswith("?"):
-                said += " " + line("go_ahead", lang)
+            if not (said + after).endswith("?"):
+                after += " " + line("go_ahead", lang)
+        if streamed:
+            stream.queued = stream.queued or bool(queued)
+            stream.end(after.strip())
+            return
         await self._send({"type": "state", "state": "listening"})
-        await reply(said)
+        await reply(said + after)
 
-    async def _turn(self, words: str, delegation: str | None) -> Turn | None:
+    async def _turn(self, words: str, delegation: str | None,
+                    on_text: Callable[[str, bool], None] | None = None) -> Turn | None:
         await self._send({"type": "state", "state": "working"})
         steps: list[str] = []
         last_note = 0.0
@@ -572,7 +664,7 @@ class LiveCall:
         status = asyncio.create_task(still_working())
         try:
             return await self.agent.respond(CONVERSATION, words, self.conversation, voice=True, on_step=on_step,
-                                            on_team=self._team)
+                                            on_team=self._team, on_text=on_text)
         except Exception as e:
             log.exception("live call: the turn failed")
             await self._send({"type": "error", "message": str(e)})

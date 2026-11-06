@@ -512,8 +512,10 @@ def test_streamed_text_starts_over_after_tools(env):
                             ("end_turn", [Block(type="text", text="Free"), Block(type="text", text="all day.")])])
     got = events(client.post("/v1/chat", json={"text": "busy?", "stream": True}, headers=AUTH))
     texts = [d for e, d in got if e == "text"]
-    assert [d["restart"] for d in texts] == [False, False, False, True, False, False, False]
-    assert "".join(d["delta"] for d in texts[3:]) == "Free\n\nall day."
+    # "Let", " me", " check.", then "\n" as the tool call starts (a call's voice says the sentence then, #71)
+    assert [d["restart"] for d in texts] == [False, False, False, False, True, False, False, False]
+    assert texts[3]["delta"] == "\n"
+    assert "".join(d["delta"] for d in texts[4:]) == "Free\n\nall day."
     assert got[-1][1]["reply"] == "Free\n\nall day."
 
 
