@@ -7,9 +7,7 @@
     },
     {
       "appearance" : "dark",
-      "value" : {
-        "automatic-gradient" : "srgb:0.10000,0.11000,0.11000,1.00000"
-      }
+      "value" : "automatic"
     }
   ],
   "groups" : [
