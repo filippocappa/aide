@@ -108,3 +108,17 @@ async def test_lending_the_gpu_lets_the_service_go_too(service):
             assert not FakeVoice.loaded and not voice.speaker.up
     voice.warm = lambda: asyncio.sleep(0)
     await lend()
+
+
+async def test_the_service_waits_while_parakeet_loads(service):
+    voice = models(service)
+    await voice.speaker.check()
+    seen = []
+
+    def load():  # Parakeet loading: the service has let its model go
+        seen.append(FakeVoice.loaded)
+        voice._asr = voice._pipes = object()
+    voice._load = load
+    await voice.warm()
+    assert seen == [False] and FakeVoice.loaded and voice.speaker.up
+    assert [path for path, _ in FakeVoice.asked] == ["/load", "/release", "/load"]

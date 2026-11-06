@@ -185,6 +185,13 @@ async def test_talking_over_it_stops_it():
     await voice.send_audio(frames(0.1, SPEECH))  # a cough: not enough
     await voice.send_audio(frames(0.3, QUIET))
     assert voice._talking()
+    backend.words = ""  # nor half a second of a loud noise, with no words in it
+    await voice.send_audio(frames(0.5, SPEECH))
+    assert voice._talking()
+    await voice.send_audio(frames(2.0, QUIET))
+    await asyncio.sleep(0.05)
+    assert voice._talking()
+    backend.words = "no wait"
     await voice.send_audio(frames(0.8, SPEECH))
     await until(voice, Speech)
     assert not voice._talking()

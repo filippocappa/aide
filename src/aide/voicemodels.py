@@ -110,6 +110,9 @@ class VoiceModels:
         async with self._loading:
             if not self.ready:
                 started = time.monotonic()
+                if self.speaker:  # Parakeet's loading peaks at ~4 GB: with Chatterbox's 3.6 that's past the 2080's 7.6
+                    await self.speaker.release()
+                    self.speaker.up = False
                 await asyncio.to_thread(self._load)
                 log.info("live call voice loaded in %.1f s", time.monotonic() - started)
         if self.speaker and not self.speaker.up:
@@ -149,6 +152,9 @@ class VoiceModels:
                 for _ in range(2):
                     asr.transcribe([_floats16k(pcm)], batch_size=1, verbose=False)
         self._asr, self._pipes = asr, pipes
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()  # the loading's peak back for the voice service
 
     def release(self) -> None:
         """Lets the GPU models go (the CPU ones stay)."""
