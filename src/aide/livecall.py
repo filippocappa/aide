@@ -484,12 +484,15 @@ class LiveCall:
         self.awaiting = []  # asked something else instead: the card stays on the screen to tap
         self.requests += 1
         before = {a["id"] for a in self._pending()}
+        started = time.monotonic()
         turn = await self._turn(words, delegation)
         if turn is None:
             await reply("Something went wrong on my side, sorry. It didn't work.")
             return
+        took = time.monotonic() - started
         if self.on_turn:
             await self.on_turn(words, turn)
+        log.info("live call turn: %d ms, sent after %d ms", took * 1000, (time.monotonic() - started) * 1000)
         queued = [a for a in self._pending() if a["id"] not in before]
         said = speakable(turn.reply) or "Done, it's in the chat."
         if any(a["tool"] in SCREEN_ONLY for a in queued):
