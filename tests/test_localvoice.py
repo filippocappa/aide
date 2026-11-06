@@ -5,7 +5,7 @@ import pytest
 
 from aide import livecall, localvoice
 from aide.livecall import Audio, Delegation, Heard, LiveCall, Said, Speech
-from aide.localvoice import FRAME, FRAME_SECONDS, Endpointer, LocalVoice, language, sentences
+from aide.localvoice import FRAME, FRAME_SECONDS, Endpointer, LocalVoice, language, sentences, spoken
 
 SPEECH = (1000).to_bytes(2, "little", signed=True) * FRAME
 QUIET = b"\0\0" * FRAME
@@ -86,6 +86,15 @@ def test_language_and_sentences():
     assert language("Macroeconomia", default="it") == "it"
     assert sentences("Ok. Tomorrow you have macro at ten. Then the dentist at four!\nNothing else.") == [
         "Ok. Tomorrow you have macro at ten.", "Then the dentist at four!", "Nothing else."]
+
+
+def test_clock_times_are_said_as_words():
+    assert spoken("A run from 13:00 to 13:47, then dinner 20:00–22:00.", "en") == \
+        "A run from 1 p.m. to 1 47 p.m., then dinner 8 p.m. to 10 p.m.."
+    assert spoken("At 9:05, 12:00 and 00:00. Or 7:30 pm.", "en") == "At 9 oh 5 a.m., noon and midnight. Or 7 30 pm."
+    assert spoken("Dalle 13:00 alle 13:47, poi 20:00-22:00 e alle 9:05.", "it") == \
+        "Dalle 13 alle 13 e 47, poi 20 alle 22 e alle 9 e 5."
+    assert spoken("It costs 9.50 and the score is 3-2.", "en") == "It costs 9.50 and the score is 3-2."
 
 
 async def test_an_utterance_is_heard_and_handed_over():
