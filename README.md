@@ -675,6 +675,7 @@ journalctl --user -u aide-voice -f    # each sentence: time to the first sound
 
 A new voice: put the clip in `data/voices/` (24 kHz mono WAV) and `systemctl --user restart aide-voice`.
 `AIDE_VOICE_STEPS` (4) is the decoder's steps: Chatterbox's own 10 sound a little cleaner but start ~0.3 s later.
+`AIDE_VOICE_SPEED` (1.15) is how fast it talks, the pitch kept.
 
 ## Backups
 

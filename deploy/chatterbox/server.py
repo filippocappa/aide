@@ -4,7 +4,10 @@ cappa (it pins torch and transformers apart from Aide's), on 127.0.0.1, `deploy/
 Each language speaks with the voice of a short clip, `data/voices/<lang>.wav` (10-20 s of one voice talking, in that
 language: the clip's accent carries over). The speech tokens are made one at a time (25 a second of audio) and turned
 into sound every EVERY tokens, a window at a time with CONTEXT tokens before it for continuity, the last HOLD tokens
-kept back (they change as more come) and a short crossfade at each join: the first sound in ~0.3 s.
+kept back (they change as more come) and a short crossfade at each join: the first sound in ~0.5 s. AIDE_VOICE_SPEED
+(1.15) makes it talk faster at the same pitch. Upstream switches every layer of the token model to eager attention to
+watch three heads for when the line is over; here only those three layers are, and their spy is set up once: ~48
+tokens a second against 31-40 (2026-11-06).
 
     POST /speak {"text": ..., "lang": "it"|"en"}  ->  raw PCM16, 24 kHz mono, streamed as it's made
     POST /load, POST /release (Whisper borrows the GPU), GET /health
@@ -33,6 +36,8 @@ FIRST, EVERY, CONTEXT, HOLD = 10, 20, 24, 3  # tokens
 SOON, LOW = 6, 0.7  # with less than LOW seconds left to play, a window as soon as SOON tokens are new
 STEPS = int(os.environ.get("AIDE_VOICE_STEPS", "4"))  # the decoder's flow steps (Chatterbox's 10: 0.4 s a window, 4: 0.18 s)
 FADE = 480  # samples crossfaded at a join (20 ms)
+SPEED = float(os.environ.get("AIDE_VOICE_SPEED", "1.15"))  # how fast it talks (the clips' pace is 1; CosyVoice's way:
+# the sound's frames squeezed before they're voiced, so the pitch stays)
 VALID = 6561  # speech tokens at or above this are special
 
 
@@ -52,6 +57,7 @@ class Voice:
             started = time.monotonic()
             model = ChatterboxMultilingualTTS.from_pretrained(device="cuda")
             model.t3.half()  # as fast, less of the GPU
+            self._spy(model)
             conds = {}
             for clip in sorted(VOICES.glob("*.wav")):
                 model.prepare_conditionals(str(clip), exaggeration=0.5)
@@ -68,6 +74,24 @@ class Voice:
                     pass
             log.info("loaded in %.1f s, voices %s, %.2f GB (%.2f at most)", time.monotonic() - started, sorted(conds),
                      torch.cuda.memory_allocated() / 2**30, torch.cuda.max_memory_allocated() / 2**30)
+
+    def _spy(self, model) -> None:
+        """Chatterbox's alignment check (it stops a sentence that rambles on) reads three heads' attention: it hooked
+        them again on every sentence, never letting go (3 more CPU copies a token each time), and put every layer on
+        the slow eager attention. Here those three layers get eager attention of their own, hooked once; the rest
+        keep SDPA."""
+        import copy
+        from chatterbox.models.t3.inference.alignment_stream_analyzer import LLAMA_ALIGNED_HEADS
+        self.attns = [None] * len(LLAMA_ALIGNED_HEADS)
+        for i, (layer, head) in enumerate(LLAMA_ALIGNED_HEADS):
+            attn = model.t3.tfmr.layers[layer].self_attn
+            attn.config = copy.copy(attn.config)
+            attn.config._attn_implementation = "eager"
+
+            def hook(module, args, output, i=i, head=head):
+                if isinstance(output, tuple) and len(output) > 1 and output[1] is not None:
+                    self.attns[i] = output[1][0, head].float().cpu()
+            attn.register_forward_hook(hook)
 
     def release(self) -> None:
         with self.lock:
@@ -91,7 +115,6 @@ class Voice:
     def _tokens(self, conds, text: str, lang: str, most: int, cfg_weight=0.5, temperature=0.8,
                 repetition_penalty=2.0, min_p=0.05, top_p=1.0):
         """Chatterbox's T3 sampling loop (mtl_tts.generate), a token at a time."""
-        from chatterbox.models.t3.inference.alignment_stream_analyzer import AlignmentStreamAnalyzer
         from chatterbox.models.t3.inference.t3_hf_backend import T3HuggingfaceBackend
         from chatterbox.mtl_tts import punc_norm
         from transformers.generation.logits_process import (MinPLogitsWarper, RepetitionPenaltyLogitsProcessor,
@@ -105,15 +128,21 @@ class Voice:
         embeds, len_cond = t3.prepare_input_embeds(
             t3_cond=conds.t3, text_tokens=text_tokens,
             speech_tokens=t3.hp.start_speech_token * torch.ones_like(text_tokens[:, :1]), cfg_weight=cfg_weight)
-        analyzer = AlignmentStreamAnalyzer(t3.tfmr, None, text_tokens_slice=(len_cond, len_cond + text_tokens.size(-1)),
-                                           alignment_layer_idx=9, eos_idx=t3.hp.stop_speech_token)
+        analyzer = _analyzer()(t3.tfmr, None, text_tokens_slice=(len_cond, len_cond + text_tokens.size(-1)),
+                                 alignment_layer_idx=9, eos_idx=t3.hp.stop_speech_token)
+        analyzer.last_aligned_attns = self.attns  # filled by the hooks of _spy
         backend = T3HuggingfaceBackend(config=t3.cfg, llama=t3.tfmr, speech_enc=t3.speech_emb,
                                        speech_head=t3.speech_head, alignment_stream_analyzer=analyzer)
         bos = torch.tensor([[t3.hp.start_speech_token]], dtype=torch.long, device=m.device)
         bos_embed = t3.speech_emb(bos) + t3.speech_pos_emb.get_fixed_embedding(0)
-        out = backend(inputs_embeds=torch.cat([embeds, torch.cat([bos_embed, bos_embed])], dim=1),
-                      past_key_values=None, use_cache=True, output_attentions=True, output_hidden_states=True,
-                      return_dict=True)
+        # The prompt goes through with eager attention everywhere, so the hooked layers get its causal mask; a token at
+        # a time needs none, and the rest of the layers go back to SDPA.
+        t3.tfmr.config._attn_implementation = "eager"
+        try:
+            out = backend(inputs_embeds=torch.cat([embeds, torch.cat([bos_embed, bos_embed])], dim=1),
+                          past_key_values=None, use_cache=True, output_hidden_states=True, return_dict=True)
+        finally:
+            t3.tfmr.config._attn_implementation = "sdpa"
         past, generated = out.past_key_values, bos.clone()
         top_p_w, min_p_w = TopPLogitsWarper(top_p=top_p), MinPLogitsWarper(min_p=min_p)
         repeat = RepetitionPenaltyLogitsProcessor(penalty=float(repetition_penalty))
@@ -129,8 +158,8 @@ class Voice:
             generated = torch.cat([generated, token], dim=1)
             yield token
             embed = t3.speech_emb(token) + t3.speech_pos_emb.get_fixed_embedding(i + 1)
-            out = backend(inputs_embeds=torch.cat([embed, embed]), past_key_values=past, output_attentions=True,
-                          output_hidden_states=True, return_dict=True)
+            out = backend(inputs_embeds=torch.cat([embed, embed]), past_key_values=past, output_hidden_states=True,
+                          return_dict=True)
             past = out.past_key_values
 
     @torch.inference_mode()
@@ -152,13 +181,16 @@ class Voice:
             tokens = torch.tensor(toks[start:], dtype=torch.long, device=m.device)
             with torch.autocast("cuda", dtype=torch.float16):
                 mels = g.flow_inference(tokens, ref_dict=conds.gen, finalize=True, n_cfm_timesteps=STEPS)
+            if SPEED != 1:
+                mels = F.interpolate(mels.float(), size=max(1, round(mels.shape[-1] / SPEED)), mode="linear")
             wav, _ = g.hift_inference(mels.to(dtype=g.dtype), None)
             wav = wav.squeeze(0).float()
             if start == 0:  # Chatterbox's fade-in against the clip spilling over
                 n = min(len(g.trim_fade), wav.shape[-1])
                 wav[:n] *= g.trim_fade[:n]
-            begin = (sent - start) * TOK
-            piece = wav[begin:] if final else wav[begin:(upto - start) * TOK]
+            per = wav.shape[-1] / len(tokens)  # samples a token (TOK at SPEED 1)
+            begin = round((sent - start) * per)
+            piece = wav[begin:] if final else wav[begin:round((upto - start) * per)]
             if tail is not None:  # the held end of the last window, faded into this window's take on it
                 ramp = torch.linspace(0, 1, len(tail), device=wav.device)
                 piece = torch.cat([tail * (1 - ramp) + wav[begin - len(tail):begin] * ramp, piece])
@@ -215,6 +247,15 @@ class Voice:
         finally:
             stop.set()
             producer.join()  # within a token; the next sentence mustn't share the model with it
+
+
+def _analyzer():
+    from chatterbox.models.t3.inference.alignment_stream_analyzer import AlignmentStreamAnalyzer
+
+    class Analyzer(AlignmentStreamAnalyzer):
+        def _add_attention_spy(self, *args):  # Voice._spy hooks them once
+            pass
+    return Analyzer
 
 
 def _trim_end(wav: torch.Tensor) -> torch.Tensor:
