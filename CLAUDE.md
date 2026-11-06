@@ -719,11 +719,14 @@ dear (~$30 a month). The words ~0.1 s after you stop, the first sound ~0.5 s aft
 when the answer hasn't come 1.2 s after the step, "one moment" for a slow turn, a breath before the answer. App
 (`Support/LiveCall.swift`): the voice on an engine of its own (voice processing only on the speaker or receiver),
 AirPods at full bandwidth on iOS 26; the voice screen (`Views/VoicePanel.swift`) keeps the call as a chat. The old
-turn-at-a-time voice when calls are off (Settings → Voice → Live calls). Faster answers next: #71.
+turn-at-a-time voice when calls are off (Settings → Voice → Live calls). Faster answers (#71, 2026-11-06, live,
+not yet tried on a call): the reply is said as Haiku writes it, a sentence at a time (`Spoken` in `livecall.py`; the
+line before a tool call too, in place of a step line), and a spoken turn's stamp carries today's and tomorrow's
+calendar (`agenda.py`: kept between turns, read when a call opens, dropped on every write through Aide), so "what's on
+tomorrow" is one model round.
 
 **Next** (GitHub issues):
-0. Live calls answer faster (#71): speak the first sentence as it's written, today's and tomorrow's calendar
-   in the voice turn's context.
+0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.
 1. Recording a lecture in the app. Notebooks for the other courses.
 
 Later: Later for health: bedtime nudge in the evening digest,
