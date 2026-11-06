@@ -64,6 +64,7 @@ class Settings:
     live_voice_en: str = "af_heart"
     live_voice_it: str = "if_sara"
     live_speed: float = 1.1
+    voice_url: str | None = None  # the Chatterbox voice service (deploy/aide-voice.service); Kokoro without it
     voice_thinking: bool = False
     voice_direct: bool = True
     openai_api_key: str | None = None
@@ -148,6 +149,8 @@ def load_settings() -> Settings:
         live_voice_en=os.environ.get("AIDE_LIVE_VOICE_EN", "").strip() or "af_heart",
         live_voice_it=os.environ.get("AIDE_LIVE_VOICE_IT", "").strip() or "if_sara",
         live_speed=float(os.environ.get("AIDE_LIVE_SPEED", "").strip() or 1.1),
+        voice_url=None if (u := os.environ.get("AIDE_VOICE_URL", "").strip()).lower() in ("off", "0", "no")
+        else u or "http://127.0.0.1:8766",
         voice_thinking=os.environ.get("AIDE_VOICE_THINKING", "").strip().lower() in ("1", "true", "on", "yes"),
         voice_direct=os.environ.get("AIDE_VOICE_DIRECT", "").strip().lower() not in ("0", "false", "off", "no"),
         openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip() or None,
