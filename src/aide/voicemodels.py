@@ -151,10 +151,9 @@ class VoiceModels:
             with torch.autocast("cuda", dtype=torch.float16), torch.inference_mode():
                 for _ in range(2):
                     asr.transcribe([_floats16k(pcm)], batch_size=1, verbose=False)
+        # No torch.cuda.empty_cache() here: it freed what Parakeet's CUDA-graph decoder had captured in the warm-up,
+        # and every transcription after hit an illegal memory access (2026-11-06)
         self._asr, self._pipes = asr, pipes
-        import gc
-        gc.collect()
-        torch.cuda.empty_cache()  # the loading's peak back for the voice service
 
     def release(self) -> None:
         """Lets the GPU models go (the CPU ones stay)."""
