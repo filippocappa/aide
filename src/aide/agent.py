@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 
+from .lang import language
 from . import activity, usage
 from .agents import (AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WATCH_REFUSED, WRITES, check_agent,
                      mentions)
@@ -107,6 +108,7 @@ class Agent:
         model: str,
         smart_model: str | None = None,
         effort: str = "medium",
+        voice_thinking: bool = False,
         idle: timedelta = timedelta(hours=6),
         tz: ZoneInfo = ZoneInfo("UTC"),
         server_fallback: bool = False,
@@ -170,6 +172,8 @@ class Agent:
         self.model = model
         self.smart_model = smart_model or model
         self.effort = effort
+        self.voice_thinking = voice_thinking  # spoken turns think too (slower); off by default
+        self._voice = False  # the turn running was spoken
         self.idle = idle
         self.tz = tz
         self.server_fallback = server_fallback  # Anthropic API only, not via OpenRouter
@@ -405,6 +409,7 @@ class Agent:
             history = self.db.history(conversation_id)
             self._start(channel, conversation, model, on_team)
             self._on_step = on_step
+            self._voice = voice
             self._photos = tuple(photos)
             self.check_photos(photos)
             body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
@@ -427,6 +432,7 @@ class Agent:
                                                   bool(photos))
             finally:
                 self._on_team = None
+                self._voice = False
             times["model"] = time.monotonic()
             attachments, consulted, team = _merge(self._attachments), list(self._consulted), list(self._team)
             # Saved only after the loop completes: a crash mid-turn leaves history consistent.
@@ -503,7 +509,7 @@ class Agent:
         queue, which may differ from what it remembers queuing."""
         where = await self.whereabouts() if self.whereabouts else None
         stamped = (f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{', ' + where if where else ''}"
-                   f"{', by voice' if voice else ''}{self._context(agent)}] {text}")
+                   f"{_spoken(text) if voice else ''}{self._context(agent)}] {text}")
         if queued := self.db.pending_actions(channel, PENDING_TTL):
             lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
             stamped += f"{_QUEUE_MARK}\n{lines}]"
@@ -835,7 +841,10 @@ class Agent:
             system=self._system(agent),
             tools=[t.definition() for t in self._offered(agent)],
             messages=_with_cache_breakpoint(history + (turn if AGENTS[agent].reads_photos else self._with_photos(turn))),
-            output_config={"effort": self.effort},
+            # A spoken turn doesn't think (asks included): ~1.5 s sooner for a turn that asks Secretary, the same
+            # answers (measured 2026-11-06).
+            **({"thinking": {"type": "disabled"}} if self._voice and not self.voice_thinking
+               else {"output_config": {"effort": self.effort}}),
             **extra,
         )
 
@@ -1138,6 +1147,12 @@ def _cut_old_results(history: list[dict]) -> list[dict]:
             m = {**m, "content": blocks}
         out.append(m)
     return out
+
+
+def _spoken(text: str) -> str:
+    """The stamp's "by voice", with the language the words were in when that's clear (the reply is said in it)."""
+    lang = {"it": "Italian", "en": "English"}.get(language(text, ""))
+    return ", by voice" + (f", in {lang}" if lang else "")
 
 
 def _drop_old_thinking(history: list[dict]) -> list[dict]:

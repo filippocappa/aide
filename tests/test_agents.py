@@ -716,3 +716,23 @@ def test_a_short_chat_reads_only_its_last_turns(env):
     sent = agent.client.requests[-1]["messages"]  # 6 turns before this one: 3 left out, 3 read
     assert "3 earlier turns" in sent[0]["content"]
     assert "meal 3" in str(sent[1]["content"]) and "meal 2" not in str(sent)
+
+
+def test_a_spoken_turn_and_its_asks_dont_think(env):
+    client, agent, _ = env()
+    sent = []
+    create = agent.client.beta.messages.create
+
+    async def recording(**kwargs):
+        sent.append(kwargs)
+        return await create(**kwargs)
+
+    agent.client.beta.messages.create = recording
+    agent.client.responses = [ask("secretary", "What's on tomorrow?"), done("Nothing."), done("Niente domani.")]
+    client.post("/v1/chat", json={"text": "che cosa ho domani", "voice": True}, headers=AUTH)
+    assert len(sent) == 3 and all(r["thinking"] == {"type": "disabled"} and "output_config" not in r for r in sent)
+    assert ", by voice, in Italian]" in str(sent[0]["messages"])
+    agent.client.responses = [done("hi")]
+    client.post("/v1/chat", json={"text": "what's on tomorrow"}, headers=AUTH)  # typed: thinks as usual
+    assert sent[-1]["output_config"] == {"effort": "medium"} and "thinking" not in sent[-1]
+    assert agent._voice is False
