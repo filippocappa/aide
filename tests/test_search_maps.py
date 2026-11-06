@@ -128,7 +128,8 @@ async def test_a_long_page_comes_in_parts_read_once():
     last = await tools["fetch_page"].handler(url="https://a.example", part=9)
     assert second.startswith("[Part 2 of 3 of this page]\n") and last.endswith("[Part 3 of 3, the last.]")
     assert len(browser.reads) == 1  # the later parts come from the first read
-    joined = "\n".join(p.split("\n", 1)[-1].rsplit("\n\n[Part", 1)[0] for p in (first, second, last))
+    joined = "\n".join(p.removeprefix("[Part 2 of 3 of this page]\n").removeprefix("[Part 3 of 3 of this page]\n")
+                       .rsplit("\n\n[Part", 1)[0] for p in (first, second, last))
     assert joined == browser.text
 
 
