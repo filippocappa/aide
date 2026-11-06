@@ -728,6 +728,7 @@ def test_a_spoken_turn_and_its_asks_dont_think(env):
         return await create(**kwargs)
 
     agent.client.beta.messages.create = recording
+    agent.voice_direct = False  # Aide asking, as it does with AIDE_VOICE_DIRECT=0
     agent.client.responses = [ask("secretary", "What's on tomorrow?"), done("Nothing."), done("Niente domani.")]
     client.post("/v1/chat", json={"text": "che cosa ho domani", "voice": True}, headers=AUTH)
     assert len(sent) == 3 and all(r["thinking"] == {"type": "disabled"} and "output_config" not in r for r in sent)
@@ -736,3 +737,24 @@ def test_a_spoken_turn_and_its_asks_dont_think(env):
     client.post("/v1/chat", json={"text": "what's on tomorrow"}, headers=AUTH)  # typed: thinks as usual
     assert sent[-1]["output_config"] == {"effort": "medium"} and "thinking" not in sent[-1]
     assert agent._voice is False
+
+
+def test_spoken_aide_uses_every_tool_itself(env):
+    client, agent, store = env()
+    sent = []
+    create = agent.client.beta.messages.create
+
+    async def recording(**kwargs):
+        sent.append(kwargs)
+        return await create(**kwargs)
+
+    agent.client.beta.messages.create = recording
+    agent.client.responses = [calls(("create_reminder", {"title": "Bins"})), done("Fatto.")]
+    r = client.post("/v1/chat", json={"text": "ricordami i bidoni", "voice": True}, headers=AUTH).json()
+    # Secretary's tool, run by Aide itself: no ask, no team talk, the specialists' rules in its prompt.
+    assert "create_reminder" in tool_names(sent[0]) and "ask_agent" not in tool_names(sent[0])
+    assert "There's no one to ask" in sent[0]["system"][0]["text"]
+    assert [x.title for x in store.open()] == ["Bins"] and r["team"] == [] and r["consulted"] == []
+    agent.client.responses = [done("ok")]
+    client.post("/v1/chat", json={"text": "hi"}, headers=AUTH)  # typed: Aide delegates as before
+    assert "ask_agent" in tool_names(sent[-1]) and "create_reminder" not in tool_names(sent[-1])

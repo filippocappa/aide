@@ -311,6 +311,7 @@ def main() -> None:
         smart_model=settings.smart_model,
         effort=settings.effort,
         voice_thinking=settings.voice_thinking,
+        voice_direct=settings.voice_direct,
         idle=timedelta(hours=settings.idle_hours),
         tz=settings.timezone,
         server_fallback=not settings.openrouter_api_key,

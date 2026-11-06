@@ -147,7 +147,9 @@ async def test_it_speaks_a_sentence_at_a_time_in_the_language_of_the_text():
 
 async def test_a_slow_turn_gets_a_filler_and_the_answer_stops_it(monkeypatch):
     monkeypatch.setattr(localvoice, "FILLER_AFTER", 0.05)
-    monkeypatch.setattr(localvoice, "STILL_EVERY", 0.1)
+    monkeypatch.setattr(localvoice, "LONG_AFTER", 0.15)
+    monkeypatch.setattr(localvoice, "STILL_EVERY", 10)
+    monkeypatch.setattr(localvoice, "QUIET", 0)
     backend = FakeBackend(speech_seconds=0.01)
     voice = LocalVoice(backend, language="it")
     await voice.working("u1")
@@ -156,7 +158,23 @@ async def test_a_slow_turn_gets_a_filler_and_the_answer_stops_it(monkeypatch):
     await asyncio.sleep(0.15)
     await voice.say("Fatto.")
     await asyncio.sleep(0.3)
-    assert [t for t, _ in backend.spoken] == ["Un attimo.", "Ci sto ancora lavorando.", "Fatto."]
+    assert [t for t, _ in backend.spoken] == ["Un attimo.", "Ancora un attimo.", "Fatto."]
+
+
+async def test_a_long_turn_gets_a_different_line_each_time(monkeypatch):
+    monkeypatch.setattr(localvoice, "FILLER_AFTER", 0.01)
+    monkeypatch.setattr(localvoice, "LONG_AFTER", 0.03)
+    monkeypatch.setattr(localvoice, "STILL_EVERY", 0.05)
+    monkeypatch.setattr(localvoice, "QUIET", 0)
+    backend = FakeBackend(speech_seconds=0.001)
+    voice = LocalVoice(backend)
+    await voice.working("u1")
+    await asyncio.sleep(0.2)
+    await voice.say("Done.")
+    await asyncio.sleep(0.05)
+    spoken = [t for t, _ in backend.spoken]
+    assert spoken[:4] == ["One moment.", "Just a moment more.", "A few more seconds.", "Still working on it."]
+    assert spoken[-1] == "Done." and len(set(spoken)) == len(spoken)
 
 
 async def test_talking_over_it_stops_it():

@@ -18,7 +18,7 @@ import anthropic
 
 from .lang import language
 from . import activity, usage
-from .agents import (AGENTS, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WATCH_REFUSED, WRITES, check_agent,
+from .agents import (AGENTS, AIDE_VOICE_PROMPT, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WATCH_REFUSED, WRITES, check_agent,
                      mentions)
 from .db import Database, utcnow
 from .engine import Engine, ask_text
@@ -109,6 +109,7 @@ class Agent:
         smart_model: str | None = None,
         effort: str = "medium",
         voice_thinking: bool = False,
+        voice_direct: bool = True,
         idle: timedelta = timedelta(hours=6),
         tz: ZoneInfo = ZoneInfo("UTC"),
         server_fallback: bool = False,
@@ -174,6 +175,8 @@ class Agent:
         self.effort = effort
         self.voice_thinking = voice_thinking  # spoken turns think too (slower); off by default
         self._voice = False  # the turn running was spoken
+        # A spoken turn with Aide: it uses every tool itself instead of asking (see `_direct`).
+        self.voice_direct = voice_direct and delegate
         self.idle = idle
         self.tz = tz
         self.server_fallback = server_fallback  # Anthropic API only, not via OpenRouter
@@ -825,9 +828,17 @@ class Agent:
                 on_text("", True)  # a round with no text still clears the draft before it
             return await stream.get_final_message()
 
+    def _direct(self, agent: str) -> bool:
+        """A spoken turn with Aide: it has every tool and no asks, since an ask is two more model rounds (~2-3 s)
+        in silence. Its prompt carries the specialists' rules (AIDE_VOICE_PROMPT)."""
+        return self._voice and self.voice_direct and agent == ORCHESTRATOR
+
+    def _registry(self, agent: str) -> ToolRegistry:
+        return self.tools if self._direct(agent) else self.registries[agent]
+
     def _offered(self, agent: str) -> list[Tool]:
         """The agent's tools for this run: without ask_agent while it answers an ask (it can't ask in turn)."""
-        return [t for t in self.registries[agent] if not (t.name == "ask_agent" and agent in self._asked)]
+        return [t for t in self._registry(agent) if not (t.name == "ask_agent" and agent in self._asked)]
 
     def _request(self, agent: str, model: str, history: list[dict], turn: list[dict]) -> dict:
         extra = {}
@@ -892,7 +903,8 @@ class Agent:
         return out
 
     def _system(self, agent: str = ORCHESTRATOR) -> list[dict]:
-        system = [{"type": "text", "text": AGENTS[agent].prompt, "cache_control": STABLE}]
+        prompt = AIDE_VOICE_PROMPT if self._direct(agent) else AGENTS[agent].prompt
+        system = [{"type": "text", "text": prompt, "cache_control": STABLE}]
         orchestrator = AGENTS[agent].orchestrator
         if memories := self.db.memories(None if orchestrator else agent):
             # Its own cached block: it changes rarely, and the prompt above stays byte-stable.
@@ -923,14 +935,15 @@ class Agent:
     async def _run_tool(self, agent: str, channel: str, name: str, args: dict) -> tuple[str, bool]:
         calling_agent.set(agent)  # this call's own task (gather), so parallel calls don't mix
         try:
-            tool = self.registries[agent].get(name)  # an agent can only call its own tools
+            registry = self._registry(agent)
+            tool = registry.get(name)  # an agent can only call its own tools
             if self._watching and (tool.confirm or name in WATCH_REFUSED):
                 if name in WRITES or tool.confirm:
                     return "Not during a check: nothing can be changed now. Suggest it in your note instead.", True
                 return "Not during a check: no pages are opened then (web_search still works).", True
             if not tool.confirm:
                 self._step(agent, tool, args)
-                out, err = await self._execute(name, args, self.registries[agent])
+                out, err = await self._execute(name, args, registry)
                 if not err and getattr(out, "attachment", None):
                     self._attachments.append(out.attachment)
                 if not err and name in WRITES and name != "ask_agent":
