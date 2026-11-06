@@ -26,6 +26,7 @@ from ..digest import DigestService, check_kind
 from ..drafts import Drafts
 from ..browser import BrowserError, check_site, full_url, site_of
 from ..engine import Engine
+from ..examplan import ExamPlan
 from ..errands import ErrandRunner, ErrandStore
 from ..pricewatch import PriceWatches
 from ..releases import Releases
@@ -708,7 +709,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                banks: Banks | None = None, bank_redirect: str | None = None,
                bedtime: Bedtime | None = None, focus: FocusStore | None = None,
                focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None,
-               releases: Releases | None = None, calls: LiveCalls | None = None) -> FastAPI:
+               releases: Releases | None = None, calls: LiveCalls | None = None,
+               examplan: ExamPlan | None = None) -> FastAPI:
     db: Database = agent.db
     calls = calls or LiveCalls(agent, db.conn)  # no voice to connect: calls are off
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
@@ -1674,6 +1676,49 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         """Professor reads the course's page and files for its dates again, even when nothing changed."""
         notebook.reread_dates(dates_or_404(course_id), force=True)
         return JSONResponse(dates_json(course_id), status_code=202)
+
+    def examplan_or_404() -> ExamPlan:
+        if examplan is None:
+            raise HTTPException(404, "the exam plan isn't set up")
+        return examplan
+
+    @app.get("/v1/study/plan", dependencies=[Depends(auth)])
+    async def study_plan(fresh: bool = False):
+        return await examplan_or_404().plan(fresh=fresh)
+
+    @app.put("/v1/study/plan/courses/{course_id}", dependencies=[Depends(auth)])
+    async def edit_study_plan(course_id: int, body: dict = Body(...)):
+        """A course's likely exam date (`expected`, null to drop it) and which topics a target covers
+        (`topics` with the target's `key`, null for all)."""
+        plan = examplan_or_404()
+        if study.course(course_id) is None:
+            raise HTTPException(404, f"no course {course_id}")
+        if unknown := set(body) - {"expected", "key", "topics"}:
+            raise HTTPException(422, f"unknown fields: {', '.join(sorted(unknown))}")
+        try:
+            if "expected" in body:
+                plan.set_expected(course_id, date.fromisoformat(body["expected"]) if body["expected"] else None)
+            if "topics" in body:
+                if not isinstance(body.get("key"), str) or not body["key"]:
+                    raise ValueError("topics need the target's key")
+                topics = body["topics"]
+                if topics is not None and (not isinstance(topics, list) or not all(isinstance(t, str) for t in topics)):
+                    raise ValueError("topics is a list of topic ids, or null")
+                plan.set_topics(body["key"], topics, course_id)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(422, str(e)) from None
+        return await plan.plan(fresh=True)
+
+    @app.get("/v1/study/settings", dependencies=[Depends(auth)])
+    async def study_settings():
+        return examplan_or_404().caps()
+
+    @app.patch("/v1/study/settings", dependencies=[Depends(auth)])
+    async def edit_study_settings(body: dict = Body(...)):
+        try:
+            return examplan_or_404().update_caps(**body)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
 
     @app.post("/v1/study/courses/{course_id}/chat", dependencies=[Depends(auth)])
     async def course_chat(course_id: int):

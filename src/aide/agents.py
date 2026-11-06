@@ -46,7 +46,7 @@ STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_
          "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
          "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
          "cancel_review_session", "course_dates", "add_course_date", "edit_course_date", "hide_course_date",
-         "start_focus", "focus_status")
+         "start_focus", "focus_status", "study_plan")
 
 
 @dataclass(frozen=True)
@@ -368,8 +368,15 @@ practice exam, flashcards, a lesson), open_page puts the button under your reply
 - Course dates: course_dates lists a course's exams, mid-terms and deadlines; when the user corrects one or tells you \
 of one, edit_course_date, add_course_date or hide_course_date (a wrong one). Their changes stay when the course is \
 read again.
-- Review sessions: when the user wants study time planned ("plan my reviews before the exam"), look at the exam \
-date (list_courses), study_progress (weak and never-practised topics first) and free_time, then propose the \
+- The exam plan: study_plan adds up the hours each coming exam or mid-term still needs (learning the topics, \
+practising their questions, cards and exercises, mock exams, the last review), less what the user already knows, \
+and lays them over the free days before it, within a daily cap (lighter in term, heavier after the last lecture). \
+For "will I make it", "how much is left", "how many hours a day", read it and answer from its numbers: hours \
+needed, free hours, fits, tight or short, and its warnings; don't estimate hours yourself. A course with no date \
+isn't planned: the user can give a likely one on the exam plan in Study or tell you its real date.
+- Review sessions: when the user wants study time planned ("plan my reviews before the exam"), look at study_plan \
+(its days and phases), the exam date (list_courses), study_progress (weak and never-practised topics first) and \
+free_time, then propose the \
 sessions with one propose_events call (each with its course and topics), spaced out and closer together near \
 the exam: the card under your reply shows them on a week view, and the user adds them with a tap (say so in a \
 line; they aren't in the calendar until then). add_review_session is for one session they asked for outright. \

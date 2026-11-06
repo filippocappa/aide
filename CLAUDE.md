@@ -47,6 +47,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   voice turns and every other chat stay on OpenRouter's Haiku; if the plan fails before a tool ran, OpenRouter answers).
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
+- `examplan.py`: the exam plan (#68): the hours each course's next exam still needs (learn, practise, mocks, review,
+  less what's known) against the free days before it, under a daily cap; no model call. Professor's `study_plan`.
 - `lessons.py`: a lesson per notebook topic (hook, goals, steps with checks), written from the topic's notes through
   `engine.py`; marking, Ask and the explanation back.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
@@ -724,6 +726,13 @@ not yet tried on a call): the reply is said as Haiku writes it, a sentence at a 
 line before a tool call too, in place of a step line), and a spoken turn's stamp carries today's and tomorrow's
 calendar (`agenda.py`: kept between turns, read when a call opens, dropped on every write through Aide), so "what's on
 tomorrow" is one model round.
+
+**Done, server (2026-11-07), live:** the exam plan (#68, contract "Exam plan"; `examplan.py`). Each course's next exam
+or mid-term (the Exam calendar, the course's dates, else a likely date the user gives), the hours left per topic and
+phase from the notebook, the answers and lessons, stretched while lectures remain, laid over the free days (wake to bed,
+less the calendar) within 2 h a day in term and 4 h after the last lecture; fits, tight or short, with warnings.
+`GET /v1/study/plan`, Professor's `study_plan`, in the objectives planner's prompt. To do: the app's card and page,
+Settings → Study, the Sunday review sessions and today's blocks as an objective.
 
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.

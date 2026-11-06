@@ -1023,6 +1023,72 @@ snippets; notes, transcripts and file pages), `list_files`, `read_file` (by page
 keeps the previous version) and `delete_lecture` (queued), plus `list_events` to read the timetable and exams. Its
 `study` connector is "Study notes". Aide hands study questions to Professor.
 
+### Exam plan
+
+Since 2026-11-07 (#68, server; the app's card and page come next). For each course's next exam or mid-term, how many
+hours it still needs and whether the free days before it hold them, worked out with no model call. Read again at most
+every 10 min, and at once after a change to the notes, the dates or these settings.
+
+**The target:** the course's next exam or mid-term after today: the Exam calendar's (`from: "calendar"`), else the
+course's dates (`"course"`), else the likely date the user gave (`"expected"`). `fallback`: the next one of the same
+kind, and whether the hours would fit by then. A course with none is in `undated`, not planned.
+
+**The work,** per written notebook topic (only the topics a mid-term covers, when the user picked them):
+- learn: its words at 60 a minute, less the larger of its lesson's progress and the share of its questions and cards
+  last answered right;
+- practise: each flashcard ×3 rounds, each checked question, each exercise in its set, less those last answered right;
+- mocks (per target): 3 for an exam, 2 for a mid-term, less the mocks already taken, each the exam's length (from the
+  Introduction, else a mock's, else 90 min) ×1.5 for taking and going through it;
+- review: 15% of the whole course's learn and practise, at least an hour.
+While lectures remain before the date, learn, practise and review are stretched by (held + left) / held (`stretch`).
+The paces are the user's own once the Study page's answers show 20 of a kind (gaps of 5 s to 10 min between answers in
+a run; `assumptions`, with `learnt`).
+
+**The days:** from today (from now, less what's been studied today in focus sessions) to the day before the date: the
+time between waking + 1 h and the next wake − 8h30 (Bedtime's wake times; 08:30–22:30 without), less every timed
+calendar event with 15 min around it (not "Review: …" sessions or the user's study blocks: those are study), at most
+the day's cap: `term_cap_min` until the last lecture in the timetable, `season_cap_min` from the day after.
+Targets take their days in date order; each spreads its hours as evenly as the days allow, and its phases are laid
+backwards from the date (review last, then mocks, practise, learn): a target that doesn't fit is short of learning.
+
+`status`: `fits`, `tight` (over 85% of the free time before it), `short` (`short_min` more than the free time), `empty`
+(no written notes to count from).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/study/plan` | `?fresh=true` to work it out now | Plan |
+| `PUT /v1/study/plan/courses/{id}` | `{"expected": "2027-01-20" or null}` and/or `{"key": "<target key>", "topics": ["t_…"] or null}` | Plan. `422`: a date not after today, an unknown topic, topics without `key`. `404` unknown course |
+| `GET /v1/study/settings` | | `{"term_cap_min": 120, "season_cap_min": 240}` |
+| `PATCH /v1/study/settings` | either, 15–600 | the same. `422` out of range or unknown |
+
+Plan: `{"computed_at": "…+01:00", "today": [Block], "targets": [Target], "undated": [{"course": 7, "name": "…"}],
+"settings": {"term_cap_min", "season_cap_min"}, "season_from": "2026-12-20" or null, "assumptions": {"read_wpm",
+"card_min", "question_min", "exercise_min": {"value": 1.5, "learnt": false, "answers": 4}, "runs": 3, "card_rounds": 3,
+"mock_factor": 1.5, "review_share": 0.15}}`.
+
+Block (today's study, in date order of the targets): `{"course": 5, "name": "macroeconomics", "phase": "learn" |
+"practise" | "mocks" | "review", "minutes": 45, "topic": {"id": "t_…", "title": "…"} or null}`.
+
+Target: `{"course": 5, "name": "macroeconomics", "what": "written exam", "kind": "exam" | "mid-term", "date":
+"2027-01-20", "time": "09:00" or null, "from": "calendar" | "course" | "expected", "date_id": "d_…" or null, "key":
+"d_…" (or "5@2027-01-20": what `PUT` takes with `topics`), "topics_chosen": ["t_…"] or null, "days_left": 74,
+"fallback": {"date", "what", "fits": true} or null, "need_min": 1840, "free_min": 9600, "planned_min": 1840,
+"short_min": 0, "status": "fits", "phases": [{"phase": "learn", "minutes": 620, "planned": 620, "from": "2026-11-07",
+"to": "2026-12-30"}], "days": [{"date": "2026-11-07", "minutes": 25, "phases": {"learn": 25}}], "topics": [{"id":
+"t_…", "title": "…", "words": 2100, "cards": 8, "questions": 6, "exercises": 3, "known": 5, "items": 17, "lesson":
+null | "3/7" | "done" | "writing", "learn_min": 30, "practise_min": 44}], "mocks": {"count": 3, "taken": 1,
+"minutes_each": 120}, "lectures_held": 9, "lectures_left": 3, "stretch": 1.33, "studied_week_min": 150, "warnings":
+["Short by 6 h before the written exam on Wed 20 Jan. The February exam on 17 Feb would fit."], "history": [{"date":
+"2026-11-07", "need_min": 1840}], "moved": null or {"since": "2026-10-31", "minutes": 240, "topics": 2, "lectures": 2}}`.
+- `warnings`: short (and whether the fallback fits), another target within 7 days before it, no past exams (the mocks
+  are Professor's own), the notes far from what the course's credits suggest (25 h a credit, ~15 of them the user's
+  own), 3 or more lectures since the notes last changed, a date that's only the user's guess.
+- `history`: the day's need for this date, one a day for 90 days; `moved`: against a week ago (more topics written,
+  more lectures held).
+
+Professor's `study_plan` (a course, or all) reads it as text; the objectives planner gets it with each plan of
+Professor's.
+
 ### Study files
 
 PDFs: slides, handouts, the professor's notes (since 2026-10-21). A file belongs to a course (or none). Attached to a
