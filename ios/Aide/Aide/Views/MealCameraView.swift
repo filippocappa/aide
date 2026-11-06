@@ -301,7 +301,7 @@ struct MealCameraView: View {
 
     private func retry(_ title: String) -> some View {
         VStack(spacing: 14) {
-            message(title, detail: "Try again, or choose a photo instead.")
+            message(title, detail: (camera.paused.map { $0 + " " } ?? "") + "Try again, or choose a photo instead.")
             Button("Try again") { Task { await camera.start() } }
                 .font(.body.weight(.semibold))
                 .foregroundStyle(Theme.slate)
@@ -441,7 +441,11 @@ final class MealCamera: NSObject, ObservableObject {
             center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     Self.log.note("interruption ended")
-                    self?.paused = nil
+                    guard let self else { return }
+                    self.paused = nil
+                    // It was refused while something else held it (the Screen report under Health, still on screen
+                    // as the camera opened): try again by itself now, Try again did nothing until then.
+                    if self.status == .failed { Task { await self.start() } }
                 }
             },
             center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: .main) { [weak self] note in

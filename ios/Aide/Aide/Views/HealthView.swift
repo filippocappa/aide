@@ -4,6 +4,12 @@ import SwiftUI
 /// used last. All three are Coach's.
 enum HealthHalf: String { case body, food, screen }
 
+/// Whether a page under Health has the meal camera open, so Health can let the Screen report go meanwhile.
+struct MealCameraUp: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}
+
 /// The Health tab, for a day (today, or an earlier one from the arrows), in halves; Body and Food share the day. Body:
 /// Strain, Recovery and Sleep as rings (docs/API.md, "Scores"; each opens its page) with the day in a sentence, last
 /// night's numbers against your usual range, the day's heart rate and workouts, activity and weight. Food: the food
@@ -30,6 +36,8 @@ struct HealthView: View {
     @State private var loggingWeight = false
     /// The Screen half's Locks and limits, also opened from Lock now in the corner.
     @State private var showLocks = false
+    /// The meal camera is open over Food (`MealCameraUp`).
+    @State private var cameraUp = false
 
     @State private var day = Calendar.current.startOfDay(for: Date())
     /// Shared with `ContentView`, which turns it to Food for `aide://food` and the meal buttons.
@@ -69,11 +77,15 @@ struct HealthView: View {
                 ZStack {
                     // Screen stays loaded under the other halves once Health opens, so its report (slow: iOS reads
                     // the usage hour by hour) is already drawn when you switch to it.
+                    // Not while the meal camera is up: the report is another process on screen, and iOS won't
+                    // give the camera to an app sharing the screen ("multiple foreground apps").
                     let onScreen = half == .screen
-                    ScreenView(showLocks: $showLocks)
-                        .opacity(onScreen ? 1 : 0)
-                        .allowsHitTesting(onScreen)
-                        .accessibilityHidden(!onScreen)
+                    if onScreen || !cameraUp {
+                        ScreenView(showLocks: $showLocks)
+                            .opacity(onScreen ? 1 : 0)
+                            .allowsHitTesting(onScreen)
+                            .accessibilityHidden(!onScreen)
+                    }
                     switch half {
                     case .food:
                         FoodPage(day: $day)
@@ -88,6 +100,7 @@ struct HealthView: View {
                 bodyPage
                 #endif
             }
+            .onPreferenceChange(MealCameraUp.self) { cameraUp = $0 }
             #if os(iOS)
             // The title, the camera and the switch stay put over both halves, so the switch doesn't jump between
             // them; the day under it scrolls with the page.
