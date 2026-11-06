@@ -981,7 +981,14 @@ STEPS: dict[str, Callable[[dict], str | None]] = {
     "health": lambda a: "Looking at Apple Health",
     "transit_arrivals": lambda a: "Checking the trams",
     "weather": lambda a: "Checking the weather",
+    "ask_agent": lambda a: f"Asking {_agent_name(a.get('agent', ''))}",
 }
+
+
+def _agent_name(who: str) -> str:
+    """An ask_agent argument (an id or a name) as the agent's name."""
+    key = who.strip().casefold()
+    return next((d.name for d in AGENTS.values() if key in (d.id.casefold(), d.name.casefold())), who.strip().title())
 
 
 def _quiz_turn(history: list[dict]) -> bool:

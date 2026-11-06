@@ -513,7 +513,9 @@ class LiveCall:
             nonlocal last_note
             steps.append(label)
             self._spawn(self._send({"type": "state", "state": "working", "step": label}))
-            if time.monotonic() - last_note >= PROGRESS_EVERY:
+            if step := getattr(self.voice, "step", None):  # a voice that says the steps itself (the local one)
+                self._spawn(step(label))
+            elif time.monotonic() - last_note >= PROGRESS_EVERY:
                 last_note = time.monotonic()
                 self._spawn(self.voice.think(f"Progress: {label}. Nothing is done yet.", delegation))
 

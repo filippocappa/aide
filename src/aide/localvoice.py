@@ -5,7 +5,8 @@ finished (a longer quiet ends it anyway), and Parakeet v3 writes the utterance d
 utterance is handed over as a request (`Heard`, then `Delegation`), so every one is a chat turn. The mouth: Kokoro,
 a sentence at a time, in the reply's language (Heart in English, Sara in Italian). Talking over it stops it.
 
-There's no model in between that chats: a request taking a while gets a short "one moment" and, every 20 s,
+There's no model in between that chats: a request taking a while gets a short "one moment" (or "I'm asking
+Secretary for you" when Aide hands it on, and the other steps when it's been quiet a while) and, every 20 s,
 "still on it". The models themselves are in voicemodels.py (`Backend` here), loaded once and kept."""
 
 import asyncio
@@ -39,6 +40,8 @@ FILLER_AFTER = 1.5
 STILL_EVERY = 20.0
 
 FILLERS = {"en": ("One moment.", "Still on it."), "it": ("Un attimo.", "Ci sto ancora lavorando.")}
+ASKING = {"en": "I'm asking {name} for you.", "it": "Chiedo a {name}."}  # an ask_agent step, always said
+STEP_GAP = 4.0  # any other step is said only after this long without a word (English only: the labels are)
 
 
 class Backend(Protocol):
@@ -173,6 +176,8 @@ class LocalVoice:
         self._tasks: set[asyncio.Task] = set()
         self._ids = itertools.count(1)
         self._playing_until = 0.0
+        self._last_word = time.monotonic()  # when the voice last started a sentence (or the call began)
+        self._steps_said: set[str] = set()  # this turn's steps already said
         self._closed = False
         backend.opened()
 
@@ -249,7 +254,23 @@ class LocalVoice:
 
     async def working(self, delegation: str | None) -> None:
         self._stop_filler()
+        self._steps_said = set()
         self._filler = self._spawn(self._fill())
+
+    async def step(self, label: str) -> None:
+        """A tool started in the turn: say who's been asked, or what it's doing if nothing's been said for a while."""
+        if self._closed or label in self._steps_said:
+            return
+        if label.startswith("Asking "):
+            note = ASKING.get(self.lang, ASKING["en"]).format(name=label.removeprefix("Asking ").strip())
+        elif self.lang == "en" and not self._talking() and time.monotonic() - self._last_word >= STEP_GAP:
+            note = label + "."
+        else:
+            return
+        self._steps_said.add(label)
+        self._stop_filler()  # said instead of "one moment"; "still on it" carries on
+        self._queue(note)
+        self._filler = self._spawn(self._fill(first=False))
 
     async def answer(self, delegation: str, pieces: list[str]) -> None:
         for piece in pieces:
@@ -266,11 +287,12 @@ class LocalVoice:
         if self._mouth is None or self._mouth.done():
             self._mouth = self._spawn(self._speak())
 
-    async def _fill(self) -> None:
-        await asyncio.sleep(FILLER_AFTER)
-        first, still = FILLERS.get(self.lang, FILLERS["en"])
-        if not self._talking():
-            self._queue(first)
+    async def _fill(self, first: bool = True) -> None:
+        opening, still = FILLERS.get(self.lang, FILLERS["en"])
+        if first:
+            await asyncio.sleep(FILLER_AFTER)
+            if not self._talking():
+                self._queue(opening)
         while True:
             await asyncio.sleep(STILL_EVERY)
             self._queue(still)
@@ -283,6 +305,7 @@ class LocalVoice:
                 if (left := self._playing_until - time.monotonic()) > AHEAD:
                     await asyncio.sleep(left - AHEAD)
                 self._put(Said(sentence + " "))
+                self._last_word = time.monotonic()
                 async for pcm in self.backend.speak(spoken(sentence, lang), lang):
                     for i in range(0, len(pcm), CHUNK):
                         piece = pcm[i:i + CHUNK]
