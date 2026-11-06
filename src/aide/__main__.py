@@ -222,7 +222,11 @@ def main() -> None:
         tools += mail_tools(gmail, settings.timezone) + draft_tools(drafts, gmail)
     else:
         log.warning("GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN not set: mail tools disabled")
-    web = search_tools(Tavily(settings.tavily_api_key), settings.timezone) if settings.tavily_api_key else []
+    # fetch_page reads pages whole in a browser of its own (data/reading/, not the errands' logins), each site's
+    # Chromium closed once its read is done.
+    reader = Browser(settings.db_path.parent / "reading", headed=bool(os.environ.get("DISPLAY")), idle=0) \
+        if Browser.available() else None
+    web = search_tools(Tavily(settings.tavily_api_key), settings.timezone, reader) if settings.tavily_api_key else []
     if web:
         tools += web
     else:

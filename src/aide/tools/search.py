@@ -1,6 +1,10 @@
-"""Web search and page reading through Tavily. All read-only and run immediately: web_search for a quick fact,
-research for a question that needs several sources (it reads the top sites in one call), fetch_page for one page."""
+"""Web search through Tavily, and page reading. All read-only and run immediately: web_search for a quick fact,
+research for a question that needs several sources (it reads the top sites in one call), fetch_page for one page
+(read whole in Aide's own browser when there is one: folded parts, tabs and the pages behind Next; else Tavily)."""
 
+import asyncio
+import itertools
+import logging
 import re
 import time
 from datetime import datetime
@@ -12,10 +16,14 @@ import httpx
 from .. import usage
 from . import Tool
 
+log = logging.getLogger(__name__)
+
 API = "https://api.tavily.com"
 MAX_RESULTS = 10
 SNIPPET_LIMIT = 300  # one result in the list
-PAGE_LIMIT = 12000  # a whole page from fetch_page
+PAGE_LIMIT = 30000  # one part of a page from fetch_page
+READ_TIMEOUT = 120  # seconds for the browser to read a page whole
+PAGE_CACHE = 15 * 60  # seconds a page read whole is kept, for its later parts
 SITES = 5  # sites research reads, by default
 MAX_SITES = 8
 SITE_LIMIT = 2500  # what research keeps of each site: its parts closest to the question
@@ -104,7 +112,30 @@ class Tavily:
         return await self._post("/extract", {"urls": [url]})
 
 
-def search_tools(tavily: Tavily, tz: ZoneInfo) -> list[Tool]:
+def _parts(text: str, limit: int = PAGE_LIMIT) -> list[str]:
+    """The text cut at line ends into parts of about `limit` characters (a longer line is cut where it must)."""
+    parts, part = [], ""
+    for line in text.splitlines():
+        while len(line) > limit:
+            if part:
+                parts.append(part)
+                part = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        if part and len(part) + len(line) + 1 > limit:
+            parts.append(part)
+            part = ""
+        part = f"{part}\n{line}" if part else line
+    if part:
+        parts.append(part)
+    return parts or [""]
+
+
+def search_tools(tavily: Tavily, tz: ZoneInfo, browser=None) -> list[Tool]:
+    """`browser`: an aide.browser.Browser of its own for fetch_page (closed after each read), or None for Tavily's."""
+    pages: dict[str, tuple[float, list[str]]] = {}  # url -> (when read, its parts)
+    reads = itertools.count(1)
+
     def published(result: dict) -> str:
         raw = result.get("published_date")
         if not raw:
@@ -149,14 +180,42 @@ def search_tools(tavily: Tavily, tz: ZoneInfo) -> list[Tool]:
                      "the user to check it themselves.")
         return "\n".join(lines)
 
-    async def fetch_page(url: str) -> str:
+    async def read_whole(url: str) -> str | None:
+        owner = f"read:{next(reads)}"
+        try:
+            return await asyncio.wait_for(browser.read_whole(owner, url), READ_TIMEOUT)
+        except Exception as e:
+            log.warning("couldn't read %s in the browser (%s): Tavily instead", url, (str(e) or type(e).__name__).splitlines()[0][:200])
+            return None
+        finally:
+            try:
+                await browser.close(owner)
+                await browser.prune()
+            except Exception:
+                log.warning("couldn't close the reading browser", exc_info=True)
+
+    async def fetch_page(url: str, part: int | None = None) -> str:
         if not url.startswith(("http://", "https://")):
             raise ValueError("give a full http(s) URL")
-        found = await tavily.extract(url)
-        for r in found.get("results", []):
-            if text := (r.get("raw_content") or "").strip():
-                return f"{r.get('url', url)}\n\n{_clip(text, PAGE_LIMIT)}"
-        return f"Couldn't read {url}."
+        now = time.monotonic()
+        for u in [u for u, (at, _) in pages.items() if now - at > PAGE_CACHE]:
+            pages.pop(u)
+        if url not in pages or not part or part == 1:
+            text = await read_whole(url) if browser is not None else None
+            if not text:
+                found = await tavily.extract(url)
+                text = next((f"{r.get('url', url)}\n\n{r['raw_content'].strip()}" for r in found.get("results", [])
+                             if (r.get("raw_content") or "").strip()), None)
+            if not text:
+                return f"Couldn't read {url}."
+            pages[url] = (now, _parts(text))
+        parts = pages[url][1]
+        n = max(1, min(part or 1, len(parts)))
+        if len(parts) == 1:
+            return parts[0]
+        more = (f"\n\n[Part {n} of {len(parts)}. The rest: fetch_page with part={n + 1}.]" if n < len(parts)
+                else f"\n\n[Part {n} of {len(parts)}, the last.]")
+        return (f"[Part {n} of {len(parts)} of this page]\n" if n > 1 else "") + parts[n - 1] + more
 
     return [
         Tool("web_search", "Search the web. Use it for anything current (news, prices, opening dates, results) or "
@@ -177,7 +236,12 @@ def search_tools(tavily: Tavily, tz: ZoneInfo) -> list[Tool]:
                   ["query"]), research,
              step=lambda a: f"Reading {max(2, min(a.get('sites') or SITES, MAX_SITES))} sites on "
                             f"\u201c{a.get('query', '')}\u201d"),
-        Tool("fetch_page", "Read one web page in full (as clean text), when a search snippet isn't enough.",
-             _obj({"url": {"type": "string"}}, ["url"]), fetch_page,
+        Tool("fetch_page", "Read one web page in full, as it shows in a browser: its folded parts opened, each tab, "
+             "and the pages behind its Next or Load more button, so a whole programme, list or FAQ comes in one call. "
+             "Use it when the user gives a link or a search snippet isn't enough. A long page comes in parts: read "
+             "every part before answering about all of it.",
+             _obj({"url": {"type": "string"},
+                   "part": {"type": "integer", "description": "which part of a long page, from 1 (the default)"}},
+                  ["url"]), fetch_page,
              step=lambda a: f"Reading {_site(a.get('url', ''))}"),
     ]

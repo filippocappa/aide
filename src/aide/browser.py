@@ -85,6 +85,107 @@ def full_url(url: str) -> str:
     return url
 
 
+# Reading a whole page for fetch_page (Browser.read_whole): the text as it shows, its folded parts opened, and the
+# pages behind its Next or Load more button.
+WHOLE_PAGES = 10  # Next pressed at most this many times
+WHOLE_FOLDS = 40  # folded parts opened at most
+WHOLE_TABS = 8  # tabs read at most
+_SKIP_FOLD = ('nav,header,footer,[role=navigation],[role=menu],[role=menubar],[role=dialog],[aria-modal=true],'
+              '[aria-roledescription=carousel],.swiper,.slick-slider,.carousel,.embla')
+_SKIP_NEXT = _SKIP_FOLD.split(',', 4)[4]  # pagination often sits in a nav or footer: only menus, dialogs, carousels
+
+# Marks each closed folded part (an accordion's button, a <details>) outside menus and carousels, and opens every
+# <details>. Returns how many buttons were marked (data-aide-fold = their number).
+_FOLDS_JS = r"""
+(args) => {
+  document.querySelectorAll('details:not([open])').forEach(d => { if (!d.closest(args.skip)) d.open = true; });
+  let n = 0;
+  for (const b of document.querySelectorAll('[aria-expanded="false"]')) {
+    if (n >= args.max) break;
+    if (b.closest(args.skip)) continue;
+    const pop = b.getAttribute('aria-haspopup');
+    if (pop && pop !== 'false') continue;  // a menu or a list to pick from, not a folded part
+    const r = b.getBoundingClientRect();
+    if (!r.width || !r.height) continue;
+    b.dataset.aideFold = String(n++);
+  }
+  return n;
+}
+"""
+
+# Opens one marked part and returns its label and what it shows (the region it controls, else its parent's text
+# without the label).
+_FOLD_JS = r"""
+async (i) => {
+  const b = document.querySelector(`[data-aide-fold="${i}"]`);
+  if (!b) return null;
+  const label = (b.innerText || b.getAttribute('aria-label') || '').trim();
+  if (b.getAttribute('aria-expanded') === 'false') b.click();
+  await new Promise(r => setTimeout(r, 120));
+  const id = b.getAttribute('aria-controls');
+  const region = id && document.getElementById(id);
+  let text = region ? region.innerText : (b.parentElement ? b.parentElement.innerText : '');
+  text = (text || '').trim();
+  if (label && text.startsWith(label)) text = text.slice(label.length).trim();
+  return {label, text};
+}
+"""
+
+# Finds the page's Next or Load more control and clicks it. Returns its label, or null when there's none.
+_NEXT_JS = r"""
+(skip) => {
+  const WORDS = /^(next|next page|load more|show more|see more|more results|view more|successiv[oa]|pagina successiva|avanti|carica altr[io]|mostra altr[io]|vedi altr[io]|›|»|>|→)$/i;
+  const usable = e => {
+    if (e.disabled || e.getAttribute('aria-disabled') === 'true' || e.closest(skip)) return false;
+    if (e.matches('form button[type=submit], form input[type=submit]')) return false;
+    if (/slide|carousel|photo|image/i.test(e.getAttribute('aria-label') || '')) return false;
+    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+  };
+  const all = [...document.querySelectorAll('a[href],button,[role=button]')].filter(usable);
+  const label = e => (e.getAttribute('aria-label') || e.innerText || e.title || '').replace(/\s+/g, ' ').trim();
+  const pick = all.find(e => e.matches('a[rel~=next]')) || all.find(e => WORDS.test(label(e)));
+  if (!pick) return null;
+  pick.click();
+  return label(pick) || 'next';
+}
+"""
+
+
+# The i-th tab on the page (outside menus and carousels): {label, selected}, clicked when it wasn't selected; null
+# when there's no i-th tab.
+_TAB_JS = r"""
+(args) => {
+  const tabs = [...document.querySelectorAll('[role=tab]')].filter(t => {
+    const r = t.getBoundingClientRect();
+    return !t.closest(args.skip) && r.width > 0 && r.height > 0 && !t.disabled && t.getAttribute('aria-disabled') !== 'true';
+  });
+  const t = tabs[args.i];
+  if (!t) return null;
+  const label = (t.innerText || t.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+  const selected = t.getAttribute('aria-selected') === 'true';
+  if (!selected) t.click();
+  return {label, selected};
+}
+"""
+
+
+def _new_part(before: list[str], after: list[str]) -> list[str]:
+    """What a page shows after Next that it didn't before: `after` without the lines it starts and ends with in
+    common with `before` (the site's header, menus and footer)."""
+    start = 0
+    while start < min(len(before), len(after)) and before[start] == after[start]:
+        start += 1
+    end = 0
+    while end < min(len(before), len(after)) - start and before[-1 - end] == after[-1 - end]:
+        end += 1
+    return after[start:len(after) - end]
+
+
+def _lines(text: str) -> list[str]:
+    return [" ".join(line.split()) for line in text.splitlines() if line.strip()]
+
+
 # Lists the page for the model: text in reading order, and a [ref] line for each visible thing that can be clicked,
 # typed in or chosen. Refs are kept on the elements (data-aide-ref), so they stay the same while the page does.
 _READ_JS = r"""
@@ -789,8 +890,9 @@ _SCENE_JS = r"""
 
 
 class Browser:
-    def __init__(self, root: Path, headed: bool = False, dial: str = "+39"):
+    def __init__(self, root: Path, headed: bool = False, dial: str = "+39", idle: float = IDLE):
         self.root = root
+        self.idle = idle  # seconds a site's browser stays open with no page in use (prune)
         self.headed = headed  # under Xvfb (a DISPLAY): harder for sites to tell from a person's browser
         self.dial = dial  # the user's dialling code, suggested for a login's code field
         self._pw = None
@@ -949,11 +1051,11 @@ class Browser:
         self._notes.pop(owner, None)
 
     async def prune(self) -> None:
-        """Close the browsers of sites with no page in use for IDLE."""
+        """Close the browsers of sites with no page in use for `idle` seconds."""
         now = time.monotonic()
         for site, context in list(self._contexts.items()):
             busy = any(s == site and not p.is_closed() for (_, s), p in self._pages.items())
-            if not busy and now - self._used.get(site, 0) > IDLE:
+            if not busy and now - self._used.get(site, 0) >= self.idle:
                 self._contexts.pop(site, None)
                 try:
                     await context.close()
@@ -1194,6 +1296,93 @@ class Browser:
             self._did(owner, "look")
         return await self._page(owner).screenshot(type="jpeg", quality=70 if sharp else 60,
                                                   scale="device" if sharp else "css")
+
+    async def read_whole(self, owner: str, url: str, pages: int = WHOLE_PAGES) -> str:
+        """The whole page as it shows (fetch_page): scrolled to the end so late parts load, each folded part opened
+        one at a time (an accordion may keep only one open), then Next or Load more pressed until nothing new
+        comes, keeping only what each press adds. Opens the page as `owner`; the caller closes it."""
+        await self.open(owner, url)
+        page = self._page(owner)
+
+        async def to_the_end() -> None:
+            for _ in range(4):
+                height = await page.evaluate("() => document.body ? document.body.scrollHeight : 0")
+                await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(0.6)
+                if await page.evaluate("() => document.body ? document.body.scrollHeight : 0") <= height:
+                    break
+            await page.evaluate("() => window.scrollTo(0, 0)")
+
+        async def text_now() -> list[str]:
+            await to_the_end()
+            folded: list[dict] = []
+            n = await page.evaluate(_FOLDS_JS, {"skip": _SKIP_FOLD, "max": WHOLE_FOLDS})
+            for i in range(n):
+                try:
+                    got = await page.evaluate(_FOLD_JS, i)
+                except Exception:
+                    continue
+                if got and got["text"]:
+                    folded.append(got)
+            lines = _lines(await page.evaluate("() => document.body ? document.body.innerText : ''"))
+            shown = "\n".join(lines)
+            for part in folded:  # what was folded again by the time the page was read goes under its label
+                body = _lines(part["text"])
+                if not body or "\n".join(body) in shown:
+                    continue
+                label = " ".join(part["label"].split())
+                at = lines.index(label) + 1 if label in lines else len(lines)
+                lines[at:at] = body
+            return lines
+
+        seen: set[str] = set()
+
+        async def paged(lines: list[str], out: list[str]) -> list[str]:
+            """Presses Next until nothing new comes, adding what each press shows; returns the last page's lines."""
+            seen.add("\n".join(lines))
+            for n in range(pages):
+                try:
+                    pressed = await page.evaluate(_NEXT_JS, _SKIP_NEXT)
+                except Exception:
+                    break  # the click navigated away mid-call: read what came
+                if pressed is None:
+                    break
+                await self._settle(page)
+                await asyncio.sleep(0.6)
+                now = await text_now()
+                new = _new_part(lines, now)
+                if not new or "\n".join(now) in seen:
+                    break
+                seen.add("\n".join(now))
+                out.append(f"--- after pressing “{pressed}” ({n + 2}) ---")
+                out += new
+                lines = now
+            else:
+                out.append(f"--- stopped after {pages} pages; there may be more ---")
+            return lines
+
+        lines = await text_now()
+        out = list(lines)
+        lines = await paged(lines, out)
+        # Tabs (a programme's days, a product's details): each one not showing, read and paged the same way.
+        for i in range(WHOLE_TABS):
+            try:
+                tab = await page.evaluate(_TAB_JS, {"i": i, "skip": _SKIP_NEXT})
+            except Exception:
+                break
+            if tab is None:
+                break
+            if tab["selected"]:
+                continue
+            await self._settle(page)
+            now = await text_now()
+            new = _new_part(lines, now)
+            if not new or "\n".join(now) in seen:
+                continue
+            out.append(f"--- tab “{tab['label']}” ---")
+            out += new
+            lines = await paged(now, out)
+        return f"{await page.title() or '(no title)'} — {page.url}\n\n" + "\n".join(out)
 
     async def offer(self, owner: str) -> dict:
         """What the page says about its product's offer, for a price watch (pricewatch.OFFER_JS)."""
