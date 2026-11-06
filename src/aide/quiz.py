@@ -385,6 +385,12 @@ class QuizStore:
             "VALUES (?, ?, ?, '{}', ?, 'chat')", (public_id, course_id, json.dumps(questions), utcnow().isoformat()))
         return self.quiz(public_id)
 
+    def open_chat(self, course_id: int) -> dict | None:
+        """The course's chat quiz still going (start_chat keeps one at a time), or None."""
+        row = self.conn.execute("SELECT public_id FROM quizzes WHERE course_id = ? AND kind = 'chat' AND "
+                                "finished_at IS NULL ORDER BY id DESC LIMIT 1", (course_id,)).fetchone()
+        return self.quiz(row[0]) if row else None
+
     def current(self, quiz: dict) -> int | None:
         """The number of the question waiting for an answer; None once all are answered."""
         n = len(quiz["answers"] or {}) + 1
