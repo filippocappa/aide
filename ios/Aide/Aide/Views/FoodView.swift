@@ -117,7 +117,6 @@ struct FoodPage: View {
             DescribeMealSheet(dayNote: isToday ? nil : day.formatted(.dateTime.weekday(.wide).day().month(.wide)),
                               tint: coach.tint) { text in Task { await log(text: text) } }
         }
-        .preference(key: MealCameraUp.self, value: showCamera)
         .fullScreenCover(isPresented: $showCamera, onDismiss: afterCamera) {
             MealCameraView(tint: coach.tint, date: isToday ? nil : Wire.dayString(day)) { cameraResult = $0 }
         }

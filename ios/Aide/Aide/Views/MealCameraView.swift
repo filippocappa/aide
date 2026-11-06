@@ -443,8 +443,7 @@ final class MealCamera: NSObject, ObservableObject {
                     Self.log.note("interruption ended")
                     guard let self else { return }
                     self.paused = nil
-                    // It was refused while something else held it (the Screen report under Health, still on screen
-                    // as the camera opened): try again by itself now, Try again did nothing until then.
+                    // Refused while iOS held it elsewhere: try again by itself now (Try again only met the same no).
                     if self.status == .failed { Task { await self.start() } }
                 }
             },
