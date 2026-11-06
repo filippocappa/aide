@@ -80,6 +80,72 @@ async def test_fetch_page_failure_and_bad_url():
         await search(rec)["fetch_page"].handler(url="file:///etc/passwd")
 
 
+class FakeBrowser:
+    """Stands in for aide.browser.Browser: read_whole answers with `text` (or raises), every owner closed after."""
+
+    def __init__(self, text: str | Exception):
+        self.text, self.reads, self.closed, self.pruned = text, [], [], 0
+
+    async def read_whole(self, owner, url):
+        self.reads.append((owner, url))
+        if isinstance(self.text, Exception):
+            raise self.text
+        return self.text
+
+    async def close(self, owner):
+        self.closed.append(owner)
+
+    async def prune(self):
+        self.pruned += 1
+
+
+def read_with(browser, rec=None) -> dict:
+    return {t.name: t for t in search_tools(Tavily("tv-key", client(rec or Recorder())), ROME, browser)}
+
+
+async def test_fetch_page_reads_in_the_browser_and_closes_it():
+    browser = FakeBrowser("Schedule — https://a.example\n\n10 November\n9.45 - 10.00\nKICK-OFF")
+    out = await read_with(browser)["fetch_page"].handler(url="https://a.example")
+    assert out == "Schedule — https://a.example\n\n10 November\n9.45 - 10.00\nKICK-OFF"
+    assert browser.reads == [("read:1", "https://a.example")] and browser.closed == ["read:1"] and browser.pruned == 1
+
+
+async def test_fetch_page_falls_back_to_tavily_when_the_browser_fails():
+    rec = Recorder(httpx.Response(200, json={"results": [{"url": "https://a.example", "raw_content": "Hello"}]}))
+    browser = FakeBrowser(TimeoutError())
+    out = await read_with(browser, rec)["fetch_page"].handler(url="https://a.example")
+    assert out == "https://a.example\n\nHello" and browser.closed == ["read:1"]
+
+
+async def test_a_long_page_comes_in_parts_read_once():
+    from aide.tools.search import PAGE_LIMIT
+    line = "x" * 99
+    browser = FakeBrowser("\n".join(f"{i:03d}{line}" for i in range(int(PAGE_LIMIT * 2.5 / 103))))
+    tools = read_with(browser)
+    first = await tools["fetch_page"].handler(url="https://a.example")
+    assert first.startswith("000x") and first.endswith("[Part 1 of 3. The rest: fetch_page with part=2.]")
+    second = await tools["fetch_page"].handler(url="https://a.example", part=2)
+    last = await tools["fetch_page"].handler(url="https://a.example", part=9)
+    assert second.startswith("[Part 2 of 3 of this page]\n") and last.endswith("[Part 3 of 3, the last.]")
+    assert len(browser.reads) == 1  # the later parts come from the first read
+    joined = "\n".join(p.split("\n", 1)[-1].rsplit("\n\n[Part", 1)[0] for p in (first, second, last))
+    assert joined == browser.text
+
+
+def test_parts_cut_a_very_long_line():
+    from aide.tools.search import _parts
+    assert _parts("ab\n" + "c" * 25 + "\nd", limit=10) == ["ab", "c" * 10, "c" * 10, "c" * 5 + "\nd"]
+
+
+def test_new_part_keeps_what_next_added():
+    from aide.browser import _new_part
+    before = ["Header", "Menu", "Talk A", "Talk B", "More pages", "Footer"]
+    after = ["Header", "Menu", "Talk C", "Talk D", "More pages", "Footer"]
+    assert _new_part(before, after) == ["Talk C", "Talk D"]
+    assert _new_part(before, before) == []
+    assert _new_part(["Header", "Talk A"], ["Header", "Talk A", "Talk B"]) == ["Talk B"]  # a Load more
+
+
 # -- maps ---------------------------------------------------------------------------------
 
 
