@@ -440,13 +440,17 @@ final class ChatViewModel: ObservableObject {
     /// What a call did to this chat (docs/API.md, "Voice calls").
     func callEvent(_ event: LiveCall.Event) {
         switch event {
+        case .team(let message):
+            liveTeam.append(message)
         case .turn(let turn):
             appendTurn(turn)
+            liveTeam = [] // the reply carries them all
             Task { await onServerChange?() }
         case .answered(let ids, _, let result):
             answered(ids: ids, result: result)
             Task { await onServerChange?() }
         case .ended:
+            liveTeam = []
             Task { // the server keeps the call when it closes: its row, the title, the card's last line
                 try? await Task.sleep(for: .seconds(1))
                 await loadHistory()

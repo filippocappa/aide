@@ -545,7 +545,7 @@ final class VoiceController: ObservableObject {
             error = message
             onCall?(.ended(reason: message, seconds: 0))
             return
-        case .turn, .answered:
+        case .turn, .answered, .team:
             break
         }
         onCall?(event)
