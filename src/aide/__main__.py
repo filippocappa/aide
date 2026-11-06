@@ -11,6 +11,7 @@ import anthropic
 import uvicorn
 
 from . import usage
+from .agenda import Agenda, WatchedCalendar
 from .agent import CONVERSATION, TEAM, Agent, calling_agent
 from .browser import Browser
 from .channels.api import create_app
@@ -170,9 +171,12 @@ def main() -> None:
     tools = [clock_tool(settings.timezone), *reminder_tools(reminders, settings.timezone), *habit_tools(habits),
              *health_tools(health, settings.timezone), *food_tools(food, photos, settings.timezone, foods, off, health),
              *weight_tools(weights), *lock_tools(locks, settings.timezone)]
-    cal = None
+    cal = agenda = None
     if settings.icloud_email and settings.icloud_app_password:
-        cal = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
+        icloud = ICloudCalendar(settings.icloud_email, settings.icloud_app_password)
+        # Today's and tomorrow's events for a spoken turn (#71), dropped on every write through Aide.
+        agenda = Agenda(icloud, settings.timezone, settings.default_calendar)
+        cal = WatchedCalendar(icloud, agenda.changed)
         # Find the calendars in the background so the first request doesn't wait for it.
         threading.Thread(target=cal.calendars, daemon=True).start()
         tools += calendar_tools(cal, settings.timezone, settings.default_calendar)
@@ -323,6 +327,7 @@ def main() -> None:
         photos=photos,
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
+    agent.agenda = agenda
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
     agent.voice_quiz = VoiceQuiz(quizzes, study)  # "B" by voice in a quiz: marked with no model call
     agent.short_chat = lambda conversation: conversation == food.chat()  # the Food log reads its last few meals

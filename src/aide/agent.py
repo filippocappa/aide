@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 
+from .agenda import Agenda
 from .lang import language
 from . import activity, usage
 from .agents import (AGENTS, AIDE_VOICE_PROMPT, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WATCH_REFUSED, WRITES, check_agent,
@@ -131,6 +132,8 @@ class Agent:
         self.short_chat: Callable[[str], bool] | None = None
         # Where the phone is, in words, for the stamp (transit.Whereabouts.describe); None leaves it out.
         self.whereabouts: Callable[[], Awaitable[str | None]] | None = None
+        # Today's and tomorrow's calendar for a spoken turn's stamp (agenda.Agenda, #71); None leaves it out.
+        self.agenda: Agenda | None = None
         self._titling: set[asyncio.Task] = set()  # titles written after a voice turn returned
         # What an agent should see fresh on every message, for its stamp (Coach: today's food against the day's
         # targets, which grow when a workout comes in later). None, or None for the agent, leaves it out.
@@ -511,14 +514,22 @@ class Agent:
         is, when that's known, "by voice" for a spoken message, and the agent's own context), and shown the real
         queue, which may differ from what it remembers queuing."""
         where = await self.whereabouts() if self.whereabouts else None
+        calendar = await self._agenda(agent) if voice else None
         stamped = (f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{', ' + where if where else ''}"
-                   f"{_spoken(text) if voice else ''}{self._context(agent)}] {text}")
+                   f"{_spoken(text) if voice else ''}{self._context(agent)}{', ' + calendar if calendar else ''}] {text}")
         # Not on a spoken turn: Haiku brought the queue up in every spoken reply ("the move still waits for your
         # OK"), and a call asks the yes or no itself (livecall.py); what it queued is in the turns before.
         if not voice and (queued := self.db.pending_actions(channel, PENDING_TTL)):
             lines = "\n".join(f"#{a['id']} {a['summary']}" for a in queued)
             stamped += f"{_QUEUE_MARK}\n{lines}\n{_QUEUE_NOTE}]"
         return stamped
+
+    async def _agenda(self, agent: str | None) -> str | None:
+        """Today's and tomorrow's calendar for a spoken turn, when the agent answering has the calendar: a question
+        about them is then answered in one model round (#71)."""
+        if self.agenda is None or agent is None or not any(t.name == "list_events" for t in self._registry(agent)):
+            return None
+        return await self.agenda.line()
 
     def _context(self, agent: str | None) -> str:
         """The agent's context for the stamp (", food today: …"), or "". Inside the stamp's brackets, so it never
@@ -804,6 +815,8 @@ class Agent:
         """At a call's start: put Aide's spoken-turn prompt and tools (~46k tokens) in the prompt cache with a
         one-token request, so the first question doesn't wait ~2 s for it to be written (it lasts 5 min; each turn
         keeps it). Built with no await in between, so a turn running meanwhile never sees `_voice` changed."""
+        if self.agenda is not None:
+            self.agenda.warm()  # the calendar for the stamp, read while the user says hello
         if agent != ORCHESTRATOR or not self.voice_direct or self.voice_thinking:
             return
         voice, self._voice = self._voice, True
