@@ -391,7 +391,9 @@ class Agent:
         `voice`: the user said it in a voice chat, and the reply is read aloud; the stamp says so.
         """
         conversation = self._key(channel, conversation)
+        times = {"start": time.monotonic()}
         async with self._lock:
+            times["lock"] = time.monotonic()
             conversation_id = self._resolve(channel, conversation)
             agent = self.db.conversation_agent(conversation_id)
             # A photo turn gets the smart model: judging a portion from a photo needs it. Asked agents use it too.
@@ -409,6 +411,7 @@ class Agent:
                 with usage.labels(purpose="photo read", agent=agent, conversation=conversation or channel):
                     body += await self._describe(text)
             turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice, agent)}]
+            times["stamp"] = time.monotonic()
             self._plan = self._plan_tools = (agent in PLAN_CHATS and not voice and self.engine is not None
                                              and self.engine.plan_now())
             try:
@@ -423,12 +426,18 @@ class Agent:
                                                   bool(photos))
             finally:
                 self._on_team = None
+            times["model"] = time.monotonic()
             attachments, consulted, team = _merge(self._attachments), list(self._consulted), list(self._team)
             # Saved only after the loop completes: a crash mid-turn leaves history consistent.
             self.db.append_turn(conversation_id, channel if conversation is None else "app", turn, attachments,
                                 consulted, team)
             if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
                 self.db.set_conversation_title(conversation_id, await self._title(text, reply))
+            times["end"] = time.monotonic()
+            if voice:
+                steps = list(times.items())
+                log.info("voice turn %s: %s", conversation_id, ", ".join(
+                    f"{name} {round((at - steps[i][1]) * 1000)} ms" for i, (name, at) in enumerate(steps) if i))
             return Turn(reply, attachments, consulted, team)
 
     async def _chat_turn(self, agent: str, channel: str, conversation: str | None, model: str, history: list[dict],
