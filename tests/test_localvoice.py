@@ -273,8 +273,9 @@ async def test_a_voice_turn_returns_before_the_new_chats_title():
 
 
 async def test_handing_it_on_is_said_instead_of_one_moment(monkeypatch):
-    monkeypatch.setattr(localvoice, "FILLER_AFTER", 0.05)
+    monkeypatch.setattr(localvoice, "FILLER_AFTER", 0.1)
     monkeypatch.setattr(localvoice, "STILL_EVERY", 10)
+    monkeypatch.setattr(localvoice, "STEP_WAIT", 0.02)
     backend = FakeBackend(speech_seconds=0.01)
     voice = LocalVoice(backend)
     await voice.working("u1")
@@ -288,6 +289,7 @@ async def test_handing_it_on_is_said_instead_of_one_moment(monkeypatch):
 async def test_a_step_after_a_quiet_while(monkeypatch):
     monkeypatch.setattr(localvoice, "FILLER_AFTER", 10)
     monkeypatch.setattr(localvoice, "STEP_GAP", 0.0)
+    monkeypatch.setattr(localvoice, "STEP_WAIT", 0.0)
     backend = FakeBackend(speech_seconds=0.01)
     voice = LocalVoice(backend)
     await voice.working("u1")
@@ -300,6 +302,39 @@ async def test_a_step_after_a_quiet_while(monkeypatch):
     await it.step("Asking Coach")
     await asyncio.sleep(0.05)
     assert [t for t, _ in it.backend.spoken] == ["Chiedo a Coach."]
+
+
+async def test_a_quick_answer_needs_no_step_line(monkeypatch):
+    monkeypatch.setattr(localvoice, "FILLER_AFTER", 10)
+    monkeypatch.setattr(localvoice, "STEP_GAP", 0.0)
+    monkeypatch.setattr(localvoice, "STEP_WAIT", 0.1)
+    backend = FakeBackend(speech_seconds=0.01)
+    voice = LocalVoice(backend)
+    await voice.working("u1")
+    await voice.step("Checking the calendar")
+    await asyncio.sleep(0.03)
+    await voice.say("You're free tomorrow.")
+    await asyncio.sleep(0.2)
+    assert [t for t, _ in backend.spoken] == ["You're free tomorrow."]
+
+
+async def test_a_breath_between_a_step_line_and_the_answer(monkeypatch):
+    monkeypatch.setattr(localvoice, "FILLER_AFTER", 10)
+    monkeypatch.setattr(localvoice, "STEP_GAP", 0.0)
+    monkeypatch.setattr(localvoice, "STEP_WAIT", 0.0)
+    backend = FakeBackend(speech_seconds=0.5)
+    voice = LocalVoice(backend)
+    await voice.working("u1")
+    await voice.step("Checking the calendar")
+    await asyncio.sleep(0.02)
+    await voice.say("You're free tomorrow.")
+    await asyncio.sleep(0.1)
+    events = []
+    while not voice._events.empty():
+        events.append(voice._events.get_nowait())
+    silent = [e for e in events if type(e).__name__ == "Audio" and not any(e.pcm)]
+    assert sum(len(a.pcm) for a in silent) == int(localvoice.BREATH * localvoice.RATE) * 2
+    await voice.close()
 
 
 async def test_one_moment_once_a_call(monkeypatch):
