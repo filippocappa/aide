@@ -675,6 +675,7 @@ Aide runs as a systemd **user** service straight from this checkout, reading `.e
 ```bash
 mkdir -p ~/.config/systemd/user
 ln -sf "$PWD/deploy/aide-user.service" ~/.config/systemd/user/aide.service
+ln -sf "$PWD/deploy/aide.slice" ~/.config/systemd/user/aide.slice   # Aide's memory budget (8 GB with the voice)
 systemctl --user daemon-reload
 systemctl --user enable --now aide
 sudo loginctl enable-linger "$USER"   # keep running while logged out, and start at boot

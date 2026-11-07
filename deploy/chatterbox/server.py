@@ -42,6 +42,15 @@ TAIL = int(os.environ.get("AIDE_VOICE_TAIL", "12"))  # tokens (40 ms each) a lin
 VALID = 6561  # speech tokens at or above this are special
 
 
+def give_back() -> None:
+    """Hands freed memory back to the system: the model is built on the CPU before it goes to the GPU, and glibc keeps
+    what's freed (~2 GB held for nothing, then swapped; with Aide loading too, cappa ran out, 2026-11-07)."""
+    import ctypes
+    import gc
+    gc.collect()
+    ctypes.CDLL("libc.so.6").malloc_trim(0)
+
+
 class Voice:
     def __init__(self):
         self.model = None
@@ -73,6 +82,7 @@ class Voice:
             for lang in ("it", "en"):  # the first sentence is slow
                 for _ in self._stream("Ciao, come stai?" if lang == "it" else "Hello, how are you?", lang):
                     pass
+            give_back()
             log.info("loaded in %.1f s, voices %s, %.2f GB (%.2f at most)", time.monotonic() - started, sorted(conds),
                      torch.cuda.memory_allocated() / 2**30, torch.cuda.max_memory_allocated() / 2**30)
 
@@ -100,6 +110,7 @@ class Voice:
         import gc
         gc.collect()
         torch.cuda.empty_cache()
+        give_back()
         log.info("let go of the GPU")
 
     # -- speaking --

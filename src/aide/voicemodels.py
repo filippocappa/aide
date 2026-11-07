@@ -136,7 +136,9 @@ class VoiceModels:
         from nemo.collections.asr.models import ASRModel
         from nemo.utils import logging as nemo_log
         nemo_log.setLevel(stdlog.ERROR)
-        asr = ASRModel.from_pretrained(ASR_MODEL).cuda().eval()
+        # Weights straight to the GPU; the .nemo is unpacked into TMPDIR, on disk for the service (aide-user.service):
+        # /tmp is RAM on cappa, and 2.5 GB more there is what froze it (2026-11-07).
+        asr = ASRModel.from_pretrained(ASR_MODEL, map_location=torch.device("cuda")).cuda().eval()
         from kokoro import KModel, KPipeline
         kokoro = KModel().to("cpu" if self.speaker else "cuda").eval()  # with Chatterbox, only its stand-in
         pipes = {lang: KPipeline(lang_code=code, model=kokoro) for lang, code in LANGS.items()}
@@ -154,6 +156,7 @@ class VoiceModels:
         # No torch.cuda.empty_cache() here: it freed what Parakeet's CUDA-graph decoder had captured in the warm-up,
         # and every transcription after hit an illegal memory access (2026-11-06)
         self._asr, self._pipes = asr, pipes
+        give_back()
 
     def release(self) -> None:
         """Lets the GPU models go (the CPU ones stay)."""
@@ -164,6 +167,7 @@ class VoiceModels:
         import torch
         gc.collect()
         torch.cuda.empty_cache()
+        give_back()
 
     @contextlib.asynccontextmanager
     async def lend(self):
@@ -265,6 +269,18 @@ class VoiceModels:
                 return out
         for pcm in await asyncio.to_thread(run):
             yield pcm
+
+
+def give_back() -> None:
+    """Hands freed memory back to the system. Each model is built on the CPU before it goes to the GPU, and glibc keeps
+    what's freed: ~2 GB held for nothing, then swapped."""
+    import ctypes
+    import gc
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):  # not glibc (the Mac)
+        pass
 
 
 def available() -> bool:
