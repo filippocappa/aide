@@ -223,6 +223,7 @@
 		D458DCBBCCFFCED61C593420 /* Skeleton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0707EC0845E48ECBB81D60A4 /* Skeleton.swift */; };
 		D70DECEDF4E4EC132639432C /* TeamChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DE2E67E64BBDA2154CA2DE6 /* TeamChatView.swift */; };
 		D78633C25E2C6DF83E260EF3 /* ReleaseViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1BD6CD4D4C474584D9A8A2 /* ReleaseViews.swift */; };
+		D8472E4E57E042B2A1A7D857 /* MacPeek.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D4476D260137D9B37A65E59 /* MacPeek.swift */; };
 		D96AE9A8C21393E5189CCF29 /* MacScreenTimeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582BAE089C17E030C634DB60 /* MacScreenTimeView.swift */; };
 		DAFEE2E684BC48DD701D876F /* DigestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */; };
 		DB01843DAFBCA6B96BC5AAA6 /* MoodleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289CE8321C0A5A80F6B92C /* MoodleView.swift */; };
@@ -375,6 +376,7 @@
 		48684A5718D72337AAAA533D /* FocusLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusLiveActivity.swift; sourceTree = "<group>"; };
 		48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityAttributes.swift; sourceTree = "<group>"; };
 		48D3B662149E81DAF5A28319 /* TouchTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchTracker.swift; sourceTree = "<group>"; };
+		4D4476D260137D9B37A65E59 /* MacPeek.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacPeek.swift; sourceTree = "<group>"; };
 		50F534E81CB6CBAEDF422485 /* DeparturesWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeparturesWidget.swift; sourceTree = "<group>"; };
 		5166C602CE23BCA8B2755EBA /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		51CE86F8FED7A90934C84B6A /* FinanceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinanceViews.swift; sourceTree = "<group>"; };
@@ -738,6 +740,7 @@
 				ED75A40C75D31819393889F1 /* MacLoginItem.swift */,
 				0A8D813CE0493DAE81AB8566 /* MacMenuBarPanel.swift */,
 				E82E2D2F31C60F70DB974B92 /* MacNavigationStack.swift */,
+				4D4476D260137D9B37A65E59 /* MacPeek.swift */,
 				6EF10BCDADB734A13BDB47BE /* MacRootView.swift */,
 				652B42830EE1741307D153A1 /* MacScreenPage.swift */,
 				9883DFA94F62FDEC76F14602 /* MacScreenTime.swift */,
@@ -1230,6 +1233,7 @@
 				F2942EA09BFC19DE9E840178 /* MacLoginItem.swift in Sources */,
 				18FD927E56D5759F9BF2BFA6 /* MacMenuBarPanel.swift in Sources */,
 				48987567C6B9D6E88B770CC3 /* MacNavigationStack.swift in Sources */,
+				D8472E4E57E042B2A1A7D857 /* MacPeek.swift in Sources */,
 				4F8E671544A9ABE370D492F4 /* MacRootView.swift in Sources */,
 				73C1C5BA25A61BF41E535655 /* MacScreenPage.swift in Sources */,
 				0FC6E8696B392B7469604CB9 /* MacScreenTime.swift in Sources */,

@@ -15,6 +15,8 @@ struct SettingsView: View {
     @State private var path = NavigationPath()
     #if os(macOS)
     @State private var openAtLogin = false
+    @AppStorage(MacPeek.enabledKey) private var peekOn = true
+    @ObservedObject private var peek = MacPeek.shared
     #endif
 
     var body: some View {
@@ -61,10 +63,21 @@ struct SettingsView: View {
                         Label { Text("Open at login") } icon: { SettingsIcon(systemName: "power", color: .gray) }
                     }
                     .onAppear { openAtLogin = MacLoginItem.isOn }
+                    Toggle(isOn: $peekOn) {
+                        Label { Text("Peek with \(MacPeek.shortcut)") } icon: {
+                            SettingsIcon(systemName: "rectangle.inset.filled.on.rectangle", color: .teal)
+                        }
+                    }
+                    .onChange(of: peekOn) { _, on in MacPeek.shared.setEnabled(on) }
+                    if peekOn && peek.needsAccess {
+                        Button("Let Aide see fn ⌥ in Accessibility…") { peek.openAccessSettings() }
+                    }
                 } header: {
                     Text("This Mac")
                 } footer: {
-                    Text("Aide counts this Mac's screen time and holds its limits only while it runs.")
+                    Text("Aide counts this Mac's screen time and holds its limits only while it runs. "
+                         + "Hold \(MacPeek.shortcut) to see Aide over any app, full-screen ones too; tap it to keep it open. "
+                         + "Peek needs Aide on in Privacy & Security → Accessibility.")
                 }
                 #endif
                 Section {

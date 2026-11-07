@@ -176,7 +176,10 @@ struct MacMenuBarPanel: View {
         _ = await g
         // No animation: the panel's window resizes to the new rows, and an animated change left them overlapping.
         if let day { model.today = day }
-        if let approvals { model.waiting = approvals.waiting }
+        if let approvals {
+            model.waiting = approvals.waiting
+            model.approvals = approvals
+        }
     }
 
     /// Opens the window on a section; the panel closes as the window takes over.
@@ -229,6 +232,8 @@ final class MacPanelModel: ObservableObject {
     static let shared = MacPanelModel()
     @Published var today: TodayResponse?
     @Published var waiting = 0
+    /// What's waiting, in full: Peek's board answers it in place (`MacPeek`).
+    @Published var approvals: Approvals?
     /// The calendar's events by the first day of the week they were loaded for.
     @Published var grids: [Date: [CalendarEvent]] = [:]
 
@@ -242,7 +247,7 @@ final class MacPanelModel: ObservableObject {
 
 /// A week, Monday first (the locale's first weekday): today filled, the chosen day ringed, a dot per calendar with
 /// something on that day. Under it the chosen day's events, and on today its reminders.
-private struct MiniCalendar: View {
+struct MiniCalendar: View {
     let now: Date
     @ObservedObject var model: MacPanelModel
     let tint: Color
@@ -507,7 +512,7 @@ private struct ReminderLine: View {
     }
 }
 
-private struct PanelHeading: View {
+struct PanelHeading: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
@@ -522,7 +527,7 @@ private struct PanelHeading: View {
 // MARK: - Styles
 
 /// A row that lights up under the pointer, as menu items do.
-private struct PanelRowStyle: ButtonStyle {
+struct PanelRowStyle: ButtonStyle {
     var fill: Color? = nil
     var padding: CGFloat = 8
 
@@ -544,7 +549,7 @@ private struct PanelRowStyle: ButtonStyle {
 }
 
 /// A round icon button for the header and the footer.
-private struct PanelIconStyle: ButtonStyle {
+struct PanelIconStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         Hovering { hover in
             configuration.label

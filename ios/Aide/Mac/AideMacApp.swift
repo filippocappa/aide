@@ -17,6 +17,7 @@ struct AideMacApp: App {
         Window("Aide", id: MacWindow.main) {
             MacRootView()
                 .withAideEnvironment(env)
+                .background(MacWindowOpener())
                 .frame(minWidth: 820, minHeight: 560)
                 .task { await env.refreshAll() }
                 .onChange(of: scenePhase) { _, phase in
@@ -28,7 +29,7 @@ struct AideMacApp: App {
         .commands { MacCommands() }
 
         MenuBarExtra(isInserted: $menuBarItem) {
-            MacMenuBarPanel().withAideEnvironment(env)
+            MacMenuBarPanel().withAideEnvironment(env).background(MacWindowOpener())
         } label: {
             Image(nsImage: MacMenuBarIcon.image).accessibilityLabel("Aide")
         }
@@ -65,12 +66,30 @@ extension View {
 
 enum MacWindow {
     static let main = "main"
+    /// SwiftUI's way to open the window, kept by `MacWindowOpener` for AppKit code (Peek) that has no environment.
+    @MainActor static var openAction: OpenWindowAction?
+
+    /// Brings Aide's window forward, opening it again if it was closed.
+    @MainActor static func show() {
+        if let openAction {
+            openAction(id: main)
+        } else {
+            NSApp.windows.first { $0.identifier?.rawValue.hasPrefix(main) == true }?.makeKeyAndOrderFront(nil)
+        }
+        NSApplication.shared.activate()
+    }
 
     @MainActor static func newChat() {
         let env = AppEnvironment.shared
         MacNavigation.shared.section = .team
         Task { await env.chat.newChat(with: env.chat.orchestrator) }
     }
+}
+
+/// Keeps the scene's `openWindow` for `MacWindow.show()`.
+private struct MacWindowOpener: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View { Color.clear.onAppear { MacWindow.openAction = openWindow } }
 }
 
 /// Pebble's small cut (`brand/logo/pebble-small.svg`: heavier eyes, for 16–32 px), a template image so it takes the
