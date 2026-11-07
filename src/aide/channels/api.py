@@ -45,7 +45,7 @@ from ..reviews import ReviewStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError, page_image
-from ..esse3 import Esse3Reader
+from ..esse3 import Esse3Reader, SignUpFailed
 from ..moodle import MoodleError, MoodleSync
 from ..passwords import MAX_NAME, MAX_PASSWORD, MAX_SITES, MAX_USERNAME, Locked, PasswordError, PasswordStore, TooMany
 from ..lessons import LessonStore
@@ -1644,9 +1644,16 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 if on else None,
                 "transcription": worker is not None and worker.transcribe is not None}
 
-    def dates_json(course_id: int) -> dict:
+    def dates_json(course_id: int, archived: bool = False) -> dict:
         today = datetime.now(tz).date().isoformat()
-        return {"course": course_id, "items": [d | {"past": d["date"] < today} for d in notebook.dates(course_id)],
+
+        def signup(d: dict) -> dict:
+            if esse3 is None or d.get("by") != "esse3" or d["kind"] != "exam":
+                return {}
+            return {"signup": esse3.signup(d["id"])}
+
+        return {"course": course_id, "items": [d | {"past": d["date"] < today} | signup(d)
+                                               for d in notebook.dates(course_id, archived=archived)],
                 "read_at": notebook.dates_read_at(course_id), "reading": notebook.dates_reading(course_id)}
 
     def dates_or_404(course_id: int) -> int:
@@ -1663,8 +1670,28 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return dates_json(course_id)
 
     @app.get("/v1/study/courses/{course_id}/dates", dependencies=[Depends(auth)])
-    async def course_dates(course_id: int):
-        return dates_json(dates_or_404(course_id))
+    async def course_dates(course_id: int, archived: bool = False):
+        return dates_json(dates_or_404(course_id), archived)
+
+    @app.post("/v1/study/courses/{course_id}/dates/{date_id}/archive", dependencies=[Depends(auth)])
+    async def archive_course_date(course_id: int, date_id: str):
+        """Not taking this exam: out of the dates, the plan and the reminders (with its sign-up's dates), and
+        never signed up for by Aide."""
+        try:
+            notebook.archive_date(dates_or_404(course_id), date_id)
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'\""))
+        if esse3 is not None:
+            esse3.forget(date_id)
+        return dates_json(course_id, archived=True)
+
+    @app.delete("/v1/study/courses/{course_id}/dates/{date_id}/archive", dependencies=[Depends(auth)])
+    async def unarchive_course_date(course_id: int, date_id: str):
+        try:
+            notebook.unarchive_date(dates_or_404(course_id), date_id)
+        except KeyError as e:
+            raise HTTPException(404, str(e).strip("'\""))
+        return dates_json(course_id, archived=True)
 
     @app.post("/v1/study/courses/{course_id}/dates", dependencies=[Depends(auth)])
     async def add_course_date(course_id: int, body: CourseDateIn):
@@ -2065,6 +2092,32 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(503, "Esse3 isn't on")
         await esse3.read_if_stale()
         return esse3.json()
+
+    def esse3_or_503() -> Esse3Reader:
+        if esse3 is None:
+            raise HTTPException(503, "Esse3 isn't on")
+        return esse3
+
+    @app.post("/v1/esse3/exams/{date_id}/signup", dependencies=[Depends(auth)])
+    async def esse3_sign_up(date_id: str):
+        """The user's Sign me up (the tap is the confirmation): booked now when sign-up is open (~5–20 s), else
+        as soon as it opens. 409 with Esse3's reason when it didn't go through."""
+        try:
+            return {"signup": await esse3_or_503().sign_up(date_id)}
+        except KeyError:
+            raise HTTPException(404, "not an Esse3 exam session")
+        except SignUpFailed as e:
+            raise HTTPException(409, {"kind": e.kind, "message": str(e)})
+
+    @app.delete("/v1/esse3/exams/{date_id}/signup", dependencies=[Depends(auth)])
+    async def esse3_cancel(date_id: str):
+        """The user's Cancel sign-up: on Esse3 while its window is open, or the wish to sign up when it opens."""
+        try:
+            return {"signup": await esse3_or_503().cancel(date_id)}
+        except KeyError:
+            raise HTTPException(404, "not an Esse3 exam session")
+        except SignUpFailed as e:
+            raise HTTPException(409, {"kind": e.kind, "message": str(e)})
 
     # -- notebooks -------------------------------------------------------------------
 

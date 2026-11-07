@@ -83,6 +83,12 @@ CREATE TABLE IF NOT EXISTS course_date_edits (  -- the user's own: a date of Pro
                               -- "own" (added by the user); NULL: hidden
     PRIMARY KEY (course_id, id)
 );
+CREATE TABLE IF NOT EXISTS course_date_archive (  -- an exam the user isn't taking: out of the dates until brought back
+    course_id INTEGER NOT NULL REFERENCES courses(id),
+    id        TEXT NOT NULL,  -- the date's id; the dates "of" it (an Esse3 session's sign-up opening, closing) go too
+    at        TEXT NOT NULL,
+    PRIMARY KEY (course_id, id)
+);
 CREATE TABLE IF NOT EXISTS proposals (
     id         INTEGER PRIMARY KEY,
     public_id  TEXT NOT NULL UNIQUE,
@@ -556,10 +562,36 @@ class NotebookStore:
 
     # -- the course's dates ---------------------------------------------------------------
 
-    def dates(self, course_id: int, since: date | None = None) -> list[dict]:
+    def dates(self, course_id: int, since: date | None = None, archived: bool = False) -> list[dict]:
         """What the course's page and files say is coming (exams, mid-terms, sign-up deadlines), by date, with the
         user's edits laid over Professor's and Esse3's (`by`: "professor", "esse3" or "you"); from `since` on, if given. An edited item
-        whose date Professor has since read differently carries `differs`."""
+        whose date Professor has since read differently carries `differs`. An exam the user isn't taking (archived)
+        is left out with the dates of it, unless `archived`: then they're in, with `archived: true`."""
+        out = self._dates(course_id, since)
+        gone = self.archived_ids(course_id)
+        if not gone:
+            return out
+        if archived:
+            return [d | {"archived": d["id"] in gone or d.get("of") in gone} for d in out]
+        return [d for d in out if d["id"] not in gone and d.get("of") not in gone]
+
+    def archived_ids(self, course_id: int) -> set[str]:
+        return {r[0] for r in self.conn.execute("SELECT id FROM course_date_archive WHERE course_id = ?", (course_id,))}
+
+    def archive_date(self, course_id: int, date_id: str) -> None:
+        """Not taking this exam: it leaves the dates (and the exam plan, the reminders), with its sign-up's dates."""
+        self.find_date(course_id, date_id)
+        self.conn.execute("INSERT OR IGNORE INTO course_date_archive (course_id, id, at) VALUES (?, ?, ?)",
+                          (course_id, date_id, utcnow().isoformat()))
+        self._changed(course_id, "the course's dates")
+
+    def unarchive_date(self, course_id: int, date_id: str) -> None:
+        if not self.conn.execute("DELETE FROM course_date_archive WHERE course_id = ? AND id = ?",
+                                 (course_id, date_id)).rowcount:
+            raise KeyError(f"no archived date {date_id} in this course")
+        self._changed(course_id, "the course's dates")
+
+    def _dates(self, course_id: int, since: date | None) -> list[dict]:
         edits = self.date_edits(course_id)
         checked = self.date_calendar(course_id)
         out = []
@@ -573,7 +605,8 @@ class NotebookStore:
             now = [d["date"], d["time"]]
             differs = ({"date": d["date"], "time": d["time"], "source": d["source"]}
                        if now != base and now != [mine["date"], mine["time"]] else None)
-            out.append(mine | {"id": d["id"], "by": "you", "differs": differs})
+            out.append(mine | {"id": d["id"], "by": "you", "differs": differs}
+                       | ({"of": d["of"]} if d.get("of") else {}))
         out += [{k: v for k, v in mine.items() if k not in ("base", "own")} | {"id": i, "by": "you", "differs": None}
                 for i, mine in edits.items() if mine is not None]  # added, or edited and no longer read by Professor
         out = [d | {"calendar": checked.get(d["id"])} for d in out]
@@ -611,6 +644,8 @@ class NotebookStore:
                 d = _date_item(it) | {"id": str(it["id"])}
             except (ValueError, KeyError, TypeError):
                 continue
+            if it.get("of"):
+                d["of"] = str(it["of"])
             if all(o["id"] != d["id"] for o in out):
                 out.append(d)
         out.sort(key=lambda d: (d["date"], d["time"] or ""))

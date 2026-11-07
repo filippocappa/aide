@@ -9,7 +9,10 @@ from fastapi.testclient import TestClient
 from aide.agent import Agent
 from aide.channels.api import create_app
 from aide.db import Database
-from aide.esse3 import BOOKED, EXAMS, TRANSCRIPT, Esse3Reader, read_booked, read_exams, read_transcript
+import pytest
+
+from aide.esse3 import (BOOKED, EXAMS, TRANSCRIPT, Esse3Reader, SignUpFailed, read_booked, read_exams,
+                        read_transcript)
 from aide.icloud import CalEvent
 from aide.moodle import MoodleSync
 from aide.notebook import NotebookStore
@@ -199,7 +202,7 @@ async def test_a_read_fills_the_course_dates():
     assert j["average"] == round((27 * 9 + 30 * 12) / 21, 2)
     # a push for the open sign-up, once
     assert push.sent == [("Sign-up open: Maths for economics II",
-                          "The 4 Dec exam, until 27 Nov. Sign up on MyUniTo.", c["maths for economics II"])]
+                          "The 4 Dec exam, until 27 Nov. Tap Sign me up on the course page.", c["maths for economics II"])]
     await reader.read()
     assert len(push.sent) == 1
     assert db.conn.execute("SELECT COUNT(*) FROM activity WHERE kind = 'study'").fetchone()[0] == 1
@@ -302,3 +305,148 @@ def test_the_api():
     assert off.get("/v1/esse3", headers=AUTH).json()["connected"] is False
     assert off.post("/v1/esse3/read", headers=AUTH).status_code == 503
 
+
+
+# -- signing up, cancelling, not taking an exam ----------------------------------------------------
+
+SIGN_UP_PAGE = """<html><body><h2>Prenotazione appello</h2>
+<form method="post" action="auth/studente/Appelli/EffettuaPrenotazioneAppello.do;jsessionid=X" id="prenota">
+<input type="hidden" name="APP_ID" value="1"><input type="hidden" name="ADSCE_ID" value="3">
+<textarea name="NOTE_STU"></textarea><input type="submit" name="btnSalva" value="Prenotati all'appello">
+</form></body></html>"""
+DONE = "<html><body><p>Prenotazione effettuata.</p></body></html>"
+REFUSED = "<html><body><p>Attenzione: non è possibile prenotarsi, mancano i prerequisiti.</p></body></html>"
+QUESTIONS = """<html><body><form action="auth/studente/Questionari/Compila.do" method="post">
+<input type="submit" name="go" value="Compila"></form></body></html>"""
+CANCEL = """<form action="auth/studente/Appelli/CancellaAppello.do" method="post"><input type="hidden" name="APP_ID"
+value="1"><input type="submit" name="btnCancella" value="Cancella prenotazione"></form>"""
+
+
+class BookingSession(FakeSession):
+    """Esse3 that takes a sign-up (or refuses it) and a cancel, changing the bookings page as it goes."""
+
+    def __init__(self, answer=DONE, takes=True):
+        super().__init__()
+        self.answer = answer
+        self.takes = takes
+        self.posts = []
+        self.booked_after = ONE_BOOKED.replace("</table>", "</table>" + CANCEL)
+
+    async def get(self, url):
+        self.entry()
+        self.got.append(url)
+        self.logged_in = True
+        text = SIGN_UP_PAGE if "DatiPrenotazioneAppello" in url else self.pages[url]
+        return SimpleNamespace(text=text, url=url)
+
+    async def post(self, url, data):
+        self.posts.append((url, dict(data)))
+        if "CancellaAppello" in url:
+            self.pages[BOOKED] = NONE_BOOKED
+            return SimpleNamespace(text=DONE, url=url, is_redirect=False)
+        if self.takes:
+            self.pages[BOOKED] = self.booked_after
+        return SimpleNamespace(text=self.answer, url=url, is_redirect=False)
+
+
+async def booking(session):
+    db, study, notebook, push, reader = make(session)
+    c = await ids(study)
+    await reader.read()
+    maths = c["maths for economics II"]
+    exam = next(d for d in notebook.dates(maths) if d["kind"] == "exam" and d["date"] == "2026-12-04")
+    return db, study, notebook, push, reader, maths, exam
+
+
+async def test_sign_up_when_open():
+    session = BookingSession()
+    db, study, notebook, push, reader, maths, exam = await booking(session)
+    assert reader.signup(exam["id"])["state"] == "open"
+    state = await reader.sign_up(exam["id"])
+    assert state["state"] == "booked" and state["can_cancel"] and state["error"] is None
+    (url, data), = session.posts
+    assert url == "https://esse3.unito.it/auth/studente/Appelli/EffettuaPrenotazioneAppello.do;jsessionid=X"
+    assert data == {"APP_ID": "1", "ADSCE_ID": "3", "NOTE_STU": "", "btnSalva": "Prenotati all'appello"}
+    assert next(d for d in notebook.dates(maths) if d["id"] == exam["id"])["you"] == "Signed up on Esse3"
+    assert next(e["app_id"] for e in reader.exams() if e["day"] == "2026-12-04") == "1"
+    rows = db.conn.execute("SELECT title FROM activity WHERE kind = 'study'").fetchall()
+    assert any("Signed up for Maths for economics II's 4 Dec exam" in r["title"] for r in rows)
+    # and cancelled again
+    state = await reader.cancel(exam["id"])
+    assert state["state"] == "open" and session.posts[-1] == (
+        "https://esse3.unito.it/auth/studente/Appelli/CancellaAppello.do",
+        {"APP_ID": "1", "btnCancella": "Cancella prenotazione"})
+
+
+async def test_a_refused_sign_up_says_why():
+    session = BookingSession(answer=REFUSED, takes=False)
+    *_, reader, maths, exam = await booking(session)
+    with pytest.raises(SignUpFailed) as e:
+        await reader.sign_up(exam["id"])
+    assert e.value.kind == "unconfirmed" and "non è possibile prenotarsi" in str(e.value)
+    assert reader.signup(exam["id"])["error"] == str(e.value) and len(session.posts) == 1  # never sent again
+
+
+async def test_a_questionnaire_first():
+    session = BookingSession(answer=QUESTIONS, takes=False)
+    *_, reader, maths, exam = await booking(session)
+    with pytest.raises(SignUpFailed) as e:
+        await reader.sign_up(exam["id"])
+    assert e.value.kind == "questionnaire"
+
+
+async def test_signed_up_as_soon_as_it_opens():
+    session = BookingSession()
+    db, study, notebook, push, reader, maths, _ = await booking(session)
+    later = next(d for d in notebook.dates(maths) if d["kind"] == "exam" and d["date"] == "2027-01-14")
+    state = await reader.sign_up(later["id"])
+    assert (state["state"], state["auto"]) == ("soon", True) and session.posts == []
+    assert next(d for d in notebook.dates(maths) if d["id"] == later["id"])["you"].startswith("Aide signs you up")
+    # it opens: the next read signs up, with a push and no "sign-up open" push
+    session.pages[EXAMS] = APPELLI.replace(appello(CLOSED, "MATHEMATICS FOR ECONOMICS II", "14/01/2027 09:30",
+                                                   "15/12/2026", "07/01/2027"),
+                                           appello(OPEN, "MATHEMATICS FOR ECONOMICS II", "14/01/2027 09:30",
+                                                   "15/12/2026", "07/01/2027"))
+    session.pages[BOOKED] = NONE_BOOKED
+    session.booked_after = ONE_BOOKED.replace("04/12/2026 - 09:00", "14/01/2027 - 09:30")
+    push.sent.clear()
+    await reader.read()
+    assert len(session.posts) == 1
+    assert [t for t, *_ in push.sent] == ["Signed up: Maths for economics II"]
+    assert reader.wants() == {}
+
+
+async def test_not_taking_an_exam():
+    session = BookingSession()
+    db, study, notebook, push, reader, maths, exam = await booking(session)
+    await reader.sign_up(next(d for d in notebook.dates(maths) if d["date"] == "2027-01-14")["id"])
+    later = next(d for d in notebook.dates(maths) if d["kind"] == "exam" and d["date"] == "2027-01-14")
+    notebook.archive_date(maths, later["id"])
+    reader.forget(later["id"])
+    left = notebook.dates(maths)
+    assert later["id"] not in {d["id"] for d in left} and all(d.get("of") != later["id"] for d in left)
+    assert len(left) == 3 and reader.wants() == {}
+    every = notebook.dates(maths, archived=True)
+    assert [d["archived"] for d in every].count(True) == 3
+    notebook.unarchive_date(maths, later["id"])
+    assert len(notebook.dates(maths)) == 6
+
+
+async def test_signing_up_through_the_api():
+    session = BookingSession()
+    db, study, notebook, push, reader, maths, exam = await booking(session)
+    agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", delegate=False, tz=ROME)
+    app = create_app(agent, ReminderStore(db.conn), FakeCalendar([]), ROME, TOKEN, study=study, notebook=notebook,
+                     esse3=reader)
+    with TestClient(app) as client:
+        items = client.get(f"/v1/study/courses/{maths}/dates", headers=AUTH).json()["items"]
+        assert next(d for d in items if d["id"] == exam["id"])["signup"]["state"] == "open"
+        assert "signup" not in next(d for d in items if d["kind"] != "exam")
+        r = client.post(f"/v1/esse3/exams/{exam['id']}/signup", headers=AUTH)
+        assert r.status_code == 200 and r.json()["signup"]["state"] == "booked"
+        r = client.post(f"/v1/study/courses/{maths}/dates/{exam['id']}/archive", headers=AUTH)
+        assert [d["archived"] for d in r.json()["items"] if d["id"] == exam["id"]] == [True]
+        assert exam["id"] not in {d["id"] for d in client.get(f"/v1/study/courses/{maths}/dates", headers=AUTH)
+                                  .json()["items"]}
+        assert client.delete(f"/v1/study/courses/{maths}/dates/{exam['id']}/archive", headers=AUTH).status_code == 200
+        assert client.post("/v1/esse3/exams/d_nope/signup", headers=AUTH).status_code == 404

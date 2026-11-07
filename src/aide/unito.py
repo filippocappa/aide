@@ -62,6 +62,8 @@ class Form:
     id: str | None
     fields: dict[str, str] = field(default_factory=dict)  # hidden inputs and named buttons, as they are
     names: set[str] = field(default_factory=set)  # every named field
+    buttons: dict[str, str] = field(default_factory=dict)  # named submit buttons and their values
+    texts: set[str] = field(default_factory=set)  # named text areas
 
 
 class _Forms(HTMLParser):
@@ -75,10 +77,15 @@ class _Forms(HTMLParser):
         if tag == "form":
             self._cur = Form(a.get("action") or None, (a.get("method") or "get").lower(), a.get("id") or None)
             self.forms.append(self._cur)
-        elif tag in ("input", "button") and self._cur is not None and a.get("name"):
+        elif tag in ("input", "button", "textarea") and self._cur is not None and a.get("name"):
             self._cur.names.add(a["name"])
-            if tag == "input" and a.get("type", "text").lower() == "hidden":
+            kind = a.get("type", "submit" if tag == "button" else "text").lower()
+            if tag == "input" and kind == "hidden":
                 self._cur.fields[a["name"]] = a.get("value", "")
+            elif tag in ("input", "button") and kind == "submit":
+                self._cur.buttons[a["name"]] = a.get("value", "")
+            elif tag == "textarea":
+                self._cur.texts.add(a["name"])
 
     def handle_endtag(self, tag):
         if tag == "form":
@@ -140,6 +147,17 @@ class UnitoSession:
             return r
         self.logged_in = False  # sent to the IdP (or somewhere else, which the login refuses)
         return await self._login(r)
+
+    async def post(self, url: str, data: dict[str, str]) -> httpx.Response:
+        """A form sent to Esse3, once: never sent again by itself. A session that ended on the way (sent to the
+        login) is LoginFailed("expired"), with nothing known about whether Esse3 took it."""
+        if not _https_on(url, {"esse3.unito.it"}):
+            raise ValueError("only Esse3's forms")
+        r = await self._follow(self.http.build_request("POST", url, data=data), within=SP_HOSTS)
+        if r.is_redirect:
+            self.logged_in = False
+            raise LoginFailed("expired", "the Esse3 session ended as the form was sent")
+        return r
 
     async def _follow(self, request: httpx.Request, within: set[str] = HOSTS) -> httpx.Response:
         """Send it and follow redirects by hand, each one within UniTo's hosts. A redirect out of `within` comes back
