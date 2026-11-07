@@ -316,7 +316,12 @@ class Agent:
                 return "Nothing is waiting for confirmation."
             lines = []
             for action in actions:
-                out, err = await self._execute(action["tool"], action["args"])
+                # The tool runs for the chat that queued it (a tool that posts back there: an Esse3 sign-up).
+                was, self._conversation = self._conversation, action["conversation"]
+                try:
+                    out, err = await self._execute(action["tool"], action["args"])
+                finally:
+                    self._conversation = was
                 self.db.set_pending_status(action["id"], "failed" if err else "done")
                 lines.append(("✗ " if err else "✓ ") + out)
                 activity.record(self.db.conn, action["agent"] or ORCHESTRATOR, "failed" if err else "confirmed",

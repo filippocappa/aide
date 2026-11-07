@@ -1,5 +1,6 @@
 """The Esse3 reader: the pages as Esse3 draws them (made-up rows, the real markup), the course dates, the push."""
 
+import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -321,9 +322,10 @@ class BookingSession(FakeSession):
         super().__init__()
         self.handed = 0
 
-    async def handoff(self, url):
+    async def handoff(self, url, user_agent=None):
         await self.get(url)
         self.handed += 1
+        self.user_agent = user_agent
         return list(COOKIES)
 
 
@@ -332,8 +334,11 @@ class FakeErrands:
 
     def __init__(self):
         self.rows, self.started, self.forgot = {}, [], []
-        self.store = SimpleNamespace(get=lambda i: self.rows.get(i))
-        self.browser = SimpleNamespace(forget=self._forget)
+        self.store = SimpleNamespace(get=lambda i: self.rows.get(i), as_json=lambda e: {"id": e["id"]})
+        self.browser = SimpleNamespace(forget=self._forget, user_agent=self._user_agent)
+
+    async def _user_agent(self):
+        return "the browser's UA"
 
     async def _forget(self, site):
         self.forgot.append(site)
@@ -377,6 +382,7 @@ async def test_sign_up_when_open():
                                                                                    "Waiting to start")
     (target, cookies), = errands.started
     assert cookies == COOKIES and session.handed == 1
+    assert session.user_agent == "the browser's UA"  # Esse3 ties its session to the User-Agent
     assert {k: target[k] for k in ("action", "course", "code", "day", "day_it", "app_id", "others")} == {
         "action": "book", "course": "MATHEMATICS FOR ECONOMICS II", "code": "SEM0251", "day": "2026-12-04",
         "day_it": "04/12/2026", "app_id": "1", "others": []}
@@ -454,7 +460,7 @@ async def test_no_browser_or_no_login():
     assert e.value.kind == "page"
     reader.errands = FakeErrands()
 
-    async def no_login(url):
+    async def no_login(url, user_agent=None):
         raise LoginFailed("needs_you", "UniTo asks for something Aide can't do")
     session.handoff = no_login
     with pytest.raises(SignUpFailed) as e:
@@ -559,7 +565,12 @@ async def test_professor_signs_up_from_chat():
     from aide.tools import ToolRegistry
     from aide.tools.esse3 import esse3_tools
     *_, push, reader, maths, exam = await booking()
-    tools = ToolRegistry(esse3_tools(reader))
+    posts = []
+
+    async def post(chat, note, text, attachments=None, record=True):
+        posts.append((chat, text, [a["type"] for a in attachments or []]))
+    reader.post = post
+    tools = ToolRegistry(esse3_tools(reader, lambda: "c-prof"))
     listed = await tools.call("exam_signups", {"course": "maths"})
     assert f"[{exam['id']}] Maths for economics II (SEM0251), Fri 04 Dec 2026" in listed
     assert "sign-up open until Fri 27 Nov" in listed
@@ -575,8 +586,13 @@ async def test_professor_signs_up_from_chat():
     assert out.startswith("Started") and out.attachment["open"][0]["url"] == f"aide://study/{maths}"
     assert len(reader.errands.started) == 1 and "Aide is signing up on Esse3 now" in await tools.call(
         "exam_signups", {})
+    await asyncio.sleep(0)  # the errand's card goes in the chat it was asked from, its steps live there
+    assert posts == [("c-prof", "Signing you up for Maths for economics II's 4 Dec exam on Esse3 now. It takes a "
+                                "minute or two.", ["errands"])]
     reader.session.pages[BOOKED] = ONE_BOOKED
     await ended(reader, 1, "finish", ok=True, result="ok")
+    assert posts[-1] == ("c-prof", "Done: signed up for Maths for economics II's 4 Dec exam. Esse3 lists it.",
+                         ["open"])
     assert "signed up" in await tools.call("exam_signups", {"course": "SEM0251"})
     assert await tools.get("cancel_exam_signup").describe(date_id=exam["id"]) == (
         "Cancel the Esse3 sign-up for Maths for economics II (SEM0251)'s exam on Fri 04 Dec")

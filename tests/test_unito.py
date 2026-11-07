@@ -273,3 +273,20 @@ def test_handoff_gives_the_browser_only_unito_cookies(make):
     assert cookies["JSESSIONID"]["url"] == "https://idp.unito.it/idp"
     assert cookies["shared"]["domain"] == ".unito.it" and cookies["shared"]["path"] == "/"
     assert all(PASSWORD not in str(c) for c in cookies.values())
+
+
+def test_handoff_logs_in_as_the_browser(make):
+    """Esse3 sends a session made with another User-Agent round in circles: the browser's cookies come from a login
+    made with its own, apart from the reader's session."""
+    fake = FakeUniTo()
+    session, *_ = make(fake)
+    seen = []
+    handler = session._transport.handler
+
+    def spy(request):
+        seen.append(request.headers["User-Agent"])
+        return handler(request)
+    session._transport.handler = spy
+    cookies = run(session.handoff(ESSE3, "Phone Chrome"))
+    assert {c["name"] for c in cookies} == {"esse3", "JSESSIONID"}
+    assert seen and set(seen) == {"Phone Chrome"} and not session.logged_in

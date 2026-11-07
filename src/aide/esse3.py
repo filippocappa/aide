@@ -40,6 +40,7 @@ from zoneinfo import ZoneInfo
 from . import activity
 from .db import utcnow
 from .moodle import MoodleSync
+from .tools.pages import open_card
 from .unito import SITE, LoginFailed, NoLogin, UnitoSession
 
 log = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS esse3_errands (  -- the errand signing up for or canc
     action    TEXT NOT NULL,     -- book or cancel
     auto      INTEGER NOT NULL DEFAULT 0,  -- started from a wish, when the sign-up opened
     told      TEXT,              -- what the user was last told: done or failed
+    chat      TEXT,              -- the chat it was asked from (Professor's sign_up_for_exam): told there too
     at        TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS esse3_exams (  -- the sessions Esse3 lists now, replaced on every read
@@ -312,16 +314,18 @@ class Esse3Reader:
         self.session = session
         self.ask = ask  # async (system, text) -> str: the fast model, for a page the parser can't read
         self.errands = None  # ErrandRunner: signing up and cancelling (set once the browser is there)
+        self.post = None  # Agent.post: a sign-up asked for in a chat is followed and answered there
         self.study = study
         self.notebook = notebook  # NotebookStore: the sessions become official course dates
         self.push = push
         self.tz = tz
         self.conn = study.conn
         self.conn.executescript(SCHEMA)
-        try:
-            self.conn.execute("ALTER TABLE esse3_exams ADD COLUMN app_id TEXT")
-        except sqlite3.OperationalError:
-            pass
+        for table, column in (("esse3_exams", "app_id"), ("esse3_errands", "chat")):
+            try:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            except sqlite3.OperationalError:
+                pass
         self._wake = asyncio.Event()
         self._lock = asyncio.Lock()
 
@@ -613,9 +617,10 @@ class Esse3Reader:
                 "errand_id": errand["id"] if live else None,
                 "step": (errand["reason"] if errand["status"] == "needs_you" else errand["step"]) if live else None}
 
-    async def sign_up(self, date_id: str) -> dict:
+    async def sign_up(self, date_id: str, chat: str | None = None) -> dict:
         """The user's Sign me up: an errand now when sign-up is open (its result comes later: `errand_ended`), else
-        as soon as it opens. SignUpFailed when it can't start."""
+        as soon as it opens. SignUpFailed when it can't start. `chat`: asked for there (Professor), so its card and
+        result are posted there too."""
         async with self._lock:
             e = self._session(date_id)
             if e["booked"] or self._working(e["key"]):
@@ -630,10 +635,10 @@ class Esse3Reader:
                                 f"Will sign up for {self._name(e)}'s {_short(e['day'])} exam when it opens")
                 self._redate()
                 return self.signup(date_id)
-            await self._start(e, "book")
+            await self._start(e, "book", chat=chat)
             return self.signup(date_id)
 
-    async def cancel(self, date_id: str) -> dict:
+    async def cancel(self, date_id: str, chat: str | None = None) -> dict:
         """The user's Cancel: the sign-up on Esse3 as an errand (while its window is open), or the wish to sign up
         (and an errand signing up that hasn't got there, stopped)."""
         async with self._lock:
@@ -649,7 +654,7 @@ class Esse3Reader:
                 return self.signup(date_id)
             if self._working(e["key"]):
                 return self.signup(date_id)
-            await self._start(e, "cancel")
+            await self._start(e, "cancel", chat=chat)
             return self.signup(date_id)
 
     def _working(self, key: str) -> bool:
@@ -670,7 +675,7 @@ class Esse3Reader:
         if self.notebook is not None:
             self._dates()
 
-    async def _start(self, e: dict, action: str, auto: bool = False) -> dict:
+    async def _start(self, e: dict, action: str, auto: bool = False, chat: str | None = None) -> dict:
         """The errand that signs up for (or cancels) a session: the login made here and handed over as cookies."""
         if self.errands is None:
             raise SignUpFailed("page", "Aide's browser isn't installed on the server, so it can't use Esse3: do it on "
@@ -682,7 +687,7 @@ class Esse3Reader:
             self.conn.execute("UPDATE esse3_errands SET told = 'stopped' WHERE key = ?", (e["key"],))
             self.errands.cancel(old["id"])
         try:
-            cookies = await self.session.handoff(BOOKED)
+            cookies = await self.session.handoff(BOOKED, await self.errands.browser.user_agent())
         except LoginFailed as x:
             raise SignUpFailed("login", f"Couldn't get into Esse3: {x}.") from None
         except NoLogin:
@@ -694,12 +699,25 @@ class Esse3Reader:
                   "day_it": d.strftime("%d/%m/%Y"), "time": e["time"], "app_id": e.get("app_id"),
                   "name": self._name(e), "start_url": e["link"] if action == "book" else BOOKED, "others": others}
         errand = await self.errands.start_esse3(target, cookies)
-        self.conn.execute("INSERT OR REPLACE INTO esse3_errands (key, errand_id, action, auto, told, at) "
-                          "VALUES (?, ?, ?, ?, NULL, ?)", (e["key"], errand["id"], action, int(auto),
-                                                           utcnow().isoformat()))
+        self.conn.execute("INSERT OR REPLACE INTO esse3_errands (key, errand_id, action, auto, told, chat, at) "
+                          "VALUES (?, ?, ?, ?, NULL, ?, ?)", (e["key"], errand["id"], action, int(auto), chat,
+                                                              utcnow().isoformat()))
         self._set(f"error:{e['key']}", None)
         log.info("esse3: errand %s to %s", errand["id"], action)
+        if chat:  # the errand's card in the chat, its steps live (Watch, Take over); posted once the turn lets go
+            verb = "Signing you up for" if action == "book" else "Cancelling your sign-up for"
+            text = f"{verb} {target['name']}'s {_short(e['day'])} exam on Esse3 now. It takes a minute or two."
+            card = {"type": "errands", "errands": [self.errands.store.as_json(errand)]}
+            asyncio.get_running_loop().create_task(self._to_chat(chat, errand["id"], "started", text, [card]))
         return errand
+
+    async def _to_chat(self, chat: str, errand_id: int, note: str, text: str, attachments: list[dict]) -> None:
+        if self.post is None:
+            return
+        try:
+            await self.post(chat, f"[Esse3 errand #{errand_id}: {note}]", text, attachments, record=False)
+        except Exception:
+            log.exception("esse3: couldn't post in the chat")
 
     async def errand_ended(self, errand: dict, kind: str, args: dict) -> None:
         """An Esse3 errand stopped (`kind`: finish, need_user, failed, cancelled). The bookings page decides, read
@@ -755,8 +773,18 @@ class Esse3Reader:
                 log.warning("esse3: errand %s didn't %s (%s)", errand["id"], t["action"], kind)
             self.conn.execute("UPDATE esse3_errands SET told = ? WHERE key = ?", (told, t["key"]))
             self._redate()
+        course = self.exam_for(_id("exam", t))
+        if row["chat"]:
+            text = (f"Done: {what[0].lower() + what[1:]}. Esse3 lists it." if done and book else
+                    f"Done: {what[0].lower() + what[1:]}." if done else f"{title}. {message}")
+            cards = []
+            if kind == "need_user":
+                cards.append({"type": "errands", "errands": [self.errands.store.as_json(errand)]})
+            if (course or {}).get("course_id"):
+                cards.append(open_card(t.get("name") or t["course"].title(), f"Exam {day}",
+                                       f"aide://study/{course['course_id']}"))
+            await self._to_chat(row["chat"], errand["id"], "done" if done else "didn't work", text, cards)
         if self.push is not None:
-            course = self.exam_for(_id("exam", t))
             try:
                 await self.push.send_esse3(title, body, (course or {}).get("course_id"))
             except Exception:

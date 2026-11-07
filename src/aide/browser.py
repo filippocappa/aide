@@ -1079,6 +1079,17 @@ class Browser:
                             "open": d.name in self._contexts})
         return sorted(out, key=lambda s: s["used_at"], reverse=True)
 
+    async def user_agent(self) -> str:
+        """The User-Agent every profile sends (a phone's Chrome of the installed version): a login handed over as
+        cookies must have been made with it (Esse3 checks)."""
+        async with self._lock:
+            if self._ua is None:
+                if self._pw is None:
+                    from playwright.async_api import async_playwright
+                    self._pw = await async_playwright().start()
+                self._ua = _UA.format(v=await self._version())
+            return self._ua
+
     async def add_cookies(self, site: str, cookies: list[dict]) -> None:
         """Cookies into a site's profile, before an errand opens its pages (an Esse3 errand: the login the server
         made itself, `UnitoSession.handoff`). `forget(site)` deletes them again."""
