@@ -49,8 +49,9 @@ you), widgets, and Live Activities on the Lock Screen and in the Dynamic Island 
 agent at work, a focus session's round, the time to bedtime).
 
 The **Mac app** is the same app in a window. It has the sections in a sidebar, the day at a glance under them, and
-Pebble in the menu bar for a quick look. It also has its own screen time: the Mac counts its apps and websites and
-enforces the phone's locks itself.
+Pebble in the menu bar for a quick look. Hold **fn ⌥** anywhere for [Peek](#peek-on-the-mac), Aide's board over
+whatever is on screen. It also has its own screen time: the Mac counts its apps and websites and enforces the phone's
+locks itself.
 
 The API is in [docs/API.md](docs/API.md), the contract between the server and the app. [SPEC.md](SPEC.md) is the
 original plan, and [CLAUDE.md](CLAUDE.md) is where things stand.
@@ -321,6 +322,25 @@ up to 8). Start one with **Focus** on a course or topic page, from a review sess
   went.
 - **It counts.** Minutes per course go into Professor's study progress and plans, the `focus` objectives measure, and
   what Coach sees of your day.
+
+## Peek on the Mac
+
+Hold **fn ⌥** and Aide's board covers the screen under the pointer, over any app, full-screen ones included; let go
+and it's gone. A quick tap keeps it open until Esc, a click outside the tiles, or fn ⌥ again. fn ⌥ with another key
+is left to that shortcut. It needs Aide in System Settings → Privacy & Security → Accessibility (asked once; Settings →
+This Mac has the button, and switches Peek off).
+
+- **Ask.** Typing goes to the ask box, and the reply is written under it on the board: the step it's on, the team's
+  talk, the words and the chat's cards, with Confirm for anything that needs your OK. Continue in Aide opens the chat.
+- **Hand off.** Right-click a tile to open its section in Aide or ask its agent about it (Secretary for the week,
+  Coach for the body and food, Professor for study, Finance for money).
+- **Make it yours.** Arrange (in the corner) lets you drag tiles to move them, drag their ↔ to span up to four
+  columns, and remove or add them: the week, the glance, the team, what's waiting, Body's three rings, habits (ticked
+  there), food today, today's study plan, money, weather, bedtime, trams near you, and web pages.
+- **Web pages** stay live in their tile (log in once, follow links) and are read again every 5 min, 15 min, an hour,
+  or only by hand. Their menu opens the page in Safari.
+
+The board is kept on the Mac, and each tile loads only while it's on it.
 
 ## Layout
 

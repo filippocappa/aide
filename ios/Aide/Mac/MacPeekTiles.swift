@@ -1,10 +1,13 @@
 import SwiftUI
+import WebKit
 
 // MARK: - What's on the board
 
 /// A kind of tile on Peek's board. Each is on the board at most once.
 enum PeekTileKind: String, Codable, CaseIterable, Identifiable {
     case week, glance, team, waiting, body, habits, food, study, money, weather, bedtime, trams
+    /// A web page of the user's choosing (`PeekTile.url`); the only kind that can be on the board more than once.
+    case web
 
     var id: String { rawValue }
 
@@ -22,6 +25,7 @@ enum PeekTileKind: String, Codable, CaseIterable, Identifiable {
         case .weather: "Weather"
         case .bedtime: "Bedtime"
         case .trams: "Trams"
+        case .web: "Web page"
         }
     }
 
@@ -39,6 +43,7 @@ enum PeekTileKind: String, Codable, CaseIterable, Identifiable {
         case .weather: "cloud.sun"
         case .bedtime: "moon.zzz"
         case .trams: "tram"
+        case .web: "globe"
         }
     }
 
@@ -50,6 +55,7 @@ enum PeekTileKind: String, Codable, CaseIterable, Identifiable {
         case .body, .habits, .food, .bedtime: Color(uiColor: UIColor(hex: 0x65BE99))
         case .money: Color(uiColor: UIColor(hex: 0xCDB360))
         case .glance, .team, .waiting, .weather: Theme.sand
+        case .web: Color(uiColor: UIColor(hex: 0xF5A623))
         }
     }
 
@@ -62,7 +68,18 @@ enum PeekTileKind: String, Codable, CaseIterable, Identifiable {
         case .food: .food
         case .study: .study
         case .money: .money
-        case .glance, .team, .waiting, .weather, .trams: nil
+        case .glance, .team, .waiting, .weather, .trams, .web: nil
+        }
+    }
+
+    /// Whose work it is: right-click → Ask them about it.
+    var agent: String? {
+        switch self {
+        case .week, .trams, .waiting: "secretary"
+        case .study: "professor"
+        case .body, .habits, .food, .bedtime: "coach"
+        case .money: "finance"
+        case .glance, .team, .weather, .web: nil
         }
     }
 }
@@ -72,6 +89,11 @@ struct PeekTile: Codable, Identifiable, Hashable {
     var kind: PeekTileKind
     /// How many of the board's columns it takes.
     var span = 1
+    /// A web page tile's page, and how often it's read again (minutes; 0: only by hand).
+    var url: String? = nil
+    var refresh: Int? = nil
+
+    var host: String { url.flatMap { URL(string: $0)?.host() }?.replacingOccurrences(of: "www.", with: "") ?? "Web page" }
 }
 
 /// The board's tiles in order, kept on this Mac. Arranged on the board itself (`MacPeek.arranging`).
@@ -91,16 +113,18 @@ final class PeekLayout: ObservableObject {
 
     private init() {
         // Tiles of a kind this version doesn't know are dropped, not the whole board.
-        struct Loose: Decodable { let id: UUID; let kind: String; let span: Int }
+        struct Loose: Decodable { let id: UUID; let kind: String; let span: Int; let url: String?; let refresh: Int? }
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let loose = try? JSONDecoder().decode([Loose].self, from: data) {
-            tiles = loose.compactMap { t in PeekTileKind(rawValue: t.kind).map { PeekTile(id: t.id, kind: $0, span: t.span) } }
+            tiles = loose.compactMap { t in PeekTileKind(rawValue: t.kind).map { PeekTile(id: t.id, kind: $0, span: t.span, url: t.url, refresh: t.refresh) } }
         } else {
             tiles = Self.standard
         }
     }
 
-    var missing: [PeekTileKind] { PeekTileKind.allCases.filter { kind in !tiles.contains { $0.kind == kind } } }
+    var missing: [PeekTileKind] {
+        PeekTileKind.allCases.filter { kind in kind != .web && !tiles.contains { $0.kind == kind } }
+    }
     var kinds: Set<PeekTileKind> { Set(tiles.map(\.kind)) }
 
     func add(_ kind: PeekTileKind) {
@@ -108,7 +132,26 @@ final class PeekLayout: ObservableObject {
         tiles.append(PeekTile(kind: kind, span: kind == .waiting ? 2 : 1))
     }
 
-    func remove(_ id: UUID) { tiles.removeAll { $0.id == id } }
+    /// A page typed as "moodle.unito.it" or a whole address; nil when it isn't one.
+    @discardableResult
+    func addWeb(_ typed: String) -> Bool {
+        var text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.contains("://") { text = "https://" + text }
+        guard let url = URL(string: text), let host = url.host(), host.contains("."),
+              ["http", "https"].contains(url.scheme ?? "") else { return false }
+        tiles.append(PeekTile(kind: .web, span: 1, url: url.absoluteString, refresh: 15))
+        return true
+    }
+
+    func setRefresh(_ id: UUID, _ minutes: Int) {
+        guard let i = tiles.firstIndex(where: { $0.id == id }) else { return }
+        tiles[i].refresh = minutes
+    }
+
+    func remove(_ id: UUID) {
+        tiles.removeAll { $0.id == id }
+        PeekWebViews.shared.forget(id)
+    }
 
     /// The tile `id` takes `target`'s place; the ones between shift over.
     func move(_ id: UUID, to target: UUID) {
@@ -217,7 +260,7 @@ final class PeekData: ObservableObject {
                     case .bedtime: if let v = try? await api.bedtime() { self.bedtime = v }
                     case .trams: if let v = try? await api.nearbyDepartures() { self.trams = v }
                     case .weather: if let v = await Self.weather(api) { self.weather = v }
-                    case .week, .glance, .team, .waiting: break
+                    case .week, .glance, .team, .waiting, .web: break
                     }
                 }
             }
@@ -639,4 +682,134 @@ private func bar(_ fraction: Double, _ color: Color) -> some View {
         }
     }
     .frame(height: 5)
+}
+
+// MARK: - Web pages
+
+/// The board's pages, kept loaded between showings so they're there at once, and read again when older than their
+/// tile's refresh. Their own cookies (log in once in the tile), apart from Safari's.
+@MainActor
+final class PeekWebViews {
+    static let shared = PeekWebViews()
+    private var views: [UUID: WKWebView] = [:]
+    private var loaded: [UUID: Date] = [:]
+
+    func view(for tile: PeekTile) -> WKWebView {
+        if let view = views[tile.id] { return view }
+        let view = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        view.pageZoom = 0.8
+        view.allowsBackForwardNavigationGestures = true
+        views[tile.id] = view
+        start(tile)
+        return view
+    }
+
+    /// Its own page again (after following links in it).
+    func start(_ tile: PeekTile) {
+        guard let url = tile.url.flatMap(URL.init(string:)) else { return }
+        views[tile.id]?.load(URLRequest(url: url))
+        loaded[tile.id] = .now
+    }
+
+    func reload(_ tile: PeekTile) {
+        guard let view = views[tile.id] else { return }
+        if view.url == nil { start(tile) } else { view.reload(); loaded[tile.id] = .now }
+    }
+
+    /// When the board opens: the pages older than their refresh.
+    func refreshStale(_ tiles: [PeekTile]) {
+        for tile in tiles where tile.kind == .web {
+            guard let minutes = tile.refresh, minutes > 0, let at = loaded[tile.id],
+                  Date.now.timeIntervalSince(at) > Double(minutes) * 60 else { continue }
+            reload(tile)
+        }
+    }
+
+    /// Where the tile is now, else its own page.
+    func address(_ tile: PeekTile) -> URL? { views[tile.id]?.url ?? tile.url.flatMap(URL.init(string:)) }
+
+    func forget(_ id: UUID) {
+        views[id]?.removeFromSuperview()
+        views[id] = nil
+        loaded[id] = nil
+    }
+}
+
+private struct PeekWebView: NSViewRepresentable {
+    let tile: PeekTile
+    func makeNSView(context: Context) -> WKWebView { PeekWebViews.shared.view(for: tile) }
+    func updateNSView(_ view: WKWebView, context: Context) {}
+}
+
+/// A web page on the board: the site, how often it's read, a menu, and the page itself, live (links, scrolling,
+/// logging in).
+struct PeekWebTile: View {
+    let tile: PeekTile
+    /// The floating copy while it's dragged: no page (a page can be in one place only).
+    var still = false
+    let remove: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 3).fill(PeekTileKind.web.tint).frame(width: 12, height: 12)
+                Text(tile.host).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 0)
+                Text(every).font(.system(size: 11)).foregroundStyle(.secondary)
+                menu
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+            .contextMenu { items }
+            Divider().opacity(0.5)
+            if still {
+                Color(white: 0.95)
+            } else {
+                PeekWebView(tile: tile)
+            }
+        }
+        .frame(height: tile.span > 1 ? 460 : 360)
+        .background(Color(white: 0.11).opacity(0.85))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.07), lineWidth: 1)
+        }
+    }
+
+    private var every: String {
+        switch tile.refresh ?? 0 {
+        case 0: "by hand"
+        case 60: "every hour"
+        case let m: "every \(m) min"
+        }
+    }
+
+    private var menu: some View {
+        Menu { items } label: {
+            Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold)).frame(width: 22, height: 22)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    @ViewBuilder private var items: some View {
+        Button("Open in Safari") {
+            if let url = PeekWebViews.shared.address(tile) { NSWorkspace.shared.open(url) }
+            MacPeek.shared.hide()
+        }
+        Button("Reload") { PeekWebViews.shared.reload(tile) }
+        Button("Back to \(tile.host)") { PeekWebViews.shared.start(tile) }
+        Divider()
+        Picker("Read it again", selection: Binding(get: { tile.refresh ?? 0 },
+                                                   set: { PeekLayout.shared.setRefresh(tile.id, $0) })) {
+            Text("Every 5 min").tag(5)
+            Text("Every 15 min").tag(15)
+            Text("Every hour").tag(60)
+            Text("Only by hand").tag(0)
+        }
+        Divider()
+        Button("Remove Tile", role: .destructive, action: remove)
+    }
 }

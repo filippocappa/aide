@@ -160,6 +160,11 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   a week strip with a dot per calendar and the chosen day's events (today: what's left and its reminders), what's
   waiting, the team to open a chat, the sections as icons. The window toolbar has no background of its own (no hard
   line). Closing the window leaves Aide running.
+- Peek (`Mac/MacPeek.swift`, `Mac/MacPeekTiles.swift`, after peek.zone): hold fn ⌥ (`MacChordWatcher`, needs
+  Accessibility) and a non-activating `.screenSaver` panel shows the board over every space; a tap keeps it (`keep()`).
+  Tiles are `PeekTile`s in `PeekLayout` (UserDefaults `peekTiles`), packed by `PeekMasonry`; Arrange moves, resizes
+  (span) and adds them; `PeekData` loads only the kinds on the board; web tiles keep their `WKWebView` in
+  `PeekWebViews`. A question asked there goes through the shared `ChatViewModel` and its reply is drawn on the board.
 - On the Mac, Return sends in a chat (`MessageBox`'s `onReturn`; Option-, Shift-, Cmd- or Cmd-Shift-Return is a new line), images dropped on a
   chat are added like picked photos (`photoDrop` in `Support/Photos.swift`), and PDFs or recordings dropped on a
   course page are uploaded.

@@ -314,6 +314,14 @@ struct MacPeekBoard: View {
     @State private var dragWidth: CGFloat = 0
     @State private var lastSwap: UUID?
     @State private var resizeFrom: CGFloat?
+    @State private var gridHeight: CGFloat?
+    @State private var webAddress = ""
+    @State private var addingWeb = false
+    @FocusState private var typingAddress: Bool
+    /// Who the ask box goes to: Aide, or the agent a tile was handed to.
+    @State private var askAgent: Agent?
+    /// The question just asked from the board, answered under the box.
+    @State private var answer: PeekAnswer?
     @FocusState private var asking: Bool
 
     private var aide: Agent { chat.orchestrator }
@@ -334,11 +342,18 @@ struct MacPeekBoard: View {
                                 if peek.arranging { arrangeBar } else { askBox }
                             }
                             .peekIn(peek.appeared, step: 1)
-                            ViewThatFits(in: .vertical) {
-                                grid(context.date, width: width)
-                                ScrollView { grid(context.date, width: width).padding(.bottom, 4) }
-                                    .scrollIndicators(.never)
+                            if let answer, !peek.arranging {
+                                answerCard(answer).transition(.opacity.combined(with: .move(edge: .top)))
                             }
+                            // As tall as the tiles, scrolling only when they don't fit (the board stays centred).
+                            ScrollView {
+                                grid(context.date, width: width)
+                                    .padding(.bottom, 4)
+                                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { gridHeight = $0 }
+                            }
+                            .scrollIndicators(.never)
+                            .scrollBounceBehavior(.basedOnSize)
+                            .frame(maxHeight: gridHeight.map { $0 + 4 } ?? .infinity)
                         } else {
                             tile {
                                 Button { peek.open(.settings) } label: {
@@ -362,10 +377,15 @@ struct MacPeekBoard: View {
         .task(id: peek.showings) { await load() }
         .onExitCommand { peek.cancel() }
         .onChange(of: peek.state) { _, state in
-            if state == .hidden { asking = false }
+            if state == .hidden {
+                asking = false
+                askAgent = nil
+                addingWeb = false
+                if !chat.isSending { answer = nil }
+            }
         }
         .onChange(of: peek.arranging) { _, on in
-            if on { asking = false } else { dragging = nil }
+            if on { asking = false } else { dragging = nil; addingWeb = false }
         }
         .onChange(of: layout.kinds) { old, new in
             Task { await data.load(env, kinds: new.subtracting(old)) }
@@ -387,9 +407,13 @@ struct MacPeekBoard: View {
         .overlay(alignment: .topLeading) { floating(now) }
     }
 
-    @ViewBuilder private func content(_ tile: PeekTile, _ now: Date) -> some View {
+    @ViewBuilder private func content(_ tile: PeekTile, _ now: Date, still: Bool = false) -> some View {
         let open: (MacSection) -> Void = { peek.open($0) }
         switch tile.kind {
+        case .web:
+            PeekWebTile(tile: tile, still: still) {
+                withAnimation(.spring(duration: 0.3, bounce: 0.1)) { layout.remove(tile.id) }
+            }
         case .week: self.tile { MiniCalendar(now: now, model: model, tint: aide.tint, open: { peek.open(.today) }) }
         case .glance: self.tile { MacGlanceCard(glance: glance, open: { peek.open($0) }) }
         case .team: self.tile { team }
@@ -420,6 +444,7 @@ struct MacPeekBoard: View {
                         .strokeBorder(.white.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                 }
             }
+            .contextMenu { if !on && tile.kind != .web { tileMenu(tile) } }
             .opacity(dragging == tile.id ? 0.2 : 1)
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .gesture(moveGesture(tile), including: on ? .all : .subviews)
@@ -472,7 +497,7 @@ struct MacPeekBoard: View {
     /// The tile being dragged, under the pointer.
     @ViewBuilder private func floating(_ now: Date) -> some View {
         if let id = dragging, let tile = layout.tiles.first(where: { $0.id == id }) {
-            content(tile, now)
+            content(tile, now, still: true)
                 .frame(width: dragWidth)
                 .overlay {
                     RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.sand, lineWidth: 1.5)
@@ -511,6 +536,106 @@ struct MacPeekBoard: View {
             )
     }
 
+    /// Right-click on a tile: hand it off.
+    @ViewBuilder private func tileMenu(_ tile: PeekTile) -> some View {
+        if let section = tile.kind.section {
+            Button("Open \(tile.kind.title) in Aide") { peek.open(section) }
+        }
+        let agent = chat.agent(tile.kind.agent ?? chat.orchestrator.id)
+        Button("Ask \(agent.name) about This…") {
+            askAgent = agent
+            asking = true
+        }
+        Divider()
+        Button("Arrange the Board") { peek.arrange() }
+        Button("Remove Tile", role: .destructive) {
+            withAnimation(.spring(duration: 0.3, bounce: 0.1)) { layout.remove(tile.id) }
+        }
+    }
+
+    /// The reply to what was asked from the board, as it comes: who was asked, the team's talk, the words, the
+    /// cards (a moved event, reminders…), changes waiting for an OK; then on to the chat in Aide, or done.
+    private func answerCard(_ answer: PeekAnswer) -> some View {
+        let reply = reply(to: answer)
+        let live = chat.isSending && reply == nil
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                if let reply, !reply.consulted.isEmpty {
+                    ConsultedRow(agents: reply.consulted.map { chat.agent($0) })
+                } else {
+                    AgentMark(agent: answer.agent, size: 22)
+                    Text(answer.agent.orchestrator ? "Aide" : "Asked \(answer.agent.name)")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                if let done = answer.done {
+                    Text("· \(max(1, Int(done.timeIntervalSince(answer.started).rounded()))) s")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Text(answer.question).font(.system(size: 12)).foregroundStyle(.tertiary).lineLimit(1)
+            }
+            if live {
+                if !chat.liveTeam.isEmpty { TeamThread(messages: chat.liveTeam, live: true) }
+                let draft = chat.liveReply.trimmingCharacters(in: .whitespacesAndNewlines)
+                if draft.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(chat.liveStep ?? "Thinking…").font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                } else {
+                    RichText(text: draft, isError: false)
+                }
+            } else if let reply {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        RichText(text: reply.text, isError: reply.isError)
+                        ForEach(Array(reply.attachments.enumerated()), id: \.offset) { _, attachment in
+                            AttachmentCard(attachment: attachment, said: reply.text)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: 340)
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("The reply is in Aide's window.").font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+            if !chat.pending.isEmpty && !live {
+                PendingCard().padding(.horizontal, -12).padding(.top, -6)
+            }
+            HStack(spacing: 8) {
+                Button("Continue in Aide") {
+                    let id = chat.conversationID
+                    self.answer = nil
+                    openChat(id)
+                }
+                .buttonStyle(PanelRowStyle(fill: .white.opacity(0.08)))
+                Button("Done") { withAnimation(.easeOut(duration: 0.15)) { self.answer = nil } }
+                    .buttonStyle(PanelRowStyle(fill: .white.opacity(0.08)))
+            }
+            .font(.system(size: 13, weight: .medium))
+        }
+        .padding(16)
+        .frame(maxWidth: 760, alignment: .leading)
+        .background(Color(white: 0.11).opacity(0.9), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.07), lineWidth: 1)
+        }
+        .onChange(of: chat.isSending) { _, sending in
+            if !sending, self.answer?.done == nil { self.answer?.done = .now }
+        }
+    }
+
+    /// The reply to the question asked, once it's in the chat.
+    private func reply(to answer: PeekAnswer) -> ChatViewModel.Message? {
+        guard chat.conversationID == answer.chat || answer.chat == nil,
+              let asked = chat.messages.lastIndex(where: { $0.role == .user && $0.text == answer.question })
+        else { return nil }
+        return chat.messages[(asked + 1)...].last { $0.role == .assistant }
+    }
+
     private var arrangeBar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
@@ -531,11 +656,38 @@ struct MacPeekBoard: View {
                 .buttonStyle(.plain)
                 .keyboardShortcut(.defaultAction)
             }
-            if layout.missing.isEmpty {
-                Text("Every tile is on the board.").font(.system(size: 12)).foregroundStyle(.secondary)
+            if addingWeb {
+                HStack(spacing: 8) {
+                    Image(systemName: "globe").foregroundStyle(PeekTileKind.web.tint)
+                    TextField("A page to keep on the board, like moodle.unito.it", text: $webAddress)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .focused($typingAddress)
+                        .onSubmit(addWeb)
+                    Button("Add", action: addWeb).buttonStyle(PanelRowStyle(fill: .white.opacity(0.08)))
+                    Button("Cancel") { addingWeb = false }.buttonStyle(PanelRowStyle())
+                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(.white.opacity(0.06), in: Capsule())
             } else {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
+                        Button {
+                            webAddress = ""
+                            addingWeb = true
+                            typingAddress = true
+                        } label: {
+                            HStack(spacing: 7) {
+                                Circle().fill(PeekTileKind.web.tint).frame(width: 7, height: 7)
+                                Image(systemName: "globe").font(.system(size: 12))
+                                Text("A web page…").font(.system(size: 12, weight: .medium))
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(.white.opacity(0.07), in: Capsule())
+                            .overlay { Capsule().strokeBorder(.white.opacity(0.08), lineWidth: 1) }
+                        }
+                        .buttonStyle(.plain)
+                        .help("Keep a page on the board, live")
                         ForEach(layout.missing) { kind in
                             Button { withAnimation(.spring(duration: 0.35, bounce: 0.15)) { layout.add(kind) } } label: {
                                 HStack(spacing: 7) {
@@ -595,10 +747,24 @@ struct MacPeekBoard: View {
 
     private var askBox: some View {
         HStack(spacing: 10) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(aide.tint)
-            TextField("Ask Aide anything…", text: $question)
+            if let agent = askAgent {
+                HStack(spacing: 6) {
+                    AgentMark(agent: agent, size: 20)
+                    Text(agent.name).font(.system(size: 13, weight: .semibold))
+                    Button { askAgent = nil } label: {
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Ask Aide instead")
+                }
+                .padding(.leading, 4).padding(.trailing, 10).padding(.vertical, 4)
+                .background(.white.opacity(0.08), in: Capsule())
+            } else {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(aide.tint)
+            }
+            TextField(askAgent.map { "Ask \($0.name)…" } ?? "Ask Aide anything…", text: $question)
                 .textFieldStyle(.plain)
                 .font(.system(size: 16))
                 .focused($asking)
@@ -715,6 +881,7 @@ struct MacPeekBoard: View {
         async let t = try? env.api.today()
         async let a: Void = loadApprovals()
         async let d: Void = data.load(env, kinds: layout.kinds)
+        PeekWebViews.shared.refreshStale(layout.tiles)
         let day = await t
         _ = await (g, a, d)
         if let day { model.today = day }
@@ -738,16 +905,32 @@ struct MacPeekBoard: View {
         }
     }
 
-    /// The question in a new chat with Aide, in the window.
+    /// The question in a new chat with Aide (or the agent a tile was handed to), answered here on the board; the
+    /// chat is in Aide's window too.
     private func ask() {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, !chat.isSending else { return }
+        let agent = askAgent ?? chat.orchestrator
         question = ""
-        peek.open(.team)
-        Task {
-            await chat.newChat(with: chat.orchestrator)
-            await chat.send(text)
+        askAgent = nil
+        peek.keep()
+        withAnimation(.spring(duration: 0.3, bounce: 0.1)) {
+            answer = PeekAnswer(question: text, agent: agent, started: .now)
         }
+        Task {
+            await chat.newChat(with: agent)
+            answer?.chat = chat.conversationID
+            await chat.send(text)
+            if answer?.chat == nil { answer?.chat = chat.conversationID }
+            if answer?.done == nil { answer?.done = .now }
+            await loadApprovals()
+        }
+    }
+
+    private func addWeb() {
+        guard layout.addWeb(webAddress) else { NSSound.beep(); return }
+        webAddress = ""
+        addingWeb = false
     }
 
     private func mood(_ now: Date) -> String {
@@ -755,6 +938,15 @@ struct MacPeekBoard: View {
         let hour = Calendar.current.component(.hour, from: now)
         return hour < 6 || hour >= 23 ? "sleeping" : "awake"
     }
+}
+
+/// A question asked from the board and the chat it went to.
+private struct PeekAnswer {
+    let question: String
+    let agent: Agent
+    let started: Date
+    var chat: String?
+    var done: Date?
 }
 
 /// A piece of the board coming in: up a little, from slightly smaller and blurred, each piece a moment after the one
