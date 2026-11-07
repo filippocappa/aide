@@ -251,6 +251,8 @@ struct CourseDateEditor: View {
     @State private var live: CourseDate?
     @State private var asking: Ask?
     @State private var signing = false
+    /// The sign-up's errand in the live view.
+    @State private var watching: BrowserTarget?
 
     private enum Ask: Identifiable {
         case signUp, cancel, archive
@@ -375,6 +377,17 @@ struct CourseDateEditor: View {
             } message: { ask in
                 Text(askMessage(ask))
             }
+            .task(id: live?.signup?.busy) {
+                // The errand takes a minute or two: follow it until it's done.
+                while !Task.isCancelled, live?.signup?.busy != nil {
+                    try? await Task.sleep(for: .seconds(3))
+                    if Task.isCancelled { break }
+                    await reload()
+                }
+            }
+            .fullScreenCover(item: $watching) { target in
+                BrowserSheet(target: target) { Task { await reload() } }
+            }
         }
     }
 
@@ -395,13 +408,19 @@ struct CourseDateEditor: View {
                     Text(busy ? (signup.busy ?? "signing up").prefix(1).uppercased() + (signup.busy ?? "signing up").dropFirst() + "…"
                          : Self.headline(signup))
                         .font(.body.weight(.semibold))
-                    if let detail = busy ? "On Esse3, up to 20 s." : Self.detail(signup) {
+                    if let detail = busy ? (signup.step ?? "On Esse3.") : Self.detail(signup) {
                         Text(detail).font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
             }
             if !busy, let error = signup.error {
                 Label(error, systemImage: "exclamationmark.circle").font(.subheadline).foregroundStyle(.orange)
+            }
+            if let id = signup.errandId {
+                // Watching while it works; taking over when it stopped at something only you can do.
+                Button(signup.busy != nil ? "Watch" : "Take over", systemImage: signup.busy != nil ? "eye" : "hand.tap") {
+                    watching = .errand(id, title: live?.what ?? "Esse3")
+                }
             }
             if signup.state == "booked" {
                 if signup.canCancel {
@@ -484,10 +503,14 @@ struct CourseDateEditor: View {
         } catch {
             self.error = error.localizedDescription
         }
-        if let fresh = try? await env.api.courseDates(course: course) {
-            saved(fresh)
-            live = fresh.items.first { $0.id == id } ?? live
-        }
+        await reload()
+    }
+
+    /// The date as the server has it now, sign-up included.
+    private func reload() async {
+        guard let id = live?.id, let fresh = try? await env.api.courseDates(course: course) else { return }
+        saved(fresh)
+        live = fresh.items.first { $0.id == id } ?? live
     }
 
     private func archive(_ on: Bool) async {
