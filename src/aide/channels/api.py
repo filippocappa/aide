@@ -45,6 +45,7 @@ from ..reviews import ReviewStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError, page_image
+from ..esse3 import Esse3Reader
 from ..moodle import MoodleError, MoodleSync
 from ..passwords import MAX_NAME, MAX_PASSWORD, MAX_SITES, MAX_USERNAME, Locked, PasswordError, PasswordStore, TooMany
 from ..lessons import LessonStore
@@ -728,7 +729,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                bedtime: Bedtime | None = None, focus: FocusStore | None = None,
                focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None,
                releases: Releases | None = None, calls: LiveCalls | None = None,
-               examplan: ExamPlan | None = None, passwords: PasswordStore | None = None) -> FastAPI:
+               examplan: ExamPlan | None = None, passwords: PasswordStore | None = None,
+               esse3: Esse3Reader | None = None) -> FastAPI:
     db: Database = agent.db
     calls = calls or LiveCalls(agent, db.conn)  # no voice to connect: calls are off
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
@@ -2014,6 +2016,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise password_error(e)
         await password_changed(f"Password for {entry['name']} added",
                                f"A password for {entry['name']} was saved in Aide.")
+        if esse3 is not None:
+            esse3.login_changed(entry["sites"])
         return entry
 
     @app.patch("/v1/passwords/{entry_id}", dependencies=[Depends(auth)])
@@ -2029,6 +2033,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         what = "password" if body.password else "username" if body.username else "name"
         await password_changed(f"Password for {entry['name']} changed",
                                f"The {what} for {entry['name']} in Aide was changed.")
+        if esse3 is not None and (body.username or body.password):
+            esse3.login_changed(entry["sites"])
         return entry
 
     @app.delete("/v1/passwords/{entry_id}", dependencies=[Depends(auth)])
@@ -2042,6 +2048,23 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         await password_changed(f"Password for {gone['name']} deleted",
                                f"The password for {gone['name']} was deleted from Aide.")
         return {"ok": True}
+
+    # -- Esse3 -------------------------------------------------------------------------
+
+    @app.get("/v1/esse3", dependencies=[Depends(auth)])
+    async def esse3_get():
+        if esse3 is None:
+            return {"connected": False, "read_at": None, "error": None, "exams": [], "transcript": [],
+                    "credits": {"passed": 0, "planned": 0}, "average": None}
+        return esse3.json()
+
+    @app.post("/v1/esse3/read", dependencies=[Depends(auth)])
+    async def esse3_read():
+        """Study opened: read now unless a read finished in the last 10 min. Waits for the read (~5–15 s)."""
+        if esse3 is None:
+            raise HTTPException(503, "Esse3 isn't on")
+        await esse3.read_if_stale()
+        return esse3.json()
 
     # -- notebooks -------------------------------------------------------------------
 

@@ -993,11 +993,14 @@ is asked only when what it would read (the page, the files' pages on the exam, t
 
 Date: `{"id": "d_…", "what": "1st mid-term", "kind": "exam" | "mid-term" | "deadline" | "other", "date": "2026-11-12",
 "time": "11:00" or null, "end": "13:00" or null, "room": "Aula 5" or null, "you": "Aula 5: surnames A–L" or null,
-"details": "…", "source": "Avviso.pdf, p. 1" or "Moodle", "by": "professor" | "you", "differs": null or {"date",
+"details": "…", "source": "Avviso.pdf, p. 1" or "Moodle", "by": "professor" | "esse3" | "you", "differs": null or {"date",
 "time", "source"}, "calendar": null or {"state": "in" | "moved" | "missing", "on": "2026-11-10", "event": "…", "plan":
 "ep_…-1"}, "past": false}`.
 - `you`: what the page sets for the user alone (their room, group, turn, a list with their name), by their name on
   Moodle; nothing about anyone else.
+- `by: "esse3"` (since 2026-11-07): read from the university's Esse3 (below): each exam session, and its sign-up
+  opening and closing, `source` "Esse3". A Professor exam on the same day is folded into it (its time, room, details and
+  `you` fill what Esse3 doesn't say). Gone from Esse3, gone from here. Edited or deleted like Professor's.
 - `by: "you"`: the user's edit or their own; Professor's later reads don't change it. `differs`: Professor has since
   read the same date differently (the app offers "The course now says…"; sending those back takes it).
 - `calendar` (exams and mid-terms still to come): `in` when the course has an event that day in the Exam calendar,
@@ -1178,6 +1181,38 @@ Password: `{"id": "pw_3f…", "name": "UniTo", "sites": ["unito.it"], "username"
 `status`: `ok`; `wrong` (the site said the password is wrong: not tried again until it's changed, so the account isn't
 locked); `needs_you` (the site asked for something Aide can't do, like a second factor or a new password: log in once
 yourself); `unreadable` (the stored copy can't be decrypted: add it again).
+
+### Esse3
+
+The university's student records (Esse3, `https://esse3.unito.it`), since 2026-11-07, read by the server with the UniTo
+login saved in Passwords (no model, no browser; `esse3.py`, `unito.py`). Read-only: nothing is booked. Four times a day,
+when a UniTo password is saved or changed, and on `POST /v1/esse3/read`. Without a UniTo password it does nothing.
+
+It reads three pages: the exam sessions open to the user (Appelli: each course's sessions, the sign-up window, the
+teachers), what they're signed up for (Bacheca prenotazioni) and the transcript (Libretto). The sessions become course
+dates (`by: "esse3"`, Course dates above) on the Aide course they belong to: by the course code in the matched Moodle
+course's name (SEM0251), else by name as Moodle's courses are matched. When a session's sign-up is open and the user
+isn't signed up, it's pushed once (`esse3`) and goes in Professor's activity.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/esse3` | | Esse3, below. Never read: `exams` and `transcript` empty, `read_at` null. |
+| `POST /v1/esse3/read` | | Esse3, after reading (~5–15 s) unless a read finished in the last 10 min. `503` the reader isn't on. |
+
+Esse3: `{"connected": true, "read_at": "2026-11-07T09:00:00+00:00" or null, "error": null or {"kind", "message"},
+"exams": [Exam], "transcript": [Course], "credits": {"passed": 21, "total": 180}, "average": 27.86 or null}`.
+- `connected`: a UniTo password is saved. `error.kind`: `wrong` or `needs_you` (the login: fix it in Settings →
+  Passwords, the entry's `status` says the same), `network` or `waiting` (UniTo didn't answer; tried again in 6 h),
+  `page` (Esse3 answered with a page Aide can't read). What was read last stays.
+- `average`: weighted by credits, over passed courses with a numeric grade (30L counts 30).
+
+Exam: `{"course": "MATHEMATICS FOR ECONOMICS II", "code": "SEM0251" or null, "course_id": 3 or null (the Aide
+course), "day": "2026-12-04", "time": "09:30" or null, "opens": "2026-11-04", "closes": "2026-11-27", "open": true
+(sign-up open now), "booked": false, "teachers": "…"}`.
+
+Course: `{"code": "SEM0251", "name": "MATHEMATICS FOR ECONOMICS II", "year": 2, "credits": 9, "status": "passed" |
+"attended" | "planned", "grade": "28" or "30L" or null, "passed_on": "2026-01-30" or null, "attended": "2025/2026" or
+null, "course_id": 3 or null}`.
 
 ### Obsidian vault
 
@@ -2958,6 +2993,8 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 | `errand` | alert; `interruption-level: time-sensitive` when it needs you in the live view or waits for a Confirm | a browser errand needs you (a login, a code, a card step), asks something, waits for a Confirm (since 2026-10-30 only when its Live Activity didn't say it), is done or failed (since 2026-10-27). Not shown while the app is on that errand's chat or live view | `errand_id`, `conversation_id` | needing you in the live view: opens it (`aide://errand/<id>`); else the conversation |
 | `finance` | alert | money came into a linked bank account (€10 or more, read while the app wasn't open: "Money in", "€250 from Borsa di studio"), or a bank's consent ends within a week ("Renew Intesa Sanpaolo"); since 2026-11-01 | `payment_id` or `bank_id` | `payment_id`: Money on that payment; `bank_id`: Money's accounts (Renew there) |
 | `bedtime` | alert | the bedtime nudge when no `bedtime` Live Activity could start ("Bedtime at 23:10", the plan's `why`); since 2026-11-03 | `date` (the morning) | the bedtime page (`aide://settings/bedtime`) |
+| `passwords` | alert | a saved password was added, changed or deleted, or a login with one failed ("UniTo password refused", "UniTo login needs you"); since 2026-11-07 | | Settings → Passwords (`aide://settings/passwords`) |
+| `esse3` | alert | an exam session's sign-up is open on Esse3 and the user isn't signed up ("Sign-up open: Macroeconomics", "The 4 Dec exam, until 27 Nov. Sign up on MyUniTo."), once per session; since 2026-11-07 | `course_id` (when it's an Aide course) | the course's page, else Study |
 | `test` | alert | `POST /v1/devices/test` | | nothing |
 
 ```json
