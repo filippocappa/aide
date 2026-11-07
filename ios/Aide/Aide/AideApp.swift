@@ -24,9 +24,19 @@ struct AideApp: App {
                 .environmentObject(env.location)
                 .environmentObject(env.screenTime)
                 .tint(Theme.accent)
-                .task { await env.refreshAll() }
+                .task {
+                    await env.refreshAll()
+                    await LectureRecorder.shared.recover() // a recording the app was ended in the middle of
+                    await LectureUploads.shared.flush()
+                }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active { Task { await env.refreshAll(); await PaymentInbox.flush(env.api) } }
+                    if phase == .active {
+                        Task {
+                            await env.refreshAll()
+                            await PaymentInbox.flush(env.api)
+                            await LectureUploads.shared.flush()
+                        }
+                    }
                     // Leaving the app: the widgets show what changed in it (check-ins, meals, objectives).
                     if phase == .background { WidgetCenter.shared.reloadAllTimelines() }
                 }
@@ -132,6 +142,7 @@ struct ContentView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var digest: DigestViewModel
+    @ObservedObject private var recorder = LectureRecorder.shared
     @State private var tab = Tab.chat
     /// The Health tab's half (`HealthView`): Food for `aide://food` and the meal buttons.
     @AppStorage("healthHalf") private var healthHalf = HealthHalf.body
@@ -200,6 +211,10 @@ struct ContentView: View {
             case .screen: tab = .health; healthHalf = .screen; env.showToday = false; return
             case .money(let payment): tab = .money; env.showToday = false; env.openPayment = payment; return
             case .study(let link): tab = .study; env.showToday = false; env.studyLink = link; return
+            case .record:
+                tab = .study; env.showToday = false
+                Task { await recorder.start() } // already recording: just the recorder
+                return
             case .settings(let page):
                 Task {
                     if env.showToday {
@@ -234,6 +249,7 @@ struct ContentView: View {
             }
         }
         .sheet(item: $env.newFiles) { NewFilesSheet(ids: $0.ids) }
+        .sheet(isPresented: $recorder.showSheet) { RecorderSheet() }
         .sheet(isPresented: $env.showToday) { TodayView(waiting: $waiting) }
         .sheet(isPresented: Binding(get: { digest.isPresented && !env.showToday }, set: { digest.isPresented = $0 })) {
             DigestSheet()

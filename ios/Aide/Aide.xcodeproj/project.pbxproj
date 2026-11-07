@@ -206,6 +206,7 @@
 		C24F2E73A92BACD6109776BA /* LockMonitor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0ED3D94C12E8FE5324793C80 /* LockMonitor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C3942029599C11D03CC6388F /* Columns.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF01ED5407EDD683110116BF /* Columns.swift */; };
 		C5018E9FDE0C54B6F23F2CD2 /* BedtimeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8C7557E4884EAD2417AE8DA /* BedtimeView.swift */; };
+		C50A5BF7CF96BC46D9ACB631 /* LectureRecorderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14EA91472361A6FFD6974E45 /* LectureRecorderViews.swift */; };
 		C95CFFA7BF809325C6437161 /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87678035748931339F27CC91 /* Photos.swift */; };
 		C9E49AE1E7182DCFB48FDE7A /* TodayWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B080CFFD5248A57D95546299 /* TodayWidget.swift */; };
 		CAA8FB4E0645029A2DE7491D /* RecentFoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2884A9E5CE8EFF2BA09F5D5 /* RecentFoodViews.swift */; };
@@ -251,6 +252,7 @@
 		EDEC57973F1B779661439B68 /* FinanceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CE86F8FED7A90934C84B6A /* FinanceViews.swift */; };
 		EE7CC3F0646FABF4F63B420B /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */; };
 		EF6EE2F4E8AB74004D48675C /* BankViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCC8A3B51912EF258E8FD9A4 /* BankViews.swift */; };
+		EFF021E983E7C1EB1C0495FD /* LectureRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38D440B96A4CD387DDA4F46B /* LectureRecorder.swift */; };
 		F05817427F823787D3F94ABF /* ScreenLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5A6ADA18164E31DD49CD71 /* ScreenLock.swift */; };
 		F149A3F3DB1C3F471EACE643 /* AgentInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105404D7A7140F4B8B3BBAF8 /* AgentInfoView.swift */; };
 		F2942EA09BFC19DE9E840178 /* MacLoginItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED75A40C75D31819393889F1 /* MacLoginItem.swift */; };
@@ -349,6 +351,7 @@
 		11CFF731DF48A1AB94AD7194 /* PaymentIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaymentIntent.swift; sourceTree = "<group>"; };
 		1292B0F4A4E45229FB6C10E0 /* LockMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockMonitor.swift; sourceTree = "<group>"; };
 		148A57EF978A9887AF00FE8A /* ReminderSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSyncService.swift; sourceTree = "<group>"; };
+		14EA91472361A6FFD6974E45 /* LectureRecorderViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LectureRecorderViews.swift; sourceTree = "<group>"; };
 		16BB2B4B8577CDF6823F8251 /* Arithmetic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Arithmetic.swift; sourceTree = "<group>"; };
 		18F809AD4D845567498CDA11 /* WidgetIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetIntents.swift; sourceTree = "<group>"; };
 		1A9F5F8A8D6464DACCB6EB02 /* iOSCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSCompat.swift; sourceTree = "<group>"; };
@@ -365,6 +368,7 @@
 		353816F15681ED315F71639A /* ReminderSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSyncTests.swift; sourceTree = "<group>"; };
 		36387E8AE9A51ED3851F3281 /* PushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushService.swift; sourceTree = "<group>"; };
 		36C0EE858E22DBEE68990F44 /* AideMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AideMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		38D440B96A4CD387DDA4F46B /* LectureRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LectureRecorder.swift; sourceTree = "<group>"; };
 		38F0E0A30B4DF8F0F6F9D585 /* MacAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAppDelegate.swift; sourceTree = "<group>"; };
 		390203A3696FD54CC8786945 /* RouteCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteCard.swift; sourceTree = "<group>"; };
 		3AD5A756F974A0E8C79F5CA5 /* MemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryView.swift; sourceTree = "<group>"; };
@@ -553,6 +557,7 @@
 				DDFDB90CA977D76111828E4F /* FoodViews.swift */,
 				BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */,
 				591D1D0440D0AE931595EE83 /* HealthView.swift */,
+				14EA91472361A6FFD6974E45 /* LectureRecorderViews.swift */,
 				F7010333B02FB2C5C4B8EC49 /* LessonViews.swift */,
 				91B4431689B0F772EB8EDA27 /* LivePebble.swift */,
 				C3FB4B94DD1D7FF3EEAFB454 /* MealCameraView.swift */,
@@ -644,6 +649,7 @@
 				BF01ED5407EDD683110116BF /* Columns.swift */,
 				77E5D11C27686D088BF88108 /* Figure.swift */,
 				63500D066A75FEEDD7B682E9 /* Keychain.swift */,
+				38D440B96A4CD387DDA4F46B /* LectureRecorder.swift */,
 				57E832869DBA4E90B67C6D56 /* LiveActivities.swift */,
 				E7D6F956C9FD3A0BBAEE53FD /* LiveCall.swift */,
 				BDD7CC531B6DFD14673ABD6C /* LocationService.swift */,
@@ -1341,6 +1347,8 @@
 				CDA6BD42FE40FA43362C4856 /* HealthView.swift in Sources */,
 				B80EB1D82215C188A6E90082 /* HeartSummary.swift in Sources */,
 				1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */,
+				EFF021E983E7C1EB1C0495FD /* LectureRecorder.swift in Sources */,
+				C50A5BF7CF96BC46D9ACB631 /* LectureRecorderViews.swift in Sources */,
 				61D729A8CAB38BDD3EF58DB4 /* LessonViews.swift in Sources */,
 				9458E33FE7340C8EDED1D46F /* LineBadge.swift in Sources */,
 				10275D194F779A427E756B09 /* LiveActivities.swift in Sources */,

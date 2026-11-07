@@ -782,9 +782,18 @@ Closer to Anki (2026-11-07): a flashcard is turned with Show answer (space) and 
 but slow answer is Hard; from 21 days before the next exam or mid-term (its chosen topics) items are due at 95% recall
 (`before_exam` on the bank and the brief; "Exam on …: shorter gaps until then" on the Due today card).
 
+**Done, app (2026-11-08):** recording a lecture on the phone (no contract change: `POST /v1/lectures` as before,
+`course` now optional so the server files it by the timetable). `Support/LectureRecorder.swift`: AAC mono 32 kbps
+(~14 MB an hour), the `audio` background mode so it goes on locked, picked up again after a call, in 10-minute pieces
+(Application Support/Lectures/<id>) so an app ended mid-lecture loses only the last piece (`recover()` at launch sends
+the rest), joined into one .m4a on Stop, 4 h at most, a "Still recording" notification 10 min after the lecture's end.
+`LectureUploads` keeps each file until the server has it (tried at launch and on each return to the app). Started from
+Study's "is on now" card (Record), a course page's + menu, `aide://record` or the "Record a lecture" Shortcut (Action
+Button); `Views/LectureRecorderViews.swift` has the recorder sheet and the cards. iPhone only (AideMac excludes both).
+
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.
-1. Recording a lecture in the app. Notebooks for the other courses.
+1. Record a real lecture with the app. Notebooks for the other courses.
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).

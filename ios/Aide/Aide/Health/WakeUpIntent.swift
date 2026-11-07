@@ -33,5 +33,9 @@ struct AideShortcuts: AppShortcutsProvider {
                     phrases: ["Log a payment in \(.applicationName)"],
                     shortTitle: "Log payment",
                     systemImageName: "creditcard")
+        AppShortcut(intent: RecordLectureIntent(),
+                    phrases: ["Record a lecture in \(.applicationName)", "Record the lecture in \(.applicationName)"],
+                    shortTitle: "Record a lecture",
+                    systemImageName: "waveform")
     }
 }

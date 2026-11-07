@@ -53,7 +53,7 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
-        NSMicrophoneUsageDescription: Aide listens when you tap the microphone, so you can talk instead of type.
+        NSMicrophoneUsageDescription: Aide listens when you tap the microphone, so you can talk instead of type, and records the lectures you ask it to.
         NSSpeechRecognitionUsageDescription: Aide turns what you say into text to send to your assistant.
         NSRemindersFullAccessUsageDescription: Aide mirrors your reminders into a list in Apple Reminders so your phone can notify you.
         NSCameraUsageDescription: Aide uses the camera when you take a photo to send, like a meal to log.
@@ -62,10 +62,11 @@ targets:
         NSHealthShareUsageDescription: Aide reads your sleep, heart rate, HRV, steps and workouts to write your wake-up briefing and tick off workout habits.
         NSHealthUpdateUsageDescription: Aide writes the meals and drinks you log through it (calories, protein, carbs, fat, water, caffeine), and a limit habit's counts to Inhaler Usage, so you don't have to log them twice.
         NSFaceIDUsageDescription: Aide asks for Face ID before a saved password is added, changed or deleted.
-        # Silent pushes wake the app to sync reminders (docs/API.md, Push).
+        # Silent pushes wake the app to sync reminders (docs/API.md, Push); audio keeps a lecture recording locked.
         UIBackgroundModes:
           - remote-notification
           - location
+          - audio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID)  # Config/Base.xcconfig; your own in Signing.local.xcconfig
@@ -213,12 +214,14 @@ targets:
           - "*.entitlements"
           - Health/HealthService.swift
           - Health/WakeUpIntent.swift
+          - Support/LectureRecorder.swift
           - Support/LiveActivities.swift
           - Support/LocationService.swift
           - Support/PaymentIntent.swift
           - Support/ScreenTimeService.swift
           - Support/TouchTracker.swift
           - Sync/ReminderSyncService.swift
+          - Views/LectureRecorderViews.swift
           - Views/MealCameraView.swift
           - Views/ScreenTimeView.swift
           - Views/ScreenView.swift

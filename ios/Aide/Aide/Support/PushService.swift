@@ -34,6 +34,8 @@ enum PushRoute: Equatable {
     case study(StudyLink?)
     /// From an `open` card in chat: Settings, on one of its pages (`digests`, `screentime`, …) or its top.
     case settings(String?)
+    /// The lecture recorder (`aide://record`, the Shortcut, the "still recording" reminder): recording, or started.
+    case record
 
     /// `aide://conversation/<id>`, `aide://team`, `aide://agent/<id>`, `aide://voice`, `aide://today`,
     /// `aide://objectives`, `aide://health`, `aide://food`, `aide://screen`, `aide://errand/<id>`, `aide://meal/photo`
@@ -57,6 +59,7 @@ enum PushRoute: Equatable {
         case "money": self = .money(payment: id.flatMap(Int.init))
         case "study": self = .study(StudyLink(url: url))
         case "settings": self = .settings(id)
+        case "record": self = .record
         default: return nil
         }
     }
@@ -76,6 +79,7 @@ enum PushRoute: Equatable {
             self = .errand(id)
         case "bedtime": self = .settings("bedtime")
         case "passwords": self = .settings("passwords")
+        case "recording": self = .record
         case "esse3":
             let course = (aide["course_id"] as? Int) ?? (aide["course_id"] as? NSNumber)?.intValue
             self = .study(course.map { StudyLink(course: $0) })

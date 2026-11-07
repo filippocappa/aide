@@ -50,7 +50,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Aide sends where you are to your server, so a tram alert knows how long the walk to the stop is.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Aide listens when you tap the microphone, so you can talk instead of type.</string>
+	<string>Aide listens when you tap the microphone, so you can talk instead of type, and records the lectures you ask it to.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Aide mirrors your reminders into a list in Apple Reminders so your phone can notify you.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -63,6 +63,7 @@
 	<array>
 		<string>remote-notification</string>
 		<string>location</string>
+		<string>audio</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict>

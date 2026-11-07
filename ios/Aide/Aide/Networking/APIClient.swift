@@ -1136,10 +1136,12 @@ final class APIClient {
     }
 
     /// A lecture recording from Files: transcribed and written up on the server.
-    func uploadRecording(_ file: URL, type: String, course: Int, recordedAt: Date) async throws -> Lecture {
+    /// `course` nil: the server files it by the timetable event on at `recordedAt`.
+    func uploadRecording(_ file: URL, type: String, course: Int?, recordedAt: Date) async throws -> Lecture {
         let when = ISO8601DateFormatter().string(from: recordedAt) // UTC, with Z
-        var req = try request("POST", "/v1/lectures", query: [URLQueryItem(name: "course", value: String(course)),
-                                                              URLQueryItem(name: "recorded_at", value: when)],
+        var query = [URLQueryItem(name: "recorded_at", value: when)]
+        if let course { query.append(URLQueryItem(name: "course", value: String(course))) }
+        var req = try request("POST", "/v1/lectures", query: query,
                               auth: true, timeout: 1800, body: nil)
         req.setValue(type, forHTTPHeaderField: "Content-Type")
         return try await upload(req, file)

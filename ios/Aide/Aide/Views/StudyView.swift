@@ -8,6 +8,9 @@ struct StudyView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var chat: ChatViewModel
+    #if os(iOS)
+    @ObservedObject private var recorder = LectureRecorder.shared
+    #endif
     @State private var overview: StudyOverview?
     @State private var reviews: [ReviewSession] = []
     @State private var error: String?
@@ -47,11 +50,20 @@ struct StudyView: View {
                     }
                     if let error { ErrorCard(text: error) }
                     if let session = env.focus { FocusCard(session: session) }
+                    #if os(iOS)
+                    if recorder.isActive {
+                        RecordingCard()
+                    } else if let now = overview?.now {
+                        RecordNowCard(now: now, transcription: overview?.transcription)
+                    }
+                    LectureUploadsCard()
+                    #else
                     if let now = overview?.now {
                         Label("\(now.name.prefix(1).uppercased() + now.name.dropFirst()) is on now",
                               systemImage: "dot.radiowaves.left.and.right")
                             .font(.subheadline.weight(.medium)).foregroundStyle(Theme.toggle).card()
                     }
+                    #endif
                     if !reviews.isEmpty {
                         UpNextCard(sessions: Array(reviews.prefix(3)), name: name) { session in
                             studying = StudyTarget(course: session.course, name: name(session.course), topics: session.topics)
@@ -513,6 +525,9 @@ struct MasteryDots: View {
 struct CourseView: View {
     let course: StudyCourse
     @EnvironmentObject private var env: AppEnvironment
+    #if os(iOS)
+    @ObservedObject private var recorder = LectureRecorder.shared
+    #endif
     @EnvironmentObject private var push: PushService
     @State private var notebook: NotebookStatus?
     @State private var bank: QuizBank?
@@ -571,6 +586,9 @@ struct CourseView: View {
                     Label(note.text, systemImage: note.symbol).font(.footnote).foregroundStyle(.secondary).card()
                 }
                 if let session = env.focus, session.courseId == course.id { FocusCard(session: session) }
+                #if os(iOS)
+                if recorder.isActive, recorder.session?.course == course.id { RecordingCard() }
+                #endif
                 if notebook?.started == true, !written.isEmpty { practiceChips }
                 if dates != nil {
                     CourseDatesCard(dates: dates, add: { editing = .new }, read: { Task { await readDates() } },
@@ -602,6 +620,12 @@ struct CourseView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button("Add a PDF", systemImage: "doc.badge.plus") { importing = .pdf }
+                    #if os(iOS)
+                    Button("Record a lecture", systemImage: "record.circle") {
+                        Task { await LectureRecorder.shared.start(course: course.id, name: course.name) }
+                    }
+                    .disabled(recorder.isActive)
+                    #endif
                     Button("Add a recording", systemImage: "waveform.badge.plus") { importing = .recording }
                     if !topics.isEmpty {
                         Button("Find figures in the slides", systemImage: "photo.on.rectangle") {
