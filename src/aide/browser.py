@@ -14,6 +14,7 @@ import base64
 import logging
 import re
 import shutil
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,8 +35,20 @@ _SECOND_LEVEL = {"co.uk", "org.uk", "ac.uk", "com.au", "co.jp", "com.br", "co.in
 _SITE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
 _DIAL_CODE = re.compile(r"^(\+|00)?\d{1,4}$")  # what a dialling code looks like typed: +39, 39, 0039
 
-# Mobile Chrome on Android, with this Chromium's version (set at launch).
-_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v} Mobile Safari/537.36"
+# The browser is what it is (#76): Google Chrome when it's installed (else Playwright's Chrome for Testing), on Linux,
+# under Xvfb when there's a DISPLAY (headless is what bot checks catch first), in Italian, on the GPU. Only the window
+# is phone-sized, for the app's live view. Pretending to be an Android phone gave it away: a Linux platform, an arm
+# CPU with a desktop form factor, PDF plugins, and service workers saying HeadlessChrome.
+_CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome") if sys.platform == "darwin" \
+    else Path("/opt/google/chrome/chrome")
+# What Chrome sends as its User-Agent (reduced: only the major version), for a login handed over as cookies (Esse3) and
+# for headless runs, which would otherwise say HeadlessChrome. Headed, the browser's own is left alone.
+_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" if sys.platform == "darwin" else "Mozilla/5.0 (X11; Linux x86_64)") \
+    + " AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v} Safari/537.36"
+SCREEN = {"width": 1920, "height": 1080}  # Xvfb's screen (deploy/aide-xvfb.service), bigger than the window
+_ARGS = ["--disable-blink-features=AutomationControlled", "--lang=it-IT", "--accept-lang=it-IT"]
+# The GPU (cappa's NVIDIA through Vulkan) instead of SwiftShader, a software renderer only bots and VMs report.
+_GPU_ARGS = ["--ignore-gpu-blocklist", "--enable-gpu-rasterization", "--use-angle=vulkan", "--enable-features=Vulkan"]
 
 
 _ON_TOP_JS = """e => {
@@ -920,7 +933,7 @@ class Browser:
         except ImportError:
             return False
         cache = Path.home() / ".cache" / "ms-playwright"
-        return any(cache.glob("chromium-*/chrome-linux*/chrome")) or any(cache.glob("chromium-*/chrome-mac*"))
+        return _CHROME.exists() or any(cache.glob("chromium-*/chrome-linux*/chrome")) or any(cache.glob("chromium-*/chrome-mac*"))
 
     # -- sites and pages -----------------------------------------------------
 
@@ -935,11 +948,12 @@ class Browser:
                 self._ua = _UA.format(v=await self._version())
             profile = self.root / check_site(site)
             profile.mkdir(parents=True, exist_ok=True)
+            look = {"screen": SCREEN, "args": _ARGS + _GPU_ARGS} if self.headed else \
+                {"screen": VIEWPORT, "args": _ARGS, "user_agent": self._ua}
             context = await self._pw.chromium.launch_persistent_context(
-                str(profile), channel="chromium", headless=not self.headed, viewport=VIEWPORT, screen=VIEWPORT,
-                device_scale_factor=SCALE, is_mobile=True, has_touch=True, user_agent=self._ua, locale="it-IT",
-                timezone_id="Europe/Rome", args=["--disable-blink-features=AutomationControlled"],
-                ignore_default_args=["--enable-automation"])
+                str(profile), channel="chrome" if _CHROME.exists() else "chromium", headless=not self.headed,
+                viewport=VIEWPORT, device_scale_factor=SCALE, locale="it-IT", timezone_id="Europe/Rome",
+                ignore_default_args=["--enable-automation"], **look)
             context.set_default_timeout(ACTION_TIMEOUT)
             context.set_default_navigation_timeout(LOAD_TIMEOUT)
             context.on("page", lambda page: self._opened(site, page))
@@ -947,9 +961,10 @@ class Browser:
             return context
 
     async def _version(self) -> str:
-        """This Chromium's version, for a user agent that matches the engine."""
+        """The browser's major version as Chrome's User-Agent gives it (157.0.0.0)."""
         try:
-            proc = await asyncio.create_subprocess_exec(self._pw.chromium.executable_path, "--version",
+            binary = str(_CHROME) if _CHROME.exists() else self._pw.chromium.executable_path
+            proc = await asyncio.create_subprocess_exec(binary, "--version",
                                                         stdout=asyncio.subprocess.PIPE,
                                                         stderr=asyncio.subprocess.DEVNULL)
             out, _ = await asyncio.wait_for(proc.communicate(), 10)
@@ -1080,8 +1095,8 @@ class Browser:
         return sorted(out, key=lambda s: s["used_at"], reverse=True)
 
     async def user_agent(self) -> str:
-        """The User-Agent every profile sends (a phone's Chrome of the installed version): a login handed over as
-        cookies must have been made with it (Esse3 checks)."""
+        """The User-Agent every profile sends (the installed Chrome's own): a login handed over as cookies must have
+        been made with it (Esse3 checks)."""
         async with self._lock:
             if self._ua is None:
                 if self._pw is None:
@@ -1538,10 +1553,9 @@ class Browser:
         return stop
 
     async def tap(self, owner: str, x: float, y: float) -> None:
-        """A tap at (x, y), each 0–1 across the visible page."""
+        """A tap at (x, y), each 0–1 across the visible page: a click, since the browser is a desktop one (#76)."""
         page = self._page(owner)
-        await page.touchscreen.tap(max(0.0, min(1.0, x)) * VIEWPORT["width"],
-                                   max(0.0, min(1.0, y)) * VIEWPORT["height"])
+        await page.mouse.click(max(0.0, min(1.0, x)) * VIEWPORT["width"], max(0.0, min(1.0, y)) * VIEWPORT["height"])
 
     async def wheel(self, owner: str, x: float, y: float, dy: float) -> None:
         """Scroll at (x, y) by dy screen heights (positive: down)."""

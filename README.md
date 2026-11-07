@@ -598,7 +598,7 @@ tries again the next day. `journalctl --user -u aide | grep "unito login\|esse3"
 
 ## Errands on the web
 
-Aide runs errands in its own Chromium on the server: "order me a diavola from Glovo", "find a train to Ivrea
+Aide runs errands in its own Chrome on the server: "order me a diavola from Glovo", "find a train to Ivrea
 tomorrow morning", "compare three cast-iron pans on Amazon". The errand card in the chat draws what Aide is doing
 (results with their pictures and prices, a menu, a timetable, the cart), with a line for each step. It isn't a
 video of the site; the real page is in the card's long-press menu.
@@ -617,6 +617,19 @@ video of the site; the real page is in the card's long-press menu.
 
 Setup on the server, once: `uv run playwright install chromium` (and `uv run playwright install-deps chromium` on a
 fresh Ubuntu for its libraries).
+
+### Browser
+
+The browser is a real desktop Chrome on a screen of its own, so bot checks see a person's browser (#76; measured with
+`scripts/browser_check.py`, results in `~/browser-check/`). Only its window is phone-sized, for the live view.
+
+```bash
+sudo apt install ./google-chrome-stable_current_amd64.deb   # from dl.google.com; adds Google's apt repository
+ln -sf "$PWD/deploy/aide-xvfb.service" ~/.config/systemd/user/   # the screen, DISPLAY=:99 (aide.service wants it)
+systemctl --user daemon-reload && systemctl --user enable --now aide-xvfb
+```
+
+Without Google Chrome it falls back to Playwright's Chrome for Testing; without the screen, to headless.
 
 ## YouTube videos
 

@@ -5,6 +5,9 @@ Description=Aide personal assistant
 # Give up restarting only after 10 failures in 10 minutes.
 StartLimitIntervalSec=600
 StartLimitBurst=10
+# The browser's screen (deploy/aide-xvfb.service); without it the browser runs headless.
+Wants=aide-xvfb.service
+After=aide-xvfb.service
 
 [Service]
 Type=simple
@@ -12,6 +15,7 @@ Type=simple
 Slice=aide.slice
 # Temporary files on disk: /tmp is RAM on cappa, and Parakeet unpacks 2.5 GB there while it loads.
 Environment=TMPDIR=%h/.cache/aide/tmp
+Environment=DISPLAY=:99
 ExecStartPre=/bin/sh -c 'rm -rf %h/.cache/aide/tmp; mkdir -p %h/.cache/aide/tmp'
 WorkingDirectory=%h/Developer/aide
 ExecStart=%h/Developer/aide/.venv/bin/aide
