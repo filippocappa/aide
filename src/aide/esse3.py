@@ -1,5 +1,6 @@
 """Esse3, the university's own record (#74, read-only): exam sessions with their sign-up windows, what the user is
-signed up for, and the transcript. Read through `unito.py` with the login saved in Settings → Passwords, no model.
+signed up for, and the transcript. Read through `unito.py` with the login saved in Settings → Passwords, no model
+(the fast model reads a page once only when the parser finds nothing on a page that has dates).
 
 Three pages, four times a day (and when the app asks, at most every 10 min):
 - `Appelli/Appelli.do`: the sessions of every course in the study plan, each with its sign-up window and whether
@@ -13,8 +14,12 @@ opening and closing become reminders (`datereminders.py`; none once signed up). 
 course through Moodle's (the same course code), else by its name's words. A sign-up seen open with no reminder for its
 opening (open already on the first read) is pushed once.
 
-Signing up and cancelling (since 2026-11-07) happen only on the user's tap in the app (`sign_up`, `cancel`): the
-booking page's own form, posted once, then the bookings page read to see it took. A session whose sign-up isn't open
+Signing up and cancelling (since 2026-11-07) happen only on the user's tap in the app (`sign_up`, `cancel`), as a
+browser errand (#75, `ErrandRunner.start_esse3`): the server's own login handed to Aide's browser as cookies (the
+password never reaches the model), the model clicking through Esse3's pages with reading and clicking tools only, and
+the tap as the Confirm for at most two clicks that commit, each on a page showing that session (`esse3_mismatch`).
+However the errand ends, the bookings page is read here in plain HTTP to decide (`errand_ended`), the browser's UniTo
+profile deleted, and the result pushed. Never tried again by itself. A session whose sign-up isn't open
 yet is kept as wanted and signed up for on the first read after it opens (reads every 15 min from its opening day),
 with a push either way. An exam the user isn't taking (archived in the course's dates) is never signed up for or pushed.
 """
@@ -35,9 +40,11 @@ from zoneinfo import ZoneInfo
 from . import activity
 from .db import utcnow
 from .moodle import MoodleSync
-from .unito import SITE, LoginFailed, NoLogin, UnitoSession, forms
+from .unito import SITE, LoginFailed, NoLogin, UnitoSession
 
 log = logging.getLogger(__name__)
+
+OPEN_ERRAND = ("queued", "running", "needs_you", "waiting_confirm", "scheduled", "interrupted")  # errands.OPEN
 
 BASE = "https://esse3.unito.it/"
 EXAMS = BASE + "auth/studente/Appelli/Appelli.do"
@@ -49,6 +56,14 @@ WANTED_EVERY = timedelta(minutes=15)  # reads while a wanted session's sign-up h
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS esse3_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS esse3_errands (  -- the errand signing up for or cancelling a session, running or last run
+    key       TEXT PRIMARY KEY,
+    errand_id INTEGER NOT NULL,
+    action    TEXT NOT NULL,     -- book or cancel
+    auto      INTEGER NOT NULL DEFAULT 0,  -- started from a wish, when the sign-up opened
+    told      TEXT,              -- what the user was last told: done or failed
+    at        TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS esse3_exams (  -- the sessions Esse3 lists now, replaced on every read
     key       TEXT PRIMARY KEY,  -- the course's name and the date
     course    TEXT NOT NULL,     -- Esse3's name, "MATHEMATICS FOR ECONOMICS II"
@@ -248,40 +263,35 @@ def read_transcript(html: str) -> list[dict]:
     return out
 
 
+READ_PROMPT = """You read a page of Esse3, an Italian university's student records, as plain text. Answer with JSON \
+only, no prose. For an exams page (Appelli): {"exams": [{"course": "<the course's name as written>", "day": \
+"YYYY-MM-DD", "time": "HH:MM" or null, "opens": "YYYY-MM-DD" or null, "closes": "YYYY-MM-DD" or null, "open": \
+<true when the page offers to sign up now>}]}. For a bookings page (Bacheca prenotazioni): {"booked": [{"course": \
+"<name>", "day": "YYYY-MM-DD"}]}. Only what the page says; an empty list when it lists none."""
+
+
+def _text(html: str) -> str:
+    return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style).*?</\1>", "", html))))
+
+
+def _json(text: str) -> dict:
+    m = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        return json.loads(m.group(0)) if m else {}
+    except ValueError:
+        return {}
+
+
+def _iso(day) -> str | None:
+    return day if isinstance(day, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else None
+
+
 class SignUpFailed(Exception):
-    """Signing up or cancelling didn't go through; the message is for the user."""
+    """Signing up or cancelling couldn't start; the message is for the user."""
 
     def __init__(self, kind: str, message: str):
         super().__init__(message)
-        self.kind = kind  # closed, questionnaire, page, unconfirmed, login
-
-
-_SAID = re.compile(r"[^.!?]*\b(non è possibile|non e' possibile|impossibile|errore|attenzione|non sei|non risult|"
-                   r"già prenotat|superato il numero|questionari)[^.!?]*[.!?]?", re.I)
-
-
-def _said(html: str) -> str | None:
-    """Esse3's own words of refusal on a page, if any (a sentence, at most 200 characters)."""
-    text = re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style|nav|header).*?</\1>",
-                                                                       "", html))))
-    m = _SAID.search(text)
-    return m.group(0).strip()[:200] if m else None
-
-
-def _to(r, href: str | None) -> str:
-    """A link or form action on an Esse3 page as a full address: against the page's <base> when it has one (Esse3's
-    do, so "auth/studente/…" is from the site's root), else the page itself."""
-    base = re.search(r'<base\s[^>]*href="([^"]+)"', r.text, re.I)
-    href = unescape(href or "")
-    if base:
-        return urljoin(urljoin(str(r.url), unescape(base.group(1))), href)
-    return urljoin(BASE if href.startswith("auth/") else str(r.url), href)
-
-
-def _shape(html: str) -> str:
-    """What a page is made of, for the log: its forms' paths and buttons, never values or text."""
-    return "; ".join(f"{f.method} {urlparse(f.action or '').path.rsplit('/', 1)[-1]} [{','.join(sorted(f.buttons))}]"
-                     for f in forms(html)) or "no forms"
+        self.kind = kind  # closed, page, login
 
 
 def _key(e: dict) -> str:
@@ -297,8 +307,11 @@ def _short(day: str) -> str:
 
 
 class Esse3Reader:
-    def __init__(self, session: UnitoSession, study, notebook=None, push=None, tz=ZoneInfo("Europe/Rome")):
+    def __init__(self, session: UnitoSession, study, notebook=None, push=None, tz=ZoneInfo("Europe/Rome"),
+                 ask=None):
         self.session = session
+        self.ask = ask  # async (system, text) -> str: the fast model, for a page the parser can't read
+        self.errands = None  # ErrandRunner: signing up and cancelling (set once the browser is there)
         self.study = study
         self.notebook = notebook  # NotebookStore: the sessions become official course dates
         self.push = push
@@ -311,7 +324,6 @@ class Esse3Reader:
             pass
         self._wake = asyncio.Event()
         self._lock = asyncio.Lock()
-        self._busy: dict[str, str] = {}  # key: "signing up" or "cancelling", while it runs
 
     def _get(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM esse3_state WHERE key = ?", (key,)).fetchone()
@@ -388,8 +400,8 @@ class Esse3Reader:
         except LoginFailed as e:
             self._set("error", json.dumps({"kind": e.kind, "message": str(e)}))
             return False
-        exams = read_exams(exams_html)
-        booked = read_booked(booked_html, exams)
+        exams = read_exams(exams_html) or await self._read_by_model(exams_html, "exams")
+        booked = await self._booked(booked_html, exams)
         transcript = read_transcript(transcript_html)
         if not exams and not transcript:
             self._set("error", json.dumps({"kind": "page", "message": "Esse3's pages had nothing Aide can read"}))
@@ -400,6 +412,44 @@ class Esse3Reader:
         self._set("error", None)
         log.info("esse3: %d sessions, %d signed up, %d courses", len(exams), len(booked), len(transcript))
         return True
+
+    async def _read_by_model(self, html: str, what: str) -> list:
+        """The fast model's reading of a page the parser found nothing on, when it has dates and doesn't say it's
+        empty: the exams in `read_exams`' shape (no booking link: the errand starts from Appelli), or the bookings
+        as [{course, day}]. [] without a model or when it fails."""
+        text = _text(html)
+        if (self.ask is None or not _DAY.search(text) or "nessun appello" in text.casefold()
+                or "non ci sono appelli" in text.casefold()):
+            return []
+        try:
+            answer = _json(await self.ask(READ_PROMPT, text[:30000]))
+        except Exception:
+            log.warning("esse3: the model couldn't read the %s page", what, exc_info=True)
+            return []
+        log.warning("esse3: the %s page read by the model (the parser found nothing)", what)
+        if what == "booked":
+            return [{"course": str(b.get("course") or ""), "day": _iso(b.get("day"))}
+                    for b in answer.get("booked") or [] if isinstance(b, dict) and b.get("course") and _iso(b.get("day"))]
+        out = []
+        for e in answer.get("exams") or []:
+            if not isinstance(e, dict) or not e.get("course") or not _iso(e.get("day")):
+                continue
+            is_open = bool(e.get("open"))
+            out.append({"course": " ".join(str(e["course"]).split()), "day": e["day"],
+                        "time": e["time"] if isinstance(e.get("time"), str) and _TIME.fullmatch(e["time"]) else None,
+                        "opens": _iso(e.get("opens")), "closes": _iso(e.get("closes")), "open": is_open,
+                        "teachers": "", "link": EXAMS if is_open else None, "app_id": None})
+        return out
+
+    async def _booked(self, html: str, exams: list[dict]) -> set[str]:
+        """The keys of `exams` signed up for on a bookings page: parsed, else read by the model."""
+        found = read_booked(html, exams)
+        if found or "nessun appello prenotato" in _text(html).casefold():
+            return found
+        rows = await self._read_by_model(html, "booked")
+        return {_key(e) for e in exams for b in rows
+                if b["day"] == e["day"] and b["course"].casefold() in (e["course"].casefold(), (e.get("code") or "").casefold())
+                or (b["day"] == e["day"] and e["course"].casefold() in b["course"].casefold())}
 
     # -- saving ----------------------------------------------------------------------------
 
@@ -537,52 +587,74 @@ class Esse3Reader:
         return any(e["key"] in (w := self.wants()) and w[e["key"]] is None and not e["booked"]
                    and e["opens"] and e["opens"] <= today for e in self.exams())
 
+    def _errand(self, key: str) -> tuple[dict | None, dict | None]:
+        """The errand signing up for or cancelling a session (its row here, the errand), if any."""
+        row = self.conn.execute("SELECT * FROM esse3_errands WHERE key = ?", (key,)).fetchone()
+        if row is None or self.errands is None:
+            return (dict(row) if row else None), None
+        return dict(row), self.errands.store.get(row["errand_id"])
+
     def signup(self, date_id: str) -> dict | None:
         """An exam date's sign-up for the app: {state: booked, open, soon or closed, opens, closes, auto, busy,
-        error, can_cancel}; None when it isn't an Esse3 session."""
+        error, can_cancel, errand_id, step}; None when it isn't an Esse3 session."""
         if (e := self.exam_for(date_id)) is None:
             return None
         today = self._today()
         wants = self.wants()
         state = ("booked" if e["booked"] else "open" if e["open"] else
                  "soon" if e["opens"] and e["opens"] > today else "closed")
+        row, errand = self._errand(e["key"])
+        working = errand is not None and errand["status"] in ("queued", "running", "scheduled")
+        live = errand is not None and errand["status"] in OPEN_ERRAND
         return {"state": state, "opens": e["opens"], "closes": e["closes"], "auto": e["key"] in wants,
-                "busy": self._busy.get(e["key"]), "error": wants.get(e["key"]) or self._get(f"error:{e['key']}"),
-                "can_cancel": e["booked"] and (e["closes"] is None or e["closes"] >= today)}
+                "busy": ("signing up" if row["action"] == "book" else "cancelling") if working else None,
+                "error": None if working else wants.get(e["key"]) or self._get(f"error:{e['key']}"),
+                "can_cancel": e["booked"] and (e["closes"] is None or e["closes"] >= today),
+                "errand_id": errand["id"] if live else None,
+                "step": (errand["reason"] if errand["status"] == "needs_you" else errand["step"]) if live else None}
 
     async def sign_up(self, date_id: str) -> dict:
-        """The user's Sign me up: now when sign-up is open, else as soon as it opens. SignUpFailed when it didn't
-        go through (the reason kept on the date too)."""
+        """The user's Sign me up: an errand now when sign-up is open (its result comes later: `errand_ended`), else
+        as soon as it opens. SignUpFailed when it can't start."""
         async with self._lock:
             e = self._session(date_id)
-            if e["booked"]:
+            if e["booked"] or self._working(e["key"]):
                 return self.signup(date_id)
             if not e["open"]:
                 if e["closes"] and e["closes"] < self._today():
                     raise SignUpFailed("closed", "The sign-up for this exam has closed.")
                 self.conn.execute("INSERT INTO esse3_wants (key, at) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
                                   "error = NULL", (e["key"], utcnow().isoformat()))
+                self._set(f"error:{e['key']}", None)
                 activity.record(self.conn, "professor", "study",
                                 f"Will sign up for {self._name(e)}'s {_short(e['day'])} exam when it opens")
                 self._redate()
                 return self.signup(date_id)
-            await self._run(e, "signing up", self._book)
-            activity.record(self.conn, "professor", "study", f"Signed up for {self._name(e)}'s {_short(e['day'])} exam")
+            await self._start(e, "book")
             return self.signup(date_id)
 
     async def cancel(self, date_id: str) -> dict:
-        """The user's Cancel: the sign-up on Esse3 (while its window is open), or the wish to sign up."""
+        """The user's Cancel: the sign-up on Esse3 as an errand (while its window is open), or the wish to sign up
+        (and an errand signing up that hasn't got there, stopped)."""
         async with self._lock:
             e = self._session(date_id)
+            row, errand = self._errand(e["key"])
             if not e["booked"]:
                 self.conn.execute("DELETE FROM esse3_wants WHERE key = ?", (e["key"],))
                 self._set(f"error:{e['key']}", None)
+                if errand is not None and row["action"] == "book" and errand["status"] in OPEN_ERRAND:
+                    self.conn.execute("UPDATE esse3_errands SET told = 'stopped' WHERE key = ?", (e["key"],))
+                    self.errands.cancel(errand["id"])
                 self._redate()
                 return self.signup(date_id)
-            await self._run(e, "cancelling", self._unbook)
-            activity.record(self.conn, "professor", "study",
-                            f"Cancelled the sign-up for {self._name(e)}'s {_short(e['day'])} exam")
+            if self._working(e["key"]):
+                return self.signup(date_id)
+            await self._start(e, "cancel")
             return self.signup(date_id)
+
+    def _working(self, key: str) -> bool:
+        _, errand = self._errand(key)
+        return errand is not None and errand["status"] in ("queued", "running", "scheduled")
 
     def forget(self, date_id: str) -> None:
         """The exam was archived: no sign-up for it later."""
@@ -598,99 +670,104 @@ class Esse3Reader:
         if self.notebook is not None:
             self._dates()
 
-    async def _run(self, e: dict, doing: str, step) -> None:
-        """One sign-up or cancel against Esse3, then everything read again; the trouble kept for the app."""
-        self._busy[e["key"]] = doing
-        try:
-            try:
-                await step(e)
-            except LoginFailed as x:
-                raise SignUpFailed("login", f"Couldn't get into Esse3: {x}.") from None
-            except NoLogin:
-                raise SignUpFailed("login", "Aide has no UniTo login: add it in Settings → Passwords.") from None
-        except SignUpFailed as x:
-            self._set(f"error:{e['key']}", str(x))
-            log.warning("esse3: %s failed (%s)", doing, x.kind)
-            raise
-        finally:
-            self._busy.pop(e["key"], None)
-        self._set(f"error:{e['key']}", None)
-        self.conn.execute("DELETE FROM esse3_wants WHERE key = ?", (e["key"],))
-        await self._read()
-
-    async def _book(self, e: dict) -> None:
-        if not e["link"]:
+    async def _start(self, e: dict, action: str, auto: bool = False) -> dict:
+        """The errand that signs up for (or cancels) a session: the login made here and handed over as cookies."""
+        if self.errands is None:
+            raise SignUpFailed("page", "Aide's browser isn't installed on the server, so it can't use Esse3: do it on "
+                                       "MyUniTo this time.")
+        if action == "book" and not e["link"]:
             raise SignUpFailed("closed", "Esse3 isn't taking sign-ups for this exam now.")
-        r = await self.session.get(e["link"])
-        if "DatiPrenotazioneAppello" not in str(r.url):  # a login lands on Esse3's home
-            r = await self.session.get(e["link"])
-        form = next((f for f in forms(r.text) if "EffettuaPrenotazioneAppello" in (f.action or "")), None)
-        if form is None:
-            log.warning("esse3: the sign-up page had no form (%s)", _shape(r.text))
-            raise SignUpFailed("page", _said(r.text) or "Esse3's sign-up page didn't show its form. Sign up on "
-                                                        "MyUniTo this time.")
-        done = set()
-        for _ in range(3):  # the form, and at most two more steps of the same sign-up (a notice to accept)
-            action = _to(r, form.action)
-            done.add(urlparse(action).path)
-            data = {**form.fields, **{t: "" for t in form.texts}}
-            if form.buttons:
-                name, value = next(iter(form.buttons.items()))
-                data[name] = value
-            log.info("esse3: posting %s", urlparse(action).path.rsplit("/", 1)[-1])
-            r = await self.session.post(action, data)
-            if "questionar" in str(r.url).casefold() or any("questionar" in (f.action or "").casefold()
-                                                            for f in forms(r.text)):
-                raise SignUpFailed("questionnaire", "Esse3 wants this course's questionnaire filled in first. Do it "
-                                                    "on MyUniTo, then tap Sign me up again.")
-            form = next((f for f in forms(r.text) if f.buttons and "Prenotazion" in (f.action or "")
-                         and "ancell" not in (f.action or "").casefold()
-                         and urlparse(_to(r, f.action)).path not in done), None)
-            if form is None:
-                break
-        if not await self._is_booked(e):
-            log.warning("esse3: sign-up not in the bookings (%s)", _shape(r.text))
-            raise SignUpFailed("unconfirmed", _said(r.text) or "Esse3 didn't list the sign-up afterwards. Check on "
-                                                               "MyUniTo.")
+        _, old = self._errand(e["key"])
+        if old is not None and old["status"] in OPEN_ERRAND:  # one left waiting for the user: this tap replaces it
+            self.conn.execute("UPDATE esse3_errands SET told = 'stopped' WHERE key = ?", (e["key"],))
+            self.errands.cancel(old["id"])
+        try:
+            cookies = await self.session.handoff(BOOKED)
+        except LoginFailed as x:
+            raise SignUpFailed("login", f"Couldn't get into Esse3: {x}.") from None
+        except NoLogin:
+            raise SignUpFailed("login", "Aide has no UniTo login: add it in Settings → Passwords.") from None
+        d = date.fromisoformat(e["day"])
+        others = [[x["course"], date.fromisoformat(x["day"]).strftime("%d/%m/%Y")] for x in self.exams()
+                  if x["booked"] and x["key"] != e["key"]]
+        target = {"action": action, "key": e["key"], "course": e["course"], "code": e["code"], "day": e["day"],
+                  "day_it": d.strftime("%d/%m/%Y"), "time": e["time"], "app_id": e.get("app_id"),
+                  "name": self._name(e), "start_url": e["link"] if action == "book" else BOOKED, "others": others}
+        errand = await self.errands.start_esse3(target, cookies)
+        self.conn.execute("INSERT OR REPLACE INTO esse3_errands (key, errand_id, action, auto, told, at) "
+                          "VALUES (?, ?, ?, ?, NULL, ?)", (e["key"], errand["id"], action, int(auto),
+                                                           utcnow().isoformat()))
+        self._set(f"error:{e['key']}", None)
+        log.info("esse3: errand %s to %s", errand["id"], action)
+        return errand
 
-    async def _unbook(self, e: dict) -> None:
-        page = await self.session.get(BOOKED)
-        html = page.text
-        app_id = e.get("app_id")
-
-        def mine(url: str) -> bool:
-            return bool(app_id) and (parse_qs(urlparse(url).query).get("APP_ID") or [None])[0] == app_id
-
-        links = [unescape(h) for h in re.findall(r'href="([^"]*ancell[^"]*)"', html, re.I)]
-        found = [f for f in forms(html) if "ancell" in (f.action or "").casefold()]
-        one = len(read_booked(html, self.exams())) == 1  # the only booking: its cancel is the only one
-        link = next((l for l in links if mine(l)), links[0] if one and len(links) == 1 else None)
-        form = next((f for f in found if app_id and f.fields.get("APP_ID") == app_id),
-                    found[0] if one and len(found) == 1 else None)
-        if link is None and form is None:
-            log.warning("esse3: no cancel on the bookings page (%s)", _shape(html))
-            raise SignUpFailed("page", "Esse3 shows no way to cancel this sign-up now (the window may have "
-                                       "closed). Check on MyUniTo.")
-        r = page
-        if link is not None:
-            r = await self.session.get(_to(page, link))
-            form = next((f for f in forms(r.text) if f.buttons and "ancell" in (f.action or "").casefold()), None)
-        if form is not None:
-            data = dict(form.fields)
-            name, value = next(iter(form.buttons.items()), (None, None))
-            if name:
-                data[name] = value
-            log.info("esse3: posting %s", urlparse(form.action or "").path.rsplit("/", 1)[-1])
-            r = await self.session.post(_to(r, form.action), data)
-        if await self._is_booked(e):
-            log.warning("esse3: still booked after cancelling (%s)", _shape(r.text))
-            raise SignUpFailed("unconfirmed", _said(r.text) or "Esse3 still lists the sign-up. Cancel it on MyUniTo.")
+    async def errand_ended(self, errand: dict, kind: str, args: dict) -> None:
+        """An Esse3 errand stopped (`kind`: finish, need_user, failed, cancelled). The bookings page decides, read
+        here; the browser's UniTo profile goes unless the user may still take over; the user is told once."""
+        t = errand["esse3"]
+        async with self._lock:
+            row = self.conn.execute("SELECT * FROM esse3_errands WHERE key = ?", (t["key"],)).fetchone()
+            if row is None or row["errand_id"] != errand["id"]:
+                return  # replaced by a newer tap: that errand's end clears the browser
+            if row["told"] == "stopped":  # the user stopped it
+                if self.errands is not None:
+                    await self.errands.browser.forget(SITE)
+                return
+            try:
+                booked = await self._is_booked(t)
+            except (LoginFailed, NoLogin) as x:
+                log.warning("esse3: couldn't check the bookings after errand %s (%s)", errand["id"], x)
+                booked = None
+            if kind != "need_user" and self.errands is not None:
+                await self.errands.browser.forget(SITE)
+            await self._read()
+            row = dict(self.conn.execute("SELECT * FROM esse3_errands WHERE key = ?", (t["key"],)).fetchone())
+            book = t["action"] == "book"
+            done = booked is not None and booked == book
+            name, day = t.get("name") or t["course"].title(), _short(t["day"])
+            if not done and kind == "cancelled" and row["told"] == "failed":
+                return  # told already, and the user never took over
+            if done:
+                self.conn.execute("DELETE FROM esse3_wants WHERE key = ?", (t["key"],))
+                self._set(f"error:{t['key']}", None)
+                told = "done"
+                what = f"Signed up for {name}'s {day} exam" if book else f"Cancelled the sign-up for {name}'s {day} exam"
+                title = f"Signed up: {name}" if book else f"Sign-up cancelled: {name}"
+                body = (f"The {day} exam, as soon as the sign-up opened." if row["auto"] else
+                        f"The {day} exam, on Esse3." if book else f"The {day} exam: you're no longer signed up.")
+                activity.record(self.conn, "professor", "study", what)
+            else:
+                told = "failed"
+                said = args.get("reason") if kind == "need_user" else args.get("result")
+                said = " ".join(str(said or "").split())[:200]
+                message = (said if said and (kind == "need_user" or args.get("ok") is False) else
+                           "Aide couldn't check Esse3 afterwards. Look on MyUniTo." if booked is None else
+                           "Esse3 didn't list the sign-up afterwards. Check on MyUniTo." if book else
+                           "Esse3 still lists the sign-up. Cancel it on MyUniTo.")
+                if kind == "need_user":
+                    message += " You can take over in the app."
+                self._set(f"error:{t['key']}", message)
+                self.conn.execute("UPDATE esse3_wants SET error = ? WHERE key = ?", (message, t["key"]))
+                title = f"Couldn't sign you up: {name}" if book else f"Couldn't cancel: {name}"
+                body = f"The {day} exam. {message}"
+                activity.record(self.conn, "professor", "study",
+                                f"Couldn't {'sign up for' if book else 'cancel'} {name}'s {day} exam", message)
+                log.warning("esse3: errand %s didn't %s (%s)", errand["id"], t["action"], kind)
+            self.conn.execute("UPDATE esse3_errands SET told = ? WHERE key = ?", (told, t["key"]))
+            self._redate()
+        if self.push is not None:
+            course = self.exam_for(_id("exam", t))
+            try:
+                await self.push.send_esse3(title, body, (course or {}).get("course_id"))
+            except Exception:
+                log.exception("esse3: push failed")
 
     async def _is_booked(self, e: dict) -> bool:
-        return e["key"] in read_booked((await self.session.get(BOOKED)).text, [e])
+        return _key(e) in await self._booked((await self.session.get(BOOKED)).text, [e])
 
     async def _sign_up_wanted(self) -> None:
-        """After a read: each wanted session whose sign-up is open now, signed up for, with a push either way."""
+        """After a read: each wanted session whose sign-up is open now, an errand to sign up (its result pushed when
+        it ends); a push now only when it can't start."""
         wants = self.wants()
         for e in self.exams():
             if e["key"] not in wants or wants[e["key"]] is not None or e["booked"] or not e["open"]:
@@ -698,22 +775,22 @@ class Esse3Reader:
             if self._archived(e):
                 self.conn.execute("DELETE FROM esse3_wants WHERE key = ?", (e["key"],))
                 continue
-            name, day = self._name(e), _short(e["day"])
+            row, errand = self._errand(e["key"])
+            if errand is not None and errand["status"] in OPEN_ERRAND:
+                continue
             try:
-                await self._run(e, "signing up", self._book)
+                await self._start(e, "book", auto=True)
             except SignUpFailed as x:
+                name, day = self._name(e), _short(e["day"])
                 self.conn.execute("UPDATE esse3_wants SET error = ? WHERE key = ?", (str(x), e["key"]))
                 self._redate()
-                title, body = f"Couldn't sign you up: {name}", f"The {day} exam. {x}"
                 activity.record(self.conn, "professor", "study", f"Couldn't sign up for {name}'s {day} exam", str(x))
-            else:
-                title, body = f"Signed up: {name}", f"The {day} exam, as soon as the sign-up opened."
-                activity.record(self.conn, "professor", "study", f"Signed up for {name}'s {day} exam")
-            if self.push is not None:
-                try:
-                    await self.push.send_esse3(title, body, e["course_id"])
-                except Exception:
-                    log.exception("esse3: push failed")
+                if self.push is not None:
+                    try:
+                        await self.push.send_esse3(f"Couldn't sign you up: {name}", f"The {day} exam. {x}",
+                                                   e["course_id"])
+                    except Exception:
+                        log.exception("esse3: push failed")
 
     # -- what's kept -----------------------------------------------------------------------
 

@@ -308,49 +308,53 @@ def test_the_api():
 
 
 # -- signing up, cancelling, not taking an exam ----------------------------------------------------
+# The clicking is an errand (tests/test_errands.py); here, what esse3.py does around it: start it with the login as
+# cookies, decide from the bookings page when it ends, push once.
 
-SIGN_UP_PAGE = """<html><body><h2>Prenotazione appello</h2>
-<form method="post" action="auth/studente/Appelli/EffettuaPrenotazioneAppello.do;jsessionid=X" id="prenota">
-<input type="hidden" name="APP_ID" value="1"><input type="hidden" name="ADSCE_ID" value="3">
-<textarea name="NOTE_STU"></textarea><input type="submit" name="btnSalva" value="Prenotati all'appello">
-</form></body></html>"""
-DONE = "<html><body><p>Prenotazione effettuata.</p></body></html>"
-REFUSED = "<html><body><p>Attenzione: non è possibile prenotarsi, mancano i prerequisiti.</p></body></html>"
-QUESTIONS = """<html><body><form action="auth/studente/Questionari/Compila.do" method="post">
-<input type="submit" name="go" value="Compila"></form></body></html>"""
-CANCEL = """<form action="auth/studente/Appelli/CancellaAppello.do" method="post"><input type="hidden" name="APP_ID"
-value="1"><input type="submit" name="btnCancella" value="Cancella prenotazione"></form>"""
+COOKIES = [{"name": "JSESSIONID", "value": "s3cret-session", "url": "https://esse3.unito.it/"}]
 
 
 class BookingSession(FakeSession):
-    """Esse3 that takes a sign-up (or refuses it) and a cancel, changing the bookings page as it goes."""
+    """Esse3 whose bookings page the test changes, as if the errand had clicked; hands its login over as cookies."""
 
-    def __init__(self, answer=DONE, takes=True):
+    def __init__(self):
         super().__init__()
-        self.answer = answer
-        self.takes = takes
-        self.posts = []
-        self.booked_after = ONE_BOOKED.replace("</table>", "</table>" + CANCEL)
+        self.handed = 0
 
-    async def get(self, url):
-        self.entry()
-        self.got.append(url)
-        self.logged_in = True
-        text = SIGN_UP_PAGE if "DatiPrenotazioneAppello" in url else self.pages[url]
-        return SimpleNamespace(text=text, url=url)
-
-    async def post(self, url, data):
-        self.posts.append((url, dict(data)))
-        if "CancellaAppello" in url:
-            self.pages[BOOKED] = NONE_BOOKED
-            return SimpleNamespace(text=DONE, url=url, is_redirect=False)
-        if self.takes:
-            self.pages[BOOKED] = self.booked_after
-        return SimpleNamespace(text=self.answer, url=url, is_redirect=False)
+    async def handoff(self, url):
+        await self.get(url)
+        self.handed += 1
+        return list(COOKIES)
 
 
-async def booking(session):
+class FakeErrands:
+    """The runner's side: errands started, cancelled; the browser's profile forgotten."""
+
+    def __init__(self):
+        self.rows, self.started, self.forgot = {}, [], []
+        self.store = SimpleNamespace(get=lambda i: self.rows.get(i))
+        self.browser = SimpleNamespace(forget=self._forget)
+
+    async def _forget(self, site):
+        self.forgot.append(site)
+        return True
+
+    async def start_esse3(self, target, cookies):
+        e = {"id": len(self.rows) + 1, "status": "queued", "step": "Waiting to start", "reason": None,
+             "esse3": target}
+        self.rows[e["id"]] = e
+        self.started.append((target, cookies))
+        return e
+
+    def cancel(self, errand_id):
+        self.rows[errand_id]["status"] = "cancelled"
+        return self.rows[errand_id]
+
+
+async def booking(session=None):
+    session = session or BookingSession()
     db, study, notebook, push, reader = make(session)
+    reader.errands = FakeErrands()
     c = await ids(study)
     await reader.read()
     maths = c["maths for economics II"]
@@ -358,67 +362,161 @@ async def booking(session):
     return db, study, notebook, push, reader, maths, exam
 
 
+async def ended(reader, errand_id, kind, **args):
+    e = reader.errands.rows[errand_id]
+    e["status"] = {"finish": "done", "need_user": "needs_you", "failed": "failed", "cancelled": "cancelled"}[kind]
+    await reader.errand_ended(e, kind, args)
+
+
 async def test_sign_up_when_open():
-    session = BookingSession()
-    db, study, notebook, push, reader, maths, exam = await booking(session)
+    db, study, notebook, push, reader, maths, exam = await booking()
+    session, errands = reader.session, reader.errands
     assert reader.signup(exam["id"])["state"] == "open"
     state = await reader.sign_up(exam["id"])
-    assert state["state"] == "booked" and state["can_cancel"] and state["error"] is None
-    (url, data), = session.posts
-    assert url == "https://esse3.unito.it/auth/studente/Appelli/EffettuaPrenotazioneAppello.do;jsessionid=X"
-    assert data == {"APP_ID": "1", "ADSCE_ID": "3", "NOTE_STU": "", "btnSalva": "Prenotati all'appello"}
+    assert (state["state"], state["busy"], state["errand_id"], state["step"]) == ("open", "signing up", 1,
+                                                                                   "Waiting to start")
+    (target, cookies), = errands.started
+    assert cookies == COOKIES and session.handed == 1
+    assert {k: target[k] for k in ("action", "course", "code", "day", "day_it", "app_id", "others")} == {
+        "action": "book", "course": "MATHEMATICS FOR ECONOMICS II", "code": "SEM0251", "day": "2026-12-04",
+        "day_it": "04/12/2026", "app_id": "1", "others": []}
+    assert "DatiPrenotazioneAppello" in target["start_url"]
+    # a second tap while it runs starts nothing
+    assert (await reader.sign_up(exam["id"]))["busy"] == "signing up" and len(errands.started) == 1
+    # the errand clicked; the bookings say so
+    session.pages[BOOKED] = ONE_BOOKED
+    push.sent.clear()
+    await ended(reader, 1, "finish", ok=True, result="Prenotazione effettuata")
+    state = reader.signup(exam["id"])
+    assert (state["state"], state["busy"], state["error"], state["errand_id"]) == ("booked", None, None, None)
+    assert state["can_cancel"] and errands.forgot == ["unito.it"]
+    assert [t for t, *_ in push.sent] == ["Signed up: Maths for economics II"]
     assert next(d for d in notebook.dates(maths) if d["id"] == exam["id"])["you"] == "Signed up on Esse3"
-    assert next(e["app_id"] for e in reader.exams() if e["day"] == "2026-12-04") == "1"
     rows = db.conn.execute("SELECT title FROM activity WHERE kind = 'study'").fetchall()
     assert any("Signed up for Maths for economics II's 4 Dec exam" in r["title"] for r in rows)
-    # and cancelled again
+    # and cancelled again, from the bookings page
     state = await reader.cancel(exam["id"])
-    assert state["state"] == "open" and session.posts[-1] == (
-        "https://esse3.unito.it/auth/studente/Appelli/CancellaAppello.do",
-        {"APP_ID": "1", "btnCancella": "Cancella prenotazione"})
+    assert state["busy"] == "cancelling" and errands.started[-1][0]["action"] == "cancel"
+    assert errands.started[-1][0]["start_url"] == BOOKED
+    session.pages[BOOKED] = NONE_BOOKED
+    await ended(reader, 2, "finish", ok=True, result="Cancellata")
+    assert reader.signup(exam["id"])["state"] == "open"
+    assert push.sent[-1][0] == "Sign-up cancelled: Maths for economics II"
 
 
-async def test_a_refused_sign_up_says_why():
-    session = BookingSession(answer=REFUSED, takes=False)
-    *_, reader, maths, exam = await booking(session)
-    with pytest.raises(SignUpFailed) as e:
-        await reader.sign_up(exam["id"])
-    assert e.value.kind == "unconfirmed" and "non è possibile prenotarsi" in str(e.value)
-    assert reader.signup(exam["id"])["error"] == str(e.value) and len(session.posts) == 1  # never sent again
+async def test_the_bookings_decide_not_the_model():
+    *_, push, reader, maths, exam = await booking()
+    await reader.sign_up(exam["id"])
+    push.sent.clear()
+    await ended(reader, 1, "finish", ok=True, result="Done!")  # says done; Esse3 doesn't list it
+    state = reader.signup(exam["id"])
+    assert state["state"] == "open" and "didn't list the sign-up" in state["error"]
+    assert [t for t, *_ in push.sent] == ["Couldn't sign you up: Maths for economics II"]
+    # never tried again by itself
+    await reader.read()
+    assert len(reader.errands.started) == 1
 
 
 async def test_a_questionnaire_first():
-    session = BookingSession(answer=QUESTIONS, takes=False)
-    *_, reader, maths, exam = await booking(session)
+    *_, push, reader, maths, exam = await booking()
+    await reader.sign_up(exam["id"])
+    push.sent.clear()
+    await ended(reader, 1, "need_user", why="other", reason="Esse3 asks for the course questionnaire first.")
+    state = reader.signup(exam["id"])
+    assert state["error"] == "Esse3 asks for the course questionnaire first. You can take over in the app."
+    assert state["errand_id"] == 1  # waiting for the user: Take over
+    assert reader.errands.forgot == []  # kept for the live view
+    assert push.sent[0][0] == "Couldn't sign you up: Maths for economics II"
+    # left waiting, then cancelled: nothing pushed again, the profile gone
+    await ended(reader, 1, "cancelled")
+    assert len(push.sent) == 1 and reader.errands.forgot == ["unito.it"]
+
+
+async def test_a_new_tap_replaces_one_left_waiting():
+    *_, push, reader, maths, exam = await booking()
+    await reader.sign_up(exam["id"])
+    await ended(reader, 1, "need_user", why="other", reason="A notice.")
+    await reader.sign_up(exam["id"])
+    assert reader.errands.rows[1]["status"] == "cancelled" and len(reader.errands.started) == 2
+    sent = len(push.sent)
+    await reader.errand_ended(reader.errands.rows[1], "cancelled", {})  # the old one's end changes nothing
+    assert len(push.sent) == sent and reader.signup(exam["id"])["busy"] == "signing up"
+
+
+async def test_no_browser_or_no_login():
+    session = BookingSession()
+    db, study, notebook, push, reader = make(session)
+    c = await ids(study)
+    await reader.read()
+    exam = next(d for d in notebook.dates(c["maths for economics II"]) if d["date"] == "2026-12-04")
     with pytest.raises(SignUpFailed) as e:
         await reader.sign_up(exam["id"])
-    assert e.value.kind == "questionnaire"
+    assert e.value.kind == "page"
+    reader.errands = FakeErrands()
+
+    async def no_login(url):
+        raise LoginFailed("needs_you", "UniTo asks for something Aide can't do")
+    session.handoff = no_login
+    with pytest.raises(SignUpFailed) as e:
+        await reader.sign_up(exam["id"])
+    assert e.value.kind == "login" and reader.errands.started == []
 
 
 async def test_signed_up_as_soon_as_it_opens():
-    session = BookingSession()
-    db, study, notebook, push, reader, maths, _ = await booking(session)
+    db, study, notebook, push, reader, maths, _ = await booking()
+    session = reader.session
     later = next(d for d in notebook.dates(maths) if d["kind"] == "exam" and d["date"] == "2027-01-14")
     state = await reader.sign_up(later["id"])
-    assert (state["state"], state["auto"]) == ("soon", True) and session.posts == []
+    assert (state["state"], state["auto"], state["busy"]) == ("soon", True, None) and reader.errands.started == []
     assert next(d for d in notebook.dates(maths) if d["id"] == later["id"])["you"].startswith("Aide signs you up")
-    # it opens: the next read signs up, with a push and no "sign-up open" push
+    # it opens: the next read starts the errand
     session.pages[EXAMS] = APPELLI.replace(appello(CLOSED, "MATHEMATICS FOR ECONOMICS II", "14/01/2027 09:30",
                                                    "15/12/2026", "07/01/2027"),
                                            appello(OPEN, "MATHEMATICS FOR ECONOMICS II", "14/01/2027 09:30",
                                                    "15/12/2026", "07/01/2027"))
-    session.pages[BOOKED] = NONE_BOOKED
-    session.booked_after = ONE_BOOKED.replace("04/12/2026 - 09:00", "14/01/2027 - 09:30")
     push.sent.clear()
     await reader.read()
-    assert len(session.posts) == 1
+    (target, _), = reader.errands.started
+    assert target["day"] == "2027-01-14" and reader.signup(later["id"])["busy"] == "signing up"
+    await reader.read()  # still running: not started again
+    assert len(reader.errands.started) == 1
+    session.pages[BOOKED] = ONE_BOOKED.replace("04/12/2026 - 09:00", "14/01/2027 - 09:30")
+    await ended(reader, 1, "finish", ok=True, result="ok")
     assert [t for t, *_ in push.sent] == ["Signed up: Maths for economics II"]
-    assert reader.wants() == {}
+    assert "as soon as the sign-up opened" in push.sent[0][1] and reader.wants() == {}
+
+
+async def test_cancelling_a_wish_stops_its_errand():
+    *_, reader, maths, exam = await booking()
+    await reader.sign_up(exam["id"])
+    reader.conn.execute("INSERT INTO esse3_wants (key, at) VALUES (?, '2026-11-07')",
+                        (reader.exam_for(exam["id"])["key"],))
+    state = await reader.cancel(exam["id"])
+    assert reader.errands.rows[1]["status"] == "cancelled" and state["busy"] is None and reader.wants() == {}
+    await ended(reader, 1, "cancelled")
+    assert not any(t.startswith(("Couldn't", "Signed")) for t, *_ in reader.push.sent)
+
+
+async def test_the_model_reads_a_page_the_parser_cant():
+    pages = {EXAMS: "<html><body><div>MATEMATICA II — 04/12/2026 ore 09:30, iscrizioni 04/11/2026–27/11/2026"
+                    "</div></body></html>", BOOKED: NONE_BOOKED, TRANSCRIPT: LIBRETTO}
+    asked = []
+
+    async def ask(system, text):
+        asked.append(text)
+        return ('{"exams": [{"course": "Matematica II", "day": "2026-12-04", "time": "09:30", "opens": "2026-11-04", '
+                '"closes": "2026-11-27", "open": true}]}')
+    db, study, notebook, push, reader = make(FakeSession(pages))
+    reader.ask = ask
+    await reader.read()
+    (e,) = reader.exams()
+    assert (e["course"], e["day"], e["time"], e["open"], e["link"]) == ("Matematica II", "2026-12-04", "09:30", True,
+                                                                        EXAMS)
+    assert len(asked) == 1 and "04/12/2026" in asked[0]
 
 
 async def test_not_taking_an_exam():
-    session = BookingSession()
-    db, study, notebook, push, reader, maths, exam = await booking(session)
+    db, study, notebook, push, reader, maths, exam = await booking()
     await reader.sign_up(next(d for d in notebook.dates(maths) if d["date"] == "2027-01-14")["id"])
     later = next(d for d in notebook.dates(maths) if d["kind"] == "exam" and d["date"] == "2027-01-14")
     notebook.archive_date(maths, later["id"])
@@ -433,8 +531,7 @@ async def test_not_taking_an_exam():
 
 
 async def test_signing_up_through_the_api():
-    session = BookingSession()
-    db, study, notebook, push, reader, maths, exam = await booking(session)
+    db, study, notebook, push, reader, maths, exam = await booking()
     agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", delegate=False, tz=ROME)
     app = create_app(agent, ReminderStore(db.conn), FakeCalendar([]), ROME, TOKEN, study=study, notebook=notebook,
                      esse3=reader)
@@ -443,7 +540,11 @@ async def test_signing_up_through_the_api():
         assert next(d for d in items if d["id"] == exam["id"])["signup"]["state"] == "open"
         assert "signup" not in next(d for d in items if d["kind"] != "exam")
         r = client.post(f"/v1/esse3/exams/{exam['id']}/signup", headers=AUTH)
-        assert r.status_code == 200 and r.json()["signup"]["state"] == "booked"
+        assert r.status_code == 202 and r.json()["signup"]["busy"] == "signing up"
+        assert r.json()["signup"]["errand_id"] == 1
+        later = next(d for d in items if d["kind"] == "exam" and d["date"] == "2027-01-14")
+        r = client.post(f"/v1/esse3/exams/{later['id']}/signup", headers=AUTH)
+        assert r.status_code == 200 and r.json()["signup"]["auto"] is True
         r = client.post(f"/v1/study/courses/{maths}/dates/{exam['id']}/archive", headers=AUTH)
         assert [d["archived"] for d in r.json()["items"] if d["id"] == exam["id"]] == [True]
         assert exam["id"] not in {d["id"] for d in client.get(f"/v1/study/courses/{maths}/dates", headers=AUTH)

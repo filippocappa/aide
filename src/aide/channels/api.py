@@ -2098,12 +2098,16 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(503, "Esse3 isn't on")
         return esse3
 
+    def esse3_answer(signup: dict) -> JSONResponse:
+        """200 when it's settled; 202 while Aide's browser is on Esse3 (the outcome comes on the signup and by push)."""
+        return JSONResponse({"signup": signup}, status_code=202 if signup.get("busy") else 200)
+
     @app.post("/v1/esse3/exams/{date_id}/signup", dependencies=[Depends(auth)])
     async def esse3_sign_up(date_id: str):
-        """The user's Sign me up (the tap is the confirmation): booked now when sign-up is open (~5–20 s), else
-        as soon as it opens. 409 with Esse3's reason when it didn't go through."""
+        """The user's Sign me up (the tap is the confirmation): an errand in Aide's browser when sign-up is open
+        (202, a minute or two), else as soon as it opens. 409 when it can't start."""
         try:
-            return {"signup": await esse3_or_503().sign_up(date_id)}
+            return esse3_answer(await esse3_or_503().sign_up(date_id))
         except KeyError:
             raise HTTPException(404, "not an Esse3 exam session")
         except SignUpFailed as e:
@@ -2111,9 +2115,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.delete("/v1/esse3/exams/{date_id}/signup", dependencies=[Depends(auth)])
     async def esse3_cancel(date_id: str):
-        """The user's Cancel sign-up: on Esse3 while its window is open, or the wish to sign up when it opens."""
+        """The user's Cancel sign-up: an errand on Esse3 while its window is open (202), or the wish to sign up when it
+        opens (and an errand signing up, stopped)."""
         try:
-            return {"signup": await esse3_or_503().cancel(date_id)}
+            return esse3_answer(await esse3_or_503().cancel(date_id))
         except KeyError:
             raise HTTPException(404, "not an Esse3 exam session")
         except SignUpFailed as e:

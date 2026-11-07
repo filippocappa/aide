@@ -255,3 +255,21 @@ def test_forms_parser():
     assert [f.id for f in found] == ["triggerFlow", None]
     assert {"j_username", "j_password", "_eventId_proceed"} <= found[1].names
     assert forms("<form><input name='x' type='hidden' value='1'></form>")[0].fields == {"x": "1"}
+
+
+def test_handoff_gives_the_browser_only_unito_cookies(make):
+    fake = FakeUniTo()
+    session, *_ = make(fake)
+
+    async def go():
+        await session.get(ESSE3)
+        session.http.cookies.set("tracker", "x", domain="ads.example.com")
+        session.http.cookies.set("shared", "y", domain=".unito.it")
+        return await session.handoff(ESSE3)
+
+    cookies = {c["name"]: c for c in run(go())}
+    assert set(cookies) == {"esse3", "JSESSIONID", "shared"}
+    assert cookies["esse3"]["url"] == "https://esse3.unito.it/" and cookies["esse3"]["secure"]
+    assert cookies["JSESSIONID"]["url"] == "https://idp.unito.it/idp"
+    assert cookies["shared"]["domain"] == ".unito.it" and cookies["shared"]["path"] == "/"
+    assert all(PASSWORD not in str(c) for c in cookies.values())
