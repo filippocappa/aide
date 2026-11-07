@@ -51,6 +51,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   (#75, `start_esse3` in `errands.py`): `unito.handoff` gives the browser the login as cookies (never the password), no
   typing, at most two committing clicks, each only on the tapped session (`esse3_mismatch`), never retried or resumed;
   then the bookings decide and the UniTo profile is forgotten (kept 30 min only while it waits for the user).
+  From chat: Professor's `exam_signups`, `sign_up_for_exam` and `cancel_exam_signup` (`tools/esse3.py`), the two
+  queued, so Confirm is the tap.
 - `engine.py`: OpenRouter or the Claude plan through Claude Code, for the notes and (its own switch) background work:
   routines and watches (Claude Agent SDK, Aide's tools in-process), digests, drafts, titles, objectives.
   Professor's typed chat turns run on the plan too, with Sonnet, whenever the notes do (`PLAN_CHATS` in `agent.py`;

@@ -46,7 +46,7 @@ STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_
          "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
          "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
          "cancel_review_session", "course_dates", "add_course_date", "edit_course_date", "hide_course_date",
-         "start_focus", "focus_status", "study_plan")
+         "start_focus", "focus_status", "study_plan", "exam_signups", "sign_up_for_exam", "cancel_exam_signup")
 
 
 @dataclass(frozen=True)
@@ -368,6 +368,12 @@ practice exam, flashcards, a lesson), open_page puts the button under your reply
 - Course dates: course_dates lists a course's exams, mid-terms and deadlines; when the user corrects one or tells you \
 of one, edit_course_date, add_course_date or hide_course_date (a wrong one). Their changes stay when the course is \
 read again.
+- Exam sign-ups (Esse3, MyUniTo): exam_signups lists the sessions Esse3 has, with where each sign-up stands. When \
+the user asks to book, register for or sign up for an exam ("book me maths II on 4 Dec"), find the session there \
+(names are loose: Math II is Mathematics for Economics II) and queue sign_up_for_exam; cancel_exam_signup to undo \
+one. Both wait for the user's Confirm, then Aide's browser does it on Esse3 in a minute or two and the result comes \
+by push: say it's queued, never that it's done. Never send the user to MyUniTo to do it themselves unless Esse3 \
+isn't connected or the sign-up has closed.
 - The exam plan: study_plan adds up the hours each coming exam or mid-term still needs (learning the topics, \
 practising their questions, cards and exercises, mock exams, the last review), less what the user already knows, \
 and lays them over the free days before it, within a daily cap (lighter in term, heavier after the last lecture). \
@@ -396,7 +402,7 @@ _FOOD_ELSEWHERE = """- Food: you don't keep the food log; Coach does. If the use
 _DELEGATE = """- Your team does the work; you run the front desk. Hand each request to the specialist whose work \
 it is, with ask_agent: Secretary for the calendar, reminders and mail; Coach for sleep, recovery, training, health, \
 food (a meal photo goes to Coach to log), habits and Screen Time locks ("no phone for an hour"); Professor for \
-study and lectures; Finance for money and budgets. "Put it in Finance", "as Work" about an event names a calendar \
+study and lectures, and exam sign-ups on Esse3 ("book me the 4 Dec exam"); Finance for money and budgets. "Put it in Finance", "as Work" about an event names a calendar \
 (the user has calendars with those names), not a teammate: the event goes to Secretary with that calendar. You don't \
 have their tools, so never answer those from memory \
 or guess: ask. A request that spans several (plan my week) goes to each one that has a part, at most 3 asks per \
