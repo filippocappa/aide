@@ -630,6 +630,9 @@ final class ChatViewModel: ObservableObject {
             pending = result.pending
             isActing = false
             await onServerChange?()
+            // What ran may post in this chat a moment later (an Esse3 sign-up's card): load it then.
+            try? await Task.sleep(for: .seconds(1.5))
+            await loadHistory()
         } catch {
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
             isActing = false

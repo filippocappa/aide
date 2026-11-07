@@ -433,6 +433,9 @@ async def test_a_questionnaire_first():
     assert state["errand_id"] == 1  # waiting for the user: Take over
     assert reader.errands.forgot == []  # kept for the live view
     assert push.sent[0][0] == "Couldn't sign you up: Maths for economics II"
+    # the user took over and it got stuck again: told once
+    await ended(reader, 1, "need_user", why="other", reason="Esse3 still asks for the questionnaire.")
+    assert len(push.sent) == 1 and reader.signup(exam["id"])["error"].startswith("Esse3 still asks")
     # left waiting, then cancelled: nothing pushed again, the profile gone
     await ended(reader, 1, "cancelled")
     assert len(push.sent) == 1 and reader.errands.forgot == ["unito.it"]
