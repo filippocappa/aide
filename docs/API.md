@@ -325,6 +325,18 @@ a new agent needs no app update.
   (`[Asked by Professor]`, one stateless turn, at most 3, no asks from the one asked), and shows the same:
   `consulted` on the specialist's reply, and team messages `from: "professor"`, `to: "secretary"` and back.
 
+- **Handed straight to a specialist (#59, since 2026-11-08).** Before Aide runs on a typed message in an Aide chat,
+  a small call to the fast model picks who should answer it (at most 1.5 s; it reads the message and the chat's last
+  6 messages). When it's sure enough (60%) that the message is one specialist's work, that specialist answers you
+  directly, with its tools and those last messages, the reply streamed as usual; it may ask its teammates. It's stored
+  as if Aide had asked it, so Aide's next turn reads it as usual. The reply then carries
+  `"routed": {"agent": "coach", "p": 0.94}` (who answered and how sure the pick was) on the `/v1/chat` response, the
+  stream's `done` event and the reply's message in `/v1/history`, and `consulted` is `["coach"]` (so an app that
+  doesn't know `routed` shows "Asked Coach"). There are no team messages for the hand-off itself (`team` is empty
+  unless the specialist asked a teammate). Show it as the specialist's answer ("Coach answered"). Left out on every
+  other reply. Voice turns are never routed; anything unclear, general or for several specialists goes to Aide.
+  Off on the server with `AIDE_ROUTER=off`.
+
 ### Team talk
 
 The agents have a group chat of their own: every ask and every answer, from all the chats, is kept there as a message. In a chat with Aide the same messages show live above Aide's reply (`team`
@@ -355,6 +367,9 @@ in Chat); the Team chat on the app's home screen shows them all together.
 - Since 2026-11-02 an agent's reply in the Team chat carries `attachments` when its tools made cards (departures,
   routes, reminders…; the same objects as `attachments` in Chat), here, in the stream's `team` events and in
   `GET /v1/team`. Left out when there are none; older messages have none.
+- Since 2026-11-08 (#59), with no mention and no follow-up, the router above may pick one specialist to answer
+  instead of Aide; its reply carries `"routed": {"agent": "coach", "p": 0.9}` (here, in the stream's `team` event
+  and in `GET /v1/team`). Left out otherwise.
 - Each agent answering sees the last 30 team messages (the ones from before plus those already written this
   turn), its usual instructions, tools and memory (shared plus its own), and knows it's in the group chat: short,
   only what it adds, no repeating the others. Agents don't start new rounds by mentioning each other.

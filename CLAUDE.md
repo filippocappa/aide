@@ -25,6 +25,9 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 
 - `agent.py`: Claude tool-use loop (via OpenRouter, Anthropic SDK), conversation history, the confirmation queue.
 - `agents.py`: the agents (Aide and the specialists): prompts, tool sets, colours, starters.
+- `router.py`: before Aide runs on a typed message (its chat, or the Team chat with no mention or follow-up), one
+  fast-model call picks the specialist; at `p` ≥ 0.6 that specialist answers directly (#59; fails open in 1.5 s,
+  each pick a row in `routes` to check the threshold; `AIDE_ROUTER=off`).
 - `db.py`: SQLite (WAL) at `data/aide.db`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
 - `channels/api.py` (FastAPI): the app's API, the only way in since the Discord bot was removed (2026-10-21).
@@ -790,6 +793,14 @@ the rest), joined into one .m4a on Stop, 4 h at most, a "Still recording" notifi
 `LectureUploads` keeps each file until the server has it (tried at launch and on each return to the app). Started from
 Study's "is on now" card (Record), a course page's + menu, `aide://record` or the "Record a lecture" Shortcut (Action
 Button); `Views/LectureRecorderViews.swift` has the recorder sheet and the cards. iPhone only (AideMac excludes both).
+
+**Done, both sides (2026-11-08):** the router and queued messages. #59 (contract "Agents", "Team talk"): a message
+for Aide that's clearly one specialist's is answered by it straight away, with no Aide round on either side
+(`routed` on the reply; stored as an `ask_agent` call so Aide's next turn reads it; the specialist may still ask a
+teammate); voice turns are never routed. App: "Coach answered" above such a reply, a branch mark in the Team chat.
+#69 (app only): a message sent while the reply is still coming waits under it, dimmed ("Waiting"; tap for Edit or
+Don't send) and goes when the reply is done, one at a time, in Aide's and the specialists' chats and the Team chat;
+the queue lives while the app runs.
 
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.

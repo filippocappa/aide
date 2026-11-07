@@ -828,7 +828,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     def chat_json(conversation: str, turn: Turn) -> dict:
         return {"reply": turn.reply, "pending": pending(), "conversation_id": conversation,
                 "attachments": turn.attachments, "consulted": turn.consulted,
-                "team": [team_json(t) for t in turn.team]}
+                "team": [team_json(t) for t in turn.team], **({"routed": turn.routed} if turn.routed else {})}
 
     turns: set[asyncio.Task] = set()  # streamed turns, held so they finish even if the app hangs up
     # conversation -> the chat turn running in it: the app that hung up on the stream asks for it in /v1/history

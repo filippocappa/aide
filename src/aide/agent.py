@@ -24,6 +24,7 @@ from .agents import (AGENTS, AIDE_VOICE_PROMPT, COMMON_TOOLS, ORCHESTRATOR, SPEC
 from .db import Database, utcnow
 from .engine import Engine, ask_text
 from .photos import PhotoStore
+from .router import Router
 from .routines import RoutineStore
 from .tools import Tool, ToolRegistry
 from .tools.memory import memory_tools
@@ -70,6 +71,8 @@ SHORT_TURNS = (3, 3)  # the Food log: a meal is a turn, and the meals themselves
 TEAM = "team"  # the Team chat: recipient of what's said there, and the queue's tag for actions queued from it
 calling_agent: ContextVar[str] = ContextVar("calling_agent", default=ORCHESTRATOR)  # whose tool is running
 TEAM_CONTEXT = 30  # team messages an agent answering in the Team chat sees
+ROUTE_CONTEXT = 6  # earlier messages the router and a routed specialist read (#59)
+ROUTE_LINE = 600  # characters of each
 FOLLOW_UP = timedelta(minutes=30)  # a Team chat message without a mention goes to who answered the last one, this soon
 SYSTEM_PROMPT = AGENTS[ORCHESTRATOR].prompt  # byte-stable per agent (agents.py), so each caches
 
@@ -98,6 +101,7 @@ class Turn(NamedTuple):
     attachments: list[dict]  # cards: the reminders, events and meals the turn's tools showed
     consulted: list[str]  # agents Aide asked, in order
     team: list[dict]  # what Aide and those agents said to each other: {from, to, text, ts (UTC)}
+    routed: dict | None = None  # {agent, p} when the router handed Aide's message straight to a specialist (#59)
 
 
 class Agent:
@@ -141,6 +145,7 @@ class Agent:
         # Marks a spoken answer to a chat quiz's multiple-choice question with no model call (voicequiz.py); None: the
         # model answers every voice turn.
         self.voice_quiz: VoiceQuiz | None = None
+        self.router: Router | None = None  # picks the specialist for a message to Aide (#59); __main__ sets it
         # One registry per agent: its share of the server's tools, plus memory, routines and cancel_queued, and
         # `agent_tools(agent id, any agent)` for other per-agent sets (objectives).
         # Aide delegates: it has only its own few tools and ask_agent, and the specialists do the work. A specialist
@@ -273,7 +278,7 @@ class Agent:
 
     def _visible(self, conversation_id: int) -> list[dict]:
         out = []
-        for role, content, ts, attachments, consulted, team, routine in self.db.history_with_ts(conversation_id):
+        for role, content, ts, attachments, consulted, team, routine, routed in self.db.history_with_ts(conversation_id):
             if role == "user":
                 if isinstance(content, str) and (shown := _answered(content)):
                     out.append({"role": "assistant", "text": shown, "ts": ts, "attachments": [], "consulted": [],
@@ -294,7 +299,8 @@ class Agent:
                 text = "\n\n".join(b["text"] for b in content if b.get("type") == "text").strip()
             if text:
                 out.append({"role": role, "text": text, "ts": ts, "attachments": attachments, "consulted": consulted,
-                            "team": team, **({"routine": routine} if routine else {})})
+                            "team": team, **({"routine": routine} if routine else {}),
+                            **({"routed": routed} if routed else {})})
         return out
 
     def pending(self, channel: str) -> list[str]:
@@ -424,10 +430,16 @@ class Agent:
             self._photos = tuple(photos)
             self.check_photos(photos)
             body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
+            # A message to Aide: the router may hand it straight to a specialist (#59), asked while the stamp is made.
+            # Not in a voice turn, where Aide uses every tool itself.
+            lines = self._chat_lines(conversation_id) if agent == ORCHESTRATOR and self.router and not voice else None
+            route = (asyncio.create_task(self.router.pick(text, lines, len(photos), "chat"))
+                     if lines is not None else None)
             if reads:
                 with usage.labels(purpose="photo read", agent=agent, conversation=conversation or channel):
                     body += await self._describe(text)
             turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice, agent)}]
+            picked = await route if route else None
             times["stamp"] = time.monotonic()
             self._plan = self._plan_tools = (agent in PLAN_CHATS and not voice and self.engine is not None
                                              and self.engine.plan_now())
@@ -438,6 +450,9 @@ class Agent:
                 if reply is not None:
                     if on_text:
                         on_text(reply, False)
+                elif picked is not None:
+                    reply = await self._routed(picked.agent, channel, conversation, conversation_id, text, photos,
+                                               lines or [], turn, on_text)
                 else:
                     reply = await self._chat_turn(agent, channel, conversation, model, history, turn, on_text,
                                                   bool(photos))
@@ -446,9 +461,10 @@ class Agent:
                 self._voice = False
             times["model"] = time.monotonic()
             attachments, consulted, team = _merge(self._attachments), list(self._consulted), list(self._team)
+            routed = {"agent": picked.agent, "p": round(picked.p, 2)} if picked else None
             # Saved only after the loop completes: a crash mid-turn leaves history consistent.
             self.db.append_turn(conversation_id, channel if conversation is None else "app", turn, attachments,
-                                consulted, team)
+                                consulted, team, routed=routed)
             if conversation is not None and self.db.app_conversation(conversation)["title"] is None:
                 if voice:  # a call waits for the turn to return before it speaks; the title can come after
                     task = asyncio.create_task(self._set_title(conversation_id, text, reply))
@@ -461,7 +477,49 @@ class Agent:
                 steps = list(times.items())
                 log.info("voice turn %s: %s", conversation_id, ", ".join(
                     f"{name} {round((at - steps[i - 1][1]) * 1000)} ms" for i, (name, at) in enumerate(steps) if i))
-            return Turn(reply, attachments, consulted, team)
+            return Turn(reply, attachments, consulted, team, routed)
+
+    def _chat_lines(self, conversation_id: int) -> list[str]:
+        """The chat's last messages as "User: …" / "Coach: …" lines, oldest first, for the router and the routed
+        specialist."""
+        out = []
+        for m in self._visible(conversation_id)[-ROUTE_CONTEXT:]:
+            who = "User" if m["role"] == "user" else _who((m.get("routed") or {}).get("agent", ORCHESTRATOR))
+            text = m["text"] if len(m["text"]) <= ROUTE_LINE else m["text"][:ROUTE_LINE] + "…"
+            out.append(f"{who}: {text}")
+        return out
+
+    async def _routed(self, agent: str, channel: str, conversation: str | None, conversation_id: int, text: str,
+                      photos: list[str] | tuple[str, ...], lines: list[str], turn: list[dict], on_text) -> str:
+        """The specialist the router picked answers a message to Aide directly (#59): one turn of its own, with its
+        tools and the chat's last messages, the reply streamed as it's written. Stored in Aide's chat as if Aide had
+        asked it (an ask_agent call, its answer, and the answer as the reply), so Aide's next turn reads it as usual.
+        Unlike an ask, it may ask its teammates."""
+        name = AGENTS[agent].name
+        self._consulted.append(agent)
+        activity.record(self.db.conn, ORCHESTRATOR, "ask", f"Handed to {name}", text or "(photos)",
+                        conversation or channel)
+        body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])
+        model = self.db.conversation_model(conversation_id) or self.model
+        if photos and AGENTS[agent].reads_photos:
+            with usage.labels(purpose="photo read", agent=agent, conversation=conversation or channel):
+                body += await self._describe(text)
+        elif photos:
+            model = self.smart_model
+        chat = "\n".join(lines)
+        note = (f"[In Aide's chat: the user wrote to Aide and it's yours to answer. Answer them directly as yourself "
+                f"(they see your name on the reply){'. The chat so far, oldest first:' if chat else ''}]"
+                f"{chr(10) + chat if chat else ''}\n\nThe user's message:\n{body}")
+        asked = [{"role": "user", "content": await self._stamp(channel, note, agent=agent)}]
+        with usage.labels(purpose="routed", agent=agent, conversation=conversation or channel):
+            answer = await self._run(agent, channel, model, [], asked, on_text)
+        call = {"type": "tool_use", "id": f"toolu_route_{secrets.token_hex(8)}", "name": "ask_agent",
+                "input": {"agent": agent, "request": text or "The photos the user sent."}}
+        turn += [{"role": "assistant", "content": [call]},
+                 {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call["id"],
+                                               "content": f"{name} answered:\n{answer}", "is_error": False}]},
+                 {"role": "assistant", "content": [{"type": "text", "text": answer}]}]
+        return answer
 
     async def _chat_turn(self, agent: str, channel: str, conversation: str | None, model: str, history: list[dict],
                          turn: list[dict], on_text, photos: bool) -> str:
@@ -605,7 +663,13 @@ class Agent:
         """The user writes in the Team chat: the @mentioned agents answer in turn. Without a mention it's a
         follow-up to whoever answered the last message, if that was recent, else Aide answers (and may ask the
         others). Every message is stored as it's said. Returns the new ones, the user's first."""
-        answering = mentions(text) or self._follow_up() or [ORCHESTRATOR]
+        answering, routed = mentions(text) or self._follow_up(), None
+        if not answering and self.router is not None:  # the router may pick one specialist (#59), else Aide
+            lines = [f"{_who(t['from'])}: {t['text'][:ROUTE_LINE]}" for t in self.db.team_messages(TEAM_CONTEXT)
+                     if t["conversation_id"] is None][-ROUTE_CONTEXT:]
+            if picked := await self.router.pick(text, lines, place="team"):
+                answering, routed = [picked.agent], {"agent": picked.agent, "p": round(picked.p, 2)}
+        answering = answering or [ORCHESTRATOR]
         new: list[dict] = []
 
         def said(message: dict) -> None:
@@ -620,7 +684,7 @@ class Agent:
             self._start(channel, TEAM, self.model, said)
             said({"from": "user", "to": TEAM, "text": text, "ts": utcnow().isoformat()})
             try:
-                await self._team_answers(channel, answering, said, on_working)
+                await self._team_answers(channel, answering, said, on_working, routed)
             finally:
                 self._on_team = None
             return new
@@ -638,7 +702,7 @@ class Agent:
         return out
 
     async def _team_answers(self, channel: str, answering: list[str], said: Callable[[dict], None],
-                            on_working: Callable[[str], None] | None) -> None:
+                            on_working: Callable[[str], None] | None, routed: dict | None = None) -> None:
         for agent in answering:
             if on_working:
                 on_working(agent)
@@ -654,7 +718,8 @@ class Agent:
                 reply = await self._run(agent, channel, self.model, [], turn)
             cards = _merge(self._attachments)
             said({"from": agent, "to": TEAM, "text": reply, "ts": utcnow().isoformat(),
-                  **({"attachments": cards} if cards else {})})
+                  **({"attachments": cards} if cards else {}),
+                  **({"routed": routed} if routed and routed["agent"] == agent else {})})
 
     def _say(self, sender: str, recipient: str, text: str) -> None:
         """One team message of the turn in progress."""
