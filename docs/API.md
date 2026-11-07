@@ -1214,7 +1214,7 @@ made (the push is for a sign-up already open when first read).
 |---|---|---|
 | `GET /v1/esse3` | | Esse3, below. Never read: `exams` and `transcript` empty, `read_at` null. |
 | `POST /v1/esse3/read` | | Esse3, after reading (~5–15 s) unless a read finished in the last 10 min. `503` the reader isn't on. |
-| `POST /v1/esse3/exams/{date_id}/signup` | | Sign me up: `{"signup": Signup}` (~5–20 s when open). `404` not an Esse3 session, `409` `{"detail": {"kind", "message"}}` it didn't go through, `503` the reader isn't on |
+| `POST /v1/esse3/exams/{date_id}/signup` | | Sign me up: `{"signup": Signup}` (~5–20 s when open). `404` not an Esse3 session, `409` `{"error": "…", "kind"}` it didn't go through, `503` the reader isn't on |
 | `DELETE /v1/esse3/exams/{date_id}/signup` | | Cancel: the same. |
 
 Signing up (since 2026-11-07). `date_id` is the session's exam course date (`by: "esse3"`, `kind: "exam"`); the tap

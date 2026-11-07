@@ -2107,7 +2107,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         except KeyError:
             raise HTTPException(404, "not an Esse3 exam session")
         except SignUpFailed as e:
-            raise HTTPException(409, {"kind": e.kind, "message": str(e)})
+            return JSONResponse({"error": str(e), "kind": e.kind}, status_code=409)
 
     @app.delete("/v1/esse3/exams/{date_id}/signup", dependencies=[Depends(auth)])
     async def esse3_cancel(date_id: str):
@@ -2117,7 +2117,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         except KeyError:
             raise HTTPException(404, "not an Esse3 exam session")
         except SignUpFailed as e:
-            raise HTTPException(409, {"kind": e.kind, "message": str(e)})
+            return JSONResponse({"error": str(e), "kind": e.kind}, status_code=409)
 
     # -- notebooks -------------------------------------------------------------------
 
