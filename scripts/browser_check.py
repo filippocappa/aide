@@ -24,7 +24,10 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from aide.browser import _UA, SCALE, VIEWPORT  # noqa: E402
+from aide.browser import SCALE, VIEWPORT, Browser  # noqa: E402
+
+# The phone identity errands had before #76, for comparison.
+_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v} Mobile Safari/537.36"
 
 VARIANTS = {
     "phone": {"chrome": False, "headed": False, "phone": True},
@@ -36,6 +39,8 @@ VARIANTS = {
     # Chrome under Xvfb with the leftovers fixed: workers in Italian too, the display's own screen size (not the
     # page's), and the GPU asked for instead of SwiftShader.
     "chrome-xvfb-tuned": {"chrome": True, "headed": True, "phone": False, "tuned": True},
+    # Exactly what errands run now: aide.browser's own launch (headed when there's a DISPLAY).
+    "aide": {"chrome": False, "headed": False, "phone": False, "aide": True},
 }
 
 # Public bot-test pages: (name, url, seconds to let it finish, words that mark a line worth keeping)
@@ -192,17 +197,25 @@ async def run(name: str, out: Path, chrome: str | None) -> None:
     variant = VARIANTS[name]
     dest = out / name
     dest.mkdir(parents=True, exist_ok=True)
-    profile = Path.home() / "browser-check" / "profiles" / name
+    profile = Path.home() / "browser-check" / "profiles" / ("aide.test" if VARIANTS[name].get("aide") else name)
     shutil.rmtree(profile, ignore_errors=True)
-    opts = launch_options(variant, chrome)
+    opts = {} if variant.get("aide") else launch_options(variant, chrome)
     results: dict = {"variant": name, "display": os.environ.get("DISPLAY")}
+    aide = None
     async with async_playwright() as pw:
-        executable = opts.get("executable_path") or pw.chromium.executable_path
-        results["browser"] = await version(executable)
-        if variant["phone"]:
-            opts["user_agent"] = _UA.format(v=re.search(r"(\d+)\.\d+\.\d+\.\d+", results["browser"]).group(1) + ".0.0.0")
-        results["launch"] = {k: v for k, v in opts.items() if k not in ("viewport", "screen")}
-        context = await pw.chromium.launch_persistent_context(str(profile), **opts)
+        if variant.get("aide"):
+            from aide.browser import _CHROME
+            aide = Browser(profile.parent, headed=bool(os.environ.get("DISPLAY")))
+            context = await aide._context("aide.test")  # profiles/aide.test
+            results["browser"] = await version(str(_CHROME) if _CHROME.exists() else pw.chromium.executable_path)
+            results["launch"] = {"aide.browser": True, "headed": aide.headed}
+        else:
+            executable = opts.get("executable_path") or pw.chromium.executable_path
+            results["browser"] = await version(executable)
+            if variant["phone"]:
+                opts["user_agent"] = _UA.format(v=re.search(r"(\d+)\.\d+\.\d+\.\d+", results["browser"]).group(1) + ".0.0.0")
+            results["launch"] = {k: v for k, v in opts.items() if k not in ("viewport", "screen")}
+            context = await pw.chromium.launch_persistent_context(str(profile), **opts)
         context.set_default_navigation_timeout(45_000)
         page = context.pages[0] if context.pages else await context.new_page()
 
@@ -306,6 +319,8 @@ async def run(name: str, out: Path, chrome: str | None) -> None:
         print(f"{name}: glovo login done", flush=True)
 
         await context.close()
+        if aide is not None:
+            await aide._pw.stop()
     (dest / "results.json").write_text(json.dumps(results, indent=2, ensure_ascii=False))
     print(f"wrote {dest}")
 

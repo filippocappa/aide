@@ -78,7 +78,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `locks.py`: Screen Time locks (one-offs and weekly schedules, unlocking early with a reason); `tools/locks.py`: Coach's.
 - `focus.py`: focus sessions (study rounds and breaks, each round a strict lock over all but the focus apps), the
   watcher (the Live Activity at each switch, the end), the check at the end and Professor's post in the course chat.
-- `browser.py`: Aide's own Chromium (Playwright, headless, a phone-sized page, a profile per site in `data/browser/`),
+- `browser.py`: Aide's own Chrome (Playwright; Google Chrome, desktop, headed on Xvfb `:99` (`deploy/aide-xvfb.service`), only the window phone-sized (#76); a profile per site in `data/browser/`),
   the page listing the model reads, the live view's screencast and input. `read_whole`: a page as it shows, folded parts opened, every
   tab, the pages behind Next or Load more, for `fetch_page` (`tools/search.py`; its own profiles in `data/reading/`,
   closed after each read; Tavily when it fails; long pages in parts of 30k). `errands.py`: browser errands (the store,

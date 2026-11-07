@@ -1,0 +1,16 @@
+# A screen for Aide's browser (src/aide/browser.py, #76): Chrome runs headed on it, since headless is what bot checks
+# catch first. aide-user.service wants it and sets DISPLAY=:99. Install: see README.md, "Browser".
+[Unit]
+Description=Aide's virtual screen (Xvfb :99)
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+Slice=aide.slice
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
