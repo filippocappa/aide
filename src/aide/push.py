@@ -255,6 +255,10 @@ class Push:
         """Money in, or a bank's consent to renew (`bank_id`)."""
         return await self._alert("finance", title, body, **extra)
 
+    async def send_esse3(self, title: str, body: str, course_id: int | None = None) -> bool:
+        """An exam's sign-up open on Esse3: opens the course's page (Study when no course matched)."""
+        return await self._alert("esse3", title, body, **({"course_id": course_id} if course_id else {}))
+
     async def send_passwords(self, title: str, body: str) -> bool:
         """A saved password added, changed or deleted, or a login that needs the user: opens Settings → Passwords."""
         return await self._alert("passwords", title, body)

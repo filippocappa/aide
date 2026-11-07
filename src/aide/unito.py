@@ -115,6 +115,12 @@ class UnitoSession:
     async def close(self) -> None:
         await self.http.aclose()
 
+    def reset(self) -> None:
+        """The saved login changed: forget the session and any wait, so the next read logs in afresh."""
+        self.http.cookies.clear()
+        self._wait_until = 0.0
+        self.logged_in = False
+
     def entry(self) -> dict:
         if not self.passwords.enabled:
             raise NoLogin("Passwords aren't on")

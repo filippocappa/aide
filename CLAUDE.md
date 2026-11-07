@@ -44,6 +44,9 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   `passwords.py`: saved logins (Settings → Passwords) for the server's own code, never the model's: AES-256-GCM in
   the database, the key a systemd credential (`deploy/aide-passwords.conf`, README "Passwords"), given out only by
   `use()` for an https address on the entry's sites; write-only API, every change pushed. `tools/` never imports it.
+  `unito.py`: UniTo's single sign-on in plain HTTP with the saved login (wrong: never tried again until changed).
+  `esse3.py`: Esse3 read through it (exam sessions with their sign-up windows into the course dates as `by: "esse3"`,
+  `official_dates` in `notebook.py`; bookings; the transcript), four times a day; read-only, booking comes later.
 - `engine.py`: OpenRouter or the Claude plan through Claude Code, for the notes and (its own switch) background work:
   routines and watches (Claude Agent SDK, Aide's tools in-process), digests, drafts, titles, objectives.
   Professor's typed chat turns run on the plan too, with Sonnet, whenever the notes do (`PLAN_CHATS` in `agent.py`;

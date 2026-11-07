@@ -586,6 +586,16 @@ just as Aide does. **If this machine is lost, so are the passwords** (the key is
 database shows them as locked; delete them in the app (or the `passwords` and `password_meta` tables) and add them
 again. Never make a new key over saved passwords: Aide refuses to use it and shows them locked.
 
+## Esse3
+
+With a UniTo password saved (Settings → Passwords, the site `unito.it`), the server reads Esse3 four times a day:
+the exam sessions and their sign-up windows (into each course's dates), what you're signed up for, and the transcript
+(docs/API.md, "Esse3"). It logs in the way a browser does, through UniTo's single sign-on with the university's own
+login (not SPID or CIE), and keeps the session in memory only. If UniTo says the password is wrong it stops and pushes
+once; it won't try again until the password is changed, so the account isn't locked. A page it doesn't know (a code, a
+new password to set, a consent) pushes "UniTo login needs you": log in once yourself at my.unito.it and deal with it; Aide
+tries again the next day. `journalctl --user -u aide | grep "unito login\|esse3"` shows the steps by name.
+
 ## Errands on the web
 
 Aide runs errands in its own Chromium on the server: "order me a diavola from Glovo", "find a train to Ivrea

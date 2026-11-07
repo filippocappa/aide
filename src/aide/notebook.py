@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS course_dates (  -- what the course's page and files s
                                          --   "source"}], by date
     read_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS official_dates (  -- the university's own record (Esse3): exam sessions, their sign-ups
+    course_id INTEGER PRIMARY KEY REFERENCES courses(id),
+    items     TEXT NOT NULL DEFAULT '[]',  -- as course_dates' items, each with its own "id" and "source": "Esse3"
+    read_at   TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS course_date_edits (  -- the user's own: a date of Professor's changed or hidden, or one added
     course_id INTEGER NOT NULL REFERENCES courses(id),
     id        TEXT NOT NULL,  -- d_…: Professor's item's, or a new one
@@ -553,14 +558,14 @@ class NotebookStore:
 
     def dates(self, course_id: int, since: date | None = None) -> list[dict]:
         """What the course's page and files say is coming (exams, mid-terms, sign-up deadlines), by date, with the
-        user's edits laid over Professor's (`by`: "professor" or "you"); from `since` on, if given. An edited item
+        user's edits laid over Professor's and Esse3's (`by`: "professor", "esse3" or "you"); from `since` on, if given. An edited item
         whose date Professor has since read differently carries `differs`."""
         edits = self.date_edits(course_id)
         checked = self.date_calendar(course_id)
         out = []
-        for d in self.professor_dates(course_id):
+        for d, by in self._read_dates(course_id):
             if d["id"] not in edits:
-                out.append(d | {"by": "professor", "differs": None})
+                out.append(d | {"by": by, "differs": None})
                 continue
             if (mine := edits.pop(d["id"])) is None:
                 continue
@@ -574,6 +579,52 @@ class NotebookStore:
         out = [d | {"calendar": checked.get(d["id"])} for d in out]
         out.sort(key=lambda d: (d["date"], d["time"] or ""))
         return [d for d in out if since is None or d["date"] >= since.isoformat()]
+
+    def _read_dates(self, course_id: int) -> list[tuple[dict, str]]:
+        """Esse3's dates and Professor's, before the user's edits. An exam Professor read on a day Esse3 has a
+        session is the same exam: Esse3's stays, with Professor's time, room and details where it has none."""
+        official = self.official_dates(course_id)
+        exams = {d["date"]: d for d in official if d["kind"] == "exam"}
+        out = []
+        for d in self.professor_dates(course_id):
+            if d["kind"] == "exam" and (e := exams.get(d["date"])) is not None:
+                for k in ("time", "end", "room"):
+                    if not e.get(k) and d.get(k):
+                        e[k] = d[k]
+                if d.get("details"):
+                    e["details"] = " ".join(x for x in (d["details"], e.get("details")) if x)[:300]
+                if d.get("you") and not e.get("you"):
+                    e["you"] = d["you"]
+                continue
+            out.append((d, "professor"))
+        return [(d, "esse3") for d in official] + out
+
+    def official_dates(self, course_id: int) -> list[dict]:
+        row = self.conn.execute("SELECT items FROM official_dates WHERE course_id = ?", (course_id,)).fetchone()
+        return [{"room": None, "you": None, "end": None, **d} for d in (json.loads(row["items"]) if row else [])]
+
+    def set_official_dates(self, course_id: int, items: list[dict]) -> list[dict]:
+        """Replaces the course's dates from the university's record (`esse3.py`); each item keeps its own id."""
+        out = []
+        for it in items:
+            try:
+                d = _date_item(it) | {"id": str(it["id"])}
+            except (ValueError, KeyError, TypeError):
+                continue
+            if all(o["id"] != d["id"] for o in out):
+                out.append(d)
+        out.sort(key=lambda d: (d["date"], d["time"] or ""))
+        if out == self.official_dates(course_id):
+            return out
+        if out:
+            self.conn.execute(
+                "INSERT INTO official_dates (course_id, items, read_at) VALUES (?, ?, ?) ON CONFLICT(course_id) "
+                "DO UPDATE SET items = excluded.items, read_at = excluded.read_at",
+                (course_id, json.dumps(out), utcnow().isoformat()))
+        else:
+            self.conn.execute("DELETE FROM official_dates WHERE course_id = ?", (course_id,))
+        self._changed(course_id, "the course's dates")
+        return out
 
     def professor_dates(self, course_id: int) -> list[dict]:
         """The dates as Professor last read them, without the user's edits."""
@@ -635,8 +686,9 @@ class NotebookStore:
         reads the course again."""
         d = self.find_date(course_id, date_id)
         mine = _date_item({k: v for k, v in d.items() if k in _DATE_FIELDS} | fields)
-        own = date_id not in {p["id"] for p in self.professor_dates(course_id)}
-        theirs = next((p for p in self.professor_dates(course_id) if p["id"] == date_id), None)
+        read = [d for d, _ in self._read_dates(course_id)]
+        own = date_id not in {p["id"] for p in read}
+        theirs = next((p for p in read if p["id"] == date_id), None)
         self._save_edit(course_id, date_id, mine | ({"own": True} if own else {"base": [theirs["date"], theirs["time"]]}))
         self._changed(course_id, "the course's dates")
         return self.find_date(course_id, date_id)
@@ -644,7 +696,7 @@ class NotebookStore:
     def hide_date(self, course_id: int, date_id: str) -> None:
         """A date of Professor's hidden (it stays hidden when read again), or one of the user's deleted."""
         d = self.find_date(course_id, date_id)
-        if date_id in {p["id"] for p in self.professor_dates(course_id)}:
+        if date_id in {p["id"] for p, _ in self._read_dates(course_id)}:
             self._save_edit(course_id, date_id, None)
         else:
             self.conn.execute("DELETE FROM course_date_edits WHERE course_id = ? AND id = ?", (course_id, d["id"]))

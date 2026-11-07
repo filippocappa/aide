@@ -44,8 +44,10 @@ from .reviews import ReviewStore, ReviewWatcher
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
 from .material import PageReader
+from .esse3 import Esse3Reader
 from .moodle import MoodleSync
 from .passwords import PasswordStore, load_key
+from .unito import UnitoSession
 from .notebook import NotebookStore, NotebookWorker
 from .examplan import ExamPlan, examplan_tools
 from .study import StudyStore, StudyWorker, whisper_transcribe
@@ -197,6 +199,7 @@ def main() -> None:
     tools += moodle_tools(moodle)
     passwords = PasswordStore(db.conn, load_key())  # Settings → Passwords; never a tool
     log.info("passwords: %s", "on" if passwords.enabled else "locked" if passwords.locked else "off (no key)")
+    esse3 = Esse3Reader(UnitoSession(passwords, push=push), study, notebook, push)  # quiet until UniTo's is saved
 
     async def finance_ask(system, text):  # sorting new merchants: a small call, OpenRouter's fast model
         return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, small=True)
@@ -423,6 +426,7 @@ def main() -> None:
             *([review_watcher.run()] if cal else []),
             *([vault.run()] if vault else []),
             *([moodle.run()] if settings.moodle_url else []),
+            esse3.run(),
             *([transit.timetable.run(), watcher.run()] if transit else []),
             *([leave.run()] if leave else []),
             *([events.run()] if events else []),
@@ -448,7 +452,7 @@ def main() -> None:
                              weights=weights, videos=videos, lessons=lessons, finance=finance, examplan=examplan,
                              banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
                              focus=focus, focus_watch=focus_watch, calls=calls,
-                             passwords=passwords)
+                             passwords=passwords, esse3=esse3)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())
@@ -458,6 +462,7 @@ def main() -> None:
         try:
             await asyncio.gather(*jobs)
         finally:
+            await esse3.session.close()
             await push.close()
 
     try:
