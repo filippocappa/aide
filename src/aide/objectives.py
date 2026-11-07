@@ -59,6 +59,7 @@ START_AT = time(12)  # a plan's proposals start by themselves from midday ...
 START_AFTER = timedelta(hours=1)  # ... and at least this long after it's made
 MAX_TITLE = 120
 MAX_TARGET = 100
+MAX_MINUTES = 600  # a focus measure in minutes
 MAX_STEPS = 10
 STATUSES = ("proposed", "active", "dropped")
 _ID = re.compile(r"^o_[0-9a-f]{12}$")
@@ -226,6 +227,8 @@ class ObjectiveStore:
             course = int(measure.get("course") or 0)
             if not self.conn.execute("SELECT 1 FROM courses WHERE id = ?", (course,)).fetchone():
                 raise ValueError(f"no course {measure.get('course')}")
+            if measure.get("unit") == "min":  # minutes of focus (the exam plan's blocks), not rounds
+                return {"type": "focus", "course": course, "unit": "min"}
             return {"type": "focus", "course": course}
         if kind == "food":
             metric = measure.get("metric")
@@ -280,8 +283,9 @@ class ObjectiveStore:
         if measure is None or measure["type"] == "reminder":
             return 1
         target = int(target or 1)
-        if not 1 <= target <= MAX_TARGET:
-            raise ValueError(f"target must be between 1 and {MAX_TARGET}")
+        most = MAX_MINUTES if measure.get("unit") == "min" else MAX_TARGET
+        if not 1 <= target <= most:
+            raise ValueError(f"target must be between 1 and {most}")
         return target
 
     def add(self, agent: str, period: str, d: date, title: str, why: str = "", measure: dict | None = None,
@@ -431,7 +435,7 @@ class ObjectiveStore:
             except sqlite3.OperationalError as e:  # no focus sessions yet: the table isn't there
                 return _no_table(e, 0)
             now = datetime.now(timezone.utc)
-            return sum(focus_studied(dict(r), now)[0] for r in rows)
+            return sum(focus_studied(dict(r), now)[1 if m.get("unit") == "min" else 0] for r in rows)
         if m["type"] == "food":
             return len(self.food.met_days(m["metric"], first, last)) if self.food else 0
         if self.health is None:
@@ -458,7 +462,8 @@ class ObjectiveStore:
                 return f"{row[0] if row else 'a course'} notebook topics written or revised"
             case "focus":
                 row = self.conn.execute("SELECT name FROM courses WHERE id = ?", (m["course"],)).fetchone()
-                return f"focus rounds on {row[0] if row else 'a course'}"
+                what = "minutes of focus" if m.get("unit") == "min" else "focus rounds"
+                return f"{what} on {row[0] if row else 'a course'}"
             case "food":
                 return {"logged": "days with meals logged", "protein_g": "days at the protein goal",
                         "calories": "days at the calorie goal"}[m["metric"]]
@@ -655,11 +660,16 @@ class ObjectivePlanner:
         agents = [check_agent(a) for a in agents] if agents else list(SPECIALISTS)
         async with self._lock:
             context, parents = await self.context(period, d, agents)
+            blocks = await self._study_blocks(d) if period == "day" and "professor" in agents else []
+            if blocks:
+                context += ("\n\nAlready made from the exam plan, one objective per course, ticked by focus minutes "
+                            "(don't propose study time, focus or review for these courses today):\n"
+                            + "\n".join(f"- {b['title']}" for b in blocks))
             most = MOST[period]
             system = PLAN_PROMPT.format(most=most, total=f", and {DAY_TOTAL} in all" if period == "day" else "")
             answer = await self.engine.ask(system, [{"type": "text", "text": context}], 3000, background=True)
             start, end = bounds(period, d)
-            items = self._parse(answer, agents, most, parents, (start, end))
+            items = blocks + self._parse(answer, agents, most, parents, (start, end))
             met = [i for i in items if i["measure"] and self.store.progress(
                 {"measure": i["measure"], "period": period, "start": start, "done_at": None}) >= i["target"]]
             if met:
@@ -678,6 +688,38 @@ class ObjectivePlanner:
                                     f"Proposed {len(mine)} objective{'s' if len(mine) != 1 else ''} for the {period}",
                                     "; ".join(mine))
             return made
+
+    async def _study_blocks(self, d: date) -> list[dict]:
+        """The exam plan's study for the day as Professor's objectives, one per course: so many minutes of focus on
+        it (ticks itself). None for a course that has one the user took or dropped (waiting ones are made again
+        with the plan's numbers now)."""
+        if self.examplan is None:
+            return []
+        try:
+            plan = await self.examplan.plan()
+        except Exception:
+            log.warning("objectives: the exam plan failed", exc_info=True)
+            return []
+        start, _ = bounds("day", d)
+        have = {o["measure"]["course"] for o in self.store.objectives("day", start, ["professor"], dropped=True)
+                if o["status"] != "proposed" and o["measure"] and o["measure"]["type"] == "focus"
+                and o["measure"].get("unit") == "min"}
+        out = []
+        for b in self.examplan.day_blocks(plan, start):
+            if b["course"] in have:
+                continue
+            name = b["name"][:1].upper() + b["name"][1:]
+            minutes = min(MAX_MINUTES, b["minutes"])
+            when = date.fromisoformat(b["date"])
+            why = (f"Today's share of the exam plan before the {b['what']} on {when:%a %d %b}: "
+                   + ", ".join(f"{p} {m} min" for p, m in b["phases"].items()) + "."
+                   + (f" Topics: {'; '.join(b['topics'])}." if b["topics"] else "")
+                   + " Counted from focus sessions on the course.")
+            out.append({"agent": "professor", "title": f"Study {name} for "
+                        + (f"{minutes} min" if minutes < 60 else _hours(minutes / 60)), "why": why,
+                        "measure": {"type": "focus", "course": b["course"], "unit": "min"}, "target": minutes,
+                        "steps": [], "parent": None, "due": None})
+        return out
 
     def _parse(self, answer: str, agents: list[str], most: int, parents: dict[str, int],
                window: tuple[date, date] | None = None) -> list[dict]:

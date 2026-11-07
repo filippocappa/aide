@@ -465,7 +465,8 @@ the data.
   `habit` {`habit`}: check-ins in the period (days done, for a limit or food habit). `practice` {`course`, `score`?}: practice exams finished (at
   `score`% or more). `notes` {`course`}: notebook topics written or revised (notes Aide wrote after your OK, or
   your edits in Obsidian; a topic counts once, added figures don't count). `focus` {`course`} (since 2026-11-03):
-  focus rounds finished on the course (Focus sessions). `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
+  focus rounds finished on the course (Focus sessions); with `unit: "min"` (since 2026-11-07, the exam plan's day
+  objectives) minutes of focus on it instead, the target up to 600, the label "minutes of focus on macroeconomics". `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
   goal (calories within 10%). `sleep` {`hours`}: nights at or over. `steps` {`steps`}: days at or over.
   `reminder` {`reminder`}: that reminder done (target 1). An unknown type is fine: show `label`. `source` (since
   2026-11-02) is where it comes from in a word or two: the habit's name, `Practice exams`, `Notebook`, `Focus sessions`, `Food log`,
@@ -1045,7 +1046,7 @@ keeps the previous version) and `delete_lecture` (queued), plus `list_events` to
 
 ### Exam plan
 
-Since 2026-11-07 (#68, server; the app's card and page come next). For each course's next exam or mid-term, how many
+Since 2026-11-07 (#68, both sides). For each course's next exam or mid-term, how many
 hours it still needs and whether the free days before it hold them, worked out with no model call. Read again at most
 every 10 min, and at once after a change to the notes, the dates or these settings.
 
@@ -1108,6 +1109,25 @@ null | "3/7" | "done" | "writing", "learn_min": 30, "practise_min": 44}], "mocks
 
 Professor's `study_plan` (a course, or all) reads it as text; the objectives planner gets it with each plan of
 Professor's.
+
+**The day as objectives** (since 2026-11-07): each day plan of Professor's (Objectives) starts with one objective per
+course the plan gives time that day, "Study Macroeconomics for 1h30", with the phases, the exam and today's topics in
+`why`, and a `focus` measure in minutes (`unit: "min"`, the target the day's minutes; see Objectives). Proposed and
+started like the rest; a replan makes a waiting one again with the plan's numbers then; one the user took or dropped
+isn't made twice. The model is told not to propose study time for those courses.
+
+**The week as review sessions** (since 2026-11-07): the plan's next 7 days placed in the free time as "Review: <course>"
+sessions, proposed on the week card (Events and plans: an `events` attachment, added only on Add, each through Review
+sessions with its topics). A course's day is one sitting in the first free stretch that holds it (starts on the quarter
+hour), else pieces of at least 25 min around the events, 15 min between two; a review session already in the calendar
+for the course that day comes off its minutes and its time. Topics run on across the days (learning in order, practice
+where most is left, the review the weakest), so the days don't repeat; mock days have none. `notes`: "From the exam
+plan, before the written exam on Wed 20 Jan: learn 30 min, practise 15 min.\nTopics: …".
+- Each Sunday from 17:00 (once a week) the coming Monday–Sunday is proposed in Professor's "Study week" chat (made the
+  first time, made again if deleted; a normal Professor chat), with a `message` push "Professor · Study week". Nothing
+  when the plan has no study in those days.
+- Professor's `propose_study_week` (`start`: the first day, today by default) does the same in the chat it's asked in
+  ("plan my week").
 
 ### Study files
 

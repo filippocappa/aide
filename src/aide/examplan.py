@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from .db import utcnow
 from .study import REVIEW_PREFIX, _name
-from .tools import Tool
+from .tools import Tool, ToolOutput
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,8 @@ CLOSE = 7  # two targets this many days apart or less
 CACHE = 600  # seconds
 HISTORY_DAYS = 90
 PHASES = ("learn", "practise", "mocks", "review")
+WEEK_AT = time(17, 0)  # on Sundays: the coming week proposed
+WEEK_TICK = 600  # seconds
 _WORD = re.compile(r"\w+")
 _CREDITS = re.compile(r"(\d{1,2})\s*(?:CFU|ECTS|credits|crediti)", re.I)
 _LENGTH = re.compile(r"(\d{1,3}(?:[.,]5)?)\s*(h\b|hours?|ore\b|min\b|minutes|minuti)", re.I)
@@ -144,6 +146,11 @@ class ExamPlan:
         self.lessons, self.focus, self.bedtime = lessons, focus, bedtime
         self.conn.executescript(SCHEMA)
         self._cache: tuple[datetime, dict] | None = None
+        # From the last working out, for week(): each day's free stretches, the review sessions already in the
+        # calendar ({day: [(course name, start, end)]}), and each target with its days laid out by phase.
+        self._gaps: dict[date, list[tuple[datetime, datetime]]] = {}
+        self._held: dict[date, list[tuple[str, datetime, datetime]]] = {}
+        self._laid: list[tuple[dict, dict[date, dict[str, int]]]] = []
 
     # -- settings ----------------------------------------------------------------------------------------
 
@@ -264,6 +271,7 @@ class ExamPlan:
     async def _days(self, start: date, end: date, now: datetime, s: dict, season_from: date | None) -> dict[date, int]:
         """Each day's study room from `start` to before `end`: free time between waking and bed, less the calendar,
         at most the day's cap; today's from now, less what's already been studied."""
+        self._gaps, self._held = {}, {}
         if end <= start:
             return {}
         busy: list[tuple[datetime, datetime]] = []
@@ -279,10 +287,14 @@ class ExamPlan:
                 if e.all_day:
                     continue
                 title = _name(e.title)
-                if title.startswith(REVIEW_PREFIX) or title.casefold() in self.study.skip:
-                    continue  # the plan's own review sessions and the user's study blocks are study time
                 s0 = e.start if e.start.tzinfo else e.start.replace(tzinfo=self.tz)
                 e0 = e.end if e.end.tzinfo else e.end.replace(tzinfo=self.tz)
+                if title.startswith(REVIEW_PREFIX):  # the plan's own review sessions are study time
+                    self._held.setdefault(s0.astimezone(self.tz).date(), []).append(
+                        (title[len(REVIEW_PREFIX):].strip().casefold(), s0, e0))
+                    continue
+                if title.casefold() in self.study.skip:
+                    continue  # and so are the user's study blocks
                 busy.append((s0 - BUSY_GAP, e0 + BUSY_GAP))
         busy.sort()
         wakes: dict[bool, time | None] = {}
@@ -313,13 +325,18 @@ class ExamPlan:
                      else datetime.combine(d, WINDOW[1], self.tz))
             if d == start:
                 open_ = max(open_, now.astimezone(self.tz))
-            free, cursor = 0.0, open_
+            free, cursor, gaps = 0.0, open_, []
             for b0, b1 in busy:
                 if b1 <= cursor or b0 >= close:
                     continue
+                if min(b0, close) > cursor:
+                    gaps.append((cursor, min(b0, close)))
                 free += max(0.0, (min(b0, close) - cursor).total_seconds() / 60)
                 cursor = max(cursor, b1)
+            if close > cursor:
+                gaps.append((cursor, close))
             free += max(0.0, (close - cursor).total_seconds() / 60)
+            self._gaps[d] = gaps
             cap = s["season_cap_min"] if season_from is not None and d >= season_from else s["term_cap_min"]
             if d == start:
                 cap = max(0, cap - studied_today)
@@ -429,6 +446,7 @@ class ExamPlan:
         room = await self._days(today, last, now, s, season_from)
         left_room = dict(room)
         out_targets, today_blocks = [], []
+        self._laid = []
         for i, t in enumerate(targets):
             when = t["target"]["date"]
             days = [d for d in sorted(left_room) if d < when]
@@ -439,6 +457,7 @@ class ExamPlan:
             for d, m in alloc.items():
                 left_room[d] -= m
             laid = lay(alloc, t["phases"])
+            self._laid.append((t, laid))
             planned = sum(alloc.values())
             short = max(0, t["need"] - planned)
             status = ("empty" if not t["work"]["topics"] else "short" if short > 0
@@ -560,6 +579,69 @@ class ExamPlan:
                           ((today - timedelta(days=HISTORY_DAYS)).isoformat(),))
         self.conn.commit()
 
+    # -- a day's blocks and a week of review sessions ------------------------------------------------------------
+
+    @staticmethod
+    def day_blocks(plan: dict, d: date) -> list[dict]:
+        """The study a day holds, a row per course: {course, name, what, date, minutes, phases, topics}; today's
+        with the topics to take."""
+        out = []
+        for t in plan["targets"]:
+            day = next((x for x in t["days"] if x["date"] == d.isoformat()), None)
+            if not day or not day["minutes"]:
+                continue
+            topics = [b["topic"]["title"] for b in plan["today"] if b["course"] == t["course"] and b["topic"]
+                      and d.isoformat() == plan["computed_at"][:10]]
+            out.append({"course": t["course"], "name": t["name"], "what": t["what"], "date": t["date"],
+                        "minutes": day["minutes"], "phases": {p: round(day["phases"][p]) for p in PHASES
+                                                              if round(day["phases"].get(p, 0))},
+                        "topics": list(dict.fromkeys(topics))})
+        return out
+
+    async def week(self, start: date | None = None, now: datetime | None = None) -> tuple[list[dict], list[str]]:
+        """The blocks of the 7 days from `start` (today when left out; days gone are skipped), placed in each day's
+        free time as review sessions to propose (plans.py): a course's day in one sitting where a gap holds it, else
+        split around events (no piece under 25 min), less a review session already in the calendar for it that day.
+        Returns the items {title, start, end, calendar, course_id, topics, notes} and the short targets' warnings."""
+        now = now or utcnow()
+        await self.plan(now, fresh=True)
+        today = now.astimezone(self.tz).date()
+        start = max(start or today, today)
+        window = {start + timedelta(days=i) for i in range(7)}
+        gaps = {d: list(g) for d, g in self._gaps.items()}
+        for d, held in self._held.items():  # sessions already there are taken time
+            for _, s0, e0 in held:
+                gaps[d] = _cut(gaps.get(d, []), s0, e0 + BUSY_GAP)
+        items, warnings = [], []
+        for t, laid in self._laid:
+            name = t["course"]["name"][:1].upper() + t["course"]["name"][1:]
+            picker = _Topics(t["work"]["topics"], t["work"]["review"])
+            if t["work"]["topics"] and any(laid.get(d) for d in window) and (short := max(
+                    0, t["need"] - sum(sum(p.values()) for p in laid.values()))):
+                warnings.append(f"{name} is short by {_hours(short)} before the {t['target']['what']} on "
+                                f"{t['target']['date']:%a %d %b}.")
+            for d in sorted(laid):
+                if d > max(window):
+                    break
+                phases = {p: round(laid[d][p]) for p in PHASES if round(laid[d].get(p, 0))}
+                topics = picker.take(phases)  # earlier days use topics up, so the week moves through the course
+                if d not in window:
+                    continue
+                minutes = sum(phases.values()) - sum(
+                    int((e0 - s0).total_seconds() // 60) for c, s0, e0 in self._held.get(d, [])
+                    if c == t["course"]["name"].casefold())
+                if minutes < MIN_PIECE:
+                    continue
+                what = ", ".join(f"{p} {m} min" for p, m in phases.items())
+                notes = (f"From the exam plan, before the {t['target']['what']} on {t['target']['date']:%a %d %b}: "
+                         f"{what}." + ("\nTopics: " + "; ".join(topics) if topics else ""))
+                for s0, e0 in _place(gaps, d, minutes):
+                    items.append({"title": REVIEW_PREFIX + name, "start": f"{s0:%Y-%m-%dT%H:%M}",
+                                  "end": f"{e0:%Y-%m-%dT%H:%M}", "calendar": self.study.study_calendar,
+                                  "course_id": t["course"]["id"], "topics": topics, "notes": notes})
+        items.sort(key=lambda i: i["start"])
+        return items, warnings
+
     # -- text for Professor and the objectives planner -----------------------------------------------------------
 
     @staticmethod
@@ -603,7 +685,165 @@ class ExamPlan:
         return "\n".join(lines) if items or undated else "No courses to plan."
 
 
-def examplan_tools(store: ExamPlan, study) -> list[Tool]:
+MIN_PIECE = 25  # minutes: no review session shorter (unless the whole block is)
+QUARTER = 15  # sessions start on the quarter hour
+BREAK = timedelta(minutes=15)  # between two sessions in a row
+
+
+def _cut(gaps: list[tuple[datetime, datetime]], a: datetime, b: datetime) -> list[tuple[datetime, datetime]]:
+    """The free stretches less [a, b)."""
+    out = []
+    for g0, g1 in gaps:
+        if b <= g0 or a >= g1:
+            out.append((g0, g1))
+            continue
+        if a > g0:
+            out.append((g0, a))
+        if b < g1:
+            out.append((b, g1))
+    return out
+
+
+def _place(gaps: dict[date, list[tuple[datetime, datetime]]], d: date, minutes: int) -> list[tuple[datetime, datetime]]:
+    """Sessions for `minutes` of study on day `d`, taken out of its free stretches: the first that holds it all, else
+    pieces of at least MIN_PIECE in order; what doesn't fit is left out (the plan counted it as free, rounded)."""
+
+    def at_quarter(t: datetime) -> datetime:
+        t = t.replace(second=0, microsecond=0)
+        extra = (-t.minute) % QUARTER
+        return t + timedelta(minutes=extra)
+
+    def room(g: tuple[datetime, datetime]) -> int:
+        return max(0, int((g[1] - at_quarter(g[0])).total_seconds() // 60) // STEP * STEP)
+
+    free = gaps.get(d, [])
+    whole = next((g for g in free if room(g) >= minutes), None)
+    out = []
+    if whole is not None:
+        s0 = at_quarter(whole[0])
+        out.append((s0, s0 + timedelta(minutes=minutes)))
+    else:
+        left = minutes
+        for g in free:
+            piece = min(left, room(g))
+            if piece < min(MIN_PIECE, left):
+                continue
+            s0 = at_quarter(g[0])
+            out.append((s0, s0 + timedelta(minutes=piece)))
+            left -= piece
+            if left < MIN_PIECE:
+                break
+    for s0, e0 in out:
+        gaps[d] = _cut(gaps.get(d, []), s0, e0 + BREAK)
+    return out
+
+
+class _Topics:
+    """Which topics a run of days takes, using them up: learning goes through the topics in order, practice the
+    ones with most left, the review the weakest, a few at a time."""
+
+    def __init__(self, rows: list[dict], review: float):
+        self.learn = [[r["title"], r["_learn"]] for r in rows if r["_learn"] >= 1]
+        self.practise = [[r["title"], r["_practise"]] for r in sorted(rows, key=lambda r: -r["_practise"])
+                         if r["_practise"] >= 1]
+        weak = sorted(rows, key=lambda r: r["_share"])
+        self.review = [[r["title"], review / len(rows)] for r in weak] if rows else []
+
+    @staticmethod
+    def _use(queue: list[list], minutes: float) -> list[str]:
+        out = []
+        while minutes > 0 and queue:
+            item = queue[0]
+            used = min(item[1], minutes)
+            item[1] -= used
+            minutes -= used
+            out.append(item[0])
+            if item[1] < 1:
+                queue.pop(0)
+        return out
+
+    def take(self, phases: dict[str, int]) -> list[str]:
+        out = []
+        out += self._use(self.learn, phases.get("learn", 0))
+        out += self._use(self.practise, phases.get("practise", 0))
+        out += self._use(self.review, phases.get("review", 0))
+        return list(dict.fromkeys(out))[:4]
+
+
+def week_message(items: list[dict], warnings: list[str]) -> str:
+    """What Professor says above the week's card."""
+    by: dict[str, int] = {}
+    for i in items:
+        minutes = int((datetime.fromisoformat(i["end"]) - datetime.fromisoformat(i["start"])).total_seconds() // 60)
+        by[i["title"][len(REVIEW_PREFIX):]] = by.get(i["title"][len(REVIEW_PREFIX):], 0) + minutes
+    total = sum(by.values())
+    out = (f"Your study week from the exam plan: {len(items)} session{'s' if len(items) != 1 else ''}, "
+           f"{_hours(total)} in all (" + ", ".join(f"{n} {_hours(m)}" for n, m in by.items()) + "). "
+           "Tap Add to put them in your calendar, or leave out the ones that don't suit; moving one there is fine, "
+           "I follow it.")
+    if warnings:
+        out += "\n\n" + " ".join(warnings)
+    return out
+
+
+class WeekProposer:
+    """Each Sunday from 17:00 the coming week's blocks go to Professor's Study week chat as proposed review sessions
+    (the week card: added only on Add), with a push. Once a week; nothing when there's nothing to study."""
+
+    def __init__(self, store: ExamPlan, plans, agent, push=None):
+        self.store, self.plans, self.agent, self.push = store, plans, agent, push
+
+    async def run(self) -> None:
+        while True:
+            try:
+                await self.tick()
+            except Exception:
+                log.exception("study week tick failed")
+            await asyncio.sleep(WEEK_TICK)
+
+    def chat(self) -> str:
+        """Professor's Study week chat, made the first time; made again if it was deleted."""
+        s = self.store.settings()
+        db = self.agent.db
+        if s.get("chat") and db.app_conversation(s["chat"]) is not None:
+            return s["chat"]
+        row = db.new_app_conversation("professor")
+        db.set_conversation_title(row["id"], "Study week")
+        s["chat"] = row["public_id"]
+        self.store._save(s)
+        return row["public_id"]
+
+    async def tick(self, now: datetime | None = None) -> dict | None:
+        now = now or utcnow()
+        local = now.astimezone(self.store.tz)
+        if local.weekday() != 6 or local.time() < WEEK_AT:
+            return None
+        monday = local.date() + timedelta(days=1)
+        s = self.store.settings()
+        if s.get("week_proposed") == monday.isoformat():
+            return None
+        s["week_proposed"] = monday.isoformat()  # once, whatever happens next: no retry every 10 min
+        self.store._save(s)
+        items, warnings = await self.store.week(monday, now)
+        if not items:
+            log.info("study week: nothing to propose for the week of %s", monday)
+            return None
+        chat = self.chat()
+        plan = self.plans.propose(chat, "professor", items)
+        text = week_message(items, warnings)
+        note = (f"[The exam plan's week from {monday:%a %d %b}, proposed as review sessions (plan "
+                f"{plan['public_id']}); they're not in the calendar until the user taps Add.]")
+        await self.agent.post(chat, note, text, [{"type": "events", "events": self.plans.card_items(plan)}])
+        if self.push is not None:
+            try:
+                await self.push.send_message(chat, "Professor · Study week", text.split("). ")[0][:178] + ").")
+            except Exception:
+                log.exception("couldn't push the study week")
+        return plan
+
+
+def examplan_tools(store: ExamPlan, study, plans=None, where=None) -> list[Tool]:
+    """`plans` and `where()` (the chat of the turn and the agent) for propose_study_week."""
     async def study_plan(course: str | None = None) -> str:
         cid = None
         if course:
@@ -615,7 +855,29 @@ def examplan_tools(store: ExamPlan, study) -> list[Tool]:
             cid = c["id"]
         return store.text(await store.plan(), cid)
 
-    return [Tool("study_plan",
+    async def propose_study_week(start: str | None = None) -> str:
+        if plans is None or plans.cal is None:
+            raise RuntimeError("There's no calendar on this server.")
+        day = date.fromisoformat(start) if start else None
+        items, warnings = await store.week(day)
+        if not items:
+            return "The exam plan has no study in those 7 days (no dated exam with work left, or no free time)."
+        conversation, agent = where() if where else (None, "professor")
+        plan = plans.propose(conversation, agent, items)
+        lines = "\n".join(f"- {plans.line(i)}" for i in plan["items"])
+        return ToolOutput(f"Proposed the exam plan's week as plan {plan['public_id']} ({len(items)} review sessions). "
+                          f"Not in the calendar yet: the user adds them with a tap on the card under your reply.\n"
+                          f"{lines}" + ("\nShort: " + " ".join(warnings) if warnings else ""),
+                          {"type": "events", "events": plans.card_items(plan)})
+
+    tools = [Tool("propose_study_week",
+                  "Put the exam plan's next 7 days on the week card as proposed review sessions, placed in the free "
+                  "time around the calendar: what \"plan my week\" or \"put my study in the calendar\" means. No "
+                  "guessing: the hours and topics come from study_plan. The user adds them with a tap.",
+                  {"type": "object", "properties": {"start": {
+                      "type": "string", "description": "The first day, YYYY-MM-DD; today when left out"}},
+                   "required": [], "additionalProperties": False}, propose_study_week)] if plans is not None else []
+    return tools + [Tool("study_plan",
                  "The exam plan: for each course's next exam or mid-term, the hours still needed (learn, practise, "
                  "mocks, review), the free hours before it, whether it fits, today's blocks and the warnings. Worked "
                  "out from the notebook, the answers so far and the calendar, no guessing. Read it before planning "

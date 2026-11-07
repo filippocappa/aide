@@ -188,6 +188,22 @@ def test_objective_counts_rounds(env):
     assert j["progress"] == 2 and j["measure"]["label"] == "focus rounds on macroeconomics"
 
 
+def test_objective_counts_minutes(env):
+    store, _, course = env
+    objectives = ObjectiveStore(store.conn, ROME)
+    today = datetime.now(ROME).date()
+    o = objectives.add("professor", "day", today, "Study macro for 1h30",
+                       measure={"type": "focus", "course": course, "unit": "min"}, target=90)
+    assert o["measure"] == {"type": "focus", "course": course, "unit": "min"}
+    start = datetime.now(timezone.utc) - timedelta(minutes=40)
+    store.start(course, 25, 5, 2, now=start)  # a round done, 10 min into the second
+    j = objectives.as_json(o)
+    assert j["progress"] == 35 and j["measure"]["label"] == "minutes of focus on macroeconomics"
+    with pytest.raises(ValueError, match="between 1 and 600"):
+        objectives.add("professor", "day", today, "Too much", measure={"type": "focus", "course": course,
+                                                                       "unit": "min"}, target=900)
+
+
 def test_tools(env):
     store, _, course = env
     tools = {t.name: t.handler for t in focus_tools(store, store.study, ROME)}

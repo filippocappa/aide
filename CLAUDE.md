@@ -758,7 +758,10 @@ less the calendar) within 2 h a day in term and 4 h after the last lecture; fits
 review the Study page on it, mocks the mock exams; press and hold to focus), the plan's page (each exam: fits, tight
 or short, the phases as a strip), an exam's page (day-by-day bars by phase, the phases' dates, warnings, the fallback
 sitting, the topics' minutes, a mid-term's topics, a likely date) and the daily limits (term and after the last
-lecture). To do: the Sunday review sessions and today's blocks as an objective.
+lecture). The day and the week (2026-11-07, closes #68): each day plan of Professor's starts with an objective per
+course, "Study Macroeconomics for 1h30", ticked by focus minutes (`focus` with `unit: "min"`); each Sunday from 17:00
+(`WeekProposer`) and on "plan my week" (`propose_study_week`) the next 7 days are placed in the free time as
+"Review: <course>" sessions on the week card (Add puts them in), with their topics, in Professor's "Study week" chat.
 
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.

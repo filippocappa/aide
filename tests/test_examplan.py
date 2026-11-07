@@ -7,17 +7,20 @@ from fastapi.testclient import TestClient
 from aide.agent import Agent
 from aide.channels.api import create_app
 from aide.db import Database
-from aide.examplan import (MOCK_FACTOR, MOCK_MIN, REVIEW_FLOOR, ExamPlan, credits, exam_minutes, examplan_tools, lay,
-                           spread, words)
+from aide.examplan import (MOCK_FACTOR, MOCK_MIN, REVIEW_FLOOR, ExamPlan, WeekProposer, credits, exam_minutes,
+                           examplan_tools, lay, spread, words)
 from aide.icloud import CalEvent
 from aide.notebook import NotebookStore
+from aide.objectives import ObjectivePlanner, ObjectiveStore
 from aide.photos import PhotoStore
+from aide.plans import PlanStore
 from aide.quiz import QuizStore
 from aide.reminders import ReminderStore
 from aide.study import StudyStore
 from aide.tools import ToolRegistry
 from test_api import AUTH, TOKEN, FakeCalendar
 from test_food import RecordingClient
+from test_objectives import FakeEngine
 from test_quiz import page
 
 ROME = ZoneInfo("Europe/Rome")
@@ -256,8 +259,110 @@ async def test_the_api_and_professors_tool(tmp_path):
     assert api.patch("/v1/study/settings", json={"term_cap_min": 90}, headers=AUTH).json()["term_cap_min"] == 90
     assert api.patch("/v1/study/settings", json={"term_cap_min": 0}, headers=AUTH).status_code == 422
 
-    tool, = examplan_tools(plan, study)
+    tool, = examplan_tools(plan, study)  # no plans: no propose_study_week
     text = await tool.handler(course="macroeconomics")
     assert "macroeconomics: exam" in text and "the user's guess" in text
     with pytest.raises(ValueError):
         await tool.handler(course="astrology")
+
+
+# -- the day's blocks as objectives, the week as review sessions -----------------------------------------------------
+
+
+async def exam_in(tmp_path, days, events=()):
+    db, study, notebook, quizzes, plan = make(tmp_path, lectures("macroeconomics", [-14, -7, -1]) + list(events))
+    macro = await course(study, "macroeconomics")
+    for title in ("IS-LM", "Phillips curve", "AD-AS"):
+        written(notebook, macro["id"], title, questions=6)
+    notebook.add_date(macro["id"], {"what": "written exam", "kind": "exam",
+                                    "date": (TODAY + timedelta(days=days)).isoformat()})
+    return db, study, notebook, quizzes, plan, macro
+
+
+async def test_todays_blocks_become_professors_objectives(tmp_path):
+    db, study, notebook, quizzes, plan, macro = await exam_in(tmp_path, 3)
+    store, engine = ObjectiveStore(db.conn, ROME), FakeEngine()
+    planner = ObjectivePlanner(store, engine, db, study.calendar, study, notebook)
+    planner.examplan = plan
+    out = await plan.plan()
+    minutes = next(d["minutes"] for d in out["targets"][0]["days"] if d["date"] == TODAY.isoformat())
+    engine.replies = ['[{"agent": "professor", "title": "Read the IS-LM notes", "why": "x"}]']
+    made = await planner.plan("day", TODAY, ["professor"])
+    block = made[0]
+    assert block["title"].startswith("Study Macroeconomics for") and block["target"] == min(600, minutes)
+    assert block["measure"] == {"type": "focus", "course": macro["id"], "unit": "min"}
+    assert "exam plan" in block["why"] and made[1]["title"] == "Read the IS-LM notes"
+    assert "Already made from the exam plan" in engine.asked[0]["text"]
+    assert store.as_json(block)["measure"]["label"] == "minutes of focus on macroeconomics"
+
+    made = await planner.plan("day", TODAY, ["professor"])  # a replan makes the waiting one again
+    assert [o["title"] for o in made][:1] == [block["title"]]
+    store.accept("day", TODAY, [made[0]["public_id"]])
+    made = await planner.plan("day", TODAY, ["professor"])  # taken: not made twice
+    assert not any(o["measure"] and o["measure"].get("unit") == "min" for o in made)
+
+
+def overlaps(a0, a1, b0, b1):
+    return a0 < b1 and b0 < a1
+
+
+async def test_the_week_goes_into_free_time(tmp_path):
+    trip = CalEvent("t", "Personal", "Dentist", at(1, 9), at(1, 18))
+    held = CalEvent("r", "Work", "Review: Macroeconomics", at(2, 9), at(2, 10))
+    db, study, notebook, quizzes, plan, macro = await exam_in(tmp_path, 12, [trip, held])
+    items, warnings = await plan.week(None, NOW)
+    out = await plan.plan(NOW)
+    days = {d["date"]: d["minutes"] for d in out["targets"][0]["days"]}
+    assert items and all(i["title"] == "Review: Macroeconomics" and i["calendar"] == study.study_calendar
+                         and i["course_id"] == macro["id"] for i in items)
+    per_day: dict[str, int] = {}
+    for i in items:
+        s0, e0 = datetime.fromisoformat(i["start"]), datetime.fromisoformat(i["end"])
+        assert s0.minute % 15 == 0 and (e0 - s0) >= timedelta(minutes=25)
+        assert TODAY <= s0.date() <= TODAY + timedelta(days=6)
+        assert not overlaps(s0, e0, at(1, 9).replace(tzinfo=None) - timedelta(minutes=15),
+                            at(1, 18).replace(tzinfo=None) + timedelta(minutes=15))
+        assert not overlaps(s0, e0, at(2, 9).replace(tzinfo=None), at(2, 10, ).replace(tzinfo=None) + timedelta(minutes=15))
+        per_day[s0.date().isoformat()] = per_day.get(s0.date().isoformat(), 0) + int((e0 - s0).total_seconds() // 60)
+    for d, m in per_day.items():
+        assert m <= days[d] - (60 if d == (TODAY + timedelta(days=2)).isoformat() else 0)
+    # Earlier days take topics first: learning goes through the course in order.
+    assert items[0]["topics"][0] == "IS-LM" and "Topics: IS-LM" in items[0]["notes"]
+    assert not warnings
+
+
+async def test_proposing_the_week(tmp_path):
+    db, study, notebook, quizzes, plan, macro = await exam_in(tmp_path, 15)
+    plans = PlanStore(db.conn, ROME, study.calendar)
+    propose, show = examplan_tools(plan, study, plans, lambda: ("c_chat", "professor"))
+    assert propose.name == "propose_study_week"
+    text = await propose.handler()
+    assert "review sessions" in text and text.attachment["type"] == "events"
+    assert all(e["title"] == "Review: Macroeconomics" for e in text.attachment["events"])
+
+    class Agent_:
+        def __init__(self):
+            self.db, self.posts = db, []
+
+        async def post(self, chat, note, text, attachments=None):
+            self.posts.append((chat, text, attachments))
+
+    class Push:
+        sent = []
+
+        async def send_message(self, chat, title, body):
+            self.sent.append((chat, title, body))
+
+    agent, push = Agent_(), Push()
+    weekly = WeekProposer(plan, plans, agent, push)
+    sunday = TODAY + timedelta(days=(6 - TODAY.weekday()) % 7)
+    early = datetime.combine(sunday, time(16), ROME).astimezone(timezone.utc)
+    assert await weekly.tick(early) is None and not agent.posts
+    evening = datetime.combine(sunday, time(18), ROME).astimezone(timezone.utc)
+    made = await weekly.tick(evening)
+    chat, said, cards = agent.posts[0]
+    assert made["conversation"] == chat == plan.settings()["chat"] and cards[0]["type"] == "events"
+    assert said.startswith("Your study week from the exam plan") and push.sent[0][1] == "Professor · Study week"
+    assert db.app_conversation(chat)["title"] == "Study week"
+    assert await weekly.tick(evening + timedelta(minutes=30)) is None and len(agent.posts) == 1  # once a week
+    assert weekly.chat() == chat

@@ -50,7 +50,7 @@ from .moodle import MoodleSync
 from .passwords import PasswordStore, load_key
 from .unito import UnitoSession
 from .notebook import NotebookStore, NotebookWorker
-from .examplan import ExamPlan, examplan_tools
+from .examplan import ExamPlan, WeekProposer, examplan_tools
 from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
 from .videos import VideoStore, VideoWorker
@@ -322,7 +322,8 @@ def main() -> None:
     date_reminders = DateReminders(notebook, reminders, settings.timezone)  # sign-ups and deadlines
     notebook.on_change.append(date_reminders.changed)
     date_reminders.sync_all()
-    tools += examplan_tools(examplan, study)
+    tools += examplan_tools(examplan, study, plans if cal is not None else None,
+                            lambda: (agent._conversation, calling_agent.get()))
 
     # Made below (digest) or maybe not at all (leave): the settings tools find them when called.
     tools += settings_tools(lambda: digest, live, lambda: leave, engine)
@@ -385,6 +386,7 @@ def main() -> None:
     notes.quizzes = quizzes
     notes.plans = plans
     review_watcher = ReviewWatcher(reviews, agent, push)
+    study_week = WeekProposer(examplan, plans, agent, push)  # Sundays: the week's blocks on the week card
     reader = PageReader(study.files, agent)  # scans, read once with the model
     worker.engine = notes.engine = reader.engine = engine
     worker.live = notes.live = live
@@ -433,7 +435,7 @@ def main() -> None:
             worker.run(),
             notes.run(),
             reader.run(),
-            *([review_watcher.run()] if cal else []),
+            *([review_watcher.run(), study_week.run()] if cal else []),
             *([vault.run()] if vault else []),
             *([moodle.run()] if settings.moodle_url else []),
             esse3.run(),

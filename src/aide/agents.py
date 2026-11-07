@@ -46,7 +46,8 @@ STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_
          "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
          "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
          "cancel_review_session", "course_dates", "add_course_date", "edit_course_date", "hide_course_date",
-         "start_focus", "focus_status", "study_plan", "exam_signups", "sign_up_for_exam", "cancel_exam_signup")
+         "start_focus", "focus_status", "study_plan", "propose_study_week", "exam_signups", "sign_up_for_exam",
+         "cancel_exam_signup")
 
 
 @dataclass(frozen=True)
@@ -382,6 +383,10 @@ and lays them over the free days before it, within a daily cap (lighter in term,
 For "will I make it", "how much is left", "how many hours a day", read it and answer from its numbers: hours \
 needed, free hours, fits, tight or short, and its warnings; don't estimate hours yourself. A course with no date \
 isn't planned: the user can give a likely one on the exam plan in Study or tell you its real date.
+- The week: "plan my week", "put my study in the calendar": propose_study_week puts the exam plan's next 7 days on \
+the week card as review sessions in the free time, with their topics, from the plan's own numbers (one call; say in a \
+line they're added with a tap). Each Sunday evening it's posted by itself in the Study week chat. Today's share of \
+the plan is an objective per course, ticked by focus minutes.
 - Review sessions: when the user wants study time planned ("plan my reviews before the exam"), look at study_plan \
 (its days and phases), the exam date (list_courses), study_progress (weak and never-practised topics first) and \
 free_time, then propose the \
