@@ -2691,6 +2691,12 @@ struct CourseDate: Decodable, Identifiable, Hashable {
     var differs: Differs?
     var calendar: InCalendar?
     var past: Bool?
+    /// Not taking this exam: off the course page, the exam plan and the reminders until brought back.
+    var archived: Bool?
+    /// A sign-up date's exam (its id), so it goes with the exam when that's archived.
+    var of: String?
+    /// An Esse3 session's sign-up: Aide books it on the user's tap.
+    var signup: Esse3Signup?
 
     struct Differs: Decodable, Hashable { let date: String; var time: String?; var source: String? }
 
@@ -2704,6 +2710,20 @@ struct CourseDate: Decodable, Identifiable, Hashable {
 
     var day: Date? { Wire.day(date) }
     var mine: Bool { by == "you" }
+}
+
+/// An Esse3 session's sign-up (docs/API.md, "Esse3", Signup).
+struct Esse3Signup: Decodable, Hashable {
+    /// "open", "soon", "closed", "booked".
+    let state: String
+    var opens: String?
+    var closes: String?
+    /// Kept as wanted: Aide signs up when it opens.
+    var auto = false
+    /// "signing up", "cancelling" while Aide is on Esse3.
+    var busy: String?
+    var error: String?
+    var canCancel = false
 }
 
 /// A course date as the user writes it; every field sent, nulls too, so a time can be taken off.

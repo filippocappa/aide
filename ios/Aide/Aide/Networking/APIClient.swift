@@ -1183,26 +1183,51 @@ final class APIClient {
     }
 
     func courseDates(course: Int) async throws -> CourseDates {
-        try await send("GET", "/v1/study/courses/\(course)/dates")
+        try await send("GET", "/v1/study/courses/\(course)/dates", query: Self.archived)
     }
 
     func addCourseDate(course: Int, _ date: CourseDateBody) async throws -> CourseDates {
-        try await send("POST", "/v1/study/courses/\(course)/dates", body: date)
+        try await send("POST", "/v1/study/courses/\(course)/dates", query: Self.archived, body: date)
     }
 
     /// The user's version, kept through Professor's later reads.
     func updateCourseDate(course: Int, id: String, _ date: CourseDateBody) async throws -> CourseDates {
-        try await send("PATCH", "/v1/study/courses/\(course)/dates/\(id)", body: date)
+        try await send("PATCH", "/v1/study/courses/\(course)/dates/\(id)", query: Self.archived, body: date)
     }
 
     /// Professor's stays hidden; the user's own is deleted.
     func deleteCourseDate(course: Int, id: String) async throws -> CourseDates {
-        try await send("DELETE", "/v1/study/courses/\(course)/dates/\(id)")
+        try await send("DELETE", "/v1/study/courses/\(course)/dates/\(id)", query: Self.archived)
+    }
+
+    /// The course page keeps the exams not being taken, in their own fold.
+    private static let archived = [URLQueryItem(name: "archived", value: "true")]
+
+    /// Not taking this exam: archived with its sign-up dates, until brought back.
+    func archiveDate(course: Int, id: String) async throws -> CourseDates {
+        try await send("POST", "/v1/study/courses/\(course)/dates/\(id)/archive", body: EmptyBody())
+    }
+
+    func unarchiveDate(course: Int, id: String) async throws -> CourseDates {
+        try await send("DELETE", "/v1/study/courses/\(course)/dates/\(id)/archive")
+    }
+
+    /// Books the Esse3 session now, or as soon as its sign-up opens (~5–20 s when open). A refusal is
+    /// `APIError.server(409, …)` with Esse3's reason.
+    func signUp(exam id: String) async throws -> Esse3Signup {
+        let reply: SignupReply = try await send("POST", "/v1/esse3/exams/\(id)/signup", body: EmptyBody(), timeout: 90)
+        return reply.signup
+    }
+
+    /// Unbooks it on Esse3, or drops the wish.
+    func cancelSignUp(exam id: String) async throws -> Esse3Signup {
+        let reply: SignupReply = try await send("DELETE", "/v1/esse3/exams/\(id)/signup", timeout: 90)
+        return reply.signup
     }
 
     /// Professor reads the course's page and files for its dates again.
     func readCourseDates(course: Int) async throws -> CourseDates {
-        try await send("POST", "/v1/study/courses/\(course)/dates/read", body: EmptyBody())
+        try await send("POST", "/v1/study/courses/\(course)/dates/read", query: Self.archived, body: EmptyBody())
     }
 
     /// Takes it off the calendar.
@@ -1419,6 +1444,7 @@ final class APIClient {
 }
 
 private struct ErrorBody: Decodable { let error: String }
+private struct SignupReply: Decodable { let signup: Esse3Signup }
 private struct Transcript: Decodable { let text: String }
 
 /// Reads a streamed chat (`text/event-stream`) line by line. Each event has one `data:` line of JSON, handled
