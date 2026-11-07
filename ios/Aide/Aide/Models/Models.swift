@@ -16,9 +16,12 @@ struct ChatReply: Decodable {
     let consulted: [String]
     /// What Aide and those agents said to each other.
     let team: [TeamMessage]
+    /// Set when the router handed the message straight to a specialist, who answered (docs/API.md, "Agents").
+    let routed: Routed?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        routed = try c.decodeIfPresent(Routed.self, forKey: .routed)
         reply = try c.decode(String.self, forKey: .reply)
         pending = try c.decodeIfPresent([PendingAction].self, forKey: .pending) ?? []
         conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
@@ -26,7 +29,13 @@ struct ChatReply: Decodable {
         consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
         team = try c.decodeIfPresent([TeamMessage].self, forKey: .team) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments, consulted, team }
+    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments, consulted, team, routed }
+}
+
+/// Who the router handed a message for Aide to, and how sure it was (docs/API.md, "Agents": `routed`).
+struct Routed: Codable, Hashable {
+    let agent: String
+    let p: Double
 }
 
 /// One message in the agents' group chat: an ask from Aide, or an agent's answer (docs/API.md, "Team talk").
@@ -39,6 +48,8 @@ struct TeamMessage: Decodable, Hashable {
     var conversationId: String?
     /// An answer's cards (departures, routes, reminders…), as in a chat.
     var attachments: [Attachment]?
+    /// Set on a Team chat answer when the router picked who answers.
+    var routed: Routed?
 
     var cards: [Attachment] { Attachment.known(attachments) }
 }
@@ -244,9 +255,12 @@ struct HistoryMessage: Decodable {
     let routine: RoutineTag?
     /// Photo ids sent with a user message (docs/API.md, "Photos").
     let photos: [String]
+    /// The specialist the router handed it to, on a reply.
+    let routed: Routed?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        routed = try c.decodeIfPresent(Routed.self, forKey: .routed)
         routine = try c.decodeIfPresent(RoutineTag.self, forKey: .routine)
         photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? []
         role = try c.decode(String.self, forKey: .role)
@@ -256,7 +270,7 @@ struct HistoryMessage: Decodable {
         consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
         team = try c.decodeIfPresent([TeamMessage].self, forKey: .team) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine, photos }
+    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine, photos, routed }
 }
 
 struct RoutineTag: Decodable, Hashable {

@@ -69,7 +69,8 @@ struct TeamChatView: View {
                                 MineBubble(text: message.text)
                             } else {
                                 TeamBubble(message: message, from: chat.agent(message.from),
-                                           to: message.to == "team" ? nil : chat.agent(message.to))
+                                           to: message.to == "team" ? nil : chat.agent(message.to),
+                                           routed: message.routed != nil)
                             }
                         }
                         .contextMenu {
@@ -91,12 +92,31 @@ struct TeamChatView: View {
                     } else if chat.isPostingTeam {
                         ThinkingDots()
                     }
+                    ForEach(Array(chat.teamQueue.enumerated()), id: \.offset) { index, text in
+                        VStack(alignment: .trailing, spacing: 4) {
+                            MineBubble(text: text).opacity(0.5)
+                            Label("Waiting", systemImage: "clock")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.tertiary)
+                                .padding(.trailing, 4)
+                        }
+                        .contextMenu {
+                            Button("Edit", systemImage: "pencil") {
+                                chat.unqueueTeam(at: index)
+                                draft = draft.isEmpty ? text : draft + "\n" + text
+                                focused = true
+                            }
+                            Button("Don't send", systemImage: "trash", role: .destructive) { chat.unqueueTeam(at: index) }
+                        }
+                        .transition(.opacity)
+                    }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .animation(.easeOut(duration: 0.28), value: chat.team.count)
                 .animation(.easeInOut(duration: 0.2), value: chat.teamWorking)
+                .animation(.easeOut(duration: 0.2), value: chat.teamQueue)
             }
             .defaultScrollAnchor(.bottom)
             .contentMargins(.top, Self.headerHeight, for: .scrollContent) // starts below the header, scrolls under it
@@ -140,7 +160,7 @@ struct TeamChatView: View {
     }
 
     private var canPost: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !chat.isPostingTeam
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty // while answers come, it waits its turn (#69)
     }
 
     private func post() {
@@ -212,6 +232,8 @@ private struct TeamBubble: View {
     let from: Agent
     /// nil when it's said to the whole team.
     let to: Agent?
+    /// Picked by the router to answer (no mention, #59).
+    var routed = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -222,6 +244,13 @@ private struct TeamBubble: View {
                     if let to {
                         Image(systemName: "arrow.right").imageScale(.small).foregroundStyle(.tertiary)
                         Text(to.name).foregroundStyle(.secondary)
+                    }
+                    if routed {
+                        Image(systemName: "arrow.triangle.branch")
+                            .imageScale(.small)
+                            .foregroundStyle(.tertiary)
+                            .help("Picked to answer")
+                            .accessibilityLabel("picked to answer")
                     }
                     Spacer(minLength: 8)
                     if let date = message.ts.flatMap(Wire.parse) {

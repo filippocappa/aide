@@ -21,6 +21,19 @@ final class ChatViewModel: ObservableObject {
         var localPhotos: [Data] = []
         /// A voice call's row ("Call with Professor · 4:12"), not a message.
         var call: VoiceCall?
+        /// The specialist who answered a message to Aide directly (the router's pick, #59).
+        var routed: Routed?
+    }
+
+    /// A message written while the chat's agent was still answering (#69): it goes when that reply is done, one at a
+    /// time, in order. Kept per chat (`chat`, nil for a blank chat not yet made on the server) while the app runs.
+    struct Queued: Identifiable, Equatable {
+        let id = UUID()
+        var chat: String?
+        let text: String
+        let photos: [PickedPhoto]
+
+        static func == (a: Queued, b: Queued) -> Bool { a.id == b.id && a.chat == b.chat }
     }
 
     private static let conversationKey = "conversationID"
@@ -57,6 +70,10 @@ final class ChatViewModel: ObservableObject {
     }
     /// A reply is on its way in the open chat.
     @Published private(set) var isSending = false
+    /// Messages waiting for the reply on its way, in every chat (`queued` is this chat's).
+    @Published private(set) var queue: [Queued] = []
+    /// Team chat messages waiting for the answers on their way.
+    @Published private(set) var teamQueue: [String] = []
     /// Chats with a reply on its way, by conversation id, also after you've left them: the agent's card says so.
     @Published private(set) var working: [String: Working] = [:]
     /// Think harder is on in the open chat (`/v1/history`'s `smart`).
@@ -215,6 +232,28 @@ final class ChatViewModel: ObservableObject {
         messages.first?.role == .assistant && conversations.first(where: { $0.id == conversationID })?.course == nil
     }
 
+    /// This chat's messages waiting to go.
+    var queued: [Queued] { queue.filter { $0.chat == conversationID } }
+
+    /// Takes a waiting message back out of the queue (to edit it, or not send it at all).
+    @discardableResult
+    func unqueue(_ id: UUID) -> Queued? {
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return nil }
+        return queue.remove(at: index)
+    }
+
+    func unqueueTeam(at index: Int) {
+        guard teamQueue.indices.contains(index) else { return }
+        teamQueue.remove(at: index)
+    }
+
+    /// Sends this chat's next waiting message once nothing is on its way.
+    private func sendNextQueued() {
+        guard !isSending, !isOpening, let index = queue.firstIndex(where: { $0.chat == conversationID }) else { return }
+        let next = queue.remove(at: index)
+        Task { await send(next.text, photos: next.photos) }
+    }
+
     func open(_ conversation: Conversation) async {
         await open(id: conversation.id)
     }
@@ -232,6 +271,7 @@ final class ChatViewModel: ObservableObject {
         defer { isLoadingHistory = false }
         await loadHistory()
         watchNotebook()
+        sendNextQueued()
     }
 
     // MARK: Notebook progress
@@ -288,10 +328,18 @@ final class ChatViewModel: ObservableObject {
     /// writing shown as thinking. A failure shows as a note from Aide, like in a chat.
     func postTeam(_ raw: String) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isPostingTeam else { return }
+        guard !text.isEmpty else { return }
+        guard !isPostingTeam else { teamQueue.append(text); return }
         team.append(TeamMessage(from: "user", to: "team", text: text, ts: Wire.local(Date())))
         isPostingTeam = true
-        defer { isPostingTeam = false; teamWorking = nil }
+        defer {
+            isPostingTeam = false
+            teamWorking = nil
+            if !teamQueue.isEmpty {
+                let next = teamQueue.removeFirst()
+                Task { await postTeam(next) }
+            }
+        }
         live?.agentStarted(conversation: "team", agent: mentioned(in: text) ?? orchestrator)
         do {
             let reply = try await api.postTeam(text) { [weak self] event in
@@ -421,7 +469,7 @@ final class ChatViewModel: ObservableObject {
             }
             list.append(Message(role: message.role == "user" ? .user : .assistant, text: message.text,
                                 attachments: message.attachments, consulted: message.consulted, team: message.team,
-                                routine: message.routine, photos: message.photos))
+                                routine: message.routine, photos: message.photos, routed: message.routed))
         }
         list += calls.map { Message(role: .assistant, text: "", call: $0.0) }
         return list
@@ -509,6 +557,7 @@ final class ChatViewModel: ObservableObject {
             liveReply = ""
             liveStep = nil
             isSending = false
+            sendNextQueued()
             return
         }
         live?.agentFinished(conversation: turn, reply: list.last?.text ?? "")
@@ -518,6 +567,7 @@ final class ChatViewModel: ObservableObject {
             liveStep = nil
             isSending = false
             messages = Self.messages(history)
+            sendNextQueued()
         } else {
             await loadConversations()
         }
@@ -532,7 +582,11 @@ final class ChatViewModel: ObservableObject {
     func send(_ raw: String, photos: [PickedPhoto] = [], voice: Bool = false,
               onDraft: ((String, Bool) -> Void)? = nil) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !photos.isEmpty, !isSending, !isOpening else { return }
+        guard !text.isEmpty || !photos.isEmpty else { return }
+        guard !isSending, !isOpening else { // a reply is on its way: this one goes after it (#69)
+            queue.append(Queued(chat: conversationID, text: text, photos: photos))
+            return
+        }
         let asked = Message(role: .user, text: text, localPhotos: photos.map(\.jpeg))
         messages.append(asked)
         isSending = true
@@ -543,7 +597,11 @@ final class ChatViewModel: ObservableObject {
         do {
             var ids: [String] = []
             for photo in photos { ids.append(try await api.uploadPhoto(photo.jpeg)) }
-            if conversationID == nil { conversationID = try await newConversationID() }
+            if conversationID == nil {
+                conversationID = try await newConversationID()
+                // What was queued in the blank chat belongs to the one just made.
+                for i in queue.indices where queue[i].chat == nil { queue[i].chat = conversationID }
+            }
             let turn = conversationID ?? "main"
             // You may leave the chat while the reply is on its way: from then on it only updates the agent's card,
             // and the reply lands in the chat's history (shown when you open it again).
@@ -576,7 +634,8 @@ final class ChatViewModel: ObservableObject {
             live?.agentFinished(conversation: turn, reply: reply.reply)
             if here(), messages.contains(where: { $0.id == asked.id }) {
                 messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments,
-                                        consulted: reply.consulted, team: reply.team.isEmpty ? liveTeam : reply.team))
+                                        consulted: reply.consulted, team: reply.team.isEmpty ? liveTeam : reply.team,
+                                        routed: reply.routed))
                 pending = reply.pending
                 if let id = reply.conversationId { conversationID = id }
                 liveTeam = []
@@ -584,12 +643,14 @@ final class ChatViewModel: ObservableObject {
                 liveStep = nil
                 isSending = false
                 if writing == nil { watchNotebook() } // "yes" to a proposal starts the writing
+                sendNextQueued()
             } else if here() { // left and came back while it was on its way: the history has it all now
                 liveTeam = []
                 liveReply = ""
                 liveStep = nil
                 isSending = false
                 await loadHistory()
+                sendNextQueued()
             } else {
                 await loadConversations() // the card's last line
             }
@@ -606,6 +667,7 @@ final class ChatViewModel: ObservableObject {
             liveReply = ""
             liveStep = nil
             isSending = false
+            sendNextQueued()
         }
     }
 

@@ -1177,6 +1177,19 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(wav.suffix(pcm.count), pcm)
     }
 
+    func testRoutedReplies() throws {
+        let reply = try JSONDecoder.api.decode(ChatReply.self, from: Data(
+            #"{"reply":"7h","consulted":["coach"],"routed":{"agent":"coach","p":0.93}}"#.utf8))
+        XCTAssertEqual(reply.routed, Routed(agent: "coach", p: 0.93))
+        XCTAssertNil(try JSONDecoder.api.decode(ChatReply.self, from: Data(#"{"reply":"ok"}"#.utf8)).routed)
+        let h = try JSONDecoder.api.decode(HistoryMessage.self, from: Data(
+            #"{"role":"assistant","text":"7h","routed":{"agent":"coach","p":0.9}}"#.utf8))
+        XCTAssertEqual(h.routed?.agent, "coach")
+        let t = try JSONDecoder.api.decode(TeamList.self, from: Data(
+            #"{"messages":[{"from":"coach","to":"team","text":"!","routed":{"agent":"coach","p":0.8}}]}"#.utf8))
+        XCTAssertEqual(t.messages.first?.routed?.p, 0.8)
+    }
+
     func testConsultedAndAgentFieldsDefault() throws {
         let reply = try JSONDecoder.api.decode(ChatReply.self, from: Data(#"{"reply":"ok","consulted":["coach"]}"#.utf8))
         XCTAssertEqual(reply.consulted, ["coach"])

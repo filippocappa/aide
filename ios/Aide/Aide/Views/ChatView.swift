@@ -158,7 +158,7 @@ struct ChatView: View {
         }
         .photoSources(camera: $showCamera, library: $showLibrary, limit: Self.maxPhotos - photos.count,
                       barcodes: chat.agent.id == "coach", onPick: add)
-        .photoDrop(enabled: settings.isConfigured && !chat.isSending, limit: Self.maxPhotos - photos.count,
+        .photoDrop(enabled: settings.isConfigured, limit: Self.maxPhotos - photos.count,
                    barcodes: chat.agent.id == "coach", onPick: add)
         .fullScreenCover(isPresented: $showMealCamera, onDismiss: afterMealCamera) {
             MealCameraView(tint: chat.agent.tint, conversation: chat.conversationID) { mealCameraResult = $0 }
@@ -239,9 +239,12 @@ struct ChatView: View {
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 2)
                             }
+                            if let routed = message.routed {
+                                RoutedRow(agent: chat.agent(routed.agent))
+                            }
                             if !message.team.isEmpty {
                                 TeamThread(messages: message.team)
-                            } else if !message.consulted.isEmpty {
+                            } else if message.routed == nil, !message.consulted.isEmpty {
                                 ConsultedRow(agents: message.consulted.map { chat.agent($0) })
                             }
                             if let call = message.call {
@@ -272,12 +275,17 @@ struct ChatView: View {
                         // While an agent works on its answer, the thread shows it thinking instead.
                         ThinkingRow()
                     }
+                    ForEach(chat.queued) { waiting in
+                        QueuedRow(waiting: waiting, edit: { edit(waiting) }, remove: { chat.unqueue(waiting.id) })
+                            .transition(.opacity.combined(with: .offset(y: 10)))
+                    }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .pageColumn(MessageBoxGlass.column + 16)
                 .animation(.easeOut(duration: 0.28), value: chat.messages)
+                .animation(.easeOut(duration: 0.2), value: chat.queued)
             }
             .scrollDismissesKeyboard(.immediately)
             .contentMargins(.top, Self.headerHeight, for: .scrollContent) // starts below Pebble, scrolls under it
@@ -285,6 +293,7 @@ struct ChatView: View {
             .onTapGesture { composerFocused = false }
             .onChange(of: chat.messages) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.pending) { _, _ in scrollToBottom(proxy) }
+            .onChange(of: chat.queued.count) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.liveTeam) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.liveReply) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: chat.liveStep) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
@@ -421,7 +430,7 @@ struct ChatView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         #endif
-        .disabled(!settings.isConfigured || chat.isSending || photos.count >= Self.maxPhotos)
+        .disabled(!settings.isConfigured || photos.count >= Self.maxPhotos)
         .accessibilityLabel("Add photos")
     }
 
@@ -478,14 +487,23 @@ struct ChatView: View {
         Task { await chat.send(text, photos: sending) }
     }
 
+    /// A waiting message back into the message box, out of the queue.
+    private func edit(_ waiting: ChatViewModel.Queued) {
+        guard let waiting = chat.unqueue(waiting.id) else { return }
+        draft = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? waiting.text : draft + "\n" + waiting.text
+        photos = Array((photos + waiting.photos).prefix(Self.maxPhotos))
+        composerFocused = true
+    }
+
     /// An empty message box offers the microphone instead of send.
     private var showsMic: Bool {
         settings.isConfigured && !chat.isSending && !chat.isOpening
             && (voice.isActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && photos.isEmpty))
     }
 
+    /// While a reply is on its way a message can still be sent: it waits and goes after it (#69).
     private var canSend: Bool {
-        settings.isConfigured && !chat.isSending && !chat.isOpening
+        settings.isConfigured
             && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty)
     }
 }
@@ -858,6 +876,55 @@ struct AttachmentCard: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+/// A message written while the reply was still coming (#69), dimmed until it goes. Tap or hold for Edit and Don't send.
+private struct QueuedRow: View {
+    let waiting: ChatViewModel.Queued
+    let edit: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Menu {
+                Button("Edit", systemImage: "pencil", action: edit)
+                Button("Don't send", systemImage: "trash", role: .destructive, action: remove)
+            } label: {
+                MessageRow(message: .init(role: .user, text: waiting.text, localPhotos: waiting.photos.map(\.jpeg)))
+                    .opacity(0.5)
+            }
+            .buttonStyle(.plain)
+            #if os(macOS)
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            #endif
+            Label("Waiting", systemImage: "clock")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.tertiary)
+                .padding(.trailing, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Waiting to send: \(waiting.text)")
+        .accessibilityAction(named: "Edit", edit)
+        .accessibilityAction(named: "Don't send", remove)
+    }
+}
+
+/// Above a reply to Aide that a specialist answered straight away (the router's pick, #59).
+struct RoutedRow: View {
+    let agent: Agent
+
+    var body: some View {
+        HStack(spacing: 6) {
+            AgentMark(agent: agent, size: 22)
+            Text("\(agent.name) answered")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 2)
+        .accessibilityElement(children: .combine)
     }
 }
 
