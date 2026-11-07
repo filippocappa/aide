@@ -12,6 +12,11 @@ Nothing that changes something happens without the user's Confirm: `ask_confirm`
 the confirmed button, and only while the page still shows the confirmed total. `click` refuses buttons that buy,
 book, send, sign up or delete otherwise. The model never sees what the user types in the live view, and never types
 in password or card fields.
+
+An Esse3 errand (esse3.py, `start_esse3`) signs the user up for an exam session or cancels it, on their tap in the
+app: no chat, the server's own UniTo login handed over as cookies, only the browser's reading and clicking tools, and
+the tap as the Confirm for at most two clicks that commit (Prenota, then a Conferma), each only on a page showing that
+session (`esse3_mismatch`). Whatever the model says, esse3.py reads the bookings afterwards and decides.
 """
 
 import asyncio
@@ -22,7 +27,7 @@ import re
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Callable
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -38,6 +43,7 @@ if TYPE_CHECKING:
     from .live import ErrandRun, LiveActivities
     from .photos import PhotoStore
     from .push import Push
+    from .esse3 import Esse3Reader
     from .releases import Releases
 
 log = logging.getLogger(__name__)
@@ -119,6 +125,35 @@ COMMIT = re.compile(
     r"subscribe|sign up|register|unsubscribe|cancel (order|subscription|booking|membership)|"
     r"delete (account|profile)|close (account|profile))\b",
     re.I)
+
+# Esse3: what commits on a booking or a bookings page. Its buttons' words and what its code calls them (the forms post
+# to EffettuaPrenotazioneAppello, a cancel goes through CancellaPrenotazione…).
+# (Avanti, Continua and the like move through the pages and aren't counted.)
+ESSE3_BOOK = re.compile(r"\b(prenota|prenotati|prenotami|conferma|confermo|s[iì]|ok|book|confirm|yes)\b", re.I)
+ESSE3_CANCEL = re.compile(r"\b(cancella|cancellami|annulla|elimina|rimuovi|conferma|confermo|s[iì]|ok|cancel|"
+                          r"delete|remove|confirm|yes)\b", re.I)
+ESSE3_BOOK_HINT = re.compile(r"effettuaprenotazion|prenotaappello|prenota\b", re.I)
+ESSE3_CANCEL_HINT = re.compile(r"cancellaprenotazion|cancella|elimina|annulla|rimuovi", re.I)
+ESSE3_ANY_HINT = re.compile(r"effettuaprenotazion|prenotaappello|cancellaprenotazion|cancella|elimina|annulla|conferma",
+                            re.I)
+ESSE3_HOST = "esse3.unito.it"
+
+ESSE3_SYSTEM = """You are Aide, in a real browser (Chromium, phone-sized, Italian locale) on Esse3, the University \
+of Turin's student records, already logged in as the user. The user tapped one button in their app: sign them up for \
+one exam session, or cancel their sign-up for it. Do exactly that, for exactly that session, and nothing else.
+
+- Start from the page you're given. Read it (read_page), find the session (the course and the date), and click its \
+button: Prenota to sign up, Cancella (often an icon, a bin or an X, on the bookings page) to cancel. If Esse3 asks to \
+confirm (Conferma, Sì), click that too. Only two such clicks are allowed, and each only on a page that shows this \
+session's course and date; the browser refuses any other.
+- Never type into any field, never fill in a questionnaire or a survey, never log in, never change the user's data, \
+never sign up for or cancel any other session.
+- If Esse3 shows a login page, asks for a questionnaire ("questionario") first, says a prerequisite is missing, says \
+the sign-up is closed or full, or anything else stops you: call need_user with why "other" and what the page says, \
+in one English line (quote Esse3's words when they're short).
+- When it's done (Esse3 says the booking went through or was cancelled), call finish with one short line, ok true. \
+If it didn't work, finish with ok false and why. The server checks the bookings page itself afterwards.
+- Write each `doing` in English, short."""
 
 SYSTEM = """You are Aide, doing an errand on the web for the user, in a real browser (Chromium on the user's \
 server, sized like a phone, Italian locale; the user lives in Turin). You work alone, though the user may watch \
@@ -221,6 +256,7 @@ class ErrandStore:
         conversation TEXT,              -- the chat it reports in (a public id)
         products     TEXT,              -- JSON: what finish showed [{title, url, price, rating, reviews, image, note}]
         timed_drop   TEXT,              -- JSON: a timed drop {opens_at, closes_at, max_total, limits, armed}
+        esse3        TEXT,              -- JSON: an Esse3 sign-up or cancel {action, key, course, code, day, ...}
         created_at   TEXT NOT NULL,
         updated_at   TEXT NOT NULL
     );
@@ -252,16 +288,19 @@ class ErrandStore:
             conn.execute("ALTER TABLE errands ADD COLUMN release INTEGER")
         if "choices" not in columns:  # databases created before picture answers
             conn.execute("ALTER TABLE errands ADD COLUMN choices TEXT")
+        if "esse3" not in columns:  # an Esse3 sign-up or cancel (esse3.py)
+            conn.execute("ALTER TABLE errands ADD COLUMN esse3 TEXT")
 
     # -- errands ---------------------------------------------------------------
 
     def create(self, task: str, title: str, site: str | None, conversation: str | None,
-               drop: dict | None = None, release: int | None = None) -> dict:
+               drop: dict | None = None, release: int | None = None, esse3: dict | None = None) -> dict:
         now = utcnow().isoformat()
         cur = self.conn.execute(
-            "INSERT INTO errands (task, title, site, status, step, conversation, timed_drop, release, created_at, "
-            "updated_at) VALUES (?, ?, ?, 'queued', 'Waiting to start', ?, ?, ?, ?, ?)",
-            (task, title, site, conversation, json.dumps(drop) if drop else None, release, now, now))
+            "INSERT INTO errands (task, title, site, status, step, conversation, timed_drop, release, esse3, "
+            "created_at, updated_at) VALUES (?, ?, ?, 'queued', 'Waiting to start', ?, ?, ?, ?, ?, ?)",
+            (task, title, site, conversation, json.dumps(drop) if drop else None, release,
+             json.dumps(esse3) if esse3 else None, now, now))
         return self.get(cur.lastrowid)
 
     def get(self, errand_id: int) -> dict | None:
@@ -281,7 +320,7 @@ class ErrandStore:
         return [self._row(r) for r in rows]
 
     def update(self, errand_id: int, **changes) -> dict:
-        for key in ("options", "choices", "confirm", "products", "timed_drop"):
+        for key in ("options", "choices", "confirm", "products", "timed_drop", "esse3"):
             if key in changes and changes[key] is not None:
                 changes[key] = json.dumps(changes[key])
         changes["updated_at"] = utcnow().isoformat()
@@ -316,6 +355,7 @@ class ErrandStore:
         e["confirm"] = json.loads(e["confirm"]) if e["confirm"] else None
         e["products"] = json.loads(e["products"]) if e.get("products") else []
         e["timed_drop"] = json.loads(e["timed_drop"]) if e.get("timed_drop") else None
+        e["esse3"] = json.loads(e["esse3"]) if e.get("esse3") else None
         return e
 
     def as_json(self, e: dict) -> dict:
@@ -429,6 +469,7 @@ class ErrandRunner:
         self.extra_tools = extra_tools or []  # web_search, when there's a key
         self.audit = audit
         self.releases: "Releases | None" = None  # release trackers' research and drops report back
+        self.esse3: "Esse3Reader | None" = None  # Esse3 sign-ups report back: it checks the bookings itself
         self.agent: "Agent | None" = None  # set by the app: posts in the chats, and the queue for Confirm
         self.queue: asyncio.Queue[int] = asyncio.Queue()
         self.current: int | None = None  # the errand running now
@@ -460,6 +501,35 @@ class ErrandRunner:
         self.store.log(errand["id"], "Waiting to start" if self.current else "Starting", counts=False)
         self.queue.put_nowait(errand["id"])
         return self.store.get(errand["id"])
+
+    async def start_esse3(self, target: dict, cookies: list[dict]) -> dict:
+        """An Esse3 sign-up or cancel, on the user's tap (esse3.py): the server's login copied into the browser's UniTo
+        profile, no chat, and the tap as the Confirm for the clicks that commit, inside `esse3_mismatch`."""
+        if target.get("action") not in ("book", "cancel"):
+            raise ValueError("an Esse3 errand books or cancels")
+        await self.browser.add_cookies(site_of(ESSE3_HOST), cookies)
+        verb = "Sign up for" if target["action"] == "book" else "Cancel the sign-up for"
+        title = f"{verb} {target['name']}"[:60]
+        task = (f"{verb} the {target['name']} exam on {target['day_it']}" + (f" at {target['time']}" if target.get("time")
+                                                                             else "") + " on Esse3.")
+        errand = self.store.create(task, title, site_of(ESSE3_HOST), None, esse3=target)
+        self.store.update(errand["id"], url=target["start_url"], confirm={"kind": "esse3", "go": True, "left": 2})
+        self.store.log(errand["id"], "Waiting to start" if self.current else "Starting", counts=False)
+        self.queue.put_nowait(errand["id"])
+        log.info("errand %s: Esse3 %s", errand["id"], target["action"])
+        return self.store.get(errand["id"])
+
+    def _esse3_ended(self, e: dict, kind: str, args: dict) -> None:
+        """An Esse3 errand stopped (finished, needs the user, failed, cancelled): esse3.py checks and reports."""
+        if not e.get("esse3") or self.esse3 is None:
+            return
+
+        async def tell() -> None:
+            try:
+                await self.esse3.errand_ended(self.store.get(e["id"]), kind, args)
+            except Exception:
+                log.exception("errand %s: Esse3 didn't take the end", e["id"])
+        asyncio.get_running_loop().create_task(tell())
 
     async def buy_product(self, errand_id: int, url: str, size: str | None = None,
                           max_total: float | None = None) -> dict:
@@ -530,7 +600,9 @@ class ErrandRunner:
         if self.current != errand_id and errand_id not in self._dropping:
             self._close(errand_id, failed=False, text="Cancelled")
             asyncio.get_running_loop().create_task(self.browser.close(_owner(errand_id)))
-        activity.record(self.store.conn, "aide", "errand", e["title"], "Cancelled", e["conversation"])
+        if not e.get("esse3"):
+            activity.record(self.store.conn, "aide", "errand", e["title"], "Cancelled", e["conversation"])
+        self._esse3_ended(e, "cancelled", {})
         return e
 
     def confirmed(self, errand_id: int) -> str:
@@ -606,6 +678,11 @@ class ErrandRunner:
             log.info("errand %s was interrupted by a restart", e["id"])
             if _armed(e) and utcnow() < _utc(e["timed_drop"]["closes_at"]):  # the sale's still on: back to it
                 self.store.update(e["id"], status="scheduled", wake_at=utcnow().isoformat(), step="Going on")
+                continue
+            if e.get("esse3"):  # never picked up again: esse3.py reads the bookings and says what it finds
+                e = self.store.update(e["id"], status="failed", step="Stopped by a restart",
+                                      result="The server restarted in the middle of it.")
+                self._esse3_ended(e, "failed", {"result": e["result"]})
                 continue
             asyncio.get_running_loop().create_task(self._post(
                 e, "The server restarted in the middle of this errand",
@@ -684,6 +761,9 @@ class ErrandRunner:
                                      f"{late}, so nothing was ordered. Ask again whenever you like.", card=True)
         now = utcnow()
         for e in self.store.by_status("needs_you"):
+            if e.get("esse3") and e["updated_at"] <= (now - WAITING_FOR).isoformat():
+                self.cancel(e["id"])  # the user didn't take over: the UniTo cookies go
+                continue
             if e["wake_at"] and e["wake_at"] <= now.isoformat():
                 self._resume(e, "The Claude plan's limit has reset. Go on.")
             elif e["id"] in self._runs and e["updated_at"] <= (now - WAITING_FOR).isoformat():
@@ -714,7 +794,8 @@ class ErrandRunner:
                 phase.outcome = ("finish", {"result": phase.last_text or "I stopped without finishing.",
                                             "ok": bool(phase.last_text)})
         except PlanLimit as limit:
-            phase.outcome = ("plan_limit", {"resets_at": limit.resets_at})
+            phase.outcome = ("plan_limit", {"resets_at": limit.resets_at}) if not e.get("esse3") else (
+                "finish", {"ok": False, "result": "The Claude plan reached its limit half-way through."})
         except (TimeoutError, asyncio.TimeoutError):
             phase.outcome = ("finish", {"ok": False, "result": "I ran out of time for this errand "
                                         f"({MAX_ACTIONS} steps or {MAX_SECONDS // 60} minutes) and stopped. "
@@ -754,28 +835,31 @@ class ErrandRunner:
             return out, err
 
         text = None
+        esse3 = bool(phase.errand.get("esse3"))
+        system = ESSE3_SYSTEM if esse3 else SYSTEM
         # A drop at its sale runs on OpenRouter: no plan limit to stop it at the wrong moment, and no tool timeout.
         if self.engine is not None and phase.errand["engine"] != "openrouter" and not _armed(phase.errand):
-            if (until := self.engine.plan_blocked()) is not None:
-                raise PlanLimit(until, None, "the plan's limit")  # ask before going to OpenRouter
-            if self.engine.plan_now():
+            blocked = self.engine.plan_blocked()
+            if blocked is not None and not esse3:
+                raise PlanLimit(blocked, None, "the plan's limit")  # ask before going to OpenRouter
+            if blocked is None and self.engine.plan_now():  # an Esse3 tap doesn't wait for the plan: OpenRouter
                 try:
-                    text = await self.engine.run(SYSTEM, prompt, tools, call, fast=False, max_turns=MAX_ROUNDS)
-                except RuntimeError as ex:
-                    if phase.calls:
+                    text = await self.engine.run(system, prompt, tools, call, fast=False, max_turns=MAX_ROUNDS)
+                except (RuntimeError, PlanLimit) as ex:
+                    if phase.calls or (isinstance(ex, PlanLimit) and not esse3):
                         raise  # the browser moved: the next phase picks up from the page
                     log.warning("errand %s: the Claude plan failed (%s); on OpenRouter instead", phase.errand_id, ex)
         if text is None:
-            text = await self._openrouter(prompt, tools, call, phase)
+            text = await self._openrouter(prompt, tools, call, phase, system)
         phase.last_text = text
 
-    async def _openrouter(self, prompt: str, tools: list[Tool], call, phase: "Phase") -> str:
+    async def _openrouter(self, prompt: str, tools: list[Tool], call, phase: "Phase", system: str = SYSTEM) -> str:
         """The tool loop through OpenRouter, with screenshots as images in the tool results."""
         messages: list[dict] = [{"role": "user", "content": prompt}]
         definitions = [t.definition() for t in tools]
         for _ in range(MAX_ROUNDS):
             response = await self.client.beta.messages.create(
-                model=self.model, max_tokens=4096, system=SYSTEM, tools=definitions,
+                model=self.model, max_tokens=4096, system=system, tools=definitions,
                 messages=_with_breakpoint(_pruned(messages)))
             messages.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
             uses = [b for b in response.content if b.type == "tool_use"]
@@ -805,8 +889,11 @@ class ErrandRunner:
             e = self.store.update(errand_id, status="done" if ok else "failed", result=result,
                                   step="Done" if ok else "Stopped")
             self._close(errand_id, failed=not ok, text=result)
-            activity.record(self.store.conn, "aide", "errand", e["title"], result, e["conversation"])
             await self.browser.close(_owner(errand_id))
+            if e.get("esse3"):
+                self._esse3_ended(e, "finish", {"ok": ok, "result": result})
+                return
+            activity.record(self.store.conn, "aide", "errand", e["title"], result, e["conversation"])
             purchase = self.store.purchase(e["confirm"]["purchase_id"]) \
                 if e["confirm"] and e["confirm"].get("purchase_id") else None
             products = args.get("products") or []
@@ -828,6 +915,9 @@ class ErrandRunner:
         elif kind == "need_user":
             why, reason = args["why"], args["reason"].strip()
             e = self.store.update(errand_id, status="needs_you", why=why, reason=reason, step=reason)
+            if e.get("esse3"):
+                self._esse3_ended(e, "need_user", {"why": why, "reason": reason})
+                return
             covered = await run.needs_you(reason) if run else False
             activity.record(self.store.conn, "aide", "errand", e["title"], f"Needs you: {reason}", e["conversation"])
             button = {"login": "Log in", "code": "Enter the code", "captcha": "Solve it"}.get(why)
@@ -883,6 +973,10 @@ class ErrandRunner:
     def _fail(self, errand_id: int, text: str) -> None:
         e = self.store.update(errand_id, status="failed", result=text, step="Stopped")
         self._close(errand_id, failed=True, text=text)
+        if e.get("esse3"):
+            asyncio.get_running_loop().create_task(self.browser.close(_owner(errand_id)))
+            self._esse3_ended(e, "failed", {"result": text})
+            return
         activity.record(self.store.conn, "aide", "errand", e["title"], text, e["conversation"])
         loop = asyncio.get_running_loop()
         loop.create_task(self.browser.close(_owner(errand_id)))
@@ -1003,6 +1097,8 @@ class Phase:
             parts.append("No page is open yet.")
         if d := e["timed_drop"]:
             parts.append(self._drop_brief(d))
+        if t := e.get("esse3"):
+            parts.append(self._esse3_brief(t))
         left = MAX_ACTIONS - e["actions"]
         parts.append(f"You have {left} browser actions left for this errand.")
         parts.append("Write for the user in English (each `doing`, questions, finish), though the page is Italian.")
@@ -1028,6 +1124,20 @@ class Phase:
                 "the total differ, or anything else is off, don't place it: ask_confirm with what the page shows. If "
                 "it's sold out, finish and say so.")
 
+    def _esse3_brief(self, t: dict) -> str:
+        c = self.store.get(self.errand_id)["confirm"] or {}
+        left = 0 if c.get("used") else c.get("left", 0)
+        what = ("Sign the user up for" if t["action"] == "book" else "Cancel the user's sign-up for")
+        others = "; ".join(f"{course} on {day}" for course, day in t.get("others") or [])
+        return (f"Esse3: {what} this exam session: {t['course']}" + (f" ({t['code']})" if t.get("code") else "")
+                + f", on {t['day_it']}" + (f" at {t['time']}" if t.get("time") else "") + ". "
+                + ("Its booking page should be open: click Prenota (or Prenotati), then confirm if asked. "
+                   if t["action"] == "book" else
+                   "The bookings page (Bacheca prenotazioni) should be open: find this session and its cancel "
+                   "(Cancella, often a bin or an X), then confirm if asked. ")
+                + (f"The user is also signed up for: {others}. Never touch those. " if others else "")
+                + f"Clicks that sign up or cancel left: {left}.")
+
     def _drop(self) -> dict | None:
         """The armed drop's limits while its window is open, else None."""
         d = self.store.get(self.errand_id)["timed_drop"]
@@ -1037,6 +1147,10 @@ class Phase:
 
     def tools(self) -> list[Tool]:
         tools = [*self._browser_tools(), *self._control_tools(), *self.runner.extra_tools]
+        if self.errand.get("esse3"):  # reading and clicking only: nothing typed, nothing asked, nothing searched
+            tools = [t for t in tools if t.name in ESSE3_TOOLS]
+            self.registry = {t.name: t for t in tools}
+            return tools
         if d := self.errand["timed_drop"]:
             tools += self._drop_tools(d)
         elif self.errand.get("release") and self.runner.releases is not None:
@@ -1080,10 +1194,18 @@ class Phase:
         c = self.store.get(self.errand_id)["confirm"]
         return c if c and c.get("go") and not c.get("used") else None
 
-    async def _commit_ok(self, text: str) -> bool:
+    async def _commit_ok(self, text: str, info: dict | None = None) -> bool:
         """A committing element may be clicked only once the user confirmed it, with the same total on the page.
-        At a timed drop the user confirmed limits instead: any order button, inside them."""
+        At a timed drop the user confirmed limits instead: any order button, inside them. On Esse3 the user's tap
+        was the Confirm: at most `left` clicks, each on this session (`esse3_mismatch`)."""
         c = self._confirm()
+        if c is not None and c.get("kind") == "esse3":
+            where = self.browser.where(self.owner) or {}
+            if (why := esse3_mismatch(self.errand["esse3"], info or {}, where.get("url"),
+                                      await self.browser.text(self.owner))) is not None:
+                raise ValueError(f"Not this session's button: {why}. Don't click it. If the page doesn't offer this "
+                                 "session's button, call need_user with what it says.")
+            return True
         if c is not None and c.get("kind") == "drop":
             d = self._drop()
             if d is None:
@@ -1103,7 +1225,12 @@ class Phase:
         b, owner = self.browser, self.owner
 
         async def open_page(url: str, doing: str | None = None) -> str:
-            if COMMIT_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
+            if self.errand.get("esse3"):
+                if urlparse(url).scheme != "https" or urlparse(url).hostname != ESSE3_HOST:
+                    raise ValueError("Only Esse3's own pages (https://esse3.unito.it/…).")
+                if ESSE3_ANY_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
+                    raise ValueError("That address signs up or cancels: go there through the page's button.")
+            elif COMMIT_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
                 raise ValueError("That address looks like it places an order or pays: go there through the page, "
                                  "and ask_confirm with the button.")
             self._step(f"Opened {url[:120]}", doing=doing)
@@ -1135,13 +1262,21 @@ class Phase:
             info = await b.inspect(owner, ref)
             text = info["text"] or info["tag"]
             where = b.where(owner) or {}
-            why = commit_reason(info, where.get("url"), await b.text(owner))
+            esse3 = self.errand.get("esse3")
+            why = commit_reason(info, where.get("url"), await b.text(owner)) or (esse3_commit(info) if esse3 else None)
             if why:
-                if not await self._commit_ok(text):
+                if not await self._commit_ok(text, info):
+                    if esse3:
+                        raise ValueError(f"[{ref}] \"{text[:80]}\" signs up or cancels, and no such clicks are left. "
+                                         "Finish and say what the page shows.")
                     raise ValueError(f"[{ref}] \"{text[:80]}\" could change something (buy, book, send, sign up, "
                                      f"delete): {why}. Use ask_confirm with this ref; the user confirms first.")
                 c = self._confirm()
-                self.store.update(self.errand_id, confirm={**c, "used": True})
+                if c.get("kind") == "esse3":
+                    left = c.get("left", 1) - 1
+                    self.store.update(self.errand_id, confirm={**c, "left": left, "used": left <= 0})
+                else:
+                    self.store.update(self.errand_id, confirm={**c, "used": True})
                 self._step(f"Clicked the confirmed \"{text[:80]}\"", doing=doing)
             else:
                 self._step(f"Clicked [{ref}] \"{text[:80]}\"", doing=doing)
@@ -1682,6 +1817,67 @@ def _utc(text: str) -> datetime:
 def at_checkout(url: str | None, text: str | None) -> bool:
     """The page is a checkout (its address, or what it says: a payment method, the order's total)."""
     return bool(CHECKOUT_URL.search(urlparse(url or "").path or "")) or bool(CHECKOUT_TEXT.search(text or ""))
+
+
+ESSE3_TOOLS = {"open_page", "read_page", "find_on_page", "screenshot", "click", "select_option", "scroll", "go_back",
+               "need_user", "finish"}
+
+
+def _esse3_hints(info: dict) -> str:
+    return " ".join(str(info.get(k) or "") for k in ("hints", "submit_hints", "ids"))
+
+
+def esse3_kind(info: dict) -> str | None:
+    """What an element on Esse3 does: "book", "cancel", "confirm" (a Conferma or Sì that goes either way) or None."""
+    text, hints = f"{info.get('text') or ''} {info.get('submits') or ''}", _esse3_hints(info)
+    if ESSE3_CANCEL_HINT.search(hints) or re.search(r"\b(cancella|cancellami|annulla|elimina|rimuovi|cancel|delete|"
+                                                    r"remove)\b", text, re.I):
+        return "cancel"
+    if ESSE3_BOOK_HINT.search(hints) or re.search(r"\b(prenota|prenotati|prenotami|book)\b", text, re.I):
+        return "book"
+    if ESSE3_BOOK.search(text) or ESSE3_CANCEL.search(text) or re.search(r"conferma", hints, re.I):
+        return "confirm"
+    return None
+
+
+def esse3_commit(info: dict) -> str | None:
+    """Why an element on Esse3 might sign up or cancel (beyond `commit_reason`, which misses a bare Cancella)."""
+    kind = esse3_kind(info)
+    if kind in ("book", "cancel"):
+        return f"an Esse3 {'sign-up' if kind == 'book' else 'cancel'} button"
+    if kind == "confirm" and (info.get("in_form") or info.get("tag") in ("button", "input")):
+        return "an Esse3 confirmation"
+    return None
+
+
+def _app_ids(info: dict) -> set[str]:
+    return set(re.findall(r"\bAPP_ID=(\d+)", _esse3_hints(info), re.I))
+
+
+def _shows(page: str, course: str, code: str | None, day: str) -> bool:
+    return day in page and (" ".join(course.split()).casefold() in page or bool(code and code.casefold() in page))
+
+
+def esse3_mismatch(t: dict, info: dict, url: str | None, page_text: str | None) -> str | None:
+    """Why a committing click on Esse3 isn't the tapped session's (None when it is): the wrong kind of button for
+    the action, a page without the session's course and day, another session's APP_ID, or another booked session on
+    the same page with nothing tying the button to this one."""
+    if urlparse(url or "").hostname != ESSE3_HOST:
+        return "not on Esse3"
+    kind = esse3_kind(info)
+    if kind is None:
+        return "not a sign-up, cancel or confirm button"
+    if kind not in (t["action"], "confirm"):
+        return "a cancel button, and this is a sign-up" if kind == "cancel" else "a sign-up button, and this cancels"
+    page = re.sub(r"\s+", " ", page_text or "").casefold()
+    if not _shows(page, t["course"], t.get("code"), t["day_it"]):
+        return f"the page doesn't show {t['course']} on {t['day_it']}"
+    ids = _app_ids(info)
+    if ids and t.get("app_id") and ids != {str(t["app_id"])}:
+        return "the button is for another session (APP_ID)"
+    if not (ids and t.get("app_id")) and any(_shows(page, course, None, day) for course, day in t.get("others") or []):
+        return "the page shows another of the user's sessions too, and nothing ties this button to this one"
+    return None
 
 
 def commit_reason(info: dict, url: str | None, page_text: str | None) -> str | None:

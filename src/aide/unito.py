@@ -1,6 +1,6 @@
 """UniTo's single sign-on for the server's own reads of Esse3 (#74), with the login saved in Settings → Passwords.
 
-Plain HTTP, no model, no browser. A protected Esse3 page sends you to the university's IdP (Shibboleth): a storage
+Plain HTTP, no model. A protected Esse3 page sends you to the university's IdP (Shibboleth): a storage
 check form, the choice of how to log in (the university's own username and password, not SPID or CIE), the username
 and password form, then a form that posts the SAML answer back to Esse3, which lands on the page asked for.
 
@@ -9,7 +9,8 @@ What keeps the password safe:
   with nothing sent;
 - the password is posted only to `https://idp.unito.it/idp/profile/SAML2/…`, and the store itself checks the address
   is https on the entry's sites (`PasswordStore.use`);
-- the cookies live in memory only: after a restart the server logs in again;
+- the cookies live in memory only (after a restart the server logs in again); an Esse3 errand gets a copy in Aide's
+  browser (`handoff`), deleted with the browser's UniTo profile when the errand ends;
 - logs carry step names only, never an address with SAML in it or a page.
 
 When it goes wrong: a wrong password marks the entry `wrong` and it's never tried again until the user changes it (so
@@ -148,16 +149,27 @@ class UnitoSession:
         self.logged_in = False  # sent to the IdP (or somewhere else, which the login refuses)
         return await self._login(r)
 
-    async def post(self, url: str, data: dict[str, str]) -> httpx.Response:
-        """A form sent to Esse3, once: never sent again by itself. A session that ended on the way (sent to the
-        login) is LoginFailed("expired"), with nothing known about whether Esse3 took it."""
-        if not _https_on(url, {"esse3.unito.it"}):
-            raise ValueError("only Esse3's forms")
-        r = await self._follow(self.http.build_request("POST", url, data=data), within=SP_HOSTS)
-        if r.is_redirect:
-            self.logged_in = False
-            raise LoginFailed("expired", "the Esse3 session ended as the form was sent")
-        return r
+    async def handoff(self, url: str) -> list[dict]:
+        """The session's cookies for Aide's browser (`Browser.add_cookies`), so an errand there starts logged in
+        without the password: logged in first (a get of `url`, an Esse3 page), then every cookie for UniTo's hosts
+        (the IdP's too, so a bounce through the login on the way passes by itself) in Playwright's shape."""
+        await self.get(url)
+        out = []
+        for c in self.http.cookies.jar:
+            host = c.domain.lstrip(".")
+            if not any(h == host or h.endswith("." + host) for h in HOSTS) or not host.endswith(SITE):
+                continue
+            cookie = {"name": c.name, "value": c.value or "", "secure": bool(c.secure),
+                      "httpOnly": bool(c.has_nonstandard_attr("HttpOnly") or c.has_nonstandard_attr("httponly"))}
+            if c.domain_specified:  # a cookie for the domain and its subdomains
+                cookie |= {"domain": c.domain, "path": c.path or "/"}
+            else:  # host-only: Playwright takes those as a url
+                cookie["url"] = f"https://{host}{c.path or '/'}"
+            if c.expires:
+                cookie["expires"] = float(c.expires)
+            out.append(cookie)
+        log.info("unito: %d cookies handed to the browser", len(out))
+        return out
 
     async def _follow(self, request: httpx.Request, within: set[str] = HOSTS) -> httpx.Response:
         """Send it and follow redirects by hand, each one within UniTo's hosts. A redirect out of `within` comes back

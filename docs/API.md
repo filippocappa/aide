@@ -1199,7 +1199,8 @@ yourself); `unreadable` (the stored copy can't be decrypted: add it again).
 ### Esse3
 
 The university's student records (Esse3, `https://esse3.unito.it`), since 2026-11-07, read by the server with the UniTo
-login saved in Passwords (no model, no browser; `esse3.py`, `unito.py`). Four times a day, when a UniTo password is
+login saved in Passwords (no browser; `esse3.py`, `unito.py`; the fast model only reads a page the parser finds
+nothing on). Four times a day, when a UniTo password is
 saved or changed, and on `POST /v1/esse3/read`. Without a UniTo password it does nothing. It signs up for an exam
 session or cancels one only on the user's tap (Signing up, below).
 
@@ -1214,23 +1215,30 @@ made (the push is for a sign-up already open when first read).
 |---|---|---|
 | `GET /v1/esse3` | | Esse3, below. Never read: `exams` and `transcript` empty, `read_at` null. |
 | `POST /v1/esse3/read` | | Esse3, after reading (~5–15 s) unless a read finished in the last 10 min. `503` the reader isn't on. |
-| `POST /v1/esse3/exams/{date_id}/signup` | | Sign me up: `{"signup": Signup}` (~5–20 s when open). `404` not an Esse3 session, `409` `{"error": "…", "kind"}` it didn't go through, `503` the reader isn't on |
+| `POST /v1/esse3/exams/{date_id}/signup` | | Sign me up: `{"signup": Signup}`, `202` while Aide's browser is on Esse3 (`busy` set; since 2026-11-07, #75), `200` when settled (not open yet: kept as wanted). `404` not an Esse3 session, `409` `{"error": "…", "kind"}` it couldn't start, `503` the reader isn't on |
 | `DELETE /v1/esse3/exams/{date_id}/signup` | | Cancel: the same. |
 
-Signing up (since 2026-11-07). `date_id` is the session's exam course date (`by: "esse3"`, `kind: "exam"`); the tap
-in the app, after its own confirmation, is the confirmation. Sign-up open: Aide opens the session's booking page, posts
-its form once (never again by itself) and reads the bookings to see it took. Not open yet: the session is kept as
-wanted (`auto`), and once its sign-up opens (reads every 15 min from its opening day) Aide signs up and pushes
-"Signed up: Maths for economics II" (`esse3`), or "Couldn't sign you up" with the reason, kept in `error` (no more tries
-until the user taps again). Cancel unbooks on Esse3 while its window is open, or drops the wish. Each one is in
-Professor's activity. `409` kinds: `closed`, `questionnaire` (the course's questionnaire first, on MyUniTo), `page`
-(Esse3 showed a page Aide doesn't know), `unconfirmed` (sent, but the bookings don't show it: Esse3's own words when it
-said why), `login`. The exam's course date says it in `you` ("Signed up on Esse3", "Aide signs you up when sign-up
-opens (15 Dec)").
+Signing up (since 2026-11-07; a browser errand since #75). `date_id` is the session's exam course date
+(`by: "esse3"`, `kind: "exam"`); the tap in the app, after its own confirmation, is the confirmation. Sign-up open:
+the server logs in itself and hands the login to Aide's browser as cookies (the password never reaches the model),
+and an errand (Browser errands, "Esse3 errands") opens the session's booking page and clicks Prenota and a Conferma
+if asked, guarded in code to this session. The answer is `202` with `busy` "signing up", `errand_id` and `step`; it
+takes a minute or two. However it ends, the server reads the bookings page itself to decide, then pushes "Signed up:
+Maths for economics II" or "Couldn't sign you up" with the reason (`esse3`), the reason kept in `error`. Never tried
+again by itself. When the errand stops on something only the user can do (a questionnaire, a prerequisite), `error`
+says so and `errand_id` stays set while the errand waits (30 min): the app's Take over opens its live view. Not open
+yet: the session is kept as wanted (`auto`), and once its sign-up opens (reads every 15 min from its opening day) the
+same errand runs, with the same pushes ("as soon as the sign-up opened"). Cancel: the same errand on the bookings page
+while its window is open (`busy` "cancelling"); for a session not signed up for, it drops the wish and stops an errand
+still signing up. Each one is in Professor's activity. `409` kinds: `closed`, `login`, `page` (no browser on the
+server). The exam's course date says it in `you` ("Signed up on Esse3", "Aide signs you up when sign-up opens
+(15 Dec)").
 
 Signup: `{"state": "open" | "soon" | "closed" | "booked", "opens": "2026-12-15" or null, "closes": "…" or null,
-"auto": false (signed up for when it opens), "busy": null or "signing up" | "cancelling", "error": null or "…",
-"can_cancel": true}`. On each Esse3 exam's course date (`signup`) and on Exam below.
+"auto": false (signed up for when it opens), "busy": null or "signing up" | "cancelling" (while the errand works),
+"error": null or "…" (null while busy), "can_cancel": true, "errand_id": 412 or null (the errand, while it's open or
+waits for the user: Watch or Take over through its live view), "step": null or "Opening the booking page" (its
+latest line, or while it waits, what it needs)}`. On each Esse3 exam's course date (`signup`) and on Exam below.
 
 Esse3: `{"connected": true, "read_at": "2026-11-07T09:00:00+00:00" or null, "error": null or {"kind", "message"},
 "exams": [Exam], "transcript": [Course], "credits": {"passed": 21, "total": 180}, "average": 27.86 or null}`.
@@ -2640,6 +2648,19 @@ Release:
 | `DELETE /v1/releases/{id}` | | `{"ok": true}` |
 
 Without the browser: the list is empty with `enabled` false, the rest answer `503`.
+
+### Esse3 errands
+
+Since 2026-11-07 (#75), signing up for an Esse3 exam session or cancelling a sign-up (Esse3, "Signing up") is an
+errand the server starts on the user's tap, not Aide: site `unito.it`, `conversation_id` null (nothing in a chat, no
+Live Activity), no `errand_go`: the tap was the Confirm. The server's own UniTo login is copied into the profile as
+cookies first, and the profile is deleted when the errand ends (kept while it waits for the user to take over). The
+model has reading and clicking tools only (no typing, no keys, no questions), stays on `esse3.unito.it`, and may make
+at most two clicks that commit (Prenota or Cancella, then a Conferma), each refused in code unless the page shows the
+tapped session's course and date, the button fits the action, and its form's `APP_ID` (when it has one) is the
+session's. A questionnaire, a prerequisite or a login stops it as `needs_you` (`why` `other`), cancelled after 30
+min. Cut off by a restart, it's failed, never resumed. It shows in `GET /v1/errands` and opens in the live view like
+any errand; the outcome is decided from the bookings page, on the exam's Signup.
 
 ### Live view
 

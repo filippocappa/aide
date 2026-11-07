@@ -367,9 +367,14 @@ _INSPECT_JS = r"""
     e.getAttribute('data-testid'), e.getAttribute('data-test'), e.getAttribute('data-action'), e.getAttribute('formaction'),
     e.tagName === 'A' ? e.getAttribute('href') : '', f && f.getAttribute('action')].filter(Boolean).join(' ').slice(0, 400);
   const inForm = !!form;
+  // Which record a button acts on: its form's hidden fields that name one (Esse3's APP_ID=…, AD_ID=…), and a link's
+  // query. For the commit guard only, never shown to the model.
+  const ids = [...(form ? form.querySelectorAll('input[type=hidden]') : [])]
+    .filter(i => /_ID$|^id$/i.test(i.name || '')).map(i => `${i.name}=${i.value}`)
+    .concat(el.tagName === 'A' && el.search ? [el.search.slice(1)] : []).join('&').slice(0, 400);
   return {tag: el.tagName.toLowerCase(), type: el.type || '', text: text.slice(0, 200), sensitive,
           submits: submits.replace(/\s+/g, ' ').trim().slice(0, 120), hints: hintsOf(el, el.form),
-          submit_hints: hintsOf(submit, form), in_form: inForm};
+          submit_hints: hintsOf(submit, form), in_form: inForm, ids};
 }
 """
 
@@ -1073,6 +1078,13 @@ class Browser:
                 out.append({"site": d.name, "used_at": datetime.fromtimestamp(used, timezone.utc).isoformat(),
                             "open": d.name in self._contexts})
         return sorted(out, key=lambda s: s["used_at"], reverse=True)
+
+    async def add_cookies(self, site: str, cookies: list[dict]) -> None:
+        """Cookies into a site's profile, before an errand opens its pages (an Esse3 errand: the login the server
+        made itself, `UnitoSession.handoff`). `forget(site)` deletes them again."""
+        context = await self._context(check_site(site))
+        if cookies:
+            await context.add_cookies(cookies)
 
     async def forget(self, site: str) -> bool:
         """Log out of a site for good: close it and delete its profile (cookies, saved logins)."""

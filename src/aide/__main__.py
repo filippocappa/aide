@@ -200,10 +200,11 @@ def main() -> None:
     tools += moodle_tools(moodle)
     passwords = PasswordStore(db.conn, load_key())  # Settings → Passwords; never a tool
     log.info("passwords: %s", "on" if passwords.enabled else "locked" if passwords.locked else "off (no key)")
-    esse3 = Esse3Reader(UnitoSession(passwords, push=push), study, notebook, push)  # quiet until UniTo's is saved
 
     async def finance_ask(system, text):  # sorting new merchants: a small call, OpenRouter's fast model
         return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, small=True)
+    # Esse3: read in plain HTTP (the fast model only for a page its parser can't read); signing up is an errand.
+    esse3 = Esse3Reader(UnitoSession(passwords, push=push), study, notebook, push, ask=finance_ask)
     finance = FinanceStore(db.conn, settings.timezone, finance_ask)
     bank_client = None
     if settings.enable_banking_app_id and settings.enable_banking_key:
@@ -263,6 +264,7 @@ def main() -> None:
         releases = Releases(db.conn, settings.timezone, client, settings.model, web, browser, push, reminders,
                             CONVERSATION)
         releases.errands, releases.watches, errands.releases = errands, watches, releases
+        esse3.errands, errands.esse3 = errands, esse3  # Esse3 sign-ups and cancels run in the browser
         tools += release_tools(releases, errand_chat)
     else:
         log.warning("Playwright's Chromium not installed (uv run playwright install chromium): no browser errands")
