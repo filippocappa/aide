@@ -60,7 +60,9 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
 - `srs.py`: spaced repetition (#63): FSRS-4.5 over each question's and flashcard's answers in `quiz_answers`
-  (one review a day, its worst grade; no state of its own), used by `quiz.py` for picking, mastery and the Due today deck.
+  (one review a day, its worst grade; no state of its own), used by `quiz.py` for picking, mastery and the Due today deck;
+  the user grades flashcards (Again/Hard/Good/Easy), a slow right MCQ is Hard, and from 21 days before the course's next
+  exam (`QuizStore.exam`: the exam plan's `targets`, else the course's dates) items come due at 95% instead of 90%.
 - `examplan.py`: the exam plan (#68): the hours each course's next exam still needs (learn, practise, mocks, review,
   less what's known) against the free days before it, under a daily cap; no model call. Professor's `study_plan`.
 - `lessons.py`: a lesson per notebook topic (hook, goals, steps with checks), written from the topic's notes through
@@ -775,6 +777,10 @@ notebook's order. `due`, `new`, `next_due` on the bank and the Study brief; a `r
 answered, once a day each), the due counts in Professor's planner prompt and `study_progress`. The vault's SR comments
 are left to the plugin. App: the Due today card on Study, a "12 due" chip on the course page, Today's Due today rows,
 `aide://study/<course>/due` (`due_today` for `open_page`).
+Closer to Anki (2026-11-07): a flashcard is turned with Show answer (space) and graded Again · Hard · Good · Easy
+(1–4; swipe right Good, left Again), sent as the check's answer; a multiple-choice check carries `seconds` and a right
+but slow answer is Hard; from 21 days before the next exam or mid-term (its chosen topics) items are due at 95% recall
+(`before_exam` on the bank and the brief; "Exam on …: shorter gaps until then" on the Due today card).
 
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.

@@ -440,6 +440,9 @@ class ExamPlan:
                             "need": round(sum(m for _, m in phases)), "held": held, "left": left, "stretch": stretch,
                             "data": data[c["id"]]})
         targets.sort(key=lambda t: (t["target"]["date"], t["course"]["name"]))
+        if self.quizzes is not None:  # the spaced-repetition schedule tightens before each (srs.py)
+            self.quizzes.targets = {t["course"]["id"]: (t["target"]["date"], set(t["work"]["chosen"] or []) or None)
+                                    for t in targets}
 
         last = max([t["target"]["date"] for t in targets] + [t["fallback"]["date"] for t in targets if t["fallback"]],
                    default=today)

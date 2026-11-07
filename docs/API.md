@@ -986,7 +986,7 @@ per topic from it.
 Since 2026-11-07 (spaced repetition, Practice exams below) `known` and `learning` follow the schedule: `known` is not
 due today and not missed last time, `learning` the rest of those answered (due, or missed); each row adds `due` (due
 today) and `retention` (0–1, how much of the topic is likely recalled now; never answered counts 0). The notebook
-also has the course's `due`, `new` and `next_due`, as on the bank.
+also has the course's `due`, `new`, `next_due` and `before_exam`, as on the bank.
 `chat` is null until the course has a chat; then the app opens it, else asks for one with the POST above.
 Since 2026-10-31 `next_exam` also has `"from": "calendar" | "course"` and `all_day`: without an exam in the Exam
 calendar, it's the earliest coming exam or mid-term from the course's dates (below), titled "<course> <what>", with
@@ -1502,20 +1502,26 @@ score is a `quiz` card on that message (Chat, attachments) and the push says it 
 | `GET /v1/quizzes?course=2` | | Bank. `404` no such course. |
 | `POST /v1/quizzes` | `{"course": 2, "count": 30, "cards": 5, "exercises": 2, "minutes": 45, "topics": ["t_…"]}`; `count` the multiple-choice questions, 0–60 (default 30, fewer when the bank is smaller), `cards` flashcards and `exercises` the course's own exercises (since 2026-10-31, default 0; 60 in all at most), `minutes` null (default) for untimed, `topics` null for all. Or `{"course": 2, "mock": "m_…"}` (since 2026-10-29): that mock exam, its time and scoring | `201`, Quiz without keys. `409` the notebook has no questions. `404` the mock isn't the course's. |
 | `GET /v1/quizzes/{id}` | | Quiz (with keys once finished). `404`. |
-| `POST /v1/quizzes/{id}/check` | `{"n": 3, "answer": "B"}` (since 2026-10-31): one question answered while taking it, as in `finish` (a flashcard's `"right"` or `"wrong"`, an open one's `{"text", "photos"}`, null blank). The answer is final: `finish` keeps it over what it's sent | That Question with its key, as once finished (an open one with `model_answer` and `rubric`, `awarded` and `correct` null until marked). `409` checked already or finished; `404` no such question, or a chat quiz. |
+| `POST /v1/quizzes/{id}/check` | `{"n": 3, "answer": "B"}` (since 2026-10-31): one question answered while taking it, as in `finish` (a flashcard's `"right"` or `"wrong"`, or since 2026-11-07 how well it was known: `"again"`, `"hard"`, `"good"`, `"easy"`, kept as wrong or right; an open one's `{"text", "photos"}`, null blank). Optional `"seconds": 34.5` (since 2026-11-07): how long a multiple-choice answer took, for its grade. The answer is final: `finish` keeps it over what it's sent | That Question with its key, as once finished (an open one with `model_answer` and `rubric`, `awarded` and `correct` null until marked). `409` checked already or finished; `404` no such question, or a chat quiz. |
 | `POST /v1/quizzes/{id}/finish` | `{"answers": {"1": "B", "2": null, "16": {"text": "…", "photos": ["p_…"]}}}`, by question number; left out or null is blank. An open question's answer: typed `text`, photos of the work on paper (`POST /v1/photos`, up to 4), or both | Quiz, finished. `409` already finished. |
 
 Spaced repetition (since 2026-11-07, `srs.py`): each multiple-choice question and flashcard has a schedule (FSRS:
 stability, difficulty, a due date) worked out from every answer it has had (practice exams, mocks, chat quizzes, study
-sessions; answers from before count too). A day is one review graded by its worst answer that day: wrong or blank is
-again (due tomorrow), an open answer worth half is hard, right is good. Due when the chance of recalling it falls to
-90%, at most 180 days on. Picking for a practice exam, a chat quiz or a study session takes what's due or missed first
+sessions; answers from before count too). A day is one review graded by its worst answer that day: a flashcard's grade
+is the user's own (again, hard, good, easy; right is good, wrong again); a multiple-choice answer is again when wrong
+or blank, hard when right but slow (over 20 s plus 0.25 s a word of the question and options, from `seconds`; over 10
+min doesn't count), else good, never easy; an open answer is again under half its points, hard from half, good when
+full. Again is due tomorrow. Due when the chance of recalling it falls to 90%, at most 180 days on. Before the course's
+next exam or mid-term (the exam plan's, else the course's dates; a mid-term with chosen topics only for those) the bar
+is 95% from 21 days before it to the day: reviews come sooner, and what isn't due before the exam is still at 95% on
+the day. Picking for a practice exam, a chat quiz or a study session takes what's due or missed first
 (the least likely recalled first), then never answered, then the rest. The Obsidian vault's Spaced Repetition comments
 (`<!--SR:…-->`) are the plugin's own: Aide neither reads nor writes them.
 
 Bank adds (since 2026-11-07) `"due": 12` (questions and flashcards due today), `"new": 15` (never answered that
 today's Due today deck can still bring in: 15 a day per course, less those first answered today) and `"next_due":
-"2026-11-09"` or null (the first local day after today something is due, for "Nothing due until Monday"); the topics'
+"2026-11-09"` or null (the first local day after today something is due, for "Nothing due until Monday") and
+`"before_exam": "2026-11-28"` or null (the next exam's date while the 95% bar holds, from 21 days before); the topics'
 `known` and `learning` follow the schedule, with `due` and `retention` as on `/v1/study`.
 
 Bank: `{"course": 2, "exam": "20 to 35 multiple-choice questions…" or null, "questions": 65, "unseen": 40,

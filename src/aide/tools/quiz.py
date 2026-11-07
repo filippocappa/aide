@@ -175,8 +175,9 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
         Tool("quiz_answer", "Record the user's answer to the question waiting, and get whether it was right, why, "
              "and the next question (or the result at the end).",
              _obj({**qid, "answer": {"type": "string", "description": "A multiple-choice letter (A–E); for a "
-                                     "flashcard right or wrong, as you judge their words against its answer; blank "
-                                     "for don't know or skip"}}, ["quiz", "answer"]), quiz_answer),
+                                     "flashcard right or wrong, as you judge their words against its answer (hard "
+                                     "when they got there only with effort or partly, easy when instant and "
+                                     "complete: it spaces the card); blank for don't know or skip"}}, ["quiz", "answer"]), quiz_answer),
         Tool("end_quiz", "End a quiz early, when the user wants to stop: what they answered stays recorded.",
              _obj(qid, ["quiz"]), end_quiz),
         Tool("study_progress", "How the user is doing on a course, topic by topic (known, being learnt, due today "

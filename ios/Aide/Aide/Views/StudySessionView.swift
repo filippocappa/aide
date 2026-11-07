@@ -365,6 +365,8 @@ private struct StudyRunView: View {
     @State private var finished = false
 
     // The question on screen.
+    /// When it came up: how long a multiple-choice answer took (right but slow is Hard for the schedule).
+    @State private var shownAt = Date()
     @State private var turned = false
     @State private var drag: CGSize = .zero
     @State private var result: QuizQuestion?
@@ -465,13 +467,14 @@ private struct StudyRunView: View {
                         .onChanged { drag = $0.translation }
                         .onEnded { value in
                             if abs(value.translation.width) > 110 {
-                                judge(q, knew: value.translation.width > 0)
+                                judge(q, value.translation.width > 0 ? .good : .again)
                             } else {
                                 withAnimation(.spring) { drag = .zero }
                             }
                         }
                 )
-            Text("Say it to yourself, tap to turn. Swipe right if you knew it, left if not.")
+            Text(turned ? "How well did you know it? Again brings it back today, Easy spaces it furthest."
+                 : "Say it to yourself, then tap to turn. Swipe right for Good, left for Again.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
@@ -498,7 +501,7 @@ private struct StudyRunView: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .strokeBorder(color, lineWidth: 3)
                 .overlay(alignment: knew ? .topLeading : .topTrailing) {
-                    Text(knew ? "Know" : "Still learning")
+                    Text(knew ? "Good" : "Again")
                         .font(.subheadline.weight(.bold)).foregroundStyle(.white)
                         .padding(.horizontal, 12).padding(.vertical, 6)
                         .background(color, in: Capsule())
@@ -509,9 +512,9 @@ private struct StudyRunView: View {
         }
     }
 
-    private func judge(_ q: QuizQuestion, knew: Bool) {
-        let id = quiz.id
-        Task { _ = try? await env.api.checkQuiz(id, n: q.n, answer: .letter(knew ? "right" : "wrong")) }
+    private func judge(_ q: QuizQuestion, _ grade: CardGrade) {
+        let id = quiz.id, knew = grade != .again
+        Task { _ = try? await env.api.checkQuiz(id, n: q.n, answer: .letter(grade.rawValue)) }
         withAnimation(.easeIn(duration: 0.2)) { drag = CGSize(width: knew ? 600 : -600, height: 0) }
         record(q.n, knew)
         Task {
@@ -551,7 +554,8 @@ private struct StudyRunView: View {
         busy = true
         defer { busy = false }
         do {
-            let checked = try await env.api.checkQuiz(quiz.id, n: q.n, answer: .letter(letter))
+            let checked = try await env.api.checkQuiz(quiz.id, n: q.n, answer: .letter(letter),
+                                                      seconds: Date().timeIntervalSince(shownAt))
             withAnimation(.snappy) { result = checked }
             error = nil
         } catch {
@@ -632,6 +636,19 @@ private struct StudyRunView: View {
         }
     }
 
+    /// One of a flashcard's four grades, with 1–4 on a keyboard as in Anki.
+    private func gradeButton(_ grade: CardGrade, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(grade.title)
+                .font(.subheadline.weight(.semibold)).foregroundStyle(grade.color)
+                .frame(maxWidth: .infinity).frame(height: 50)
+                .background(grade.color.opacity(0.14), in: Capsule())
+        }
+        .buttonStyle(CardPress())
+        .keyboardShortcut(grade.key, modifiers: [])
+        .disabled(busy)
+    }
+
     private func pill(_ title: String, _ symbol: String, _ color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: symbol)
@@ -702,6 +719,7 @@ private struct StudyRunView: View {
             draft = OpenDraft()
             selfMark = false
             error = nil
+            shownAt = .now
             index += 1
             if index >= queue.count { phase = missed.isEmpty ? .done : .roundDone }
         }
@@ -715,6 +733,7 @@ private struct StudyRunView: View {
         withAnimation(.snappy) {
             queue = missed.shuffled()
             missed = []
+            shownAt = .now
             index = 0
             round += 1
             phase = .asking
@@ -743,9 +762,17 @@ private struct StudyRunView: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 8)
         } else if let q = current, q.isCard {
-            HStack(spacing: 10) {
-                pill("Still learning", "arrow.uturn.left", .orange) { judge(q, knew: false) }
-                pill("Know", "checkmark", Theme.study) { judge(q, knew: true) }
+            Group {
+                if turned {
+                    HStack(spacing: 8) {
+                        ForEach(CardGrade.allCases, id: \.self) { grade in
+                            gradeButton(grade) { judge(q, grade) }
+                        }
+                    }
+                } else {
+                    big("Show answer", filled: false) { withAnimation(.spring(duration: 0.45)) { turned = true } }
+                        .keyboardShortcut(.space, modifiers: [])
+                }
             }
             .padding(.horizontal, 16).padding(.vertical, 8)
         }
@@ -904,6 +931,31 @@ private struct WriteBox: View {
             let id = try? await env.api.uploadPhoto(picked.jpeg)
             guard let index = draft.photos.firstIndex(where: { $0.key == photo.key }) else { return }
             if let id { draft.photos[index].id = id } else { draft.photos[index].failed = true }
+        }
+    }
+}
+
+/// How well a flashcard was known, as the user says after turning it (the schedule's grades, srs.py).
+private enum CardGrade: String, CaseIterable {
+    case again, hard, good, easy
+
+    var title: String { rawValue.capitalized }
+
+    var color: Color {
+        switch self {
+        case .again: .red
+        case .hard: .orange
+        case .good: Theme.study
+        case .easy: .blue
+        }
+    }
+
+    var key: KeyEquivalent {
+        switch self {
+        case .again: "1"
+        case .hard: "2"
+        case .good: "3"
+        case .easy: "4"
         }
     }
 }

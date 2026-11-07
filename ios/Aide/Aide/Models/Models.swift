@@ -2095,6 +2095,8 @@ struct QuizBank: Decodable {
     var due: Int?
     var new: Int?
     var nextDue: String?
+    /// The next exam's date ("2026-11-28") while the schedule is tighter for it (from three weeks before), else nil.
+    var beforeExam: String?
 }
 
 struct QuizBankTopic: Decodable, Identifiable, Hashable {
@@ -2288,7 +2290,12 @@ enum QuizAnswer: Encodable, Equatable {
 }
 
 struct QuizFinishBody: Encodable { let answers: [String: QuizAnswer] }
-struct QuizCheckBody: Encodable { let n: Int; let answer: QuizAnswer? }
+struct QuizCheckBody: Encodable {
+    let n: Int
+    let answer: QuizAnswer?
+    /// How long a multiple-choice answer took: right but slow counts as Hard for the schedule.
+    var seconds: Double? = nil
+}
 
 // MARK: Lessons (docs/API.md, "Lessons")
 
@@ -2780,6 +2787,7 @@ struct CourseNotebook: Decodable, Hashable {
     var due: Int?
     var new: Int?
     var nextDue: String?
+    var beforeExam: String?
     /// What the Due today deck has: due and new.
     var deck: Int { (due ?? 0) + (new ?? 0) }
 }

@@ -372,12 +372,18 @@ private struct DueTodayCard: View {
                     Chip(title: "Start", style: .prominent, tint: Theme.study) { start(courses[0]) }
                 }
             }
+            if courses.count == 1, let exam = Self.exam(courses[0]) {
+                Label(exam, systemImage: "calendar.badge.clock").font(.footnote).foregroundStyle(Theme.study)
+            }
             if courses.count > 1 {
                 ForEach(courses) { course in
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(course.title).font(.subheadline.weight(.medium)).lineLimit(1)
                             Text(Self.counts(course)).font(.footnote).foregroundStyle(.secondary)
+                            if let exam = Self.exam(course) {
+                                Text(exam).font(.footnote).foregroundStyle(Theme.study)
+                            }
                         }
                         Spacer(minLength: 0)
                         Chip(title: "Start", tint: Theme.study) { start(course) }
@@ -386,6 +392,12 @@ private struct DueTodayCard: View {
             }
         }
         .card()
+    }
+
+    /// "Exam on Friday 28: shorter gaps until then", in the three weeks before it.
+    static func exam(_ course: StudyCourse) -> String? {
+        guard let day = course.notebook?.beforeExam.flatMap(Wire.day) else { return nil }
+        return "Exam \(StudyDay.phrase(day)): shorter gaps until then"
     }
 
     /// "12 due · 3 new".

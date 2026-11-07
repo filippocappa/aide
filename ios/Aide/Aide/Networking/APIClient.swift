@@ -1247,8 +1247,8 @@ final class APIClient {
 
     /// One question answered while taking it: it comes back with its key, and the answer is final (in a study
     /// session it can be checked again, and an open answer comes back marked).
-    func checkQuiz(_ id: String, n: Int, answer: QuizAnswer?) async throws -> QuizQuestion {
-        try await send("POST", "/v1/quizzes/\(id)/check", body: QuizCheckBody(n: n, answer: answer))
+    func checkQuiz(_ id: String, n: Int, answer: QuizAnswer?, seconds: Double? = nil) async throws -> QuizQuestion {
+        try await send("POST", "/v1/quizzes/\(id)/check", body: QuizCheckBody(n: n, answer: answer, seconds: seconds))
     }
 
     /// A study session: untimed, in a shuffled order, `write` flashcards answered in words.

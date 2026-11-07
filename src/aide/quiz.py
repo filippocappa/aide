@@ -37,7 +37,7 @@ import re
 import secrets
 import sqlite3
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 
 from . import srs
 from .db import utcnow
@@ -81,6 +81,9 @@ ANSWER_CHARS = 20_000  # an open answer's text, at most
 ANSWER_PHOTOS = 4  # photos of the work on paper, at most, for an open answer
 QUIZ_MOST = 30  # in a quiz
 NEW_PER_DAY = 15  # items never answered that the Due today deck brings in a day, per course
+CARD_GRADES = {"again": srs.AGAIN, "hard": srs.HARD, "good": srs.GOOD, "easy": srs.EASY,
+               "wrong": srs.AGAIN, "right": srs.GOOD}  # a flashcard's answer: how well the user knew it
+SLOW = (20.0, 0.25, 600.0)  # a multiple-choice answer is slow after 20 s plus 0.25 s a word; over 10 min: walked away
 STYLES = ("mixed", "questions", "cards")  # what a quiz asks: both, multiple choice only, flashcards only
 KINDS = ("exam", "study")  # what POST /v1/quizzes starts (a mock and a chat quiz have their own ways)
 MARK_PROMPT = """You mark a university student's answer while they study, as a fair examiner would. You get the \
@@ -111,11 +114,31 @@ class QuizStore:
         if "grade" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(quiz_answers)")}:
             self.conn.execute("ALTER TABLE quiz_answers ADD COLUMN grade INTEGER")
         self.rng = rng or random.Random()
+        # Each course's next exam from the exam plan (examplan.py, set each time it's worked out, so the Exam
+        # calendar's count too): its local date and the notebook topics it covers (None: all).
+        self.targets: dict[int, tuple[date, set[str] | None]] = {}
 
     # -- the questions -----------------------------------------------------------------
 
     def today(self):
         return utcnow().astimezone(self.study.tz).date()
+
+    def exam(self, course_id: int) -> tuple[date, set[str] | None] | None:
+        """The course's next exam or mid-term, today on (the exam plan's, else the course's own dates): its date and
+        the topics it covers (None: all of them). The schedule tightens before it (srs.py)."""
+        today = self.today()
+        if (t := self.targets.get(course_id)) and t[0] >= today:
+            return t
+        d = next((d for d in self.notebook.dates(course_id, since=today) if d["kind"] in ("exam", "mid-term")), None)
+        return (date.fromisoformat(d["date"]), None) if d else None
+
+    def _covered(self, course_id: int, topics: set[str]) -> set[str]:
+        """The qkeys of the questions and flashcards in these topics."""
+        out = set()
+        for t in self._topics(course_id, list(topics)):
+            out |= {qkey(p["text"]) for q in mcqs(t["body"]).values() if (p := parse_question(q))}
+            out |= {qkey(q) for q, _ in json.loads(t["cards"])}
+        return out
 
     def _last(self, course_id: int) -> dict[str, dict]:
         """What the user last did with each question they've seen, by qkey, with its schedule (srs.py) as of today:
@@ -129,9 +152,12 @@ class QuizStore:
             e = found.setdefault(r["qkey"], {"answers": [], "first": day, "seen": 0})
             e["answers"].append((day, r["grade"] or srs.grade_of(bool(r["correct"]))))
             e |= {"correct": bool(r["correct"]), "answered_at": r["answered_at"], "seen": e["seen"] + 1}
+        exam = self.exam(course_id) if found else None
+        covered = self._covered(course_id, exam[1]) if exam and exam[1] is not None else None
         out = {}
         for key, e in found.items():
-            s = srs.schedule(srs.by_day(e.pop("answers")))
+            s = srs.schedule(srs.by_day(e.pop("answers")),
+                             exam=exam[0] if exam and (covered is None or key in covered) else None)
             out[key] = e | {"first": e["first"].isoformat(), "due": s.due.isoformat(), "is_due": s.is_due(today),
                             "known": s.known(today), "retention": round(s.retention(today), 3)}
         return out
@@ -336,20 +362,25 @@ class QuizStore:
                           (json.dumps(given), score, now, quiz["id"]))
         return self.quiz(public_id)
 
-    def _record(self, course_id: int, q: dict, answer: str | dict | None, at: str) -> None:
+    def _record(self, course_id: int, q: dict, answer: str | dict | None, at: str, grade: int | None = None,
+                seconds: float | None = None) -> None:
+        """One answer for the schedule: `grade` is a flashcard's as the user gave it (else worked out), `seconds` how
+        long a multiple-choice one took (right but slow is Hard)."""
         right = correct(q, answer)
         part = None
         if q.get("type") == "open":
             part = (answer.get("awarded") or 0) / q["points"] if isinstance(answer, dict) and q.get("points") else 0.0
+        if grade is None or q.get("type") != "card" or not right and grade != srs.AGAIN:
+            grade = srs.grade_of(right, part, slow(q, seconds))
         self.conn.execute(
             "INSERT INTO quiz_answers (course_id, qkey, answer, correct, answered_at, grade) VALUES (?, ?, ?, ?, ?, ?)",
-            (course_id, q["qkey"], "open" if isinstance(answer, dict) else answer, int(right), at,
-             srs.grade_of(right, part)))
+            (course_id, q["qkey"], "open" if isinstance(answer, dict) else answer, int(right), at, grade))
 
-    def check(self, public_id: str, n: int, answer: str | dict | None) -> dict:
+    def check(self, public_id: str, n: int, answer: str | dict | None, seconds: float | None = None) -> dict:
         """One question answered while taking a practice or mock exam, for answers shown after each question: the
         answer is kept (final: `finish` uses it) and the question comes back as it will on the results, without the
-        marks of an open one (those come when it's finished)."""
+        marks of an open one (those come when it's finished). A flashcard's answer is again, hard, good or easy (or
+        right, wrong); `seconds`, how long a multiple-choice one took, for its grade."""
         quiz = self.quiz(public_id)
         if quiz["kind"] == "chat":
             raise LookupError(f"no practice exam {public_id}")
@@ -364,7 +395,7 @@ class QuizStore:
         quiz["checked"][str(n)] = given = _given(q, answer)
         self.conn.execute("UPDATE quizzes SET checked = ? WHERE id = ?", (json.dumps(quiz["checked"]), quiz["id"]))
         if study and (q.get("type") != "open" or given is None):  # an open answer is recorded once it's marked
-            self._record(quiz["course_id"], q, given, utcnow().isoformat())
+            self._record(quiz["course_id"], q, given, utcnow().isoformat(), card_grade(q, answer), seconds)
         return self.question_json(quiz, n, reveal=True)
 
     def to_mark(self, public_id: str, n: int) -> tuple[dict, dict] | None:
@@ -459,7 +490,7 @@ class QuizStore:
 
     def answer(self, public_id: str, answer: str | None) -> dict:
         """The answer to the question waiting: a letter for a multiple-choice one, "right" or "wrong" for a flashcard
-        (as judged), None (or "blank") for "I don't know". Recorded at once. Returns the quiz with `given` (n, the
+        (as judged; or again, hard, good, easy), None (or "blank") for "I don't know". Recorded at once. Returns the quiz with `given` (n, the
         answer as recorded, correct)."""
         quiz = self.quiz(public_id)
         if quiz is None or quiz["kind"] != "chat":
@@ -468,13 +499,14 @@ class QuizStore:
             raise ValueError("This quiz is over.")
         q = quiz["questions"][n - 1]
         a = (answer or "").strip()
+        grade = card_grade(q, a)
         if q.get("type") == "card":
-            a = a.lower() if a.lower() in ("right", "wrong") else None
+            a = _given(q, a)
         else:
             a = a.upper().removesuffix(")")[:1] if a and a.lower() != "blank" else None
             if a is not None and a not in {o["letter"] for o in q["options"]}:
                 raise ValueError(f"{answer!r} isn't one of the options: " + ", ".join(o["letter"] for o in q["options"]))
-        self._record(quiz["course_id"], q, a, utcnow().isoformat())
+        self._record(quiz["course_id"], q, a, utcnow().isoformat(), grade)
         quiz["answers"][str(n)] = a
         self.conn.execute("UPDATE quizzes SET answers = ? WHERE public_id = ?", (json.dumps(quiz["answers"]), public_id))
         if self.current(quiz) is None:
@@ -626,14 +658,18 @@ class QuizStore:
 
     def due_json(self, course_id: int) -> dict:
         """What the Due today deck has for the course: `due`, `new` (never answered, what's left of today's
-        NEW_PER_DAY) and `next_due` (the first day something is due after today, a local date, or null)."""
+        NEW_PER_DAY), `next_due` (the first day something is due after today, a local date, or null) and
+        `before_exam` (the next exam's date while the schedule is tighter for it, srs.EXAM_WINDOW days before, or null)."""
         last = self._last(course_id)
         items = self.bank(course_id) + self.cards(course_id)
         seen = [q["last"] for q in items if q["last"]]
         later = [e["due"] for e in seen if not e["is_due"]]
+        exam = self.exam(course_id)
+        near = exam and (exam[0] - self.today()).days <= srs.EXAM_WINDOW
         return {"due": sum(e["is_due"] for e in seen),
                 "new": min(len(items) - len(seen), self.new_left(course_id, last)),
-                "next_due": min(later) if later else None}
+                "next_due": min(later) if later else None,
+                "before_exam": exam[0].isoformat() if near else None}
 
     def bank_json(self, course_id: int) -> dict:
         bank = self.bank(course_id)
@@ -737,9 +773,23 @@ def _given(q: dict, a) -> str | dict | None:
     if q.get("type") == "open":
         return _open_answer(a)
     if q.get("type") == "card":
-        return a.strip().lower() if isinstance(a, str) and a.strip().lower() in ("right", "wrong") else None
+        g = CARD_GRADES.get(a.strip().lower()) if isinstance(a, str) else None
+        return None if g is None else "wrong" if g == srs.AGAIN else "right"
     a = a.strip().upper()[:1] if isinstance(a, str) and a.strip() else None
     return a if a in {o["letter"] for o in q["options"]} else None
+
+
+def card_grade(q: dict, a) -> int | None:
+    """A flashcard's grade as the user gave it (again, hard, good, easy; right is good, wrong again); None otherwise."""
+    return CARD_GRADES.get(a.strip().lower()) if q.get("type") == "card" and isinstance(a, str) else None
+
+
+def slow(q: dict, seconds: float | None) -> bool:
+    """A multiple-choice answer that took longer than reading it and a short think: right, it counts as Hard."""
+    if q.get("type") in ("card", "open") or seconds is None or not 0 < seconds <= SLOW[2]:
+        return False
+    words = len(" ".join([q.get("text") or ""] + [o.get("text") or "" for o in q.get("options") or []]).split())
+    return seconds > SLOW[0] + SLOW[1] * words
 
 
 def _source_name(source: str) -> str:

@@ -134,7 +134,7 @@ def test_the_study_tab_reads_notes_as_plain_text(nb):
     brief = courses[cid]["notebook"]
     assert {k: v for k, v in brief.items() if k != "mastery"} == {"topics": 2, "questions": 6, "proposals": 0,
                                                                   "writing": False, "due": 0, "new": 6,
-                                                                  "next_due": None}
+                                                                  "next_due": None, "before_exam": None}
     assert [(m["title"], m["known"], m["learning"], m["unseen"]) for m in brief["mastery"]] == \
         [("The IS-LM model", 0, 0, 3), ("Phillips curve", 0, 0, 3)]
     assert all(c["notebook"] is None for i, c in courses.items() if i != cid)

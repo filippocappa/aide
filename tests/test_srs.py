@@ -94,7 +94,7 @@ def test_the_due_deck_brings_in_only_so_many_new_ones_a_day_cards_too(nb):
     cid = nb.macro["id"]
     quizzes = QuizStore(nb.notebook)
     items = quizzes.bank(cid) + quizzes.cards(cid)
-    assert quizzes.due_json(cid) == {"due": 0, "new": 8, "next_due": None}
+    assert quizzes.due_json(cid) == {"due": 0, "new": 8, "next_due": None, "before_exam": None}
     deck = quizzes.start_due(cid)
     assert {q.get("type") for q in deck["questions"]} == {None, "card"} and len(deck["questions"]) == 8
 
@@ -125,3 +125,63 @@ def test_a_review_objective_counts_each_item_once_a_day(nb):
     assert store._count(m, today, today) == 2
     assert store._count(m, today - timedelta(days=6), today) == 3
     assert store.label(m) == "macroeconomics questions and flashcards reviewed" and store.source(m) == "Spaced repetition"
+
+
+def test_before_an_exam_it_comes_due_sooner_so_recall_is_95_percent_on_the_day():
+    days = [(D, srs.GOOD), (day(4), srs.GOOD), (day(20), srs.GOOD)]
+    free = srs.schedule(days)
+    assert (free.due - day(20)).days > 30
+    # The exam 40 days on: in the window it's due once recall reaches 95%, never later than the normal day.
+    exam = day(60)
+    tight = srs.schedule(days, exam=exam)
+    assert exam - timedelta(days=srs.EXAM_WINDOW) <= tight.due < free.due and tight.due <= exam
+    assert tight.retention(tight.due) >= 0.94
+    # Far from the exam it's the usual schedule; after it, too.
+    assert srs.schedule(days, exam=day(400)).due == free.due and srs.schedule(days, exam=day(10)).due == free.due
+    # A miss is still tomorrow.
+    assert srs.schedule(days + [(day(30), srs.AGAIN)], exam=day(40)).due == day(31)
+
+
+def test_the_users_grades_space_a_card_apart_and_a_slow_right_answer_is_hard(nb):
+    t = notebook_with_questions(nb)
+    with_cards(nb, t)
+    cid = nb.macro["id"]
+    quizzes = QuizStore(nb.notebook)
+    deck = quizzes.start_due(cid)
+    by = {q["qkey"]: n for n, q in enumerate(deck["questions"], 1)}
+    cards = [q for q in deck["questions"] if q.get("type") == "card"]
+    for q, word in zip(cards, ("easy", "hard")):
+        out = quizzes.check(deck["public_id"], by[q["qkey"]], word)
+        assert out["correct"] is True
+    mcq = next(q for q in deck["questions"] if q.get("type") != "card")
+    assert quizzes.check(deck["public_id"], by[mcq["qkey"]], mcq["key"], seconds=300)["correct"] is True
+    grades = dict(nb.db.conn.execute("SELECT qkey, grade FROM quiz_answers").fetchall())
+    assert [grades[q["qkey"]] for q in cards] == [srs.EASY, srs.HARD] and grades[mcq["qkey"]] == srs.HARD
+    last = quizzes._last(cid)
+    assert last[cards[0]["qkey"]]["due"] > last[cards[1]["qkey"]]["due"]  # easy goes further than hard
+    assert quizzes.check(deck["public_id"], by[cards[0]["qkey"]], "again")["correct"] is False  # asked again: a miss
+    from aide.quiz import slow
+    assert not slow(mcq, 5) and slow(mcq, 200) and not slow(mcq, 3600) and not slow(mcq, None)
+
+
+def test_the_courses_next_exam_tightens_the_schedule_of_the_topics_it_covers(nb):
+    t = notebook_with_questions(nb)
+    cid = nb.macro["id"]
+    quizzes = QuizStore(nb.notebook)
+    islm, pc = (quizzes.bank(cid, [t[k]["public_id"]])[0] for k in ("islm", "pc"))
+    for q in (islm, pc):
+        for when in (12, 5):  # due in about 12 days: under 95% before the exam
+            quizzes._record(cid, q, q["key"], ago(when))
+    today = datetime.now(ROME).date()
+    free = quizzes._last(cid)
+    assert quizzes.exam(cid) is None and quizzes.due_json(cid)["before_exam"] is None
+    nb.notebook.set_dates(cid, [{"what": "Written exam", "kind": "exam", "date": (today + timedelta(days=14)).isoformat(),
+                                 "source": "Moodle"}])
+    assert quizzes.exam(cid) == (today + timedelta(days=14), None)
+    near = quizzes._last(cid)
+    assert all(near[q["qkey"]]["due"] < free[q["qkey"]]["due"] for q in (islm, pc))
+    assert quizzes.due_json(cid)["before_exam"] == (today + timedelta(days=14)).isoformat()
+    # A mid-term on one topic (the exam plan's choice): only that topic's items.
+    quizzes.targets[cid] = (today + timedelta(days=14), {t["islm"]["public_id"]})
+    part = quizzes._last(cid)
+    assert part[islm["qkey"]]["due"] == near[islm["qkey"]]["due"] and part[pc["qkey"]]["due"] == free[pc["qkey"]]["due"]

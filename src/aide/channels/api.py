@@ -279,6 +279,7 @@ class LessonFinish(BaseModel):
 class QuizCheck(BaseModel):
     n: int
     answer: str | OpenAnswer | None = None  # as in QuizFinish; null: blank
+    seconds: float | None = None  # how long a multiple-choice answer took: right but slow is Hard for the schedule
 
 
 class QuizMark(BaseModel):  # a study session's open answer: "I was right" (or not), over the model's mark
@@ -2447,7 +2448,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def check_quiz(quiz_id: str, body: QuizCheck):
         quiz_or_404(quiz_id)
         try:
-            checked = quizzes.check(quiz_id, body.n, open_answer(body.answer))
+            checked = quizzes.check(quiz_id, body.n, open_answer(body.answer), body.seconds)
         except LookupError as e:
             raise HTTPException(404, str(e))
         except ValueError as e:
