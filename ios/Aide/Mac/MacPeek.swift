@@ -18,6 +18,8 @@ final class MacPeek: ObservableObject {
     @Published private(set) var showings = 0
     /// The tiles in place: false while the window fades in, so they rise in one after another (`PeekEntrance`).
     @Published private(set) var appeared = false
+    /// Moving, resizing, adding and removing tiles (`PeekLayout`); only while kept.
+    @Published var arranging = false
 
     private var panel: PeekPanel?
     /// Peek is on but macOS doesn't let Aide see the keys yet (Accessibility).
@@ -114,6 +116,7 @@ final class MacPeek: ObservableObject {
     func hide() {
         guard state != .hidden else { return }
         state = .hidden
+        arranging = false
         guard let panel else { return }
         if let sheet = panel.attachedSheet { panel.endSheet(sheet) }
         appeared = false
@@ -126,6 +129,17 @@ final class MacPeek: ObservableObject {
                 if MacPeek.shared.state == .hidden { panel.orderOut(nil) }
             }
         })
+    }
+
+    /// Esc: done arranging, else closed.
+    func cancel() {
+        if arranging { arranging = false } else { hide() }
+    }
+
+    /// Arranging the board: it stays open meanwhile.
+    func arrange() {
+        keep()
+        arranging = true
     }
 
     /// Closes the board and brings Aide's window forward, on a section if one is given.
@@ -150,7 +164,7 @@ final class MacPeek: ObservableObject {
         panel.animationBehavior = .none
         panel.appearance = NSAppearance(named: .darkAqua)
         panel.onMouseDown = { [weak self] in if self?.state == .held { self?.keep() } }
-        panel.onCancel = { [weak self] in self?.hide() }
+        panel.onCancel = { [weak self] in self?.cancel() }
         panel.onResignKey = { [weak self] in self?.resigned() }
 
         let blur = NSVisualEffectView()
@@ -289,24 +303,42 @@ struct MacPeekBoard: View {
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject private var glance = MacGlance.shared
     @ObservedObject private var model = MacPanelModel.shared
+    @ObservedObject private var layout = PeekLayout.shared
+    @ObservedObject private var data = PeekData.shared
     @State private var question = ""
+    // Arranging: the tiles' frames in the grid, the one being dragged and where.
+    @State private var frames: [UUID: CGRect] = [:]
+    @State private var dragging: UUID?
+    @State private var dragPoint = CGPoint.zero
+    @State private var grab = CGSize.zero
+    @State private var dragWidth: CGFloat = 0
+    @State private var lastSwap: UUID?
+    @State private var resizeFrom: CGFloat?
     @FocusState private var asking: Bool
 
     private var aide: Agent { chat.orchestrator }
 
     var body: some View {
         GeometryReader { geo in
+            let width = min(geo.size.width - 112, PeekGrid.maxWidth)
             TimelineView(.everyMinute) { context in
                 ZStack {
-                    // A click between or around the tiles closes the board.
+                    // A click between or around the tiles closes the board (arranging: ends that).
                     Color.black.opacity(0.3)
                         .contentShape(Rectangle())
-                        .onTapGesture { peek.hide() }
+                        .onTapGesture { peek.cancel() }
                     VStack(alignment: .leading, spacing: 18) {
                         header(context.date).peekIn(peek.appeared, step: 0)
                         if settings.isConfigured {
-                            askBox.peekIn(peek.appeared, step: 1)
-                            columns(context.date)
+                            Group {
+                                if peek.arranging { arrangeBar } else { askBox }
+                            }
+                            .peekIn(peek.appeared, step: 1)
+                            ViewThatFits(in: .vertical) {
+                                grid(context.date, width: width)
+                                ScrollView { grid(context.date, width: width).padding(.bottom, 4) }
+                                    .scrollIndicators(.never)
+                            }
                         } else {
                             tile {
                                 Button { peek.open(.settings) } label: {
@@ -316,9 +348,9 @@ struct MacPeekBoard: View {
                                 .buttonStyle(PanelRowStyle())
                             }
                         }
-                        footer.peekIn(peek.appeared, step: 5)
+                        footer.peekIn(peek.appeared, step: 2 + min(layout.tiles.count, 6))
                     }
-                    .frame(maxWidth: 1240)
+                    .frame(maxWidth: PeekGrid.maxWidth)
                     .padding(.horizontal, 56)
                     .padding(.vertical, 44)
                 }
@@ -328,9 +360,206 @@ struct MacPeekBoard: View {
         }
         .environment(\.colorScheme, .dark)
         .task(id: peek.showings) { await load() }
-        .onExitCommand { peek.hide() }
+        .onExitCommand { peek.cancel() }
         .onChange(of: peek.state) { _, state in
             if state == .hidden { asking = false }
+        }
+        .onChange(of: peek.arranging) { _, on in
+            if on { asking = false } else { dragging = nil }
+        }
+        .onChange(of: layout.kinds) { old, new in
+            Task { await data.load(env, kinds: new.subtracting(old)) }
+        }
+    }
+
+    // MARK: The grid
+
+    private func grid(_ now: Date, width: CGFloat) -> some View {
+        PeekMasonry {
+            ForEach(Array(layout.tiles.enumerated()), id: \.element.id) { index, tile in
+                arrangeable(tile, width: width) { content(tile, now) }
+                    .peekIn(peek.appeared, step: 2 + min(index, 5))
+                    .layoutValue(key: PeekSpan.self, value: tile.span)
+            }
+        }
+        .coordinateSpace(name: "peekGrid")
+        .onPreferenceChange(PeekFrames.self) { frames = $0 }
+        .overlay(alignment: .topLeading) { floating(now) }
+    }
+
+    @ViewBuilder private func content(_ tile: PeekTile, _ now: Date) -> some View {
+        let open: (MacSection) -> Void = { peek.open($0) }
+        switch tile.kind {
+        case .week: self.tile { MiniCalendar(now: now, model: model, tint: aide.tint, open: { peek.open(.today) }) }
+        case .glance: self.tile { MacGlanceCard(glance: glance, open: { peek.open($0) }) }
+        case .team: self.tile { team }
+        case .waiting: waiting
+        case .body: self.tile { PeekBodyTile(scores: data.scores, open: open) }
+        case .habits:
+            self.tile {
+                PeekHabitsTile(habits: data.habits, tick: { habit in Task { await data.tick(habit, env: env) } }, open: open)
+            }
+        case .food: self.tile { PeekFoodTile(food: data.food, open: open) }
+        case .study: self.tile { PeekStudyTile(plan: data.plan, open: open) }
+        case .money: self.tile { PeekMoneyTile(month: data.money, open: open) }
+        case .weather: self.tile { PeekWeatherTile(weather: data.weather) }
+        case .bedtime: self.tile { PeekBedtimeTile(bedtime: data.bedtime, open: open) }
+        case .trams: self.tile { PeekTramsTile(trams: data.trams) }
+        }
+    }
+
+    /// A tile as it is, or, while arranging, dashed, held still, with × to remove it and ↔ to make it wider; dragging
+    /// it moves it (the others make way as it goes).
+    private func arrangeable<C: View>(_ tile: PeekTile, width: CGFloat, @ViewBuilder _ content: () -> C) -> some View {
+        let on = peek.arranging
+        return content()
+            .allowsHitTesting(!on)
+            .overlay {
+                if on {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(.white.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                }
+            }
+            .opacity(dragging == tile.id ? 0.2 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .gesture(moveGesture(tile), including: on ? .all : .subviews)
+            .overlay(alignment: .topTrailing) {
+                if on {
+                    Button { withAnimation(.spring(duration: 0.3, bounce: 0.1)) { layout.remove(tile.id) } } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, Color(white: 0.32))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove \(tile.kind.title)")
+                    .padding(8)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if on && PeekGrid.columns(width) > 1 { resizeHandle(tile, width: width) }
+            }
+            .background {
+                GeometryReader { g in
+                    Color.clear.preference(key: PeekFrames.self, value: [tile.id: g.frame(in: .named("peekGrid"))])
+                }
+            }
+    }
+
+    private func moveGesture(_ tile: PeekTile) -> some Gesture {
+        DragGesture(minimumDistance: 3, coordinateSpace: .named("peekGrid"))
+            .onChanged { value in
+                if dragging == nil, let frame = frames[tile.id] {
+                    grab = CGSize(width: value.startLocation.x - frame.minX, height: value.startLocation.y - frame.minY)
+                    dragWidth = frame.width
+                    dragging = tile.id
+                }
+                dragPoint = value.location
+                let over = frames.first { $0.key != tile.id && $0.value.contains(value.location) }?.key
+                if let over, over != lastSwap {
+                    lastSwap = over
+                    withAnimation(.spring(duration: 0.32, bounce: 0.12)) { layout.move(tile.id, to: over) }
+                } else if over == nil {
+                    lastSwap = nil
+                }
+            }
+            .onEnded { _ in
+                withAnimation(.spring(duration: 0.28, bounce: 0.1)) { dragging = nil }
+                lastSwap = nil
+            }
+    }
+
+    /// The tile being dragged, under the pointer.
+    @ViewBuilder private func floating(_ now: Date) -> some View {
+        if let id = dragging, let tile = layout.tiles.first(where: { $0.id == id }) {
+            content(tile, now)
+                .frame(width: dragWidth)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.sand, lineWidth: 1.5)
+                }
+                .rotationEffect(.degrees(-1.2))
+                .shadow(color: .black.opacity(0.55), radius: 26, y: 16)
+                .offset(x: dragPoint.x - grab.width, y: dragPoint.y - grab.height)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
+    }
+
+    private func resizeHandle(_ tile: PeekTile, width: CGFloat) -> some View {
+        let columns = PeekGrid.columns(width)
+        let column = PeekGrid.columnWidth(width)
+        return Image(systemName: "arrow.left.and.right")
+            .font(.system(size: 10, weight: .bold))
+            .frame(width: 24, height: 24)
+            .background(Color(white: 0.3), in: Circle())
+            .padding(8)
+            .contentShape(Rectangle())
+            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+            .help("Drag to make it wider or narrower")
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .named("peekGrid"))
+                    .onChanged { value in
+                        let start = resizeFrom ?? frames[tile.id]?.width ?? column
+                        resizeFrom = start
+                        let span = Int(((start + value.translation.width + PeekGrid.spacing)
+                                        / (column + PeekGrid.spacing)).rounded())
+                        withAnimation(.spring(duration: 0.28, bounce: 0.1)) {
+                            layout.setSpan(tile.id, min(max(span, 1), columns))
+                        }
+                    }
+                    .onEnded { _ in resizeFrom = nil }
+            )
+    }
+
+    private var arrangeBar: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Text("Arrange your board").font(.system(size: 16, weight: .semibold))
+                Text("Drag a tile to move it, its ↔ to make it wider")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Button("Reset") { withAnimation(.spring(duration: 0.35, bounce: 0.1)) { layout.reset() } }
+                    .buttonStyle(PanelRowStyle(fill: .white.opacity(0.08)))
+                    .help("Back to the board Aide starts with")
+                Button { peek.arranging = false } label: {
+                    Text("Done").font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.slate)
+                        .padding(.horizontal, 16).padding(.vertical, 6)
+                        .background(Theme.sand, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.defaultAction)
+            }
+            if layout.missing.isEmpty {
+                Text("Every tile is on the board.").font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(layout.missing) { kind in
+                            Button { withAnimation(.spring(duration: 0.35, bounce: 0.15)) { layout.add(kind) } } label: {
+                                HStack(spacing: 7) {
+                                    Circle().fill(kind.tint).frame(width: 7, height: 7)
+                                    Image(systemName: kind.icon).font(.system(size: 12))
+                                    Text(kind.title).font(.system(size: 12, weight: .medium))
+                                    Image(systemName: "plus").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .background(.white.opacity(0.07), in: Capsule())
+                                .overlay { Capsule().strokeBorder(.white.opacity(0.08), lineWidth: 1) }
+                            }
+                            .buttonStyle(.plain)
+                            .help("Add \(kind.title)")
+                        }
+                    }
+                }
+                .scrollIndicators(.never)
+            }
+        }
+        .padding(14)
+        .background(Color(white: 0.11).opacity(0.85), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.sand.opacity(0.35), lineWidth: 1)
         }
     }
 
@@ -394,27 +623,6 @@ struct MacPeekBoard: View {
         .onTapGesture { asking = true }
     }
 
-    private func columns(_ now: Date) -> some View {
-        HStack(alignment: .top, spacing: 18) {
-            tile {
-                MiniCalendar(now: now, model: model, tint: aide.tint, open: { peek.open(.today) })
-            }
-            .frame(width: 360)
-            .peekIn(peek.appeared, step: 2)
-
-            VStack(spacing: 18) {
-                tile { MacGlanceCard(glance: glance, open: { peek.open($0) }) }
-                tile { team }
-            }
-            .frame(width: 340)
-            .peekIn(peek.appeared, step: 3)
-
-            waiting
-                .peekIn(peek.appeared, step: 4)
-                .frame(maxWidth: .infinity, alignment: .top)
-        }
-    }
-
     @ViewBuilder private var waiting: some View {
         if let approvals = model.approvals, approvals.waiting > 0 {
             List {
@@ -473,7 +681,13 @@ struct MacPeekBoard: View {
                     .help(section.title)
             }
             Spacer(minLength: 0)
-            Text(peek.state == .kept ? "Esc to close"
+            if !peek.arranging && settings.isConfigured {
+                Button { peek.arrange() } label: { Label("Arrange", systemImage: "square.grid.2x2") }
+                    .buttonStyle(PanelRowStyle(fill: .white.opacity(0.07)))
+                    .font(.system(size: 12, weight: .medium))
+                    .help("Move, resize, add and remove tiles")
+            }
+            Text(peek.arranging ? "Esc when you're done" : peek.state == .kept ? "Esc to close"
                  : "Let go to close · tap \(MacPeek.shortcut) to keep it open")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -485,6 +699,7 @@ struct MacPeekBoard: View {
 
     private func tile<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
+            .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(14)
             .background(Color(white: 0.11).opacity(0.85), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
@@ -499,8 +714,9 @@ struct MacPeekBoard: View {
         async let g: Void = glance.load(env)
         async let t = try? env.api.today()
         async let a: Void = loadApprovals()
+        async let d: Void = data.load(env, kinds: layout.kinds)
         let day = await t
-        _ = await (g, a)
+        _ = await (g, a, d)
         if let day { model.today = day }
     }
 
