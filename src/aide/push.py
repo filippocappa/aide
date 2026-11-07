@@ -255,6 +255,10 @@ class Push:
         """Money in, or a bank's consent to renew (`bank_id`)."""
         return await self._alert("finance", title, body, **extra)
 
+    async def send_passwords(self, title: str, body: str) -> bool:
+        """A saved password added, changed or deleted, or a login that needs the user: opens Settings → Passwords."""
+        return await self._alert("passwords", title, body)
+
     async def request_location(self) -> bool:
         """Ask the phone for a fresh location fix (silent): a tram alert needs to know the walk."""
         sent, _ = await self.send({"aps": {"content-available": 1}, "aide": {"kind": "location"}}, background=True)

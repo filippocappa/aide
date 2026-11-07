@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS activity (
     id           INTEGER PRIMARY KEY,
     ts           TEXT NOT NULL,  -- UTC
     agent        TEXT NOT NULL,
-    kind         TEXT NOT NULL,  -- action, queued, confirmed, failed, cancelled, routine, watch, quiet, ask, message, objectives, digest
+    kind         TEXT NOT NULL,  -- action, queued, confirmed, failed, cancelled, routine, watch, quiet, ask, message, objectives, digest, passwords
     title        TEXT NOT NULL,
     detail       TEXT,
     conversation TEXT  -- the chat it happened in: a public id, 'main' or 'team'

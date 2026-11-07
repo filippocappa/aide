@@ -1152,6 +1152,33 @@ MoodleCourse: `{"id": 101, "name": "Macroeconomics 2026/27", "course": 2 or null
 "files": 12}`. New files are pushed (`moodle`); an expired login is pushed once (`moodle` with `login: true`) and shows
 as `error`: log in again.
 
+### Passwords
+
+Logins the user saves in the app (Settings → Passwords) for the server's own code to use, since 2026-11-07: the first
+is the UniTo login, so Esse3 can be read without logging in again. Never the model's: no tool, prompt, memory or
+activity line holds a username or password.
+
+**Write-only.** No response ever holds a password; the username shows only in `GET` and on the entry a write returns.
+Errors name the field, never the value. **Sites are fixed** when an entry is added (a registrable domain each, up to 5:
+`unito.it`, not `my.unito.it` or an IP); the server gives a password out only for an https address on one of them. To
+use it elsewhere, delete it and add it again. Every add, change and delete is in the activity feed (`kind:
+"passwords"`, the name only) and pushed (`passwords`, an alert opening `aide://settings/passwords`), so a change the user
+didn't make shows at once. At most 10 changes an hour (`429`). The app sends a password only over an https server URL
+and asks Face ID or the passcode first.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/passwords` | | `{"enabled": true, "locked": false, "entries": [Password]}`. `enabled` false: no key on the server (README, "Passwords"); `locked` true: there are saved passwords but the server's key isn't theirs (entries empty). |
+| `POST /v1/passwords` | `{"name": "UniTo", "sites": ["unito.it"], "username": "…", "password": "…"}` (name ≤ 60, username ≤ 256, password ≤ 1024) | `201`, the Password. `400` a bad field or site; `503` off or locked. |
+| `PATCH /v1/passwords/{id}` | any of `{"name", "username", "password"}`; `sites` is refused (`400`) | the Password. A new password sets `status` back to `ok`. `404` unknown. |
+| `DELETE /v1/passwords/{id}` | | `{"ok": true}`. |
+
+Password: `{"id": "pw_3f…", "name": "UniTo", "sites": ["unito.it"], "username": "mario.rossi@edu.unito.it", "status":
+"ok", "used_at": "2026-11-07T09:00:00+00:00" or null, "used_by": "the Esse3 reader" or null, "updated_at": "…"}`.
+`status`: `ok`; `wrong` (the site said the password is wrong: not tried again until it's changed, so the account isn't
+locked); `needs_you` (the site asked for something Aide can't do, like a second factor or a new password: log in once
+yourself); `unreadable` (the stored copy can't be decrypted: add it again).
+
 ### Obsidian vault
 
 The server keeps an Obsidian vault of the notes and files (since 2026-10-21), served over WebDAV, which Obsidian's
