@@ -75,6 +75,10 @@ enum PushRoute: Equatable {
             guard let id = (aide["errand_id"] as? Int) ?? (aide["errand_id"] as? NSNumber)?.intValue else { return nil }
             self = .errand(id)
         case "bedtime": self = .settings("bedtime")
+        case "passwords": self = .settings("passwords")
+        case "esse3":
+            let course = (aide["course_id"] as? Int) ?? (aide["course_id"] as? NSNumber)?.intValue
+            self = .study(course.map { StudyLink(course: $0) })
         case "finance":
             self = .money(payment: (aide["payment_id"] as? Int) ?? (aide["payment_id"] as? NSNumber)?.intValue)
         default: return nil

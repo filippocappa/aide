@@ -289,6 +289,7 @@ struct CourseDateEditor: View {
 
     private func note(_ item: CourseDate) -> String {
         if item.mine { return item.source.map { "Your edit of what \($0) says. Professor's next reads keep it." } ?? "Added by you." }
+        if item.by == "esse3" { return "From Esse3, the university's records, read four times a day." }
         return item.source.map { "Read by Professor from \($0)." } ?? "Read by Professor."
     }
 

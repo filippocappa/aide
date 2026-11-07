@@ -948,6 +948,35 @@ final class APIClient {
         return data
     }
 
+    // MARK: Passwords (docs/API.md, "Passwords"): write-only, no answer holds a password
+
+    func passwords() async throws -> PasswordList {
+        try await send("GET", "/v1/passwords")
+    }
+
+    func addPassword(_ entry: NewPassword) async throws -> SavedPassword {
+        try await send("POST", "/v1/passwords", body: entry)
+    }
+
+    func changePassword(_ id: String, _ change: PasswordChange) async throws -> SavedPassword {
+        try await send("PATCH", "/v1/passwords/\(id)", body: change)
+    }
+
+    func deletePassword(_ id: String) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/passwords/\(id)", body: EmptyBody())
+    }
+
+    // MARK: Esse3 (docs/API.md, "Esse3")
+
+    func esse3() async throws -> Esse3Status {
+        try await send("GET", "/v1/esse3")
+    }
+
+    /// Reads Esse3 now (unless it was read in the last 10 min): slow, ~5–15 s.
+    func readEsse3() async throws -> Esse3Status {
+        try await send("POST", "/v1/esse3/read", body: EmptyBody(), timeout: 60)
+    }
+
     func moodle() async throws -> MoodleStatus {
         try await send("GET", "/v1/moodle")
     }

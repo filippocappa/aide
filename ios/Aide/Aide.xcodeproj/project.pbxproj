@@ -189,6 +189,7 @@
 		B498B793AEFA7987A267B6D0 /* Figure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E5D11C27686D088BF88108 /* Figure.swift */; };
 		B5544DEBFD6FFF64B092ABC5 /* RecentFoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2884A9E5CE8EFF2BA09F5D5 /* RecentFoodViews.swift */; };
 		B7433ACB2B176B4BC666FAA3 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
+		B790ABE0DFAC5D8EF2E3556F /* PasswordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AD11C685FB347E4E8C04C77 /* PasswordsView.swift */; };
 		B80EB1D82215C188A6E90082 /* HeartSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9B460E43DC41726DAA0D2B8 /* HeartSummary.swift */; };
 		B8456A965823E33B1D7CC857 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95BA6200F2ECB7474C9F8E54 /* Theme.swift */; };
 		B8C1C840F6F79522D7D40EAC /* PlanViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 525C202EFF430C8A11DDC8AA /* PlanViews.swift */; };
@@ -252,6 +253,7 @@
 		F4C31F271C54C45FDD7148AD /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = F17C4D12EC034EF14E41E00C /* SwiftMath */; };
 		F4CBC49331862920D6DD3CC7 /* HabitIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FA885056211A769DEA36F2 /* HabitIntents.swift */; };
 		F54C21D9A83154F5BFC44430 /* Figure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E5D11C27686D088BF88108 /* Figure.swift */; };
+		F5595BD5FD50A31D65278BE9 /* PasswordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AD11C685FB347E4E8C04C77 /* PasswordsView.swift */; };
 		F6B00D2F77B7F975287A6827 /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18F809AD4D845567498CDA11 /* WidgetIntents.swift */; };
 		F78985137F02EFC1F9249F29 /* MealIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D42096136F2F92641EAC10 /* MealIntents.swift */; };
 		F889CC6C37E9D4CC8806D49B /* SleepSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8264AE9B1D2C00FDE268AD /* SleepSummary.swift */; };
@@ -408,6 +410,7 @@
 		81B15B4A9C146D208E461D58 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		87320B5BA6327928E4CC8A7D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		87678035748931339F27CC91 /* Photos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photos.swift; sourceTree = "<group>"; };
+		8AD11C685FB347E4E8C04C77 /* PasswordsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordsView.swift; sourceTree = "<group>"; };
 		8B681840D8379B92E739C78A /* MacUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUsage.swift; sourceTree = "<group>"; };
 		8BD448611F6C2528A4B7C49A /* EventLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventLiveActivity.swift; sourceTree = "<group>"; };
 		8F38E82A30132956316CD8AC /* DeparturesCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeparturesCard.swift; sourceTree = "<group>"; };
@@ -549,6 +552,7 @@
 				75A4AEC9022A036D36BF776D /* NotesView.swift */,
 				C667A9215ADB1783C8AC6E2C /* NutritionViews.swift */,
 				054584741E8F0145B3456003 /* ObjectivesView.swift */,
+				8AD11C685FB347E4E8C04C77 /* PasswordsView.swift */,
 				525C202EFF430C8A11DDC8AA /* PlanViews.swift */,
 				E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */,
 				F2884A9E5CE8EFF2BA09F5D5 /* RecentFoodViews.swift */,
@@ -1232,6 +1236,7 @@
 				BFEBCBEDF16B580DF9D38464 /* NotesView.swift in Sources */,
 				8D1F181D217CCDDACF048D9A /* NutritionViews.swift in Sources */,
 				D0F090F167DBCEE35F588816 /* ObjectivesView.swift in Sources */,
+				B790ABE0DFAC5D8EF2E3556F /* PasswordsView.swift in Sources */,
 				C95CFFA7BF809325C6437161 /* Photos.swift in Sources */,
 				B8C1C840F6F79522D7D40EAC /* PlanViews.swift in Sources */,
 				27014DDA70702F7E1FD41A5F /* PracticeExamView.swift in Sources */,
@@ -1336,6 +1341,7 @@
 				879BFFF09ECF6F6D4A039B00 /* NotesView.swift in Sources */,
 				6A8A6B60D44134404B6B202A /* NutritionViews.swift in Sources */,
 				27063010372E886231ED3DD3 /* ObjectivesView.swift in Sources */,
+				F5595BD5FD50A31D65278BE9 /* PasswordsView.swift in Sources */,
 				A95786B59C78CB29C209E8D7 /* PaymentIntent.swift in Sources */,
 				6B4364FB23EAD3E5E23039BE /* Photos.swift in Sources */,
 				23E40DD753D79D4F35F5BA25 /* PlanViews.swift in Sources */,

@@ -2405,6 +2405,81 @@ struct LessonAnswer: Decodable { let answer: String }
 struct LessonFinishBody: Encodable { let explanation: String? }
 struct QuizMarkBody: Encodable { let n: Int; let correct: Bool }
 
+// MARK: Passwords and Esse3 (docs/API.md, "Passwords", "Esse3")
+
+/// A saved login, as the server shows it: never the password.
+struct SavedPassword: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let sites: [String]
+    let username: String
+    /// "ok", "wrong", "needs_you" or "unreadable".
+    let status: String
+    var usedAt: String?
+    var usedBy: String?
+    var updatedAt: String?
+}
+
+struct PasswordList: Decodable {
+    var enabled = false
+    var locked = false
+    var entries: [SavedPassword] = []
+}
+
+struct NewPassword: Encodable {
+    let name: String
+    let sites: [String]
+    let username: String
+    let password: String
+}
+
+/// Only what changed; nil fields aren't sent.
+struct PasswordChange: Encodable {
+    var name: String?
+    var username: String?
+    var password: String?
+}
+
+struct Esse3Status: Decodable {
+    var connected = false
+    var readAt: String?
+    var error: Problem?
+    var exams: [Exam] = []
+    var transcript: [Course] = []
+    var credits = Credits()
+    var average: Double?
+
+    struct Problem: Decodable, Hashable { let kind: String; let message: String }
+    struct Credits: Decodable, Hashable { var passed = 0.0; var total = 0.0 }
+
+    struct Exam: Decodable, Hashable, Identifiable {
+        let course: String
+        var code: String?
+        var courseId: Int?
+        let day: String
+        var time: String?
+        var opens: String?
+        var closes: String?
+        var open = false
+        var booked = false
+        var teachers: String?
+        var id: String { "\(code ?? course) \(day)" }
+    }
+
+    struct Course: Decodable, Hashable, Identifiable {
+        let code: String
+        let name: String
+        var year: Int?
+        var credits: Double?
+        let status: String
+        var grade: String?
+        var passedOn: String?
+        var attended: String?
+        var courseId: Int?
+        var id: String { code }
+    }
+}
+
 // MARK: Moodle and the Obsidian vault (docs/API.md, "Moodle", "Obsidian vault")
 
 struct MoodleStatus: Decodable {
@@ -2509,7 +2584,7 @@ struct CourseDate: Decodable, Identifiable, Hashable {
     var you: String?
     var details: String?
     var source: String?
-    /// "professor", or "you": the user's edit or their own.
+    /// "professor", "esse3" (the university's records), or "you": the user's edit or their own.
     var by: String?
     /// Professor has since read it differently.
     var differs: Differs?
