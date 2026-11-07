@@ -44,6 +44,7 @@ from .reviews import ReviewStore, ReviewWatcher
 from .routines import routine_schedule
 from .scheduler import reminder_fallback
 from .material import PageReader
+from .datereminders import DateReminders
 from .esse3 import Esse3Reader
 from .moodle import MoodleSync
 from .passwords import PasswordStore, load_key
@@ -313,6 +314,9 @@ def main() -> None:
     tools += bedtime_tools(bedtime)
     examplan = ExamPlan(db.conn, settings.timezone, study, notebook, quizzes, lessons, focus, bedtime)
     notebook.on_change.append(examplan.invalidate)
+    date_reminders = DateReminders(notebook, reminders, settings.timezone)  # sign-ups and deadlines
+    notebook.on_change.append(date_reminders.changed)
+    date_reminders.sync_all()
     tools += examplan_tools(examplan, study)
 
     # Made below (digest) or maybe not at all (leave): the settings tools find them when called.
