@@ -11,7 +11,8 @@ struct StudyView: View {
     @State private var overview: StudyOverview?
     @State private var reviews: [ReviewSession] = []
     @State private var error: String?
-    @State private var path: [StudyCourse] = []
+    @State private var path = NavigationPath()
+    @State private var plan: ExamPlan?
     @State private var practice: StudyCourse?
     @State private var studying: StudyTarget?
     @State private var result: String?
@@ -59,7 +60,17 @@ struct StudyView: View {
                                                    topicTitle: session.topics.isEmpty ? nil : session.topics.joined(separator: ", "),
                                                    review: session.id)
                         } open: { session in
-                            if let course = courses.first(where: { $0.id == session.course }) { path = [course] }
+                            if let course = courses.first(where: { $0.id == session.course }) { path = NavigationPath([course]) }
+                        }
+                    }
+                    if let plan, !(plan.today.isEmpty && plan.targets.isEmpty) {
+                        TodayPlanCard(plan: plan) { block in
+                            start(block)
+                        } focus: { block in
+                            focusing = FocusTarget(course: block.course, name: block.name, topic: block.topic?.id,
+                                                   topicTitle: block.topic?.title)
+                        } open: {
+                            path.append(ExamPlanPage())
                         }
                     }
                     if let due = toReview {
@@ -85,6 +96,8 @@ struct StudyView: View {
             .previewAnchor()
             .pageGlow(Theme.study)
             .navigationDestination(for: StudyCourse.self) { CourseView(course: $0).macPageBack() }
+            .navigationDestination(for: ExamPlanPage.self) { _ in ExamPlanView().macPageBack() }
+            .navigationDestination(for: PlanMocksPage.self) { MockExamsView(course: $0.course).macPageBack() }
             #if os(iOS)
             .toolbar(.hidden, for: .navigationBar) // Moodle sits on the title's line
             #else
@@ -118,6 +131,24 @@ struct StudyView: View {
     }
 
     private struct QuizID: Identifiable { let id: String }
+
+    /// A piece of today's plan, started: a topic to learn opens its lesson; practice, mocks and review open the
+    /// Study page on the topic (or the whole course).
+    private func start(_ block: PlanBlock) {
+        let name = courses.first { $0.id == block.course }?.name ?? block.name
+        switch block.phase {
+        case "learn":
+            if let topic = block.topic, let course = courses.first(where: { $0.id == block.course }) {
+                lesson = LinkedLesson(course: course, topic: topic)
+            } else {
+                studying = StudyTarget(course: block.course, name: name)
+            }
+        case "mocks":
+            if let course = courses.first(where: { $0.id == block.course }) { path.append(PlanMocksPage(course: course)) }
+        default:
+            studying = StudyTarget(course: block.course, name: name, topics: block.topic.map { [$0.id] } ?? [])
+        }
+    }
 
     /// The page's one line: the next review sessions and the next exam.
     private var line: String {
@@ -154,6 +185,7 @@ struct StudyView: View {
         do {
             overview = try await env.api.study()
             reviews = (try? await env.api.reviewSessions()) ?? []
+            plan = try? await env.api.examPlan() // an older server has none
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -169,7 +201,7 @@ struct StudyView: View {
         if !courses.contains(where: { $0.id == link.course }) { await load() }
         guard let course = courses.first(where: { $0.id == link.course }) else { return }
         switch link.page {
-        case .course: path = [course]
+        case .course: path = NavigationPath([course])
         case .practice: practice = course
         case .quiz: studying = StudyTarget(course: course.id, name: course.title, topics: link.topic.map { [$0] } ?? [],
                                            afterFocus: link.focus)
@@ -189,7 +221,7 @@ struct StudyView: View {
         guard parts.count == 2 else { return }
         if parts[0] == "result" { result = parts[1]; return }
         guard let course = courses.first(where: { String($0.id) == parts[1] }) else { return }
-        if parts[0] == "course" || parts[0] == "date" { path = [course] }
+        if parts[0] == "course" || parts[0] == "date" { path = NavigationPath([course]) }
         if parts[0] == "practice" { practice = course }
         if parts[0] == "study" { studying = StudyTarget(course: course.id, name: course.title) }
         #endif
