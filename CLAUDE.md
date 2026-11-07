@@ -46,8 +46,11 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   `use()` for an https address on the entry's sites; write-only API, every change pushed. `tools/` never imports it.
   `unito.py`: UniTo's single sign-on in plain HTTP with the saved login (wrong: never tried again until changed).
   `esse3.py`: Esse3 read through it (exam sessions with their sign-up windows into the course dates as `by: "esse3"`,
-  `official_dates` in `notebook.py`; bookings; the transcript), four times a day; signing up and cancelling only on the
-  user's tap (now, or when the sign-up opens: `esse3_wants`), the booking page's form posted once, then checked.
+  `official_dates` in `notebook.py`; bookings; the transcript), four times a day, the fast model when a page won't parse;
+  signing up and cancelling only on the user's tap (now, or when the sign-up opens: `esse3_wants`), as an Esse3 errand
+  (#75, `start_esse3` in `errands.py`): `unito.handoff` gives the browser the login as cookies (never the password), no
+  typing, at most two committing clicks, each only on the tapped session (`esse3_mismatch`), never retried or resumed;
+  then the bookings decide and the UniTo profile is forgotten (kept 30 min only while it waits for the user).
 - `engine.py`: OpenRouter or the Claude plan through Claude Code, for the notes and (its own switch) background work:
   routines and watches (Claude Agent SDK, Aide's tools in-process), digests, drafts, titles, objectives.
   Professor's typed chat turns run on the plan too, with Sonnet, whenever the notes do (`PLAN_CHATS` in `agent.py`;
