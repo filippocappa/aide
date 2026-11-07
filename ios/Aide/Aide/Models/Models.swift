@@ -2720,10 +2720,14 @@ struct Esse3Signup: Decodable, Hashable {
     var closes: String?
     /// Kept as wanted: Aide signs up when it opens.
     var auto = false
-    /// "signing up", "cancelling" while Aide is on Esse3.
+    /// "signing up", "cancelling" while Aide's errand works on Esse3.
     var busy: String?
     var error: String?
     var canCancel = false
+    /// The errand, while it's open or waits for you to take over (the live view).
+    var errandId: Int?
+    /// What the errand is doing now, or why it needs you.
+    var step: String?
 }
 
 /// A course date as the user writes it; every field sent, nulls too, so a time can be taken off.
