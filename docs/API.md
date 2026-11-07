@@ -1018,11 +1018,17 @@ Date: `{"id": "d_…", "what": "1st mid-term", "kind": "exam" | "mid-term" | "de
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/study/courses/{id}/dates` | | `{"course": 5, "items": [Date], "read_at": "…" or null, "reading": false}`, by date, past ones too. `reading`: a read is queued or running. |
+| `GET /v1/study/courses/{id}/dates` | `?archived=true` | `{"course": 5, "items": [Date], "read_at": "…" or null, "reading": false}`, by date, past ones too. `reading`: a read is queued or running. With `archived`, the exams not being taken are in too, `"archived": true`. |
 | `POST /v1/study/courses/{id}/dates` | `{"what", "kind", "date", "time"?, "end"?, "room"?, "you"?, "details"?}` | `201`, the same as GET plus `"item": "d_…"` |
 | `PATCH /v1/study/courses/{id}/dates/{date_id}` | any of those | the same as GET. `404` unknown, `400` no `what` or a bad date |
 | `DELETE /v1/study/courses/{id}/dates/{date_id}` | | the same as GET: Professor's stays hidden through new reads, the user's own is deleted |
 | `POST /v1/study/courses/{id}/dates/read` | | `202`, the same as GET with `reading` true: read again even when nothing changed |
+| `POST /v1/study/courses/{id}/dates/{date_id}/archive` | | Not taking this exam: the same as GET with `archived=true`. `404` unknown |
+| `DELETE /v1/study/courses/{id}/dates/{date_id}/archive` | | Brought back: the same as GET with `archived=true`. `404` not archived |
+
+Archived (since 2026-11-07): an exam the user isn't taking leaves the dates everywhere (the course page, the exam plan,
+Professor, the reminders), and so do the dates `of` it (an Esse3 session's sign-up opening and closing carry
+`"of": "d_…"`, the exam's id). Aide won't sign up for it or push its sign-up. Kept until brought back.
 
 The ready message in the course chat comes from Professor ("Notes from Tuesday's macroeconomics lecture…"); the
 model's note before it is hidden from `/v1/history`. A lecture with no course gets the push but no chat message.
@@ -1193,8 +1199,9 @@ yourself); `unreadable` (the stored copy can't be decrypted: add it again).
 ### Esse3
 
 The university's student records (Esse3, `https://esse3.unito.it`), since 2026-11-07, read by the server with the UniTo
-login saved in Passwords (no model, no browser; `esse3.py`, `unito.py`). Read-only: nothing is booked. Four times a day,
-when a UniTo password is saved or changed, and on `POST /v1/esse3/read`. Without a UniTo password it does nothing.
+login saved in Passwords (no model, no browser; `esse3.py`, `unito.py`). Four times a day, when a UniTo password is
+saved or changed, and on `POST /v1/esse3/read`. Without a UniTo password it does nothing. It signs up for an exam
+session or cancels one only on the user's tap (Signing up, below).
 
 It reads three pages: the exam sessions open to the user (Appelli: each course's sessions, the sign-up window, the
 teachers), what they're signed up for (Bacheca prenotazioni) and the transcript (Libretto). The sessions become course
@@ -1207,6 +1214,23 @@ made (the push is for a sign-up already open when first read).
 |---|---|---|
 | `GET /v1/esse3` | | Esse3, below. Never read: `exams` and `transcript` empty, `read_at` null. |
 | `POST /v1/esse3/read` | | Esse3, after reading (~5–15 s) unless a read finished in the last 10 min. `503` the reader isn't on. |
+| `POST /v1/esse3/exams/{date_id}/signup` | | Sign me up: `{"signup": Signup}` (~5–20 s when open). `404` not an Esse3 session, `409` `{"detail": {"kind", "message"}}` it didn't go through, `503` the reader isn't on |
+| `DELETE /v1/esse3/exams/{date_id}/signup` | | Cancel: the same. |
+
+Signing up (since 2026-11-07). `date_id` is the session's exam course date (`by: "esse3"`, `kind: "exam"`); the tap
+in the app, after its own confirmation, is the confirmation. Sign-up open: Aide opens the session's booking page, posts
+its form once (never again by itself) and reads the bookings to see it took. Not open yet: the session is kept as
+wanted (`auto`), and once its sign-up opens (reads every 15 min from its opening day) Aide signs up and pushes
+"Signed up: Maths for economics II" (`esse3`), or "Couldn't sign you up" with the reason, kept in `error` (no more tries
+until the user taps again). Cancel unbooks on Esse3 while its window is open, or drops the wish. Each one is in
+Professor's activity. `409` kinds: `closed`, `questionnaire` (the course's questionnaire first, on MyUniTo), `page`
+(Esse3 showed a page Aide doesn't know), `unconfirmed` (sent, but the bookings don't show it: Esse3's own words when it
+said why), `login`. The exam's course date says it in `you` ("Signed up on Esse3", "Aide signs you up when sign-up
+opens (15 Dec)").
+
+Signup: `{"state": "open" | "soon" | "closed" | "booked", "opens": "2026-12-15" or null, "closes": "…" or null,
+"auto": false (signed up for when it opens), "busy": null or "signing up" | "cancelling", "error": null or "…",
+"can_cancel": true}`. On each Esse3 exam's course date (`signup`) and on Exam below.
 
 Esse3: `{"connected": true, "read_at": "2026-11-07T09:00:00+00:00" or null, "error": null or {"kind", "message"},
 "exams": [Exam], "transcript": [Course], "credits": {"passed": 21, "total": 180}, "average": 27.86 or null}`.
@@ -1215,9 +1239,9 @@ Esse3: `{"connected": true, "read_at": "2026-11-07T09:00:00+00:00" or null, "err
   `page` (Esse3 answered with a page Aide can't read). What was read last stays.
 - `average`: weighted by credits, over passed courses with a numeric grade (30L counts 30).
 
-Exam: `{"course": "MATHEMATICS FOR ECONOMICS II", "code": "SEM0251" or null, "course_id": 3 or null (the Aide
+Exam: `{"id": "d_e3…" (its course date), "course": "MATHEMATICS FOR ECONOMICS II", "code": "SEM0251" or null, "course_id": 3 or null (the Aide
 course), "day": "2026-12-04", "time": "09:30" or null, "opens": "2026-11-04", "closes": "2026-11-27", "open": true
-(sign-up open now), "booked": false, "teachers": "…"}`.
+(sign-up open now), "booked": false, "teachers": "…", "signup": Signup}`.
 
 Course: `{"code": "SEM0251", "name": "MATHEMATICS FOR ECONOMICS II", "year": 2, "credits": 9, "status": "passed" |
 "attended" | "planned", "grade": "28" or "30L" or null, "passed_on": "2026-01-30" or null, "attended": "2025/2026" or
