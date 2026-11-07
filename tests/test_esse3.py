@@ -587,3 +587,9 @@ async def test_professor_signs_up_from_chat():
 def test_professor_has_the_esse3_tools():
     from aide.agents import AGENTS
     assert {"exam_signups", "sign_up_for_exam", "cancel_exam_signup"} <= set(AGENTS["professor"].tools)
+
+
+def test_aide_sends_exam_sign_ups_to_professor():
+    from aide.agents import AGENTS
+    prompt = AGENTS["aide"].prompt
+    assert "Exam sign-ups and cancels on Esse3" in prompt and "never an errand" in prompt
