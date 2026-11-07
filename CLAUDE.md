@@ -110,7 +110,8 @@ Rules that matter here:
 - Secrets live in `.env` only (git-ignored), saved logins in `passwords` (encrypted, the key outside the repo and backups). Never commit or print them.
 - Times: store UTC, talk to the user in `AIDE_TIMEZONE` (Europe/Rome).
 - Memory: cappa has 15 GB and is also the user's dev box (an Android emulator, Expo). Aide and its voice share
-  `deploy/aide.slice` (8 GB, 1 GB of swap; killed inside it, never cappa frozen, 2026-11-07); each restart reloads
+  `deploy/aide.slice` (8 GB, 1 GB of swap; killed inside it, never cappa frozen, 2026-11-07; 10 GB while no
+  emulator, Expo or Gradle runs: `deploy/aide-budget.sh`); each restart reloads
   the voice models (~5 GB for a minute), so one restart per deploy. Tests on cappa go in a capped scope:
   `systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 uv run pytest`.
 
