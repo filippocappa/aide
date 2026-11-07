@@ -1663,11 +1663,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(404, "no notebooks on this server")
         return course_id
 
-    async def dates_changed(course_id: int) -> dict:
+    async def dates_changed(course_id: int, archived: bool = False) -> dict:
         """After the user's change: the calendar checked again now, and a missing exam proposed in the chat."""
         await notebook.calendar_check(course_id)
         notebook.reread_dates(course_id)  # no model call when nothing it reads changed: only the proposal
-        return dates_json(course_id)
+        return dates_json(course_id, archived)
 
     @app.get("/v1/study/courses/{course_id}/dates", dependencies=[Depends(auth)])
     async def course_dates(course_id: int, archived: bool = False):
@@ -1694,36 +1694,36 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return dates_json(course_id, archived=True)
 
     @app.post("/v1/study/courses/{course_id}/dates", dependencies=[Depends(auth)])
-    async def add_course_date(course_id: int, body: CourseDateIn):
+    async def add_course_date(course_id: int, body: CourseDateIn, archived: bool = False):
         try:
             item = notebook.add_date(dates_or_404(course_id), body.model_dump(exclude_none=True))
         except ValueError as e:
             raise HTTPException(400, f"a date needs what it is and a real date: {e}")
-        return JSONResponse(await dates_changed(course_id) | {"item": item["id"]}, status_code=201)
+        return JSONResponse(await dates_changed(course_id, archived) | {"item": item["id"]}, status_code=201)
 
     @app.patch("/v1/study/courses/{course_id}/dates/{date_id}", dependencies=[Depends(auth)])
-    async def edit_course_date(course_id: int, date_id: str, body: CourseDateIn):
+    async def edit_course_date(course_id: int, date_id: str, body: CourseDateIn, archived: bool = False):
         try:
             notebook.edit_date(dates_or_404(course_id), date_id, body.model_dump(exclude_unset=True))
         except KeyError as e:
             raise HTTPException(404, str(e).strip("'\""))
         except ValueError as e:
             raise HTTPException(400, f"a date needs what it is and a real date: {e}")
-        return await dates_changed(course_id)
+        return await dates_changed(course_id, archived)
 
     @app.delete("/v1/study/courses/{course_id}/dates/{date_id}", dependencies=[Depends(auth)])
-    async def hide_course_date(course_id: int, date_id: str):
+    async def hide_course_date(course_id: int, date_id: str, archived: bool = False):
         try:
             notebook.hide_date(dates_or_404(course_id), date_id)
         except KeyError as e:
             raise HTTPException(404, str(e).strip("'\""))
-        return dates_json(course_id)
+        return dates_json(course_id, archived)
 
     @app.post("/v1/study/courses/{course_id}/dates/read", dependencies=[Depends(auth)])
-    async def read_course_dates(course_id: int):
+    async def read_course_dates(course_id: int, archived: bool = False):
         """Professor reads the course's page and files for its dates again, even when nothing changed."""
         notebook.reread_dates(dates_or_404(course_id), force=True)
-        return JSONResponse(dates_json(course_id), status_code=202)
+        return JSONResponse(dates_json(course_id, archived), status_code=202)
 
     def examplan_or_404() -> ExamPlan:
         if examplan is None:

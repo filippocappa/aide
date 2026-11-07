@@ -1018,7 +1018,7 @@ Date: `{"id": "d_…", "what": "1st mid-term", "kind": "exam" | "mid-term" | "de
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/study/courses/{id}/dates` | `?archived=true` | `{"course": 5, "items": [Date], "read_at": "…" or null, "reading": false}`, by date, past ones too. `reading`: a read is queued or running. With `archived`, the exams not being taken are in too, `"archived": true`. |
+| `GET /v1/study/courses/{id}/dates` | `?archived=true` | `{"course": 5, "items": [Date], "read_at": "…" or null, "reading": false}`, by date, past ones too. `reading`: a read is queued or running. With `archived`, the exams not being taken are in too, `"archived": true` (each endpoint here that answers like GET takes `?archived=true` too). |
 | `POST /v1/study/courses/{id}/dates` | `{"what", "kind", "date", "time"?, "end"?, "room"?, "you"?, "details"?}` | `201`, the same as GET plus `"item": "d_…"` |
 | `PATCH /v1/study/courses/{id}/dates/{date_id}` | any of those | the same as GET. `404` unknown, `400` no `what` or a bad date |
 | `DELETE /v1/study/courses/{id}/dates/{date_id}` | | the same as GET: Professor's stays hidden through new reads, the user's own is deleted |
