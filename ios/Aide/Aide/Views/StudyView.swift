@@ -816,7 +816,8 @@ struct CourseView: View {
             dates = try? await env.api.courseDates(course: course.id)
             #if DEBUG
             if env.settings.isPreview, UserDefaults.standard.string(forKey: "previewOpen") == "date:\(course.id)",
-               editing == nil, let first = dates?.items.first(where: { $0.past != true }) {
+               editing == nil, let first = dates?.items.first(where: {
+                   $0.past != true && $0.archived != true && CourseDatesCard.shown.contains($0.kind) }) {
                 editing = .item(first)
             }
             #endif
