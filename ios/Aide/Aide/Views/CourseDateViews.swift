@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// The course's dates on its page: exams, mid-terms and deadlines, what applies to the user, whether each exam is in
-/// the Exam calendar. Professor reads them from the course's page and files; a tap changes one.
+/// The course's exams and mid-terms on its page, what applies to the user, whether each exam is in the Exam calendar.
+/// Professor and Esse3 read them; a tap changes one. Sign-ups and deadlines aren't here: the server makes them
+/// reminders (docs/API.md, "Course dates").
 struct CourseDatesCard: View {
     let dates: CourseDates?
     let add: () -> Void
@@ -11,7 +12,8 @@ struct CourseDatesCard: View {
     let chat: () -> Void
     @State private var showPast = false
 
-    private var items: [CourseDate] { dates?.items ?? [] }
+    private var items: [CourseDate] { (dates?.items ?? []).filter { CourseDatesCard.shown.contains($0.kind) } }
+    static let shown: Set<String> = ["exam", "mid-term"]
     private var upcoming: [CourseDate] { items.filter { $0.past != true } }
     private var past: [CourseDate] { items.filter { $0.past == true } }
     private var reading: Bool { dates?.reading == true }
@@ -69,7 +71,8 @@ struct CourseDatesCard: View {
                 }
             }
             .card(padding: 0)
-            Text("From the course's page and files. Tap one to change it; Professor's next reads keep your changes.")
+            Text("From Esse3 and the course's page and files. Tap one to change it; the next reads keep your changes. "
+                 + "Sign-ups and deadlines are in Reminders.")
                 .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
         }
     }
@@ -193,7 +196,7 @@ struct CourseDateEditor: View {
     @State private var working = false
     @State private var confirmDelete = false
 
-    static let kinds = [("exam", "Exam"), ("mid-term", "Mid-term"), ("deadline", "Deadline"), ("other", "Other")]
+    static let kinds = [("exam", "Exam"), ("mid-term", "Mid-term")]
 
     init(course: Int, item: CourseDate?, saved: @escaping (CourseDates) -> Void) {
         self.course = course
