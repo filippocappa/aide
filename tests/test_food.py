@@ -277,14 +277,14 @@ async def test_tools_correct_list_and_queue_a_delete(env):
 
 
 async def test_drinks_carry_water_and_caffeine_and_every_change_asks_the_phone_to_sync(env):
-    api, agent, food, *_ = env([log_meal(name="Espresso and 1 L water", items=[ESPRESSO],
-                                         water_ml=1030, caffeine_mg=65), done("Logged.")])
+    api, agent, food, *_ = env([log_meal(name="Espresso and 1 L water", items=[{**ESPRESSO, "kind": "drink"}],
+                                         plain_water_ml=1000, caffeine_mg=65), done("Logged.")])
     synced = []
     food.on_change.append(lambda: synced.append(1))
     turn = await agent.respond(CONVERSATION, "an espresso and 1 L of water")
     [meal] = turn.attachments[0]["meals"]
-    assert (meal["calories"], meal["water_ml"], meal["caffeine_mg"]) == (10, 1030, 65) and synced == [1]
-    assert api.get("/v1/food", headers=AUTH).json()["totals"]["water_ml"] == 1030
+    assert (meal["calories"], meal["water_ml"], meal["caffeine_mg"]) == (10, 1029, 65) and synced == [1]
+    assert api.get("/v1/food", headers=AUTH).json()["totals"]["water_ml"] == 1029
     r = api.patch(f"/v1/food/meals/{meal['id']}", json={"water_ml": 530}, headers=AUTH)
     assert r.json()["water_ml"] == 530 and synced == [1, 1]
     old = food.add("Tea", 0, 0, 0, 0, datetime.now(ROME) - timedelta(days=3), caffeine_mg=40)

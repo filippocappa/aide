@@ -1,7 +1,8 @@
 """Food log tools. Logging, changing and goals run immediately; deleting a meal waits for the user's OK.
 
 A meal is logged from its items: saved foods (foods.py) with grams, or new foods with the model's numbers per 100 g,
-saved as they're logged; the server works out the totals. Meals logged before items only have their totals.
+saved as they're logged; the server works out the totals, and the water from the drinks among the items (plain
+water comes on its own, as plain_water_ml). Meals logged before items only have their totals.
 """
 
 from datetime import date as Date, datetime
@@ -75,16 +76,16 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         return food_day_line(store, nutrition, d)
 
     async def log_meal(name: str, items: list[dict], eaten_at: str | None = None, photo_id: str | None = None,
-                       notes: str | None = None, water_ml: int = 0, caffeine_mg: int = 0,
+                       notes: str | None = None, plain_water_ml: int = 0, caffeine_mg: int = 0,
                        emoji: str | None = None) -> str:
         if photo_id and not photos.exists(photo_id):
             raise ValueError(f"no photo {photo_id}")
-        if not items and not (water_ml or caffeine_mg):
+        if not items and not (plain_water_ml or caffeine_mg):
             raise ValueError("items is empty: give what they ate, each with its grams")
         top = store.conn.execute("SELECT COALESCE(MAX(id), 0) FROM foods").fetchone()[0]
         rows, sums, notes = foods.from_items(items, notes)
-        meal = store.add(name, **sums, eaten_at=eaten_at, photo=photo_id, notes=notes, water_ml=water_ml,
-                         caffeine_mg=caffeine_mg, emoji=emoji)
+        meal = store.add(name, **sums, eaten_at=eaten_at, photo=photo_id, notes=notes,
+                         water_ml=foods.water(rows) + (plain_water_ml or 0), caffeine_mg=caffeine_mg, emoji=emoji)
         foods.keep_items(meal["id"], rows, count=True)
         lines = [f"Logged: {fmt(meal)}{quality_line(meal)}", day_line(store.local_day(meal))]
         new = [f"[food {r['food_id']}] {r['name']}" for r in rows if r["food_id"] > top]
@@ -92,14 +93,21 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         return cards("\n".join(lines), [meal])
 
     async def update_meal(meal_id: int, name: str | None = None, items: list[dict] | None = None,
-                          eaten_at: str | None = None, notes: str | None = None, water_ml: int | None = None,
+                          eaten_at: str | None = None, notes: str | None = None, plain_water_ml: int | None = None,
                           caffeine_mg: int | None = None, emoji: str | None = None) -> str:
+        old, had = store.find(meal_id), foods.items(meal_id)
         rows = None
         sums = {k: None for k in MACROS}
         if items:
-            kept = notes if notes is not None else free_notes(store.find(meal_id)["notes"])
+            kept = notes if notes is not None else free_notes(old["notes"])
             rows, sums, notes = foods.from_items(items, kept)
-        meal = store.update(meal_id, name=name, **sums, eaten_at=eaten_at, notes=notes, water_ml=water_ml,
+        water = None
+        if rows or plain_water_ml is not None:
+            # The plain water is what the meal had beyond its drinks, unless given again (older meals' water_ml was
+            # Coach's own figure, drinks and all).
+            plain = plain_water_ml if plain_water_ml is not None else max(0, old["water_ml"] - foods.water(had))
+            water = foods.water(rows or had) + plain
+        meal = store.update(meal_id, name=name, **sums, eaten_at=eaten_at, notes=notes, water_ml=water,
                             caffeine_mg=caffeine_mg, emoji=emoji)
         if rows:
             foods.keep_items(meal_id, rows, count=False)
@@ -168,15 +176,17 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
                        "description": "The meal item by item, each a food and its grams: a saved food by food_id, "
                        "or a new one with name and your numbers per 100 g (saved as it's logged, for next time; a "
                        "name already saved is that food). The server adds them up and lists them in notes"}}
-    drinks = {"water_ml": {"type": "integer", "description": "ml of water drunk: plain or sparkling water, and the "
-                           "volume of drinks that are mostly water (coffee, tea, juice). 0 or omit for none"},
+    drinks = {"plain_water_ml": {"type": "integer", "description": "ml of plain water drunk (still or sparkling), "
+                                 "not an item. Other drinks are items (kind drink) and their water is counted from "
+                                 "them; never add their ml here. 0 or omit for none"},
               "caffeine_mg": {"type": "integer", "description": "mg of caffeine (an espresso about 65, a moka cup "
                               "about 100, a cola can about 35). 0 or omit for none"},
               "emoji": {"type": "string", "description": "One emoji for the meal, shown in the app's list instead "
                         "of the photo (🍝, 🥗, 🥣, ☕)"}}
     return [
         Tool("log_meal", "Log a meal (or a drink: water, coffee) the user had from its items, each a food with "
-             "the grams they had; plus water and caffeine when there are any (water alone: items empty). Pass "
+             "the grams they had (ml for drinks); plus plain water and caffeine when there are any (plain water "
+             "alone: items empty). The meal's water is worked out from its drinks plus the plain water. Pass "
              "photo_id when it came from a photo. The phone writes it to Apple Health. Returns the day's totals so "
              "far. Runs immediately.",
              _obj({"name": {"type": "string", "description": "Short dish name, e.g. 'Pasta al pomodoro'"}, **items,

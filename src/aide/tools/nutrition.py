@@ -6,14 +6,14 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from ..foods import KINDS, SOURCES, FoodDB
+from ..foods import KINDS, SOURCES, FoodDB, water_share
 from ..nutrition import grade
 from . import Tool
 
 SEARCH = "https://search.openfoodfacts.org/search"
 PRODUCT = "https://world.openfoodfacts.org/api/v2/product/{}.json"
 FIELDS = ("code,product_name,product_name_it,brands,quantity,serving_quantity,serving_size,nutriments,"
-          "nutriscore_grade,nova_group")
+          "nutriscore_grade,nova_group,categories_tags")
 OFF_NUTRIENTS = {"sugars_100g": "sugars_100g", "sat_fat_100g": "saturated-fat_100g", "fibre_100g": "fiber_100g",
                  "salt_100g": "salt_100g"}
 USER_AGENT = "Aide/1.0 (personal assistant)"  # Open Food Facts asks every app to name itself
@@ -53,6 +53,18 @@ def serving(raw: dict) -> float | None:
     return grams
 
 
+BEVERAGES = "en:beverages"
+NOT_DRINKS = {"en:dried-products-to-be-rehydrated", "en:instant-beverages"}  # powders, tea bags, capsules
+
+
+def off_kind(raw: dict, kcal: float) -> str | None:
+    """water or drink from a product's categories, else None (the default, general)."""
+    tags = set(raw.get("categories_tags") or [])
+    if BEVERAGES not in tags or tags & NOT_DRINKS:
+        return None
+    return "water" if "en:waters" in tags and kcal < 1 else "drink"
+
+
 def product(raw: dict) -> dict | None:
     """An Open Food Facts product as a food, or None without a name or the four numbers per 100 g."""
     nut = raw.get("nutriments") or {}
@@ -72,7 +84,7 @@ def product(raw: dict) -> dict | None:
             "serving_g": serving(raw), "pack": (raw.get("quantity") or "").strip(),
             "quality": {**{k: _num(nut.get(off)) for k, off in OFF_NUTRIENTS.items()},
                         "nutriscore": grade if grade in ("a", "b", "c", "d", "e") else None,
-                        "nova": nova if nova in (1, 2, 3, 4) else None}}
+                        "nova": nova if nova in (1, 2, 3, 4) else None, "kind": off_kind(raw, kcal)}}
 
 
 def save_product(foods: FoodDB, p: dict, code: str) -> dict:
@@ -138,6 +150,8 @@ def describe(food: dict) -> str:
     line += f" · usual {_g(food['usual_g'])}" if food["usual_g"] else ""
     line += f" · eaten {food['uses']}×" if food["uses"] else ""
     line += f" · Nutri-Score {g.upper()}" if (g := grade(food)) else ""
+    if food["kind"] in ("drink", "water") or food.get("water_pct") is not None:
+        line += f" · counts {round(water_share(food) * 100)}% as water"
     return line + f" · from {food['source']}"
 
 
@@ -153,7 +167,10 @@ def quality_schema() -> dict:
             "nova": {"type": "integer", "enum": [1, 2, 3, 4], "description": "how processed (NOVA): 1 unprocessed or "
                      "minimally (fruit, veg, eggs, plain yogurt, meat, fish, rice, pasta, oats), 2 a culinary ingredient "
                      "(oil, butter, sugar, salt), 3 processed (cheese, bakery bread, tinned fish, cured ham), 4 "
-                     "ultra-processed (industrial snacks, soft drinks, packaged sweets, most ready meals)"}}
+                     "ultra-processed (industrial snacks, soft drinks, packaged sweets, most ready meals)"},
+            "water_pct": {"type": "number", "description": "Only when the server's guess is wrong: % of it that counts "
+                          "as water drunk. Without it: water 100, a drink what isn't protein, carbs or fat (coffee "
+                          "98, cola 88, juice 88), an alcoholic drink 0, food 0"}}
 
 
 def nutrition_tools(foods: FoodDB, off: OpenFoodFacts) -> list[Tool]:

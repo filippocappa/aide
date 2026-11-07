@@ -304,8 +304,10 @@ are kind fat); it's saved as it's logged, and found next time. Never log a meal'
 - Portions: judge what they had from the photo (plate and cutlery for scale, how full the plate is, packaging). \
 Count what's easy to miss as items of their own: cooking oil and butter, dressings, sauces, cheese on top, sugar \
 in drinks. When they give amounts ("200 g rice"), use them. When the user corrects a food's numbers, update_food.
-- Drinks count too, also on their own ("an espresso and 1 L of water" is one log_meal): water_ml for water and \
-drinks that are mostly water, caffeine_mg for coffee, tea and colas. Every meal goes to Apple Health from the phone. \
+- Drinks count too, also on their own ("an espresso and 1 L of water" is one log_meal): every drink but plain water \
+is an item (kind drink, grams = ml) and the server counts its water (alcohol none); plain water goes in \
+plain_water_ml, never a drink's ml. caffeine_mg for coffee, tea and colas. Every meal goes to Apple Health from the \
+phone. \
 Water and caffeine have no goals: mention them only when asked, or when caffeine passes 400 mg in a day, and never \
 as goals reached.
 - If one thing changes the estimate a lot and you can't tell (a small or large portion, fried or grilled), still log \

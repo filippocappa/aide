@@ -8,7 +8,7 @@ from aide.agent import Agent
 from aide.channels.api import create_app
 from aide.db import Database
 from aide.food import FoodStore
-from aide.foods import FoodDB, normalize
+from aide.foods import FoodDB, normalize, water_share
 from aide.photos import PhotoStore
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
@@ -158,8 +158,8 @@ async def test_a_meal_is_always_items_and_a_new_item_with_a_saved_name_is_that_f
     said = await tools.call("log_meal", {"name": "Pizza", "items": [{**pizza, "kcal_100g": 300}]})
     assert food.get(2)["calories"] == 880 and "Saved as new" not in said
     assert len(foods.search("pizza")) == 1 and foods.get(1)["uses"] == 2
-    # Water alone needs no items.
-    await tools.call("log_meal", {"name": "Water", "items": [], "water_ml": 1000})
+    # Plain water alone needs no items.
+    await tools.call("log_meal", {"name": "Water", "items": [], "plain_water_ml": 1000})
     assert (food.get(3)["calories"], food.get(3)["water_ml"], food.get(3)["notes"]) == (0, 1000, "")
     plain = foods.save("Riso", 360, 7, 80, 0.6, "estimate")
     with pytest.raises(ValueError, match="how many grams"):
@@ -338,3 +338,82 @@ def test_what_you_eat_at_this_time_of_day_comes_first(env):
     meal = food.add("Caffè", **sums, eaten_at=now - timedelta(days=4), notes=notes)
     foods.keep_items(meal["id"], rows, count=True)
     assert [f["name"] for f in foods.recent(ROME)["foods"]] == ["Caffè", "Pizza"]  # 2 + 2 against 3
+
+
+# -- water from drinks (#72) -------------------------------------------------------------
+
+
+def test_a_drink_counts_as_water_what_isnt_protein_carbs_fat_or_alcohol():
+    def share(kcal, p, c, f, kind="drink", **more):
+        return round(water_share({"kcal_100g": kcal, "protein_100g": p, "carbs_100g": c, "fat_100g": f,
+                                  "kind": kind, **more}) * 100)
+    assert share(0, 0, 0, 0, "water") == 100
+    assert share(2, 0.1, 0.3, 0) == 99  # coffee
+    assert share(42, 0, 10.6, 0) == 88  # cola
+    assert share(45, 0.7, 10.4, 0.2) == 88  # orange juice
+    assert share(64, 3.4, 4.8, 3.6) == 87  # milk
+    assert share(58, 8.3, 5.2, 0.4) == 85  # a protein drink: its kcal are its macros
+    assert share(43, 0.5, 3.6, 0) == 0  # beer: alcohol
+    assert share(85, 0.1, 2.6, 0) == 0  # wine
+    assert share(243, 0, 0, 0) == 0  # gin
+    assert share(130, 3, 28, 0.5, "general") == 0  # rice: food isn't water drunk
+    assert share(43, 0.5, 3.6, 0, water_pct=40) == 40  # set by hand, it wins
+
+
+async def test_a_meals_water_is_its_drinks_plus_the_plain_water(env):
+    tools, food, foods, _ = env()
+    cola = foods.save("Coca-Cola", 42, 0, 10.6, 0, "off", kind="drink")
+    espresso = {"name": "Espresso", "grams": 30, "kcal_100g": 2, "protein_100g": 0.1, "carbs_100g": 0.3,
+                "fat_100g": 0, "kind": "drink"}
+    beer = {"name": "Beer lager", "grams": 660, "kcal_100g": 43, "protein_100g": 0.5, "carbs_100g": 3.6,
+            "fat_100g": 0, "kind": "drink"}
+    pasta = {"name": "Pasta", "grams": 100, "kcal_100g": 360, "protein_100g": 13, "carbs_100g": 72, "fat_100g": 1.5}
+    await tools.call("log_meal", {"name": "Pranzo", "items": [pasta, {"food_id": cola["id"], "grams": 330}, espresso],
+                                  "plain_water_ml": 500, "caffeine_mg": 100})
+    assert food.get(1)["water_ml"] == 500 + 321 and  # cola 291.7 + espresso 29.6 food.get(1)["caffeine_mg"] == 100
+    await tools.call("log_meal", {"name": "2 beers", "items": [beer]})
+    assert food.get(2)["water_ml"] == 0
+    said = await tools.call("find_food", {"query": "coca"})
+    assert "counts 88% as water" in said
+
+    # A correction keeps the plain water when it isn't given again, and counts the new drinks.
+    await tools.call("update_meal", {"meal_id": 1, "items": [pasta, {"food_id": cola["id"], "grams": 500}]})
+    assert food.get(1)["water_ml"] == 500 + 442
+    await tools.call("update_meal", {"meal_id": 1, "plain_water_ml": 0})
+    assert food.get(1)["water_ml"] == 442
+    await tools.call("update_meal", {"meal_id": 1, "name": "Lunch"})
+    assert food.get(1)["water_ml"] == 442
+
+    # A meal from before: Coach's own figure had the cola in it too; a correction doesn't count it twice.
+    old = food.add("Acqua e cola", 140, 0, 35, 0, water_ml=1830)
+    foods.keep_items(old["id"], foods.resolve([{"food_id": cola["id"], "grams": 330}]), count=False)
+    await tools.call("update_meal", {"meal_id": old["id"], "items": [{"food_id": cola["id"], "grams": 500}]})
+    assert food.get(old["id"])["water_ml"] == 1538 + 442
+
+
+def test_open_food_facts_drinks_get_their_kind_from_the_categories():
+    def kind(tags, kcal=42):
+        raw = {**NOCCIOLATA, "categories_tags": tags,
+               "nutriments": {"energy-kcal_100g": kcal, "proteins_100g": 0, "carbohydrates_100g": 10.6,
+                              "fat_100g": 0}}
+        return product(raw)["quality"]["kind"]
+    assert kind(["en:beverages", "en:carbonated-drinks", "en:sodas"]) == "drink"
+    assert kind(["en:beverages", "en:waters", "en:mineral-waters"], kcal=0) == "water"
+    assert kind(["en:beverages", "en:instant-beverages", "en:cocoa-powders"]) is None
+    assert kind(["en:spreads"]) is None and kind([]) is None
+
+
+def test_scans_and_meals_again_count_their_drinks_water(app_env):
+    api, food, foods, *_ = app_env()
+    cola = foods.save("Coca-Cola", 42, 0, 10.6, 0, "off", kind="drink")
+    meal = api.post(f"/v1/food/foods/{cola['id']}/log", json={"grams": 330}, headers=AUTH).json()["meal"]
+    assert meal["water_ml"] == 292
+    meal = api.post("/v1/food/foods/log", json={"items": [{"food_id": cola["id"], "grams": 500}]},
+                    headers=AUTH).json()["meal"]
+    assert meal["water_ml"] == 442
+    again = api.post(f"/v1/food/meals/{meal['id']}/again", json={}, headers=AUTH).json()["meal"]
+    assert again["water_ml"] == 442
+    # An older meal whose water_ml was Coach's figure (plain water too) keeps it.
+    old = food.add("Acqua e cola", 210, 0, 53, 0, water_ml=1500)
+    foods.keep_items(old["id"], foods.resolve([{"food_id": cola["id"], "grams": 500}]), count=False)
+    assert api.post(f"/v1/food/meals/{old['id']}/again", json={}, headers=AUTH).json()["meal"]["water_ml"] == 1500

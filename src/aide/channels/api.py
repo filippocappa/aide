@@ -1495,7 +1495,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             raise HTTPException(404, f"no food {food_id}")
         when = meal_time(body.day)
         rows, sums, notes = from_items([{"food_id": food_id, "grams": body.grams}])
-        meal = food.add(food_name(rows), **sums, eaten_at=when, notes=notes)
+        meal = food.add(food_name(rows), **sums, water_ml=foods.water(rows), eaten_at=when, notes=notes)
         foods.keep_items(meal["id"], rows, count=True)
         return await logged(meal, rows, "scanned", body.conversation_id)
 
@@ -1510,7 +1510,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         when = meal_time(body.day)
         rows, sums, notes = from_items([i.model_dump() for i in body.items])
         try:
-            meal = food.add((body.name or "").strip() or food_name(rows), **sums, eaten_at=when, notes=notes)
+            meal = food.add((body.name or "").strip() or food_name(rows), **sums, water_ml=foods.water(rows),
+                            eaten_at=when, notes=notes)
         except ValueError as e:
             raise HTTPException(400, str(e))
         foods.keep_items(meal["id"], rows, count=True)
@@ -1536,6 +1537,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         drinks = {k: old[k] for k in ("water_ml", "caffeine_mg")}
         if items:
             rows, sums, notes = from_items(items)
+            # Its drinks' water plus the plain water it had (an older meal's water_ml was Coach's figure for both)
+            drinks["water_ml"] = max(old["water_ml"], foods.water(rows))
             meal = food.add(old["name"], **sums, **drinks, eaten_at=when, notes=notes, emoji=old["emoji"])
             foods.keep_items(meal["id"], rows, count=True)
         else:

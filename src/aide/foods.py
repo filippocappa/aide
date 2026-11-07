@@ -4,6 +4,7 @@ A food comes from Open Food Facts (by barcode), a nutrition label in a photo, a 
 own estimate (saved as it logs a meal with it), saved once and reused so the same food always gives the same
 numbers. Each food keeps its usual portion (the last one eaten) and how often it's eaten, which ranks searches.
 A meal logged from items keeps them in meal_items. Drinks are per 100 ml, the same as grams.
+A meal's water is worked out from its drinks (water_share), plus any plain water given on its own.
 """
 
 import sqlite3
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS foods (
     kind         TEXT NOT NULL DEFAULT 'general',  -- general | fat | drink | water | cheese | red_meat
     nutriscore   TEXT,  -- Open Food Facts' grade, a–e; else worked out from the numbers
     nova         INTEGER,  -- the processing group, 1–4: Open Food Facts', or Coach's estimate
+    water_pct    REAL,  -- % of it that counts as water drunk, NULL to work it out from kind and numbers
     serving_g    REAL,  -- one serving as the packet says, NULL when unknown
     usual_g      REAL,  -- the portion the user had last time
     source       TEXT NOT NULL,  -- off | label | web | estimate | user
@@ -60,12 +62,13 @@ CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id);
 
 SOURCES = ("off", "label", "web", "estimate", "user")
 PER_100 = ("kcal_100g", "protein_100g", "carbs_100g", "fat_100g")
-QUALITY = ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct", "kind", "nutriscore", "nova")
+QUALITY = ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct", "kind", "nutriscore", "nova",
+           "water_pct")
 EDITABLE = ("name", "brand", "barcode", *PER_100, *QUALITY, "serving_g", "usual_g", "source", "source_ref", "aliases")
 KINDS = ("general", "fat", "drink", "water", "cheese", "red_meat")
 QUALITY_COLUMNS = {"sugars_100g": "REAL", "sat_fat_100g": "REAL", "fibre_100g": "REAL", "salt_100g": "REAL",
                    "fvl_pct": "REAL", "kind": "TEXT NOT NULL DEFAULT 'general'", "nutriscore": "TEXT",
-                   "nova": "INTEGER"}
+                   "nova": "INTEGER", "water_pct": "REAL"}
 MAX_NAME = 100
 MAX_PORTION = 5000  # g in one serving or one item
 SEARCH_LIMIT = 5
@@ -73,6 +76,25 @@ RECENT_DAYS = 90  # how far back "what you eat" looks
 RECENT_HOURS = 2  # eaten within this many hours of now's time of day counts double (breakfast in the morning)
 RECENT_FOODS = 40
 RECENT_MEALS = 10
+ALCOHOL_KCAL = 15  # kcal per 100 ml beyond 4/4/9 × the macros: alcohol (~2 g, ~2.5% vol); less is labels rounding
+MINERALS_PCT = 1  # what a drink holds besides water, protein, carbs and fat
+
+
+def water_share(food: dict) -> float:
+    """How much of a food counts as water drunk, 0–1. Plain water all of it; a drink what isn't protein, carbs, fat or
+    minerals (coffee 0.98, cola 0.88, juice 0.88, milk 0.87); an alcoholic drink (kcal well over its macros' share)
+    none, nor food. A food's water_pct, when set, says otherwise."""
+    if food.get("water_pct") is not None:
+        return food["water_pct"] / 100
+    kind = food.get("kind") or "general"
+    if kind == "water":
+        return 1.0
+    if kind != "drink":
+        return 0.0
+    p, c, f = food["protein_100g"], food["carbs_100g"], food["fat_100g"]
+    if food["kcal_100g"] - (4 * p + 4 * c + 9 * f) >= ALCOHOL_KCAL:
+        return 0.0
+    return max(0.0, 100 - MINERALS_PCT - p - c - f) / 100
 
 
 def normalize(text: str) -> str:
@@ -226,7 +248,7 @@ class FoodDB:
                 if not 0 <= float(value) <= top:
                     raise ValueError(f"{key} must be between 0 and {top}")
                 value = float(value)
-            elif key in ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct"):
+            elif key in ("sugars_100g", "sat_fat_100g", "fibre_100g", "salt_100g", "fvl_pct", "water_pct"):
                 if value is not None and not 0 <= float(value) <= 100:
                     raise ValueError(f"{key} must be between 0 and 100")
                 value = None if value is None else float(value)
@@ -339,6 +361,15 @@ class FoodDB:
         rows = self.resolve(items)
         sums = {k: sum(r[k] for r in rows) for k in MACROS}
         return rows, sums, "\n".join(filter(None, [rows and items_line(rows), (notes or "").strip()]))
+
+    def water(self, items: list[dict]) -> int:
+        """ml of water drunk in a meal's items (resolved rows or stored meal_items): each saved food's grams times its
+        water share; an item estimated on its own, none."""
+        total = 0.0
+        for i in items:
+            if i.get("food_id") is not None and i.get("grams") and (food := self.get(i["food_id"])):
+                total += i["grams"] * water_share(food)
+        return round(total)
 
     def keep_items(self, meal_id: int, rows: list[dict], count: bool) -> None:
         """Store a meal's items; each saved food's portion becomes its usual (and, with count, one more use)."""
