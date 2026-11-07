@@ -558,7 +558,15 @@ struct ErrandCard: View {
             env.browser = .errand(fresh.id, title: fresh.title)
         }
         errand = fresh
-        if changed, let id = fresh.conversationId, id == chat.conversationID { await chat.loadHistory() }
+        guard changed else { return }
+        if let id = fresh.conversationId, id == chat.conversationID {
+            await chat.loadHistory()
+        } else if fresh.conversationId == nil, chat.conversationID != nil {
+            // An errand without a chat of its own (Esse3) posts its result in the chat it was asked from, just after
+            // it stops: this card is in that chat.
+            try? await Task.sleep(for: .seconds(3))
+            await chat.loadHistory()
+        }
     }
 
     static func opensByItself(_ e: Errand) -> Bool {

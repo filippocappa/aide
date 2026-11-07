@@ -771,8 +771,11 @@ class Esse3Reader:
                 activity.record(self.conn, "professor", "study",
                                 f"Couldn't {'sign up for' if book else 'cancel'} {name}'s {day} exam", message)
                 log.warning("esse3: errand %s didn't %s (%s)", errand["id"], t["action"], kind)
+            again = not done and kind == "need_user" and row["told"] == "failed"
             self.conn.execute("UPDATE esse3_errands SET told = ? WHERE key = ?", (told, t["key"]))
             self._redate()
+            if again:
+                return  # stuck again after the user took over: told once already
         course = self.exam_for(_id("exam", t))
         if row["chat"]:
             text = (f"Done: {what[0].lower() + what[1:]}. Esse3 lists it." if done and book else
