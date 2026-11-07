@@ -8,6 +8,11 @@ StartLimitBurst=10
 
 [Service]
 Type=simple
+# Aide and its voice share one memory budget (aide.slice), so loading the models can't take cappa down with them.
+Slice=aide.slice
+# Temporary files on disk: /tmp is RAM on cappa, and Parakeet unpacks 2.5 GB there while it loads.
+Environment=TMPDIR=%h/.cache/aide/tmp
+ExecStartPre=/bin/sh -c 'rm -rf %h/.cache/aide/tmp; mkdir -p %h/.cache/aide/tmp'
 WorkingDirectory=%h/Developer/aide
 ExecStart=%h/Developer/aide/.venv/bin/aide
 Restart=always

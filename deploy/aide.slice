@@ -1,0 +1,11 @@
+# Aide's memory budget: the service and its call voice (aide-voice.service) together. Loading the voice models peaks
+# at a few GB each; without a cap, a restart on top of other work took cappa into swap until it froze (2026-11-07).
+# Past MemoryHigh the kernel reclaims; past MemoryMax it kills inside the slice (systemd restarts it), never outside.
+# Install: README.md, "Running as a service".
+[Unit]
+Description=Aide and its voice
+
+[Slice]
+MemoryHigh=7G
+MemoryMax=8G
+MemorySwapMax=1G
