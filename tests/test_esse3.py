@@ -551,3 +551,39 @@ async def test_signing_up_through_the_api():
                                   .json()["items"]}
         assert client.delete(f"/v1/study/courses/{maths}/dates/{exam['id']}/archive", headers=AUTH).status_code == 200
         assert client.post("/v1/esse3/exams/d_nope/signup", headers=AUTH).status_code == 404
+
+
+async def test_professor_signs_up_from_chat():
+    """"Book me maths II on 4 Dec" in chat: Professor finds the session and queues the sign-up; it runs only on the
+    user's Confirm, as the app's tap does."""
+    from aide.tools import ToolRegistry
+    from aide.tools.esse3 import esse3_tools
+    *_, push, reader, maths, exam = await booking()
+    tools = ToolRegistry(esse3_tools(reader))
+    listed = await tools.call("exam_signups", {"course": "maths"})
+    assert f"[{exam['id']}] Maths for economics II (SEM0251), Fri 04 Dec 2026" in listed
+    assert "sign-up open until Fri 27 Nov" in listed
+    sign = tools.get("sign_up_for_exam")
+    assert sign.confirm and sign.target_arg == "date_id"
+    assert await sign.describe(date_id=exam["id"]) == ("Sign up for Maths for economics II (SEM0251)'s exam on "
+                                                       "Fri 04 Dec on Esse3 (open until Fri 27 Nov)")
+    with pytest.raises(ValueError, match="exam_signups lists them"):
+        await sign.describe(date_id="d_nope")
+    with pytest.raises(ValueError, match="isn't signed up"):
+        await tools.get("cancel_exam_signup").describe(date_id=exam["id"])
+    out = await tools.call("sign_up_for_exam", {"date_id": exam["id"]})  # what Confirm runs
+    assert out.startswith("Started") and out.attachment["open"][0]["url"] == f"aide://study/{maths}"
+    assert len(reader.errands.started) == 1 and "Aide is signing up on Esse3 now" in await tools.call(
+        "exam_signups", {})
+    reader.session.pages[BOOKED] = ONE_BOOKED
+    await ended(reader, 1, "finish", ok=True, result="ok")
+    assert "signed up" in await tools.call("exam_signups", {"course": "SEM0251"})
+    assert await tools.get("cancel_exam_signup").describe(date_id=exam["id"]) == (
+        "Cancel the Esse3 sign-up for Maths for economics II (SEM0251)'s exam on Fri 04 Dec")
+    with pytest.raises(ValueError, match="already signed up"):
+        await sign.describe(date_id=exam["id"])
+
+
+def test_professor_has_the_esse3_tools():
+    from aide.agents import AGENTS
+    assert {"exam_signups", "sign_up_for_exam", "cancel_exam_signup"} <= set(AGENTS["professor"].tools)

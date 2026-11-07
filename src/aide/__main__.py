@@ -69,6 +69,7 @@ from .tools.objectives import objective_tools
 from .tools.pages import page_tools
 from .tools.settings import settings_tools
 from .tools.habits import habit_tools
+from .tools.esse3 import esse3_tools
 from .tools.locks import lock_tools
 from .tools.health import health_tools
 from .tools.weight import weight_tools
@@ -205,6 +206,7 @@ def main() -> None:
         return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, small=True)
     # Esse3: read in plain HTTP (the fast model only for a page its parser can't read); signing up is an errand.
     esse3 = Esse3Reader(UnitoSession(passwords, push=push), study, notebook, push, ask=finance_ask)
+    tools += esse3_tools(esse3)
     finance = FinanceStore(db.conn, settings.timezone, finance_ask)
     bank_client = None
     if settings.enable_banking_app_id and settings.enable_banking_key:
