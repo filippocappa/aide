@@ -41,6 +41,9 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes, served by
   `webdav.py` (its own unit, `deploy/aide-webdav.service`, published by `tailscale serve` on 8443). `moodle.py`:
   the university Moodle's PDFs into the study files (login through the app; the token in `.env`).
+  `passwords.py`: saved logins (Settings → Passwords) for the server's own code, never the model's: AES-256-GCM in
+  the database, the key a systemd credential (`deploy/aide-passwords.conf`, README "Passwords"), given out only by
+  `use()` for an https address on the entry's sites; write-only API, every change pushed. `tools/` never imports it.
 - `engine.py`: OpenRouter or the Claude plan through Claude Code, for the notes and (its own switch) background work:
   routines and watches (Claude Agent SDK, Aide's tools in-process), digests, drafts, titles, objectives.
   Professor's typed chat turns run on the plan too, with Sonnet, whenever the notes do (`PLAN_CHATS` in `agent.py`;
@@ -95,7 +98,7 @@ journalctl --user -u aide -f        # logs
 Rules that matter here:
 - **Destructive or outward-facing actions are queued in code** and run only after the user's `POST /v1/confirm` (Confirm in the app). Never let the model execute them directly.
 - Each user message is stamped with local time and the live queue. The model shouldn't rely on remembered times or queue state.
-- Secrets live in `.env` only (git-ignored). Never commit or print them.
+- Secrets live in `.env` only (git-ignored), saved logins in `passwords` (encrypted, the key outside the repo and backups). Never commit or print them.
 - Times: store UTC, talk to the user in `AIDE_TIMEZONE` (Europe/Rome).
 
 ## iOS app (MacBook)

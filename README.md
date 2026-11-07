@@ -562,6 +562,30 @@ Course PDFs from the university's Moodle, every 4 hours (docs/API.md, "Moodle").
 own login page, so the password stays with you; the server keeps only Moodle's token, as `MOODLE_TOKEN` in `.env`.
 Logging out in the app removes it.
 
+## Passwords
+
+Logins Aide's own code uses (Settings → Passwords in the app; docs/API.md, "Passwords"), first the UniTo login for
+Esse3. Each username and password is encrypted (AES-256-GCM) in `data/aide.db`; the key is 32 random bytes kept as a
+systemd credential, encrypted with the machine's root-only secret and handed to the service in its own private tmpfs.
+It's never in the repo, `.env`, `data/` or the backups. Set it up once:
+
+```bash
+mkdir -p ~/.config/aide ~/.config/systemd/user/aide.service.d
+(umask 077; head -c 32 /dev/urandom | systemd-creds --user encrypt --name=aide-passwords - ~/.config/aide/passwords.cred)
+cp deploy/aide-passwords.conf ~/.config/systemd/user/aide.service.d/passwords.conf
+systemctl --user daemon-reload && systemctl --user restart aide
+journalctl --user -u aide | grep "passwords:"     # "passwords: on"
+```
+
+Without a credential (or on a system whose user manager can't decrypt one) a key file works too:
+`head -c 32 /dev/urandom > ~/.config/aide/passwords.key; chmod 400 ~/.config/aide/passwords.key`.
+
+What it guards: a copy of the database, the backups or the repo shows no password, and nothing reaches the model, the
+logs or a reply. What it can't: someone running code as you on this machine while Aide runs can ask systemd for the key
+just as Aide does. **If this machine is lost, so are the passwords** (the key isn't backed up, on purpose): a restored
+database shows them as locked; delete them in the app (or the `passwords` and `password_meta` tables) and add them
+again. Never make a new key over saved passwords: Aide refuses to use it and shows them locked.
+
 ## Errands on the web
 
 Aide runs errands in its own Chromium on the server: "order me a diavola from Glovo", "find a train to Ivrea

@@ -45,6 +45,7 @@ from .routines import routine_schedule
 from .scheduler import reminder_fallback
 from .material import PageReader
 from .moodle import MoodleSync
+from .passwords import PasswordStore, load_key
 from .notebook import NotebookStore, NotebookWorker
 from .examplan import ExamPlan, examplan_tools
 from .study import StudyStore, StudyWorker, whisper_transcribe
@@ -194,6 +195,8 @@ def main() -> None:
     moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push,  # its worker comes later
                         save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token), notebook=notebook)
     tools += moodle_tools(moodle)
+    passwords = PasswordStore(db.conn, load_key())  # Settings → Passwords; never a tool
+    log.info("passwords: %s", "on" if passwords.enabled else "locked" if passwords.locked else "off (no key)")
 
     async def finance_ask(system, text):  # sorting new merchants: a small call, OpenRouter's fast model
         return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, small=True)
@@ -444,7 +447,8 @@ def main() -> None:
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off, watches=watches, releases=releases,
                              weights=weights, videos=videos, lessons=lessons, finance=finance, examplan=examplan,
                              banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
-                             focus=focus, focus_watch=focus_watch, calls=calls)
+                             focus=focus, focus_watch=focus_watch, calls=calls,
+                             passwords=passwords)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

@@ -16,7 +16,7 @@ import httpx
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from .. import activity, usage
 from ..agent import CONVERSATION, PENDING_TTL, SCANNED, TEAM, Agent, Turn, UnknownConversation
@@ -46,6 +46,7 @@ from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError, page_image
 from ..moodle import MoodleError, MoodleSync
+from ..passwords import MAX_NAME, MAX_PASSWORD, MAX_SITES, MAX_USERNAME, Locked, PasswordError, PasswordStore, TooMany
 from ..lessons import LessonStore
 from ..notebook import NotebookStore
 from ..objectives import ObjectivePlanner, ObjectiveStore
@@ -589,6 +590,23 @@ class SiteIn(BaseModel):
     url: str  # a site (amazon.it) or a page on it, to log in there
 
 
+class PasswordIn(BaseModel):
+    """A saved login (Settings → Passwords). Secrets as SecretStr: they never show in a repr or an error."""
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=MAX_NAME)
+    sites: list[str] = Field(min_length=1, max_length=MAX_SITES)
+    username: SecretStr = Field(min_length=1, max_length=MAX_USERNAME)
+    password: SecretStr = Field(min_length=1, max_length=MAX_PASSWORD)
+
+
+class PasswordPatch(BaseModel):
+    """Sites can't change: a password stays bound to the sites it was added for."""
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=MAX_NAME)
+    username: SecretStr | None = Field(default=None, min_length=1, max_length=MAX_USERNAME)
+    password: SecretStr | None = Field(default=None, min_length=1, max_length=MAX_PASSWORD)
+
+
 class ScreenTimeDevice(BaseModel):
     authorized: bool
     allowed_apps: int = 0
@@ -710,7 +728,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                bedtime: Bedtime | None = None, focus: FocusStore | None = None,
                focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None,
                releases: Releases | None = None, calls: LiveCalls | None = None,
-               examplan: ExamPlan | None = None) -> FastAPI:
+               examplan: ExamPlan | None = None, passwords: PasswordStore | None = None) -> FastAPI:
     db: Database = agent.db
     calls = calls or LiveCalls(agent, db.conn)  # no voice to connect: calls are off
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
@@ -733,6 +751,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     wake = wake or WakeService(digest, health, tz, push=push)
     study = study or StudyStore(db, tz, calendar)
     moodle = moodle or MoodleSync(study, None, None)  # no AIDE_MOODLE_URL: enabled false
+    passwords = passwords or PasswordStore(db.conn, None)  # no key: Passwords off
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
     quizzes = quizzes or QuizStore(notebook)
     focus = focus or FocusStore(db.conn, tz, locks, study)
@@ -1968,6 +1987,61 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             return moodle.course_json(moodle.match(moodle_id, body.course))
         except KeyError:
             raise HTTPException(404, f"no Moodle course {moodle_id}")
+
+    # -- passwords -------------------------------------------------------------------
+    # Write-only: no route returns a password, and every change is in the activity feed and pushed, so one the user
+    # didn't make shows at once.
+
+    def password_error(e: PasswordError) -> HTTPException:
+        if isinstance(e, Locked):
+            return HTTPException(503, str(e))
+        return HTTPException(429 if isinstance(e, TooMany) else 400, str(e))
+
+    async def password_changed(title: str, body: str) -> None:
+        activity.record(db.conn, "aide", "passwords", title)
+        await push.send_passwords(title, body)
+
+    @app.get("/v1/passwords", dependencies=[Depends(auth)])
+    async def passwords_list():
+        return passwords.status()
+
+    @app.post("/v1/passwords", dependencies=[Depends(auth)], status_code=201)
+    async def passwords_add(body: PasswordIn):
+        try:
+            entry = passwords.add(body.name, body.sites, body.username.get_secret_value(),
+                                  body.password.get_secret_value())
+        except PasswordError as e:
+            raise password_error(e)
+        await password_changed(f"Password for {entry['name']} added",
+                               f"A password for {entry['name']} was saved in Aide.")
+        return entry
+
+    @app.patch("/v1/passwords/{entry_id}", dependencies=[Depends(auth)])
+    async def passwords_update(entry_id: str, body: PasswordPatch):
+        try:
+            entry = passwords.update(entry_id, body.name,
+                                     body.username.get_secret_value() if body.username else None,
+                                     body.password.get_secret_value() if body.password else None)
+        except KeyError:
+            raise HTTPException(404, "no such password")
+        except PasswordError as e:
+            raise password_error(e)
+        what = "password" if body.password else "username" if body.username else "name"
+        await password_changed(f"Password for {entry['name']} changed",
+                               f"The {what} for {entry['name']} in Aide was changed.")
+        return entry
+
+    @app.delete("/v1/passwords/{entry_id}", dependencies=[Depends(auth)])
+    async def passwords_delete(entry_id: str):
+        try:
+            gone = passwords.delete(entry_id)
+        except KeyError:
+            raise HTTPException(404, "no such password")
+        except PasswordError as e:
+            raise password_error(e)
+        await password_changed(f"Password for {gone['name']} deleted",
+                               f"The password for {gone['name']} was deleted from Aide.")
+        return {"ok": True}
 
     # -- notebooks -------------------------------------------------------------------
 
