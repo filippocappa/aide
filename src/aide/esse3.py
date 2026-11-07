@@ -8,9 +8,10 @@ Three pages, four times a day (and when the app asks, at most every 10 min):
 - `Libretto/LibrettoHome.do`: the transcript (code, credits, passed or planned, grade and date).
 
 Each session becomes official dates of its Aide course (`NotebookStore.set_official_dates`): the exam, and the
-sign-up's opening and closing, so the exam plan, Professor and the course page see them. Esse3's course is matched to
-an Aide course through Moodle's (the same course code), else by its name's words. When a session's sign-up opens, a
-push says so once. Booking is a later step, behind Confirm.
+sign-up's opening and closing, so the exam plan and Professor see them; the course page shows the exam, and the
+opening and closing become reminders (`datereminders.py`; none once signed up). Esse3's course is matched to an Aide
+course through Moodle's (the same course code), else by its name's words. A sign-up seen open with no reminder for its
+opening (open already on the first read) is pushed once. Booking is a later step, behind Confirm.
 """
 
 import asyncio
@@ -18,6 +19,7 @@ import hashlib
 import json
 import logging
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
@@ -398,7 +400,8 @@ class Esse3Reader:
                           "you": you, "details": (teachers + window).strip(), "source": "Esse3"})
             if e["opens"]:
                 items.append({"id": _id("opens", e), "what": f"Sign-up opens for the {when} exam", "kind": "other",
-                              "date": e["opens"], "details": "On MyUniTo, Appelli disponibili.", "source": "Esse3"})
+                              "date": e["opens"], "you": "Signed up" if e["booked"] else None,
+                              "details": "On MyUniTo, Appelli disponibili.", "source": "Esse3"})
             if e["closes"]:
                 items.append({"id": _id("closes", e), "what": f"Sign-up closes for the {when} exam",
                               "kind": "deadline", "date": e["closes"],
@@ -415,6 +418,8 @@ class Esse3Reader:
             if not e["open"] or e["booked"] or e["key"] in told:
                 continue
             told.add(e["key"])
+            if self._reminded(e):  # its opening's reminder said so
+                continue
             name = self._name(e)
             title = f"Sign-up open: {name}"
             body = (f"The {_short(e['day'])} exam" + (f", until {_short(e['closes'])}" if e["closes"] else "")
@@ -427,6 +432,13 @@ class Esse3Reader:
                     log.exception("esse3: push failed")
         keep = {r[0] for r in self.conn.execute("SELECT key FROM esse3_exams")}
         self._set("told", json.dumps(sorted(told & keep)))
+
+    def _reminded(self, e: dict) -> bool:
+        try:
+            return self.conn.execute("SELECT 1 FROM date_reminders WHERE course_id = ? AND date_id = ?",
+                                     (e["course_id"], _id("opens", e))).fetchone() is not None
+        except sqlite3.OperationalError:  # no date reminders on this server
+            return False
 
     def _name(self, e: dict) -> str:
         course = self.study.course(e["course_id"]) if e.get("course_id") else None

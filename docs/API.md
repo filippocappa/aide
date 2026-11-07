@@ -991,6 +991,14 @@ file looks like it may say when or where an exam is: by its name (exam, appello,
 or its first 3 pages (exam words, or an exam word and a written date). A lecture's slides aren't read for it. The model
 is asked only when what it would read (the page, the files' pages on the exam, the user's name) has changed.
 
+Reminders (since 2026-11-07, `datereminders.py`): a date from today on that isn't an exam or a mid-term (`kind`
+`deadline` or `other`: a sign-up opening or closing, a hand-in) becomes a reminder in the reminders store, so Apple
+Reminders notifies on its day: "Business law: sign-up closes for the 10 Dec exam", at 09:00 (a deadline's time if
+earlier; an `other` at its own time), the details and source in its notes. It follows the date (moved with it,
+deleted when the date is gone, hidden, or its `you` is set, as when signed up), never made again once the user ticks or
+deletes it, and kept as it is once the day has passed. The dates API still returns every kind; the app's course page
+shows exams and mid-terms only.
+
 Date: `{"id": "d_…", "what": "1st mid-term", "kind": "exam" | "mid-term" | "deadline" | "other", "date": "2026-11-12",
 "time": "11:00" or null, "end": "13:00" or null, "room": "Aula 5" or null, "you": "Aula 5: surnames A–L" or null,
 "details": "…", "source": "Avviso.pdf, p. 1" or "Moodle", "by": "professor" | "esse3" | "you", "differs": null or {"date",
@@ -999,7 +1007,7 @@ Date: `{"id": "d_…", "what": "1st mid-term", "kind": "exam" | "mid-term" | "de
 - `you`: what the page sets for the user alone (their room, group, turn, a list with their name), by their name on
   Moodle; nothing about anyone else.
 - `by: "esse3"` (since 2026-11-07): read from the university's Esse3 (below): each exam session, and its sign-up
-  opening and closing, `source` "Esse3". A Professor exam on the same day is folded into it (its time, room, details and
+  opening and closing (reminders, above; `you` "Signed up" on both once signed up), `source` "Esse3". A Professor exam on the same day is folded into it (its time, room, details and
   `you` fill what Esse3 doesn't say). Gone from Esse3, gone from here. Edited or deleted like Professor's.
 - `by: "you"`: the user's edit or their own; Professor's later reads don't change it. `differs`: Professor has since
   read the same date differently (the app offers "The course now says…"; sending those back takes it).
@@ -1192,7 +1200,8 @@ It reads three pages: the exam sessions open to the user (Appelli: each course's
 teachers), what they're signed up for (Bacheca prenotazioni) and the transcript (Libretto). The sessions become course
 dates (`by: "esse3"`, Course dates above) on the Aide course they belong to: by the course code in the matched Moodle
 course's name (SEM0251), else by name as Moodle's courses are matched. When a session's sign-up is open and the user
-isn't signed up, it's pushed once (`esse3`) and goes in Professor's activity.
+isn't signed up, it goes in Professor's activity and is pushed once (`esse3`), unless the reminder for its opening was
+made (the push is for a sign-up already open when first read).
 
 | Endpoint | Body | Response |
 |---|---|---|
