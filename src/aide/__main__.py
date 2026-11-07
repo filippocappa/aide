@@ -206,7 +206,8 @@ def main() -> None:
         return await engine.ask(system, [{"type": "text", "text": text}], 1500, fast=True, small=True)
     # Esse3: read in plain HTTP (the fast model only for a page its parser can't read); signing up is an errand.
     esse3 = Esse3Reader(UnitoSession(passwords, push=push), study, notebook, push, ask=finance_ask)
-    tools += esse3_tools(esse3)
+    # Professor's sign-ups from chat: the errand's card and result go to the chat it was asked in.
+    tools += esse3_tools(esse3, lambda: CONVERSATION if agent._conversation in (None, TEAM) else agent._conversation)
     finance = FinanceStore(db.conn, settings.timezone, finance_ask)
     bank_client = None
     if settings.enable_banking_app_id and settings.enable_banking_key:
@@ -346,6 +347,7 @@ def main() -> None:
         photos=photos,
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
+    esse3.post = agent.post  # a sign-up asked for in a chat: its card and result there
     agent.agenda = agenda
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
     agent.voice_quiz = VoiceQuiz(quizzes, study)  # "B" by voice in a quiz: marked with no model call

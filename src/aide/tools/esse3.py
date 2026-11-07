@@ -2,6 +2,7 @@
 cancelling, both queued: they run only when the user confirms, as the app's Sign me up (an errand in Aide's browser,
 the result coming later by push and on the exam's sheet)."""
 
+from collections.abc import Callable
 from datetime import date
 
 from ..esse3 import Esse3Reader, SignUpFailed, _id
@@ -17,7 +18,8 @@ def _day(iso: str | None) -> str:
     return f"{date.fromisoformat(iso):%a %d %b}" if iso else "?"
 
 
-def esse3_tools(esse3: Esse3Reader) -> list[Tool]:
+def esse3_tools(esse3: Esse3Reader, chat: Callable[[], str | None] = lambda: None) -> list[Tool]:
+    """`chat`: the chat the tool runs for, where the errand's card and result are posted."""
     def session(date_id: str) -> tuple[dict, dict]:
         e = esse3.exam_for(date_id)
         if e is None:
@@ -73,7 +75,7 @@ def esse3_tools(esse3: Esse3Reader) -> list[Tool]:
     async def sign_up_for_exam(date_id: str) -> ToolOutput:
         e, _ = session(date_id)
         try:
-            s = await esse3.sign_up(date_id)
+            s = await esse3.sign_up(date_id, chat())
         except SignUpFailed as x:
             return ToolOutput(f"Couldn't start: {x}")
         card = open_card(esse3._name(e), f"Exam {_day(e['day'])}", f"aide://study/{e['course_id']}") \
@@ -81,8 +83,8 @@ def esse3_tools(esse3: Esse3Reader) -> list[Tool]:
         if s["state"] == "booked":
             text = "Already signed up."
         elif s["busy"]:
-            text = ("Started: Aide is signing up on Esse3 now. It takes a minute or two; the result comes as a push "
-                    "and on the exam's sheet (the course's dates). Don't say it's done yet.")
+            text = ("Started: Aide is signing up on Esse3 now, its card in this chat. It takes a minute or two; the "
+                    "result is posted here and pushed. Don't say it's done yet.")
         elif s["auto"]:
             text = f"Set: Aide signs the user up when the sign-up opens ({_day(s['opens'])}), with a push."
         else:
@@ -103,14 +105,14 @@ def esse3_tools(esse3: Esse3Reader) -> list[Tool]:
     async def cancel_exam_signup(date_id: str) -> str:
         e, before = session(date_id)
         try:
-            s = await esse3.cancel(date_id)
+            s = await esse3.cancel(date_id, chat())
         except SignUpFailed as x:
             return f"Couldn't start: {x}"
         if before["state"] != "booked":
             return "Done: Aide won't sign the user up for it."
         if s["busy"]:
-            return ("Started: Aide is cancelling on Esse3 now. The result comes as a push and on the exam's sheet; "
-                    "don't say it's done yet.")
+            return ("Started: Aide is cancelling on Esse3 now, its card in this chat. The result is posted here and "
+                    "pushed; don't say it's done yet.")
         return state(s)
 
     did = _obj({"date_id": {"type": "string", "description": "the session's id, in brackets in exam_signups"}},

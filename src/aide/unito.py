@@ -111,12 +111,14 @@ class UnitoSession:
     """An Esse3 session kept in memory. `get` reads a page, logging in first when the session is gone."""
 
     def __init__(self, passwords: PasswordStore, push=None, transport: httpx.AsyncBaseTransport | None = None,
-                 clock=time.monotonic):
+                 clock=time.monotonic, user_agent: str = UA):
         self.passwords = passwords
         self.push = push
         self.clock = clock
+        self._transport = transport
         self.http = httpx.AsyncClient(timeout=30, transport=transport, follow_redirects=False,
-                                      headers={"User-Agent": UA, "Accept-Language": "it-IT,it;q=0.9,en;q=0.8"})
+                                      headers={"User-Agent": user_agent,
+                                               "Accept-Language": "it-IT,it;q=0.9,en;q=0.8"})
         self._wait_until = 0.0  # no login before this (network trouble, or a page that needs the user)
         self.logged_in = False
 
@@ -149,10 +151,19 @@ class UnitoSession:
         self.logged_in = False  # sent to the IdP (or somewhere else, which the login refuses)
         return await self._login(r)
 
-    async def handoff(self, url: str) -> list[dict]:
+    async def handoff(self, url: str, user_agent: str | None = None) -> list[dict]:
         """The session's cookies for Aide's browser (`Browser.add_cookies`), so an errand there starts logged in
         without the password: logged in first (a get of `url`, an Esse3 page), then every cookie for UniTo's hosts
-        (the IdP's too, so a bounce through the login on the way passes by itself) in Playwright's shape."""
+        (the IdP's too, so a bounce through the login on the way passes by itself) in Playwright's shape.
+        Esse3 ties its session to the User-Agent (another one is sent round in circles, ERR_TOO_MANY_REDIRECTS,
+        2026-11-07), so with the browser's `user_agent` the login is a fresh one made as the browser, apart from
+        this session's."""
+        if user_agent and user_agent != self.http.headers.get("User-Agent"):
+            other = UnitoSession(self.passwords, self.push, self._transport, self.clock, user_agent)
+            try:
+                return await other.handoff(url)
+            finally:
+                await other.close()
         await self.get(url)
         out = []
         for c in self.http.cookies.jar:
