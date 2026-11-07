@@ -370,7 +370,7 @@ async def test_a_meals_water_is_its_drinks_plus_the_plain_water(env):
     pasta = {"name": "Pasta", "grams": 100, "kcal_100g": 360, "protein_100g": 13, "carbs_100g": 72, "fat_100g": 1.5}
     await tools.call("log_meal", {"name": "Pranzo", "items": [pasta, {"food_id": cola["id"], "grams": 330}, espresso],
                                   "plain_water_ml": 500, "caffeine_mg": 100})
-    assert food.get(1)["water_ml"] == 500 + 321 and  # cola 291.7 + espresso 29.6 food.get(1)["caffeine_mg"] == 100
+    assert food.get(1)["water_ml"] == 500 + 321 and food.get(1)["caffeine_mg"] == 100  # cola 291.7, espresso 29.6
     await tools.call("log_meal", {"name": "2 beers", "items": [beer]})
     assert food.get(2)["water_ml"] == 0
     said = await tools.call("find_food", {"query": "coca"})
