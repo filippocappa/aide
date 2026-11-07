@@ -1505,9 +1505,9 @@ class Browser:
                 pass
 
         def frame(params: dict) -> None:
-            meta = params.get("metadata", {})
-            on_frame(params["data"], int(meta.get("deviceWidth", VIEWPORT["width"]) * SCALE),
-                     int(meta.get("deviceHeight", VIEWPORT["height"]) * SCALE))
+            # Every page has the same viewport. Chromium's metadata usually says it in CSS pixels, but the first frame
+            # sometimes comes in device pixels (824 for 412), so it isn't trusted.
+            on_frame(params["data"], VIEWPORT["width"] * SCALE, VIEWPORT["height"] * SCALE)
             asyncio.get_running_loop().create_task(ack(params["sessionId"]))
 
         cdp.on("Page.screencastFrame", frame)
