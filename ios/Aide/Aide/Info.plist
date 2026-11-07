@@ -39,6 +39,8 @@
 	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>Aide uses the camera when you take a photo to send, like a meal to log.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Aide asks for Face ID before a saved password is added, changed or deleted.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Aide reads your sleep, heart rate, HRV, steps and workouts to write your wake-up briefing and tick off workout habits.</string>
 	<key>NSHealthUpdateUsageDescription</key>

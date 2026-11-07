@@ -31,6 +31,7 @@ struct SettingsView: View {
                     }
                     row("Claude plan", "sparkles", Color(red: 0.85, green: 0.47, blue: 0.34)) { NotesWriterView() }
                     row("Browser", "safari.fill", .blue) { BrowserSettingsView() }
+                    row("Passwords", "key.fill", .gray) { PasswordsView() }
                     row("Nutrition targets", "fork.knife", .green) { NutritionTargetsView() }
                     row("Bedtime", "bed.double.fill", .indigo) { BedtimeView() }
                     row("Videos", "play.rectangle.fill", .red) { VideosView() }
@@ -112,6 +113,7 @@ struct SettingsView: View {
                 case "voice": VoiceSettingsView()
                 case "plan": NotesWriterView()
                 case "browser": BrowserSettingsView()
+                case "passwords": PasswordsView()
                 case "nutrition": NutritionTargetsView()
                 case "bedtime": BedtimeView()
                 case "videos": VideosView()
@@ -144,11 +146,11 @@ struct SettingsView: View {
 
     /// The pages a link can open on this device; another one (the Mac has no Notifications page) opens Settings.
     #if os(iOS)
-    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "nutrition", "bedtime", "videos",
+    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "passwords", "nutrition", "bedtime", "videos",
                                      "moodle", "obsidian", "notifications", "reminders", "health", "location", "screentime",
                                      "payments", "connection"]
     #else
-    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "nutrition", "bedtime", "videos",
+    static let pages: Set<String> = ["digests", "memory", "voice", "plan", "browser", "passwords", "nutrition", "bedtime", "videos",
                                      "moodle", "obsidian", "screentime", "connection"]
     #endif
 
