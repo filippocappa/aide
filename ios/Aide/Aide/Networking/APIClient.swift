@@ -1166,6 +1166,22 @@ final class APIClient {
         return list.sessions
     }
 
+    func examPlan(fresh: Bool = false) async throws -> ExamPlan {
+        try await send("GET", "/v1/study/plan", query: fresh ? [URLQueryItem(name: "fresh", value: "true")] : [])
+    }
+
+    func changePlan(course: Int, _ change: PlanCourseChange) async throws -> ExamPlan {
+        try await send("PUT", "/v1/study/plan/courses/\(course)", body: change)
+    }
+
+    func studySettings() async throws -> StudySettings {
+        try await send("GET", "/v1/study/settings")
+    }
+
+    func setStudySettings(_ settings: StudySettings) async throws -> StudySettings {
+        try await send("PATCH", "/v1/study/settings", body: settings)
+    }
+
     func courseDates(course: Int) async throws -> CourseDates {
         try await send("GET", "/v1/study/courses/\(course)/dates")
     }

@@ -737,8 +737,12 @@ tomorrow" is one model round.
 or mid-term (the Exam calendar, the course's dates, else a likely date the user gives), the hours left per topic and
 phase from the notebook, the answers and lessons, stretched while lectures remain, laid over the free days (wake to bed,
 less the calendar) within 2 h a day in term and 4 h after the last lecture; fits, tight or short, with warnings.
-`GET /v1/study/plan`, Professor's `study_plan`, in the objectives planner's prompt. To do: the app's card and page,
-Settings → Study, the Sunday review sessions and today's blocks as an objective.
+`GET /v1/study/plan`, Professor's `study_plan`, in the objectives planner's prompt. App (2026-11-07,
+`Views/ExamPlanViews.swift`): today's plan on Study (a row per block: learn opens the topic's lesson, practise and
+review the Study page on it, mocks the mock exams; press and hold to focus), the plan's page (each exam: fits, tight
+or short, the phases as a strip), an exam's page (day-by-day bars by phase, the phases' dates, warnings, the fallback
+sitting, the topics' minutes, a mid-term's topics, a likely date) and the daily limits (term and after the last
+lecture). To do: the Sunday review sessions and today's blocks as an objective.
 
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.

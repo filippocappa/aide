@@ -2560,6 +2560,107 @@ struct StudyExam: Decodable, Hashable {
     var allDay: Bool?
 }
 
+/// The exam plan (docs/API.md, "Exam plan"): the hours each course's next exam still needs, against the free days
+/// before it. Minutes come as numbers that may have decimals.
+struct ExamPlan: Decodable {
+    var computedAt: String?
+    var today: [PlanBlock] = []
+    var targets: [PlanTarget] = []
+    var undated: [Undated] = []
+    var settings: StudySettings?
+    var seasonFrom: String?
+
+    struct Undated: Decodable, Hashable, Identifiable { let course: Int; let name: String; var id: Int { course } }
+}
+
+/// A piece of today's study.
+struct PlanBlock: Decodable, Hashable {
+    let course: Int
+    let name: String
+    let phase: String
+    let minutes: Double
+    var topic: LessonTopicRef?
+}
+
+struct PlanTarget: Decodable, Identifiable, Hashable {
+    let course: Int
+    let name: String
+    let what: String
+    let kind: String
+    let date: String
+    var time: String?
+    /// "calendar", "course" or "expected" (the user's guess).
+    let from: String
+    var dateId: String?
+    let key: String
+    var topicsChosen: [String]?
+    let daysLeft: Int
+    var fallback: Fallback?
+    let needMin: Double
+    let freeMin: Double
+    let plannedMin: Double
+    let shortMin: Double
+    /// fits, tight, short, empty.
+    let status: String
+    var phases: [Phase] = []
+    var days: [Day] = []
+    var topics: [Topic] = []
+    var mocks: Mocks?
+    var lecturesHeld: Int?
+    var lecturesLeft: Int?
+    var stretch: Double?
+    var studiedWeekMin: Double?
+    var warnings: [String] = []
+    var history: [History]?
+    var moved: Moved?
+
+    var id: String { key }
+    var title: String { name.prefix(1).uppercased() + name.dropFirst() }
+
+    struct Fallback: Decodable, Hashable { let date: String; let what: String; let fits: Bool }
+    struct Phase: Decodable, Hashable { let phase: String; let minutes: Double; var planned: Double?; var from: String?; var to: String? }
+    struct Day: Decodable, Hashable { let date: String; let minutes: Double; var phases: [String: Double] = [:] }
+    struct Topic: Decodable, Hashable, Identifiable {
+        let id: String
+        let title: String
+        var words: Int?
+        var cards: Int?
+        var questions: Int?
+        var exercises: Int?
+        var known: Int?
+        var items: Int?
+        /// null, "3/7", "done" or "writing".
+        var lesson: String?
+        let learnMin: Double
+        let practiseMin: Double
+    }
+    struct Mocks: Decodable, Hashable { let count: Int; let taken: Int; let minutesEach: Double }
+    struct History: Decodable, Hashable { let date: String; let needMin: Double }
+    struct Moved: Decodable, Hashable { let since: String; let minutes: Double; var topics: Int?; var lectures: Int? }
+}
+
+/// The daily caps on study (docs/API.md, "Exam plan").
+struct StudySettings: Codable, Hashable {
+    var termCapMin: Int
+    var seasonCapMin: Int
+}
+
+/// `PUT /v1/study/plan/courses/{id}`: the likely date (null clears it), or a mid-term's topics (null: all).
+struct PlanCourseChange: Encodable {
+    enum Field { case expected(String?), topics(key: String, ids: [String]?) }
+    let field: Field
+    enum CodingKeys: String, CodingKey { case expected, key, topics }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch field {
+        case .expected(let date): try c.encode(date, forKey: .expected) // null too
+        case .topics(let key, let ids):
+            try c.encode(key, forKey: .key)
+            try c.encode(ids, forKey: .topics) // null too
+        }
+    }
+}
+
 /// A course's dates: exams, mid-terms, deadlines, read by Professor or the user's own (docs/API.md, "Course dates").
 struct CourseDates: Decodable, Hashable {
     let course: Int
