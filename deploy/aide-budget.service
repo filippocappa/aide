@@ -1,0 +1,15 @@
+# Grows Aide's memory budget (aide.slice) to 10 GB while nothing big runs on cappa; see deploy/aide-budget.sh.
+# Stopped, the slice keeps its own 8 GB. Install: README.md, "Running as a service".
+[Unit]
+Description=Aide's memory budget, following what else runs
+
+[Service]
+Type=simple
+ExecStart=%h/Developer/aide/deploy/aide-budget.sh
+# Back to 8 GB when this stops.
+ExecStopPost=/usr/bin/systemctl --user set-property --runtime aide.slice MemoryHigh=7G MemoryMax=8G
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
