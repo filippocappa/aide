@@ -331,6 +331,7 @@ def main() -> None:
     objectives = ObjectiveStore(db.conn, settings.timezone, habits, food, health, reminders)
     planner = ObjectivePlanner(objectives, engine, db, cal, study, notebook)
     planner.examplan = examplan
+    planner.quizzes = quizzes
     replanner = StudyReplanner(planner)  # Professor's proposals follow the notes and dates as they change
     notebook.on_change.append(replanner.changed)
     agent = Agent(

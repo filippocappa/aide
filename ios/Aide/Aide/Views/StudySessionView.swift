@@ -13,6 +13,8 @@ struct StudySessionView: View {
     /// A focus session just over (its id): the check, 5 multiple-choice questions, starts by itself and its first
     /// round's score goes back to the session (docs/API.md, "Focus sessions").
     var afterFocus: String? = nil
+    /// The Due today deck: what spaced repetition has due, then new ones, started at once.
+    var due = false
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
     @Environment(\.coverClose) private var coverClose
@@ -58,8 +60,9 @@ struct StudySessionView: View {
     private var setup: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                TopBlock(afterFocus == nil ? "Study" : "What stuck", overline: courseName) {
-                    Text(afterFocus == nil ? "No timer and no score. Whatever you miss comes back until you know it."
+                TopBlock(due ? "Due today" : afterFocus == nil ? "Study" : "What stuck", overline: courseName) {
+                    Text(due ? "What's due to be recalled now, then a few new ones."
+                         : afterFocus == nil ? "No timer and no score. Whatever you miss comes back until you know it."
                          : "Five questions on what you just studied, right or wrong at once.")
                         .foregroundStyle(.secondary)
                 }
@@ -230,6 +233,19 @@ struct StudySessionView: View {
                 if !picked.isEmpty { scope = .picked }
             }
             bank = fresh
+            if due {
+                do {
+                    let started = try await env.api.startDue(course: course)
+                    withAnimation { quiz = started }
+                    error = nil
+                    return
+                } catch {
+                    // Nothing due (409): say so, and leave the usual choices.
+                    self.error = (fresh.nextDue.flatMap { Wire.day($0) }).map {
+                        "Nothing due today. The next ones are due \(StudyDay.phrase($0))."
+                    } ?? error.localizedDescription
+                }
+            }
             if afterFocus != nil {
                 size = 5
                 if StudyMode.learn.count(available) > 0 {

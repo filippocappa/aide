@@ -29,6 +29,8 @@ struct TodayView: View {
     @State private var overview: ObjectivesOverview?
     @State private var notes: [ActivityItem] = []
     @State private var notesLoaded = false
+    /// Courses with spaced repetition's deck for today (docs/API.md, "Practice exams").
+    @State private var dueCourses: [StudyCourse] = []
     @State private var error: String?
     /// The period being planned now.
     @State private var planning: String?
@@ -137,6 +139,7 @@ struct TodayView: View {
                 }
             } else {
                 WaitingSection(approvals: approvals, agent: nil, reload: { await loadApprovals() }) { open($0) }
+                dueSection
                 habitsSection.id(TodayFocus.habits)
                 notesSection.id(TodayFocus.notes)
             }
@@ -149,6 +152,7 @@ struct TodayView: View {
             if !objectivesOnly {
                 digestSection.id(TodayFocus.digest)
                 WaitingSection(approvals: approvals, agent: nil, reload: { await loadApprovals() }) { open($0) }
+                dueSection
             }
             objectivesSection
             if !objectivesOnly { notesSection.id(TodayFocus.notes) }
@@ -182,6 +186,48 @@ struct TodayView: View {
     private func reply(_ latest: Digest) async {
         await chat.startNewChat(digest: latest.kind)
         push.route = .chats
+    }
+
+    // MARK: Due today
+
+    /// A row per course with questions and flashcards due (or new ones to start), opening its Due today deck.
+    @ViewBuilder private var dueSection: some View {
+        if !dueCourses.isEmpty {
+            Section {
+                ForEach(dueCourses) { course in
+                    Button {
+                        push.route = .study(StudyLink(course: course.id, page: .due))
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(Theme.study)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(course.title).foregroundStyle(.primary).lineLimit(1)
+                                Text(Self.dueCounts(course)).font(.footnote).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: { Text("Due today") }
+            .listRowBackground(Theme.row)
+        }
+    }
+
+    /// "12 questions and flashcards due · 3 new".
+    private static func dueCounts(_ course: StudyCourse) -> String {
+        let due = course.notebook?.due ?? 0, new = course.notebook?.new ?? 0
+        return [due > 0 ? "\(due) due to recall" : nil, new > 0 ? "\(new) new" : nil].compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    private func loadDue() async {
+        guard !objectivesOnly, let study = try? await env.api.study() else { return }
+        dueCourses = study.courses.filter { ($0.notebook?.due ?? 0) > 0 }
+            .sorted { ($0.notebook?.due ?? 0) > ($1.notebook?.due ?? 0) }
     }
 
     // MARK: Habits and objectives
@@ -420,7 +466,9 @@ struct TodayView: View {
         async let objectives: Void = loadObjectives()
         async let notes: Void = loadNotes()
         async let latest: Void = digest.loadLatest()
+        async let due: Void = loadDue()
         await approvals
+        await due
         await habits
         await objectives
         await notes

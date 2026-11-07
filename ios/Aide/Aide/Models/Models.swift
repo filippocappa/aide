@@ -1677,6 +1677,7 @@ extension Objective.Measure {
         switch type {
         case "habit": "your check-ins of that habit"
         case "practice": "the practice exams you finish"
+        case "review": "the questions and flashcards you review"
         case "notes": "the notebook topics written or revised"
         case "food": "your food log"
         case "sleep": "your sleep in Apple Health"
@@ -2089,6 +2090,11 @@ struct QuizBank: Decodable {
     var topics: [QuizBankTopic] = []
     var scoring: QuizScoring?
     var past: [Quiz] = []
+    /// Spaced repetition (since 2026-11-07): questions and flashcards due today, never-answered ones today's Due today
+    /// deck can still bring in, and the first day something is due after today ("2026-11-09").
+    var due: Int?
+    var new: Int?
+    var nextDue: String?
 }
 
 struct QuizBankTopic: Decodable, Identifiable, Hashable {
@@ -2100,6 +2106,8 @@ struct QuizBankTopic: Decodable, Identifiable, Hashable {
     var known: Int?
     var learning: Int?
     var unseen: Int?
+    var due: Int?
+    var retention: Double?
 }
 struct QuizScoring: Decodable, Hashable { let right: Double; let wrong: Double; var blank: Double? }
 
@@ -2108,8 +2116,10 @@ struct Quiz: Decodable, Identifiable, Hashable {
     /// "exam" (a practice exam), "chat" (Professor quizzing in the course chat), "mock" (a mock exam) or "study"
     /// (the Study page).
     var kind: String?
-    /// "Practice exam", "Mock exam 1", "Quiz".
+    /// "Practice exam", "Mock exam 1", "Quiz", "Due today".
     var title: String?
+    /// "due": the Due today deck (since 2026-11-07).
+    var deck: String?
     /// The mock exam taken, when it's one.
     var mock: String?
     var scoring: QuizScoring?
@@ -2255,6 +2265,8 @@ struct QuizStartBody: Encodable {
     var kind: String?
     /// A study session's flashcards answered in words, marked by the model.
     var write: Int?
+    /// A study session of what spaced repetition has due, then new ones (since 2026-11-07).
+    var due: Bool?
 }
 
 /// An answer as handed in: a letter, or an open question's words and photos (`p_…` ids).
@@ -2764,15 +2776,25 @@ struct CourseNotebook: Decodable, Hashable {
     var writing: Bool?
     /// A row per written topic, in order (since 2026-10-31).
     var mastery: [TopicMastery]?
+    /// Spaced repetition (since 2026-11-07), as on the bank.
+    var due: Int?
+    var new: Int?
+    var nextDue: String?
+    /// What the Due today deck has: due and new.
+    var deck: Int { (due ?? 0) + (new ?? 0) }
 }
 
-/// A topic's questions and flashcards by how its last answer went: right, wrong or blank, never answered.
+/// A topic's questions and flashcards by the spaced-repetition schedule (since 2026-11-07; before, by how the last
+/// answer went): known (not due, not missed), learning (due or missed), never answered; and how many are due today.
 struct TopicMastery: Decodable, Hashable, Identifiable {
     let id: String
     let title: String
     var known = 0
     var learning = 0
     var unseen = 0
+    var due: Int?
+    /// How much of it is likely recalled now, 0–1.
+    var retention: Double?
     var total: Int { known + learning + unseen }
     /// One word for its dot: known when most are, learning when any were tried, else unseen.
     var level: Level {

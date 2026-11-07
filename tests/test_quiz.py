@@ -133,7 +133,8 @@ def test_the_study_tab_reads_notes_as_plain_text(nb):
     courses = {c["id"]: c for c in nb.api.get("/v1/study", headers=AUTH).json()["courses"]}
     brief = courses[cid]["notebook"]
     assert {k: v for k, v in brief.items() if k != "mastery"} == {"topics": 2, "questions": 6, "proposals": 0,
-                                                                  "writing": False}
+                                                                  "writing": False, "due": 0, "new": 6,
+                                                                  "next_due": None}
     assert [(m["title"], m["known"], m["learning"], m["unseen"]) for m in brief["mastery"]] == \
         [("The IS-LM model", 0, 0, 3), ("Phillips curve", 0, 0, 3)]
     assert all(c["notebook"] is None for i, c in courses.items() if i != cid)
@@ -330,7 +331,7 @@ async def test_a_practice_exam_mixes_questions_cards_and_the_courses_exercises(n
     [course] = [c for c in nb.api.get("/v1/study", headers=AUTH).json()["courses"] if c["id"] == cid]
     mastery = course["notebook"]["mastery"]
     assert [m["title"] for m in mastery] == ["The IS-LM model", "Phillips curve"]
-    assert mastery[0] == {k: after[k] for k in ("id", "title", "known", "learning", "unseen")}
+    assert mastery[0] == {k: after[k] for k in ("id", "title", "known", "learning", "unseen", "due", "retention")}
 
 
 def test_a_practice_exam_with_only_cards_or_none_of_them(nb):

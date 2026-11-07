@@ -229,6 +229,7 @@ class QuizStart(BaseModel):
     mock: str | None = None  # a mock exam's id (m_…): that paper, its time and scoring; count, minutes, topics unused
     kind: Literal["exam", "study"] = "exam"  # study: the Study page, untimed, each answer shown and marked as it comes
     write: int = Field(default=0, ge=0, le=MOST_QUESTIONS)  # study: flashcards answered in words, marked by the model
+    due: bool = False  # study: the Due today deck (spaced repetition); count, cards, exercises, write, topics unused
 
 
 class WriterIn(BaseModel):
@@ -1626,7 +1627,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         def brief(cid: int) -> dict | None:
             if (summary := notebook.summary(cid)) is None:
                 return None
-            return summary | {"mastery": quizzes.mastery(cid)}
+            return summary | {"mastery": quizzes.mastery(cid), **quizzes.due_json(cid)}
 
         def exam(c: dict) -> dict:
             """The calendar's next exam, else the earliest exam or mid-term the course's own dates say is coming."""
@@ -2410,6 +2411,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 if (m := notebook.mock(body.mock)) is None or m["course_id"] != cid:
                     raise HTTPException(404, f"no mock exam {body.mock} in this course")
                 quiz = quizzes.start_mock(body.mock)
+            elif body.due:
+                quiz = quizzes.start_due(cid)
             else:
                 quiz = quizzes.start(cid, body.count, body.minutes, body.topics, body.cards, body.exercises,
                                      body.kind, body.write)

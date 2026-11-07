@@ -1285,6 +1285,11 @@ final class APIClient {
                                                                   write: write))
     }
 
+    /// The Due today deck: what spaced repetition has due in the course, then new ones (409 when there's nothing).
+    func startDue(course: Int) async throws -> Quiz {
+        try await send("POST", "/v1/quizzes", body: QuizStartBody(course: course, kind: "study", due: true))
+    }
+
     // MARK: Lessons
 
     /// A course's lessons in order, and the one to learn next.

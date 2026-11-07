@@ -73,8 +73,10 @@ struct StudyView: View {
                             path.append(ExamPlanPage())
                         }
                     }
-                    if let due = toReview {
-                        ToReviewCard(course: due.course, count: due.count, topic: due.topic) { practice = due.course }
+                    if !dueCourses.isEmpty {
+                        DueTodayCard(courses: dueCourses) { course in
+                            studying = StudyTarget(course: course.id, name: course.title, due: true)
+                        }
                     }
                     if overview == nil, error == nil {
                         ForEach(0..<3, id: \.self) { _ in
@@ -112,7 +114,7 @@ struct StudyView: View {
             }
             .macWindowCover(item: $studying, onDismiss: { Task { await load() } }) { target in
                 StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
-                             afterFocus: target.afterFocus)
+                             afterFocus: target.afterFocus, due: target.due)
             }
             .macWindowCover(item: $lesson, onDismiss: { Task { await load() } }) { l in
                 LessonView(topic: l.topic, course: l.course.id, courseName: l.course.title)
@@ -167,14 +169,10 @@ struct StudyView: View {
         return parts.joined(separator: " ")
     }
 
-    /// The course with the most questions last answered wrong or blank, and its most missed topic.
-    private var toReview: (course: StudyCourse, count: Int, topic: TopicMastery?)? {
-        courses.compactMap { course -> (StudyCourse, Int, TopicMastery?)? in
-            let mastery = course.notebook?.mastery ?? []
-            let count = mastery.reduce(0) { $0 + $1.learning }
-            return count > 0 ? (course, count, mastery.max { $0.learning < $1.learning }) : nil
-        }
-        .max { $0.1 < $1.1 }
+    /// Courses with something in today's Due today deck, the most due first.
+    private var dueCourses: [StudyCourse] {
+        courses.filter { ($0.notebook?.deck ?? 0) > 0 }
+            .sorted { ($0.notebook?.due ?? 0, $0.notebook?.deck ?? 0) > ($1.notebook?.due ?? 0, $1.notebook?.deck ?? 0) }
     }
 
     private func name(_ course: Int) -> String {
@@ -205,6 +203,7 @@ struct StudyView: View {
         case .practice: practice = course
         case .quiz: studying = StudyTarget(course: course.id, name: course.title, topics: link.topic.map { [$0] } ?? [],
                                            afterFocus: link.focus)
+        case .due: studying = StudyTarget(course: course.id, name: course.title, due: true)
         case .lesson:
             guard let topic = link.topic else { return }
             lesson = LinkedLesson(course: course, topic: LessonTopicRef(id: topic, title: link.title ?? "Lesson"))
@@ -265,6 +264,8 @@ struct StudyTarget: Identifiable {
     var topics: [String] = []
     /// The check after a focus session (its id).
     var afterFocus: String?
+    /// The Due today deck (spaced repetition) instead of choosing.
+    var due = false
 }
 
 struct ErrorCard: View {
@@ -348,27 +349,49 @@ private struct UpNextCard: View {
     }
 }
 
-/// What was last answered wrong or blank, in the course with the most of it.
-private struct ToReviewCard: View {
-    let course: StudyCourse
-    let count: Int
-    let topic: TopicMastery?
-    let review: () -> Void
+/// Spaced repetition's deck for today: per course, what's due and the new ones it brings in (docs/API.md,
+/// "Practice exams", spaced repetition).
+private struct DueTodayCard: View {
+    let courses: [StudyCourse]
+    let start: (StudyCourse) -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "arrow.counterclockwise")
-                .font(.title3.weight(.semibold)).foregroundStyle(Theme.study)
-                .frame(width: 44, height: 44).background(Theme.study.opacity(0.14), in: Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(count) to review").font(.headline)
-                Text([topic.map { "Most missed: \($0.title)" }, course.title].compactMap { $0 }.joined(separator: " · "))
-                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 14) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.title3.weight(.semibold)).foregroundStyle(Theme.study)
+                    .frame(width: 44, height: 44).background(Theme.study.opacity(0.14), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Due today").font(.headline)
+                    Text(courses.count == 1 ? Self.counts(courses[0]) + " · " + courses[0].title
+                         : "Before you forget them, a few minutes each")
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                if courses.count == 1 {
+                    Chip(title: "Start", style: .prominent, tint: Theme.study) { start(courses[0]) }
+                }
             }
-            Spacer(minLength: 0)
-            Chip(title: "Review now", style: .prominent, tint: Theme.study, action: review)
+            if courses.count > 1 {
+                ForEach(courses) { course in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(course.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                            Text(Self.counts(course)).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Chip(title: "Start", tint: Theme.study) { start(course) }
+                    }
+                }
+            }
         }
         .card()
+    }
+
+    /// "12 due · 3 new".
+    static func counts(_ course: StudyCourse) -> String {
+        let due = course.notebook?.due ?? 0, new = course.notebook?.new ?? 0
+        return [due > 0 ? "\(due) due" : nil, new > 0 ? "\(new) new" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -409,6 +432,7 @@ private struct CourseCard: View {
                 parts.append(nb.topics == 1 ? "1 topic" : "\(nb.topics) topics")
                 if known + learning > 0 {
                     parts += ["\(known) known", "\(learning) learning", "\(unseen) not tried"]
+                    if let due = nb.due, due > 0 { parts.append("\(due) due today") }
                 } else if let q = nb.questions, q > 0 {
                     parts.append("\(q) questions, none tried yet")
                 }
@@ -619,7 +643,7 @@ struct CourseView: View {
         }
         .macWindowCover(item: $studying, onDismiss: { Task { await load() } }) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
-                             afterFocus: target.afterFocus)
+                             afterFocus: target.afterFocus, due: target.due)
         }
         .confirmationDialog("Start the notebook?", isPresented: $confirmStart, titleVisibility: .visible) {
             Button("Start") { Task { await start() } }
@@ -666,6 +690,12 @@ struct CourseView: View {
                         focusing = FocusTarget(course: course.id, name: course.title)
                     }
                 }
+                if let bank, (bank.due ?? 0) + (bank.new ?? 0) > 0 {
+                    Chip(title: (bank.due ?? 0) > 0 ? "\(bank.due ?? 0) due" : "\(bank.new ?? 0) new",
+                         systemImage: "arrow.triangle.2.circlepath") {
+                        studying = StudyTarget(course: course.id, name: course.title, due: true)
+                    }
+                }
                 if questions {
                     Chip(title: "Quiz me", systemImage: "rectangle.on.rectangle.angled") {
                         studying = StudyTarget(course: course.id, name: course.title)
@@ -698,7 +728,8 @@ struct CourseView: View {
     /// Each topic's questions and flashcards by how their last answer went, from the bank or the Study brief.
     private func mastery(_ topic: NotebookTopic) -> TopicMastery? {
         if let t = bank?.topics.first(where: { $0.id == topic.id }) {
-            return TopicMastery(id: t.id, title: t.title, known: t.known ?? 0, learning: t.learning ?? 0, unseen: t.unseen ?? 0)
+            return TopicMastery(id: t.id, title: t.title, known: t.known ?? 0, learning: t.learning ?? 0, unseen: t.unseen ?? 0,
+                                due: t.due, retention: t.retention)
         }
         return course.notebook?.mastery?.first { $0.id == topic.id }
     }

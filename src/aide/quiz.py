@@ -5,8 +5,9 @@ The questions are the notebook's own: the multiple-choice questions at the end o
 keys were checked when the page was written (notebook.check_answers), and, in a quiz, its flashcards. A practice
 exam costs no model call.
 
-Picking is the spaced-repetition part: a question last answered wrong or left blank comes back first, then those
-never seen, then the ones answered right longest ago, spread over the topics. Scoring is the exam's: a right answer
+Picking follows the spaced-repetition schedule (srs.py, #63): a question due today or last answered wrong or left
+blank comes back first (the least likely to be recalled first), then those never seen, then the rest, the least
+likely to be recalled first, spread over the topics. Scoring is the exam's: a right answer
 +1, a wrong one −0.25, a blank 0. When a practice exam is finished, Professor posts the score and the weakest
 topics in the course chat, so the user can go through them there.
 
@@ -23,6 +24,8 @@ A study session (`kind` "study") is the app's Study page, Quizlet's way: flashca
 multiple choice shown right or wrong at once, and flashcards or the course's exercises answered in words, marked at
 once by the fast model (`mark`). Untimed, scored by nothing; each answer is recorded as it's checked, and a question
 can be checked again (a missed one comes back in the next round). Not a practice exam: no objectives, no post.
+The Due today deck (`deck` "due") is a study session of what the schedule says is due, then new ones up to
+NEW_PER_DAY a day.
 """
 
 import base64
@@ -36,6 +39,7 @@ import sqlite3
 import unicodedata
 from datetime import datetime
 
+from . import srs
 from .db import utcnow
 from .notebook import NotebookStore, _number, _sentences, exercises, max_points, mcqs, mock_title, parse_json, \
     parse_question
@@ -54,7 +58,8 @@ CREATE TABLE IF NOT EXISTS quizzes (
     kind        TEXT NOT NULL DEFAULT 'exam',  -- exam: the app's practice exam; chat: Professor asking; mock; study
     mock        TEXT,                  -- a mock exam's id (m_…)
     scoring     TEXT,                  -- JSON: a mock's {"right", "wrong", "blank"}; NULL: RIGHT and WRONG
-    checked     TEXT                   -- JSON: answers checked one at a time while taking it, {"3": "B"}: final
+    checked     TEXT,                  -- JSON: answers checked one at a time while taking it, {"3": "B"}: final
+    deck        TEXT                   -- a study session's deck: "due" (Due today), else NULL
 );
 CREATE TABLE IF NOT EXISTS quiz_answers (
     id          INTEGER PRIMARY KEY,
@@ -62,7 +67,8 @@ CREATE TABLE IF NOT EXISTS quiz_answers (
     qkey        TEXT NOT NULL,     -- the question, by its text: numbers change when a page is rewritten
     answer      TEXT,              -- NULL: left blank
     correct     INTEGER NOT NULL,
-    answered_at TEXT NOT NULL
+    answered_at TEXT NOT NULL,
+    grade       INTEGER            -- srs.AGAIN…EASY; NULL (from before): from `correct`
 );
 CREATE INDEX IF NOT EXISTS quiz_answers_key ON quiz_answers (course_id, qkey, answered_at);
 """
@@ -74,6 +80,7 @@ MOST = 60  # questions in one practice exam
 ANSWER_CHARS = 20_000  # an open answer's text, at most
 ANSWER_PHOTOS = 4  # photos of the work on paper, at most, for an open answer
 QUIZ_MOST = 30  # in a quiz
+NEW_PER_DAY = 15  # items never answered that the Due today deck brings in a day, per course
 STYLES = ("mixed", "questions", "cards")  # what a quiz asks: both, multiple choice only, flashcards only
 KINDS = ("exam", "study")  # what POST /v1/quizzes starts (a mock and a chat quiz have their own ways)
 MARK_PROMPT = """You mark a university student's answer while they study, as a fair examiner would. You get the \
@@ -97,19 +104,43 @@ class QuizStore:
         have = {r["name"] for r in self.conn.execute("PRAGMA table_info(quizzes)")}
         for column, sql in (("kind", "kind TEXT NOT NULL DEFAULT 'exam'"),  # from before quizzes
                             ("mock", "mock TEXT"), ("scoring", "scoring TEXT"),  # from before mock exams
-                            ("checked", "checked TEXT")):  # from before answers shown after each question
+                            ("checked", "checked TEXT"),  # from before answers shown after each question
+                            ("deck", "deck TEXT")):  # from before Due today
             if column not in have:
                 self.conn.execute(f"ALTER TABLE quizzes ADD COLUMN {sql}")
+        if "grade" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(quiz_answers)")}:
+            self.conn.execute("ALTER TABLE quiz_answers ADD COLUMN grade INTEGER")
         self.rng = rng or random.Random()
 
     # -- the questions -----------------------------------------------------------------
 
+    def today(self):
+        return utcnow().astimezone(self.study.tz).date()
+
     def _last(self, course_id: int) -> dict[str, dict]:
-        """What the user last did with each question they've seen, by qkey."""
-        return {r["qkey"]: dict(r) for r in self.conn.execute(
-            # SQLite takes the bare columns from the row with the MAX: the latest answer.
-            "SELECT qkey, correct, MAX(answered_at) AS answered_at, COUNT(*) AS seen FROM quiz_answers "
-            "WHERE course_id = ? GROUP BY qkey", (course_id,))}
+        """What the user last did with each question they've seen, by qkey, with its schedule (srs.py) as of today:
+        `correct` (the last answer), `answered_at` (UTC), `seen` (answers), `first` (the local day of the first),
+        `due` (a local date), `is_due`, `known`, `retention` (the chance of recalling it today, 0–1)."""
+        today = self.today()
+        found: dict[str, dict] = {}
+        for r in self.conn.execute("SELECT qkey, correct, grade, answered_at FROM quiz_answers WHERE course_id = ? "
+                                   "ORDER BY answered_at, id", (course_id,)):
+            day = datetime.fromisoformat(r["answered_at"]).astimezone(self.study.tz).date()
+            e = found.setdefault(r["qkey"], {"answers": [], "first": day, "seen": 0})
+            e["answers"].append((day, r["grade"] or srs.grade_of(bool(r["correct"]))))
+            e |= {"correct": bool(r["correct"]), "answered_at": r["answered_at"], "seen": e["seen"] + 1}
+        out = {}
+        for key, e in found.items():
+            s = srs.schedule(srs.by_day(e.pop("answers")))
+            out[key] = e | {"first": e["first"].isoformat(), "due": s.due.isoformat(), "is_due": s.is_due(today),
+                            "known": s.known(today), "retention": round(s.retention(today), 3)}
+        return out
+
+    def new_left(self, course_id: int, last: dict[str, dict] | None = None) -> int:
+        """How many never answered the Due today deck can still bring in today."""
+        today = self.today().isoformat()
+        last = self._last(course_id) if last is None else last
+        return max(0, NEW_PER_DAY - sum(1 for e in last.values() if e["first"] == today))
 
     def _topics(self, course_id: int, topics: list[str] | None) -> list[dict]:
         return [t for t in self.notebook.topics(course_id) if t["body"] and (not topics or t["public_id"] in topics)]
@@ -159,13 +190,14 @@ class QuizStore:
         return out
 
     def pick(self, bank: list[dict], count: int) -> list[dict]:
-        """`count` questions: wrong or blank last time first, then never seen, then right longest ago; no topic
-        more than its share until the others run out."""
+        """`count` questions: due today or wrong or blank last time first, then never seen, then the rest, each
+        group the least likely to be recalled first; no topic more than its share until the others run out."""
         def order(q):
             last = q["last"]
             if last is None:
-                return 1, "", self.rng.random()
-            return (0 if not last["correct"] else 2), last["answered_at"], self.rng.random()
+                return 1, 0.0, self.rng.random()
+            return ((0 if not last["correct"] or last["is_due"] else 2), last["retention"], last["answered_at"],
+                    self.rng.random())
 
         ranked = sorted(bank, key=order)
         share = math.ceil(count / max(1, len({q["topic"] for q in bank})))
@@ -219,6 +251,30 @@ class QuizStore:
         self.conn.execute(
             "INSERT INTO quizzes (public_id, course_id, minutes, questions, started_at, kind) VALUES (?, ?, ?, ?, ?, ?)",
             (public_id, course_id, minutes, json.dumps(questions), utcnow().isoformat(), "study" if study else "exam"))
+        return self.quiz(public_id)
+
+    def start_due(self, course_id: int) -> dict:
+        """The Due today deck: a study session of the course's questions and flashcards due today (the least likely
+        to be recalled first), then ones never answered, in the notebook's order, up to what's left of NEW_PER_DAY;
+        at most MOST. Flashcards are turned and marked, questions answered."""
+        bank, flash = self.bank(course_id), self.cards(course_id)
+        if not bank and not flash:
+            raise ValueError("This course's notebook has no questions yet.")
+        items = bank + flash
+        due = sorted((q for q in items if q["last"] and q["last"]["is_due"]),
+                     key=lambda q: (q["last"]["retention"], self.rng.random()))
+        order = {t["public_id"]: n for n, t in enumerate(self._topics(course_id, None))}
+        new = sorted((q for q in items if q["last"] is None), key=lambda q: order[q["topic"]])  # topics in order
+        picked = due[:MOST] + new[:min(self.new_left(course_id), MOST - min(len(due), MOST))]
+        if not picked:
+            raise ValueError("Nothing due today.")
+        keep = ("qkey", "topic", "topic_title", "text", "options", "key", "explanation")
+        questions = [{k: q[k] for k in keep if k in q} | ({"type": "card"} if q.get("type") == "card" else {})
+                     | {"source": PROFESSOR} for q in picked]
+        public_id = "x_" + secrets.token_hex(6)
+        self.conn.execute(
+            "INSERT INTO quizzes (public_id, course_id, questions, started_at, kind, deck) "
+            "VALUES (?, ?, ?, ?, 'study', 'due')", (public_id, course_id, json.dumps(questions), utcnow().isoformat()))
         return self.quiz(public_id)
 
     def quiz(self, public_id: str) -> dict | None:
@@ -281,9 +337,14 @@ class QuizStore:
         return self.quiz(public_id)
 
     def _record(self, course_id: int, q: dict, answer: str | dict | None, at: str) -> None:
+        right = correct(q, answer)
+        part = None
+        if q.get("type") == "open":
+            part = (answer.get("awarded") or 0) / q["points"] if isinstance(answer, dict) and q.get("points") else 0.0
         self.conn.execute(
-            "INSERT INTO quiz_answers (course_id, qkey, answer, correct, answered_at) VALUES (?, ?, ?, ?, ?)",
-            (course_id, q["qkey"], "open" if isinstance(answer, dict) else answer, int(correct(q, answer)), at))
+            "INSERT INTO quiz_answers (course_id, qkey, answer, correct, answered_at, grade) VALUES (?, ?, ?, ?, ?, ?)",
+            (course_id, q["qkey"], "open" if isinstance(answer, dict) else answer, int(right), at,
+             srs.grade_of(right, part)))
 
     def check(self, public_id: str, n: int, answer: str | dict | None) -> dict:
         """One question answered while taking a practice or mock exam, for answers shown after each question: the
@@ -435,18 +496,25 @@ class QuizStore:
         return self.quiz(public_id)
 
     def progress(self, course_id: int) -> list[dict]:
-        """Each written topic, for planning reviews: its questions and cards, how many were last answered right,
-        wrong (or blank), never seen, and when it was last practised."""
-        out = {t["public_id"]: {"id": t["public_id"], "title": t["title"], "items": 0, "right": 0, "wrong": 0,
-                                "unseen": 0, "last": None} for t in self._topics(course_id, None)}
+        """Each written topic, for planning reviews: its questions and cards, how many are known (by the schedule:
+        not due, not missed last time), being learnt (due, or missed), never seen, how many are due today, how much
+        is retained now (the average chance of recalling each, never seen counting 0) and when it was last
+        practised."""
+        out = {t["public_id"]: {"id": t["public_id"], "title": t["title"], "items": 0, "known": 0, "learning": 0,
+                                "unseen": 0, "due": 0, "retention": 0.0, "last": None}
+               for t in self._topics(course_id, None)}
         for q in self.bank(course_id) + self.cards(course_id):
             t = out[q["topic"]]
             t["items"] += 1
             if (last := q["last"]) is None:
                 t["unseen"] += 1
             else:
-                t["right" if last["correct"] else "wrong"] += 1
+                t["known" if last["known"] else "learning"] += 1
+                t["due"] += last["is_due"]
+                t["retention"] += last["retention"]
                 t["last"] = max(t["last"] or "", last["answered_at"])
+        for t in out.values():
+            t["retention"] = round(t["retention"] / t["items"], 2) if t["items"] else 0.0
         return list(out.values())
 
     @staticmethod
@@ -483,6 +551,8 @@ class QuizStore:
 
     def title(self, quiz: dict) -> str:
         m = self.notebook.mock(quiz["mock"]) if quiz.get("mock") else None
+        if quiz.get("deck") == "due":
+            return "Due today"
         return mock_title(m) if m else {"chat": "Quiz", "study": "Study"}.get(quiz["kind"], "Practice exam")
 
     def headline(self, quiz: dict) -> str:
@@ -549,10 +619,21 @@ class QuizStore:
     # -- JSON for the API --------------------------------------------------------------
 
     def mastery(self, course_id: int) -> list[dict]:
-        """Each written topic in order, how well it's known: its questions and flashcards last answered right
-        (`known`), wrong or blank (`learning`), never (`unseen`)."""
-        return [{"id": t["id"], "title": t["title"], "known": t["right"], "learning": t["wrong"], "unseen": t["unseen"]}
+        """Each written topic in order, how well it's known now (the schedule, srs.py): its questions and flashcards
+        `known`, `learning` (due or missed last time), `unseen`, `due` today, and `retention` (0–1)."""
+        return [{k: t[k] for k in ("id", "title", "known", "learning", "unseen", "due", "retention")}
                 for t in self.progress(course_id)]
+
+    def due_json(self, course_id: int) -> dict:
+        """What the Due today deck has for the course: `due`, `new` (never answered, what's left of today's
+        NEW_PER_DAY) and `next_due` (the first day something is due after today, a local date, or null)."""
+        last = self._last(course_id)
+        items = self.bank(course_id) + self.cards(course_id)
+        seen = [q["last"] for q in items if q["last"]]
+        later = [e["due"] for e in seen if not e["is_due"]]
+        return {"due": sum(e["is_due"] for e in seen),
+                "new": min(len(items) - len(seen), self.new_left(course_id, last)),
+                "next_due": min(later) if later else None}
 
     def bank_json(self, course_id: int) -> dict:
         bank = self.bank(course_id)
@@ -566,7 +647,8 @@ class QuizStore:
             if q["topic"] in topics:
                 topics[q["topic"]]["exercises"] += 1
         intro = self.notebook.intro(course_id)
-        return {"course": course_id, "exam": intro["exam"] if intro else None, "questions": len(bank),
+        return self.due_json(course_id) | {"course": course_id, "exam": intro["exam"] if intro else None,
+                "questions": len(bank),
                 "to_review": sum(1 for q in bank if q["last"] and not q["last"]["correct"]),
                 "unseen": sum(1 for q in bank if q["last"] is None),
                 "cards": sum(t["cards"] for t in topics.values()),
@@ -577,7 +659,8 @@ class QuizStore:
 
     def quiz_json(self, quiz: dict, brief: bool = False) -> dict:
         done = quiz["finished_at"] is not None
-        out = {"id": quiz["public_id"], "kind": quiz["kind"], "title": self.title(quiz), "course": quiz["course_id"],
+        out = {"id": quiz["public_id"], "kind": quiz["kind"], "deck": quiz.get("deck"), "title": self.title(quiz),
+               "course": quiz["course_id"],
                "minutes": quiz["minutes"],
                "mock": quiz["mock"], "scoring": quiz["scoring"] or {"right": RIGHT, "wrong": WRONG, "blank": 0},
                "count": len(quiz["questions"]), "started_at": self.study.local(quiz["started_at"]),

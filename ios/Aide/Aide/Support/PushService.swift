@@ -98,7 +98,7 @@ enum PushRoute: Equatable {
 
 /// A course's page to open on the Study tab (`aide://study/<course>/…`), from an `open` card in chat.
 struct StudyLink: Equatable {
-    enum Page: String { case course, practice, quiz, lesson }
+    enum Page: String { case course, practice, quiz, due, lesson }
     let course: Int
     var page = Page.course
     /// A notebook topic's id (`t_…`) and title: a lesson's topic, or the one a study session starts on.

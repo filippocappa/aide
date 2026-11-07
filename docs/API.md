@@ -108,7 +108,8 @@ from the tools the assistant used in that turn, not parsed from its text:
   - `aide://today`, `aide://team`, `aide://objectives`, `aide://health`, `aide://food`, `aide://screen`,
     `aide://money`, `aide://money/banks`
   - `aide://study`: the Study tab. `aide://study/<course id>`: the course's page. `…/practice`: its practice exam.
-    `…/quiz`: the Study page for the course, or one topic with `?topic=<t_…>&title=<title>`. `…/lesson?topic=<t_…>
+    `…/quiz`: the Study page for the course, or one topic with `?topic=<t_…>&title=<title>`. `…/due` (since
+    2026-11-07): the course's Due today deck (spaced repetition). `…/lesson?topic=<t_…>
     &title=<title>`: that topic's lesson.
   - `aide://settings`: Settings. `aide://settings/<page>`, `<page>` one of `digests`, `memory`, `voice`, `plan`
     (Claude plan), `browser`, `nutrition`, `videos`, `notifications`, `reminders`, `health`, `bedtime` (since
@@ -463,7 +464,9 @@ the data.
   each day's `count` of what the measure counts (`null` for days still to come). The app draws them as dots.
 - `measure` says what ticks it, with a readable `label`; `null` means you tick it. Types:
   `habit` {`habit`}: check-ins in the period (days done, for a limit or food habit). `practice` {`course`, `score`?}: practice exams finished (at
-  `score`% or more). `notes` {`course`}: notebook topics written or revised (notes Aide wrote after your OK, or
+  `score`% or more). `review` {`course`} (since 2026-11-07, spaced repetition): the course's questions and flashcards
+  answered (the Due today deck, quizzes, practice exams, the Study page), each once a day; source `Spaced repetition`.
+  `notes` {`course`}: notebook topics written or revised (notes Aide wrote after your OK, or
   your edits in Obsidian; a topic counts once, added figures don't count). `focus` {`course`} (since 2026-11-03):
   focus rounds finished on the course (Focus sessions); with `unit: "min"` (since 2026-11-07, the exam plan's day
   objectives) minutes of focus on it instead, the target up to 600, the label "minutes of focus on macroeconomics". `food` {`metric`: `logged` | `protein_g` | `calories`}: days with meals logged, or at the
@@ -980,6 +983,10 @@ Since 2026-10-31 it also has `"mastery": [{"id": "t_…", "title": "…", "known
 row per written topic in the notebook's order: its multiple-choice questions and flashcards last answered right
 (`known`), wrong or blank (`learning`), never (`unseen`), from every practice exam, mock and quiz. The app draws a dot
 per topic from it.
+Since 2026-11-07 (spaced repetition, Practice exams below) `known` and `learning` follow the schedule: `known` is not
+due today and not missed last time, `learning` the rest of those answered (due, or missed); each row adds `due` (due
+today) and `retention` (0–1, how much of the topic is likely recalled now; never answered counts 0). The notebook
+also has the course's `due`, `new` and `next_due`, as on the bank.
 `chat` is null until the course has a chat; then the app opens it, else asks for one with the POST above.
 Since 2026-10-31 `next_exam` also has `"from": "calendar" | "course"` and `all_day`: without an exam in the Exam
 calendar, it's the earliest coming exam or mid-term from the course's dates (below), titled "<course> <what>", with
@@ -1498,6 +1505,19 @@ score is a `quiz` card on that message (Chat, attachments) and the push says it 
 | `POST /v1/quizzes/{id}/check` | `{"n": 3, "answer": "B"}` (since 2026-10-31): one question answered while taking it, as in `finish` (a flashcard's `"right"` or `"wrong"`, an open one's `{"text", "photos"}`, null blank). The answer is final: `finish` keeps it over what it's sent | That Question with its key, as once finished (an open one with `model_answer` and `rubric`, `awarded` and `correct` null until marked). `409` checked already or finished; `404` no such question, or a chat quiz. |
 | `POST /v1/quizzes/{id}/finish` | `{"answers": {"1": "B", "2": null, "16": {"text": "…", "photos": ["p_…"]}}}`, by question number; left out or null is blank. An open question's answer: typed `text`, photos of the work on paper (`POST /v1/photos`, up to 4), or both | Quiz, finished. `409` already finished. |
 
+Spaced repetition (since 2026-11-07, `srs.py`): each multiple-choice question and flashcard has a schedule (FSRS:
+stability, difficulty, a due date) worked out from every answer it has had (practice exams, mocks, chat quizzes, study
+sessions; answers from before count too). A day is one review graded by its worst answer that day: wrong or blank is
+again (due tomorrow), an open answer worth half is hard, right is good. Due when the chance of recalling it falls to
+90%, at most 180 days on. Picking for a practice exam, a chat quiz or a study session takes what's due or missed first
+(the least likely recalled first), then never answered, then the rest. The Obsidian vault's Spaced Repetition comments
+(`<!--SR:…-->`) are the plugin's own: Aide neither reads nor writes them.
+
+Bank adds (since 2026-11-07) `"due": 12` (questions and flashcards due today), `"new": 15` (never answered that
+today's Due today deck can still bring in: 15 a day per course, less those first answered today) and `"next_due":
+"2026-11-09"` or null (the first local day after today something is due, for "Nothing due until Monday"); the topics'
+`known` and `learning` follow the schedule, with `due` and `retention` as on `/v1/study`.
+
 Bank: `{"course": 2, "exam": "20 to 35 multiple-choice questions…" or null, "questions": 65, "unseen": 40,
 "to_review": 6, "cards": 40, "exercises": 12, "topics": [{"id": "t_…", "title": "…", "questions": 6, "cards": 4,
 "exercises": 1, "known": 4, "learning": 2, "unseen": 4}], "scoring": {"right": 1, "wrong": -0.25,
@@ -1543,6 +1563,13 @@ turned and written. A study session is untimed (`minutes` ignored, null), its qu
   full points or 0, over the model's. `409` not an answered open question; `404` not a study session.
 - `finish` closes it: only the checked answers count, nothing is posted in the chat, no marking job. Study sessions
   aren't in the bank's `past` and don't count for objectives.
+
+The Due today deck (since 2026-11-07): `POST /v1/quizzes` `{"course": 2, "kind": "study", "due": true}` (`count`,
+`cards`, `exercises`, `write`, `topics` unused): a study session of what's due (the least likely recalled first),
+then never-answered ones in the notebook's order up to the bank's `new`, 60 at most; questions and flashcards (turned),
+no exercises. The Quiz has `"deck": "due"` (null on every other quiz) and title "Due today". `409` "Nothing due
+today." when nothing is due and no new ones are left. A question missed and asked again in the next round is due again
+tomorrow.
 
 ### Lessons
 

@@ -89,7 +89,7 @@ def objective_tools(store: ObjectiveStore, planner: ObjectivePlanner | None, age
         "why": {"type": "string"},
         "track": {"type": "string", "enum": list(MEASURES), "description":
                   "what ticks it by itself: habit (habit_id: check-ins), practice (course_id, min_score: practice "
-                  "exams), food (food: days logged or at a goal), sleep (hours: nights at or over), steps (steps: days "
+                  "exams), review (course_id: questions and flashcards reviewed, each once a day), food (food: days logged or at a goal), sleep (hours: nights at or over), steps (steps: days "
                   "at or over), reminder (reminder_id: done). Leave out: the user ticks it"},
         "habit_id": {"type": "integer"}, "course_id": {"type": "integer"},
         "min_score": {"type": "number", "description": "percent"},

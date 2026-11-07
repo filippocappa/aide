@@ -49,7 +49,7 @@ def _no_table(error: sqlite3.OperationalError, empty):
 PERIODS = ("day", "week", "month")
 MOST = {"day": 2, "week": 3, "month": 2}  # proposals per specialist
 DAY_TOTAL = 6  # proposals for a day, all specialists together
-MEASURES = ("habit", "practice", "notes", "focus", "food", "sleep", "steps", "reminder")
+MEASURES = ("habit", "practice", "review", "notes", "focus", "food", "sleep", "steps", "reminder")
 COURSE_DATES_AHEAD = 120  # days: a course's exams and deadlines the planner sees
 NEW_NOTES_DAYS = 7  # the planner sees the notebook topics changed in this many days
 MISSED_QUIZZES = 10  # ... and the topics most missed in this many recent practice exams
@@ -218,6 +218,11 @@ class ObjectiveStore:
             if score is not None and not 0 < float(score) <= 100:
                 raise ValueError("score is a percentage, 1 to 100")
             return {"type": "practice", "course": course, **({"score": round(float(score))} if score else {})}
+        if kind == "review":
+            course = int(measure.get("course") or 0)
+            if not self.conn.execute("SELECT 1 FROM courses WHERE id = ?", (course,)).fetchone():
+                raise ValueError(f"no course {measure.get('course')}")
+            return {"type": "review", "course": course}
         if kind == "notes":
             course = int(measure.get("course") or 0)
             if not self.conn.execute("SELECT 1 FROM courses WHERE id = ?", (course,)).fetchone():
@@ -420,6 +425,14 @@ class ObjectiveStore:
             need = m.get("score", 0) / 100
             return sum(1 for r in rows if (r[0] or 0) >= need * max_points(json.loads(r[1]),
                                                                            r[2] and json.loads(r[2])))
+        if m["type"] == "review":  # questions and flashcards answered (quiz.py), each once a day
+            try:
+                rows = self.conn.execute(
+                    "SELECT qkey, answered_at FROM quiz_answers WHERE course_id = ? AND answered_at >= ? "
+                    "AND answered_at < ?", (m["course"], self._utc(first), self._utc(last + timedelta(days=1))))
+                return len({(r[0], datetime.fromisoformat(r[1]).astimezone(self.tz).date()) for r in rows})
+            except sqlite3.OperationalError as e:  # nothing answered yet: the table isn't there
+                return _no_table(e, 0)
         if m["type"] == "notes":
             try:
                 return self.conn.execute(
@@ -457,6 +470,9 @@ class ObjectiveStore:
                 row = self.conn.execute("SELECT name FROM courses WHERE id = ?", (m["course"],)).fetchone()
                 score = f" at {m['score']}% or more" if m.get("score") else ""
                 return f"practice exams in {row[0] if row else 'a course'}{score}"
+            case "review":
+                row = self.conn.execute("SELECT name FROM courses WHERE id = ?", (m["course"],)).fetchone()
+                return f"{row[0] if row else 'a course'} questions and flashcards reviewed"
             case "notes":
                 row = self.conn.execute("SELECT name FROM courses WHERE id = ?", (m["course"],)).fetchone()
                 return f"{row[0] if row else 'a course'} notebook topics written or revised"
@@ -483,7 +499,7 @@ class ObjectiveStore:
         if m["type"] == "habit":
             habit = self.habits and self.habits.get(m["habit"])
             return habit.name if habit else "Habits"
-        return {"practice": "Practice exams", "notes": "Notebook", "focus": "Focus sessions", "food": "Food log", "sleep": "Apple Health",
+        return {"practice": "Practice exams", "review": "Spaced repetition", "notes": "Notebook", "focus": "Focus sessions", "food": "Food log", "sleep": "Apple Health",
                 "steps": "Apple Health", "reminder": "Reminders"}.get(m["type"])
 
     # -- shapes -------------------------------------------------------------------------
@@ -602,6 +618,9 @@ Tie each to a measure when one fits, so it ticks itself; otherwise the person ti
 ended within its limit); target = how many. Week and month only.
 - {{"type": "practice", "course": <course id>, "score": <percent, optional>}}: practice exams finished; target = \
 how many.
+- {{"type": "review", "course": <course id>}}: questions and flashcards of the course reviewed (each counts once a \
+day; the Due today deck, quizzes, practice exams, the Study page); target = how many ("Clear the 25 cards due in \
+macro today": the course's `due` today, below). Day and week.
 - {{"type": "notes", "course": <course id>}}: notebook topics written or revised in the period (the notes Aide \
 writes once the user OKs them, and the user's own edits in Obsidian); target = how many topics.
 - {{"type": "focus", "course": <course id>}}: focus rounds finished on the course (pomodoros, the app's focus \
@@ -638,6 +657,7 @@ class ObjectivePlanner:
         self.study = study
         self.notebook = notebook
         self.examplan = None  # examplan.py, set after: the hours each exam still needs against the free days
+        self.quizzes = None  # quiz.py's QuizStore, set after: what spaced repetition has due
         self.tz = store.tz
         self._lock = asyncio.Lock()
 
@@ -894,6 +914,11 @@ class ObjectivePlanner:
                         f"{', by the user' if t['by_user'] else ''})" for t in new[:12]))
             if missed := self._missed(c["id"]):
                 out.append(f"  - Topics most missed in recent practice exams and quizzes: {missed}")
+            if self.quizzes is not None and nb:
+                d = self.quizzes.due_json(c["id"])
+                if d["due"] or d["new"]:
+                    out.append(f"  - Spaced repetition: {d['due']} questions and flashcards due today, {d['new']} new "
+                               "ones for today's Due today deck")
         if self.examplan is not None:
             try:
                 plan = await self.examplan.plan()

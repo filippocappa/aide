@@ -624,7 +624,7 @@ struct TopicPageView: View {
         .refreshable { await load() }
         .macWindowCover(item: $studying) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
-                             afterFocus: target.afterFocus)
+                             afterFocus: target.afterFocus, due: target.due)
         }
         .sheet(item: $focusing, onDismiss: { Task { await env.refreshFocus() } }) { FocusStartSheet(target: $0) }
         .macWindowCover(item: $learning) { ref in

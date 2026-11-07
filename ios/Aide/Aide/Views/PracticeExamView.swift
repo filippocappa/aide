@@ -1292,7 +1292,7 @@ struct ReviewStartCard: View {
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .macWindowCover(item: $studying) { target in
             StudySessionView(course: target.course, courseName: target.name, focus: target.topics,
-                             afterFocus: target.afterFocus)
+                             afterFocus: target.afterFocus, due: target.due)
         }
     }
 }

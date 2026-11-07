@@ -59,6 +59,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   voice turns and every other chat stay on OpenRouter's Haiku; if the plan fails before a tool ran, OpenRouter answers).
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
+- `srs.py`: spaced repetition (#63): FSRS-4.5 over each question's and flashcard's answers in `quiz_answers`
+  (one review a day, its worst grade; no state of its own), used by `quiz.py` for picking, mastery and the Due today deck.
 - `examplan.py`: the exam plan (#68): the hours each course's next exam still needs (learn, practise, mocks, review,
   less what's known) against the free days before it, under a daily cap; no model call. Professor's `study_plan`.
 - `lessons.py`: a lesson per notebook topic (hook, goals, steps with checks), written from the topic's notes through
@@ -762,6 +764,17 @@ lecture). The day and the week (2026-11-07, closes #68): each day plan of Profes
 course, "Study Macroeconomics for 1h30", ticked by focus minutes (`focus` with `unit: "min"`); each Sunday from 17:00
 (`WeekProposer`) and on "plan my week" (`propose_study_week`) the next 7 days are placed in the free time as
 "Review: <course>" sessions on the week card (Add puts them in), with their topics, in Professor's "Study week" chat.
+
+**Done, both sides (2026-11-07):** spaced repetition (#63, contract "Practice exams", spaced repetition; "Study";
+"Objectives", `review`). Each notebook question and flashcard has an FSRS schedule worked out from every answer it has
+had (`srs.py`; a day is one review graded by its worst answer: wrong Again, an open answer worth half Hard, right Good;
+due at 90% recall, a miss due tomorrow, at most 180 days). Mastery's known and learning follow it (plus `due` and
+`retention` per topic), and the exam plan's known items too; picking takes what's due or missed first, least recalled
+first. The Due today deck (`POST /v1/quizzes` with `"due": true`): what's due, then up to 15 new a day per course in the
+notebook's order. `due`, `new`, `next_due` on the bank and the Study brief; a `review` objectives measure (items
+answered, once a day each), the due counts in Professor's planner prompt and `study_progress`. The vault's SR comments
+are left to the plugin. App: the Due today card on Study, a "12 due" chip on the course page, Today's Due today rows,
+`aide://study/<course>/due` (`due_today` for `open_page`).
 
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.

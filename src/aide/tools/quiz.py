@@ -90,11 +90,17 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
         topics = quizzes.progress(c["id"])
         if not topics:
             out.append("No written topics yet, so nothing to practise.")
+        else:
+            d = quizzes.due_json(c["id"])
+            out.append(f"Spaced repetition: {d['due']} questions and cards due today, {d['new']} new ones for today's "
+                       "Due today deck (the app's Study tab)" + (f"; next due {d['next_due']}" if not d["due"] and
+                                                                 d["next_due"] else "") + ".")
         for t in topics:
-            seen = t["right"] + t["wrong"]
+            seen = t["known"] + t["learning"]
             line = f"{t['title']}: {t['items']} questions and cards"
             if seen:
-                line += f"; last time {t['right']} right, {t['wrong']} wrong or blank"
+                line += (f"; {t['known']} known, {t['learning']} being learnt (due or missed), {t['due']} due today, "
+                         f"about {round(t['retention'] * 100)}% retained now")
             if t["unseen"]:
                 line += f"; {t['unseen']} never asked"
             if t["last"]:
@@ -173,8 +179,9 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
                                      "for don't know or skip"}}, ["quiz", "answer"]), quiz_answer),
         Tool("end_quiz", "End a quiz early, when the user wants to stop: what they answered stays recorded.",
              _obj(qid, ["quiz"]), end_quiz),
-        Tool("study_progress", "How the user is doing on a course, topic by topic (right, wrong, never asked, when "
-             "last practised), its mock exams and their scores, the next exam, and the review sessions coming. For "
+        Tool("study_progress", "How the user is doing on a course, topic by topic (known, being learnt, due today "
+             "and retained now by the spaced-repetition schedule, never asked, when last practised; quizzes pick "
+             "what's due first), its mock exams and their scores, the next exam, and the review sessions coming. For "
              "planning reviews.", _obj(one_course, ["course"]), study_progress),
         Tool("write_mock_exam", "Write a mock exam for a course: a paper like the real exam (its kinds of questions, "
              "open ones included, its points, time and scoring), over every topic, in the style of its past exams. "

@@ -398,7 +398,7 @@ class ExamPlan:
                                ("exercise", self.quizzes.exercise_bank(cid))):
                 for q in bank:
                     items.setdefault(q["topic"], {}).setdefault(kind, []).append(
-                        bool(q["last"] and q["last"]["correct"]))
+                        bool(q["last"] and q["last"]["known"]))  # by the schedule: not due, not missed
                     kinds[q["qkey"]] = kind
         intro = self.notebook.intro(cid) if self.notebook else None
         mocks = self.notebook.mocks(cid) if self.notebook else []

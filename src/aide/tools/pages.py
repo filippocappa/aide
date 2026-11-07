@@ -20,6 +20,7 @@ PAGES = {
     "course": ("{course}", "aide://study/{id}"),
     "practice_exam": ("Practice exam", "aide://study/{id}/practice"),
     "study_session": ("Study", "aide://study/{id}/quiz"),
+    "due_today": ("Due today", "aide://study/{id}/due"),
     "lesson": ("Lesson", "aide://study/{id}/lesson"),
     "settings": ("Settings", "aide://settings"),
     "settings_digests": ("Digests", "aide://settings/digests"),
@@ -39,7 +40,7 @@ PAGES = {
     "settings_moodle": ("Moodle", "aide://settings/moodle"),
     "settings_obsidian": ("Obsidian", "aide://settings/obsidian"),
 }
-COURSE_PAGES = ("course", "practice_exam", "study_session", "lesson")
+COURSE_PAGES = ("course", "practice_exam", "study_session", "due_today", "lesson")
 
 
 def open_card(title: str, subtitle: str | None, url: str) -> dict:
@@ -83,7 +84,7 @@ def page_tools(study=None, notebook=None) -> list[Tool]:
         {"type": "object", "additionalProperties": False, "required": ["page"], "properties": {
             "page": {"type": "string", "enum": list(PAGES)},
             "course": {"type": "string", "description": "the course's name, for course, practice_exam, "
-                       "study_session and lesson"},
+                       "study_session, due_today and lesson"},
             "topic": {"type": "string", "description": "a notebook topic's id or title, for lesson and study_session"},
             "note": {"type": "string", "description": "a few words under the button, e.g. what to do there"}}},
         open_page)]
