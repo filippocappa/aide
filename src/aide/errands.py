@@ -33,6 +33,8 @@ from zoneinfo import ZoneInfo
 
 from . import activity
 from .browser import Browser, BrowserError, sharp_image, site_of
+from .browsing import (COMMIT_HINT, PageGuard, _norm, at_checkout, commit_reason, commits, page_tools,  # noqa: F401
+                       placed)
 from .db import utcnow
 from .engine import PlanLimit
 from .tools import Tool, ToolOutput
@@ -60,8 +62,6 @@ SCREENSHOTS_SEEN = 2  # on OpenRouter, the model sees the latest screenshots; ol
 READS_KEPT = 3  # and the latest page listings in full; older ones their first lines
 CHECK_EVERY = 30  # seconds between the worker's looks at errands waiting on a Confirm or a reset
 # A form's next page: the visible word and a screen reader's generic "Invia form" (Edumeter, 2026-11-08).
-NEXT_FORM = re.compile(r"(avanti|indietro|next|previous|back|continua|continue|prosegui) (invia|submit) (il |the )?form")
-COMMIT_TEXT = 48  # characters: longer texts aren't buttons
 PICTURE_SECONDS = 30  # at the end, opening product pages for the pictures no page showed
 CONFIRM_TTL = timedelta(minutes=30)  # agent.PENDING_TTL: an unanswered Confirm expires
 WAITING_FOR = timedelta(minutes=30)  # live.WAITING_FOR: an errand waiting for the user keeps its activity this long
@@ -92,41 +92,7 @@ RISKY = {
 TOTAL_LINE = re.compile(r"\b(?:totale(?: dell'?ordine| ordine| da pagare| complessivo| \(iva inclusa\))?|"
                         r"order total|grand total|total(?: to pay| due)?)\b[^\n\d]{0,24}?(\d[\d.,]*\d|\d)", re.I)
 
-# What a committing element is called in the page's code (ids, classes, test ids, form actions), whatever its text
-# says: an icon-only pay button, or one worded unusually.
-COMMIT_HINT = re.compile(
-    r"place[-_ ]?(your[-_ ]?)?order|placeorder|buy[-_ ]?now|buynow|submit[-_ ]?order|submitorder|"
-    r"confirm[-_ ]?(order|payment|purchase|booking)|complete[-_ ]?(order|purchase|checkout|booking)|"
-    r"pay[-_ ]?now|\bpay\b|checkout[-_ ]?submit|order[-_ ]?submit|conferma[-_ ]?ordine|effettua[-_ ]?ordine", re.I)
-# A checkout: a page where the next button may be the one that pays.
-CHECKOUT_URL = re.compile(r"checkout|order[-_]?summary|/pay(ment)?\b|pagamento|riepilogo|order[-_]?review|/buy/|/spc/|conferma", re.I)
-CHECKOUT_TEXT = re.compile(r"metodo di pagamento|payment method|totale (dell'?)?ordine|order total|totale da pagare|"
-                           r"importo totale|riepilogo (dell'?)?ordine|order summary|review your order", re.I)
-# There, a button that says only to go on (or nothing at all) may be the final one: it needs the Confirm too.
-GO_ON = re.compile(r"^(procedi|prosegui|continua|avanti|conferma|vai|fatto|ok|next|continue|proceed|confirm|done|"
-                   r"submit|go)\b|^[\W_]*$", re.I)
-# Small controls that never buy: a quantity's + and −, a close button.
 OPTION_PRICE = re.compile(r"\d[\d.,]*\s?€|€\s?\d[\d.,]*")  # "10,43 €" in an answer
-STEPPER = re.compile(r"qty|quantit|increment|decrement|stepper|minus|plus|close|dismiss|chiudi", re.I)
-# A page that says an order went through.
-PLACED_URL = re.compile(r"thank|grazie|order[-_]?(confirm|placed|complete|success)|confirmation|conferma[-_]?ordine|"
-                        r"success", re.I)
-PLACED = re.compile(r"thank you for your (order|purchase|booking)|order (confirmed|placed|received|complete)|"
-                    r"grazie per (il tuo |l'|aver )?(ordin|acquist|prenot)|"
-                    r"(ordine|prenotazione|order|booking)( n\.?| #| number)? ?[\w-]{0,20} (effettuat|confermat|ricevut|"
-                    r"completat|placed|confirmed)|acquisto completato|booking confirmed", re.I)
-
-# Buttons that commit: they need the user's Confirm. (Going to the checkout, adding to the cart, searching don't.)
-COMMIT = re.compile(
-    r"\b(acquista|compra( ora| adesso)?|ordina( ora)?|effettua (l'|il )?(ordine|pagamento)|invia (l'|il )?ordine|"
-    r"conferma (e paga|l'ordine|ordine|acquisto|l'acquisto|prenotazione|la prenotazione|pagamento|il pagamento)|"
-    r"paga( ora| adesso)?|prenota( ora| adesso)?|acquista ora|invia|iscriviti|registrati|abbonati|"
-    r"disdici|annulla (l'|il )?(ordine|abbonamento|prenotazione)|elimina (il |l')?(account|profilo)|"
-    r"buy( now)?|place (your |the )?order|order now|pay( now)?|book( now)?|purchase|checkout and pay|"
-    r"confirm (and pay|order|purchase|booking|payment)|complete (purchase|order|booking|payment)|submit|send|"
-    r"subscribe|sign up|register|unsubscribe|cancel (order|subscription|booking|membership)|"
-    r"delete (account|profile)|close (account|profile))\b",
-    re.I)
 
 # Esse3: what commits on a booking or a bookings page. Its buttons' words and what its code calls them (the forms post
 # to EffettuaPrenotazioneAppello, a cancel goes through CancellaPrenotazione…).
@@ -1101,6 +1067,70 @@ def _owner(errand_id: int) -> str:
     return f"errand:{errand_id}"
 
 
+class _ErrandGuard(PageGuard):
+    """An errand's guard for the page tools (browsing.py): a committing click only once the user confirmed it
+    (`_commit_ok`), Esse3's own pages and buttons only, UniTo's sites logged in with the saved login, and every action
+    counted against the errand's MAX_ACTIONS."""
+
+    def __init__(self, phase: "Phase"):
+        self.phase = phase
+
+    def step(self, text: str, counts: bool = True, doing: str | None = None) -> None:
+        self.phase._step(text, counts, doing)
+
+    async def opening(self, url: str) -> None:
+        p = self.phase
+        if p.errand.get("esse3"):
+            if urlparse(url).scheme != "https" or urlparse(url).hostname != ESSE3_HOST:
+                raise ValueError("Only Esse3's own pages (https://esse3.unito.it/…).")
+            if ESSE3_ANY_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
+                raise ValueError("That address signs up or cancels: go there through the page's button.")
+        elif COMMIT_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
+            raise ValueError("That address looks like it places an order or pays: go there through the page, "
+                             "and ask_confirm with the button.")
+        if not p.errand.get("esse3") and _on_unito(url) and p.errand_id not in p.runner._unito:
+            if why := await p.runner.unito_login(p.errand_id):
+                log.info("errand %s: no UniTo login (%s)", p.errand_id, why)
+
+    async def opened(self, url: str) -> None:
+        if not self.phase.store.get(self.phase.errand_id)["site"]:
+            self.phase.store.update(self.phase.errand_id, site=site_of(url))
+
+    async def read(self) -> None:
+        await self.phase._collect_images()
+
+    def commits(self, info: dict, url: str | None, page_text: str | None) -> str | None:
+        return commit_reason(info, url, page_text) or (esse3_commit(info) if self.phase.errand.get("esse3") else None)
+
+    async def committing(self, ref: str, text: str, info: dict, why: str) -> str:
+        p = self.phase
+        if not await p._commit_ok(text, info):
+            if p.errand.get("esse3"):
+                raise ValueError(f"[{ref}] \"{text[:80]}\" signs up or cancels, and no such clicks are left. "
+                                 "Finish and say what the page shows.")
+            raise ValueError(f"[{ref}] \"{text[:80]}\" could change something (buy, book, send, sign up, "
+                             f"delete): {why}. Use ask_confirm with this ref; the user confirms first.")
+        c = p._confirm()
+        if c.get("kind") == "esse3":
+            left = c.get("left", 1) - 1
+            p.store.update(p.errand_id, confirm={**c, "left": left, "used": left <= 0})
+        else:
+            p.store.update(p.errand_id, confirm={**c, "used": True})
+        return f"Clicked the confirmed \"{text[:80]}\""
+
+    def sensitive(self) -> str:
+        return "That's a password or card field: the user fills it. Use need_user."
+
+    async def typing(self, info: dict, press_enter: bool) -> None:
+        pass  # an errand fills in forms (an address, a username), and asks before sending one
+
+    def enter(self) -> str:
+        return "Enter would send that form. Type without press_enter, then ask_confirm with the form's button."
+
+    async def after(self, what: str) -> None:
+        await self.phase._placed_unconfirmed(what)
+
+
 class Phase:
     """One phase's tools, bound to its errand, and how it ended (`outcome`: (kind, args))."""
 
@@ -1266,138 +1296,7 @@ class Phase:
         return True
 
     def _browser_tools(self) -> list[Tool]:
-        b, owner = self.browser, self.owner
-
-        async def open_page(url: str, doing: str | None = None) -> str:
-            if self.errand.get("esse3"):
-                if urlparse(url).scheme != "https" or urlparse(url).hostname != ESSE3_HOST:
-                    raise ValueError("Only Esse3's own pages (https://esse3.unito.it/…).")
-                if ESSE3_ANY_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
-                    raise ValueError("That address signs up or cancels: go there through the page's button.")
-            elif COMMIT_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
-                raise ValueError("That address looks like it places an order or pays: go there through the page, "
-                                 "and ask_confirm with the button.")
-            if not self.errand.get("esse3") and _on_unito(url) and self.errand_id not in self.runner._unito:
-                if why := await self.runner.unito_login(self.errand_id):
-                    log.info("errand %s: no UniTo login (%s)", self.errand_id, why)
-            self._step(f"Opened {url[:120]}", doing=doing)
-            heading = await b.open(owner, url)
-            if not self.store.get(self.errand_id)["site"]:
-                self.store.update(self.errand_id, site=site_of(url))
-            return heading + "\n(read_page to see it)"
-
-        async def read_page(everything: bool | None = None, doing: str | None = None) -> str:
-            if doing:
-                self._step("Read the page", counts=False, doing=doing)
-            text = await b.read(owner, bool(everything))
-            await self._collect_images()
-            return text
-
-        async def find_on_page(text: str, doing: str | None = None) -> str:
-            if doing:
-                self._step(f"Looked for \"{text[:60]}\"", counts=False, doing=doing)
-            return await b.find(owner, text)
-
-        async def screenshot(doing: str | None = None) -> ToolOutput:
-            if doing:
-                self._step("Looked at the page", counts=False, doing=doing)
-            data = await b.screenshot(owner)
-            return ToolOutput("The visible part of the page:", image={"media_type": "image/jpeg",
-                                                                       "data": base64.b64encode(data).decode()})
-
-        async def click(ref: str, doing: str | None = None) -> str:
-            info = await b.inspect(owner, ref)
-            text = info["text"] or info["tag"]
-            where = b.where(owner) or {}
-            esse3 = self.errand.get("esse3")
-            why = commit_reason(info, where.get("url"), await b.text(owner)) or (esse3_commit(info) if esse3 else None)
-            if why:
-                if not await self._commit_ok(text, info):
-                    if esse3:
-                        raise ValueError(f"[{ref}] \"{text[:80]}\" signs up or cancels, and no such clicks are left. "
-                                         "Finish and say what the page shows.")
-                    raise ValueError(f"[{ref}] \"{text[:80]}\" could change something (buy, book, send, sign up, "
-                                     f"delete): {why}. Use ask_confirm with this ref; the user confirms first.")
-                c = self._confirm()
-                if c.get("kind") == "esse3":
-                    left = c.get("left", 1) - 1
-                    self.store.update(self.errand_id, confirm={**c, "left": left, "used": left <= 0})
-                else:
-                    self.store.update(self.errand_id, confirm={**c, "used": True})
-                self._step(f"Clicked the confirmed \"{text[:80]}\"", doing=doing)
-            else:
-                self._step(f"Clicked [{ref}] \"{text[:80]}\"", doing=doing)
-            out = await b.click(owner, ref)
-            if not why:
-                await self._placed_unconfirmed(text)
-            return out
-
-        async def type_text(ref: str, text: str, press_enter: bool | None = None, doing: str | None = None) -> str:
-            info = await b.inspect(owner, ref)
-            if info["sensitive"]:
-                raise ValueError("That's a password or card field: the user fills it. Use need_user.")
-            if press_enter and (commits(info["submits"]) or COMMIT_HINT.search(info.get("submit_hints") or "")
-                                or (info.get("in_form") and at_checkout((b.where(owner) or {}).get("url"),
-                                                                        await b.text(owner)))):
-                raise ValueError("Enter would send that form. Type without press_enter, then ask_confirm with the "
-                                 "form's button.")
-            self._step(f"Typed \"{text[:60]}\" in [{ref}]" + (" and pressed Enter" if press_enter else ""), doing=doing)
-            return await b.fill(owner, ref, text, bool(press_enter))
-
-        async def select_option(ref: str, option: str, doing: str | None = None) -> str:
-            self._step(f"Chose \"{option[:60]}\" in [{ref}]", doing=doing)
-            out = await b.choose(owner, ref, option)
-            await self._placed_unconfirmed(f"{option} (a drop-down)")
-            return out
-
-        async def press_key(key: str, doing: str | None = None) -> str:
-            if key not in KEYS:
-                raise ValueError(f"key must be one of {', '.join(KEYS)}")
-            if key == "Enter":
-                focused = await b.focused(owner)
-                if commits(focused.get("submits")) or COMMIT_HINT.search(focused.get("submit_hints") or "") or (
-                        focused.get("in_form") and at_checkout((b.where(owner) or {}).get("url"), await b.text(owner))):
-                    raise ValueError("Enter would send that form: ask_confirm with the form's button instead.")
-            self._step(f"Pressed {key}", doing=doing)
-            return await b.press(owner, key)
-
-        async def scroll(direction: str, doing: str | None = None) -> str:
-            self._step(f"Scrolled {direction}", counts=False, doing=doing)
-            return await b.scroll(owner, direction)
-
-        async def go_back(doing: str | None = None) -> str:
-            self._step("Went back", doing=doing)
-            out = await b.back(owner)
-            await self._placed_unconfirmed("Back")
-            return out
-
-        ref = {"type": "string", "description": "The number in brackets from read_page, like \"12\""}
-        doing = {"doing": {"type": ["string", "null"], "description":
-                           "One short line for the user on what you're doing and why, in the task's language, like "
-                           "\"Checking the reviews on the Lodge\" or \"Cercando padelle in ghisa\" (under 60 characters)"}}
-        return [
-            Tool("open_page", "Open a web address (https://…) in the errand's browser.",
-                 _obj({**doing, "url": {"type": "string"}}, ["url"]), open_page),
-            Tool("read_page", "The page's text and a [ref] for each thing to click, type in or choose: the visible "
-                 "part and a little around it, or `everything`.",
-                 _obj({**doing, "everything": {"type": ["boolean", "null"]}}, []), read_page),
-            Tool("find_on_page", "Where some text is on the whole page, with the ref of what holds it.",
-                 _obj({**doing, "text": {"type": "string"}}, ["text"]), find_on_page),
-            Tool("screenshot", "A picture of the visible part of the page, when the layout or an image matters.",
-                 _obj({**doing}, []), screenshot),
-            Tool("click", "Click (tap) a link, button, checkbox or option by its ref.",
-                 _obj({**doing, "ref": ref}, ["ref"]), click),
-            Tool("type_text", "Type in a text field by its ref, replacing what's there; press_enter to search.",
-                 _obj({**doing, "ref": ref, "text": {"type": "string"}, "press_enter": {"type": ["boolean", "null"]}},
-                      ["ref", "text"]), type_text),
-            Tool("select_option", "Choose an option of a drop-down (a select) by its text.",
-                 _obj({**doing, "ref": ref, "option": {"type": "string"}}, ["ref", "option"]), select_option),
-            Tool("press_key", "Press a key on the focused element.",
-                 _obj({**doing, "key": {"type": "string", "enum": list(KEYS)}}, ["key"]), press_key),
-            Tool("scroll", "Scroll the page a screen up or down.",
-                 _obj({**doing, "direction": {"type": "string", "enum": ["down", "up"]}}, ["direction"]), scroll),
-            Tool("go_back", "The browser's Back.", _obj({**doing}, []), go_back),
-        ]
+        return page_tools(self.browser, self.owner, _ErrandGuard(self))
 
     # -- stopping --------------------------------------------------------------
 
@@ -1791,9 +1690,6 @@ class Phase:
         raise Stop()
 
 
-KEYS = ("Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "Backspace")
-
-
 def no_bots(site: str | None) -> str | None:
     """Why Aide doesn't buy at a drop on this site (it sells tickets), or None."""
     site = (site or "").lower()
@@ -1869,11 +1765,6 @@ def _utc(text: str) -> datetime:
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
-def at_checkout(url: str | None, text: str | None) -> bool:
-    """The page is a checkout (its address, or what it says: a payment method, the order's total)."""
-    return bool(CHECKOUT_URL.search(urlparse(url or "").path or "")) or bool(CHECKOUT_TEXT.search(text or ""))
-
-
 ESSE3_TOOLS = {"open_page", "read_page", "find_on_page", "screenshot", "click", "select_option", "scroll", "go_back",
                "need_user", "finish"}
 
@@ -1933,40 +1824,6 @@ def esse3_mismatch(t: dict, info: dict, url: str | None, page_text: str | None) 
     if not (ids and t.get("app_id")) and any(_shows(page, course, None, day) for course, day in t.get("others") or []):
         return "the page shows another of the user's sessions too, and nothing ties this button to this one"
     return None
-
-
-def commit_reason(info: dict, url: str | None, page_text: str | None) -> str | None:
-    """Why clicking this element (browser.inspect's) could buy, book, send or delete, or None. Its text (`commits`),
-    what the page's code calls it (`COMMIT_HINT`), and on a checkout any button that only says to go on, or nothing."""
-    text = info.get("text") or ""
-    if commits(text):
-        return "its text"
-    if COMMIT_HINT.search(info.get("hints") or ""):
-        return "what the page calls it"
-    if at_checkout(url, page_text) and info.get("tag") in ("button", "input", "a", "div", "span", "img", "svg") \
-            and info.get("type") not in ("text", "email", "tel", "search", "number", "checkbox", "radio") \
-            and len(_norm(text)) <= COMMIT_TEXT and GO_ON.search(_norm(text)) \
-            and not STEPPER.search(info.get("hints") or ""):
-        return "on a checkout, a button that only says to go on"
-    return None
-
-
-def placed(url: str | None, heading: str | None) -> bool:
-    """The page says an order (or a booking) went through."""
-    return bool(PLACED_URL.search(urlparse(url or "").path or "")) or bool(PLACED.search(heading or ""))
-
-
-def commits(text: str | None) -> bool:
-    """A button's text that buys, books, sends, signs up or deletes. Only short texts: a long link is a product
-    or an article ("… Paperback book"), not a button."""
-    text = _norm(text or "")
-    if (step := NEXT_FORM.fullmatch(text)) is not None:  # "Avanti Invia form": a page of a form, not the sending
-        text = step.group(1)
-    return 0 < len(text) <= COMMIT_TEXT and bool(COMMIT.search(text))
-
-
-def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().lower()
 
 
 def picture_for(url: str | None, title: str | None, images: list[dict]) -> str | None:

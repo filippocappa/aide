@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 VIEWPORT = {"width": 412, "height": 915}  # a large phone, in CSS pixels
 SCALE = 2  # device pixels per CSS pixel: sharp enough in the app's live view
+LOOK_IMAGE = {"width": 1100, "height": 1560}  # the window for a picture opened by its address (look_at_page)
 LOAD_TIMEOUT = 30_000  # ms for a page to load
 ACTION_TIMEOUT = 8_000  # ms for a click or a fill
 SETTLE = 0.8  # seconds after an action for the page to react
@@ -180,6 +181,29 @@ _TAB_JS = r"""
   const selected = t.getAttribute('aria-selected') === 'true';
   if (!selected) t.click();
   return {label, selected};
+}
+"""
+
+
+# A cookie banner's button that refuses (or keeps only the needed cookies), clicked; its label, or null. Only in
+# something that talks about cookies or consent, and only a visible button.
+_REFUSE_COOKIES_JS = r"""
+() => {
+  const NO = /^(reject|reject all|reject all cookies|decline|decline all|deny|deny all|refuse|refuse all|only necessary|necessary only|use necessary cookies only|only essential|essential only|continue without accepting|rifiuta|rifiuta tutto|rifiuta tutti|rifiuta tutti i cookie|rifiuta i cookie|solo necessari|solo i necessari|accetta solo i necessari|accetta solo necessari|continua senza accettare|nega|nega tutto)$/i;
+  const ABOUT = /cookie|consent|privacy|gdpr|iubenda|onetrust|didomi|cmp|usercentrics|cookiebot|tracking/i;
+  const label = e => (e.innerText || e.getAttribute('aria-label') || e.value || '').replace(/\s+/g, ' ').trim();
+  for (const b of document.querySelectorAll('button,[role=button],a[role=button],input[type=button]')) {
+    const r = b.getBoundingClientRect();
+    if (!r.width || !r.height || !NO.test(label(b))) continue;
+    let about = false;
+    for (let e = b; e && e !== document.body && !about; e = e.parentElement)
+      about = ABOUT.test(`${e.id} ${e.className} ${e.getAttribute('aria-label') || ''}`) ||
+              (e.matches('dialog,[role=dialog],[role=alertdialog],[aria-modal=true]') && ABOUT.test(e.innerText));
+    if (!about) continue;
+    b.click();
+    return label(b);
+  }
+  return null;
 }
 """
 
@@ -1293,13 +1317,55 @@ class Browser:
         self._did(owner, "choose", option, box)
         try:
             await locator.select_option(label=option)
-        except Exception:
+        except Exception as first:
+            if "not a <select>" in str(first):  # a made-up dropdown (a combobox of divs): open it, click the option
+                return await self._choose_listed(owner, locator, ref, option)
             try:
                 await locator.select_option(value=option)
             except Exception as e:
                 raise BrowserError(f"Couldn't choose {option!r} in [{ref}]: {str(e).splitlines()[0][:160]}") from None
         await asyncio.sleep(SETTLE)
         return f"Chose {option}."
+
+    async def _choose_listed(self, owner: str, locator, ref: str, option: str) -> str:
+        """`choose` on a dropdown that isn't a <select> (#77: a schedule's Stage filter): click it open, then the
+        option by its role, else by its text; when there's none, its options are in the error."""
+        page = self._page(owner)
+        try:
+            await locator.click(timeout=4000)
+        except Exception as e:
+            raise BrowserError(f"Couldn't open [{ref}]: {self._why(e)}") from None
+        await asyncio.sleep(0.4)
+        for found in (page.get_by_role("option", name=option),
+                      page.locator("[role=listbox] *, ul li, [class*=option]").filter(has_text=option)):
+            pick = found.first
+            try:
+                if await found.count() and await pick.is_visible():
+                    await pick.click(timeout=3000)
+                    await self._settle(page)
+                    return f"Chose {option}."
+            except Exception:
+                continue
+        listed = await page.evaluate("() => [...document.querySelectorAll('[role=option]')].filter(o => "
+                                     "o.getClientRects().length).map(o => o.innerText.trim()).filter(Boolean)"
+                                     ".slice(0, 30)")
+        await page.keyboard.press("Escape")
+        raise BrowserError(f"[{ref}] has no option {option!r}" +
+                           (f"; its options: {', '.join(listed)}" if listed else "") + ".")
+
+    async def refuse_cookies(self, owner: str) -> str | None:
+        """Presses a cookie banner's Reject (or "only necessary") button, in the page or its frames, so the banner
+        doesn't sit over the page taking clicks; what it pressed, or None. For chat's read-only pages (#77)."""
+        page = self._page(owner)
+        for frame in page.frames:
+            try:
+                pressed = await frame.evaluate(_REFUSE_COOKIES_JS)
+            except Exception:
+                continue
+            if pressed:
+                await asyncio.sleep(0.4)
+                return pressed
+        return None
 
     async def press(self, owner: str, key: str) -> str:
         page = self._page(owner)
@@ -1364,6 +1430,37 @@ class Browser:
             self._did(owner, "look")
         return await self._page(owner).screenshot(type="jpeg", quality=70 if sharp else 60,
                                                   scale="device" if sharp else "css")
+
+    async def screenshots(self, owner: str, pieces: int = 1) -> list[bytes]:
+        """For the model to read (look_at_page): the visible part of the page (pieces=1), or the page from the top in
+        up to `pieces` screens, scrolled one screen at a time so late parts load, then back where it was. JPEGs in
+        device pixels (824 wide), sharp enough for small print. A page that is only a picture (a scanned menu opened
+        by its address) fits the phone's window too small to read: it's taken alone in a window LOOK_IMAGE big."""
+        page = self._page(owner)
+        self._did(owner, "look")
+        shot = lambda: page.screenshot(type="jpeg", quality=70, scale="device")  # noqa: E731
+        if await page.evaluate("() => (document.contentType || '').startsWith('image/')"):
+            await page.set_viewport_size(LOOK_IMAGE)
+            try:
+                await asyncio.sleep(0.3)
+                return [await page.screenshot(type="jpeg", quality=80, scale="css")]
+            finally:
+                await page.set_viewport_size(VIEWPORT)
+        if pieces <= 1:
+            return [await shot()]
+        was = await page.evaluate("() => window.scrollY")
+        await page.evaluate("() => window.scrollTo(0, 0)")
+        await asyncio.sleep(0.3)
+        shots = []
+        for _ in range(pieces):
+            shots.append(await shot())
+            moved = await page.evaluate("() => { const y = window.scrollY; window.scrollBy(0, window.innerHeight);"
+                                        " return window.scrollY !== y; }")
+            if not moved:
+                break
+            await asyncio.sleep(0.5)
+        await page.evaluate("y => window.scrollTo(0, y)", was)
+        return shots
 
     async def read_whole(self, owner: str, url: str, pages: int = WHOLE_PAGES) -> str:
         """The whole page as it shows (fetch_page): scrolled to the end so late parts load, each folded part opened
@@ -1438,7 +1535,10 @@ class Browser:
         lines = await text_now()
         out = list(lines)
         lines = await paged(lines, out)
-        # Tabs (a programme's days, a product's details): each one not showing, read and paged the same way.
+        # Tabs (a programme's days, a product's details): each one not showing, read and paged the same way. The one
+        # showing at first gets its label too, or its text reads as no day in particular (#77: a programme's day 1 was
+        # taken for day 2).
+        shown, read_tabs = None, False
         for i in range(WHOLE_TABS):
             try:
                 tab = await page.evaluate(_TAB_JS, {"i": i, "skip": _SKIP_NEXT})
@@ -1447,6 +1547,7 @@ class Browser:
             if tab is None:
                 break
             if tab["selected"]:
+                shown = shown or tab["label"]
                 continue
             await self._settle(page)
             now = await text_now()
@@ -1456,6 +1557,9 @@ class Browser:
             out.append(f"--- tab “{tab['label']}” ---")
             out += new
             lines = await paged(now, out)
+            read_tabs = True
+        if read_tabs and shown:
+            out.insert(0, f"--- tab “{shown}” (showing when the page opened) ---")
         if listed := _link_list(links, page.url):
             out += ["", "--- links on the page ---", *listed]
         return f"{await page.title() or '(no title)'} — {page.url}\n\n" + "\n".join(out)

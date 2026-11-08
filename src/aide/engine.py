@@ -197,7 +197,7 @@ class Engine:
             async def handler(args: dict) -> dict:
                 out, err = await call(t.name, args)
                 content = [{"type": "text", "text": str(out)}]
-                if image := getattr(out, "image", None):  # a browser screenshot
+                for image in getattr(out, "images", None) or []:  # browser screenshots
                     content.append({"type": "image", "data": image["data"], "mimeType": image["media_type"]})
                 return {"content": content, "is_error": err}
             return tool(t.name, t.description, t.input_schema)(handler)

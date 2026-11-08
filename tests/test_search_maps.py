@@ -133,6 +133,21 @@ async def test_a_long_page_comes_in_parts_read_once():
     assert joined == browser.text
 
 
+async def test_a_later_part_says_which_tab_it_goes_on_in():
+    """A programme's day 2 runs over parts 2 and 3: each later part names its tab, or day 2 reads as no day (#77)."""
+    from aide.tools.search import PAGE_LIMIT
+    line = "x" * 99
+    body = lambda n: [f"{i:03d}{line}" for i in range(n)]  # noqa: E731
+    browser = FakeBrowser("\n".join(["--- tab “10 NOV Tuesday” (showing when the page opened) ---", *body(50),
+                                      "--- tab “11 NOV Wednesday” ---", *body(int(PAGE_LIMIT * 2 / 103))]))
+    tools = read_with(browser)
+    await tools["fetch_page"].handler(url="https://a.example")
+    second = await tools["fetch_page"].handler(url="https://a.example", part=2)
+    assert second.startswith("[Part 2 of 3 of this page, still in the tab “11 NOV Wednesday”]\n")
+    first = await tools["fetch_page"].handler(url="https://a.example")
+    assert "Its tabs: “10 NOV Tuesday” in part 1, “11 NOV Wednesday” in parts 1–3." in first
+
+
 def test_parts_cut_a_very_long_line():
     from aide.tools.search import _parts
     assert _parts("ab\n" + "c" * 25 + "\nd", limit=10) == ["ab", "c" * 10, "c" * 10, "c" * 5 + "\nd"]

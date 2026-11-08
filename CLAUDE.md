@@ -106,6 +106,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   closed after each read; Tavily when it fails; long pages in parts of 30k). `errands.py`: browser errands (the store,
   the runner and its phases, the commit guard, the purchases log; one on a unito.it page logs in with the saved UniTo
   login, `unito_login`, its profile deleted at the end); `tools/browser.py`: Aide's and the errand's tools.
+  `browsing.py`: the page tools and their read-only guard, shared by errands and chat; in chat (#77) Aide's
+  `look_at_page` (screenshots the model sees, the latest two in a turn, a line in the history) and `browse_page`
+  (clicks through, refusing anything that buys, sends, signs up or logs in: that's `start_errand`), a page per
+  conversation in the reading browser, its cookie banner refused, kept 5 min for a follow-up, 15 page calls a turn.
   `pricewatch.py`: price watches. `releases.py`: release trackers (research by an errand, the user's picks, a daily
   look by the fast model, and the timed drop, reminder or price watch each pick calls for).
 - `livecall.py`: live voice calls (#34): a voice behind an adapter listens and speaks over `WS /v1/voice/call`: the

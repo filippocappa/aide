@@ -112,6 +112,33 @@ class Tavily:
         return await self._post("/extract", {"urls": [url]})
 
 
+TAB_LINE = re.compile(r"^--- tab “(.+?)”", re.M)
+
+
+def _tab_map(parts: list[str]) -> str:
+    """" Its tabs: “10 NOV Tuesday” in part 1, “11 NOV Wednesday” in parts 2–3." for a page whose tabs run over
+    several parts, so the model reads the part with the tab it needs instead of clicking for it (#77)."""
+    spans: dict[str, list[int]] = {}
+    current = None
+    for i, part in enumerate(parts, 1):
+        if current:
+            spans[current].append(i)
+        for label in TAB_LINE.findall(part):
+            current = label
+            spans.setdefault(label, []).append(i)
+    if len(spans) < 2:
+        return ""
+    where = lambda n: f"part {n[0]}" if n[0] == n[-1] else f"parts {n[0]}–{n[-1]}"  # noqa: E731
+    return " Its tabs: " + ", ".join(f"“{label}” in {where(sorted(set(n)))}" for label, n in spans.items()) + "."
+
+
+def _still_in(before: list[str]) -> str:
+    """", still in the tab “11 NOV Wednesday”" when the parts before this one opened a tab and this part goes on in
+    it: a part that starts mid-tab otherwise reads as no tab in particular."""
+    found = [m for part in before for m in TAB_LINE.findall(part)]
+    return f", still in the tab “{found[-1]}”" if found else ""
+
+
 def _parts(text: str, limit: int = PAGE_LIMIT) -> list[str]:
     """The text cut at line ends into parts of about `limit` characters (a longer line is cut where it must)."""
     parts, part = [], ""
@@ -213,10 +240,11 @@ def search_tools(tavily: Tavily, tz: ZoneInfo, browser=None) -> list[Tool]:
         n = max(1, min(part or 1, len(parts)))
         if len(parts) == 1:
             return parts[0]
-        more = (f"\n\n[Part {n} of {len(parts)}. The rest: fetch_page with part={n + 1}. The page's links are at the "
-                f"end of the last part.]" if n < len(parts)
-                else f"\n\n[Part {n} of {len(parts)}, the last.]")
-        return (f"[Part {n} of {len(parts)} of this page]\n" if n > 1 else "") + parts[n - 1] + more
+        more = (f"\n\n[Part {n} of {len(parts)}. The rest: fetch_page with part={n + 1}.{_tab_map(parts)} The page's "
+                f"links are at the end of the last part.]" if n < len(parts)
+                else f"\n\n[Part {n} of {len(parts)}, the last.{_tab_map(parts)}]")
+        return (f"[Part {n} of {len(parts)} of this page{_still_in(parts[:n - 1])}]\n" if n > 1 else "") + \
+            parts[n - 1] + more
 
     return [
         Tool("web_search", "Search the web. Use it for anything current (news, prices, opening dates, results) or "

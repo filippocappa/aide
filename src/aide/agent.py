@@ -38,7 +38,11 @@ log = logging.getLogger(__name__)
 CONVERSATION = "main"
 SHARED_TITLE = "First chat"
 
-MAX_TOOL_ROUNDS = 12
+MAX_TOOL_ROUNDS = 20  # browsing a site in chat (#77) takes a round per click
+SCREENSHOTS_SEEN = 2  # tool results whose pictures the model sees in a turn (look_at_page); older ones: their line
+BROWSING = {"look_at_page", "browse_page"}  # a turn that used one is `browse` in the usage ledger (#77)
+LAST_ROUND = ("That was the last step this turn. Answer now from what you found, say in a line what you tried and "
+              "what's still open, and offer to go on (or an errand, start_errand, for something long).")
 PENDING_TTL = timedelta(minutes=30)  # an unconfirmed action expires after this
 
 
@@ -189,6 +193,11 @@ class Agent:
         self.tz = tz
         self.server_fallback = server_fallback  # Anthropic API only, not via OpenRouter
         self._lock = asyncio.Lock()  # one turn at a time keeps history append-only
+        self.turn = 0  # counts turns, so a tool can tell this turn from the last (browsing.py's budget)
+        # The turn's screenshots by tool_use id: the model sees them as images (_with_screenshots), the stored
+        # history only the tool's line ("(a screenshot of …)").
+        self._images: dict[str, list[dict]] = {}
+        self._last_round = False  # the turn's last model round: no tools, answer with what there is
 
     def reset(self, channel: str) -> None:
         self.db.new_conversation(channel)
@@ -610,6 +619,8 @@ class Agent:
                on_team: Callable[[dict], None] | None = None) -> None:
         """Reset the per-turn state. Called under the lock."""
         self._channel, self._conversation, self._model = channel, conversation, model
+        self.turn += 1
+        self._images = {}
         self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
         self._watching, self._photos, self._read = False, (), None
         self._plan, self._plan_calls, self._plan_tools = False, 0, False
@@ -808,11 +819,17 @@ class Agent:
             return await self._run_on_plan(agent, channel, model, history, turn, on_text)
         restart = False  # the text so far came before a tool call: the draft starts over
         history = _drop_old_thinking(_cut_old_results(history))
-        for _ in range(MAX_TOOL_ROUNDS):
-            if on_text:
-                response = await self._stream(agent, model, history, turn, on_text, restart)
-            else:
-                response = await self._create(agent, model, history, turn)
+        for round_ in range(MAX_TOOL_ROUNDS):
+            # The last round answers instead of stopping with nothing (a long browse used the rounds up, #77).
+            self._last_round = round_ == MAX_TOOL_ROUNDS - 1
+            try:
+                with usage.labels(**({"purpose": "browse"} if self._browsing(turn) else {})):
+                    if on_text:
+                        response = await self._stream(agent, model, history, turn, on_text, restart)
+                    else:
+                        response = await self._create(agent, model, history, turn)
+            finally:
+                self._last_round = False
             # Store blocks exactly as returned (thinking blocks included, even when empty): the API needs them back
             # within this turn's tool loop. Later turns don't send them (_drop_old_thinking).
             turn.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
@@ -954,7 +971,9 @@ class Agent:
             # Two cache breakpoints: tools + system, and the conversation so far.
             system=self._system(agent),
             tools=[t.definition() for t in self._offered(agent)],
-            messages=_with_cache_breakpoint(history + (turn if AGENTS[agent].reads_photos else self._with_photos(turn))),
+            messages=_with_cache_breakpoint(history + self._closing(self._with_screenshots(
+                turn if AGENTS[agent].reads_photos else self._with_photos(turn)))),
+            **({"tool_choice": {"type": "none"}} if self._last_round else {}),
             # A spoken turn doesn't think (asks included): ~1.5 s sooner for a turn that asks Secretary, the same
             # answers (measured 2026-11-06).
             **({"thinking": {"type": "disabled"}} if self._voice and not self.voice_thinking
@@ -1005,6 +1024,47 @@ class Agent:
             out[i] = {**m, "content": [*images, {"type": "text", "text": m["content"]}]}  # images first reads best
         return out
 
+    def _with_screenshots(self, messages: list[dict]) -> list[dict]:
+        """Copy of the turn's messages where the latest SCREENSHOTS_SEEN tool results with pictures carry them as
+        images after their line; older ones keep the line, so a long browse doesn't fill the context."""
+        if not self._images:
+            return messages
+        out, left = list(messages), SCREENSHOTS_SEEN
+        for i in range(len(out) - 1, -1, -1):
+            m = out[i]
+            if left == 0:
+                break
+            if m["role"] != "user" or not isinstance(m["content"], list):
+                continue
+            blocks, changed = [], False
+            for b in m["content"]:
+                images = self._images.get(b.get("tool_use_id")) if b.get("type") == "tool_result" else None
+                if images and left > 0:
+                    left -= 1
+                    changed = True
+                    b = {**b, "content": [{"type": "text", "text": str(b["content"])},
+                                          *({"type": "image", "source": {"type": "base64", **{
+                                              "media_type": im["media_type"], "data": im["data"]}}}
+                                            for im in images)]}
+                blocks.append(b)
+            if changed:
+                out[i] = {**m, "content": blocks}
+        return out
+
+    @staticmethod
+    def _browsing(turn: list[dict]) -> bool:
+        """The turn has looked at or clicked through a page (its usage is `browse`)."""
+        return any(b.get("type") == "tool_use" and b.get("name") in BROWSING
+                   for m in turn if m["role"] == "assistant" and isinstance(m["content"], list) for b in m["content"])
+
+    def _closing(self, messages: list[dict]) -> list[dict]:
+        """On the last round, a line after the last tool results saying to answer now (the request has no tools)."""
+        if not self._last_round or not messages or messages[-1]["role"] != "user" or \
+                not isinstance(messages[-1]["content"], list):
+            return messages
+        return [*messages[:-1], {**messages[-1], "content": [*messages[-1]["content"],
+                                                              {"type": "text", "text": LAST_ROUND}]}]
+
     def _system(self, agent: str = ORCHESTRATOR) -> list[dict]:
         prompt = AIDE_VOICE_PROMPT if self._direct(agent) else AGENTS[agent].prompt
         system = [{"type": "text", "text": prompt, "cache_control": STABLE}]
@@ -1030,6 +1090,9 @@ class Agent:
         """Run every tool_use block and return all results in one user message."""
         calls = [b for b in content if b.type == "tool_use"]
         results = await asyncio.gather(*(self._run_tool(agent, channel, b.name, b.input) for b in calls))
+        for b, (out, err) in zip(calls, results):
+            if not err and (images := getattr(out, "images", None)):
+                self._images[b.id] = images
         return [
             {"type": "tool_result", "tool_use_id": b.id, "content": out, "is_error": err}
             for b, (out, err) in zip(calls, results)

@@ -14,6 +14,7 @@ from . import usage
 from .agenda import Agenda, WatchedCalendar
 from .agent import CONVERSATION, TEAM, Agent, calling_agent
 from .browser import Browser
+from .browsing import ChatBrowsing, browsing_tools
 from .channels.api import create_app
 from .reader import PhotoReader
 from .transcribe import Transcriber
@@ -246,6 +247,10 @@ def main() -> None:
     reader = Browser(settings.db_path.parent / "reading", headed=bool(os.environ.get("DISPLAY")), idle=0) \
         if Browser.available() else None
     web = search_tools(Tavily(settings.tavily_api_key), settings.timezone, reader) if settings.tavily_api_key else []
+    # Browsing in chat (#77): each chat's own page in the same reading browser, read-only, closed after 5 idle minutes.
+    browsing = ChatBrowsing(reader, lambda: (agent._conversation or CONVERSATION, agent.turn)) if reader else None
+    if web and browsing:
+        web += browsing_tools(browsing)
     if web:
         tools += web
     else:
@@ -452,6 +457,7 @@ def main() -> None:
             focus_watch.run(),
             bedtime.run(),
             *([errands.run(), watches.run(), releases.run()] if errands else []),
+            *([browsing.run()] if browsing else []),
             videos.run(),
             lessons.run(),
             *([banks.run()] if banks.enabled else []),

@@ -24,7 +24,7 @@ MAPS = ("find_places", "travel_time")
 WEATHER = ("weather",)
 TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alerts", "add_transit_alert",
            "update_transit_alert", "delete_transit_alert")
-WEB = ("web_search", "research", "fetch_page")
+WEB = ("web_search", "research", "fetch_page", "look_at_page", "browse_page")
 BROWSER = ("start_errand", "errand_status", "reply_errand", "cancel_errand", "watch_price", "list_price_watches",
            "update_price_watch", "track_release", "set_release_picks", "list_releases", "release_status",
            "stop_release")
@@ -224,6 +224,18 @@ so open the full list: fetch_page gives the page's links under its text; follow 
 "Speakers", "Programme") rather than guessing an address, and read every part. Asked for "the top 20", give 20 from \
 that list, picking by role (CEOs, directors, presidents first). If the site's list fails, try news articles about \
 it. What really isn't public (who's attending an event) you say in one line, then give the closest thing that is.
+- Looking at and clicking through a page, in this turn: start with fetch_page, the cheapest; its text and links \
+answer most questions. When its text looks empty or incomplete (a page made of pictures, a programme or menu posted \
+as an image, names only in photos, a layout the text doesn't explain), look_at_page shows it to you. When the answer \
+is behind clicks (a tab, a filter, a "View All" that isn't a plain link, the site's own search, the pages of a list), \
+browse_page: open, read (each thing to click has a [ref]), click, type in a search box, and so on, then answer in \
+the same turn. The page stays open for a follow-up ("and the second day?"): go on from it without opening it again. \
+Both only read: when the user wants something done there (buy, book, fill in, sign up, log in), that's start_errand.
+- Before saying something isn't there or isn't public, say what you tried (the pages, the clicks) in one line.
+- In a follow-up, what you answered before from a page stands: the page's text from earlier turns isn't kept, only \
+your answer, so not seeing it again isn't a reason to take it back. Correct it only when what you read now says \
+otherwise, and say which line. When the follow-up could mean two things (two talks on the same subject, on two \
+days), answer for the one the chat is about (the day just asked) and mention the other in a line.
 - When the user says you didn't look properly, look further before answering again (the site's other pages, then \
 other sources); don't apologise for what you gave before, and don't stop at "I couldn't open it"."""
 
@@ -682,7 +694,7 @@ _CONNECTORS = (
 WRITES = frozenset({*(t for *_, writes in _CONNECTORS for t in writes), "cancel_queued"})
 # Refused during a watch: the writes, and opening a page the model picks. A watch reads mail and the like unattended,
 # so a link built from what it read could carry data out (web_search stays: it goes only to the search API).
-WATCH_REFUSED = WRITES | {"fetch_page", "research"}
+WATCH_REFUSED = WRITES | {"fetch_page", "research", "look_at_page", "browse_page"}
 
 
 def connectors(tool_names: list[str]) -> list[dict]:
