@@ -13,7 +13,7 @@ last_big=0
 
 while true; do
   now=$(date +%s)
-  why=$(pgrep -fa -- "$BIG" | grep -v aide-budget | head -1 | cut -d' ' -f2- | cut -c1-70)
+  why=$(pgrep -fa -- "$BIG" | grep -v -e aide-budget -e earlyoom | head -1 | cut -d' ' -f2- | cut -c1-70)
   used_kb=$(awk '/^MemTotal/ {t=$2} /^MemAvailable/ {a=$2} END {print t-a}' /proc/meminfo)
   aide_kb=$(awk '$1 == "anon" {print int($2/1024)}' "$slice/memory.stat" 2>/dev/null || echo 0)
   other_mb=$(( (used_kb - ${aide_kb:-0}) / 1024 ))
