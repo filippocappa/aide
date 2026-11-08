@@ -38,7 +38,8 @@ CONTEXT = 6  # earlier messages it reads
 
 # Aide's own work, besides anything that needs more than one specialist.
 GENERAL = ("chat, opinions, general knowledge, web search, finding a place or a product, booking, buying or ordering "
-           "something on a website, memory, routines, settings")
+           "something on a website, filling in a form or questionnaire on a website (the university's too, "
+           "like an Edumeter course evaluation), memory, routines, settings")
 
 # What each one does, for the router only (the agents' own prompts are long). An agent added to agents.py without a
 # line here is never picked: Aide still reaches it through ask_agent.

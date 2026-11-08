@@ -612,3 +612,11 @@ def test_aide_sends_exam_sign_ups_to_professor():
     from aide.agents import AGENTS
     prompt = AGENTS["aide"].prompt
     assert "Exam sign-ups and cancels on Esse3" in prompt and "never an errand" in prompt
+
+
+def test_aide_does_other_university_sites_as_errands():
+    from aide.agents import AGENTS
+    from aide.router import GENERAL
+    prompt = AGENTS["aide"].prompt
+    assert "Edumeter" in prompt and "Professor has no browser" in prompt
+    assert "Edumeter" in GENERAL
