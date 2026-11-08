@@ -123,7 +123,7 @@ async def test_a_long_page_comes_in_parts_read_once():
     browser = FakeBrowser("\n".join(f"{i:03d}{line}" for i in range(int(PAGE_LIMIT * 2.5 / 103))))
     tools = read_with(browser)
     first = await tools["fetch_page"].handler(url="https://a.example")
-    assert first.startswith("000x") and first.endswith("[Part 1 of 3. The rest: fetch_page with part=2.]")
+    assert first.startswith("000x") and first.endswith("[Part 1 of 3. The rest: fetch_page with part=2. The page's links are at the end of the last part.]")
     second = await tools["fetch_page"].handler(url="https://a.example", part=2)
     last = await tools["fetch_page"].handler(url="https://a.example", part=9)
     assert second.startswith("[Part 2 of 3 of this page]\n") and last.endswith("[Part 3 of 3, the last.]")
