@@ -128,7 +128,7 @@ class FakeBrowser:
     async def back(self, owner):
         return "Went back."
 
-    async def screenshot(self, owner, sharp=False):
+    async def screenshot(self, owner, sharp=False, whole=False):
         return b"\xff\xd8\xff fake jpeg"
 
     async def images(self, owner):
@@ -1238,6 +1238,39 @@ async def test_a_unito_login_page_is_passed_with_the_saved_login(tmp_path):
     e = await next_phase(runner)
     assert e["status"] == "done" and len(session.handoffs) == 1
     assert "saved UniTo login" in json.dumps(runner.client.requests[1]["messages"])
+
+
+async def test_a_login_asked_after_the_saved_login_passed_is_read_again_first(tmp_path):
+    """#40 asked for a login on my.unito.it while the redirect was still landing: it's told to read again, once."""
+    session = FakeUnito()
+    runner, browser = unito_runner(tmp_path, [
+        calls(("need_user", {"why": "login", "reason": "Log in to UniTo."})),
+        calls(("open_page", {"url": "https://edumeter.unito.it/"})),
+        calls(("need_user", {"why": "login", "reason": "Log in to MyUniTo."})),
+        calls(("need_user", {"why": "login", "reason": "Still a login form."})),
+    ], session)
+    e = runner.start("Fill in the Edumeter", "Edumeter", None, CONVERSATION)
+    browser.at[f"errand:{e['id']}"] = "https://idp.unito.it/idp/login"
+    e = await next_phase(runner)
+    assert "already logged in" in json.dumps(runner.client.requests[3]["messages"])
+    assert (e["status"], e["why"]) == ("needs_you", "login") and len(session.handoffs) == 1
+
+
+async def test_a_forms_confirm_shows_the_whole_page_and_no_empty_total(tmp_path):
+    runner, browser = unito_runner(tmp_path, [
+        calls(("open_page", {"url": "https://edumeter.unito.it/"})),
+        calls(("ask_confirm", {"summary": "Send the questionnaire: all 4", "ref": "9", "total": "", "items": []})),
+    ], FakeUnito())
+    shots = []
+    async def screenshot(owner, sharp=False, whole=False):
+        shots.append(whole)
+        return b"\xff\xd8\xff fake jpeg"
+    browser.screenshot = screenshot
+    browser.pages["https://edumeter.unito.it/"][2]["9"] = {"text": "Invia", "tag": "button"}
+    runner.start("Fill in the Edumeter", "Edumeter", None, CONVERSATION)
+    e = await next_phase(runner)
+    assert e["status"] == "waiting_confirm" and e["reason"] == "Send the questionnaire: all 4"
+    assert shots == [True]
 
 
 async def test_without_a_unito_login_the_user_logs_in(tmp_path):

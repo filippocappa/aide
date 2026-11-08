@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 log = logging.getLogger(__name__)
 
 VIEWPORT = {"width": 412, "height": 915}  # a large phone, in CSS pixels
+WHOLE_HEIGHT = 9000  # CSS pixels of a page taken whole for a Confirm (a long questionnaire is ~5000)
 SCALE = 2  # device pixels per CSS pixel: sharp enough in the app's live view
 LOOK_IMAGE = {"width": 1100, "height": 1560}  # the window for a picture opened by its address (look_at_page)
 LOAD_TIMEOUT = 30_000  # ms for a page to load
@@ -1439,12 +1440,20 @@ class Browser:
             pass
         return out
 
-    async def screenshot(self, owner: str, sharp: bool = False) -> bytes:
-        """The visible part of the page as a JPEG: CSS pixels for the model, device pixels with `sharp`."""
+    async def screenshot(self, owner: str, sharp: bool = False, whole: bool = False) -> bytes:
+        """The visible part of the page as a JPEG: CSS pixels for the model, device pixels with `sharp`. `whole`: the
+        page from the top down (at most WHOLE_HEIGHT), for a Confirm the user scrolls through to check every answer."""
         if not sharp:
             self._did(owner, "look")
-        return await self._page(owner).screenshot(type="jpeg", quality=70 if sharp else 60,
-                                                  scale="device" if sharp else "css")
+        page = self._page(owner)
+        if whole:
+            try:
+                height = min(int(await page.evaluate("() => document.documentElement.scrollHeight")), WHOLE_HEIGHT)
+                return await page.screenshot(type="jpeg", quality=70, scale="device", full_page=True,
+                                             clip={"x": 0, "y": 0, "width": VIEWPORT["width"], "height": height})
+            except Exception:
+                log.warning("no whole-page screenshot for %s: the visible part instead", owner, exc_info=True)
+        return await page.screenshot(type="jpeg", quality=70 if sharp else 60, scale="device" if sharp else "css")
 
     async def screenshots(self, owner: str, pieces: int = 1) -> list[bytes]:
         """For the model to read (look_at_page): the visible part of the page (pieces=1), or the page from the top in

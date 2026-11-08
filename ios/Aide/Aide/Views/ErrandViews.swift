@@ -980,6 +980,7 @@ struct PurchaseConfirmSheet: View {
     let done: () async -> Void
     @State private var busy = false
     @State private var error: String?
+    @State private var page: String?
 
     var body: some View {
         NavigationStack {
@@ -1013,9 +1014,18 @@ struct PurchaseConfirmSheet: View {
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         if let shot = detail.screenshot {
-                            Text(detail.pays ? "The checkout page" : "The page").font(.headline)
-                            ServerPhoto(id: shot, fit: true)
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            HStack {
+                                Text(detail.pays ? "The checkout page" : "The page").font(.headline)
+                                Spacer()
+                                Button("Full size") { page = shot }.font(.subheadline)
+                            }
+                            // The whole page since 2026-11-08 (a questionnaire to check answer by answer): scroll the
+                            // sheet through it, or open it full size.
+                            Button { page = shot } label: {
+                                ServerPhoto(id: shot, fit: true)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     if let error {
@@ -1045,8 +1055,13 @@ struct PurchaseConfirmSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
+            .sheet(item: Binding(get: { page.map(PageShot.init) }, set: { page = $0?.id })) {
+                PagePhotoSheet(title: title, photo: $0.id).macCoverSize()
+            }
         }
     }
+
+    private struct PageShot: Identifiable { let id: String }
 
     private var title: String {
         if action.drop != nil { return "Confirm the limits" }
@@ -1084,11 +1099,39 @@ struct PagePhotoSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView { ServerPhoto(id: photo, fit: true).padding(16) }
+            ZoomablePage { ServerPhoto(id: photo, fit: true).padding(16) }
                 .background(Theme.grouped)
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+}
+
+/// A tall page picture to read closely: scrolls, and pinches (or ⌘+ / ⌘− and the trackpad on the Mac) to zoom in.
+private struct ZoomablePage<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    @State private var zoom: CGFloat = 1
+    @State private var pinch: CGFloat = 1
+
+    var body: some View {
+        GeometryReader { box in
+            ScrollView([.vertical, .horizontal]) {
+                content()
+                    .frame(width: box.size.width * zoom * pinch)
+            }
+            .gesture(MagnifyGesture()
+                .onChanged { pinch = $0.magnification }
+                .onEnded { zoom = min(max(zoom * $0.magnification, 1), 4); pinch = 1 })
+            .onTapGesture(count: 2) { withAnimation { zoom = zoom > 1 ? 1 : 2 } }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { withAnimation { zoom = max(zoom / 1.5, 1) } } label: { Image(systemName: "minus.magnifyingglass") }
+                    .keyboardShortcut("-", modifiers: .command).disabled(zoom <= 1)
+                Button { withAnimation { zoom = min(zoom * 1.5, 4) } } label: { Image(systemName: "plus.magnifyingglass") }
+                    .keyboardShortcut("+", modifiers: .command).disabled(zoom >= 4)
+            }
         }
     }
 }

@@ -1156,6 +1156,7 @@ class Phase:
         self.calls = 0
         self.waited = 0.0  # seconds spent waiting for a drop's sale, not counted as the errand's time
         self.registry: dict[str, Tool] = {}
+        self._login_checked = False  # told once that the saved UniTo login already passed
 
     async def prompt(self) -> str:
         e = self.errand
@@ -1340,6 +1341,12 @@ class Phase:
                     return ("Logged in with the user's saved UniTo login. Open the page you wanted again with "
                             "open_page (its own address, not the login page's): the login passes by itself now.")
                 log.info("errand %s: no UniTo login (%s)", self.errand_id, why_not)
+            elif why == "login" and where and _on_unito(where["url"]) and self.errand_id in self.runner._unito \
+                    and not self._login_checked:
+                # #40 asked for a login on my.unito.it while the SSO redirect was still landing, already logged in
+                self._login_checked = True
+                return ("You're already logged in with the user's saved UniTo login: the page was probably still "
+                        "loading the login's redirect. read_page again; ask only if it still shows a login form.")
             self._end("need_user", {"why": why, "reason": reason})
 
         async def ask_user(question: str, options: list[str] | None = None,
@@ -1694,22 +1701,24 @@ class Phase:
         screenshot = None
         if runner.photos is not None:
             try:
-                screenshot = runner.photos.save(await self.browser.screenshot(self.owner, sharp=True), "image/jpeg")
+                shot = await self.browser.screenshot(self.owner, sharp=True, whole=True)
+                screenshot = runner.photos.save(shot, "image/jpeg")
             except Exception:
                 log.warning("errand %s: no screenshot for the Confirm", self.errand_id, exc_info=True)
         site = e["site"] or (self.browser.where(self.owner) or {}).get("site")
+        said = f"{summary} ({total})" if str(total or "").strip() else summary  # a form: no "()"
         detail = {"kind": "purchase", "errand_id": self.errand_id, "site": site, "summary": summary,
                   "items": await self._pictured(_items(items)), "total": total, "delivery": delivery, "address": address,
                   "screenshot": screenshot, "button": label[:80]}
         action_id, _ = runner.agent.db.add_pending(
-            runner.channel, "errand_go", {"errand": self.errand_id}, f"{summary} ({total})", f"errand:{self.errand_id}",
+            runner.channel, "errand_go", {"errand": self.errand_id}, said, f"errand:{self.errand_id}",
             e["conversation"], "aide", detail=detail)
-        activity.record(self.store.conn, "aide", "queued", f"{summary} ({total})", conversation=e["conversation"])
-        self.store.update(self.errand_id, status="waiting_confirm", reason=f"{summary} ({total})",
+        activity.record(self.store.conn, "aide", "queued", said, conversation=e["conversation"])
+        self.store.update(self.errand_id, status="waiting_confirm", reason=said,
                           step="Waiting for your Confirm",
                           confirm={"action_id": action_id, "ref": ref, "label": label, "total": total,
                                    "summary": summary})
-        self.store.log(self.errand_id, f"Asked to confirm: {summary} ({total})", counts=False)
+        self.store.log(self.errand_id, f"Asked to confirm: {said}", counts=False)
         self.outcome = ("ask_confirm", {})
         raise Stop()
 
