@@ -68,6 +68,7 @@ class Settings:
     voice_thinking: bool = False
     voice_direct: bool = True
     router_model: str | None = None  # picks the specialist for a message to Aide (#59); AIDE_ROUTER=off: none
+    decider_model: str | None = None  # a decision model (decide.py) for study marks; AIDE_DECIDER_MODEL=off: none
     openai_api_key: str | None = None
     live_model: str = "gpt-live-1"
     live_voice: str = "marin"
@@ -156,6 +157,8 @@ def load_settings() -> Settings:
         voice_direct=os.environ.get("AIDE_VOICE_DIRECT", "").strip().lower() not in ("0", "false", "off", "no"),
         router_model=None if os.environ.get("AIDE_ROUTER", "").strip().lower() in ("0", "false", "off", "no")
         else os.environ.get("AIDE_ROUTER_MODEL", "").strip() or ("typesafe/jev-1.13" if openrouter_key else haiku),
+        decider_model=None if not openrouter_key or (d := os.environ.get("AIDE_DECIDER_MODEL", "").strip()).lower()
+        in ("0", "false", "off", "no") else d or "typesafe/jev-1.13",
         openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip() or None,
         live_model=os.environ.get("AIDE_LIVE_MODEL", "").strip() or "gpt-live-1",
         live_voice=os.environ.get("AIDE_LIVE_VOICE", "").strip() or "marin",

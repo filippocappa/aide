@@ -30,6 +30,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   in `routes` to check the threshold; `AIDE_ROUTER=off`). The picker is TypeSafe's Jev (`typesafe/jev-1.13`, a decision
   model on OpenRouter's `/api/alpha/decisions`: ~0.2 s, a probability per agent; 20/20 against Haiku's 20/20 at ~0.8 s,
   2026-11-08), or a chat model asked for JSON (`AIDE_ROUTER_MODEL=anthropic/claude-haiku-5.5`).
+- `decide.py`: decision models (Jev on OpenRouter's alpha `/api/alpha/decisions`): a choice with a probability per
+  option. The router uses it, and so does `quiz.mark` for a typed study answer (Study page, lesson checks): Jev ≥ 0.8
+  sure it's right is the mark at once, with no feedback; else Haiku's mark and feedback (thinking off: it ran past
+  `max_tokens`), Jev's when Haiku fails (85/94 against Haiku's 82/94 with 6 failures, 2026-11-08). `AIDE_DECIDER_MODEL=off`.
 - `db.py`: SQLite (WAL) at `data/aide.db`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
 - `channels/api.py` (FastAPI): the app's API, the only way in since the Discord bot was removed (2026-10-21).

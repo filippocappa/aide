@@ -22,6 +22,7 @@ from .. import activity, usage
 from ..agent import CONVERSATION, PENDING_TTL, SCANNED, TEAM, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, ORCHESTRATOR, check_agent, connectors, mentions
 from ..db import Database
+from ..decide import Decider
 from ..digest import DigestService, check_kind
 from ..drafts import Drafts
 from ..browser import BrowserError, check_site, full_url, site_of
@@ -732,7 +733,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None,
                releases: Releases | None = None, calls: LiveCalls | None = None,
                examplan: ExamPlan | None = None, passwords: PasswordStore | None = None,
-               esse3: Esse3Reader | None = None) -> FastAPI:
+               esse3: Esse3Reader | None = None, decider: Decider | None = None) -> FastAPI:
     db: Database = agent.db
     calls = calls or LiveCalls(agent, db.conn)  # no voice to connect: calls are off
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
@@ -770,7 +771,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             messages=[{"role": "user", "content": content}])
         return "".join(b.text for b in response.content if b.type == "text").strip()
 
-    lessons = lessons or LessonStore(notebook, lesson_ask, engine.plan_blocked if engine else None)
+    lessons = lessons or LessonStore(notebook, lesson_ask, engine.plan_blocked if engine else None, decider=decider)
     lessons.mastery = lessons.mastery or quizzes.mastery
     reviews = reviews or ReviewStore(db.conn, tz, calendar, study)
     plans = plans or PlanStore(db.conn, tz, calendar, reviews)
@@ -2434,8 +2435,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         """Straight to the fast model: the user is waiting on the Study page (the plan's Claude Code takes longer, so
         it's only the fallback, when OpenRouter says no)."""
         try:
-            response = await agent.client.beta.messages.create(
-                model=agent.model, max_tokens=max_tokens, system=system,
+            response = await agent.client.beta.messages.create(  # no thinking: it ran past max_tokens
+                model=agent.model, max_tokens=max_tokens, system=system, thinking={"type": "disabled"},
                 messages=[{"role": "user", "content": content}])
         except anthropic.APIError:
             if engine is None or not engine.plan_now():
@@ -2456,7 +2457,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if (waiting := quizzes.to_mark(quiz_id, body.n)) is None:
             return checked
         try:  # a study session's open answer, marked while the user waits
-            points, feedback = await mark_answer(ask_fast, *waiting, photos.load if photos is not None else None)
+            points, feedback = await mark_answer(ask_fast, *waiting, photos.load if photos is not None else None,
+                                                 decider=decider)
         except Exception:
             log.exception("couldn't mark a study answer")
             raise HTTPException(502, "couldn't mark it: say yourself whether it was right") from None

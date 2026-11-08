@@ -33,6 +33,7 @@ from . import usage
 from .db import utcnow
 from .engine import course_var
 from .notebook import NotebookStore, _sentences, parse_json
+from .decide import Decider
 from .quiz import mark as mark_answer
 
 log = logging.getLogger(__name__)
@@ -139,12 +140,14 @@ Ask = Callable[[str, list[dict], int, bool, bool], Awaitable[str]]  # (system, c
 
 class LessonStore:
     def __init__(self, notebook: NotebookStore, ask: Ask | None = None,
-                 blocked: Callable[[], datetime | None] | None = None, rng: random.Random | None = None):
+                 blocked: Callable[[], datetime | None] | None = None, rng: random.Random | None = None,
+                 decider: Decider | None = None):
         self.notebook = notebook
         self.study = notebook.study
         self.conn: sqlite3.Connection = notebook.conn
         self.conn.executescript(SCHEMA)
         self.ask = ask
+        self.decider = decider  # a decision model, to mark a written check at once when it's surely right
         self.blocked = blocked  # the plan can't write notes now (its limit): until when
         self.rng = rng or random.Random()
         self.queue: asyncio.Queue[str] = asyncio.Queue()
@@ -303,7 +306,8 @@ class LessonStore:
             q = {"text": c["question"], "model_answer": c["answer"], "points": 1.0}
             with usage.labels(purpose="lesson mark"):
                 points, feedback = await mark_answer(
-                    lambda system, content, tokens: self.ask(system, content, tokens, True, True), q, {"text": answer})
+                    lambda system, content, tokens: self.ask(system, content, tokens, True, True), q, {"text": answer},
+                    decider=self.decider)
             out |= {"awarded": points, "correct": points >= 0.5, "feedback": feedback}
         self._record(self._get(public_id), step, check, {"answer": out["answer"], "correct": out["correct"]})
         return out

@@ -19,6 +19,7 @@ from .reader import PhotoReader
 from .transcribe import Transcriber
 from .config import OPENROUTER_BASE_URL, Settings, load_settings, save_env
 from .db import Database
+from .decide import Decider
 from .digest import DigestService, digest_schedule
 from .drafts import Drafts
 from .engine import Engine
@@ -222,7 +223,8 @@ def main() -> None:
 
     async def lesson_ask(system, content, max_tokens, fast, live):  # the plan first; live calls never wait at its limit
         return await engine.ask(system, content, max_tokens, fast=fast, wait=not live)
-    lessons = LessonStore(notebook, lesson_ask, engine.plan_blocked)
+    decider = Decider(settings.openrouter_api_key, settings.decider_model) if settings.decider_model else None
+    lessons = LessonStore(notebook, lesson_ask, engine.plan_blocked, decider=decider)
     lessons.mastery = quizzes.mastery
     reviews = ReviewStore(db.conn, settings.timezone, cal, study)
     focus = FocusStore(db.conn, settings.timezone, locks, study)
@@ -465,7 +467,7 @@ def main() -> None:
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off, watches=watches, releases=releases,
-                             weights=weights, videos=videos, lessons=lessons, finance=finance, examplan=examplan,
+                             weights=weights, videos=videos, lessons=lessons, decider=decider, finance=finance, examplan=examplan,
                              banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
                              focus=focus, focus_watch=focus_watch, calls=calls,
                              passwords=passwords, esse3=esse3)
