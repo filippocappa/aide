@@ -104,7 +104,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   the page listing the model reads, the live view's screencast and input. `read_whole`: a page as it shows, folded parts opened, every
   tab, the pages behind Next or Load more, for `fetch_page` (`tools/search.py`; its own profiles in `data/reading/`,
   closed after each read; Tavily when it fails; long pages in parts of 30k). `errands.py`: browser errands (the store,
-  the runner and its phases, the commit guard, the purchases log); `tools/browser.py`: Aide's and the errand's tools.
+  the runner and its phases, the commit guard, the purchases log; one on a unito.it page logs in with the saved UniTo
+  login, `unito_login`, its profile deleted at the end); `tools/browser.py`: Aide's and the errand's tools.
   `pricewatch.py`: price watches. `releases.py`: release trackers (research by an errand, the user's picks, a daily
   look by the fast model, and the timed drop, reminder or price watch each pick calls for).
 - `livecall.py`: live voice calls (#34): a voice behind an adapter listens and speaks over `WS /v1/voice/call`: the
