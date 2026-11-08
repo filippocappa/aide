@@ -903,10 +903,10 @@ struct PurchaseSummary: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let delivery = detail.delivery { Label(delivery, systemImage: "shippingbox") }
                 if let address = detail.address { Label(address, systemImage: "mappin.and.ellipse") }
-                if let site = detail.site { Label("The card saved on \(site)", systemImage: "creditcard") }
+                if detail.pays, let site = detail.site { Label("The card saved on \(site)", systemImage: "creditcard") }
             }
             .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-            if let total = detail.total {
+            if let total = detail.total, detail.pays {
                 HStack {
                     Text("Total").font(.headline)
                     Spacer()
@@ -971,7 +971,8 @@ private extension String {
     var capitalizingFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 
-/// An order to confirm, full size: the items, the checkout page, and Confirm.
+/// An order to confirm, full size: the items, the checkout page, and Confirm. Without a total (a form, a
+/// questionnaire) it's only the button Aide will press and the page it's on.
 struct PurchaseConfirmSheet: View {
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
@@ -1001,15 +1002,18 @@ struct PurchaseConfirmSheet: View {
                         }
                     }
                     if let detail = action.purchase {
-                        PurchaseSummary(detail: detail)
-                            .padding(14)
-                            .background(Theme.row, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        if detail.hasSummary {
+                            PurchaseSummary(detail: detail)
+                                .padding(14)
+                                .background(Theme.row, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        }
                         if let button = detail.button {
-                            Text("Confirm and Aide presses \u{201C}\(button)\u{201D} on \(detail.site ?? "the site"), only if the total is still the same.")
+                            Text("Confirm and Aide presses \u{201C}\(button)\u{201D} on \(detail.site ?? "the site")"
+                                 + (detail.pays ? ", only if the total is still the same." : "."))
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         if let shot = detail.screenshot {
-                            Text("The checkout page").font(.headline)
+                            Text(detail.pays ? "The checkout page" : "The page").font(.headline)
                             ServerPhoto(id: shot, fit: true)
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
@@ -1038,15 +1042,22 @@ struct PurchaseConfirmSheet: View {
                 .padding(16)
                 .background(.bar)
             }
-            .navigationTitle(action.drop != nil ? "Confirm the limits" : "Confirm the order")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
         }
     }
 
+    private var title: String {
+        if action.drop != nil { return "Confirm the limits" }
+        if let detail = action.purchase, !detail.pays { return detail.site.map { "Confirm on \($0)" } ?? "Confirm" }
+        return "Confirm the order"
+    }
+
     private var confirmTitle: String {
         if let drop = action.drop { return drop.maxTotal.map { "Confirm · up to \($0)" } ?? "Confirm" }
-        return action.purchase?.total.map { "Confirm · \($0)" } ?? "Confirm"
+        guard let detail = action.purchase, detail.pays, let total = detail.total else { return "Confirm" }
+        return "Confirm · \(total)"
     }
 
     private func answer(confirm: Bool) async {

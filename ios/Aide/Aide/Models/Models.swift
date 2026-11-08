@@ -3425,6 +3425,12 @@ struct PurchaseDetail: Decodable, Hashable {
     var closesAt: String?
     var card: String?
     var url: String?
+
+    /// Whether it costs anything: a shop's order has a total; a form or a questionnaire (Edumeter) has none, and then
+    /// there's no card, no total and no checkout to show.
+    var pays: Bool { !(total ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+    /// Anything for the summary box: items, a delivery, an address, or a payment.
+    var hasSummary: Bool { pays || !(items ?? []).isEmpty || delivery != nil || address != nil }
 }
 
 /// An order an errand placed.

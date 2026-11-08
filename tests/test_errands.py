@@ -1250,3 +1250,27 @@ async def test_without_a_unito_login_the_user_logs_in(tmp_path):
     e = await next_phase(runner)
     assert (e["status"], e["why"]) == ("needs_you", "login")
     assert browser.cookies == [] and browser.forgot == []
+
+
+def test_about_user_gives_an_errand_the_notes_and_the_transcript():
+    """A form asking about the user (Edumeter's credits so far) is filled from what Aide knows, not guessed."""
+    from aide.errands import about_user_text
+    db = Database(":memory:")
+    db.conn.execute("INSERT INTO memory (text, created_at) VALUES ('Studies at SME, UniTo', '2026-11-01')")
+    db.conn.execute("INSERT INTO memory (text, created_at, agent) VALUES ('Secretary only', '2026-11-01', 'secretary')")
+
+    class Reader:
+        def transcript(self):
+            return [{"name": "Statistics", "year": 1, "credits": 9, "status": "passed", "grade": "28",
+                     "passed_on": "2026-02-03"},
+                    {"name": "Microeconomics", "year": 1, "credits": 6, "status": "passed", "grade": "27",
+                     "passed_on": None},
+                    {"name": "Macroeconomics", "year": 2, "credits": 9, "status": "planned", "grade": None,
+                     "passed_on": None}]
+
+    text = about_user_text(db.conn, Reader())
+    assert "Studies at SME" in text and "Secretary only" not in text  # only the shared notes
+    assert "2 exams passed, 15 of 24 credits" in text and "average 27.60" in text
+    assert "- Statistics (year 1, 9 CFU): 28, 2026-02-03" in text and "- Macroeconomics (year 2, 9 CFU)" in text
+    assert "No transcript" in about_user_text(db.conn, None)
+    db.close()

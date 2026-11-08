@@ -169,6 +169,14 @@ the click is refused.
 - After the user confirms, you'll be told. Check the page still shows that total, click the confirmed button, \
 then read the confirmation page: call record_order with what it says (the order number, the total, the items, \
 when it arrives), then finish.
+- Forms and questionnaires (a university's, like Edumeter; a booking's details): read each field's value before \
+saying anything about it: an empty box isn't prefilled, and "prefilled, unchanged" is only for fields you read. Fill \
+what you know: the task first, then about_user (Aide's notes and, for the university, the transcript: credits so far, \
+the average, exams passed and still to take, the year). For fields neither answers, call ask_user once for the \
+page, all of them together, saying which are optional and what you'd put, instead of guessing or leaving them blank \
+without a word. Ratings follow the task. A button that only goes to the form's next page (Avanti) is fine; before \
+the one that sends it (Invia, Invia questionario, Conferma), ask_confirm with total "" and items [] and, in \
+`summary`, what you answered in short (the course, then "all 'Decisamente sì' except …", the personal details).
 - finish with a short message for the user, in English: what you did or found, or why you \
 couldn't. Plain text, no Markdown. When you found things to show (products to compare, the item you put in the \
 cart, trains, restaurants), put them in finish's `products`, best first, each with a short name (brand, model, \
@@ -1224,6 +1232,7 @@ class Phase:
             tools = [t for t in tools if t.name in ESSE3_TOOLS]
             self.registry = {t.name: t for t in tools}
             return tools
+        tools.append(self._about_tool())
         if d := self.errand["timed_drop"]:
             tools += self._drop_tools(d)
         elif self.errand.get("release") and self.runner.releases is not None:
@@ -1302,6 +1311,16 @@ class Phase:
     def _end(self, kind: str, args: dict) -> None:
         self.outcome = (kind, args)
         raise Stop()
+
+    def _about_tool(self) -> Tool:
+        async def about_user() -> str:
+            return about_user_text(self.store.conn, self.runner.esse3)
+        return Tool("about_user", "What Aide knows about the user, for a form that asks about them (a university "
+                    "questionnaire's personal details, a booking's): Aide's saved notes on them and, from Esse3, their "
+                    "degree's transcript (exams passed with grade and credits, credits so far, the average, what's "
+                    "left). Read-only. Type it only into the form that asks for it, nowhere else.",
+                    {"type": "object", "properties": {}, "additionalProperties": False}, about_user,
+                    step=lambda a: "Looking at what Aide knows about you")
 
     def _control_tools(self) -> list[Tool]:
         async def need_user(why: str, reason: str) -> str:
@@ -1762,6 +1781,34 @@ def _armed(e: dict) -> bool:
 def _utc(text: str) -> datetime:
     when = datetime.fromisoformat(text)
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def about_user_text(conn: sqlite3.Connection, esse3: "Esse3Reader | None") -> str:
+    """The errand's about_user: the shared memory and the Esse3 transcript, as lines."""
+    notes = [r[0] for r in conn.execute("SELECT text FROM memory WHERE agent IS NULL ORDER BY id")]
+    out = ["Aide's notes on the user:", *(f"- {n}" for n in notes)] if notes else ["Aide has no notes on the user."]
+    rows = []
+    if esse3 is not None:
+        try:
+            rows = esse3.transcript()  # the saved transcript: a database read, nothing fetched
+        except Exception:
+            log.warning("about_user: the transcript failed", exc_info=True)
+    if not rows:
+        out.append("No transcript from Esse3 (not read yet, or no UniTo login): ask the user what the form needs.")
+        return "\n".join(out)
+    passed = [t for t in rows if t["status"] == "passed"]
+    left = [t for t in rows if t["status"] != "passed"]
+    graded = [(int(t["grade"][:2]), t["credits"] or 0) for t in passed if (t["grade"] or "")[:2].isdigit()]
+    weight = sum(w for _, w in graded)
+    average = f", weighted average {sum(g * w for g, w in graded) / weight:.2f}" if weight else ""
+    done, total = sum(t["credits"] or 0 for t in passed), sum(t["credits"] or 0 for t in rows)
+    out += [f"\nTheir degree's transcript (Esse3): {len(passed)} exams passed, {done:g} of {total:g} credits in "
+            f"the plan{average}.",
+            "Passed:", *(f"- {t['name']} (year {t['year']}, {t['credits'] or 0:g} CFU): {t['grade'] or 'passed'}"
+                         f"{', ' + t['passed_on'][:10] if t['passed_on'] else ''}" for t in passed),
+            "Still to take:", *(f"- {t['name']} (year {t['year']}, {t['credits'] or 0:g} CFU)"
+                                f"{'' if t['status'] == 'planned' else ': ' + t['status']}" for t in left)]
+    return "\n".join(out)
 
 
 ESSE3_TOOLS = {"open_page", "read_page", "find_on_page", "screenshot", "click", "select_option", "scroll", "go_back",

@@ -619,7 +619,7 @@ private struct QueuedActionRow: View {
                     }
                 }
             }
-            if let order = action.purchase { PurchaseSummary(detail: order) }
+            if let order = action.purchase, order.hasSummary { PurchaseSummary(detail: order) }
             if let drop = action.drop { DropSummary(detail: drop) }
             HStack(spacing: 10) {
                 Button(action: confirm) {
