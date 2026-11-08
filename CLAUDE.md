@@ -26,8 +26,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `agent.py`: Claude tool-use loop (via OpenRouter, Anthropic SDK), conversation history, the confirmation queue.
 - `agents.py`: the agents (Aide and the specialists): prompts, tool sets, colours, starters.
 - `router.py`: before Aide runs on a typed message (its chat, or the Team chat with no mention or follow-up), one
-  fast-model call picks the specialist; at `p` ≥ 0.6 that specialist answers directly (#59; fails open in 1.5 s,
-  each pick a row in `routes` to check the threshold; `AIDE_ROUTER=off`).
+  call picks the specialist; at `p` ≥ 0.6 that specialist answers directly (#59; fails open in 1.5 s, each pick a row
+  in `routes` to check the threshold; `AIDE_ROUTER=off`). The picker is TypeSafe's Jev (`typesafe/jev-1.13`, a decision
+  model on OpenRouter's `/api/alpha/decisions`: ~0.2 s, a probability per agent; 20/20 against Haiku's 20/20 at ~0.8 s,
+  2026-11-08), or a chat model asked for JSON (`AIDE_ROUTER_MODEL=anthropic/claude-haiku-5.5`).
 - `db.py`: SQLite (WAL) at `data/aide.db`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
 - `channels/api.py` (FastAPI): the app's API, the only way in since the Discord bot was removed (2026-10-21).

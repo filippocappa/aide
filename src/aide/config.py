@@ -155,7 +155,7 @@ def load_settings() -> Settings:
         voice_thinking=os.environ.get("AIDE_VOICE_THINKING", "").strip().lower() in ("1", "true", "on", "yes"),
         voice_direct=os.environ.get("AIDE_VOICE_DIRECT", "").strip().lower() not in ("0", "false", "off", "no"),
         router_model=None if os.environ.get("AIDE_ROUTER", "").strip().lower() in ("0", "false", "off", "no")
-        else os.environ.get("AIDE_ROUTER_MODEL", "").strip() or haiku,
+        else os.environ.get("AIDE_ROUTER_MODEL", "").strip() or ("typesafe/jev-1.13" if openrouter_key else haiku),
         openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip() or None,
         live_model=os.environ.get("AIDE_LIVE_MODEL", "").strip() or "gpt-live-1",
         live_voice=os.environ.get("AIDE_LIVE_VOICE", "").strip() or "marin",

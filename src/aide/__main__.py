@@ -355,7 +355,7 @@ def main() -> None:
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
     agent.voice_quiz = VoiceQuiz(quizzes, study)  # "B" by voice in a quiz: marked with no model call
     if settings.router_model:  # a message to Aide goes straight to the specialist when it's clear whose it is (#59)
-        agent.router = Router(client, settings.router_model, db.conn)
+        agent.router = Router(client, settings.router_model, db.conn, key=settings.openrouter_api_key)
     agent.short_chat = lambda conversation: conversation == food.chat()  # the Food log reads its last few meals
     # Coach sees today's food against the day's targets on every message: a run uploaded after the last meal was
     # logged raises them, and an old tool result in the chat would still say the lower ones.

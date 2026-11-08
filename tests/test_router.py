@@ -142,3 +142,57 @@ def test_parse():
     # Thought out loud and ran out of tokens before the brace.
     assert router.parse('It spans more than one specialist.\n\n{"agent": "aide", "p": 0.85') == Pick("aide", 0.85)
     assert router.parse('{"agent": "coach", "p": 0.') is None
+
+
+def jev(agent, answers):
+    """The router on a decision model, answered by `answers` (each a JSON body, or an Exception to raise)."""
+    import httpx
+    sent = []
+
+    def handle(request):
+        sent.append(request)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return httpx.Response(200, json=answer)
+    agent.router = Router(None, "typesafe/jev-1.13", agent.db.conn, key="k",
+                          http=httpx.AsyncClient(transport=httpx.MockTransport(handle)))
+    return sent
+
+
+def decided(choice, probabilities):
+    return {"model": "typesafe/jev-1.13-20260917", "answers": {"agent": {
+        "type": "choice", "choice": choice, "probabilities": probabilities, "confidence": max(probabilities.values())}},
+        "usage": {"input_tokens": 581, "output_tokens": 57, "cost": 2.44e-05}}
+
+
+def test_a_decision_model_picks_with_its_probability(env, monkeypatch):
+    import json
+
+    from aide import usage
+    spent = []
+    monkeypatch.setattr(usage, "record", lambda engine, model, **kw: spent.append((model, kw["purpose"], kw["cost"])))
+    client, agent, _ = env([done("Seven hours.")])
+    sent = jev(agent, [decided("coach", {"coach": 0.97, "aide": 0.03})])
+    body = client.post("/v1/chat", json={"text": "how did I sleep?"}, headers=AUTH).json()
+    assert body["reply"] == "Seven hours." and body["routed"] == {"agent": "coach", "p": 0.97}
+    (request,) = sent
+    assert str(request.url) == "https://openrouter.ai/api/alpha/decisions"
+    assert request.headers["authorization"] == "Bearer k"
+    asked = json.loads(request.content)
+    assert asked["model"] == "typesafe/jev-1.13" and asked["state"]["new_message"] == "how did I sleep?"
+    question = asked["questions"]["agent"]
+    assert question["type"] == "choice" and set(question["criteria"]) == {"aide", *agent.router.agents}
+    assert ("typesafe/jev-1.13", "route", 2.44e-05) in spent
+
+
+@pytest.mark.parametrize("answer", [decided("aide", {"aide": 0.9, "coach": 0.1}),
+                                    decided("coach", {"coach": 0.5, "aide": 0.5}),
+                                    decided("bob", {"bob": 1}),
+                                    {"answers": {"agent": {"type": "refusal"}}},
+                                    RuntimeError("502")])
+def test_a_decision_model_unsure_or_failing_leaves_it_to_aide(env, answer):
+    client, agent, _ = env([done("Hi there!")])
+    jev(agent, [answer])
+    body = client.post("/v1/chat", json={"text": "hey"}, headers=AUTH).json()
+    assert body["reply"] == "Hi there!" and "routed" not in body
