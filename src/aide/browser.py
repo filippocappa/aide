@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 VIEWPORT = {"width": 412, "height": 915}  # a large phone, in CSS pixels
 WHOLE_HEIGHT = 9000  # CSS pixels of a page taken whole for a Confirm (a long questionnaire is ~5000)
+WHOLE_WIDTH = 1240  # and its width at most, for a page wider than the phone
 SCALE = 2  # device pixels per CSS pixel: sharp enough in the app's live view
 LOOK_IMAGE = {"width": 1100, "height": 1560}  # the window for a picture opened by its address (look_at_page)
 LOAD_TIMEOUT = 30_000  # ms for a page to load
@@ -1448,9 +1449,13 @@ class Browser:
         page = self._page(owner)
         if whole:
             try:
-                height = min(int(await page.evaluate("() => document.documentElement.scrollHeight")), WHOLE_HEIGHT)
+                # as wide as the page too: a questionnaire's table runs past the phone's width (its comment boxes)
+                width, height = await page.evaluate(
+                    "() => [document.documentElement.scrollWidth, document.documentElement.scrollHeight]")
                 return await page.screenshot(type="jpeg", quality=70, scale="device", full_page=True,
-                                             clip={"x": 0, "y": 0, "width": VIEWPORT["width"], "height": height})
+                                             clip={"x": 0, "y": 0, "width": min(max(int(width), VIEWPORT["width"]),
+                                                                                WHOLE_WIDTH),
+                                                   "height": min(int(height), WHOLE_HEIGHT)})
             except Exception:
                 log.warning("no whole-page screenshot for %s: the visible part instead", owner, exc_info=True)
         return await page.screenshot(type="jpeg", quality=70 if sharp else 60, scale="device" if sharp else "css")
