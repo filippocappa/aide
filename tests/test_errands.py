@@ -225,10 +225,10 @@ def test_money_and_totals():
 
 def test_commit_words():
     for text in ("Acquista ora", "Ordina", "Paga ora", "Invia", "Place your order", "Buy now", "Iscriviti",
-                 "Conferma e paga", "Prenota", "Book now", "Cancel order"):
+                 "Conferma e paga", "Prenota", "Book now", "Cancel order", "Invia form", "Invia questionario"):
         assert commits(text), text
     for text in ("Aggiungi al carrello", "Procedi all'ordine", "Proceed to checkout", "Continua", "Cerca",
-                 "Elimina", "Accedi", "Libro: The Book of Tea, copertina flessibile, edizione 2024 tascabile"):
+                 "Elimina", "Accedi", "Avanti Invia form", "Avanti  invia form", "Libro: The Book of Tea, copertina flessibile, edizione 2024 tascabile"):
         assert not commits(text), text
 
 

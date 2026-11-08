@@ -59,6 +59,8 @@ STEPS_KEPT = 60  # step lines kept on the errand
 SCREENSHOTS_SEEN = 2  # on OpenRouter, the model sees the latest screenshots; older ones become a line
 READS_KEPT = 3  # and the latest page listings in full; older ones their first lines
 CHECK_EVERY = 30  # seconds between the worker's looks at errands waiting on a Confirm or a reset
+# A form's next page: the visible word and a screen reader's generic "Invia form" (Edumeter, 2026-11-08).
+NEXT_FORM = re.compile(r"(avanti|indietro|next|previous|back|continua|continue|prosegui) (invia|submit) (il |the )?form")
 COMMIT_TEXT = 48  # characters: longer texts aren't buttons
 PICTURE_SECONDS = 30  # at the end, opening product pages for the pictures no page showed
 CONFIRM_TTL = timedelta(minutes=30)  # agent.PENDING_TTL: an unanswered Confirm expires
@@ -1958,6 +1960,8 @@ def commits(text: str | None) -> bool:
     """A button's text that buys, books, sends, signs up or deletes. Only short texts: a long link is a product
     or an article ("… Paperback book"), not a button."""
     text = _norm(text or "")
+    if (step := NEXT_FORM.fullmatch(text)) is not None:  # "Avanti Invia form": a page of a form, not the sending
+        text = step.group(1)
     return 0 < len(text) <= COMMIT_TEXT and bool(COMMIT.search(text))
 
 
