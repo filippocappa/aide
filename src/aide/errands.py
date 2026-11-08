@@ -137,6 +137,7 @@ ESSE3_CANCEL_HINT = re.compile(r"cancellaprenotazion|cancella|elimina|annulla|ri
 ESSE3_ANY_HINT = re.compile(r"effettuaprenotazion|prenotaappello|cancellaprenotazion|cancella|elimina|annulla|conferma",
                             re.I)
 ESSE3_HOST = "esse3.unito.it"
+UNITO = "unito.it"  # the university's sites: an errand there logs in with the saved login (`unito_login`)
 
 ESSE3_SYSTEM = """You are Aide, in a real browser (Chromium, phone-sized, Italian locale) on Esse3, the University \
 of Turin's student records, already logged in as the user. The user tapped one button in their app: sign them up for \
@@ -477,6 +478,7 @@ class ErrandRunner:
         self._images: dict[int, list[dict]] = {}  # an errand's pages' pictures by link, for its products
         self._cancelled: set[int] = set()
         self._dropping: dict[int, asyncio.Task] = {}  # armed drops' phases, run beside the queue's errand
+        self._unito: set[int] = set()  # errands given the server's UniTo login (`unito_login`)
 
     # -- what the user and Aide do --------------------------------------------
 
@@ -518,6 +520,34 @@ class ErrandRunner:
         self.queue.put_nowait(errand["id"])
         log.info("errand %s: Esse3 %s", errand["id"], target["action"])
         return self.store.get(errand["id"])
+
+    async def unito_login(self, errand_id: int) -> str | None:
+        """Aide's browser logged in to UniTo with the user's saved login, for an errand on one of the university's
+        sites (Edumeter, MyUniTo…): the server logs in itself (`UnitoSession.handoff`, the password never in the
+        browser or the model) and hands the browser the cookies, the IdP's among them, so the single sign-on passes
+        by itself. None when it worked, else why not. The UniTo profile goes when the errand ends (`_forget_unito`)."""
+        if self.esse3 is None:
+            return "Esse3 isn't set up on this server"
+        from .esse3 import BOOKED
+        from .unito import LoginFailed, NoLogin
+        try:
+            cookies = await self.esse3.session.handoff(BOOKED, await self.browser.user_agent())
+        except NoLogin:
+            return "no UniTo login saved (Settings → Passwords)"
+        except LoginFailed as x:
+            return str(x)
+        await self.browser.add_cookies(UNITO, cookies)
+        self._unito.add(errand_id)
+        log.info("errand %s: logged in to UniTo with the saved login", errand_id)
+        return None
+
+    async def _forget_unito(self, errand_id: int) -> None:
+        if errand_id in self._unito:
+            self._unito.discard(errand_id)
+            try:
+                await self.browser.forget(UNITO)
+            except Exception:
+                log.exception("errand %s: couldn't forget the UniTo profile", errand_id)
 
     def _esse3_ended(self, e: dict, kind: str, args: dict) -> None:
         """An Esse3 errand stopped (finished, needs the user, failed, cancelled): esse3.py checks and reports."""
@@ -602,6 +632,8 @@ class ErrandRunner:
             asyncio.get_running_loop().create_task(self.browser.close(_owner(errand_id)))
         if not e.get("esse3"):
             activity.record(self.store.conn, "aide", "errand", e["title"], "Cancelled", e["conversation"])
+            if self.current != errand_id:  # a running one is forgotten when its phase stops
+                asyncio.get_running_loop().create_task(self._forget_unito(errand_id))
         self._esse3_ended(e, "cancelled", {})
         return e
 
@@ -807,6 +839,7 @@ class ErrandRunner:
                 self.store.update(errand_id, url=where["url"], site=self.store.get(errand_id)["site"] or where["site"])
         if errand_id in self._cancelled or phase.outcome[0] == "cancelled":
             await self.browser.close(_owner(errand_id))
+            await self._forget_unito(errand_id)
             return
         await self._end_phase(self.store.get(errand_id), *phase.outcome)
 
@@ -890,6 +923,7 @@ class ErrandRunner:
                                   step="Done" if ok else "Stopped")
             self._close(errand_id, failed=not ok, text=result)
             await self.browser.close(_owner(errand_id))
+            await self._forget_unito(errand_id)
             if e.get("esse3"):
                 self._esse3_ended(e, "finish", {"ok": ok, "result": result})
                 return
@@ -980,6 +1014,7 @@ class ErrandRunner:
         activity.record(self.store.conn, "aide", "errand", e["title"], text, e["conversation"])
         loop = asyncio.get_running_loop()
         loop.create_task(self.browser.close(_owner(errand_id)))
+        loop.create_task(self._forget_unito(errand_id))
         loop.create_task(self._post(e, "An errand failed", text, card=True, push=f"Aide · {e['title']}"))
 
     def _close(self, errand_id: int, failed: bool, text: str) -> None:
@@ -1051,6 +1086,13 @@ def _was(was, price) -> str | None:
         return None
     old, now = parse_money(str(was))[0], parse_money(str(price))[0]
     return str(was).strip()[:30] if old is not None and now is not None and old > now else None
+
+
+def _on_unito(url: str) -> bool:
+    """An https page on one of the university's sites (edumeter.unito.it, idp.unito.it, my.unito.it…)."""
+    u = urlparse(url)
+    host = (u.hostname or "").lower()
+    return u.scheme == "https" and (host == UNITO or host.endswith("." + UNITO))
 
 
 def _owner(errand_id: int) -> str:
@@ -1233,6 +1275,9 @@ class Phase:
             elif COMMIT_HINT.search(urlparse(url).path + "?" + urlparse(url).query):
                 raise ValueError("That address looks like it places an order or pays: go there through the page, "
                                  "and ask_confirm with the button.")
+            if not self.errand.get("esse3") and _on_unito(url) and self.errand_id not in self.runner._unito:
+                if why := await self.runner.unito_login(self.errand_id):
+                    log.info("errand %s: no UniTo login (%s)", self.errand_id, why)
             self._step(f"Opened {url[:120]}", doing=doing)
             heading = await b.open(owner, url)
             if not self.store.get(self.errand_id)["site"]:
@@ -1362,6 +1407,14 @@ class Phase:
         async def need_user(why: str, reason: str) -> str:
             if why not in WHY or why in ("question", "plan_limit"):
                 raise ValueError("why must be login, captcha, code, card or other")
+            where = self.browser.where(self.owner)
+            if why == "login" and not self.errand.get("esse3") and where and _on_unito(where["url"]) \
+                    and self.errand_id not in self.runner._unito:
+                if (why_not := await self.runner.unito_login(self.errand_id)) is None:
+                    self._step("Logged in to UniTo with the saved login")
+                    return ("Logged in with the user's saved UniTo login. Open the page you wanted again with "
+                            "open_page (its own address, not the login page's): the login passes by itself now.")
+                log.info("errand %s: no UniTo login (%s)", self.errand_id, why_not)
             self._end("need_user", {"why": why, "reason": reason})
 
         async def ask_user(question: str, options: list[str] | None = None,

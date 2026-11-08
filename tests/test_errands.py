@@ -1168,3 +1168,85 @@ def test_shop_pictures_are_asked_for_big():
     assert sharp_image("https://shop.it/a.jpg?w=1600") == "https://shop.it/a.jpg?w=1600"
     assert sharp_image("https://shop.it/a.jpg") == "https://shop.it/a.jpg"
     assert sharp_image(None) is None
+
+
+class FakeUnito:
+    """The Esse3 reader's UniTo session, as `unito_login` uses it."""
+
+    def __init__(self, fails=None):
+        self.fails, self.handoffs = fails, []
+
+    async def handoff(self, url, user_agent=None):
+        if self.fails:
+            raise self.fails
+        self.handoffs.append((url, user_agent))
+        return [{"name": "shib_idp_session", "value": "x", "url": "https://idp.unito.it/"}]
+
+
+class UnitoBrowser(FakeBrowser):
+    def __init__(self):
+        super().__init__({**PAGES,
+                          "https://edumeter.unito.it/": ("Edumeter", "Questionari da compilare", {}),
+                          "https://idp.unito.it/idp/login": ("Accedi", "Nome utente Password", {})})
+        self.cookies, self.forgot = [], []
+
+    async def user_agent(self):
+        return "UA"
+
+    async def add_cookies(self, site, cookies):
+        self.cookies.append((site, cookies))
+
+    async def forget(self, site):
+        self.forgot.append(site)
+        return True
+
+
+def unito_runner(tmp_path, script, session):
+    from types import SimpleNamespace
+    db = Database(":memory:")
+    browser = UnitoBrowser()
+    runner = ErrandRunner(ErrandStore(db.conn, ROME), browser, FakeClient(script), "m", CONVERSATION,
+                          photos=PhotoStore(tmp_path / "photos"), audit=db.audit)
+    runner.agent = Agent(FakeClient([]), db, ToolRegistry(errand_tools(runner, lambda: CONVERSATION)), model="m",
+                         tz=ROME, photos=runner.photos)
+    runner.esse3 = SimpleNamespace(session=session)
+    return runner, browser
+
+
+async def test_an_errand_on_unito_logs_in_with_the_saved_login(tmp_path):
+    session = FakeUnito()
+    runner, browser = unito_runner(tmp_path, [
+        calls(("open_page", {"url": "https://edumeter.unito.it/"})),
+        calls(("finish", {"result": "Filled in, waiting for your OK.", "ok": True})),
+    ], session)
+    runner.start("Fill in the Edumeter", "Edumeter", None, CONVERSATION)
+    e = await next_phase(runner)
+    assert e["status"] == "done"
+    assert session.handoffs == [("https://esse3.unito.it/auth/studente/Appelli/BachecaPrenotazioni.do", "UA")]
+    assert browser.cookies[0][0] == "unito.it"
+    assert browser.forgot == ["unito.it"]  # the login doesn't outlive the errand
+
+
+async def test_a_unito_login_page_is_passed_with_the_saved_login(tmp_path):
+    session = FakeUnito()
+    runner, browser = unito_runner(tmp_path, [
+        calls(("need_user", {"why": "login", "reason": "Log in to UniTo."})),
+        calls(("finish", {"result": "Done.", "ok": True})),
+    ], session)
+    e = runner.start("Fill in the Edumeter", "Edumeter", None, CONVERSATION)
+    browser.at[f"errand:{e['id']}"] = "https://idp.unito.it/idp/login"  # got there through a link
+    e = await next_phase(runner)
+    assert e["status"] == "done" and len(session.handoffs) == 1
+    assert "saved UniTo login" in json.dumps(runner.client.requests[1]["messages"])
+
+
+async def test_without_a_unito_login_the_user_logs_in(tmp_path):
+    from aide.unito import NoLogin
+    runner, browser = unito_runner(tmp_path, [
+        calls(("open_page", {"url": "https://edumeter.unito.it/"})),
+        calls(("need_user", {"why": "login", "reason": "Log in to UniTo."})),
+    ], FakeUnito(fails=NoLogin("none")))
+    runner.start("Fill in the Edumeter", "Edumeter", None, CONVERSATION)
+    e = await next_phase(runner)
+    assert (e["status"], e["why"]) == ("needs_you", "login")
+    assert browser.cookies == [] and browser.forgot == []
