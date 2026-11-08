@@ -322,9 +322,10 @@ class Agent:
         return [a for a in self.db.pending_actions(channel, PENDING_TTL)
                 if (a["id"] in ids if ids is not None else not _standing(a))]
 
-    async def confirm(self, channel: str, ids: list[int] | None = None, by_voice: bool = False) -> str:
+    async def confirm(self, channel: str, ids: list[int] | None = None, by_voice: bool = False,
+                      rest: bool = False) -> str:
         """Run every pending action, or only those with the given ids. `by_voice`: a spoken yes in a live call
-        (livecall.py), not a tap."""
+        (livecall.py), not a tap. `rest`: an errand's send confirmed "with the rest like it" (errands.py)."""
         async with self._lock:
             actions = self._answerable(channel, ids)
             if not actions:
@@ -334,7 +335,9 @@ class Agent:
                 # The tool runs for the chat that queued it (a tool that posts back there: an Esse3 sign-up).
                 was, self._conversation = self._conversation, action["conversation"]
                 try:
-                    out, err = await self._execute(action["tool"], action["args"])
+                    args = {**action["args"], "rest": True} if rest and action["tool"] == "errand_go" \
+                        else action["args"]
+                    out, err = await self._execute(action["tool"], args)
                 finally:
                     self._conversation = was
                 self.db.set_pending_status(action["id"], "failed" if err else "done")

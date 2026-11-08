@@ -1897,6 +1897,8 @@ struct DraftSent: Decodable { let ok: Bool; let draft: MailDraft }
 
 /// Which queued actions to confirm or cancel.
 struct ActionIDs: Encodable { let ids: [Int] }
+/// A Confirm of an errand's send "and the rest like it" (`rest`, docs/API.md).
+struct ConfirmIDs: Encodable { let ids: [Int]; let rest: Bool }
 
 // MARK: - Dates
 
@@ -3414,6 +3416,10 @@ struct PurchaseDetail: Decodable, Hashable {
     var screenshot: String?
     /// The button it will press once you confirm.
     var button: String?
+    /// Answers the errand chose itself, that nobody gave it (a form's field): check them before confirming.
+    var guessed: [String]?
+    /// A send with nothing to pay (a form): it can be confirmed with the rest like it in the errand.
+    var rest: Bool?
     // A timed drop (`kind` "drop"): the limits it buys inside.
     var item: String?
     var variant: String?

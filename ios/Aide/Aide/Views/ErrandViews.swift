@@ -1008,6 +1008,12 @@ struct PurchaseConfirmSheet: View {
                                 .padding(14)
                                 .background(Theme.row, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                         }
+                        if let guessed = detail.guessed, !guessed.isEmpty {
+                            Label("Aide guessed \(guessed.joined(separator: "; ")). Check it on the page before you "
+                                  + "confirm, or cancel and tell it the right answer.",
+                                  systemImage: "questionmark.circle.fill")
+                                .font(.footnote).foregroundStyle(.orange)
+                        }
                         if let button = detail.button {
                             Text("Confirm and Aide presses \u{201C}\(button)\u{201D} on \(detail.site ?? "the site")"
                                  + (detail.pays ? ", only if the total is still the same." : "."))
@@ -1036,16 +1042,27 @@ struct PurchaseConfirmSheet: View {
             }
             .background(Theme.grouped)
             .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 10) {
-                    Button(role: .cancel) { Task { await answer(confirm: false) } } label: {
-                        Text("Cancel").frame(maxWidth: .infinity)
+                VStack(spacing: 8) {
+                    HStack(spacing: 10) {
+                        Button(role: .cancel) { Task { await answer(confirm: false) } } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        Button { Task { await answer(confirm: true) } } label: {
+                            Text(confirmTitle).frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .foregroundStyle(Theme.onAccent)
                     }
-                    .buttonStyle(.bordered)
-                    Button { Task { await answer(confirm: true) } } label: {
-                        Text(confirmTitle).frame(maxWidth: .infinity)
+                    // A form's send: one tap for the errand's next ones too (each still asks if Aide guessed).
+                    if action.purchase?.rest == true {
+                        Button { Task { await answer(confirm: true, rest: true) } } label: {
+                            Text("Confirm this and the rest like it").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        Text("The next ones in this errand are sent without asking, unless Aide had to guess an answer.")
+                            .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .foregroundStyle(Theme.onAccent)
                 }
                 .controlSize(.large)
                 .disabled(busy)
@@ -1075,12 +1092,13 @@ struct PurchaseConfirmSheet: View {
         return "Confirm · \(total)"
     }
 
-    private func answer(confirm: Bool) async {
+    private func answer(confirm: Bool, rest: Bool = false) async {
         busy = true
         defer { busy = false }
         do {
             if confirm {
-                let result = try await env.api.confirm(ids: [action.id]).result
+                let result = try await (rest ? env.api.confirm(ids: [action.id], rest: true)
+                                             : env.api.confirm(ids: [action.id])).result
                 if result.contains("✗") { error = result; return }
             } else {
                 _ = try await env.api.cancel(ids: [action.id])

@@ -190,7 +190,7 @@ data: { the usual /v1/chat body, including the whole "team" }
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/confirm` | `{}`, or `{"ids": [42]}` | `{"result": "✓ Moved: …", "pending": []}`. Runs every pending action, or only those (since 2026-10-22; see Activity and approvals). |
+| `POST /v1/confirm` | `{}`, or `{"ids": [42]}`, or `{"ids": [42], "rest": true}` | `{"result": "✓ Moved: …", "pending": []}`. Runs every pending action, or only those (since 2026-10-22; see Activity and approvals). `rest` (since 2026-11-08): an errand's send that has `"rest": true` in its `detail` is confirmed "with the rest like it" (Browser errands). |
 | `POST /v1/cancel` | `{}`, or `{"ids": [42]}` | `{"result": "Cancelled. Nothing was changed.", "pending": [ … ]}`: what's still waiting. |
 | `POST /v1/new` | `{}` | `{"ok": true}`. Starts a fresh conversation (like `!new`). |
 | `POST /v1/think` | `{}` | `{"ok": true}`. Smarter model for the rest of the conversation (like `!think`). |
@@ -2555,9 +2555,14 @@ The Confirm's `detail` (on that action in `/v1/approvals` and `pending`):
 {"kind": "purchase", "errand_id": 7, "site": "amazon.it", "summary": "Order the Anker USB-C cable",
  "items": [{"title": "Anker USB-C cable 2 m", "quantity": 1, "price": "9,99 €", "image": "https://m.media-amazon.com/…"}],
  "total": "12,98 €", "delivery": "Tomorrow, 28 Oct", "address": "Via Roma 1, Torino",
- "screenshot": "p_3f2a…", "button": "Acquista ora"}
+ "screenshot": "p_3f2a…", "button": "Acquista ora", "guessed": [], "rest": false}
 ```
-`total`, prices and `delivery` are as the site wrote them. `screenshot` is a photo id (`GET /v1/photos/{id}`) of
+`total`, prices and `delivery` are as the site wrote them. Since 2026-11-08: `guessed` lists the answers the errand
+chose itself that nobody gave it (a form's field; also at the end of `summary` as "I guessed: …"), and `rest` is true
+for a send with nothing to pay (a form, a questionnaire). Then the app offers "Confirm this and the rest like it"
+(`POST /v1/confirm` with `"rest": true`): the errand's later sends with nothing to pay and nothing guessed go through
+without asking, each logged in Activity; one with a guess, or one with a total, still waits for its own Confirm.
+Old servers leave both out. `screenshot` is a photo id (`GET /v1/photos/{id}`) of
 the checkout page; `image`, `delivery` and `address` may be null.
 
 Purchase (an order placed):

@@ -367,6 +367,7 @@ class ObjectivesAccept(BaseModel):
 
 class ActionsIn(BaseModel):
     ids: list[int] | None = None  # None: every pending action
+    rest: bool = False  # Confirm only: an errand's send "and the rest like it"
 
 
 class ConversationIn(BaseModel):
@@ -934,7 +935,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])
     async def confirm(body: ActionsIn | None = None):
-        return {"result": await agent.confirm(CONVERSATION, body.ids if body else None), "pending": pending()}
+        return {"result": await agent.confirm(CONVERSATION, body.ids if body else None,
+                                              rest=bool(body and body.rest)), "pending": pending()}
 
     @app.post("/v1/cancel", dependencies=[Depends(auth)])
     async def cancel(body: ActionsIn | None = None):

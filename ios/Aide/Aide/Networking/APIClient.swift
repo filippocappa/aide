@@ -151,6 +151,11 @@ final class APIClient {
         try await send("POST", "/v1/confirm", body: ActionIDs(ids: ids), timeout: 120)
     }
 
+    /// An errand's send, and its later ones like it (nothing to pay, nothing guessed) without asking.
+    func confirm(ids: [Int], rest: Bool) async throws -> ActionResult {
+        try await send("POST", "/v1/confirm", body: ConfirmIDs(ids: ids, rest: rest), timeout: 120)
+    }
+
     func cancel(ids: [Int]) async throws -> ActionResult {
         try await send("POST", "/v1/cancel", body: ActionIDs(ids: ids))
     }

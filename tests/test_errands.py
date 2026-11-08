@@ -316,6 +316,7 @@ async def test_an_order_waits_for_confirm_then_goes_through(env):
     assert action["detail"]["items"] == [ITEM] and action["detail"]["total"] == "12,98 €"
     assert action["detail"]["address"] == "Via Roma 1, Torino" and action["detail"]["screenshot"].startswith("p_")
     assert action["detail"]["button"] == "Acquista ora" and action["detail"]["site"] == "amazon.it"
+    assert action["detail"]["rest"] is False and action["detail"]["guessed"] == []  # money: one Confirm each
 
     # Confirm only schedules the next phase: no browser step under the agent's lock.
     result = await agent.confirm(CONVERSATION)
@@ -339,6 +340,41 @@ async def test_an_order_waits_for_confirm_then_goes_through(env):
     # Finance sees it.
     listed = await purchase_tools(runner.store, ROME)[0].handler(days=7, site=None)
     assert "amazon.it" in listed and "Total: 12.98 EUR" in listed
+
+
+async def test_confirming_the_rest_sends_the_next_forms_unless_one_has_a_guess(env):
+    """"Confirm this and the rest like it": the errand's next sends with nothing to pay and nothing guessed go
+    through at once; one with a guess waits for its own Confirm, with the guess in what the user reads."""
+    make, db, browser = env
+    form = "https://forms.example.it/"
+    for n in (1, 2, 3):
+        browser.pages[f"{form}{n}"] = (f"Questionario {n}", f"Questionario {n}",
+                                       {str(n): {"text": "Invia", "goes": f"{form}{n + 1}"}})
+    browser.pages[f"{form}4"] = ("Grazie", "Inviato", {})
+    form_confirm = lambda n, guessed: ("ask_confirm", {"summary": f"Send questionnaire {n}: all 4", "ref": str(n),
+                                                       "total": "", "items": [], "guessed": guessed})
+    runner, agent, _ = make([
+        calls(("open_page", {"url": f"{form}1"})),
+        calls(form_confirm(1, [])),
+        # After "this and the rest":
+        calls(("click", {"ref": "1"})),
+        calls(form_confirm(2, [])),
+        calls(("click", {"ref": "2"})),
+        calls(form_confirm(3, ["attendance 50-70%"])),
+    ])
+    runner.start("Fill in the questionnaires", "Questionnaires", "forms.example.it", CONVERSATION)
+    e = await next_phase(runner)
+    [action] = db.pending_actions(CONVERSATION, runner_ttl())
+    assert e["status"] == "waiting_confirm" and action["detail"]["rest"] is True
+
+    assert "with the rest like it" in await agent.confirm(CONVERSATION, rest=True)
+    e = await next_phase(runner)
+    assert browser.clicked == ["Invia", "Invia"]  # 1 on the tap, 2 with it
+    assert e["status"] == "waiting_confirm" and e["reason"] == \
+        "Send questionnaire 3: all 4. I guessed: attendance 50-70%"
+    [action] = db.pending_actions(CONVERSATION, runner_ttl())
+    assert action["detail"]["guessed"] == ["attendance 50-70%"]
+    assert any("Confirmed with the rest: Send questionnaire 2" in s["text"] for s in e["steps"])
 
 
 def prompt_of(request) -> str:

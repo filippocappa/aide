@@ -174,9 +174,15 @@ saying anything about it: an empty box isn't prefilled, and "prefilled, unchange
 what you know: the task first, then about_user (Aide's notes and, for the university, the transcript: credits so far, \
 the average, exams passed and still to take, the year). For fields neither answers, call ask_user once for the \
 page, all of them together, saying which are optional and what you'd put, instead of guessing or leaving them blank \
-without a word. Ratings follow the task. A button that only goes to the form's next page (Avanti) is fine; before \
+without a word. Never make up a fact about the user (how many lectures they attended, how often they used office \
+hours, how many students there were, a date, a number): ask. Several forms asking the same thing: ask once for all \
+of them, and an answer the user gave (in the task or a reply) holds for every later form in the errand: don't ask \
+it again. Whatever you still chose yourself goes in ask_confirm's `guessed`. Ratings follow the task. A button that only goes to the form's next page (Avanti) is fine; before \
 the one that sends it (Invia, Invia questionario, Conferma), ask_confirm with total "" and items [] and, in \
-`summary`, what you answered in short (the course, then "all 'Decisamente sì' except …", the personal details). \
+`summary`, what you answered in short (the course, then "all 'Decisamente sì' except …", the personal details), \
+and in `guessed` every answer you picked that neither the task, the user's replies nor about_user gave (empty when \
+none). The user may confirm "this and the rest like it": then your next sends with nothing guessed go through at \
+once (ask_confirm says so: click the button straight away); one with a guess still waits for their Confirm. \
 "Don't send until I say so" (or "never press submit" in a task about filling something in) means exactly this: the \
 user's Confirm is them saying so. So fill one, ask_confirm, send it once confirmed, and go on to the next (several \
 questionnaires: one Confirm each); don't stop with them filled and unsent. Only "fill it in but don't send it at \
@@ -616,19 +622,28 @@ class ErrandRunner:
         self._esse3_ended(e, "cancelled", {})
         return e
 
-    def confirmed(self, errand_id: int) -> str:
+    def confirmed(self, errand_id: int, rest: bool = False) -> str:
         """errand_go, once the user confirmed: only marks it and schedules the next phase (it runs under the
-        agent's lock, so no browser step happens here)."""
+        agent's lock, so no browser step happens here). `rest`: they confirmed "this and the rest like it", so
+        the errand's later sends with nothing to pay and nothing guessed go through without asking."""
         e = self._get(errand_id)
         confirm = e["confirm"] or {}
         if e["status"] != "waiting_confirm" or not confirm:
             return f"Errand {errand_id} isn't waiting for a Confirm any more ({e['status']})."
         confirm["go"] = True
+        if rest and not str(confirm.get("total") or "").strip():
+            confirm["standing"] = utcnow().isoformat()
         self.store.update(errand_id, confirm=confirm)
         self._resume(e, f"The user confirmed: {confirm['summary']} (total {confirm['total']}). Check the page still "
                         f"shows the total {confirm['total']}, then click the button \"{confirm['label']}\" "
                         f"([{confirm['ref']}] when you asked). If the total or the items changed, don't click: "
-                        "ask_confirm again with what the page shows now.")
+                        "ask_confirm again with what the page shows now."
+                        + (" They confirmed the rest like it too: keep calling ask_confirm before each send, with "
+                           "`guessed` filled in honestly; one with nothing guessed goes through at once."
+                           if confirm.get("standing") else ""))
+        if confirm.get("standing"):
+            return (f"Confirmed, with the rest like it. Aide sends each next one on {e['site'] or 'the site'} without "
+                    "asking, unless it had to guess an answer: the result comes in this chat.")
         return f"Confirmed. Aide is doing it now on {e['site'] or 'the site'}: the result comes in this chat."
 
     def drop_confirmed(self, errand_id: int) -> str:
@@ -1358,8 +1373,8 @@ class Phase:
                                    or [o for o in (options or []) if o][:6]})
 
         async def ask_confirm(summary: str, ref: str, total: str, items: list[dict], delivery: str | None = None,
-                              address: str | None = None) -> str:
-            return await self._ask_confirm(summary, ref, total, items, delivery, address)
+                              address: str | None = None, guessed: list[str] | None = None) -> str:
+            return await self._ask_confirm(summary, ref, total, items, delivery, address, guessed)
 
         async def record_order(total: str, items: list[dict], order_number: str | None = None,
                                delivery: str | None = None) -> str:
@@ -1448,8 +1463,10 @@ class Phase:
                  _obj({"summary": {"type": "string", "description": "e.g. \"Order the Anker USB-C cable (2 m)\""},
                        "ref": {"type": "string"}, "total": {"type": "string"},
                        "items": {"type": "array", "items": item},
-                       "delivery": {"type": ["string", "null"]}, "address": {"type": ["string", "null"]}},
-                      ["summary", "ref", "total", "items", "delivery", "address"]), ask_confirm),
+                       "delivery": {"type": ["string", "null"]}, "address": {"type": ["string", "null"]},
+                       "guessed": {"type": ["array", "null"], "items": {"type": "string"},
+                                   "description": "answers you chose yourself, that nobody told you (empty: none)"}},
+                      ["summary", "ref", "total", "items", "delivery", "address", "guessed"]), ask_confirm),
             Tool("record_order", "After a confirmed order went through: what the confirmation page says.",
                  _obj({"total": {"type": "string"}, "items": {"type": "array", "items": item},
                        "order_number": {"type": ["string", "null"]}, "delivery": {"type": ["string", "null"]}},
@@ -1690,8 +1707,9 @@ class Phase:
                                            or named_picture(i["title"], images))} for i in items]
 
     async def _ask_confirm(self, summary: str, ref: str, total: str, items: list[dict], delivery: str | None,
-                           address: str | None) -> str:
+                           address: str | None, guessed: list[str] | None = None) -> str:
         runner, e = self.runner, self.store.get(self.errand_id)
+        guessed = [g.strip() for g in guessed or [] if g and g.strip()]
         if runner.agent is None:
             raise ValueError("Confirm isn't available.")
         info = await self.browser.inspect(self.owner, ref)  # BrowserError when there's no such ref
@@ -1706,10 +1724,24 @@ class Phase:
             except Exception:
                 log.warning("errand %s: no screenshot for the Confirm", self.errand_id, exc_info=True)
         site = e["site"] or (self.browser.where(self.owner) or {}).get("site")
+        standing = (e["confirm"] or {}).get("standing")
+        if standing and not str(total or "").strip() and not guessed:
+            # The user confirmed "this and the rest like it": a send with nothing to pay and nothing guessed goes
+            # through on that tap, logged as theirs.
+            self.store.update(self.errand_id, confirm={"ref": ref, "label": label, "total": total, "summary": summary,
+                                                       "go": True, "standing": standing})
+            self.store.log(self.errand_id, f"Confirmed with the rest: {summary}", counts=False)
+            activity.record(self.store.conn, "aide", "confirmed", f"{summary} (with the rest the user confirmed)",
+                            conversation=e["conversation"])
+            return (f"The user already confirmed this one with the rest like it: click [{ref}] \"{label}\" now, "
+                    "then go on.")
+        if guessed:
+            summary = f"{summary.rstrip(' .')}. I guessed: {'; '.join(guessed)}"
         said = f"{summary} ({total})" if str(total or "").strip() else summary  # a form: no "()"
         detail = {"kind": "purchase", "errand_id": self.errand_id, "site": site, "summary": summary,
                   "items": await self._pictured(_items(items)), "total": total, "delivery": delivery, "address": address,
-                  "screenshot": screenshot, "button": label[:80]}
+                  "screenshot": screenshot, "button": label[:80], "guessed": guessed,
+                  "rest": not str(total or "").strip()}
         action_id, _ = runner.agent.db.add_pending(
             runner.channel, "errand_go", {"errand": self.errand_id}, said, f"errand:{self.errand_id}",
             e["conversation"], "aide", detail=detail)
@@ -1717,7 +1749,7 @@ class Phase:
         self.store.update(self.errand_id, status="waiting_confirm", reason=said,
                           step="Waiting for your Confirm",
                           confirm={"action_id": action_id, "ref": ref, "label": label, "total": total,
-                                   "summary": summary})
+                                   "summary": summary, **({"standing": standing} if standing else {})})
         self.store.log(self.errand_id, f"Asked to confirm: {said}", counts=False)
         self.outcome = ("ask_confirm", {})
         raise Stop()
@@ -2046,8 +2078,8 @@ def errand_tools(runner: ErrandRunner, current_conversation: Callable[[], str | 
         e = runner.cancel(errand)
         return f"Errand #{e['id']} is {e['status']}."
 
-    async def errand_go(errand: int) -> str:
-        return runner.confirmed(errand)
+    async def errand_go(errand: int, rest: bool = False) -> str:
+        return runner.confirmed(errand, rest)
 
     async def errand_drop(errand: int) -> str:
         return runner.drop_confirmed(errand)
