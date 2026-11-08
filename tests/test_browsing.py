@@ -291,3 +291,22 @@ async def test_the_last_round_answers_with_tools_off(db, monkeypatch):
     last = client.requests[2]
     assert last["tool_choice"] == {"type": "none"}
     assert last["messages"][-1]["content"][-1]["text"].startswith("That was the last step")
+
+
+async def test_a_hanging_web_tool_is_stopped_and_the_turn_goes_on(db, monkeypatch):
+    """A page that went away mid-read once held a chat turn for minutes: the web tools have a time limit."""
+    import asyncio
+    import aide.agent as agent_module
+    monkeypatch.setattr(agent_module, "WEB_TIMEOUT", 0.05)
+
+    async def fetch_page(url: str) -> str:
+        await asyncio.sleep(10)
+        return "never"
+
+    tools = ToolRegistry([Tool("fetch_page", "Read", {"type": "object", "properties": {"url": {"type": "string"}},
+                                                      "required": ["url"], "additionalProperties": False}, fetch_page)])
+    client = FakeClient([("tool_use", [tool_use("a", "fetch_page", {"url": "https://gam.test"})]),
+                         ("end_turn", [text("From the other site: 8 €.")])])
+    agent = Agent(client, db, tools, model="fast-model", delegate=False)
+    assert await agent.reply("discord", "GAM price?") == "From the other site: 8 €."
+    assert "took too long" in _results(client.requests[1])[0]["content"]

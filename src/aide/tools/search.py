@@ -216,8 +216,9 @@ def search_tools(tavily: Tavily, tz: ZoneInfo, browser=None) -> list[Tool]:
             return None
         finally:
             try:
-                await browser.close(owner)
-                await browser.prune()
+                # a page that went away mid-read once hung the close for minutes, and the chat turn with it
+                await asyncio.wait_for(browser.close(owner), 15)
+                await asyncio.wait_for(browser.prune(), 15)
             except Exception:
                 log.warning("couldn't close the reading browser", exc_info=True)
 

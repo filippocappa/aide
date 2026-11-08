@@ -1152,13 +1152,22 @@ class Agent:
     async def _execute(self, name: str, args: dict, tools: ToolRegistry | None = None) -> tuple[str, bool]:
         """Run a tool. Queued actions run from the orchestrator's registry, which has every tool."""
         try:
-            out, err = await (tools or self.tools).call(name, args), False
+            call = (tools or self.tools).call(name, args)
+            out = await (asyncio.wait_for(call, WEB_TIMEOUT) if name in WEB_TOOLS else call)
+            err = False
+        except TimeoutError:  # a stuck page never holds the whole turn
+            log.warning("tool %s took over %ss", name, WEB_TIMEOUT)
+            out, err = f"Error: {name} took too long and was stopped. Try another source, or answer from what you have.", True
         except Exception as e:  # report to the model instead of failing the turn
             log.exception("tool %s failed", name)
             out, err = f"Error: {e}", True
         self.db.audit(name, args, out, err)
         return out, err
 
+
+# Read-only web tools, stopped when they hang (a fetch_page reads for up to 120 s, a research reads several at once).
+WEB_TOOLS = {"web_search", "research", "fetch_page", "look_at_page", "browse_page"}
+WEB_TIMEOUT = 180
 
 # Step labels for the tools that have none of their own, so a live call (and the app) can say what's going on.
 STEPS: dict[str, Callable[[dict], str | None]] = {
