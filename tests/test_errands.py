@@ -228,7 +228,7 @@ def test_commit_words():
                  "Conferma e paga", "Prenota", "Book now", "Cancel order", "Invia form", "Invia questionario"):
         assert commits(text), text
     for text in ("Aggiungi al carrello", "Procedi all'ordine", "Proceed to checkout", "Continua", "Cerca",
-                 "Elimina", "Accedi", "Avanti Invia form", "Avanti  invia form", "Libro: The Book of Tea, copertina flessibile, edizione 2024 tascabile"):
+                 "Elimina", "Accedi", "Avanti Invia form", "Avanti  invia form", "Avanti Invia form e vai alla pagina seguente", "Libro: The Book of Tea, copertina flessibile, edizione 2024 tascabile"):
         assert not commits(text), text
 
 

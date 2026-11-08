@@ -61,7 +61,6 @@ STEPS_KEPT = 60  # step lines kept on the errand
 SCREENSHOTS_SEEN = 2  # on OpenRouter, the model sees the latest screenshots; older ones become a line
 READS_KEPT = 3  # and the latest page listings in full; older ones their first lines
 CHECK_EVERY = 30  # seconds between the worker's looks at errands waiting on a Confirm or a reset
-# A form's next page: the visible word and a screen reader's generic "Invia form" (Edumeter, 2026-11-08).
 PICTURE_SECONDS = 30  # at the end, opening product pages for the pictures no page showed
 CONFIRM_TTL = timedelta(minutes=30)  # agent.PENDING_TTL: an unanswered Confirm expires
 WAITING_FOR = timedelta(minutes=30)  # live.WAITING_FOR: an errand waiting for the user keeps its activity this long

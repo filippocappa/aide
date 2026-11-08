@@ -68,7 +68,10 @@ COMMIT = re.compile(
     r"subscribe|sign up|register|unsubscribe|cancel (order|subscription|booking|membership)|"
     r"delete (account|profile)|close (account|profile))\b",
     re.I)
-NEXT_FORM = re.compile(r"(avanti|indietro|next|previous|back|continua|continue|prosegui) (invia|submit) (il |the )?form")
+NEXT_FORM = re.compile(r"(avanti|indietro|next|previous|back|continua|continue|prosegui) (invia|submit) (il |the )?form"
+                       # saying where it goes: "… e vai alla pagina seguente" (Edumeter's personal-details page)
+                       r"( e (vai|torna) alla pagina (seguente|successiva|precedente)"
+                       r"| and go to the (next|previous) page)?")
 COMMIT_TEXT = 48  # characters: longer texts aren't buttons
 KEYS = ("Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "Backspace")
 # A form's button that logs in: chat never logs in (an errand does, with the saved logins).
