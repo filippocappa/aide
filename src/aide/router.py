@@ -116,19 +116,21 @@ class Router:
         message = f"The conversation so far:\n{lines}\n\nThe new message:\n{text.strip()[:2000] or '(no text)'}{sent}"
         with usage.labels(purpose="route"):
             response = await self.client.beta.messages.create(
-                model=self.model, max_tokens=60, system=self.system, thinking={"type": "disabled"},
+                model=self.model, max_tokens=120, system=self.system, thinking={"type": "disabled"},
                 messages=[{"role": "user", "content": message}])
         answer = "".join(b.text for b in response.content if b.type == "text")
         return self.parse(answer)
 
     def parse(self, answer: str) -> Pick | None:
         """The pick in the model's answer, or None when it doesn't check out (not JSON, an agent not offered, no
-        probability between 0 and 1)."""
-        m = re.search(r"\{.*?\}", answer, re.S)
+        probability between 0 and 1). A model that thinks out loud first can run out of tokens before the closing
+        brace: the JSON is then closed for it."""
+        m = re.search(r"\{.*?(\}|$)", answer, re.S)
         if not m:
             return None
+        found = m.group(0) if m.group(1) else m.group(0).rstrip() + "}"
         try:
-            data = json.loads(m.group(0))
+            data = json.loads(found)
             agent, p = str(data["agent"]).strip().lower(), float(data["p"])
         except (ValueError, KeyError, TypeError):
             return None

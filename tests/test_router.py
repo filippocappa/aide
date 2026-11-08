@@ -139,3 +139,6 @@ def test_parse():
     assert router.parse('```json\n{"agent": "aide", "p": 1}\n```') == Pick("aide", 1.0)
     assert router.parse('{"agent": "finance", "p": 0.9}') is None
     assert router.parse('{"agent": "coach"}') is None
+    # Thought out loud and ran out of tokens before the brace.
+    assert router.parse('It spans more than one specialist.\n\n{"agent": "aide", "p": 0.85') == Pick("aide", 0.85)
+    assert router.parse('{"agent": "coach", "p": 0.') is None
