@@ -218,7 +218,14 @@ lines and give the 1–3 links you relied on.
 before answering, even when you think you know, since these change and memory gets them wrong. Never answer \
 "probably not" from memory, and never send the user to check a site themselves: looking it up is your job. If \
 what you read leaves part of the question open ("not sure the Workout app takes it"), research that part too (up \
-to 3 calls in all) and answer it; say you couldn't find it only when you searched and nothing says."""
+to 3 calls in all) and answer it; say you couldn't find it only when you searched and nothing says.
+- Lists on a site (an event's speakers or programme, exhibitors, a line-up, a menu): the home page shows only a few, \
+so open the full list: fetch_page gives the page's links under its text; follow the one for it ("View All", \
+"Speakers", "Programme") rather than guessing an address, and read every part. Asked for "the top 20", give 20 from \
+that list, picking by role (CEOs, directors, presidents first). If the site's list fails, try news articles about \
+it. What really isn't public (who's attending an event) you say in one line, then give the closest thing that is.
+- When the user says you didn't look properly, look further before answering again (the site's other pages, then \
+other sources); don't apologise for what you gave before, and don't stop at "I couldn't open it"."""
 
 _VIDEO = """- YouTube: when the user sends a YouTube link (youtube.com, youtu.be, a Shorts link), call summarize_video \
 with it, and with what they want from it as `question` if they said. It reads the video in the background and posts \

@@ -103,6 +103,7 @@ def full_url(url: str) -> str:
 WHOLE_PAGES = 10  # Next pressed at most this many times
 WHOLE_FOLDS = 40  # folded parts opened at most
 WHOLE_TABS = 8  # tabs read at most
+WHOLE_LINKS = 150  # links listed under the page's text at most
 _SKIP_FOLD = ('nav,header,footer,[role=navigation],[role=menu],[role=menubar],[role=dialog],[aria-modal=true],'
               '[aria-roledescription=carousel],.swiper,.slick-slider,.carousel,.embla')
 _SKIP_NEXT = _SKIP_FOLD.split(',', 4)[4]  # pagination often sits in a nav or footer: only menus, dialogs, carousels
@@ -193,6 +194,35 @@ def _new_part(before: list[str], after: list[str]) -> list[str]:
     while end < min(len(before), len(after)) - start and before[-1 - end] == after[-1 - end]:
         end += 1
     return after[start:len(after) - end]
+
+
+def _worth(new: list[str]) -> bool:
+    """Whether what a press added is content, not a ticking countdown or a counter ("44", "02:13")."""
+    return any(len(line) >= 4 and not line.replace(":", "").replace(".", "").isdigit() for line in new)
+
+
+# Every link on the page: [its text, its address], for the list under fetch_page's text.
+_LINKS_JS = r"""
+() => [...document.querySelectorAll('a[href]')].map(a =>
+  [(a.innerText || a.getAttribute('aria-label') || a.title || '').replace(/\s+/g, ' ').trim(), a.href])
+"""
+
+
+def _link_list(found: list[list[str]], at: str, limit: int = WHOLE_LINKS) -> list[str]:
+    """The page's links as "text: address" lines, each address once (no #part), the page itself left out; the
+    site's own links first, then the others, at most `limit`. Without them the model guesses addresses."""
+    site = (urlparse(at).hostname or "").removeprefix("www.")
+    here = at.split("#")[0].rstrip("/")
+    labels: dict[str, str] = {}
+    for label, href in found:
+        href = href.split("#")[0]
+        if href.startswith(("http://", "https://")) and len(href) <= 300 and href.rstrip("/") != here:
+            labels[href] = labels.get(href) or label[:80]  # an icon's link may be repeated with its text
+    def own(href: str) -> bool:
+        host = (urlparse(href).hostname or "").removeprefix("www.")
+        return host == site or host.endswith("." + site)
+    ordered = sorted(labels, key=lambda h: not own(h))  # stable: page order within each
+    return [f"{labels[h]}: {h}" if labels[h] else h for h in ordered[:limit]]
 
 
 def _lines(text: str) -> list[str]:
@@ -1351,8 +1381,14 @@ class Browser:
                     break
             await page.evaluate("() => window.scrollTo(0, 0)")
 
+        links: list[list[str]] = []
+
         async def text_now() -> list[str]:
             await to_the_end()
+            try:
+                links.extend(await page.evaluate(_LINKS_JS))
+            except Exception:
+                pass
             folded: list[dict] = []
             n = await page.evaluate(_FOLDS_JS, {"skip": _SKIP_FOLD, "max": WHOLE_FOLDS})
             for i in range(n):
@@ -1389,8 +1425,8 @@ class Browser:
                 await asyncio.sleep(0.6)
                 now = await text_now()
                 new = _new_part(lines, now)
-                if not new or "\n".join(now) in seen:
-                    break
+                if not _worth(new) or "\n".join(now) in seen:
+                    break  # nothing new, or only a countdown that ticked (a carousel's Next)
                 seen.add("\n".join(now))
                 out.append(f"--- after pressing “{pressed}” ({n + 2}) ---")
                 out += new
@@ -1415,11 +1451,13 @@ class Browser:
             await self._settle(page)
             now = await text_now()
             new = _new_part(lines, now)
-            if not new or "\n".join(now) in seen:
+            if not _worth(new) or "\n".join(now) in seen:
                 continue
             out.append(f"--- tab “{tab['label']}” ---")
             out += new
             lines = await paged(now, out)
+        if listed := _link_list(links, page.url):
+            out += ["", "--- links on the page ---", *listed]
         return f"{await page.title() or '(no title)'} — {page.url}\n\n" + "\n".join(out)
 
     async def offer(self, owner: str) -> dict:

@@ -213,7 +213,8 @@ def search_tools(tavily: Tavily, tz: ZoneInfo, browser=None) -> list[Tool]:
         n = max(1, min(part or 1, len(parts)))
         if len(parts) == 1:
             return parts[0]
-        more = (f"\n\n[Part {n} of {len(parts)}. The rest: fetch_page with part={n + 1}.]" if n < len(parts)
+        more = (f"\n\n[Part {n} of {len(parts)}. The rest: fetch_page with part={n + 1}. The page's links are at the "
+                f"end of the last part.]" if n < len(parts)
                 else f"\n\n[Part {n} of {len(parts)}, the last.]")
         return (f"[Part {n} of {len(parts)} of this page]\n" if n > 1 else "") + parts[n - 1] + more
 
@@ -238,7 +239,7 @@ def search_tools(tavily: Tavily, tz: ZoneInfo, browser=None) -> list[Tool]:
                             f"\u201c{a.get('query', '')}\u201d"),
         Tool("fetch_page", "Read one web page in full, as it shows in a browser: its folded parts opened, each tab, "
              "and the pages behind its Next or Load more button, so a whole programme, list or FAQ comes in one call. "
-             "Use it when the user gives a link or a search snippet isn't enough. A long page comes in parts: read "
+             "Under the text come the page's links (text: address): follow those, never a guessed address. Use it when the user gives a link or a search snippet isn't enough. A long page comes in parts: read "
              "every part before answering about all of it.",
              _obj({"url": {"type": "string"},
                    "part": {"type": "integer", "description": "which part of a long page, from 1 (the default)"}},

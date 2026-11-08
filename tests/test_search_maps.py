@@ -147,6 +147,27 @@ def test_new_part_keeps_what_next_added():
     assert _new_part(["Header", "Talk A"], ["Header", "Talk A", "Talk B"]) == ["Talk B"]  # a Load more
 
 
+def test_a_ticking_countdown_is_not_a_next_page():
+    from aide.browser import _worth
+    assert not _worth(["44"]) and not _worth(["06", "27", "44"]) and not _worth(["02:13"]) and not _worth([])
+    assert _worth(["Talk C"]) and _worth(["44", "Mattia Mucci"])
+
+
+def test_the_page_links_are_listed_own_site_first():
+    from aide.browser import _link_list
+    found = [["", "https://x.com/SF_Summit"], ["View All", "https://socialfootballsummit.com/en/sfs-26/speaker"],
+             ["", "https://socialfootballsummit.com/en/sfs-26/schedule"],
+             ["Schedule", "https://socialfootballsummit.com/en/sfs-26/schedule#day1"],
+             ["Home", "https://socialfootballsummit.com/en/"], ["Mail", "mailto:info@sfs.com"],
+             ["Shop", "https://shop.socialfootballsummit.com/tickets"]]
+    assert _link_list(found, "https://socialfootballsummit.com/en") == [
+        "View All: https://socialfootballsummit.com/en/sfs-26/speaker",
+        "Schedule: https://socialfootballsummit.com/en/sfs-26/schedule",
+        "Shop: https://shop.socialfootballsummit.com/tickets",
+        "https://x.com/SF_Summit"]
+    assert len(_link_list([["", f"https://a.it/{i}"] for i in range(9)], "https://a.it", limit=4)) == 4
+
+
 # -- maps ---------------------------------------------------------------------------------
 
 
