@@ -484,6 +484,25 @@ final class APIClientTests: XCTestCase {
         XCTAssertNil(try stream.feed(#"data: {"reply": "plain message event"}"#))
     }
 
+    func testStreamReadsAStepsKindAndTheBrowsedPage() throws {
+        var stream = EventStream()
+        XCTAssertNil(try stream.feed("event: step"))
+        guard case .step(_, let text, let kind)? = try stream.feed(#"data: {"agent": "aide", "text": "Opening gtt.to.it", "kind": "click"}"#) else {
+            return XCTFail("no step")
+        }
+        XCTAssertEqual(text, "Opening gtt.to.it")
+        XCTAssertEqual(kind, "click")
+        XCTAssertNil(try stream.feed("event: step"))  // an older server: no kind
+        guard case .step(_, _, nil)? = try stream.feed(#"data: {"agent": "aide", "text": "Checking the trams"}"#) else {
+            return XCTFail("no step")
+        }
+        XCTAssertNil(try stream.feed("event: page"))
+        guard case .page(let jpeg)? = try stream.feed(#"data: {"agent": "aide", "jpeg": "/9j/4A=="}"#) else {
+            return XCTFail("no page")
+        }
+        XCTAssertEqual(Array(jpeg.prefix(2)), [0xFF, 0xD8])
+    }
+
     func testMissingConfigFailsBeforeNetwork() async {
         StubURLProtocol.handler = { _ in XCTFail("no request expected"); return (200, "{}") }
         do { _ = try await makeClient(config: nil).today(); XCTFail("expected failure") }

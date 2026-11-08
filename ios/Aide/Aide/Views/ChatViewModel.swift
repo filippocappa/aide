@@ -99,7 +99,13 @@ final class ChatViewModel: ObservableObject {
     /// The reply on its way, as it's written. Replaced by the finished reply.
     @Published private(set) var liveReply = ""
     /// What the agent is doing for the reply on its way ("Searching the web for …"), while a tool runs.
-    @Published private(set) var liveStep: String?
+    @Published private(set) var liveStep: String? {
+        didSet { if liveStep == nil { liveStepKind = nil; livePage = nil } }
+    }
+    /// The step's kind (docs/API.md, `step`): which icon goes with it.
+    @Published private(set) var liveStepKind: String?
+    /// The page Aide is browsing, as it shows now (a `page` event), until the reply starts.
+    @Published private(set) var livePage: Data?
     /// The agents' group chat, oldest first (docs/API.md, "Team talk").
     @Published private(set) var team: [TeamMessage] = []
     /// The agent writing in the Team chat right now.
@@ -624,11 +630,14 @@ final class ChatViewModel: ObservableObject {
                     live?.agentUpdate(conversation: turn, status: "asking", detail: "Asking \(self.agent(message.to).name)")
                 }
                 if here() { liveTeam.append(message) }
-            }, onStep: { [weak self] who, label in
+            }, onStep: { [weak self] who, label, kind in
                 guard let self else { return }
                 let said = who == speaker ? label : "\(self.agent(who).name): \(label)"
                 working[turn]?.status = said
-                if here() { liveStep = said }
+                if here() { liveStep = said; liveStepKind = kind }
+            }, onPage: { [weak self] jpeg in
+                guard let self, here(), liveStep != nil else { return }
+                livePage = jpeg
             })
             working[turn] = nil
             live?.agentFinished(conversation: turn, reply: reply.reply)

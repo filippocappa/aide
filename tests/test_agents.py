@@ -486,7 +486,7 @@ def test_streamed_chat_sends_team_then_the_reply(env):
     r = client.post("/v1/chat", json={"text": "delete bins", "stream": True}, headers=AUTH)
     assert r.headers["content-type"].startswith("text/event-stream")
     step, *got = events(r)
-    assert step == ("step", {"text": "Asking Secretary", "agent": "aide"})
+    assert step == ("step", {"text": "Asking Secretary", "agent": "aide", "kind": "ask"})
     assert [e for e, _ in got] == ["team", "team", "text", "text", "text", "reply"]
     assert got[0][1]["text"] == "Delete Bins\nplease" and got[1][1]["from"] == "secretary"
     # Only Aide's own reply is streamed, not Secretary's answer, and it starts a fresh draft after the ask.
@@ -527,8 +527,24 @@ def test_streamed_chat_says_what_a_tool_is_doing(env):
     tools = agent.registries["aide"]._tools
     tools["web_search"] = dataclasses.replace(tools["web_search"], step=lambda a: f"Searching for {a['query']}")
     got = events(client.post("/v1/chat", json={"text": "look it up", "stream": True}, headers=AUTH))
-    assert ("step", {"agent": "aide", "text": "Searching for q"}) in got
+    assert ("step", {"agent": "aide", "text": "Searching for q", "kind": "search"}) in got
     assert [e for e, _ in got].index("step") < [e for e, _ in got].index("reply")
+
+
+def test_streamed_chat_sends_the_browsed_page(env):
+    """A tool whose output carries the page's picture sends it as a `page` event after its step (#77)."""
+    import dataclasses
+    from aide.tools import ToolOutput
+    client, agent, _ = env([("tool_use", [Block(type="tool_use", id="t0", name="web_search", input={"query": "q"})]),
+                            done("Found it.")])
+    tools = agent.registries["aide"]._tools
+
+    async def browsed(**_):
+        return ToolOutput("Clicked.", page="AAAA")
+    tools["web_search"] = dataclasses.replace(tools["web_search"], handler=browsed, step=lambda a: "Opening a.test")
+    got = events(client.post("/v1/chat", json={"text": "look it up", "stream": True}, headers=AUTH))
+    names = [e for e, _ in got]
+    assert ("page", {"agent": "aide", "jpeg": "AAAA"}) in got and names.index("step") < names.index("page")
 
 
 async def test_a_running_turn_shows_in_history_and_quiet_streams_get_pings(env, monkeypatch):

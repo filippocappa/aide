@@ -901,10 +901,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             mine = working[conversation] = {"agent": speaker, "text": text, "photos": body.photos,
                                             "since": datetime.now(tz).replace(microsecond=0).isoformat()}
 
-            def step(who: str, label: str) -> None:
-                mine["step"] = label  # for an app that hung up and asks /v1/history
+            def step(who: str, label: str | None, kind: str | None = None, page: str | None = None) -> None:
+                if label is not None:
+                    mine["step"] = label  # for an app that hung up and asks /v1/history
                 if on_step:
-                    on_step(who, label)
+                    on_step(who, label, kind, page)
             try:
                 turn = await agent.respond(CONVERSATION, text, conversation, hooks(on_team, activity_turn.team),
                                            hooks(on_text, activity_turn.text) if on_text else None, body.photos,
@@ -926,7 +927,9 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         return streamed(
             lambda emit: respond(lambda t: emit("team", team_json(t)),
                                  lambda delta, restart: emit("text", {"delta": delta, "restart": restart}),
-                                 lambda who, label: emit("step", {"agent": who, "text": label})),
+                                 lambda who, label, kind=None, page=None:
+                                 emit("page", {"agent": who, "jpeg": page}) if page else
+                                 emit("step", {"agent": who, "text": label, **({"kind": kind} if kind else {})})),
             lambda turn: sse("reply", chat_json(conversation, turn)), hung_up)
 
     @app.post("/v1/confirm", dependencies=[Depends(auth)])

@@ -270,7 +270,9 @@ struct ChatView: View {
                     }
                     if chat.isSending, let step = chat.liveStep {
                         // A tool is running: say what (a search, the sites it reads), under any draft before it.
-                        ThinkingRow(label: step, symbol: "magnifyingglass").transition(.opacity)
+                        ThinkingRow(label: step, symbol: ThinkingRow.symbol(for: chat.liveStepKind))
+                            .transition(.opacity)
+                        if let page = chat.livePage { BrowsedPage(jpeg: page).transition(.opacity) }
                     } else if chat.isSending, draft.isEmpty, chat.liveTeam.last?.from != chat.orchestrator.id {
                         // While an agent works on its answer, the thread shows it thinking instead.
                         ThinkingRow()
@@ -297,6 +299,7 @@ struct ChatView: View {
             .onChange(of: chat.liveTeam) { _, _ in scrollToBottom(proxy) }
             .onChange(of: chat.liveReply) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: chat.liveStep) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: chat.livePage) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: chat.isSending) { _, sending in
                 scrollToBottom(proxy)
                 if !sending, chat.messages.last?.role == .assistant, chat.messages.last?.isError == false {
@@ -1011,6 +1014,25 @@ private struct ThinkingRow: View {
     var label = "Thinking…"
     var symbol: String?
 
+    /// The icon for a step's kind (docs/API.md, `step`); a search's glass for one without a kind or an unknown one.
+    static func symbol(for kind: String?) -> String {
+        switch kind {
+        case "read": "doc.text.magnifyingglass"
+        case "look": "eye"
+        case "click": "hand.tap"
+        case "calendar": "calendar"
+        case "reminders": "checklist"
+        case "mail": "envelope"
+        case "health": "heart"
+        case "transit": "tram"
+        case "weather": "cloud.sun"
+        case "map": "map"
+        case "ask": "bubble.left.and.bubble.right"
+        case "errand": "cart"
+        default: "magnifyingglass"
+        }
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             if let symbol {
@@ -1023,6 +1045,31 @@ private struct ThinkingRow: View {
             Spacer()
         }
         .padding(.horizontal, 2)
+    }
+}
+
+/// The page Aide is browsing while it works (#77): the top of what it shows now, small, like a glance at its screen.
+private struct BrowsedPage: View {
+    let jpeg: Data
+
+    var body: some View {
+        HStack {
+            if let image = UIImage(data: jpeg) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 150, height: 190, alignment: .top)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.quaternary))
+                    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                    .id(jpeg.hashValue)
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: jpeg)
+            }
+            Spacer()
+        }
+        .padding(.leading, 24)
+        .accessibilityLabel("The page Aide is looking at")
     }
 }
 

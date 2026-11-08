@@ -49,12 +49,14 @@ final class APIClient {
     }
 
     /// The chat, streamed: `onTeam` gets each message Aide and the agents send each other while Aide works,
-    /// `onText` each piece of the reply as it's written, true when the draft starts over (docs/API.md, "Chat").
+    /// `onText` each piece of the reply as it's written, true when the draft starts over (docs/API.md, "Chat"),
+    /// `onStep` what a tool is doing (agent, label, kind), `onPage` a picture of the page Aide is browsing (JPEG).
     /// A server without streaming answers plain JSON: same reply, nothing live. `photos` are uploaded ids.
     func chatLive(_ text: String, photos: [String] = [], conversationID: String? = nil, voice: Bool = false,
                   onText: @escaping @MainActor (String, Bool) -> Void = { _, _ in },
                   onTeam: @escaping @MainActor (TeamMessage) -> Void,
-                  onStep: @escaping @MainActor (String, String) -> Void = { _, _ in }) async throws -> ChatReply {
+                  onStep: @escaping @MainActor (String, String, String?) -> Void = { _, _, _ in },
+                  onPage: @escaping @MainActor (Data) -> Void = { _ in }) async throws -> ChatReply {
         let body = try JSONEncoder.api.encode(ChatRequest(text: text, conversationId: conversationID, stream: true,
                                                           photos: photos.isEmpty ? nil : photos,
                                                           voice: voice ? true : nil))
@@ -62,7 +64,8 @@ final class APIClient {
             switch event {
             case .team(let message): onTeam(message)
             case .text(let delta, let restart): onText(delta, restart)
-            case .step(let agent, let text): onStep(agent, text)
+            case .step(let agent, let text, let kind): onStep(agent, text, kind)
+            case .page(let jpeg): onPage(jpeg)
             default: break
             }
         }) { event in
@@ -1459,10 +1462,12 @@ private struct Transcript: Decodable { let text: String }
 struct EventStream {
     enum Event {
         case team(TeamMessage), text(delta: String, restart: Bool), reply(ChatReply), working(agent: String), done(TeamReply)
-        case step(agent: String, text: String)
+        case step(agent: String, text: String, kind: String?)
+        case page(Data)
     }
     private struct Working: Decodable { let agent: String }
-    private struct Step: Decodable { let agent: String; let text: String }
+    private struct Step: Decodable { let agent: String; let text: String; var kind: String? }
+    private struct Page: Decodable { let jpeg: String }
     private struct Text: Decodable { let delta: String; var restart: Bool? }
     private var name = "message"
 
@@ -1484,7 +1489,12 @@ struct EventStream {
             case "working": return .working(agent: try JSONDecoder.api.decode(Working.self, from: data).agent)
             case "step":
                 let step = try JSONDecoder.api.decode(Step.self, from: data)
-                return .step(agent: step.agent, text: step.text)
+                return .step(agent: step.agent, text: step.text, kind: step.kind)
+            case "page":
+                guard let jpeg = Data(base64Encoded: try JSONDecoder.api.decode(Page.self, from: data).jpeg) else {
+                    return nil
+                }
+                return .page(jpeg)
             case "done": return .done(try JSONDecoder.api.decode(TeamReply.self, from: data))
             case "error":
                 let message = (try? JSONDecoder.api.decode(StreamError.self, from: data))?.error ?? "Something went wrong."

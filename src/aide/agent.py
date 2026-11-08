@@ -408,15 +408,16 @@ class Agent:
                       on_team: Callable[[dict], None] | None = None,
                       on_text: Callable[[str, bool], None] | None = None,
                       photos: list[str] | tuple[str, ...] = (), voice: bool = False,
-                      on_step: Callable[[str, str], None] | None = None) -> Turn:
+                      on_step: Callable[..., None] | None = None) -> Turn:
         """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
 
         `photos` are ids from the photo store, sent with the text (which may then be empty). The message stores a
         [Photo id] line for each, and the model sees them as images in this turn only (_with_photos).
 
         `on_team` gets each team message as it happens: an ask when Aide sends it, the answer when it's back.
-        `on_step` gets (agent, what it's doing) when a tool with a step starts ("Searching the web for …"), the
-        agents it asks included.
+        `on_step` gets (agent, what it's doing, its kind) when a tool with a step starts ("Searching the web for …",
+        "search"), the agents it asks included; and (agent, None, None, page) with a small JPEG of the page Aide is
+        browsing in chat after each move (#77).
         `on_text` gets the reply as it's written, piece by piece, and True with the first piece of a model round
         after one that called tools: the draft starts over (the reply is the last round's text).
         `voice`: the user said it in a voice chat, and the reply is read aloud; the stamp says so.
@@ -624,7 +625,8 @@ class Agent:
         self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
         self._watching, self._photos, self._read = False, (), None
         self._plan, self._plan_calls, self._plan_tools = False, 0, False
-        self._on_step: Callable[[str, str], None] | None = None
+        # on_step(agent, label, kind) when a tool starts; on_step(agent, None, None, page) with a browsed page's picture
+        self._on_step: Callable[..., None] | None = None
 
     async def run_routine(self, channel: str, routine: dict) -> tuple[str | None, int]:
         """One run of a routine: its agent answers the hidden prompt in the routine's chat, with that chat's history.
@@ -1110,6 +1112,11 @@ class Agent:
             if not tool.confirm:
                 self._step(agent, tool, args)
                 out, err = await self._execute(name, args, registry)
+                if not err and self._on_step and (page := getattr(out, "page", None)):
+                    try:
+                        self._on_step(agent, None, None, page)  # the page Aide is browsing, for the app (#77)
+                    except Exception:
+                        log.warning("sending the page's picture failed", exc_info=True)
                 if not err and getattr(out, "attachment", None):
                     self._attachments.append(out.attachment)
                 if not err and name in WRITES and name != "ask_agent":
@@ -1138,7 +1145,7 @@ class Agent:
             return
         try:
             if label := (tool.step or STEPS[tool.name])(args):
-                self._on_step(agent, label)
+                self._on_step(agent, label, _step_kind(tool.name, args))
         except Exception:
             log.warning("step for %s failed", tool.name, exc_info=True)
 
@@ -1174,6 +1181,24 @@ STEPS: dict[str, Callable[[dict], str | None]] = {
     "weather": lambda a: "Checking the weather",
     "ask_agent": lambda a: f"Asking {_agent_name(a.get('agent', ''))}",
 }
+
+
+# What kind of thing a step is, for the app's icon (docs/API.md, `step`'s `kind`): by tool, or by the call's arguments.
+STEP_KINDS: dict[str, str | Callable[[dict], str]] = {
+    "web_search": "search", "research": "read", "fetch_page": "read", "look_at_page": "look",
+    "browse_page": lambda a: "click" if a.get("action") in ("click", "type", "select", "back") else "read",
+    "list_events": "calendar", "search_events": "calendar", "free_time": "calendar", "create_event": "calendar",
+    "edit_event": "calendar", "list_reminders": "reminders", "create_reminder": "reminders",
+    "update_reminder": "reminders", "complete_reminder": "reminders", "search_mail": "mail", "list_unread": "mail",
+    "read_mail": "mail", "read_thread": "mail", "draft_reply": "mail", "health": "health",
+    "transit_arrivals": "transit", "weather": "weather", "ask_agent": "ask", "find_places": "map",
+    "travel_time": "map", "start_errand": "errand",
+}
+
+
+def _step_kind(name: str, args: dict) -> str | None:
+    kind = STEP_KINDS.get(name)
+    return kind(args) if callable(kind) else kind
 
 
 def _agent_name(who: str) -> str:

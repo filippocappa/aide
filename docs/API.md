@@ -144,7 +144,10 @@ event: team
 data: {"from": "coach", "to": "aide", "text": "…", "ts": "…"}
 
 event: step
-data: {"agent": "aide", "text": "Reading 5 sites on “Coros arm band Apple Watch”"}
+data: {"agent": "aide", "text": "Reading 5 sites on “Coros arm band Apple Watch”", "kind": "read"}
+
+event: page
+data: {"agent": "aide", "jpeg": "/9j/4AAQ…"}
 
 event: text
 data: {"delta": "Coach says", "restart": true}
@@ -167,6 +170,14 @@ data: { the usual /v1/chat body, including the whole "team" }
   the web for …", "Reading 5 sites on …", "Reading coros.com", "Checking Moodle", "Looking on Maps for …"):
   `agent` is who runs it (an agent Aide asked too). Show the latest until the next `step`, `text` or `reply`. Only
   some tools have one. `GET /v1/history`'s `working` carries the latest as `step` while the turn runs.
+  `kind` (since 2026-11-08, absent when there's none) is what sort of step it is, for an icon: `search`, `read` (a
+  page or sites), `look` (Aide looking at a page's pictures), `click` (clicking through a page), `calendar`,
+  `reminders`, `mail`, `health`, `transit`, `weather`, `map`, `ask` (asking an agent), `errand`. More may come:
+  show an unknown one like none.
+- `page` events (since 2026-11-08, #77) come while Aide browses a page in chat (`look_at_page`, `browse_page`):
+  after each move (open, click, type, choose, scroll, back) a small picture of what the page shows now, `jpeg` the
+  JPEG in base64 (412 px wide, a phone's screen, ~30–60 KB). Show the latest with the step line while the turn runs,
+  and drop it at `reply`. Not in `/v1/history`.
 - A failure after the stream has started is `event: error` with `data: {"error": "…"}`, then the stream ends.
   Failures before it starts (401, 400…) are plain HTTP errors as usual.
 - A server that doesn't know `stream` answers plain JSON; the app checks `Content-Type` and handles both.

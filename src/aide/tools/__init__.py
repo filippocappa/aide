@@ -12,16 +12,19 @@ class ToolOutput(str):
     `attachment` is one docs/API.md attachment, e.g. {"type": "reminders", "reminders": [...]}.
     `image` is a picture the model sees with the text (a browser screenshot): {"media_type", "data" (base64)};
     `images` all of them when there are several (a whole page in pieces), `image` then the first.
+    `page` is a small JPEG (base64) of the page Aide is browsing in chat, for the app to show while it works (#77).
     """
 
     attachment: dict | None
     image: dict | None
     images: list[dict]
+    page: str | None
 
     def __new__(cls, text: str, attachment: dict | None = None, image: dict | None = None,
-                images: list[dict] | None = None):
+                images: list[dict] | None = None, page: str | None = None):
         out = super().__new__(cls, text)
         out.attachment = attachment
+        out.page = page
         out.images = list(images) if images else ([image] if image else [])
         out.image = out.images[0] if out.images else None
         return out

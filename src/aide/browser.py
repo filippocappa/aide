@@ -173,6 +173,8 @@ _TAB_JS = r"""
 (args) => {
   const tabs = [...document.querySelectorAll('[role=tab]')].filter(t => {
     const r = t.getBoundingClientRect();
+    for (let e = t; e && e !== document.body; e = e.parentElement)  // a cookie banner's tabs aren't the page's
+      if (/cookie|consent|iubenda|onetrust|didomi|usercentrics|cookiebot/i.test(`${e.id} ${e.className}`)) return false;
     return !t.closest(args.skip) && r.width > 0 && r.height > 0 && !t.disabled && t.getAttribute('aria-disabled') !== 'true';
   });
   const t = tabs[args.i];
@@ -199,7 +201,7 @@ _REFUSE_COOKIES_JS = r"""
     for (let e = b; e && e !== document.body && !about; e = e.parentElement)
       about = ABOUT.test(`${e.id} ${e.className} ${e.getAttribute('aria-label') || ''}`) ||
               (e.matches('dialog,[role=dialog],[role=alertdialog],[aria-modal=true]') && ABOUT.test(e.innerText));
-    if (!about) continue;
+    if (!about && !/consent|cookie/i.test(location.hostname)) continue;  // a consent page of its own (Google's)
     b.click();
     return label(b);
   }
@@ -1353,6 +1355,18 @@ class Browser:
         raise BrowserError(f"[{ref}] has no option {option!r}" +
                            (f"; its options: {', '.join(listed)}" if listed else "") + ".")
 
+    async def thumbnail(self, owner: str) -> str | None:
+        """What the page shows now as a small JPEG (base64, 412 px wide), for the app while Aide browses in chat; None
+        when there's no page or it won't draw."""
+        page = self.page(owner)
+        if page is None:
+            return None
+        try:
+            shot = await page.screenshot(type="jpeg", quality=45, scale="css", timeout=3000)
+        except Exception:
+            return None
+        return base64.b64encode(shot).decode()
+
     async def refuse_cookies(self, owner: str) -> str | None:
         """Presses a cookie banner's Reject (or "only necessary") button, in the page or its frames, so the banner
         doesn't sit over the page taking clicks; what it pressed, or None. For chat's read-only pages (#77)."""
@@ -1364,6 +1378,7 @@ class Browser:
                 continue
             if pressed:
                 await asyncio.sleep(0.4)
+                await self._settle(page)  # a consent page (Google's) goes on to the page asked for
                 return pressed
         return None
 
@@ -1467,6 +1482,9 @@ class Browser:
         one at a time (an accordion may keep only one open), then Next or Load more pressed until nothing new
         comes, keeping only what each press adds. Opens the page as `owner`; the caller closes it."""
         await self.open(owner, url)
+        # A cookie wall is all a page shows until it's answered (Google Flights gave only its consent page), and its
+        # tabs ("Consenso", "Dettagli") would be read as the page's (#77).
+        await self.refuse_cookies(owner)
         page = self._page(owner)
 
         async def to_the_end() -> None:

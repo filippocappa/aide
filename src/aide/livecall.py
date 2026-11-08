@@ -642,7 +642,9 @@ class LiveCall:
         steps: list[str] = []
         last_note = 0.0
 
-        def on_step(_who: str, label: str) -> None:
+        def on_step(_who: str, label: str | None, kind: str | None = None, page: str | None = None) -> None:
+            if label is None:
+                return  # a browsed page's picture: nothing to say on a call
             nonlocal last_note
             steps.append(label)
             self._spawn(self._send({"type": "state", "state": "working", "step": label}))

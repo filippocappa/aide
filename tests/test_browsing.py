@@ -53,6 +53,9 @@ class Shots(FakeBrowser):
     async def prune(self):
         self.pruned += 1
 
+    async def thumbnail(self, owner):
+        return "thumb:" + self._here(owner)[0] if owner in self.at else None
+
     async def refuse_cookies(self, owner):
         self.refused = getattr(self, "refused", 0) + 1
 
@@ -84,9 +87,10 @@ async def test_chat_clicks_through_a_page_and_reads_the_list(chat):
     await browse(tools, action="open", url=HOME)
     assert browser.refused == 1  # its cookie banner, refused as it opens
     assert "[1]" in await browse(tools, action="read")
-    await browse(tools, action="click", ref="1")
-    assert browser.at["chat:c1"] == SPEAKERS
-    assert "De Siervo" in await browse(tools, action="read")
+    clicked = await browse(tools, action="click", ref="1")
+    assert browser.at["chat:c1"] == SPEAKERS and clicked.page == "thumb:Speakers"  # the app's picture of it
+    read = await browse(tools, action="read")
+    assert "De Siervo" in read and read.page is None  # reading changes nothing to show
 
 
 async def test_chat_refuses_a_committing_click_and_says_start_errand(chat):

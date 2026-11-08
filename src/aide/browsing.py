@@ -279,6 +279,7 @@ def page_tools(browser: Browser, owner: str, guard: PageGuard) -> list[Tool]:
 # -- browsing in chat --------------------------------------------------------------------------------------------
 
 ACTIONS = ("open", "read", "find", "click", "type", "select", "scroll", "back")
+MOVES = {"open", "click", "type", "select", "scroll", "back"}  # actions after which the app gets the page's picture
 
 
 class _Budget(PageGuard):
@@ -382,17 +383,23 @@ class ChatBrowsing:
         line = (f"({pictures} of {at}. You saw it in that turn, and what you said about it came from it; only this "
                 "line is kept, so stand by it unless the user says it's wrong)")
         images = [{"media_type": "image/jpeg", "data": base64.b64encode(s).decode()} for s in shots]
-        return ToolOutput(line, images=images)
+        return ToolOutput(line, images=images, page=await self._thumbnail(conversation))
 
     async def browse(self, action: str, url: str | None = None, ref: str | None = None, text: str | None = None,
                      option: str | None = None, direction: str | None = None, everything: bool | None = None,
-                     doing: str | None = None) -> str:
+                     doing: str | None = None) -> ToolOutput:
         conversation, _ = self.current()
         async with self._queue(conversation):
             out = await self._browse(conversation, action, url, ref, text, option, direction, everything, doing)
+            # The app shows the page as it is now while Aide works; reading it changes nothing to show.
+            page = await self._thumbnail(conversation) if action in MOVES else None
         if action in ("click", "type", "select", "back"):
             out += "\n(The page may have changed: read it again for its new refs before the next click.)"
-        return out
+        return ToolOutput(out, page=page)
+
+    async def _thumbnail(self, conversation: str) -> str | None:
+        thumbnail = getattr(self.browser, "thumbnail", None)
+        return await thumbnail(self.owner(conversation)) if thumbnail else None
 
     async def _browse(self, conversation: str, action: str, url: str | None, ref: str | None, text: str | None,
                       option: str | None, direction: str | None, everything: bool | None, doing: str | None) -> str:
