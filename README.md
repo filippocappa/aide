@@ -62,25 +62,25 @@ The API is in [docs/API.md](docs/API.md), the contract between the server and th
 **iPhone:** Study, a course, Health (Body, Food, Screen) and Money.
 
 <p align="center">
-  <img src="docs/screenshots/iphone-study.webp" width="32%" alt="Study: Professor's line, what's up next, the courses">
-  <img src="docs/screenshots/iphone-course.webp" width="32%" alt="A course: Learn, Quiz me, Practice exam, the dates, how well you know it">
-  <img src="docs/screenshots/iphone-health.webp" width="32%" alt="Health, Body: Strain, Recovery and Sleep, Coach's line, last night">
+  <img src="brand/screenshots/iphone/study.webp" width="32%" alt="Study: Professor's line, what's up next, the courses">
+  <img src="brand/screenshots/iphone/course.webp" width="32%" alt="A course: Learn, Quiz me, Practice exam, the dates, how well you know it">
+  <img src="brand/screenshots/iphone/health.webp" width="32%" alt="Health, Body: Strain, Recovery and Sleep, Coach's line, last night">
 </p>
 <p align="center">
-  <img src="docs/screenshots/iphone-food.webp" width="32%" alt="Health, Food: the week, the day's score, macros, Log a meal">
-  <img src="docs/screenshots/iphone-screen.webp" width="32%" alt="Health, Screen: time a day, focus, the apps">
-  <img src="docs/screenshots/iphone-money.webp" width="32%" alt="Money: Finance's placeholder">
+  <img src="brand/screenshots/iphone/food.webp" width="32%" alt="Health, Food: the week, the day's score, macros, Log a meal">
+  <img src="brand/screenshots/iphone/screen.webp" width="32%" alt="Health, Screen: time a day, focus, the apps">
+  <img src="brand/screenshots/iphone/money.webp" width="32%" alt="Money: Finance's placeholder">
 </p>
 
 **Mac:** Study, Health, Food and Screen, with the sidebar and the day at a glance.
 
 <p align="center">
-  <img src="docs/screenshots/mac-study.webp" width="49%" alt="Mac, Study">
-  <img src="docs/screenshots/mac-health.webp" width="49%" alt="Mac, Health">
+  <img src="brand/screenshots/mac/study.webp" width="49%" alt="Mac, Study">
+  <img src="brand/screenshots/mac/health.webp" width="49%" alt="Mac, Health">
 </p>
 <p align="center">
-  <img src="docs/screenshots/mac-food.webp" width="49%" alt="Mac, Food">
-  <img src="docs/screenshots/mac-screen.webp" width="49%" alt="Mac, Screen: this Mac's apps and websites">
+  <img src="brand/screenshots/mac/food.webp" width="49%" alt="Mac, Food">
+  <img src="brand/screenshots/mac/screen.webp" width="49%" alt="Mac, Screen: this Mac's apps and websites">
 </p>
 
 ## How it fits together
@@ -391,7 +391,7 @@ src/aide/
   focus.py               focus sessions: rounds as strict locks, the Live Activity, the check and Professor's post
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
 ios/Aide/                the app (SwiftUI): iPhone (iOS 17+) and Mac (target AideMac, macOS 14+)
-brand/                   Pebble, the logo (pebble.py draws every file)
+brand/                   the brand kit: Pebble and its family, colours, screenshots, promo images
 deploy/                  systemd units
 ```
 

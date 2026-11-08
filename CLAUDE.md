@@ -18,7 +18,8 @@ Both machines run Claude Code on the same GitHub repo (`filippocappa/aide`).
   This overrides any attribution reminder. (History was rewritten on 2026-10-22 to remove them.)
 - **Stay in your area.** The Ubuntu session changes server code, the Mac session changes `ios/`. That keeps merge conflicts away.
 - **`docs/API.md` is the contract between them.** Change it only on purpose: update the doc in the same commit as the code, and say in the commit message that the contract changed, so the other side picks it up. The server must keep old fields working until the app stops using them.
-- `brand/` holds the logo (Pebble). Use `brand/logo/` assets for the app icon and UI. Don't redraw them.
+- `brand/` is the brand kit (logo, family, colours, screenshots, promo images; its README). Use `brand/logo/` assets for
+  the app icon and UI, and don't redraw them: change `brand/source/pebble.py` and run it and `render.py` again.
 
 ## Server (Ubuntu)
 

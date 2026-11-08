@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Pebble's family: each agent is its own little creature, with Pebble's eyes and expressions (brand/pebble.py)
+/// Pebble's family: each agent is its own little creature, with Pebble's eyes and expressions (brand/source/pebble.py)
 /// on a body shape of its own, so they're told apart by shape as well as colour. Aide, and any agent the app
 /// doesn't know yet, is Pebble. Everything is on the brand's 256 grid, and the eyes are holes.
 enum Figure: Equatable {
@@ -69,7 +69,7 @@ enum Figure: Equatable {
     }
 
     /// The eye holes for an expression. Open eyes (awake, thinking) take `look`, `radius` and `openness`, so they
-    /// can glance and blink; the others are drawn as in brand/pebble.py.
+    /// can glance and blink; the others are drawn as in brand/source/pebble.py.
     func eyeHoles(face: String, look: CGSize, radius: CGFloat, openness: CGFloat) -> Path {
         let (y, dx, k) = eyes
         var p = Path()

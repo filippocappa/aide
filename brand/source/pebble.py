@@ -1,7 +1,9 @@
-"""Generate the Pebble logo, expressions and idle animation from one set of geometry.
+"""Generate the Pebble logo, expressions, the agents' family and the idle animation from one set of geometry.
 
-    python3 brand/pebble.py                     # SVGs only, no dependencies
-    uv run --no-project --with cairosvg --with pillow python3 brand/pebble.py --gif
+    python3 brand/source/pebble.py              # SVGs only, no dependencies
+    uv run --no-project --with cairosvg --with pillow python3 brand/source/pebble.py --gif
+
+render.py turns these into the PNGs and the promo images.
 
 Eyes are real holes in the body (fill-rule evenodd), so every file works in one colour
 and on any background.
@@ -11,9 +13,9 @@ import argparse
 import math
 from pathlib import Path
 
-OUT = Path(__file__).parent / "logo"
+OUT = Path(__file__).parent.parent / "logo"
 # The app icon is an Icon Composer document: its colours per appearance live in its icon.json.
-APP_ICON = Path(__file__).parent.parent / "ios" / "Aide" / "Aide" / "AppIcon.icon" / "Assets"
+APP_ICON = Path(__file__).parent.parent.parent / "ios" / "Aide" / "Aide" / "AppIcon.icon" / "Assets"
 
 SLATE = "#34413F"  # Pebble
 SAND = "#ECE5D8"   # background tile
@@ -63,8 +65,48 @@ EXPRESSIONS = {
 }
 
 
+# -- the family: each agent its own creature with Pebble's eyes (ios/Aide/Aide/Support/Figure.swift) -----------
+
+
+def _ingot() -> str:
+    """A trapezoid with its corners rounded by 28: the outline pushed out by 28, arcs at the corners."""
+    v = [(96, 100), (160, 100), (180, 168), (76, 168)]
+    r, out = 28, []
+    normals = []
+    for i in range(4):
+        (x0, y0), (x1, y1) = v[i], v[(i + 1) % 4]
+        d = math.hypot(x1 - x0, y1 - y0)
+        normals.append(((y1 - y0) / d, -(x1 - x0) / d))
+    for i in range(4):
+        (x0, y0), (x1, y1), (nx, ny) = v[i], v[(i + 1) % 4], normals[i]
+        mx, my = normals[(i + 1) % 4]
+        if i == 0:
+            out.append(f"M{x0 + r * nx:.2f} {y0 + r * ny:.2f}")
+        out.append(f"L{x1 + r * nx:.2f} {y1 + r * ny:.2f}A{r} {r} 0 0 1 {x1 + r * mx:.2f} {y1 + r * my:.2f}")
+    return "".join(out) + "Z"
+
+
+# id: (name, colour, body, eye height, eye distance from the middle, eye size next to Pebble's)
+FAMILY = {
+    "aide": ("Aide", SLATE, BODY, 124, 28, 1.0),
+    "secretary": ("Secretary", "#3B6FD8",
+                  "M104 58H152A46 46 0 0 1 198 104V152A46 46 0 0 1 152 198H104A46 46 0 0 1 58 152V104A46 46 0 0 1 104 58Z",
+                  122, 28, 1.0),
+    "professor": ("Professor", "#7A4FD0", "M60 122A68 68 0 0 1 196 122V166A34 34 0 0 1 162 200H94A34 34 0 0 1 60 166Z",
+                  128, 25, 0.92),
+    "coach": ("Coach", "#23A26D", "M54 128A74 74 0 1 1 202 128A74 74 0 1 1 54 128Z", 120, 30, 1.05),
+    "finance": ("Finance", "#B8921C", _ingot(), 138, 27, 0.95),
+}
+
+
+def family_path(agent: str) -> str:
+    """The agent's body with calm eyes cut out, as one path (fill-rule evenodd)."""
+    _, _, body, y, dx, k = FAMILY[agent]
+    return body + arc_eye(128 - dx, y, r=15 * k, t=11 * k) + arc_eye(128 + dx, y, r=15 * k, t=11 * k)
+
+
 def svg(eyes: str, fill: str = "#000", tile: str | None = None, scale: float = 1.0,
-        body_transform: str = "", title: str = "Aide") -> str:
+        body_transform: str = "", title: str = "Aide", body: str = BODY) -> str:
     group = []
     if scale != 1.0:
         group.append(f"translate(128 128) scale({scale}) translate(-128 -128)")
@@ -74,7 +116,7 @@ def svg(eyes: str, fill: str = "#000", tile: str | None = None, scale: float = 1
     bg = f'<rect width="256" height="256" fill="{tile}"/>' if tile else ""
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><title>{title}</title>{bg}'
-        f'<path fill="{fill}" fill-rule="evenodd"{transform} d="{BODY}{eyes}"/></svg>\n'
+        f'<path fill="{fill}" fill-rule="evenodd"{transform} d="{body}{eyes}"/></svg>\n'
     )
 
 
@@ -92,6 +134,9 @@ def write_svgs() -> None:
     (OUT / "pebble-small.svg").write_text(small_svg())
     for name, eyes in EXPRESSIONS.items():
         (OUT / "expressions" / f"{name}.svg").write_text(svg(eyes, fill=SLATE, tile=SAND, scale=1.2))
+    (OUT / "family").mkdir(exist_ok=True)
+    for agent, (name, colour, *_rest) in FAMILY.items():
+        (OUT / "family" / f"{agent}.svg").write_text(svg("", fill=colour, body=family_path(agent), title=name))
     # The app icon's one layer: Pebble alone on Icon Composer's 1024 canvas, no tile.
     APP_ICON.mkdir(parents=True, exist_ok=True)
     (APP_ICON / "pebble.svg").write_text(
