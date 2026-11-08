@@ -176,7 +176,11 @@ the average, exams passed and still to take, the year). For fields neither answe
 page, all of them together, saying which are optional and what you'd put, instead of guessing or leaving them blank \
 without a word. Ratings follow the task. A button that only goes to the form's next page (Avanti) is fine; before \
 the one that sends it (Invia, Invia questionario, Conferma), ask_confirm with total "" and items [] and, in \
-`summary`, what you answered in short (the course, then "all 'Decisamente sì' except …", the personal details).
+`summary`, what you answered in short (the course, then "all 'Decisamente sì' except …", the personal details). \
+"Don't send until I say so" (or "never press submit" in a task about filling something in) means exactly this: the \
+user's Confirm is them saying so. So fill one, ask_confirm, send it once confirmed, and go on to the next (several \
+questionnaires: one Confirm each); don't stop with them filled and unsent. Only "fill it in but don't send it at \
+all" means stopping before the button.
 - finish with a short message for the user, in English: what you did or found, or why you \
 couldn't. Plain text, no Markdown. When you found things to show (products to compare, the item you put in the \
 cart, trains, restaurants), put them in finish's `products`, best first, each with a short name (brand, model, \
@@ -964,10 +968,12 @@ class ErrandRunner:
         elif kind == "ask_confirm":
             covered = await run.needs_you(f"Confirm: {e['confirm']['summary']}") if run else False
             c = e["confirm"]
+            # A form has no total: "Ready: Send the questionnaire. Confirm …", not "…questionnaire., . Confirm"
+            what = c["summary"].rstrip(" .") + (f", {c['total']}" if str(c["total"] or "").strip() else "")
             await self._post(e, "An errand waits for the user's Confirm",
-                             f"Ready: {c['summary']}, {c['total']}. Confirm and I'll do it.", card=True,
+                             f"Ready: {what}. Confirm and I'll do it.", card=True,
                              push=None if covered else f"Aide · confirm on {e['site'] or 'the site'}",
-                             body=f"{c['summary']}, {c['total']}", level="time-sensitive")
+                             body=what, level="time-sensitive")
         elif kind == "plan_limit":
             resets = args.get("resets_at")
             when = f" (it resets at {resets.astimezone(self.store.tz):%H:%M})" if resets else ""
@@ -1786,7 +1792,8 @@ def _utc(text: str) -> datetime:
 def about_user_text(conn: sqlite3.Connection, esse3: "Esse3Reader | None") -> str:
     """The errand's about_user: the shared memory and the Esse3 transcript, as lines."""
     notes = [r[0] for r in conn.execute("SELECT text FROM memory WHERE agent IS NULL ORDER BY id")]
-    out = ["Aide's notes on the user:", *(f"- {n}" for n in notes)] if notes else ["Aide has no notes on the user."]
+    notes = ["\nAide's notes on the user:", *(f"- {n}" for n in notes)] if notes else ["\nAide has no notes on the user."]
+    out = []
     rows = []
     if esse3 is not None:
         try:
@@ -1795,19 +1802,20 @@ def about_user_text(conn: sqlite3.Connection, esse3: "Esse3Reader | None") -> st
             log.warning("about_user: the transcript failed", exc_info=True)
     if not rows:
         out.append("No transcript from Esse3 (not read yet, or no UniTo login): ask the user what the form needs.")
-        return "\n".join(out)
+        return "\n".join(out + notes)
     passed = [t for t in rows if t["status"] == "passed"]
     left = [t for t in rows if t["status"] != "passed"]
     graded = [(int(t["grade"][:2]), t["credits"] or 0) for t in passed if (t["grade"] or "")[:2].isdigit()]
     weight = sum(w for _, w in graded)
     average = f", weighted average {sum(g * w for g, w in graded) / weight:.2f}" if weight else ""
     done, total = sum(t["credits"] or 0 for t in passed), sum(t["credits"] or 0 for t in rows)
-    out += [f"\nTheir degree's transcript (Esse3): {len(passed)} exams passed, {done:g} of {total:g} credits in "
-            f"the plan{average}.",
+    out += [f"Their degree's transcript (Esse3): {len(passed)} exams passed; credits earned so far (CFU acquisiti, "
+            f"\"crediti già acquisiti\"): {done:g}, of {total:g} in the plan{average}.",
             "Passed:", *(f"- {t['name']} (year {t['year']}, {t['credits'] or 0:g} CFU): {t['grade'] or 'passed'}"
                          f"{', ' + t['passed_on'][:10] if t['passed_on'] else ''}" for t in passed),
             "Still to take:", *(f"- {t['name']} (year {t['year']}, {t['credits'] or 0:g} CFU)"
                                 f"{'' if t['status'] == 'planned' else ': ' + t['status']}" for t in left)]
+    out += notes
     return "\n".join(out)
 
 

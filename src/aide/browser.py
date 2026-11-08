@@ -333,8 +333,8 @@ _READ_JS = r"""
     }
     if (tag === 'input' || tag === 'textarea') {
       if (sensitive(el)) line += el.value ? ' (filled, hidden)' : ' (for the user)';
-      else if (el.value && !['submit', 'button', 'checkbox', 'radio'].includes(el.type))
-        line += ` value="${clean(el.value).slice(0, 80)}"`;
+      else if (!['submit', 'button', 'image', 'reset', 'checkbox', 'radio', 'hidden'].includes(el.type))
+        line += el.value ? ` value="${clean(el.value).slice(0, 80)}"` : ' (empty)';  // an empty box isn't prefilled
     }
     if (tag === 'select') {
       const opts = [...el.options].slice(0, 15).map(o => clean(o.text)).join(' | ');

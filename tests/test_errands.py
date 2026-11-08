@@ -1270,7 +1270,8 @@ def test_about_user_gives_an_errand_the_notes_and_the_transcript():
 
     text = about_user_text(db.conn, Reader())
     assert "Studies at SME" in text and "Secretary only" not in text  # only the shared notes
-    assert "2 exams passed, 15 of 24 credits" in text and "average 27.60" in text
+    assert "2 exams passed; credits earned so far" in text and ": 15, of 24 in the plan" in text
+    assert "average 27.60" in text and text.index("transcript") < text.index("Studies at SME")  # the form's part first
     assert "- Statistics (year 1, 9 CFU): 28, 2026-02-03" in text and "- Macroeconomics (year 2, 9 CFU)" in text
     assert "No transcript" in about_user_text(db.conn, None)
     db.close()
