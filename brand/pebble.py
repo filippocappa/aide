@@ -78,7 +78,7 @@ def svg(eyes: str, fill: str = "#000", tile: str | None = None, scale: float = 1
     )
 
 
-# Small-size cut: bigger body, heavier eyes, for favicons and 16-32 px.
+# Small-size cut: bigger body, heavier eyes, for 16-32 px (the Mac menu bar).
 def small_svg(fill: str = "#000") -> str:
     eyes = arc_eye(128 - 30, 126, r=17, t=16) + arc_eye(128 + 30, 126, r=17, t=16)
     return svg(eyes, fill=fill, scale=1.3, title="Aide (small)")
@@ -88,9 +88,8 @@ def write_svgs() -> None:
     (OUT / "expressions").mkdir(parents=True, exist_ok=True)
     (OUT / "pebble.svg").write_text(svg(EXPRESSIONS["calm"]))
     (OUT / "pebble-slate.svg").write_text(svg(EXPRESSIONS["calm"], fill=SLATE))
+    (OUT / "pebble-white.svg").write_text(svg(EXPRESSIONS["calm"], fill="#fff"))
     (OUT / "pebble-small.svg").write_text(small_svg())
-    # Discord crops avatars to a circle; scale 1.2 keeps Pebble well inside it.
-    (OUT / "avatar.svg").write_text(svg(EXPRESSIONS["calm"], fill=SLATE, tile=SAND, scale=1.2))
     for name, eyes in EXPRESSIONS.items():
         (OUT / "expressions" / f"{name}.svg").write_text(svg(eyes, fill=SLATE, tile=SAND, scale=1.2))
     # The app icon's one layer: Pebble alone on Icon Composer's 1024 canvas, no tile.
@@ -116,7 +115,7 @@ def idle_frame(i: int) -> str:
 
 
 def write_animated_svg() -> None:
-    """CSS-animated SVG for web pages and the future iOS app's web views."""
+    """CSS-animated SVG for web pages (the README)."""
     eyes = both(dot_eye)
     doc = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><title>Aide</title>
 <style>

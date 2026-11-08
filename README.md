@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/web/pebble-white.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/pebble-white.svg">
     <img src="brand/logo/pebble.svg" width="120" alt="Pebble, Aide's logo">
   </picture>
 </p>
@@ -53,8 +53,9 @@ Pebble in the menu bar for a quick look. Hold **fn ⌥** anywhere for [Peek](#pe
 whatever is on screen. It also has its own screen time: the Mac counts its apps and websites and enforces the phone's
 locks itself.
 
-The API is in [docs/API.md](docs/API.md), the contract between the server and the app. [SPEC.md](SPEC.md) is the
-original plan, and [CLAUDE.md](CLAUDE.md) is where things stand.
+The API is in [docs/API.md](docs/API.md), the contract between the server and the app. The original plan is in
+[docs/archive/SPEC.md](docs/archive/SPEC.md), [CLAUDE.md](CLAUDE.md) is how it's built now and
+[docs/HISTORY.md](docs/HISTORY.md) how it got there.
 
 ## Screenshots
 
@@ -390,7 +391,7 @@ src/aide/
   focus.py               focus sessions: rounds as strict locks, the Live Activity, the check and Professor's post
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
 ios/Aide/                the app (SwiftUI): iPhone (iOS 17+) and Mac (target AideMac, macOS 14+)
-brand/                   Pebble, the logo
+brand/                   Pebble, the logo (pebble.py draws every file)
 deploy/                  systemd units
 ```
 

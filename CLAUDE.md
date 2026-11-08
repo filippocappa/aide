@@ -1,7 +1,8 @@
 # Aide
 
-Personal AI assistant for one person: calendar, reminders, habits and later mail, through chat.
-[SPEC.md](SPEC.md) is the original plan; this file is the current state and how to work on it.
+Personal AI assistant for one person, through chat: calendar, reminders, mail, study, health, food, money and errands.
+[docs/archive/SPEC.md](docs/archive/SPEC.md) was the original plan; this file is the current state and how to work on it,
+[docs/HISTORY.md](docs/HISTORY.md) how each part came about.
 
 ## Two machines, one repo
 
@@ -35,6 +36,13 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   sure it's right is the mark at once, with no feedback; else Haiku's mark and feedback (thinking off: it ran past
   `max_tokens`), Jev's when Haiku fails (85/94 against Haiku's 82/94 with 6 failures, 2026-11-08). `AIDE_DECIDER_MODEL=off`.
 - `db.py`: SQLite (WAL) at `data/aide.db`.
+- Smaller pieces: `config.py` (settings from `.env`), `usage.py` (what every model and paid API call cost, by purpose),
+  `shapes.py` (JSON the API and the digest both send), `fts.py` (full-text search with a question), `lang.py` (Italian
+  or English), `transcribe.py` (voice-chat recordings to text on OpenRouter), `agenda.py` (today's and tomorrow's
+  calendar in a spoken turn's stamp, #71), `reader.py` (the photo reader: Gemini Flash looks at photos once for Coach's
+  food turns), `gmail.py` (`gmail_auth.py`: the one-time setup), `drafts.py` (Secretary's reply drafts before the
+  evening digest), `scores.py` (Strain, Recovery, Sleep), `weight.py` (readings, the trend, the verdict), `reviews.py`
+  (review sessions in the timetable calendar), `datereminders.py` (course dates that aren't exams, as reminders).
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
 - `channels/api.py` (FastAPI): the app's API, the only way in since the Discord bot was removed (2026-10-21).
 - `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (a push for reminders not yet on the phone).
@@ -251,562 +259,41 @@ cd ios/Aide
 xcodebuild -scheme AideMac -destination 'platform=macOS' build    # the Mac app
 ```
 
-## Roadmap
+## Where things stand
 
-Where things stand (2026-10-20):
+Built on both sides and in use unless it says otherwise. Each area's contract is its section in `docs/API.md`; how it
+came about, with dates and what was tried, is in [docs/HISTORY.md](docs/HISTORY.md) and the closed issues.
 
-**Done, server (Ubuntu, live):**
-- Core: agent loop, systemd service (the Discord bot was removed 2026-10-21); iCloud Calendar; Gmail (read, search; send and reply after
-  confirmation; one-time setup in README.md, "Gmail").
-- HTTP API v1, all of `docs/API.md`: chat with many conversations and memory, reminders store and sync, a push
-  for reminders not yet on the phone.
-- Nightly backups to `~/aide-backups` (user timer, 14 daily + 8 weekly; restore notes in README.md).
-- Habits with streaks and a 26-week `history` for the app's grid.
-- Digests: morning (`daily`), evening, weekly, monthly, on the schedule in the digest settings, also pushed. Data sections are rebuilt live on every read; only the greeting (a short spoken note) is stored.
-  Reminders: due in the period plus today's overdue. Mail: today's inbox. A new chat can open with the
-  greeting (`POST /v1/conversations` with `digest`). Background in `docs/digest-v2.md` (built, both sides).
-- Chat `attachments`: reminder and event cards from the turn's tool calls, in `/v1/chat` and `/v1/history`.
-- Web search (Tavily: `web_search`, `fetch_page`) and Google Maps (`find_places`, `travel_time`), read-only,
-  each on only when its key is set; home from `AIDE_HOME_ADDRESS`, or memory when it says otherwise. Plain chat
-  text for now; place cards in the app can come later.
+- **Chat and the team:** Aide and the specialists (Secretary, Professor, Coach, Finance), each with its chats, tools,
+  memory and Pebble colour; `ask_agent`, the Team chat with @mentions, the router (#59), queued messages (#69),
+  streamed replies, photos, cards under replies (`attachments`, `open` links into the app), the confirm queue,
+  Activity and approvals (#12).
+- **Calendar, reminders, mail:** iCloud Calendar, Apple Reminders sync (every list, EventKit alarms), Gmail (read,
+  send after Confirm), Secretary's reply drafts (#7), the events card as a week with proposed plans (#25).
+- **Digests, objectives, routines:** the wake-up briefing, evening, weekly and monthly digests (the morning one is
+  off); each specialist's objectives as plans that start by themselves; routines and watches (#13); weather (#51).
+- **Health:** Apple Health uploads and the scores, a page per metric, weight, bedtime (#53), habits (limit habits,
+  some counted from Health); the Health tab is Body · Food · Screen.
+- **Food:** meals from a photo, a description, a barcode or Recent; saved foods; targets and the day score.
+- **Screen Time:** locks (strict ones end early only with a pass), daily limits, the usage report; the Mac holds the
+  same locks and limits itself, apps and websites (#30).
+- **Study:** Moodle files, lecture notes from recordings, notebooks, lessons, quizzes and the Study page, practice and
+  mock exams, spaced repetition (#63), the exam plan and study week (#68), focus sessions (#54), Esse3 (#74: sessions,
+  bookings, transcript; sign-up as an errand, #75). Recording on the phone and an Esse3 sign-up aren't tried for real yet.
+- **Errands:** Aide's Chrome on cappa for shops and bookings (#22), the live view, price watches and timed drops
+  (#57), release trackers, the bot-check fixes (#76).
+- **Getting around:** GTT trams (alerts, Live Activities, following the ride), leave-now for events, Maps, web search.
+- **Money:** Apple Pay taps through a Shortcut, categories, budget, subscriptions, bank accounts (#31).
+- **Voice:** voice chat and live calls on cappa's own voice (#34); the faster answers (#71) are live, not yet tried on
+  a call.
+- **On the phone:** push, Live Activities (trams, the next event, agents at work, locks, focus, bedtime), widgets,
+  Control Center controls, App Intents and Shortcuts, the share extension (YouTube videos).
 
-**Done, app (Mac):** iOS app v1 (chat, Today, reminders sync, settings), voice chat, habits tab, digest
-greeting as the first chat message with a Details sheet, digest settings, reminder and event cards with tick
-boxes in chat from `attachments`, the habit grid from `history` (552f523).
-
-**Done, both sides (2026-10-20), tried live:**
-- Polish: grouped lists, glass header buttons, a home header that scrolls with the page. New chats start blank;
-  the digest greeting opens a chat only from its notification. Secretary is a rounded card, Coach is emerald.
-- About each agent (card long-press or the chat's ••• menu): its connectors (`connectors` on `/v1/agents`),
-  read-only or not, and its instructions (`prompt`).
-- Voice: the server transcribes (`POST /v1/transcribe`, Gemini Flash Lite via OpenRouter, Italian and English
-  mixed), with Apple's recogniser only as a live preview of your words, or as the fallback.
-- Streamed replies: `text` events on a streamed `/v1/chat`. The chat shows the reply as it's written, and voice
-  reads it out a sentence at a time.
-- Team chat: a follow-up without a mention goes to whoever answered last, within 30 min (#16).
-- Reminders in every Apple Reminders list, each carrying its `list`. Agents can add to a list, move a
-  reminder and filter by list. Settings picks where reminders without a list go.
-
-**Done, live (2026-10-20):** push (#1). Server: devices endpoints, APNs sender, silent `sync`
-on server-side reminder changes, `reminder` and `digest` alerts. App: device
-registration, background sync on silent pushes, taps open the digest chat, the conversation or Details, and
-Settings → Notifications with a test button. The test push reached the phone. App unit tests pass on the Simulator (53, 2026-10-22).
-
-**Done, both sides, tried live:** Apple Health (#2), contract in `docs/API.md` ("Apple Health"). App:
-daily health summaries with a 60-day backfill, HealthKit background delivery, the "I'm up" App Intent for a
-Shortcuts Sleep → Waking Up automation, the `wake` digest with sleep and recovery cards, Watch workouts ticking
-habits. The app's Health tab (redesigned 2026-10-30, Bevel-style) is one page for a day (arrows to earlier ones):
-Strain, Recovery and Sleep as gradient rings with the server's line of the day (tap: Coach's chat), each ring opening
-its page (what it's made of, flags, sleep need, zones, workouts' strain, cardio load, 30 days); last night's numbers
-on gauges against the usual range, the day's heart rate, workouts with their strain, activity tiles and weight, then
-Food (`Views/ScoreViews.swift`; the metric charts in `Views/BodyViews.swift`). Redesigned again (#28, 2026-10-31): the page is cards, not a list;
-the day's heart rate in grey with the sleep (from the real bedtime, naps, the evening's) in purple and workouts in
-orange, tapping it opens Resting HR; each metric's page (`HealthMetricView`, `MetricMath`) follows the chosen day:
-the number and a sentence against the 30-day average and the usual range (the server's `vitals`, else the 60 days
-before, worked out the same way), D · W · M · 6M (D a gauge, 6M weekly averages over ~8 months fetched on open),
-against your usual, the average night for sleep, About, day by day; today's steps, energy and exercise are "so far",
-never judged. Weight (`WeightView`, `WeightMath`) the same way: the changes over 7, 14 and 28 days (the server's
-rule, so the 28-day rate is `rate_kg_week`), W · M · 6M with the goal's pace as a band, the days (long-press to delete
-one logged in Aide). After the first look (2026-10-31): Recovery large between Strain and Sleep, flat rings with a soft glow
-of their colour; Coach's line of the day as a message from Coach below the card; the glow reaches past Last night;
-Activity is four tiles (Total energy: resting plus active, from `resting_kcal`). Scores come from the server
-(`scores.py`, contract "Scores"); the app sends heart rate as `hr_minutes`, `hr_hourly` and `max_hr`. Second pass
-(2026-10-30, after the first look on the phone): sleep need learnt from his own nights (trimmed mean of up to 90, plus
-the day before's strain and half the 3 nights' net shortfall, at most 45 min), deep and REM scored apart, stricter
-efficiency, bed and wake consistency; recovery adds the 7-day HRV trend and the training load; max HR is the middle of
-the 3 highest workout peaks, zones shown in bpm (`zone_bpm`). Recovery's heart part is the heart rate asleep (`sleep_hr`,
-the phone's average over the night's sleep stages; `sleep_hr_low` the lowest ~15 min), not Apple's resting HR, which is
-mostly a daytime number and often missing in the morning (that one stays for strain's rest HR and as the fallback). Third pass (2026-10-30, from the phone): sleep weighs hours more (duration 50%, 90% of the need scores 75, 80% scores 50; efficiency 5%, full only at 97%), each part shows the usual of the last 30 nights (`usual`, `diff_min`); the cardio load stops the day before (today's half day made every morning look like detraining) and says why (`why`, the 7 days' strain); recovery says how it's worked out; a calendar on the day header. Food: a run in the calendar no longer adds kcal before it happens (only the Watch's workouts do), each meal's `quality_parts` on its page, Log a meal as Photo · Describe · Barcode, Coach's chats take photos with the meal camera. Each score's page asks Coach for its take
-(`POST /v1/health/insight`, contract "Coach's take"). Food is the other half of the Health tab (2026-11-01: a Body · Food switch under the title, `HealthHalf`, the last one
-kept; one day for both; a camera in the corner opens the meal camera; `FoodPage` in `Views/FoodView.swift`, which
-the Mac still shows as its own section; `aide://food`, the meal buttons and the Food widget open Health → Food). Habits moved to Today (#21). Health, Screen Time and the App Group are on by default (`Aide/Default.entitlements`); `Aide.entitlements` adds push. Server
-(live): `health_days` and `/v1/health/days`, habit `workouts` and `PATCH /v1/habits/{id}`, `POST /v1/wake` and the
-implicit wake from an upload (once a day, 03:00–15:00, waits up to 10 min for sleep), the `wake` digest with a
-time-aware greeting and leave-by times (Maps: walk and transit, arriving 10 min early, home and per-place mode from memory, else `AIDE_HOME_ADDRESS`), `sleep` and `recovery`
-sections in `wake` and `daily`, the read-only `health` tool. Live from the phone: 63 days uploaded (backfill from 2026-08-21), wake briefings from uploads since 2026-10-20.
-
-**In progress:** agents (contract in `docs/API.md`, "Agents"): Aide as the orchestrator that asks Secretary,
-Professor, Coach and Finance (`ask_agent`), each with its own chats, tools, memory and Pebble colour. App side built
-(agent row in the chat list, tinted Pebble, starters, "Asked Coach" above replies, memory per agent). Server
-(live): definitions and prompts in `agents.py`, `GET /v1/agents`, `agent` on conversations and memory, each chat
-answered by its agent with its own tools and memory (shared plus its own; Aide sees all, marked), `ask_agent` for
-Aide (one stateless turn, max 3 per turn, `consulted` in chat and history). Team talk: every ask and answer is
-stored (`team` in chat and history, `GET /v1/team`), and `"stream": true` on `/v1/chat` sends them live as
-server-sent events (checked through `tailscale serve`, not buffered). Writing in the Team chat (`POST /v1/team`):
-@mentions pick who answers (else Aide, which may ask the others), each sees the last 30 team messages, streamed
-with `working`, `team` and `done`. App (dfbca79): the "Your team" home grid, a drawn
-figure per agent (`Support/Figure.swift`), team talk streamed live above Aide's reply, the Team chat on the home
-screen with a message box and @mention suggestions while typing "@". Tried on the phone (#11, closed).
-
-**Done, both sides, tried live:** routines (contract in `docs/API.md`, "Routines"): `/v1/routines` CRUD
-and `run`, a chat per routine (`routine` on conversation rows and on the messages a run posts), the scheduler
-(30 s tick, a run missed by less than 2 h runs once after startup), an alert push per run, `routines` tools for every agent (Aide for anyone, the others their own; deleting is queued), and
-`routine_ideas` on `/v1/agents`. App (dfbca79, `Views/RoutinesView.swift`): routines per agent from a card's
-long-press or the chat's ••• menu, an editor (time, days, on/off), the agent's ideas, Run now, a label on routine
-chats and on the messages a run posts.
-
-**Done, both sides (2026-10-21):** watches, the proactive specialists (#13, contract in `docs/API.md`,
-"Watches"). A watch is a routine with `watch: true`: it checks on time and posts only when something needs you
-(the model answers `NOTHING` otherwise), read-only during the check, at most 3 notes a day. Four starting
-watches, set up once: Secretary "Mail that needs you" and "Tomorrow", Coach "Recovery check" and "Habits
-tonight". App: a "Keeps an eye on" group in the routines sheet, the editor's "Only when something needs you",
-Check now. Live on the server; the first "Tomorrow" note reached the phone.
-
-**Done, both sides (2026-10-21):** photos and food (contract in `docs/API.md`, "Photos" and "Food"). Photos go
-up with `POST /v1/photos` and ride on a chat message (up to 4); the model sees a chat's last 3 as images
-(checked live through OpenRouter). Food: Coach (and Aide) log meals from a photo or a description with estimated
-calories and macros, correctable in chat; `meals` cards; daily goals. The app's Habits tab became Health: food
-for the day (ring, macros, meals, "Log a meal" through `POST /v1/food/log` into Coach's "Food log" chat) above
-the habits. Aide now sees every specialist's memory, marked with its name, and always delegates: it has
-only web, maps, memory and routines of its own, and hands the rest to the specialist whose work it is (the
-user's photos go along). Queued actions still run from a registry with every tool (`Agent.tools`).
-Saved foods (2026-10-29, server only, contract "Food"): Coach looks each item up (`find_food`: saved foods, then Open
-Food Facts by name or barcode; else `web_search`, a label, or its estimate, saved with `save_food`) and logs the meal
-from `items` with grams; the server adds them up and remembers the usual portion. Coach's photo turns (2026-10-31, #29): the
-photo reader looks at the photos once in a small call (`reader.py`: Gemini 3.8 Flash on OpenRouter,
-`AIDE_PHOTO_READ_MODEL`; the smart model when it fails; `Agent._describe`, `READ_PROMPT`; `reads_photos` on the agent)
-and Coach, on the everyday model, logs from what it saw: ~$0.003 a photo, was $0.02–0.075 with Sonnet running the
-whole turn. Gemini beat Sonnet and GPT-6 Luna on 17 of the user's meal photos. The app's chat hides the description.
-Other agents' photo turns still run on the smart model. Barcodes (2026-10-29,
-both sides): the app reads them in meal photos (Vision, `BarcodeReader` in `Support/Photos.swift`). A lone packet's
-photo opens `Views/ScanViews.swift`: the product and how much (empty: the usual portion, else a serving), logged by
-the server with no model call, or "Ask Coach instead"; an unknown barcode asks for a photo of its nutrition facts,
-read once (`POST /v1/food/label`) and saved. More photos go to Coach with their `barcodes`. "Type a barcode" in the
-Log a meal menu. Fixes from the first day (2026-10-29): Coach's chats read barcodes too (the meal's card is posted in
-that chat); `log_meal` takes only items (new foods saved as they're logged), so every meal builds the saved foods;
-OFF's placeholder "100 g" serving is ignored; the message box makes a new text field on send (the keyboard wrote the
-sent text back).
-Targets and the day score (2026-10-29, both sides, contract "Food", "Targets and the day score"; `nutrition.py`): a
-rest-day base plus the day's Watch workout kcal (× `share`, `carbs_pct` as carbs, the rest fat); `goals` on `GET /v1/food` is now the day's targets. Each food's
-Nutri-Score (2023 rules; Open Food Facts' grade when it has one, else from sugars, saturated fat, fibre, salt, fruit
-and veg share and kind, which Coach gives as it logs a new food) and NOVA. A 0–100 day score: 60% numbers, 40% the
-calorie-weighted grades (counted from half the day's kcal graded). `POST /v1/food/targets/propose`: Coach's proposal
-from the profile, 60 days of Health and 14 of food. App (`Views/NutritionViews.swift`): the score card on top of Health
-→ Food and the day's page (targets, A–E bars, 4 weeks of scores), Settings → Nutrition targets (also Targets on the
-Food page; profile from Apple Health once, "Ask Coach to propose"); HealthKit now also reads weight, height, age,
-sex, VO2 max and workout distance (`weight_kg`, `vo2max`, `workouts[].km`).
-Quality beyond Nutri-Score (2026-10-29, contract "Targets and the day score"): the 40% is three `parts`, the day's
-nutrients 50% (fibre, fruit and veg, saturated fat and free sugars as % of kcal, salt, against WHO-style lines; fibre
-and fruit/veg only on a finished day), processing 25% (the NOVA 4 share of kcal; Coach gives `nova` for new foods)
-and the kcal-weighted grades 25%. Coach's day line names the weakest. App: Nutrients, Processing and Food grades
-sections on the day's page, the weakest as a hint on the card.
-From the first try (2026-10-29): Health's Resting Energy is uploaded (`resting_kcal`) and Coach's proposal works from the
-measured burn, not a formula; it may ask up to two `questions`, answered on the page and sent back for a new proposal.
-Meals list newest first, each with an `emoji` (Coach's, else guessed from the name); the photo only on the meal's page.
-Second try (2026-10-29): targets are optional (without them the score is quality alone, and the card says so). Each
-meal carries its `items` (Nutri-Score, NOVA, a 0–100 quality each) and a `quality` (the day's recipe on the meal, its
-nutrients per 2000 kcal): a pill on the meal row, "What's in it" on the meal's page. The targets page: the goals as
-rows (Fuel my training = `perform`, Stay as I am, Lose weight, Build muscle), "Anything else for Coach" (`note`), the
-Ask Coach pill, "Edit" folded, "What Coach gets" (the model from `coach` on the targets, and every piece of data sent);
-the profile comes from Apple Health with no page of its own. The 25 meals logged before items were broken into foods
-once by Sonnet (2026-10-29, totals unchanged).
-Third try (2026-10-29): Coach keeps its last proposal and every answer (with the targets) and starts `why` with what the
-answers changed; the app shows "was 2,450" on each number that moved. "What Coach gets" is gone from the page.
-Control Center (iOS 18): "Snap a meal" and "Describe a meal" (`LogMealIntent`, `Shared/MealIntents.swift`, also a
-Shortcut) open Health → Food with the camera or the describe box (`aide://meal/photo`). The barcode's grams take sums
-(`Support/Arithmetic.swift`: 400/3, 2×30; + − × ÷ keys over the number pad).
-The meal camera (2026-10-29, `Views/MealCameraView.swift`): Aide's own camera for Health → Food and the Control Center
-button (now a fork and knife, not a camera): up to 4 shots then Next, Library and Describe. A food barcode held still
-in view (0.35 s) opens the packet's page over the camera by itself (Cancel goes back; that code then waits for a tap on
-its pill until it leaves the picture). The packet page (`ScanSheet`, redesigned 2026-10-29): name, brand, Nutri-Score
-tile, Ultra-processed, a big grams field prefilled with the usual portion or a serving, portion chips, the kcal and
-macros, "Log 240 kcal". Chat photos keep the system camera. Since 2026-10-30: the phone's virtual back camera (triple,
-dual wide…) with lens buttons as in the Camera app (0.5, 1, 2, the telephoto), pinch to zoom, tap to focus, macro
-switched on by the phone up close (a Macro badge), the preview kept upright by following the rotation coordinator.
-Barcodes are read by Vision on the live frames (~8 a second, 10–20 ms each), not `AVCaptureMetadataOutput`: asking it
-for any barcode type held the camera's start up exactly 9 s on the 15 Pro Max; now it runs in ~0.15 s.
-Food history (2026-11-03, both sides, contract "Food"): `GET /v1/food/recent` (foods eaten in 90 days, or any saved
-food matching `q`; meals of several items, the same items once; by how often, times near now's time of day counting
-double), `POST /v1/food/foods/log` (several saved foods as one meal) and `POST /v1/food/meals/{id}/again`, no model call,
-posted in Coach's chat like a scan. App: Recent, the fourth way in on Health → Food (`Views/RecentFoodViews.swift`: search,
-a meal again, a food opens the packet page on it, + builds one meal of several), Have it again on a meal's page.
-Weight (2026-10-29, both sides, contract "Apple Health", Weight; `weight.py`, `tools/weight.py`): readings logged in
-chat (`log_weight`) or the app plus Health's, the 7-day average, the change over 3 weeks and the rate a week (28 days)
-against the goal's pace (gain +0.25–0.5% a month), with a verdict. The phone writes Aide's readings to Health as Body
-Mass (`HealthService.writeWeights`). Coach's proposal corrects the base from a trend off for ~3 weeks. A Weigh-in watch
-(Mondays 08:30). App: a Weight card on Health → Body, `Views/WeightViews.swift` (chart, trend, days, Log weight), a row
-on the targets page.
-
-**Done, both sides (2026-10-21):** study material and course notebooks (#3, contract in `docs/API.md`, "Study
-files", "Moodle", "Obsidian vault" and "Notebook"). Moodle's PDFs come in every 4 hours (login in the app), and
-the Obsidian vault is served over WebDAV. A notebook per course: an Introduction on the exam, a page per topic
-(explanation, key terms, formulas, worked examples, slide figures, exam-style MCQs with checked keys) and Spaced
-Repetition cards. Every write is proposed in the course's Professor chat first; new material is triaged against
-the outline and merged into the user's latest version, edits in Obsidian included. Sonnet writes, Haiku triages
-and checks the answer keys. App: Moodle and Obsidian setup in Settings, a progress card in the chat while notes
-are written. Live on macroeconomics (11 topics, 25 figures).
-Formula sheet and exercises (2026-10-29, contract "Notebook" and "Exercises"): `Formulas.md` gathers every topic's
-Formulas (no model call, never behind the topics). A set of solved exercises per topic (`exercise_sets`, the `exercises`
-job): only the course's own (exercise sheets and their solutions, review questions, past exams), matched to the topics
-by Haiku, copied and solved (following the course's solution where there is one), nothing invented; the other final
-answers checked by a blind solver; topics no sheet practises get none; `Exercises/` in the vault, Professor's `write_exercises` and
-`read_exercises`. App: a Practice section on the course page (Formulas, Exercises, Quiz me, Practice exam).
-Mock exams (2026-10-29, contract "Mock exams"): a paper like the real exam (`mock_exams`, the `mock` job, Sonnet in one
-go from the Introduction, every topic's notes and the past exams; MCQ keys checked blind), open questions included,
-taken in the app as a `kind: "mock"` quiz with its own time and scoring; open answers typed or photographed, marked by
-the `grade` job against the model answer and marking, then posted in the course chat. `Mock exams/` in the vault (the
-paper, then the answers), Professor's `write_mock_exam`, objectives count them. Past exams (`past=true`, the `papers`
-job): the course's own papers (past exams, the mocks it gave out) copied as they are, one Sonnet call each, keys checked
-blind with only the key changeable; a mock with `source` and the paper's `title`, in `Past exams/` in the vault. App: Mock exams in Practice.
-Practice exams (#4, `quiz.py`, contract "Practice exams"): from the notebook's checked MCQs, no model call, missed
-questions first, scored like the exam; the app's "Practice exam" in a course chat's ••• menu; Professor posts the
-result in the chat.
-Quizzes and review sessions (2026-10-27, closes #4; `reviews.py`, `tools/quiz.py`, contract "Quizzes and review
-sessions"): Professor quizzes in the course chat, one question at a time from the notebook's MCQs and flashcards (missed
-first, answers recorded as they come, shared with practice exams; `kind: "chat"` quizzes don't count for objectives).
-By voice: `voice` on `/v1/chat` makes replies speakable, and "Quiz me by voice" (the course chat's ••• menu, a review
-session's card) opens the chat in voice mode with "Quiz me" said for you (`VoiceController.start(saying:)`).
-The Study page (2026-10-31, `Views/StudySessionView.swift`, contract "Practice exams", study sessions): every other "Quiz
-me" (course page, Up next, a review session, a topic page's Study this topic) opens it. Flashcards (turn, swipe Know or
-Still learning), Learn (multiple choice, right or wrong at once), Write (a flashcard's front or a course exercise
-answered in words, marked by the fast model in ~2 s, "I was right" to override; if marking fails, you mark it) and Mix;
-in rounds until what was missed is known. A `kind: "study"` quiz: no timer, no score, nothing posted, answers count
-for mastery. The marker falls back to the Claude plan when OpenRouter refuses (the key's $5 limit, 2026-10-31). Review sessions: planned with the
-user from `free_time`, `study_progress` and the exam date, put in the timetable calendar as "Review: <course>" (never
-a lecture), followed when moved or deleted there; when one starts Professor offers the quiz in the chat, with a push.
-The course page lists them (swipe to cancel).
-Lessons (2026-10-31, `lessons.py`, contract "Lessons"; `Views/LessonViews.swift`): a topic taught a step at a time.
-Professor turns the topic's notes into a lesson the first time it's opened (a hook, goals, 4–10 short steps, each with
-a key idea, the same idea told another way, a multiple-choice or written check and a second one if the first is
-missed), on the Claude plan first (smart model; at its limit it waits, as notes do). A step: read or listen (`say`, the
-maths in words), Got it or Not quite (another way, then Ask), the check (choices checked with no model call, written
-answers marked by the fast model), Ask Professor about the step (the fast model, as is the explanation back). At the end the user explains the topic back and
-Professor says what stuck and which steps to look at again; then the next topic's lesson is written ahead. Lessons are
-kept, marked stale when the notes change. App: "Learn this topic" on a topic page, "Learn" on the course page (the path:
-up next, every topic with how far its lesson got). On OpenRouter it would be ~$0.10 to write a lesson (Sonnet) and
-~$0.005 of live calls to go through one. Writers compared (2026-10-31, `~/lesson-bench` on cappa, three courses judged
-blind by Opus): Sonnet left nothing important out; Haiku, GPT-6 Luna and Gemini Flash got every key right but each
-skipped exam material, so Sonnet writes and Haiku answers.
-Since 2026-10-22 (`engine.py`, contract "Who writes the notes"): lecture notes and notebook jobs can run on the
-user's Claude plan through Claude Code on `cappa` (`claude -p`, Sonnet writes, Haiku reads; set in Settings → Claude
-plan; on now). At the plan's limit a job pauses and Professor asks: wait, or finish on OpenRouter.
-Figures come from a Haiku scan of every slide (`page_looks`); "Find figures in the slides" re-picks them.
-Study tab (both sides): courses with their notebook in brief, a course page with proposals (Apply / Not now), the
-writing progress, Ask Professor, Practice exam, the Introduction and topic pages (notes with figures from
-`GET /v1/files/{id}/pages/{n}`, folded answers, flashcards; `plain=true` reads), lectures, PDFs, and adding a PDF or
-a recording from Files.
-Notes in the app (2026-10-29): formulas and the maths in sentences drawn as LaTeX with SwiftMath (`MathFormula`,
-`MathText`; `plain`, `latex` and `inline` on the note endpoints), and Contents (the list button) on long pages to jump to a heading.
-
-**Done, both sides (2026-10-22), live on the server:** objectives (contract in `docs/API.md`, "Objectives";
-covers the Goals idea in #14). Every specialist proposes objectives for the day, the week and the month (before the
-morning, weekly and monthly digests, month first), each tied to a measure where one fits (habit check-ins, practice
-exams, food log, sleep, steps, a reminder) so it ticks itself; the rest are ticked by hand. They wait for the
-user's OK. `objectives` tools for every agent, an `objectives` digest section. App: an Objectives tab (badge: proposals
-waiting for the OK; Today / Week / Month, accept, drop, tick, add, propose now), objectives in the
-digest. First plan made live 2026-10-22; on the phone, the first proposals accepted 2026-10-22.
-Steps (2026-10-26): any objective can carry a checklist (`steps`); a hand-ticked one with steps is done when they all
-are. Only hand-ticked and reminder-linked objectives have a tick box; measured ones show a dashed ring and "Ticks
-itself". Tapping an objective opens its page (how it's ticked, steps, title).
-Since #19 (2026-10-22): a `notes` measure (notebook topics written or revised, logged in `topic_changes`), and
-`StudyReplanner` plans Professor's week and day again 10 min after a course's notes or dates change (not when
-they're all taken with none waiting); the planner sees each course's new notes and most-missed topics.
-Course dates (2026-10-22): a model reads each course's Moodle page and the files' exam pages into dated items
-(exams, mid-terms, sign-up deadlines; `course_dates`, the `dates` notebook job), again when Moodle changes. The
-planner, Professor's `list_courses` and the Introduction's Dates section use them.
-
-**Done, both sides (2026-10-22), tried on the phone:** Activity and approvals (#12, contract in
-`docs/API.md`, "Activity and approvals"). Server: `activity.py` keeps a 90-day feed of what each agent did (changes,
-queued actions and how they were answered, routine and watch runs, asks, unasked posts, objectives proposed,
-digests), `GET /v1/activity` (paged, per agent) and `GET /v1/approvals` (queued actions with who and from where,
-proposed objectives, notebook proposals, a paused notes job, the next routines). `/v1/confirm` and `/v1/cancel`
-take `ids` to answer one action at a time. App (`Views/ActivityView.swift`): a bell with a badge on the home
-screen, a sheet with "Waiting for you" (each answered there), "Coming up" and the feed by day; an agent card's
-"Activity" shows that agent's alone.
-
-**Done, both sides (2026-10-22), live on the phone:** GTT tram alerts (contract in `docs/API.md`, "Transit
-(GTT)"). Server (live): GTT's timetable and live feed (GTT takes ~20 s to answer, so it refreshes in the background;
-the metro has no live data), transit tools for Aide and Secretary (stops, arrivals near the phone or at a stop,
-alerts: a weekday commute or a one-off), a watcher that pushes a time-sensitive "Tram 4 in 7 min: leave now" when
-the tram is the walk from the phone plus 2 min away (or N min before). App: `LocationService` (significant moves,
-Always, a fix on a silent `location` push), Settings → Location and trams (location, Tram alerts list and editor).
-Departure cards (`departures` attachment, `GET /v1/transit/departures`): per stop, each line's badge, direction,
-minutes, live delay or timetable, the next ones, the walk and when to leave; with a destination (a stop, or any place
-through Maps: its stops within 400 m) only direct lines, with the time there. The app's `DeparturesCard` counts down
-and fetches the board again every 30 s while on screen (cards under 3 h old).
-Leave-now for events (2026-10-26, contract "Leaving for an event"; closes the tram half of #5): for a timed event with
-a place (or one from memory: lectures are at the uni), Maps' transit ways from the phone, the latest on the line memory
-prefers (the 10 to uni), else on a frequent GTT line; ~45 min before leaving, its first ride becomes a one-off tram alert
-(`event` on the alert), so the usual "Tram 4 in 7 min: leave now" comes. On/off in Settings → Location and trams →
-Tram alerts (`/v1/transit/settings`).
-Following the ride (2026-10-27): while a tram Live Activity is on, the app sends a fix every ~20 s (background location);
-the server re-picks the tram from where the user is (an earlier one once at the stop), sees them on board when the phone
-moves along the line, counts the stops to where they get off (`to_stop` from Maps) and says when it's next.
-Tram alerts (2026-10-27): leave-now 3 min before it's time to leave, at the stop 2 min early; the push and the Live
-Activity say where the tram is (stops to go, the stop it's near, or when it leaves its first stop, drawn as a track)
-and "GTT live down" when GTT's feed isn't answering (it was down 07:32–07:58 on 2026-10-27).
-Fixes from the first ride (2026-10-27): push-started activities ask iOS for their update token (`input-push-token`),
-and when one's missing the server wakes the app (a `location` push) to send it again; the trams being followed survive
-a restart (`tram_follows`); one countdown per tram (a second alert for the same stop and line, or a one-off asked again,
-doesn't start another); "follow my tram" is a one-off with `right_away`. Driving and transit times come as a `routes`
-card (`Views/RouteCard.swift`). The event activity has a bar to the start, the notes and what comes after.
-
-**Done, both sides (2026-10-22), tried on the phone:** mail drafts (#7, contract in `docs/API.md`, "Mail
-drafts"). Server (live, `drafts.py`): before the evening digest Secretary reads the last 3 days' inbox (each message
-once) and drafts replies to mail that asks something of the user, with memory and the calendar; `draft_reply`,
-`list_drafts`, `discard_draft` in chat; drafts in `/v1/approvals` and the evening digest's `replies` section.
-`POST /v1/mail/drafts/{id}/send` (the app's tap) is the confirmation. App (`Views/DraftViews.swift`): drafts in
-Activity's "Waiting for you" (Send, Edit, Dismiss), an editor sheet, and "Replies to send" in the digest Details.
-
-**Done, both sides (2026-10-24), tried on the phone:** Live Activities and widgets (contract in
-`docs/API.md`, "Live Activities" and "Widgets"). Server (live, `live.py`): push-to-start and update tokens
-(`/v1/live/tokens`, `/v1/live/activities`), the `liveactivity` sender; a tram alert starts a countdown instead of
-the plain push when there's a start token, updated as the live feed moves; chat and team turns update the agent's
-activity (asking, writing, then done with an alert ~3 s after, unless the app ended it: the island pops open with the reply and stays 15 min to be tapped, the push quiet, since 2026-11-02); scheduled routines start one
-quietly. `POST /v1/reminders/{id}/complete` and `GET /v1/transit/nearby` for the widgets. App: `AideWidgets`
-extension (App Group `group.<bundle id>` shares the keychain items and a cache of the last answers): Today, Food and
-habits, Objectives, Your team (and "Talk to Aide" on the Lock Screen), Departures; tick boxes through App Intents;
-`TramLiveActivity` and `AgentLiveActivity` on the Lock Screen and in the Dynamic Island
-(`Shared/LiveActivityAttributes.swift`); `Support/LiveActivities.swift` starts the chat ones and registers tokens;
-`aide://` links (`PushRoute(url:)`). The first phone install needs the App Group and the `.widgets` bundle ID on the
-team (Xcode's automatic signing adds them).
-
-**Done, both sides (2026-10-27), closed:** more in the Dynamic Island (#24, two of its ideas;
-contract in `docs/API.md`, "Live Activities"). The next event: 10 min before a timed event on the Work calendar the server
-(`upcoming.py`) push-starts an `event` countdown with its place, follows a move, ends at the start; none when leave-now
-set a tram alert for it; off in Settings → Notifications (`/v1/live/settings`). Notes jobs: Professor's agent activity
-while a notebook proposal is applied (topics done of total, a bar and "2/5" in the island) or a lecture's notes are
-written (`NotesRun` in `live.py`). An activity ended before the app sent its token is ended when the token comes.
-
-**Done, both sides (2026-10-27), tried on the phone:** Screen Time locks (#23, contract in `docs/API.md`,
-"Screen Time"). Server (`locks.py`): one-offs (15 min to 24 h) and weekly schedules (overnight ones run into the next
-morning), `/v1/locks`, a sync push on every change; Coach's tools (`lock_now`, `add_lock_schedule`, `update_lock`;
-`end_lock` and `delete_lock` queued, ending early needs the user's reason, and Coach sees the week's unlocks). App:
-Settings → Screen Time (allow it, what stays open through `FamilyActivityPicker`, lock now, the locks and an editor,
-End early with a reason and a 10 s wait); `ScreenTimeService` sets one DeviceActivity schedule per lock; two
-extensions read the locks from the App Group (`ScreenTime/LockBook.swift`): `LockMonitor` shields and opens on time
-with the app closed, `LockShield` is the locked app's screen ("Locked until 07:00"). Needs the Family Controls
-entitlement (`Aide.entitlements` and both extensions): fine for development builds, TestFlight needs Apple's approval
-(a request form). Each lock picks its own apps on the phone (everything but some, or only some). Strict locks
-(2026-10-27): once on, only an emergency pass ends one early (3 a calendar month, `passes` on `/v1/locks`), not a
-reason or Coach, and the app's Screen Time page is locked until it's over.
-The Screen half of Health (2026-11-01, iPhone only; Body · Food · Screen since #32, `aide://screen`): where the
-phone's time went, Day · Week · Month with arrows, Lock now in the corner and Locks and limits (`ScreenTimeView`)
-under the date (`Views/ScreenView.swift`). The page under it is drawn by the `UsageReport` extension
-(`DeviceActivityReport`, the only place iOS shows per-app use; it has no network and can't write to the App Group, so
-none of it reaches the server yet): the total is every app's time added up (not Apple's total), against your usual
-by now (7 days) or last week/month, a focus score (how much against 3 h, your usual, pickups, at night; tap the ring
-for its parts), pickups, first pickup, offline, hourly or daily bars, Most used (tap an app for its bars).
-The maths is `Usage/UsageMath.swift` (tested); the views `Usage/UsageReportView.swift` are shared, so the
-Simulator shows them from `UsageSample` in preview mode.
-Daily limits and estimates (2026-11-01, contract "Daily app limits", "Screen time estimates"; `locks.py`): a limit gives
-some apps so many minutes a day, then locks them until midnight (`/v1/limits`; the title is typed, the apps stay on the
-phone in `LockBook.limitApps`). A `limit-<id>` DeviceActivity per limit with one threshold event; `LockMonitor` shields
-it and records the hit; ending one early takes a reason, a strict one a pass, and a strict one reached today can only be
-tightened. The estimate: one `usage` activity over what the user picks in "Share with Coach" (every category), events
-every 15 min to 8 h then hourly to 16 h; the monitor keeps the day's highest step, the app sends the last 7 days and the
-limit hits on sync (`PUT /v1/screen/usage`), and Coach reads them (`screen_usage`, as "at least"). The lock's countdown (2026-11-01, contract "Live Activities", `lock`; `lockwatch.py`): the server push-starts
-it when a lock comes on (Pebble asleep, the time left, a bar), ends it when it opens or is unlocked; on/off in Settings →
-Notifications.
-
-**Done, both sides (2026-10-27), tried on the server and the phone:** browser errands (#22, contract in
-`docs/API.md`, "Browser errands"). Aide starts an errand (`start_errand`) for anything a shop or booking site shows now
-or does for you; it runs in the background in Aide's Chromium on `cappa` and reports in Aide's chat. It searches,
-reads, compares and fills carts on its own; anything that changes something (buying, booking, sending, signing up,
-cancelling) is refused in code and asked as a queued `errand_go` with the order's `detail`, and after Confirm only the
-confirmed button is clicked while the page shows the confirmed total. Logins, codes, CAPTCHAs and card steps are the
-user's, in the live view (a WebSocket; typed text is never logged or shown to the model). It uses the site's saved
-card and address. Placed orders go into `purchases`, which Finance reads (`list_purchases`). Tried headless on
-Amazon.it (prices, product links). App (`Views/ErrandViews.swift`): the errand card in chat (Take over, answers, Review
-and confirm, Watch, Cancel), the live view (`BrowserSheet`: taps, drags, a native field that follows the page's focus
-so AutoFill offers passwords and codes), the order's Confirm sheet, errands and orders in Waiting for you, purchase
-cards, Settings → Browser (sites, logging in, Purchases), `aide://errand/<id>` and the `errand` push. Since 2026-10-28:
-the app draws the errand (scenes: results, menus, timetables as `rows`, product, cart), logins open on their own;
-Glovo (menu, "+", the address dialog) and Trenitalia (stations, search, timetable) tried headless. Next: a login and
-a small real order from the phone.
-
-**Done, both sides (2026-10-26), installed on the phone 2026-10-26:** Today and limit habits (#21, contract in
-`docs/API.md`, "Today" and "Habits"). The app's first tab, `Views/TodayView.swift`: the latest digest as a card
-(`GET /v1/digest?kind=latest`; Details, Reply), "Waiting for you" (`WaitingSection`, also in an agent's Activity),
-habits and objectives with Today / Week / Month, "From the team" (`/v1/activity?kind=routine,watch`) and all
-activity. It replaced the digest as a chat message, the sun button, the bell and the Objectives tab. Since 2026-10-26 the
-agents come first. Since #32 (2026-11-01) the tabs are Team · Study · Health · Money: Settings is a sheet from the gear
-in Team's corner (`env.showSettings`; on first launch until set up, and it can't close before), Screen is Health's
-third half, Money is a placeholder for Finance (#31, `Views/MoneyView.swift`), and each area page leads with its
-agent's line (`AgentLine`: Professor on Study, Coach on Health, Finance on Money; tap: its chat). The Team tab has the briefing behind a sun button in the
-corner (the digest sheet: Wake-up, Evening, Week, Month, and Refresh to write it again) and a small strip ("3 of 5 habits
-done today", what's waiting) above the team; Today opens from it as a page (`env.showToday`). The Morning digest is off
-(2026-10-26): the wake-up briefing is the morning one. Notifications open Today on their item (a routine's push carries `routine`), or the
-chat. Routine chats are left out of Chats. Limit habits (`{"type": "limit", "max": 5}`, `POST /v1/habits/{id}/count`,
-the `count_habit` tool, "had another coffee") show "2/5" with − and +. Food habits tick from the food log. The planner
-leaves habits out of a day's objectives, and Coach sees each limit habit's last 7 days. One tap: the "Log one" App
-Intent (Shortcuts, Action Button), the Health widget's +, a Control Center control (iOS 18,
-`AideWidgets/HabitControl.swift`). A limit habit can count from Apple Health (`health: "inhaler_usage"`: the user logs
-the habit as Inhaler Usage; the day's count is the larger of Health's and the app's). One habit is set up
-that way. Counts logged through Aide (an agent, the app, a widget) go back to Health (2026-10-27): the server keeps each
-day's `health_logged` and the app makes its own Inhaler Usage samples match, never touching the user's.
-
-**Done, both sides (2026-10-29), tried on the phone:** the events card as a week (#25, contract "Events and
-plans"): a turn's events in one card in time order, marked found, created or proposed; `propose_events` (Secretary,
-Professor) puts a plan on it that goes in the calendar only on Add; the app's `Views/EventWeekView.swift` (week strip,
-the chosen day, the event's sheet with Move, Delete, Open in Calendar). Also a reply survives the app going to the
-background (pings, `working` on history, a `message` push when no Live Activity is left).
-
-**Done, both sides (2026-10-30), tried on the phone:** YouTube videos (contract in `docs/API.md`, "Videos"; `videos.py`,
-`tools/videos.py`). A link pasted in Aide's or Professor's chat (`summarize_video`) or shared through the app
-(`POST /v1/videos`, a new Aide chat) is read in the background: yt-dlp's details and captions (the video's own, else
-YouTube's automatic ones; no captions: Whisper on the audio), a brief in English by Sonnet (gist, TL;DR, what to know,
-4–10 key moments with times, the takeaway, the answer to the user's question), a frame after each moment from the
-stream (ffmpeg, no download) and Haiku keeping only the ones that show something; posted in the chat with a `videos`
-card and a push. `read_video` and `list_videos` for follow-ups. Each one is a page in the vault (`Aide/Videos/`).
-Tried on cappa: 3Blue1Brown (captions, 27–43 s), Geopop in Italian (brief in English), Whisper on 10 min (42 s).
-yt-dlp must be kept current (README, "YouTube videos"). App (`Views/VideoViews.swift`): the card in chat (thumbnail, the
-step while it's read, the gist, "9 key moments"), the page (Play as slides, YouTube, the answer, TL;DR, what to know, the
-moments on a timeline with time chips opening YouTube there and their frames, zoomable, the takeaway), the slides
-(story-style: cover, answer, a slide per moment, Remember; tap to skip, hold to pause, drag down to close), Settings →
-Videos (search, swipe to delete). The `AideShare` extension (bundle `.share`, App Group) sends a shared YouTube link with
-an optional question. The chat message is only the answer or the TL;DR; the card has the rest.
-
-**Done, both sides (2026-11-01), live (closes #31):** Finance, step 1 of #31 (contract in `docs/API.md`,
-"Finance"; `finance.py`, `tools/finance.py`). Payments come from Apple Pay taps: a Shortcuts Transaction automation runs
-the app's Log payment intent (`Support/PaymentIntent.swift`, iPhone only; a tap with no connection waits in
-`PaymentInbox` and goes when the app opens; the same card, merchant and amount within 3 min is one payment). Cash and
-transfers are told to Finance in chat. Each new merchant is sorted by the fast model once, then by its rule; a change
-in the app or chat becomes the rule. The month, categories against an optional budget (never nagging: orange words
-only when ahead or over), subscriptions found from repeats, accounts. App (`Views/MoneyView.swift`,
-`Views/FinanceViews.swift`): the Money tab and the Mac's Money section, the month as a ring of what's left (without a
-budget: this month against last), category bars with a tick for today, payments by day, a payment's page (the
-category as a row, kept for the merchant), subscriptions by date, accounts, the budget sheet, Settings → Payments (how
-to make the automation), `payments` cards in chat. Debug builds: `-previewMonth 2026-10`.
-Banks, step 2 of #31 (2026-11-01, contract "Banks"; `banks.py`): Enable Banking (GoCardless/Nordigen closed sign-ups
-in 2025; the others are enterprise), a JWT signed with the application's key (`ENABLE_BANKING_*` in `.env`, the key on
-`cappa`). Linking: the bank's page in an `ASWebAuthenticationSession`, the bank back to the server's callback (no
-token, a one-time state), then `aide://money/banks`. Reads at 07/12/17/22 and when Money opens (`POST
-/v1/finance/banks/sync`, PSU headers lift the 4-a-day limit), the first 90 days, then 10 days of overlap; a tap and
-its bank record are one payment (amount, 5 days before to 1 after), pending becomes booked in place, own-account moves
-are transfers, money in ≥ €10 is pushed (`finance`), a push a week before the consent ends. App
-(`Views/BankViews.swift`): Money → Banks (link, renew, unlink, Read now, the bank picker with logos), balances and
-the total under Accounts, Pending on rows. Live: the Enable Banking application is set up and a bank is linked
-(2026-11-02).
-
-**Done, both sides (2026-11-02), tried on the phone:** chat drives the app (contract "Attachments", `open`;
-"Daily app limits"). Coach adds and changes daily app limits (ending early and deleting queued; the apps are picked on
-the phone), edits habits and the food targets; Professor reads and corrects course dates; Aide reads and changes the
-server's settings (`tools/settings.py`: digest times, Live Activities, leave-now, the engines) and writes a digest
-again. Any agent can put an `open` card under its reply (`open_page`, `tools/pages.py`): buttons to a page of the app,
-opened only on a tap (`OpenLinksCard` in `ChatView.swift`). New links: `aide://study[/<course>[/practice|/quiz|/lesson]]`
-(`StudyLink`, followed by `StudyView`) and `aide://settings[/<page>]` (followed by `SettingsView`; the Mac opens its
-Settings section, without the phone's pages). Debug builds: `-previewRoute <aide:// link>`.
-
-**Done, both sides (2026-11-02), live:** objectives as plans and activity grouped (contract "Objectives", "Approvals",
-"Activity and approvals"). A period's proposals are one plan (`plans` in approvals) that starts by itself at
-`starts_at` (midday, at least an hour after it's made, never before the period; lazily, on the first read after) unless
-something is dropped (`drop` on accept); a proposal with a `due` lapses once that's passed. Day objectives link to the
-week goal they're a step of (`parent`); week ones with a measure carry `days` for dots; `measure.source` says where
-progress comes from. App (`Views/PlanViews.swift`): `ObjectivePlanCard` in Waiting for you (Not this on each goal,
-Start all now), Today as the week (`WeekGoalCard` with day dots and today's steps inside, Also today, habits, the month
-as bars; no Today/Week/Month picker). `/v1/activity?grouped=true` folds a run (same agent and kind, one chat or one
-title, 45 min), an errand's lines, a plan's objectives (10 min, any agent) and a day's quiet checks into rows with
-`count`, `agents`, `children` (`activity.grouped`); the Activity sheet has agent chips, rows with ×N that fold open
-(`ActivityLine`), quiet checks as one grey line, and every day before the newest folded to one row ("Yesterday · 52 things from…").
-
-**Done, both sides (2026-11-03), tried on the phone:** weather (#51, contract "Weather"; `weather.py`).
-Open-Meteo where the phone is (a fix under 2 h old), else home; a `weather` section in `wake`, `daily` and `evening`
-(the greeting names it only when it changes plans), the `weather` tool for Aide, Secretary and Coach (Coach flags a
-run in rain or heat), "Rain likely (70%): take an umbrella." on a leave-now tram alert. App: `WeatherCard` in the
-digest Details, a line on Today's digest card.
-
-**Done, both sides (2026-11-03), tried on the phone:** bedtime (#53, contract "Apple Health", "Bedtime";
-`bedtime.py`). The wake time is the anchor: set in Settings → Bedtime, else learnt from the last 28 mornings (weekdays
-and weekends apart), moved earlier only for an early event (when to leave, less getting ready). The bedtime is the wake
-less the sleep need, the usual time awake in the night and 15 min to fall asleep. `lead_min` before it the server
-starts a `bedtime` Live Activity (`AideWidgets/BedtimeLiveActivity.swift`: Pebble asleep, the countdown, "7h30 of sleep ·
-up at 7:15"), or a push without a token; with wind-down on, a "Bedtime" Screen Time lock to the wake time (the Mac holds
-it too). The evening digest's Tonight card (`BedtimeCard`), a line on Today's digest card; the wake briefing says how
-the night went against the plan, Coach's `sleep_plan` sees the week, `set_sleep_plan` changes it.
-
-**Done, both sides (2026-11-03), tried on the phone:** focus sessions (#54, contract "Focus sessions";
-`focus.py`). Started from a course page or a topic (Focus chip), a review session (Up next's Focus, or a review row's
-press and hold), or by asking Professor: 25/5 × 4, 50/10 × 2 or your own (15–120 min rounds, up to 8), strict by
-default. Each round is a lock with `focus` (`Views/FocusViews.swift`: the start sheet, `FocusCard` on Study and the
-course page, ending a round early with a reason or, strict, a pass; a break ends freely). The phone locks all but
-`LockBook.focusAllowed` (Settings → Screen Time → During focus; until picked, the usual ones); the Mac closes every
-regular app but `MacLockApps.focus` (Notes, Preview, Obsidian…; Settings → This Mac → Screen Time) and Aide, never a
-website. The `focus` Live Activity (`AideWidgets/FocusLiveActivity.swift`: the phase, the time left, the round, a
-sound at each switch; off in Settings → Notifications). At the end the card and the push open "What stuck" (the Study
-page in Learn mode, 5 questions, `afterFocus`, the first round's score sent back), and Professor posts the session in
-the course chat. Minutes per course count for `study_progress`, the `focus` objectives measure and Coach.
-
-**Done, both sides (2026-11-04), live on the server, tried on the phone:** price watches and timed drops
-(#57, contract "Browser errands": Timed drops, Price watches; `pricewatch.py`, `errands.py`). A price watch reads a
-product page every few hours in Aide's browser with no model (schema.org, meta tags, Amazon's price box, a coupon
-counted; the fast model only when no price shows), posts once with a push when it's under the line or back in stock,
-then waits for Watch again; Buy it starts a normal errand. Not a routine (no model run, no 3-a-day cap). A timed drop
-(`start_errand` with `drop_at`, `max_total`) gets ready ahead, asks once with a standing `errand_drop` (confirmed only
-on its own card, waits until the sale closes), sits `scheduled`, opens 5 min before and buys only inside the limits
-(`drop_mismatch` in the commit guard: window, item, variant, total at or under the max). Bot-forbidding shops refuse a
-drop (`NO_BOTS`). App: the `price_watches` card, Settings → Browser → Price watches, the drop's limits sheet.
-
-**Done, both sides (2026-11-04), tried on the phone:** release trackers (contract "Browser errands", Release
-trackers; `releases.py`). "Follow the Nike Alphafly 4 release": an errand researches every colourway (code, price,
-status, the date and time in Italy, first come or draw, the shops) and posts a `releases` card. The app opens it as a
-shop's page in a drawn browser (`Views/ReleaseViews.swift`: a colourway carousel with Want this, EU sizes, shops,
-Tell me or Buy it for me with the most you'd pay). Then a daily look (every 6 h in the last 4 days) with web search
-posts what changed and sets up each pick: a timed drop on the user's shop once there's a date and time (buy, first
-come), a reminder 10 min before (tell, or any draw), a price watch when sold out; a moved drop is undone and redone.
-Settings → Browser → Releases. Aide's tools: `track_release`, `set_release_picks`, `list_releases`, `release_status`,
-`stop_release`.
-
-**Done, both sides (2026-11-06), live on the phone (closes #34):** the voice redesign (contract "Voice calls").
-Spoken quiz answers are marked with no model call. Live calls: cappa's own voice (`localvoice.py`, `voicemodels.py`,
-Chatterbox in `deploy/chatterbox/`) as the ears and mouth, the chat's agent doing the work, a spoken yes or no checked
-in code (money and outward actions stay on the card), a call row in the chat; GPT-Live (`gptlive.py`) is there but too
-dear (~$30 a month). The words ~0.1 s after you stop, the first sound ~0.5 s after the reply, at `AIDE_VOICE_SPEED`
-(1.15); a line ends ~0.5 s after its last words (it rambled before). A step's line ("Checking the calendar.") only
-when the answer hasn't come 1.2 s after the step, "one moment" for a slow turn, a breath before the answer. App
-(`Support/LiveCall.swift`): the voice on an engine of its own (voice processing only on the speaker or receiver),
-AirPods at full bandwidth on iOS 26; the voice screen (`Views/VoicePanel.swift`) keeps the call as a chat. The old
-turn-at-a-time voice when calls are off (Settings → Voice → Live calls). Faster answers (#71, 2026-11-06, live,
-not yet tried on a call): the reply is said as Haiku writes it, a sentence at a time (`Spoken` in `livecall.py`; the
-line before a tool call too, in place of a step line), and a spoken turn's stamp carries today's and tomorrow's
-calendar (`agenda.py`: kept between turns, read when a call opens, dropped on every write through Aide), so "what's on
-tomorrow" is one model round.
-
-**Done, server (2026-11-07), live:** the exam plan (#68, contract "Exam plan"; `examplan.py`). Each course's next exam
-or mid-term (the Exam calendar, the course's dates, else a likely date the user gives), the hours left per topic and
-phase from the notebook, the answers and lessons, stretched while lectures remain, laid over the free days (wake to bed,
-less the calendar) within 2 h a day in term and 4 h after the last lecture; fits, tight or short, with warnings.
-`GET /v1/study/plan`, Professor's `study_plan`, in the objectives planner's prompt. App (2026-11-07,
-`Views/ExamPlanViews.swift`): today's plan on Study (a row per block: learn opens the topic's lesson, practise and
-review the Study page on it, mocks the mock exams; press and hold to focus), the plan's page (each exam: fits, tight
-or short, the phases as a strip), an exam's page (day-by-day bars by phase, the phases' dates, warnings, the fallback
-sitting, the topics' minutes, a mid-term's topics, a likely date) and the daily limits (term and after the last
-lecture). The day and the week (2026-11-07, closes #68): each day plan of Professor's starts with an objective per
-course, "Study Macroeconomics for 1h30", ticked by focus minutes (`focus` with `unit: "min"`); each Sunday from 17:00
-(`WeekProposer`) and on "plan my week" (`propose_study_week`) the next 7 days are placed in the free time as
-"Review: <course>" sessions on the week card (Add puts them in), with their topics, in Professor's "Study week" chat.
-
-**Done, both sides (2026-11-07):** spaced repetition (#63, contract "Practice exams", spaced repetition; "Study";
-"Objectives", `review`). Each notebook question and flashcard has an FSRS schedule worked out from every answer it has
-had (`srs.py`; a day is one review graded by its worst answer: wrong Again, an open answer worth half Hard, right Good;
-due at 90% recall, a miss due tomorrow, at most 180 days). Mastery's known and learning follow it (plus `due` and
-`retention` per topic), and the exam plan's known items too; picking takes what's due or missed first, least recalled
-first. The Due today deck (`POST /v1/quizzes` with `"due": true`): what's due, then up to 15 new a day per course in the
-notebook's order. `due`, `new`, `next_due` on the bank and the Study brief; a `review` objectives measure (items
-answered, once a day each), the due counts in Professor's planner prompt and `study_progress`. The vault's SR comments
-are left to the plugin. App: the Due today card on Study, a "12 due" chip on the course page, Today's Due today rows,
-`aide://study/<course>/due` (`due_today` for `open_page`).
-Closer to Anki (2026-11-07): a flashcard is turned with Show answer (space) and graded Again · Hard · Good · Easy
-(1–4; swipe right Good, left Again), sent as the check's answer; a multiple-choice check carries `seconds` and a right
-but slow answer is Hard; from 21 days before the next exam or mid-term (its chosen topics) items are due at 95% recall
-(`before_exam` on the bank and the brief; "Exam on …: shorter gaps until then" on the Due today card).
-
-**Done, app (2026-11-08):** recording a lecture on the phone (no contract change: `POST /v1/lectures` as before,
-`course` now optional so the server files it by the timetable). `Support/LectureRecorder.swift`: AAC mono 32 kbps
-(~14 MB an hour), the `audio` background mode so it goes on locked, picked up again after a call, in 10-minute pieces
-(Application Support/Lectures/<id>) so an app ended mid-lecture loses only the last piece (`recover()` at launch sends
-the rest), joined into one .m4a on Stop, 4 h at most, a "Still recording" notification 10 min after the lecture's end.
-`LectureUploads` keeps each file until the server has it (tried at launch and on each return to the app). Started from
-Study's "is on now" card (Record), a course page's + menu, `aide://record` or the "Record a lecture" Shortcut (Action
-Button); `Views/LectureRecorderViews.swift` has the recorder sheet and the cards. iPhone only (AideMac excludes both).
-
-**Done, both sides (2026-11-08):** the router and queued messages. #59 (contract "Agents", "Team talk"): a message
-for Aide that's clearly one specialist's is answered by it straight away, with no Aide round on either side
-(`routed` on the reply; stored as an `ask_agent` call so Aide's next turn reads it; the specialist may still ask a
-teammate); voice turns are never routed. App: "Coach answered" above such a reply, a branch mark in the Team chat.
-#69 (app only): a message sent while the reply is still coming waits under it, dimmed ("Waiting"; tap for Edit or
-Don't send) and goes when the reply is done, one at a time, in Aide's and the specialists' chats and the Team chat;
-the queue lives while the app runs.
+Worth remembering:
+- Family Controls works in development builds; TestFlight needs Apple's approval (a request form).
+- The first install on a phone needs the App Group and the `.widgets` bundle ID on the team (automatic signing adds them).
+- yt-dlp must be kept current (README, "YouTube videos").
+- Debug launch arguments: `-previewMonth 2026-10`, `-previewRoute <aide:// link>`, `-shieldTest 2` (Mac).
 
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.
@@ -815,5 +302,5 @@ the queue lives while the app runs.
 2. A real Esse3 sign-up from the app (#74 and #75 are closed and reading works; the two tries on 2026-11-07 stopped
    at need_user, before the #76 fixes).
 
-Later: Later for health: bedtime nudge in the evening digest,
+Later, for health: a bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
