@@ -810,7 +810,10 @@ the queue lives while the app runs.
 
 **Next** (GitHub issues):
 0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.
+   No call has been made since it went live (2026-11-06 23:48); the checklist is on the issue.
 1. Record a real lecture with the app. Notebooks for the other courses.
+2. A real Esse3 sign-up from the app (#74 and #75 are closed and reading works; the two tries on 2026-11-07 stopped
+   at need_user, before the #76 fixes).
 
 Later: Later for health: bedtime nudge in the evening digest,
 weekly health recap, the getting-sick hint (resting HR, HRV and wrist temperature off baseline together).
