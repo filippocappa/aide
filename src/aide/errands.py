@@ -70,8 +70,11 @@ STATUSES = ("queued", "running", "needs_you", "waiting_confirm", "scheduled", "d
             "interrupted")
 OPEN = ("queued", "running", "needs_you", "waiting_confirm", "scheduled", "interrupted")  # not over yet
 WHY = ("login", "captcha", "code", "card", "question", "plan_limit", "other")
-MAX_ACTIONS = 80  # browser actions in one errand
-MAX_SECONDS = 20 * 60  # model time in one errand, all its phases together
+# Against an errand going round in circles (each action is a model call): browser actions and model time in one
+# errand, all its phases together. A confirmed send (a form, an order) is progress, so it starts a fresh allowance:
+# a batch of questionnaires (~20 actions each) goes through in one errand (2026-11-09: six took four errands at 80).
+MAX_ACTIONS = 100
+MAX_SECONDS = 20 * 60
 MAX_ROUNDS = 60  # model calls in one phase
 STEPS_KEPT = 60  # step lines kept on the errand
 SCREENSHOTS_SEEN = 2  # on OpenRouter, the model sees the latest screenshots; older ones become a line
@@ -841,7 +844,9 @@ class ErrandRunner:
                 raise TimeoutError
             if _armed(e):  # waiting for the sale to open isn't the errand's time: the window is added
                 left += max(0.0, (_utc(e["timed_drop"]["closes_at"]) - utcnow()).total_seconds())
-            await asyncio.wait_for(self._loop(phase, prompt), left)
+            async with asyncio.timeout(left) as timer:  # moved on by a confirmed send (Phase.fresh)
+                phase.timer = timer
+                await self._loop(phase, prompt)
             if phase.outcome is None:  # the model stopped without finish: its last words are the report
                 phase.outcome = ("finish", {"result": phase.last_text or "I stopped without finishing.",
                                             "ok": bool(phase.last_text)})
@@ -853,7 +858,7 @@ class ErrandRunner:
                                         f"({MAX_ACTIONS} steps or {MAX_SECONDS // 60} minutes) and stopped. "
                                         f"I'd got this far: {e['step'] or 'nowhere yet'}."})
         finally:
-            spent = max(0.0, time.monotonic() - started - phase.waited)
+            spent = max(0.0, time.monotonic() - (phase.fresh_at or started) - phase.waited)
             self.store.conn.execute("UPDATE errands SET seconds = seconds + ? WHERE id = ?", (spent, errand_id))
             if where := self.browser.where(_owner(errand_id)):
                 self.store.update(errand_id, url=where["url"], site=self.store.get(errand_id)["site"] or where["site"])
@@ -1178,6 +1183,9 @@ class _ErrandGuard(PageGuard):
             p.store.update(p.errand_id, confirm={**c, "left": left, "used": left <= 0})
         else:
             p.store.update(p.errand_id, confirm={**c, "used": True})
+            p.fresh()
+            return (f"Clicked the confirmed \"{text[:80]}\". That send starts a fresh allowance: {MAX_ACTIONS} "
+                    f"browser actions and {MAX_SECONDS // 60} minutes from here.")
         return f"Clicked the confirmed \"{text[:80]}\""
 
     def sensitive(self) -> str:
@@ -1204,6 +1212,8 @@ class Phase:
         self.last_text = ""
         self.calls = 0
         self.waited = 0.0  # seconds spent waiting for a drop's sale, not counted as the errand's time
+        self.timer: asyncio.Timeout | None = None  # the phase's time limit
+        self.fresh_at: float | None = None  # when a confirmed send last started a fresh allowance
         self.registry: dict[str, Tool] = {}
         self._login_checked = False  # told once that the saved UniTo login already passed
 
@@ -1297,6 +1307,14 @@ class Phase:
         return tools
 
     # -- the browser -----------------------------------------------------------
+
+    def fresh(self) -> None:
+        """A confirmed send went through: the errand's actions and time start again (an Esse3 sign-up keeps its
+        strict limits)."""
+        self.store.conn.execute("UPDATE errands SET actions = 0, seconds = 0 WHERE id = ?", (self.errand_id,))
+        self.fresh_at, self.waited = time.monotonic(), 0.0
+        if self.timer is not None:
+            self.timer.reschedule(asyncio.get_running_loop().time() + MAX_SECONDS)
 
     def _step(self, text: str, counts: bool = True, doing: str | None = None) -> None:
         if counts and self.store.get(self.errand_id)["actions"] >= MAX_ACTIONS:

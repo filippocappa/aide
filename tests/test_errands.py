@@ -728,6 +728,35 @@ async def test_out_of_actions_stops(env, monkeypatch):
     assert e["actions"] == 2
 
 
+async def test_a_confirmed_send_starts_a_fresh_allowance(env, monkeypatch):
+    import aide.errands as errands
+    monkeypatch.setattr(errands, "MAX_ACTIONS", 3)
+    make, db, browser = env
+    form = "https://forms.example.it/"
+    for n in (1, 2):
+        browser.pages[f"{form}{n}"] = (f"Questionario {n}", "Domande", {str(n): {"text": "Invia", "goes": f"{form}{n + 1}"}})
+    browser.pages[f"{form}3"] = ("Grazie", "Inviato", {})
+    runner, agent, _ = make([
+        calls(("open_page", {"url": f"{form}1"})),
+        calls(("ask_confirm", {"summary": "Send 1", "ref": "1", "total": "", "items": [], "guessed": []})),
+        calls(("click", {"ref": "1"})),  # the confirmed send: a fresh allowance
+        calls(("read_page", {})),
+        calls(("read_page", {})),
+        calls(("ask_confirm", {"summary": "Send 2", "ref": "2", "total": "", "items": [], "guessed": []})),
+        calls(("click", {"ref": "2"})),
+        calls(("finish", {"result": "Both sent.", "ok": True})),
+    ])
+    runner.start("Fill in the questionnaires", "Questionnaires", "forms.example.it", CONVERSATION)
+    await next_phase(runner)
+    assert "with the rest like it" in await agent.confirm(CONVERSATION, rest=True)
+    e = await next_phase(runner)
+    results = [m["content"][0]["content"][0]["text"] for m in runner.client.requests[-1]["messages"]
+               if m["role"] == "user" and isinstance(m["content"], list) and m["content"][0].get("type") == "tool_result"]
+    assert sum("fresh allowance" in st["text"] for st in e["steps"]) == 2
+    assert not any("Out of browser actions" in r for r in results)  # 1 + 3 reads and a click: over 3 without it
+    assert browser.clicked == ["Invia", "Invia"] and e["status"] == "done"
+
+
 async def test_only_aide_starts_errands_and_finance_reads_purchases(env):
     make, _, _ = env
     runner, agent, _ = make()
