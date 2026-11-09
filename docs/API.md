@@ -312,7 +312,7 @@ a new agent needs no app update.
   - `tools`: the names of the tools it has on this server right now (web and maps only when their keys are set).
   - `connectors`: those tools grouped by what they reach, in a fixed order, each
     `{"id": "calendar", "name": "iCloud Calendar", "read_only": true, "tools": ["list_calendars", "list_events", "search_events"]}`.
-    Ids: `calendar`, `reminders`, `mail`, `health`, `habits`, `web`, `maps`, `weather` (since 2026-11-03), `memory`, `routines`, `objectives`, `team`
+    Ids: `calendar`, `reminders`, `mail`, `health`, `habits`, `web`, `maps`, `weather` (since 2026-11-03), `university` (since 2026-11-09: `uni_timetable`, the lecture timetable), `memory`, `routines`, `objectives`, `team`
     (`ask_agent`: Aide's, and each specialist's for its teammates). `read_only` is true when none of its tools here change anything. A connector it doesn't
     have here is left out. Show `name`; an unknown `id` is fine.
 
@@ -2580,7 +2580,7 @@ page. Finance reads these (`list_purchases`).
 | `GET /v1/errands/{id}` | | the Errand with all its `steps` |
 | `POST /v1/errands/{id}/buy` | `{"url": "https://www.nike.com/…", "size": "EU 44", "max_total": 180}` (`size`, `max_total` optional) | the new Errand (`queued`, since 2026-11-04): Buy it for me from one of this errand's product cards (`url` must be one of them, else `422`), in the same chat and site. It picks the size (stops if it's sold out in it), stops and asks above `max_total`, and asks the usual Confirm with the order's `detail` before paying. The chat gets "Buying …" with its errands card |
 | `POST /v1/errands/{id}/done` | | the Errand (`queued`): you finished in the live view. `409` unless it's `needs_you` or `interrupted` |
-| `POST /v1/errands/{id}/reply` | `{"answer": "the 2 m one"}` | the Errand (`queued`). `409` unless it's `needs_you` or `interrupted`, or with an empty answer |
+| `POST /v1/errands/{id}/reply` | `{"answer": "the 2 m one"}` | the Errand (`queued`). While it's `running` or `queued` (since 2026-11-09) the answer is kept and the Errand comes back as it is: the errand gets it with its next step, or it answers its next question at once. `409` otherwise (`done`, `failed`, …), or with an empty answer. A question's `options` never include an "Other" one (since 2026-11-09): anything else is typed in the chat |
 | `POST /v1/errands/{id}/cancel` | | the Errand (`cancelled`); also drops its queued Confirm. Nothing is ordered |
 | `GET /v1/errands/{id}/frame` | | the page now, `image/jpeg`; `404` when it has no page open |
 | `GET /v1/browser/sites` | | `{"sites": [{"site": "amazon.it", "used_at": "…", "open": false}], "enabled": true}`: the sites with a profile |

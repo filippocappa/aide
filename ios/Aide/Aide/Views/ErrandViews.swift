@@ -772,6 +772,11 @@ struct ErrandButtons: View {
                         Button { answer(option) } label: { Text(option).frame(maxWidth: .infinity) }
                             .buttonStyle(.bordered)
                     }
+                    // The server leaves out "Other": anything else is typed in the chat, and Aide passes it on.
+                    Text("Or type your own answer in the chat.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
                 }
                 if let title = primaryTitle {
                     HStack(spacing: 10) {

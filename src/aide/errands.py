@@ -50,6 +50,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# An ask_user option that only says "something else" ("Other (type the exact name)", "Altro"): dropped, since the
+# user types their own answer in the chat.
+OTHER = re.compile(r"^(other|altro|something else|none of (these|the above)|nessuno)\b", re.I)
 STATUSES = ("queued", "running", "needs_you", "waiting_confirm", "scheduled", "done", "failed", "cancelled",
             "interrupted")
 OPEN = ("queued", "running", "needs_you", "waiting_confirm", "scheduled", "interrupted")  # not over yet
@@ -462,6 +465,7 @@ class ErrandRunner:
         self._runs: dict[int, "ErrandRun"] = {}
         self._images: dict[int, list[dict]] = {}  # an errand's pages' pictures by link, for its products
         self._cancelled: set[int] = set()
+        self._heard: dict[int, list[str]] = {}  # what the user said while the errand ran: told at its next step
         self._dropping: dict[int, asyncio.Task] = {}  # armed drops' phases, run beside the queue's errand
         self._unito: set[int] = set()  # errands given the server's UniTo login (`unito_login`)
 
@@ -586,6 +590,11 @@ class ErrandRunner:
         """The user's answer to an ask_user question (or 'go on' for an interrupted errand)."""
         e = self._get(errand_id)
         answer = answer.strip()
+        if e["status"] in ("running", "queued") and answer:
+            # It's working (it may have just moved on from a question the user then answered in the chat): the
+            # answer goes with its next step's result, or becomes the answer to its next question.
+            self._heard.setdefault(errand_id, []).append(answer)
+            return e
         if e["status"] not in ("needs_you", "interrupted"):
             raise ValueError(f"the errand is {e['status'].replace('_', ' ')}, not waiting for an answer")
         if e["why"] == "plan_limit" and e["status"] == "needs_you":
@@ -859,6 +868,10 @@ class ErrandRunner:
                 out, err = f"Error: {ex}", True
             if self.audit and name not in ("read_page", "screenshot", "find_on_page"):
                 self.audit(f"errand:{name}", args, str(out)[:500], err)
+            if heard := self._heard.pop(phase.errand_id, None):
+                out = ToolOutput(str(out) + "\n\n[The user, while you worked: " + " / ".join(heard)
+                                 + ". It holds for the rest of the errand.]", getattr(out, "attachment", None),
+                                 images=getattr(out, "images", None), page=getattr(out, "page", None))
             return out, err
 
         text = None
@@ -955,6 +968,10 @@ class ErrandRunner:
                                 else "Tap Take over, and tell me when you're done."),
                              card=True, push=None if covered else f"Aide needs you on {e['site'] or 'the site'}",
                              level="time-sensitive")
+        elif kind == "ask_user" and (heard := self._heard.pop(errand_id, None)):
+            # The user already said something meanwhile (in the chat): that's the answer, no need to wait.
+            self.store.update(errand_id, status="needs_you", why="question", reason=args["question"].strip())
+            self.reply(errand_id, " / ".join(heard))
         elif kind == "ask_user":
             question, options = args["question"].strip(), args.get("options") or []
             choices = args.get("choices") or []
@@ -1366,7 +1383,10 @@ class Phase:
 
         async def ask_user(question: str, options: list[str] | None = None,
                            choices: list[dict] | None = None) -> str:
-            shown = await self._choices(choices or []) if choices else await self._pictured_options(options or [])
+            # The user can always type their own answer in the chat, so a catch-all option is only a button that
+            # sends its own label ("Other (type the name)" came back as the answer, 2026-11-09).
+            options = [o for o in options or [] if not OTHER.match(o.strip())]
+            shown = await self._choices(choices or []) if choices else await self._pictured_options(options)
             # The answers are the cards' names too: an app that doesn't draw cards shows them as buttons.
             self._end("ask_user", {"question": question, "choices": shown,
                                    "options": [c["title"] for c in shown]
@@ -1451,7 +1471,9 @@ class Phase:
                  "of food, a restaurant, a dish, a product), always, with its name as the title and the price, "
                  "rating and a short note in their own fields: the user taps a card with its picture, and its title "
                  "comes back as the answer. `options` only for plain answers with nothing to show (a size, a day, "
-                 "yes or no).",
+                 "yes or no), never an \"Other\" one: the user can always type their own. Before asking about the "
+                 "user themselves (their degree, year, student ID, address), look in about_user and on their own "
+                 "account pages first (on UniTo: Esse3's home and career pages show the degree).",
                  _obj({"question": {"type": "string"},
                        "options": {"type": ["array", "null"], "items": {"type": "string"}},
                        "choices": {"type": ["array", "null"], "items": choice}},

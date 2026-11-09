@@ -116,6 +116,33 @@ def test_the_routed_specialist_may_ask_a_teammate(env):
     assert [(t["from"], t["to"]) for t in body["team"]] == [("coach", "secretary"), ("secretary", "coach")]
 
 
+def test_the_routed_specialist_may_pass_it_back_to_aide(env):
+    client, agent, _ = env([
+        calls(("pass_to_aide", {"reason": "it needs MyUniTo, a website"})),  # Secretary
+        done("Opening MyUniTo."),  # Aide
+    ])
+    routed(agent, [], ['{"agent": "secretary", "p": 0.8}'])
+    body = client.post("/v1/chat", json={"text": "check it on my unito"}, headers=AUTH).json()
+    assert body["reply"] == "Opening MyUniTo." and "routed" not in body and body["consulted"] == []
+    secretary, aide = agent.client.requests
+    assert "pass_to_aide" in tool_names(secretary) and "pass_to_aide" not in tool_names(aide)
+    assert aide["system"][0]["text"] == AGENTS["aide"].prompt
+    assert "Secretary had this message and passed it to you: it needs MyUniTo" in str(aide["messages"][-1])
+    history = client.get("/v1/history", headers=AUTH).json()["messages"]
+    assert [m.get("routed") for m in history] == [None, None] and history[-1]["text"] == "Opening MyUniTo."
+    assert agent._routing is None and agent._passed is None
+
+
+def test_an_asked_specialist_cant_pass_it_back(env):
+    client, agent, _ = env([
+        calls(("ask_agent", {"agent": "secretary", "request": "What's on today?"})),
+        done("Nothing."),  # Secretary, asked
+        done("Nothing today."),
+    ])
+    client.post("/v1/chat", json={"text": "what's on today?"}, headers=AUTH)
+    assert "pass_to_aide" not in tool_names(agent.client.requests[1])
+
+
 def test_the_team_chat_routes_when_nobody_is_mentioned(env):
     client, agent, _ = env([done("Pasta with chicken.")])
     routed(agent, [], ['{"agent": "coach", "p": 0.88}'])

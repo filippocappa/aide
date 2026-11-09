@@ -174,6 +174,15 @@ class Agent:
         self._attachments: list[dict] = []  # cards from the turn in progress
         self._consulted: list[str] = []  # agents asked in the turn in progress
         self._asked: list[str] = []  # agents answering an ask right now: they can't ask in turn
+        self._routing: str | None = None  # the specialist answering a routed message (#59): it may pass it to Aide
+        self._passed: str | None = None  # why it passed it (pass_to_aide), for Aide's turn
+        self._pass_tool = Tool(
+            "pass_to_aide", "Hand the user's message back to Aide when it needs what you have no tool for (a "
+            "website, the user's account on one, an errand): Aide answers it instead of you, and your reply is "
+            "dropped. Call it alone, before writing anything.",
+            {"type": "object", "additionalProperties": False, "required": ["reason"], "properties": {
+                "reason": {"type": "string", "description": "what Aide needs to do, in a line"}}},
+            self._pass_to_aide)
         self._team: list[dict] = []  # its team messages
         self._photos: tuple[str, ...] = ()  # photos the user sent with the turn in progress; asked agents see them
         self._read: str | None = None  # what the smart model saw in them, once per turn (_describe)
@@ -466,6 +475,10 @@ class Agent:
                 elif picked is not None:
                     reply = await self._routed(picked.agent, channel, conversation, conversation_id, text, photos,
                                                lines or [], turn, on_text)
+                    if reply is None:  # the specialist passed it back: Aide answers after all
+                        picked = None
+                        reply = await self._chat_turn(agent, channel, conversation, model, history, turn, on_text,
+                                                      bool(photos))
                 else:
                     reply = await self._chat_turn(agent, channel, conversation, model, history, turn, on_text,
                                                   bool(photos))
@@ -502,12 +515,19 @@ class Agent:
             out.append(f"{who}: {text}")
         return out
 
+    async def _pass_to_aide(self, reason: str) -> str:
+        self._passed = reason.strip() or "it needs Aide"
+        return "Passed to Aide."
+
     async def _routed(self, agent: str, channel: str, conversation: str | None, conversation_id: int, text: str,
-                      photos: list[str] | tuple[str, ...], lines: list[str], turn: list[dict], on_text) -> str:
+                      photos: list[str] | tuple[str, ...], lines: list[str], turn: list[dict],
+                      on_text) -> str | None:
         """The specialist the router picked answers a message to Aide directly (#59): one turn of its own, with its
         tools and the chat's last messages, the reply streamed as it's written. Stored in Aide's chat as if Aide had
         asked it (an ask_agent call, its answer, and the answer as the reply), so Aide's next turn reads it as usual.
-        Unlike an ask, it may ask its teammates."""
+        Unlike an ask, it may ask its teammates. It may also pass the message back (pass_to_aide: a website it has
+        no tool for): then nothing of its turn is kept, the draft is cleared, a note goes on Aide's turn and this
+        returns None for Aide to answer."""
         name = AGENTS[agent].name
         self._consulted.append(agent)
         activity.record(self.db.conn, ORCHESTRATOR, "ask", f"Handed to {name}", text or "(photos)",
@@ -524,8 +544,25 @@ class Agent:
                 f"(they see your name on the reply){'. The chat so far, oldest first:' if chat else ''}]"
                 f"{chr(10) + chat if chat else ''}\n\nThe user's message:\n{body}")
         asked = [{"role": "user", "content": await self._stamp(channel, note, agent=agent)}]
-        with usage.labels(purpose="routed", agent=agent, conversation=conversation or channel):
-            answer = await self._run(agent, channel, model, [], asked, on_text)
+        self._routing, self._passed = agent, None
+        try:
+            with usage.labels(purpose="routed", agent=agent, conversation=conversation or channel):
+                answer = await self._run(agent, channel, model, [], asked, on_text)
+        finally:
+            self._routing = None
+        if self._passed is not None:
+            log.info("routed: %s passed it to Aide (%s)", agent, self._passed)
+            if on_text:
+                on_text("", True)
+            self._consulted.remove(agent)
+            note = f"\n[{name} had this message and passed it to you: {self._passed}]"
+            first = turn[0]["content"]
+            if isinstance(first, str):
+                turn[0]["content"] = first + note
+            else:
+                turn[0]["content"] = [*first, {"type": "text", "text": note}]
+            self._passed = None
+            return None
         call = {"type": "tool_use", "id": f"toolu_route_{secrets.token_hex(8)}", "name": "ask_agent",
                 "input": {"agent": agent, "request": text or "The photos the user sent."}}
         turn += [{"role": "assistant", "content": [call]},
@@ -844,6 +881,8 @@ class Agent:
                 case "tool_use":
                     turn.append({"role": "user", "content": await self._run_tools(agent, channel, response.content)})
                     restart = True
+                    if self._passed is not None and agent == self._routing:
+                        return ""  # passed to Aide: _routed drops this turn
                 case "pause_turn":
                     continue
                 case "refusal":
@@ -963,7 +1002,10 @@ class Agent:
 
     def _offered(self, agent: str) -> list[Tool]:
         """The agent's tools for this run: without ask_agent while it answers an ask (it can't ask in turn)."""
-        return [t for t in self._registry(agent) if not (t.name == "ask_agent" and agent in self._asked)]
+        offered = [t for t in self._registry(agent) if not (t.name == "ask_agent" and agent in self._asked)]
+        if agent == self._routing and agent not in self._asked:
+            offered.append(self._pass_tool)
+        return offered
 
     def _request(self, agent: str, model: str, history: list[dict], turn: list[dict]) -> dict:
         extra = {}
@@ -1105,6 +1147,8 @@ class Agent:
 
     async def _run_tool(self, agent: str, channel: str, name: str, args: dict) -> tuple[str, bool]:
         calling_agent.set(agent)  # this call's own task (gather), so parallel calls don't mix
+        if name == "pass_to_aide" and agent == self._routing and agent not in self._asked:
+            return await self._pass_to_aide(**args), False
         try:
             registry = self._registry(agent)
             tool = registry.get(name)  # an agent can only call its own tools

@@ -560,6 +560,47 @@ async def test_a_question_is_answered_through_aide(env):
     assert e["status"] == "done"
 
 
+async def test_an_other_option_is_left_out(env):
+    make, _, _ = env
+    runner, _, _ = make([calls(("ask_user", {"question": "Which degree?", "options": [
+        "Economia Aziendale", "Economia e Management", "Other (type the exact name)", "Altro"]}))])
+    e = runner.start("My timetable", "Timetable", "unito.it", CONVERSATION)
+    e = await next_phase(runner)
+    assert e["options"] == ["Economia Aziendale", "Economia e Management"]
+
+
+async def test_an_answer_given_while_it_runs_reaches_its_next_step(env):
+    make, _, _ = env
+    runner, agent, _ = make([
+        calls(("open_page", {"url": "https://www.amazon.it/s?k=cavo"})),
+        calls(("finish", {"result": "OK, the 2 m one.", "ok": True})),
+    ])
+    e = runner.start("A cable", "Cable", None, CONVERSATION)
+    reply = agent.registries["aide"].get("reply_errand")
+    await reply.handler(errand=e["id"], answer="the 2 m one")  # queued: no error, it's kept for the errand
+    e = await next_phase(runner)
+    results = [m["content"][0] for m in runner.client.requests[1]["messages"] if m["role"] == "user"
+               and isinstance(m["content"], list)]
+    assert "[The user, while you worked: the 2 m one." in results[0]["content"][0]["text"]
+    assert e["status"] == "done" and runner._heard == {}
+
+
+async def test_an_answer_given_before_its_question_answers_it(env):
+    make, _, _ = env
+    runner, _, _ = make([
+        calls(("ask_user", {"question": "Which degree?", "options": ["Economia Aziendale"]})),
+        calls(("finish", {"result": "Found it.", "ok": True})),
+    ])
+    e = runner.start("My timetable", "Timetable", "unito.it", CONVERSATION)
+    runner.reply(e["id"], "Economics and Finance with Data Science")
+    e = await next_phase(runner)
+    assert e["status"] == "queued"  # it goes on at once instead of waiting for a tap
+    e = await next_phase(runner)
+    prompt = prompt_of(runner.client.requests[1])
+    assert "You asked: Which degree?\nThe user answered: Economics and Finance with Data Science" in prompt
+    assert e["status"] == "done"
+
+
 GLOVO = "https://glovoapp.com/it/it/torino/"
 
 

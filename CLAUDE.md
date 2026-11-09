@@ -63,6 +63,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   the database, the key a systemd credential (`deploy/aide-passwords.conf`, README "Passwords"), given out only by
   `use()` for an https address on the entry's sites; write-only API, every change pushed. `tools/` never imports it.
   `unito.py`: UniTo's single sign-on in plain HTTP with the saved login (wrong: never tried again until changed).
+  `unitimetable.py`: the lecture timetable from UniTo's University Planner (Cineca's public API, no login; the year's
+  calendar link in `AIDE_UNITO_TIMETABLE`): Secretary's and Professor's `uni_timetable`, reading a week and adding
+  the missing lectures to the study calendar under the course's name (room and teachers in the notes, no location).
+  A routed specialist that needs the browser hands the message back with `pass_to_aide` (`agent.py`).
   `esse3.py`: Esse3 read through it (exam sessions with their sign-up windows into the course dates as `by: "esse3"`,
   `official_dates` in `notebook.py`; bookings; the transcript), four times a day, the fast model when a page won't parse;
   signing up and cancelling only on the user's tap (now, or when the sign-up opens: `esse3_wants`), as an Esse3 errand

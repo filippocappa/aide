@@ -89,6 +89,7 @@ from .tools.transit import leave_tools, transit_tools
 from .tools.videos import video_tools
 from .leave import LeaveWatcher
 from .transit import AlertStore, AlertWatcher, Boards, Live, Location, Timetable, Transit, Walks, Whereabouts
+from .unitimetable import UniTimetable, timetable_tools
 from .weather import Weather, weather_tools
 from .upcoming import EventWatcher
 from .lockwatch import LockWatcher
@@ -202,6 +203,9 @@ def main() -> None:
     moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push,  # its worker comes later
                         save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token), notebook=notebook)
     tools += moodle_tools(moodle)
+    if settings.unito_timetable:
+        tools += timetable_tools(UniTimetable(settings.unito_timetable, settings.timezone), study, cal,
+                                 settings.timezone)
     passwords = PasswordStore(db.conn, load_key())  # Settings → Passwords; never a tool
     log.info("passwords: %s", "on" if passwords.enabled else "locked" if passwords.locked else "off (no key)")
 

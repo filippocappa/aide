@@ -39,13 +39,15 @@ CONTEXT = 6  # earlier messages it reads
 # Aide's own work, besides anything that needs more than one specialist.
 GENERAL = ("chat, opinions, general knowledge, web search, finding a place or a product, booking, buying or ordering "
            "something on a website, filling in a form or questionnaire on a website (the university's too, "
-           "like an Edumeter course evaluation), memory, routines, settings")
+           "like an Edumeter course evaluation), checking something on a website behind the user's login (MyUniTo, "
+           "a shop account), memory, routines, settings")
 
 # What each one does, for the router only (the agents' own prompts are long). An agent added to agents.py without a
 # line here is never picked: Aide still reaches it through ask_agent.
 SCOPES = {
-    "secretary": "calendar and events, reminders and to-dos, mail (reading, drafting replies), trams and buses "
-                 "(GTT), leaving for an event, weather, travel times",
+    "secretary": "calendar and events, reminders and to-dos, mail (reading, drafting replies), the university "
+                 "lecture timetable (reading it, adding it to the calendar), trams and buses (GTT), leaving for an "
+                 "event, weather, travel times",
     "professor": "university study: courses, lectures and their notes, notebooks, quizzes and flashcards, practice "
                  "and mock exams, exam dates and sign-ups (Esse3), study plans and review sessions (it puts them in the "
                  "calendar itself), focus sessions, course files, explaining course material",

@@ -22,6 +22,7 @@ MAIL = ("search_mail", "list_unread", "read_mail", "read_thread", "send_mail", "
         "draft_reply", "discard_draft")
 MAPS = ("find_places", "travel_time")
 WEATHER = ("weather",)
+UNI = ("uni_timetable",)
 TRANSIT = ("transit_stops", "transit_arrivals", "leave_for", "list_transit_alerts", "add_transit_alert",
            "update_transit_alert", "delete_transit_alert")
 WEB = ("web_search", "research", "fetch_page", "look_at_page", "browse_page")
@@ -448,6 +449,10 @@ never an errand.
 - Exam sign-ups and cancels on Esse3 (MyUniTo, "book me the maths exam", "register me for the 4 Dec appello") are \
 Professor's: it queues them for the user's Confirm and Aide's browser signs up with the saved login, so ask it, \
 never an errand, and never ask the user to log in to MyUniTo. Even if this chat said otherwise before.
+- The lecture timetable ("my uni schedule", "add my classes to the calendar") is Secretary's: it reads the degree's \
+own timetable and adds the lectures itself, so ask it, never an errand or a web search.
+- You are logged in to the user's accounts (MyUniTo and the other UniTo sites included, with their saved login): \
+never tell them you can't reach one, even if a teammate or this chat said so before; start an errand.
 - Everything else on the university's websites is an errand, yours: filling in an Edumeter course questionnaire, \
 a form or a survey, getting a certificate, checking a page on MyUniTo or another UniTo site. Professor has no \
 browser, so don't ask it: start_errand straight away with the user's answers in `task` (scores, what to leave empty). \
@@ -490,6 +495,20 @@ something done that needs a teammate's tools (study sessions or a training slot 
 set), hand that part to them with ask_agent rather than telling the user to do it themselves. They don't see your \
 chat, so put everything into the request: what to do, exact dates and times, titles, the calendar if the user named one. Then say in a line who \
 did it ("Secretary added the six sessions to your calendar.")."""
+
+
+_UNI = """- The user's lecture timetable: uni_timetable reads it from their degree's own timetable on the university's \
+planner, for any week ("my uni schedule", "what lectures do I have", "when is macro this week"). Use it, never a web \
+search or another degree's page, and never ask the user to type their timetable in. To put the lectures in the \
+calendar ("add my timetable", "put my classes in my calendar"), call it with add=true: it adds the missing ones to \
+the study calendar itself, titled with each course's name (lectures are filed under it), never twice. Then say how \
+many it added and which days, in a line or two; the card shows them."""
+
+_BROWSERLESS = """- You have no browser, but Aide does: it does things on websites as errands, logged in to the user's \
+accounts with their saved logins (MyUniTo and the other UniTo sites included). Never tell the user you or Aide \
+can't reach a site or their account, and never ask them to look it up or log in themselves. When what they want \
+needs a website you have no tool for: in Aide's chat, call pass_to_aide, and Aide does it; asked by Aide or a \
+teammate, say in a line that it needs Aide's browser."""
 
 
 _ROUTINES = """- Routines: jobs you run on a schedule ("every Sunday at 18 recap my week"), each with its own chat. \
@@ -539,7 +558,7 @@ SECRETARY_PROMPT = _prompt(
     "You are Secretary, one of the user's assistants: their calendar, reminders and mail. You are efficient: "
     "you get the day organised in as few words as possible, notice clashes and loose ends, and propose the "
     "next step instead of asking open questions.",
-    _BASICS, _CALENDAR, _MAIL, _CARDS, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _WEATHER, _TRANSIT, _ASKED, _ROUTINES,
+    _BASICS, _CALENDAR, _UNI, _MAIL, _CARDS, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _WEATHER, _TRANSIT, _BROWSERLESS, _ASKED, _ROUTINES,
     _WATCHES, _OBJECTIVES,
 )
 
@@ -548,7 +567,7 @@ PROFESSOR_PROMPT = _prompt(
     "explain step by step, starting from what the user already knows, with a small example where it helps. "
     "After a longer explanation, check understanding with one short question. Study plans are concrete: "
     "topics, order and time per session, working back from the exam date.",
-    _BASICS, _QUEUE, _STUDY, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _VIDEO, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _STUDY, _UNI, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _VIDEO, _BROWSERLESS, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 COACH_PROMPT = _prompt(
@@ -557,7 +576,7 @@ COACH_PROMPT = _prompt(
     "session. You compare the user only with their own usual numbers, never with other people or population "
     "norms, and you never make medical claims or diagnoses; if something looks worrying, suggest a doctor. "
     "You can read the calendar to plan training around the day; to put a session in it, ask Secretary.",
-    _BASICS, _QUEUE, _HEALTH, _BEDTIME, _HABITS, _LOCKS, _CARDS, _PAGES, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _WEATHER, _WEATHER_TRAINING, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
+    _BASICS, _QUEUE, _HEALTH, _BEDTIME, _HABITS, _LOCKS, _CARDS, _PAGES, _PHOTOS_READ, _FOOD, _MEMORY_SCOPED, _WEB, _WEATHER, _WEATHER_TRAINING, _BROWSERLESS, _ASKED, _ROUTINES, _WATCHES, _OBJECTIVES,
 )
 
 _FINANCE = ("- Money: every Apple Pay tap comes in by itself (a Shortcuts automation on the phone) and is "
@@ -581,7 +600,7 @@ _FINANCE = ("- Money: every Apple Pay tap comes in by itself (a Shortcuts automa
 FINANCE_PROMPT = _prompt(
     "You are Finance, one of the user's assistants: money and budgets. You are practical and careful, and the user "
     "is a university student.",
-    _BASICS, _QUEUE, _FINANCE, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _ASKED, _ROUTINES, _WATCHES,
+    _BASICS, _QUEUE, _FINANCE, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _BROWSERLESS, _ASKED, _ROUTINES, _WATCHES,
     _OBJECTIVES,
 )
 
@@ -593,7 +612,7 @@ AIDE_VOICE_PROMPT = _prompt(
     "food, habits and Screen Time, study notes and lectures, money, the web, maps, the weather and GTT. There's no one "
     "to ask: where the notes below say to ask a teammate, do it yourself. For health and training, compare the user "
     "only with their own usual numbers, and never make medical claims or diagnoses.",
-    _BASICS, _QUEUE, _CARDS, _PAGES, _SETTINGS, _PHOTOS, _MEMORY_SHARED, _CALENDAR, _MAIL, _HEALTH, _BEDTIME, _HABITS,
+    _BASICS, _QUEUE, _CARDS, _PAGES, _SETTINGS, _PHOTOS, _MEMORY_SHARED, _CALENDAR, _UNI, _MAIL, _HEALTH, _BEDTIME, _HABITS,
     _LOCKS, _FOOD, _STUDY, _FINANCE, _WEB, _VIDEO, _MAPS, _WEATHER, _WEATHER_TRAINING, _TRANSIT, _BROWSER, _ROUTINES,
     _WATCHES, _ROUTINES_ANY, _OBJECTIVES, _OBJECTIVES_ANY,
 )
@@ -635,14 +654,14 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
     AgentDef("secretary", "Secretary", "Calendar, reminders and mail", "#3B6FD8",
              ("What's on my calendar today?", "Any mail I need to answer?", "Remind me to "),
-             SECRETARY_PROMPT, (*CALENDAR, *PLANS, *REMINDERS, *MAIL, *MAPS, *WEATHER, *TRANSIT, *WEB),
+             SECRETARY_PROMPT, (*CALENDAR, *UNI, *PLANS, *REMINDERS, *MAIL, *MAPS, *WEATHER, *TRANSIT, *WEB),
              routine_ideas=(_idea("Mail sweep", "Go through my unread mail: what needs an answer from me today, what "
                                   "can wait, and anything with a date to put in the calendar.", "09:00",
                                   (1, 2, 3, 4, 5)),
                             *(i for a, i in _STARTING_WATCHES if a == "secretary"))),
     AgentDef("professor", "Professor", "Study and lectures", "#7A4FD0",
              ("What did we cover in ", "Explain ", "Make me a study plan for "), PROFESSOR_PROMPT,
-             (*STUDY, *CALENDAR_READ, *PLANS, *WEB, *VIDEO),
+             (*STUDY, *UNI, *CALENDAR_READ, *PLANS, *WEB, *VIDEO),
              routine_ideas=(_idea("Review what I studied", "Ask me what I studied this week, then quiz me on it with "
                                   "a few short questions.", "17:00", (7,)),)),
     AgentDef("coach", "Coach", "Sleep, training, food and habits", "#23A26D",
@@ -686,6 +705,7 @@ _CONNECTORS = (
     ("youtube", "YouTube", VIDEO, {"summarize_video"}),
     ("maps", "Google Maps", MAPS, set()),
     ("weather", "Weather", WEATHER, set()),
+    ("university", "University timetable", UNI, {"uni_timetable"}),  # a write with add=true
     ("transit", "GTT", TRANSIT, {"leave_for", "add_transit_alert", "update_transit_alert", "delete_transit_alert"}),
     ("browser", "Browser", BROWSER, {"start_errand", "reply_errand", "cancel_errand", "watch_price",
                                       "update_price_watch", "track_release", "set_release_picks",

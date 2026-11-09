@@ -53,6 +53,7 @@ class Settings:
     webdav_port: int = 8789
     webdav_url: str | None = None  # how the phone reaches it, for the app's setup screen
     moodle_url: str | None = None  # https://elearning.unito.it/sme
+    unito_timetable: str | None = None  # the degree year's public timetable in UniTo's planner (unitimetable.py)
     moodle_token: str | None = None  # from the app's Moodle login, written here by the server
     enable_banking_app_id: str | None = None  # bank sync (#31): Enable Banking's application ID
     enable_banking_key: Path | None = None  # its private key (PEM), copied to the server by the user
@@ -142,6 +143,7 @@ def load_settings() -> Settings:
         webdav_port=int(os.environ.get("AIDE_WEBDAV_PORT", "8789")),
         webdav_url=os.environ.get("AIDE_WEBDAV_URL", "").strip() or None,
         moodle_url=os.environ.get("AIDE_MOODLE_URL", "").strip().rstrip("/") or None,
+        unito_timetable=os.environ.get("AIDE_UNITO_TIMETABLE", "").strip() or None,
         moodle_token=os.environ.get("MOODLE_TOKEN", "").strip() or None,
         enable_banking_app_id=os.environ.get("ENABLE_BANKING_APP_ID", "").strip() or None,
         enable_banking_key=Path(k).expanduser() if (k := os.environ.get("ENABLE_BANKING_KEY", "").strip()) else None,
