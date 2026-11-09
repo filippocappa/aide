@@ -50,6 +50,19 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+EARLIER = "\n\nWhat the user told you earlier in this errand (it still holds, for every later form too):\n"
+
+
+def _told(answer: str | None) -> str:
+    """The user's answers in a phase's `answer`, to carry into the next: its own question and answer, and those
+    carried into it."""
+    if not answer:
+        return ""
+    head, _, carried = answer.partition(EARLIER)
+    asked = head.strip() if head.startswith("You asked:") else ""
+    return "\n".join(x for x in (carried.strip(), asked) if x)
+
+
 # An ask_user option that only says "something else" ("Other (type the exact name)", "Altro"): dropped, since the
 # user types their own answer in the chat.
 OTHER = re.compile(r"^(other|altro|something else|none of (these|the above)|nessuno)\b", re.I)
@@ -681,6 +694,10 @@ class ErrandRunner:
         return e
 
     def _resume(self, e: dict, answer: str) -> dict:
+        # The user's answers hold for the whole errand: a Confirm's "click the button" would otherwise replace the
+        # answer that came before it, and the next form's answers became guesses (2026-11-09, Edumeter 2/6).
+        if told := _told(self.store.get(e["id"])["answer"]):
+            answer = f"{answer}{EARLIER}{told}"
         self.store.update(e["id"], status="queued", answer=answer, why=None, reason=None, options=None,
                           choices=None, wake_at=None, step="Going on")
         if _armed(e):  # a drop doesn't wait behind another errand

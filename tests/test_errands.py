@@ -377,6 +377,31 @@ async def test_confirming_the_rest_sends_the_next_forms_unless_one_has_a_guess(e
     assert any("Confirmed with the rest: Send questionnaire 2" in s["text"] for s in e["steps"])
 
 
+async def test_an_answer_holds_after_a_confirm(env):
+    """The user's answer stays in front of the errand after a Confirm, so the next form's same answers aren't
+    guesses."""
+    make, db, browser = env
+    form = "https://forms.example.it/"
+    browser.pages[f"{form}1"] = ("Questionario 1", "Studenti?", {"1": {"text": "Invia", "goes": f"{form}2"}})
+    browser.pages[f"{form}2"] = ("Questionario 2", "Studenti?", {"2": {"text": "Invia", "goes": f"{form}3"}})
+    runner, agent, _ = make([
+        calls(("open_page", {"url": f"{form}1"})),
+        calls(("ask_user", {"question": "How many students?", "options": None})),
+        calls(("ask_confirm", {"summary": "Send 1", "ref": "1", "total": "", "items": [], "guessed": []})),
+        calls(("click", {"ref": "1"})),
+        calls(("ask_confirm", {"summary": "Send 2", "ref": "2", "total": "", "items": [], "guessed": []})),
+    ])
+    runner.start("Fill in the questionnaires", "Questionnaires", "forms.example.it", CONVERSATION)
+    e = await next_phase(runner)
+    runner.reply(e["id"], "60")
+    await next_phase(runner)
+    await agent.confirm(CONVERSATION)
+    await next_phase(runner)
+    prompt = prompt_of(runner.client.requests[3])
+    assert "The user confirmed: Send 1" in prompt
+    assert "earlier in this errand" in prompt and "You asked: How many students?\nThe user answered: 60" in prompt
+
+
 def prompt_of(request) -> str:
     """The phase's opening prompt (the first message; a block with the cache breakpoint when it's the only one)."""
     content = request["messages"][0]["content"]
