@@ -121,15 +121,12 @@ struct FoodPage: View {
             MealCameraView(tint: coach.tint, date: isToday ? nil : Wire.dayString(day)) { cameraResult = $0 }
         }
         // The meal camera above takes photos here; the library comes from this.
-        .photoSources(camera: .constant(false), library: $showLibrary, limit: 4, barcodes: true) { photos in
-            // A lone packet with its barcode: the real numbers and how much, no model call. Anything more
-            // (other photos) goes to Coach, with the barcodes.
-            if photos.count == 1, let code = photos[0].barcodes.first {
-                scanned = ScannedCode(code: code, photo: photos[0])
-            } else {
-                pickedPhotos = PickedMeal(photos: photos)
-            }
-        }
+        .photoSources(camera: .constant(false), library: $showLibrary, limit: 4, barcodes: true, onPick: picked)
+        // Photos dragged onto the page (a Mac, an iPad) log a meal the same way (#78).
+        .dropZone(DropSpec(title: isToday ? "Drop to log a meal" : "Drop to log a meal on \(dayName)",
+                           detail: "Photos of what you ate, or a packet's barcode", agent: coach,
+                           accepts: [.image], refusal: "Only photos can log a meal", barcodes: true),
+                  enabled: settings.isConfigured && !logging) { picked($0.photos) }
         .sheet(item: $pickedPhotos) { picked in
             MealPhotosSheet(photos: picked.photos) { text in Task { await log(photos: picked.photos, text: text) } }
         }
@@ -427,6 +424,19 @@ struct FoodPage: View {
     }
 
     /// Uploads the photos, then Coach logs the meal on the chosen day and says what it made of it.
+    /// Photos picked or dropped: a lone packet with its barcode gets the real numbers and how much, no model call.
+    /// Anything more (other photos) goes to Coach, with the barcodes.
+    private func picked(_ photos: [PickedPhoto]) {
+        guard !photos.isEmpty else { return }
+        if photos.count == 1, let code = photos[0].barcodes.first {
+            scanned = ScannedCode(code: code, photo: photos[0])
+        } else {
+            pickedPhotos = PickedMeal(photos: photos)
+        }
+    }
+
+    private var dayName: String { day.formatted(.dateTime.weekday(.wide)) }
+
     private func log(photos: [PickedPhoto] = [], text: String? = nil) async {
         logging = true
         logReply = nil

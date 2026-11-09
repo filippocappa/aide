@@ -28,6 +28,7 @@
 		0C860598D1CAEEF1B982C06E /* HealthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591D1D0440D0AE931595EE83 /* HealthView.swift */; };
 		0CD0E22F88733316E0A2FC75 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7386B4E42939B32072754CC0 /* APIClient.swift */; };
 		0E8E4C39F0C5E93AC75C7BBB /* WidgetSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADE4DEA766E09C8CD558DC9B /* WidgetSupport.swift */; };
+		0EFD845BE6DBF3F24956B559 /* Drops.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97DA5F380FF3736EA25D8301 /* Drops.swift */; };
 		0FC6E8696B392B7469604CB9 /* MacScreenTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9883DFA94F62FDEC76F14602 /* MacScreenTime.swift */; };
 		0FCF8B6FDC9B0F339B8500A4 /* VoicePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7667868F3C9CBDB2FCA8CC22 /* VoicePanel.swift */; };
 		0FF67AD67E275550C423000E /* ExamPlanViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE9963D6AB6412DCE47203D /* ExamPlanViews.swift */; };
@@ -65,6 +66,7 @@
 		32929000119CE3BE2D9FD69A /* TramLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA0AF3C34ADA2A7F1F3492E /* TramLiveActivity.swift */; };
 		37C256159F3B5D5EBF6B2A03 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 6E1B259BBCE24A81EE5735B1 /* AppIcon.icon */; };
 		37E7FDC4F3AD9DD0671521BB /* HabitsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDEBC005A69A28CF2B9E07DE /* HabitsView.swift */; };
+		3A26A74703E9EFEF7ADCD4DB /* Drops.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97DA5F380FF3736EA25D8301 /* Drops.swift */; };
 		3A5B21289142C95A31CC24F3 /* StudySessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F052E49EFFBA77932E41460B /* StudySessionView.swift */; };
 		3B94BC79A60AEAD6626F4EEA /* LockShield.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ACCD638FA0D9F230CF15238B /* LockShield.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3BE23AEE883E0ABB508D9B38 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 6E1B259BBCE24A81EE5735B1 /* AppIcon.icon */; };
@@ -435,6 +437,7 @@
 		95CA5950A59DD5065B084678 /* MealControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealControl.swift; sourceTree = "<group>"; };
 		9660896769986933FF90EE0B /* FoodView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodView.swift; sourceTree = "<group>"; };
 		971B6228337758CDB2A12C8A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		97DA5F380FF3736EA25D8301 /* Drops.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Drops.swift; sourceTree = "<group>"; };
 		9883DFA94F62FDEC76F14602 /* MacScreenTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScreenTime.swift; sourceTree = "<group>"; };
 		9AEB482052BA9CB53D3B8410 /* ChatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsView.swift; sourceTree = "<group>"; };
 		9D2DF812BA77D4AF27AD2ECE /* AideApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AideApp.swift; sourceTree = "<group>"; };
@@ -647,6 +650,7 @@
 				0DFEF5446D771554DAAA7229 /* AppSettings.swift */,
 				16BB2B4B8577CDF6823F8251 /* Arithmetic.swift */,
 				BF01ED5407EDD683110116BF /* Columns.swift */,
+				97DA5F380FF3736EA25D8301 /* Drops.swift */,
 				77E5D11C27686D088BF88108 /* Figure.swift */,
 				63500D066A75FEEDD7B682E9 /* Keychain.swift */,
 				38D440B96A4CD387DDA4F46B /* LectureRecorder.swift */,
@@ -1215,6 +1219,7 @@
 				546E6E5560D3B5212B87B103 /* DigestView.swift in Sources */,
 				5D695BDA3149BDAFACC382CB /* DigestViewModel.swift in Sources */,
 				2E07871F56D61C4F68EC9A67 /* DraftViews.swift in Sources */,
+				0EFD845BE6DBF3F24956B559 /* Drops.swift in Sources */,
 				26FC5A7D4982C666678089E4 /* ErrandStageViews.swift in Sources */,
 				03B01F505920F1FA05E66BCA /* ErrandViews.swift in Sources */,
 				793C4A8FEBB8243F501A67C9 /* EventWeekView.swift in Sources */,
@@ -1332,6 +1337,7 @@
 				08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */,
 				AA355EF0C809637B2B575280 /* DigestViewModel.swift in Sources */,
 				FA49E57FDF31B7507D385EA8 /* DraftViews.swift in Sources */,
+				3A26A74703E9EFEF7ADCD4DB /* Drops.swift in Sources */,
 				717B9649EF5B1FF87668F918 /* ErrandStageViews.swift in Sources */,
 				3E1727F77882BD2842BC741B /* ErrandViews.swift in Sources */,
 				72C49417699FB469145362D1 /* EventWeekView.swift in Sources */,

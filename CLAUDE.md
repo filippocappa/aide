@@ -196,9 +196,11 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   Tiles are `PeekTile`s in `PeekLayout` (UserDefaults `peekTiles`), packed by `PeekMasonry`; Arrange moves, resizes
   (span) and adds them; `PeekData` loads only the kinds on the board; web tiles keep their `WKWebView` in
   `PeekWebViews`. A question asked there goes through the shared `ChatViewModel` and its reply is drawn on the board.
-- On the Mac, Return sends in a chat (`MessageBox`'s `onReturn`; Option-, Shift-, Cmd- or Cmd-Shift-Return is a new line), images dropped on a
-  chat are added like picked photos (`photoDrop` in `Support/Photos.swift`), and PDFs or recordings dropped on a
-  course page are uploaded.
+- On the Mac, Return sends in a chat (`MessageBox`'s `onReturn`; Option-, Shift-, Cmd- or Cmd-Shift-Return is a new line), drops go through
+  `dropZone` (`Support/Drops.swift`, #78): an overlay says what the drop will do (the agent's Pebble, or the course)
+  or that it isn't taken; photos and PDFs on a chat go into the message, PDFs or recordings on a course page are
+  uploaded, photos on Food log a meal, and on any other page they start a chat with Aide (`composerDrop`).
+  `-previewDrop takes|refused` shows the overlay in a debug build.
 - Push (`Mac/MacAppDelegate.swift`): alerts only, with the topic `<bundle id>.mac` (the server's `push.py`). Off unless
   `Signing.local.xcconfig` sets `AIDE_MAC_ENTITLEMENTS = Mac/AideMacPush.entitlements`, which needs the Mac registered
   on the team (`xcodebuild -scheme AideMac -allowProvisioningUpdates -allowProvisioningDeviceRegistration build`

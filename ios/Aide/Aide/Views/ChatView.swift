@@ -19,6 +19,11 @@ struct ChatView: View {
     @State private var justReplied = false
     /// Photos to go with the next message, shrunk and ready.
     @State private var photos: [PickedPhoto] = []
+    /// PDFs to go with it (#78), dropped or chosen in Files.
+    @State private var files: [PickedFile] = []
+    @State private var showFiles = false
+    /// A sent PDF opened from its chip.
+    @State private var openFile: StudyFile?
     @State private var showCamera = false
     @State private var showLibrary = false
     /// Coach's chats: Aide's meal camera instead of the system one, and what it ended with.
@@ -51,6 +56,22 @@ struct ChatView: View {
     private var replying: Bool { (chat.isSending || chat.isActing) && !voice.isActive }
 
     private static let maxPhotos = 4
+    private static let maxFiles = 4
+
+    /// Dropped photos and PDFs go into the message being written, sliding into the strip over the box.
+    private func take(_ dropped: Dropped) {
+        if !dropped.photos.isEmpty { add(dropped.photos) }
+        files = Array((files + dropped.files).prefix(Self.maxFiles))
+        composerFocused = true
+    }
+
+    /// What a drop on the chat says it will do: into this message, to this agent.
+    private var dropSpec: DropSpec {
+        DropSpec(title: "Drop to add to the chat with \(chat.agent.name)",
+                 detail: photos.count >= Self.maxPhotos ? "PDFs (four photos already)" : "Photos and PDFs",
+                 agent: chat.agent, barcodes: chat.agent.id == "coach",
+                 photoLimit: Self.maxPhotos - photos.count)
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -158,8 +179,23 @@ struct ChatView: View {
         }
         .photoSources(camera: $showCamera, library: $showLibrary, limit: Self.maxPhotos - photos.count,
                       barcodes: chat.agent.id == "coach", onPick: add)
-        .photoDrop(enabled: settings.isConfigured, limit: Self.maxPhotos - photos.count,
-                   barcodes: chat.agent.id == "coach", onPick: add)
+        .dropZone(dropSpec, enabled: settings.isConfigured, onDrop: take)
+        // Dropped on another page: this chat was opened for it.
+        .onReceive(chat.$composerDrop.compactMap { $0 }) { dropped in
+            chat.composerDrop = nil
+            take(dropped)
+        }
+        .fileImporter(isPresented: $showFiles, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            let picked = urls.compactMap { url -> PickedFile? in
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                return PickedFile.copy(of: url)
+            }
+            files = Array((files + picked).prefix(Self.maxFiles))
+        }
+        .sheet(item: $openFile) { PDFSheet(file: $0) }
+        .environment(\.openChatFile) { openFile = $0 }
         .fullScreenCover(isPresented: $showMealCamera, onDismiss: afterMealCamera) {
             MealCameraView(tint: chat.agent.tint, conversation: chat.conversationID) { mealCameraResult = $0 }
         }
@@ -378,7 +414,7 @@ struct ChatView: View {
     /// send sit above it.
     private var composer: some View {
         VStack(spacing: 0) {
-            if !photos.isEmpty { photoStrip }
+            if !photos.isEmpty || !files.isEmpty { photoStrip }
             MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused, reset: sent,
                        tint: chat.agent.tint, onReturn: { if canSend { sendDraft() } }) {
                 attachMenu
@@ -386,6 +422,7 @@ struct ChatView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: photos)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: files)
     }
 
     /// Photos picked, taken or dropped on the chat. A packet on its own in Coach's chat: say how much and it's
@@ -420,6 +457,8 @@ struct ChatView: View {
                 Button("Take photo", systemImage: "camera") { showCamera = true }
             }
             Button("Choose photos", systemImage: "photo.on.rectangle") { showLibrary = true }
+            Button("Choose PDF", systemImage: "doc") { showFiles = true }
+                .disabled(files.count >= Self.maxFiles)
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 17, weight: .semibold))
@@ -433,8 +472,8 @@ struct ChatView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         #endif
-        .disabled(!settings.isConfigured || photos.count >= Self.maxPhotos)
-        .accessibilityLabel("Add photos")
+        .disabled(!settings.isConfigured || (photos.count >= Self.maxPhotos && files.count >= Self.maxFiles))
+        .accessibilityLabel("Add photos or a PDF")
     }
 
     private var photoStrip: some View {
@@ -458,6 +497,22 @@ struct ChatView: View {
                             .accessibilityLabel("Remove photo")
                         }
                         .transition(.scale.combined(with: .opacity))
+                }
+                ForEach(files) { file in
+                    FileChip(name: file.name, pages: file.pages, tint: chat.agent.tint, compact: true)
+                        .frame(height: 64)
+                        .overlay(alignment: .topTrailing) {
+                            Button { files.removeAll { $0.id == file.id } } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 18))
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, .black.opacity(0.6))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(3)
+                            .accessibilityLabel("Remove \(file.name)")
+                        }
+                        .transition(.scale(scale: 0.6, anchor: .bottom).combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 16)
@@ -483,11 +538,12 @@ struct ChatView: View {
     }
 
     private func sendDraft() {
-        let text = draft, sending = photos
+        let text = draft, sending = photos, sendingFiles = files
         $draft.clearMessage()
         sent += 1
         photos = []
-        Task { await chat.send(text, photos: sending) }
+        files = []
+        Task { await chat.send(text, photos: sending, files: sendingFiles) }
     }
 
     /// A waiting message back into the message box, out of the queue.
@@ -495,19 +551,21 @@ struct ChatView: View {
         guard let waiting = chat.unqueue(waiting.id) else { return }
         draft = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? waiting.text : draft + "\n" + waiting.text
         photos = Array((photos + waiting.photos).prefix(Self.maxPhotos))
+        files = Array((files + waiting.files).prefix(Self.maxFiles))
         composerFocused = true
     }
 
     /// An empty message box offers the microphone instead of send.
     private var showsMic: Bool {
         settings.isConfigured && !chat.isSending && !chat.isOpening
-            && (voice.isActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && photos.isEmpty))
+            && (voice.isActive || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && photos.isEmpty
+                                   && files.isEmpty))
     }
 
     /// While a reply is on its way a message can still be sent: it waits and goes after it (#69).
     private var canSend: Bool {
         settings.isConfigured
-            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty)
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty || !files.isEmpty)
     }
 }
 
@@ -680,6 +738,7 @@ private struct MessageRow: View {
                 Spacer(minLength: 56)
                 VStack(alignment: .trailing, spacing: 6) {
                     if !message.photos.isEmpty || !message.localPhotos.isEmpty { MessagePhotos(message: message) }
+                    if !message.files.isEmpty { MessageFiles(files: message.files) }
                     if !message.text.isEmpty {
                         Text(message.text.markdown)
                             .textSelection(.enabled)
@@ -722,6 +781,64 @@ private struct MessageRow: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 2)
         .sensoryFeedback(.success, trigger: copied) { _, now in now }
+    }
+}
+
+/// The PDFs you sent with a message, above its text: a chip each, opening the PDF once it's on the server.
+private struct MessageFiles: View {
+    let files: [StudyFile]
+    @Environment(\.openChatFile) private var open
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            ForEach(files) { file in
+                let sent = file.id.hasPrefix("f_")
+                Button { if sent { open(file) } } label: {
+                    FileChip(name: file.name, pages: file.pages, tint: Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .disabled(!sent)
+                .accessibilityHint(sent ? "Opens the PDF" : "")
+            }
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// Opens a PDF sent in the chat (its sheet is the chat's).
+    @Entry var openChatFile: (StudyFile) -> Void = { _ in }
+}
+
+/// A PDF as a small card: its icon, its name and how many pages.
+struct FileChip: View {
+    let name: String
+    let pages: Int?
+    var tint: Color = Theme.accent
+    /// In the strip above the message box: a 64 pt tall tile.
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.text.fill")
+                .font(.system(size: compact ? 20 : 18))
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(compact ? 2 : 1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(.primary)
+                Text(pages.map { "PDF · \($0) page\($0 == 1 ? "" : "s")" } ?? "PDF")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .multilineTextAlignment(.leading)
+        .padding(.leading, 10).padding(.trailing, 14).padding(.vertical, 8)
+        .frame(maxWidth: compact ? 220 : 260, minHeight: compact ? 64 : nil, alignment: .leading)
+        .background(Theme.chip, in: RoundedRectangle(cornerRadius: compact ? 12 : 16, style: .continuous))
     }
 }
 
@@ -894,7 +1011,9 @@ private struct QueuedRow: View {
                 Button("Edit", systemImage: "pencil", action: edit)
                 Button("Don't send", systemImage: "trash", role: .destructive, action: remove)
             } label: {
-                MessageRow(message: .init(role: .user, text: waiting.text, localPhotos: waiting.photos.map(\.jpeg)))
+                MessageRow(message: .init(role: .user, text: waiting.text, localPhotos: waiting.photos.map(\.jpeg),
+                                          files: waiting.files.map { StudyFile(id: $0.id.uuidString, name: $0.name,
+                                                                              pages: $0.pages) }))
                     .opacity(0.5)
             }
             .buttonStyle(.plain)

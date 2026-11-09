@@ -52,13 +52,14 @@ final class APIClient {
     /// `onText` each piece of the reply as it's written, true when the draft starts over (docs/API.md, "Chat"),
     /// `onStep` what a tool is doing (agent, label, kind), `onPage` a picture of the page Aide is browsing (JPEG).
     /// A server without streaming answers plain JSON: same reply, nothing live. `photos` are uploaded ids.
-    func chatLive(_ text: String, photos: [String] = [], conversationID: String? = nil, voice: Bool = false,
+    func chatLive(_ text: String, photos: [String] = [], files: [String] = [], conversationID: String? = nil, voice: Bool = false,
                   onText: @escaping @MainActor (String, Bool) -> Void = { _, _ in },
                   onTeam: @escaping @MainActor (TeamMessage) -> Void,
                   onStep: @escaping @MainActor (String, String, String?) -> Void = { _, _, _ in },
                   onPage: @escaping @MainActor (Data) -> Void = { _ in }) async throws -> ChatReply {
         let body = try JSONEncoder.api.encode(ChatRequest(text: text, conversationId: conversationID, stream: true,
                                                           photos: photos.isEmpty ? nil : photos,
+                                                          files: files.isEmpty ? nil : files,
                                                           voice: voice ? true : nil))
         return try await stream("/v1/chat", body: body, onEvent: { event in
             switch event {
@@ -1137,6 +1138,16 @@ final class APIClient {
     /// A PDF from Files into the course's material.
     func uploadPDF(_ file: URL, name: String, course: Int) async throws -> StudyFile {
         var req = try request("POST", "/v1/files", query: [URLQueryItem(name: "course", value: String(course)),
+                                                           URLQueryItem(name: "name", value: name)],
+                              auth: true, timeout: 600, body: nil)
+        req.setValue("application/pdf", forHTTPHeaderField: "Content-Type")
+        return try await upload(req, file)
+    }
+
+    /// A PDF for a message in a chat (#78): a course chat's goes into that course's material, any other's stays the
+    /// chat's. Its id goes with the message (`chatLive`'s `files`).
+    func uploadChatPDF(_ file: URL, name: String, conversationID: String) async throws -> StudyFile {
+        var req = try request("POST", "/v1/files", query: [URLQueryItem(name: "conversation_id", value: conversationID),
                                                            URLQueryItem(name: "name", value: name)],
                               auth: true, timeout: 600, body: nil)
         req.setValue("application/pdf", forHTTPHeaderField: "Content-Type")

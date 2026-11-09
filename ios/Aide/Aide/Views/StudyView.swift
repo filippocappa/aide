@@ -645,16 +645,14 @@ struct CourseView: View {
             Task { await upload(url, kind: kind) }
         }
         // PDFs and recordings dragged in from Finder (or Files on an iPad) go up the same way, one after another.
-        .dropDestination(for: URL.self) { urls, _ in
-            let picked = urls.compactMap { url -> (URL, Import)? in
-                let type = UTType(filenameExtension: url.pathExtension)
-                if type?.conforms(to: .pdf) == true { return (url, .pdf) }
-                if type?.conforms(to: .audio) == true { return (url, .recording) }
-                return nil
+        .dropZone(DropSpec(title: "Drop to add to \(course.title)", detail: "PDFs and lecture recordings",
+                           symbol: "books.vertical", accepts: [.pdf, .audio],
+                           refusal: "Only PDFs and recordings can go here"),
+                  enabled: busy == nil) { dropped in
+            Task {
+                for file in dropped.files { await upload(file.url, kind: .pdf) }
+                for url in dropped.others { await upload(url, kind: .recording) }
             }
-            guard busy == nil, !picked.isEmpty else { return false }
-            Task { for (url, kind) in picked { await upload(url, kind: kind) } }
-            return true
         }
         .sheet(item: $openFile) { PDFSheet(file: $0) }
         .sheet(item: $focusing, onDismiss: { Task { await env.refreshFocus() } }) { FocusStartSheet(target: $0) }

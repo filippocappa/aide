@@ -19,6 +19,8 @@ final class ChatViewModel: ObservableObject {
         var photos: [String] = []
         /// Photos sent from here, shown before they're uploaded.
         var localPhotos: [Data] = []
+        /// PDFs sent with it (#78): from the server, or (before then) the ones picked here, with no id yet.
+        var files: [StudyFile] = []
         /// A voice call's row ("Call with Professor · 4:12"), not a message.
         var call: VoiceCall?
         /// The specialist who answered a message to Aide directly (the router's pick, #59).
@@ -32,6 +34,7 @@ final class ChatViewModel: ObservableObject {
         var chat: String?
         let text: String
         let photos: [PickedPhoto]
+        var files: [PickedFile] = []
 
         static func == (a: Queued, b: Queued) -> Bool { a.id == b.id && a.chat == b.chat }
     }
@@ -92,6 +95,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var loadError: String?
     /// A chat is on screen, pushed over the chat list. Opening or starting a chat sets it.
     @Published var isChatOpen = false
+    /// Photos and PDFs dropped on another page (the Mac, #78), for the composer of the chat that opens next.
+    @Published var composerDrop: Dropped?
     /// The next chat to open starts with the keyboard up ("Ask Aide anything" on the Team tab).
     var typeOnOpen = false
     /// The team talk of the reply on its way, message by message as it streams in.
@@ -257,7 +262,7 @@ final class ChatViewModel: ObservableObject {
     private func sendNextQueued() {
         guard !isSending, !isOpening, let index = queue.firstIndex(where: { $0.chat == conversationID }) else { return }
         let next = queue.remove(at: index)
-        Task { await send(next.text, photos: next.photos) }
+        Task { await send(next.text, photos: next.photos, files: next.files) }
     }
 
     func open(_ conversation: Conversation) async {
@@ -437,7 +442,8 @@ final class ChatViewModel: ObservableObject {
             smart = history.smart ?? false
             var loaded = Self.messages(history)
             if let running = history.working { // a turn this app lost track of (it was closed): wait for it
-                let asked = Message(role: .user, text: running.text, photos: running.photos ?? [])
+                let asked = Message(role: .user, text: running.text, photos: running.photos ?? [],
+                                    files: (running.files ?? []).map { StudyFile(id: $0, name: "PDF") })
                 loaded.append(asked)
                 messages = loaded
                 isSending = true
@@ -451,7 +457,7 @@ final class ChatViewModel: ObservableObject {
             func content(_ list: [Message]) -> [String] {
                 list.map {
                     "\($0.role == .user ? "u" : "a")|\($0.text)|\($0.attachments.hashValue)|\($0.team.count)"
-                        + "|\(max($0.photos.count, $0.localPhotos.count))|\($0.call?.id ?? 0)"
+                        + "|\(max($0.photos.count, $0.localPhotos.count))|\($0.files.count)|\($0.call?.id ?? 0)"
                 }
             }
             if content(loaded) != content(messages.filter { !$0.isError }) {
@@ -475,7 +481,8 @@ final class ChatViewModel: ObservableObject {
             }
             list.append(Message(role: message.role == "user" ? .user : .assistant, text: message.text,
                                 attachments: message.attachments, consulted: message.consulted, team: message.team,
-                                routine: message.routine, photos: message.photos, routed: message.routed))
+                                routine: message.routine, photos: message.photos, files: message.files,
+                                routed: message.routed))
         }
         list += calls.map { Message(role: .assistant, text: "", call: $0.0) }
         return list
@@ -583,17 +590,18 @@ final class ChatViewModel: ObservableObject {
     // MARK: Messages
 
     /// Sends a message; the reply shows as it's written. `onDraft` gets the draft each time it grows, and true
-    /// when it started over (text written before a tool call is dropped). Photos go up first; the text may then
-    /// be empty.
-    func send(_ raw: String, photos: [PickedPhoto] = [], voice: Bool = false,
+    /// when it started over (text written before a tool call is dropped). Photos and PDFs go up first; the text
+    /// may then be empty. A PDF goes up for its chat (#78), so a new chat is made before it.
+    func send(_ raw: String, photos: [PickedPhoto] = [], files: [PickedFile] = [], voice: Bool = false,
               onDraft: ((String, Bool) -> Void)? = nil) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !photos.isEmpty else { return }
+        guard !text.isEmpty || !photos.isEmpty || !files.isEmpty else { return }
         guard !isSending, !isOpening else { // a reply is on its way: this one goes after it (#69)
-            queue.append(Queued(chat: conversationID, text: text, photos: photos))
+            queue.append(Queued(chat: conversationID, text: text, photos: photos, files: files))
             return
         }
-        let asked = Message(role: .user, text: text, localPhotos: photos.map(\.jpeg))
+        let asked = Message(role: .user, text: text, localPhotos: photos.map(\.jpeg),
+                            files: files.map { StudyFile(id: $0.id.uuidString, name: $0.name, pages: $0.pages) })
         messages.append(asked)
         isSending = true
         liveReply = ""
@@ -608,6 +616,11 @@ final class ChatViewModel: ObservableObject {
                 // What was queued in the blank chat belongs to the one just made.
                 for i in queue.indices where queue[i].chat == nil { queue[i].chat = conversationID }
             }
+            var fileIDs: [String] = []
+            for file in files {
+                fileIDs.append(try await api.uploadChatPDF(file.url, name: file.name,
+                                                           conversationID: conversationID ?? "main").id)
+            }
             let turn = conversationID ?? "main"
             // You may leave the chat while the reply is on its way: from then on it only updates the agent's card,
             // and the reply lands in the chat's history (shown when you open it again).
@@ -615,7 +628,7 @@ final class ChatViewModel: ObservableObject {
             started = turn
             working[turn] = Working(agent: speaker, status: "Thinking…")
             live?.agentStarted(conversation: turn, agent: agent)
-            let reply = try await api.chatLive(text, photos: ids, conversationID: conversationID, voice: voice, onText: { [weak self] delta, restart in
+            let reply = try await api.chatLive(text, photos: ids, files: fileIDs, conversationID: conversationID, voice: voice, onText: { [weak self] delta, restart in
                 guard let self else { return }
                 working[turn]?.status = "Writing…"
                 live?.agentUpdate(conversation: turn, status: "writing")

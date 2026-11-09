@@ -1371,6 +1371,24 @@ final class FoodTests: XCTestCase {
         XCTAssertNil((try JSONSerialization.jsonObject(with: without) as? [String: Any])?["photos"])
     }
 
+    func testChatCarriesPDFs() throws {
+        let json = #"""
+        {"messages":[{"role":"user","text":"What's in it?","files":[{"id":"f_0123456789ab","name":"Week 3.pdf","pages":12}]},
+                     {"role":"assistant","text":"The IS-LM model."}],
+         "working":{"agent":"aide","text":"","files":["f_0123456789ab"]}}
+        """#
+        let history = try JSONDecoder.api.decode(HistoryResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(history.messages[0].files.map(\.name), ["Week 3.pdf"])
+        XCTAssertEqual(history.messages[0].files.first?.pages, 12)
+        XCTAssertEqual(history.messages[1].files.count, 0)
+        XCTAssertEqual(history.working?.files, ["f_0123456789ab"])
+        let sent = try JSONEncoder.api.encode(ChatRequest(text: "", files: ["f_0123456789ab"]))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: sent) as? [String: Any])?["files"] as? [String],
+                       ["f_0123456789ab"])
+        let without = try JSONEncoder.api.encode(ChatRequest(text: "hi"))
+        XCTAssertNil((try JSONSerialization.jsonObject(with: without) as? [String: Any])?["files"])
+    }
+
     func testChatSaysWhenItWasSpoken() throws {
         let spoken = try JSONEncoder.api.encode(ChatRequest(text: "quiz me", voice: true))
         XCTAssertEqual((try JSONSerialization.jsonObject(with: spoken) as? [String: Any])?["voice"] as? Bool, true)

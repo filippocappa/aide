@@ -62,6 +62,7 @@ struct MacRootView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var push: PushService
     @EnvironmentObject private var digest: DigestViewModel
+    @EnvironmentObject private var chat: ChatViewModel
     @ObservedObject private var nav = MacNavigation.shared
     /// Things waiting for your OK, on the Team row's badge.
     @State private var waiting = 0
@@ -74,6 +75,10 @@ struct MacRootView: View {
         // glow behind everything, and the sections float over it on the left in glass.
         detail
             .id(nav.section)
+            // Photos and PDFs dropped on a page with no drop of its own start a chat with Aide carrying them (#78).
+            // The chat, Food and a course page take theirs themselves.
+            .dropZone(DropSpec(title: "Drop to start a chat with Aide", agent: chat.orchestrator),
+                      enabled: settings.isConfigured && nav.section != .settings, onDrop: askAide)
             .safeAreaPadding(.leading, MacSidebar.inset(collapsed: collapsed))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // The page's glow runs up under the title; no band of the toolbar's own with a hard edge under it.
@@ -137,6 +142,14 @@ struct MacRootView: View {
             if show { nav.section = .today; env.showToday = false }
         }
         .stage(item: $env.browser, root: true)
+    }
+
+    private func askAide(_ dropped: Dropped) {
+        nav.section = .team
+        Task {
+            await chat.newChat(with: chat.orchestrator)
+            chat.composerDrop = dropped
+        }
     }
 
     @ViewBuilder private var detail: some View {

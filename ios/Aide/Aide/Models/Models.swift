@@ -196,7 +196,7 @@ struct EmptyBody: Encodable {}
 struct NewConversation: Encodable { var digest: String?; var agent: String? }
 /// `conversationId` nil keeps the old behaviour: the one shared conversation. `photos` nil when there are none.
 /// `voice`: spoken in voice chat, so the reply is written to be read aloud.
-struct ChatRequest: Encodable { let text: String; var conversationId: String?; var stream: Bool?; var photos: [String]?; var voice: Bool? }
+struct ChatRequest: Encodable { let text: String; var conversationId: String?; var stream: Bool?; var photos: [String]?; var files: [String]?; var voice: Bool? }
 struct PhotoUpload: Decodable { let id: String }
 struct ConversationBody: Encodable { var conversationId: String? }
 /// `agent` nil: shared by every agent.
@@ -255,6 +255,8 @@ struct HistoryMessage: Decodable {
     let routine: RoutineTag?
     /// Photo ids sent with a user message (docs/API.md, "Photos").
     let photos: [String]
+    /// PDFs sent with a user message (since 2026-11-09, #78): `id`, `name` and `pages`.
+    let files: [StudyFile]
     /// The specialist the router handed it to, on a reply.
     let routed: Routed?
 
@@ -263,6 +265,7 @@ struct HistoryMessage: Decodable {
         routed = try c.decodeIfPresent(Routed.self, forKey: .routed)
         routine = try c.decodeIfPresent(RoutineTag.self, forKey: .routine)
         photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? []
+        files = try c.decodeIfPresent([StudyFile].self, forKey: .files) ?? []
         role = try c.decode(String.self, forKey: .role)
         text = try c.decode(String.self, forKey: .text)
         ts = try c.decodeIfPresent(String.self, forKey: .ts)
@@ -270,7 +273,7 @@ struct HistoryMessage: Decodable {
         consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
         team = try c.decodeIfPresent([TeamMessage].self, forKey: .team) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine, photos, routed }
+    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine, photos, files, routed }
 }
 
 struct RoutineTag: Decodable, Hashable {
@@ -461,6 +464,7 @@ struct HistoryResponse: Decodable {
         let agent: String
         let text: String
         let photos: [String]?
+        var files: [String]?
         /// What it's doing now ("Searching the web for …"), when a tool is running.
         var step: String?
     }
