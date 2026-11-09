@@ -159,12 +159,15 @@ def timetable_tools(timetable: UniTimetable, study, cal, tz: ZoneInfo):
                                      "events": [{**event_json(e, tz), "change": "created"} for e in added]})
         return text
 
+    where = study.study_calendar if study else "study"
     return [Tool(
         "uni_timetable",
         "The user's lectures from their degree's official timetable (the university's own planner, their year of "
         "their degree): each with day, times, course, room and teachers, cancelled ones marked, and "
-        "whether it's already in the study calendar. add=true also puts the missing ones in the study calendar "
-        "(titled with the course's name, the room and teachers in the notes), never twice. Default: this week.",
+        f"whether it's already in their {where} calendar (the calendar lectures go in). add=true also puts the "
+        f"missing ones in the {where} calendar (titled with the course's name, the room and teachers in the notes, "
+        "no address so no leave-now alerts), never twice: the way to add lectures, never create_event or "
+        "propose_events. Default: this week.",
         {"type": "object", "additionalProperties": False, "required": [], "properties": {
             "start_date": {"type": "string", "description": "YYYY-MM-DD, the first day (default: this Monday)"},
             "days": {"type": "integer", "description": f"how many days (default 7, at most {MAX_DAYS})"},

@@ -501,8 +501,9 @@ _UNI = """- The user's lecture timetable: uni_timetable reads it from their degr
 planner, for any week ("my uni schedule", "what lectures do I have", "when is macro this week"). Use it, never a web \
 search or another degree's page, and never ask the user to type their timetable in. To put the lectures in the \
 calendar ("add my timetable", "put my classes in my calendar"), call it with add=true: it adds the missing ones to \
-the study calendar itself, titled with each course's name (lectures are filed under it), never twice. Then say how \
-many it added and which days, in a line or two; the card shows them."""
+the study calendar itself (the one the user means by "my calendar" or "my work calendar" for lectures), titled \
+with each course's name (lectures are filed under it), never twice; never add or propose lectures with create_event \
+or propose_events. Then say how many it added and which days, in a line or two; the card shows them."""
 
 _BROWSERLESS = """- You have no browser, but Aide does: it does things on websites as errands, logged in to the user's \
 accounts with their saved logins (MyUniTo and the other UniTo sites included). Never tell the user you or Aide \
