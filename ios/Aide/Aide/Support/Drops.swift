@@ -53,8 +53,8 @@ struct DropSpec {
     var refusal = "Only photos and PDFs can go here"
     /// Read food barcodes in dropped photos (Coach).
     var barcodes = false
-    /// Photos a drop may still add (a message takes four); PDFs as many.
-    var photoLimit = 4
+    /// Photos a drop may still add (a message takes `PhotoLimit.message`); PDFs as many.
+    var photoLimit = PhotoLimit.message
 }
 
 extension View {

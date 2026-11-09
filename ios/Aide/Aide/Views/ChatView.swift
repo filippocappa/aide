@@ -55,7 +55,8 @@ struct ChatView: View {
 
     private var replying: Bool { (chat.isSending || chat.isActing) && !voice.isActive }
 
-    private static let maxPhotos = 4
+    /// Photos a message takes: Coach's chats take a day's meals at once, like the Food log.
+    private var maxPhotos: Int { chat.agent.id == "coach" ? PhotoLimit.food : PhotoLimit.message }
     private static let maxFiles = 4
 
     /// Dropped photos and PDFs go into the message being written, sliding into the strip over the box.
@@ -68,9 +69,9 @@ struct ChatView: View {
     /// What a drop on the chat says it will do: into this message, to this agent.
     private var dropSpec: DropSpec {
         DropSpec(title: "Drop to add to the chat with \(chat.agent.name)",
-                 detail: photos.count >= Self.maxPhotos ? "PDFs (four photos already)" : "Photos and PDFs",
+                 detail: photos.count >= maxPhotos ? "PDFs (\(maxPhotos) photos already)" : "Photos and PDFs",
                  agent: chat.agent, barcodes: chat.agent.id == "coach",
-                 photoLimit: Self.maxPhotos - photos.count)
+                 photoLimit: maxPhotos - photos.count)
     }
 
     var body: some View {
@@ -177,7 +178,7 @@ struct ChatView: View {
             chat.isOnScreen = false
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        .photoSources(camera: $showCamera, library: $showLibrary, limit: Self.maxPhotos - photos.count,
+        .photoSources(camera: $showCamera, library: $showLibrary, limit: maxPhotos - photos.count,
                       barcodes: chat.agent.id == "coach", onPick: add)
         .dropZone(dropSpec, enabled: settings.isConfigured, onDrop: take)
         // Dropped on another page: this chat was opened for it.
@@ -431,7 +432,7 @@ struct ChatView: View {
         if picked.count == 1, photos.isEmpty, let code = picked[0].barcodes.first {
             scanned = ScannedCode(code: code, photo: picked[0])
         } else {
-            photos = Array((photos + picked).prefix(Self.maxPhotos))
+            photos = Array((photos + picked).prefix(maxPhotos))
         }
     }
 
@@ -441,7 +442,7 @@ struct ChatView: View {
         guard let result = mealCameraResult else { return }
         mealCameraResult = nil
         switch result {
-        case .photos(let picked): photos = Array((photos + picked).prefix(Self.maxPhotos))
+        case .photos(let picked): photos = Array((photos + picked).prefix(maxPhotos))
         case .logged: Task { await chat.loadHistory() }
         case .library: showLibrary = true
         case .describe: composerFocused = true
@@ -472,7 +473,7 @@ struct ChatView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         #endif
-        .disabled(!settings.isConfigured || (photos.count >= Self.maxPhotos && files.count >= Self.maxFiles))
+        .disabled(!settings.isConfigured || (photos.count >= maxPhotos && files.count >= Self.maxFiles))
         .accessibilityLabel("Add photos or a PDF")
     }
 
@@ -550,7 +551,7 @@ struct ChatView: View {
     private func edit(_ waiting: ChatViewModel.Queued) {
         guard let waiting = chat.unqueue(waiting.id) else { return }
         draft = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? waiting.text : draft + "\n" + waiting.text
-        photos = Array((photos + waiting.photos).prefix(Self.maxPhotos))
+        photos = Array((photos + waiting.photos).prefix(maxPhotos))
         files = Array((files + waiting.files).prefix(Self.maxFiles))
         composerFocused = true
     }

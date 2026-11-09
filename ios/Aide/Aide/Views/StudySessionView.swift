@@ -873,7 +873,7 @@ private struct WriteBox: View {
     @State private var library = false
     @FocusState private var writing: Bool
 
-    private let most = 4
+    private let most = PhotoLimit.message
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

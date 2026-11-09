@@ -164,6 +164,24 @@ def test_the_photo_reader_reads_for_coach_and_sonnet_steps_in_when_it_fails(env)
     assert look["model"] == "smart" and "100 g dry" in coach["messages"][-1]["content"][0]["text"]
 
 
+def test_the_photo_reader_sees_a_whole_days_meals(env):
+    """15 photos at once on the Food log: the reader sees every one, in order, with room to write each."""
+    api, *_ = env()
+    ids = [upload(api, JPEG + bytes([i])).json()["id"] for i in range(15)]
+    api, agent, _, _, client = env([done("Logged them.")])
+    asked = []
+
+    async def reader(system, images, text, max_tokens):
+        asked.append((system, images, text, max_tokens))
+        return "\n".join(f"{p}: pasta" for p in ids)
+    agent.reader = reader
+    assert api.post("/v1/food/log", json={"photos": ids}, headers=AUTH).status_code == 200
+    [(system, images, text, max_tokens)] = asked
+    assert [data for data, _ in images] == [JPEG + bytes([i]) for i in range(15)]
+    assert [line for line in text.splitlines() if line.startswith("[Photo")] == [f"[Photo {p}]" for p in ids]
+    assert "Several photos" in system and max_tokens == 1500 + 14 * 500
+
+
 async def test_the_photo_reader_asks_openrouter_with_the_images():
     from aide.reader import PhotoReader
     sent = []
@@ -186,8 +204,8 @@ async def test_the_photo_reader_asks_openrouter_with_the_images():
 def test_unknown_or_too_many_photos_are_400(env):
     api, *_ = env()
     assert api.post("/v1/chat", json={"text": "hi", "photos": ["p_0000000000000000"]}, headers=AUTH).status_code == 400
-    ids = [upload(api).json()["id"] for _ in range(5)]
-    assert api.post("/v1/chat", json={"photos": ids}, headers=AUTH).status_code == 400
+    ids = [upload(api).json()["id"] for _ in range(21)]
+    assert api.post("/v1/chat", json={"photos": ids}, headers=AUTH).status_code == 400  # 20 at most
     assert api.post("/v1/chat", json={"text": "  "}, headers=AUTH).status_code == 400
 
 
@@ -229,7 +247,7 @@ def test_barcodes_the_app_read_go_to_coach(env):
                     headers=AUTH).json()
     said = api.get(f"/v1/history?conversation_id={body['conversation_id']}", headers=AUTH).json()["messages"][0]
     assert "Barcodes the app read in the photos: 8001505005707. find_food" in said["text"]
-    assert api.post("/v1/food/log", json={"photos": [photo], "barcodes": ["1"] * 5}, headers=AUTH).status_code == 400
+    assert api.post("/v1/food/log", json={"photos": [photo], "barcodes": ["1"] * 21}, headers=AUTH).status_code == 400
 
 
 def test_food_endpoints(env):

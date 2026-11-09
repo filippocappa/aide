@@ -29,7 +29,7 @@ class PhotoReader:
         started = time.monotonic()
         try:
             # A client of its own per read unless one was given: the app's requests can run on different loops.
-            async with httpx.AsyncClient(timeout=60) if self.http is None else _Borrowed(self.http) as http:
+            async with httpx.AsyncClient(timeout=120) if self.http is None else _Borrowed(self.http) as http:
                 r = await http.post(f"{OPENROUTER_BASE_URL}/v1/chat/completions", json=body,
                                     headers={"Authorization": f"Bearer {self.api_key}"})
             r.raise_for_status()

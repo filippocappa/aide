@@ -698,6 +698,9 @@ struct MealPhotosSheet: View {
     @State private var text = ""
     @FocusState private var focused: Bool
 
+    /// A photo's side: big alone, smaller as there are more (a day's meals scroll by).
+    private var side: CGFloat { photos.count == 1 ? 220 : photos.count <= 4 ? 140 : 100 }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -708,7 +711,7 @@ struct MealPhotosSheet: View {
                                 Image(uiImage: photo.preview)
                                     .resizable()
                                     .scaledToFill()
-                                    .frame(width: photos.count == 1 ? 220 : 140, height: photos.count == 1 ? 220 : 140)
+                                    .frame(width: side, height: side)
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             }
                         }
@@ -724,7 +727,9 @@ struct MealPhotosSheet: View {
                 } header: {
                     Text("What is it?")
                 } footer: {
-                    if photos.contains(where: { !$0.barcodes.isEmpty }) {
+                    if photos.count > 4 {
+                        Text("Coach logs each meal in them on its own. Say when you had them if it wasn't today.")
+                    } else if photos.contains(where: { !$0.barcodes.isEmpty }) {
                         Text("Barcode read: Coach uses the packet's real numbers. Say how much you had.")
                     } else {
                         Text("Optional. Amounts, brands, what's hidden (oil, sugar in the coffee) make the numbers better.")
@@ -733,7 +738,7 @@ struct MealPhotosSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.grouped)
-            .navigationTitle("Log a meal")
+            .navigationTitle(photos.count > 4 ? "Log \(photos.count) photos" : "Log a meal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

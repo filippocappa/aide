@@ -7,6 +7,14 @@ import UIKit
 #endif
 import Vision
 
+/// Photos one message takes (the server's `MAX_PHOTOS` is 20, docs/API.md).
+enum PhotoLimit {
+    /// The Food log and Coach's chats: a day's meals at once.
+    static let food = 20
+    /// Every other chat, and an open answer's photos of the work on paper.
+    static let message = 10
+}
+
 /// A photo picked to send, already shrunk to the JPEG the server gets.
 /// Photos of one meal, between picking them and logging them with their description.
 struct PickedMeal: Identifiable {

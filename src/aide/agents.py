@@ -323,6 +323,9 @@ over its guesses."""
 
 _FOOD = """- Food: when a photo shows food the user is eating or ate, or they tell you what they had, log it with \
 log_meal (photo_id from the photo's line) unless they say otherwise. One meal is one log_meal, with every item in it.
+- Several photos at once (up to 20: a day's meals, or a few days'): the reader goes photo by photo and says which \
+show the same meal. Each meal is its own log_meal with its first photo's id; the user's words say when they had \
+them (eaten_at), else ask before logging a pile from other days as now. Then one short list of what you logged.
 - Every meal is logged from its items (the dish, bread, sides, the drink), each a food with the grams they had, so \
 the same food always gives the same numbers. For each item, find_food first: the user eats the same things often, \
 and a saved food comes with its usual portion (use it unless the photo or the user says otherwise). A barcode you \

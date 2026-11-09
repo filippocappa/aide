@@ -121,11 +121,12 @@ struct FoodPage: View {
             MealCameraView(tint: coach.tint, date: isToday ? nil : Wire.dayString(day)) { cameraResult = $0 }
         }
         // The meal camera above takes photos here; the library comes from this.
-        .photoSources(camera: .constant(false), library: $showLibrary, limit: 4, barcodes: true, onPick: picked)
+        .photoSources(camera: .constant(false), library: $showLibrary, limit: PhotoLimit.food, barcodes: true, onPick: picked)
         // Photos dragged onto the page (a Mac, an iPad) log a meal the same way (#78).
         .dropZone(DropSpec(title: isToday ? "Drop to log a meal" : "Drop to log a meal on \(dayName)",
                            detail: "Photos of what you ate, or a packet's barcode", agent: coach,
-                           accepts: [.image], refusal: "Only photos can log a meal", barcodes: true),
+                           accepts: [.image], refusal: "Only photos can log a meal", barcodes: true,
+                           photoLimit: PhotoLimit.food),
                   enabled: settings.isConfigured && !logging) { picked($0.photos) }
         .sheet(item: $pickedPhotos) { picked in
             MealPhotosSheet(photos: picked.photos) { text in Task { await log(photos: picked.photos, text: text) } }
@@ -453,7 +454,7 @@ struct FoodPage: View {
             for code in photos.flatMap(\.barcodes) where !codes.contains(code) { codes.append(code) }
             let reply = try await env.api.logFood(FoodLogRequest(photos: ids, text: text,
                                                                  date: isToday ? nil : Wire.dayString(day),
-                                                                 barcodes: Array(codes.prefix(4))))
+                                                                 barcodes: Array(codes.prefix(PhotoLimit.food))))
             withAnimation { logReply = reply.reply }
             if let id = reply.conversationId { logChat = id }
             await loadFood()

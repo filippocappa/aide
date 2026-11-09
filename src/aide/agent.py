@@ -59,7 +59,7 @@ EPHEMERAL = {"type": "ephemeral"}
 STABLE = {"type": "ephemeral", "ttl": "1h"}
 
 MAX_ASKS = 3  # ask_agent calls per turn
-MAX_PHOTOS = 4  # per message
+MAX_PHOTOS = 20  # per message: a day's meals for the Food log; the app keeps other chats to 10
 MAX_FILES = 4  # PDFs per message (#78)
 FILE_CHARS = 60_000  # the text of a message's PDFs the model reads in its turn, shared between them
 SCAN_PAGES = 3  # a scan whose pages aren't read yet: its first pages as images
@@ -70,8 +70,9 @@ PLAN_CONTEXT = 20  # earlier messages a turn on the Claude plan reads, as text (
 # through an exam problem step by step needs Sonnet, and the plan doesn't bill per token. Voice turns stay on
 # OpenRouter (they stream, and are read aloud as they're written).
 PLAN_CHATS = ("professor",)
-SEEN_PHOTOS = 3  # the model sees the turn's photos as images, up to this many; earlier ones only as [Photo id] lines
+SEEN_PHOTOS = MAX_PHOTOS  # the model sees the turn's photos as images, up to this many; earlier ones only as [Photo id] lines
 READ_TOKENS = 1500  # what the photo reader writes for an agent that reads photos (AgentDef.reads_photos)
+READ_TOKENS_MORE = 500  # and for each photo after the first: 15 meals at once need their own lines
 # How much of a chat the model reads: at least the first number of turns, and fewer than that plus the second.
 # Old turns go in steps, not one a turn, so the history sent stays the same bytes (cached) between steps.
 CHAT_TURNS = (20, 10)
@@ -1125,13 +1126,13 @@ class Agent:
             if self.reader is not None and self.photos is not None:
                 images = [loaded for p in self._photos[-SEEN_PHOTOS:] if (loaded := self.photos.load(p))]
                 try:
-                    seen = await self.reader(READ_PROMPT, images, lines, READ_TOKENS)
+                    seen = await self.reader(READ_PROMPT, images, lines, _read_tokens(len(images)))
                 except Exception:
                     log.warning("the photo reader failed; the smart model reads the photos", exc_info=True)
             if not seen:
                 content = self._with_photos([{"role": "user", "content": lines}])[0]["content"]
                 response = await self.client.beta.messages.create(
-                    model=self.smart_model, max_tokens=READ_TOKENS, system=READ_PROMPT,
+                    model=self.smart_model, max_tokens=_read_tokens(len(self._photos)), system=READ_PROMPT,
                     messages=[{"role": "user", "content": content}])
                 seen = "\n".join(b.text for b in response.content if b.type == "text").strip()
             self._read = f"{_READ_MARK}\n{seen or '(the photo reader saw nothing it could describe)'}\n[End of what the photos show]"
@@ -1427,7 +1428,15 @@ exactly.
 Terse: one line per item, a few words each ("Mezze maniche al pesto, creamy: 90 g dry (~260 g cooked), judged \
 from the 26 cm plate"), at most 12 lines; a label's table can take more. No preamble, no advice, no calorie totals \
 unless printed. The user's words come after the photos: use them for context (which meal, how much they had); \
-they're not asking you."""
+they're not asking you.
+- Several photos: they come in the order of the [Photo p_…] lines. Start each photo's lines with a line of its own, \
+"p_…:" (its id), and up to 12 lines for each. When a photo shows the same meal as an earlier one (another angle, \
+the packet beside the plate), say so on that line ("p_…: same meal as p_…") and don't count its food twice."""
+
+
+def _read_tokens(photos: int) -> int:
+    """What the photo reader may write for this many photos."""
+    return READ_TOKENS + READ_TOKENS_MORE * max(0, photos - 1)
 # Every note the server writes for the model starts with a bracket ("[Course dates: …]", "[Scheduled routine …"),
 # the routine's and the digest's below among them; a photo, a Markdown link or "[1] milk" isn't one.
 _NOTE = re.compile(r"\[(?!Photo p_)[A-Z][^\]]*(\]|$)(?!\()")

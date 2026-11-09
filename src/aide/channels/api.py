@@ -86,7 +86,7 @@ class FoodLogIn(BaseModel):
     photos: list[str] = []
     text: str = ""
     day: date | None = Field(None, alias="date")  # the day it was eaten, default today
-    barcodes: list[str] = Field([], max_length=4)  # read in the photos by the phone
+    barcodes: list[str] = Field([], max_length=20)  # read in the photos by the phone
 
 
 class LabelIn(BaseModel):
@@ -245,7 +245,7 @@ class WriterDecide(BaseModel):
 
 class OpenAnswer(BaseModel):  # a mock exam's open question: typed, or photos of the work on paper, or both
     text: str = ""
-    photos: list[str] = Field(default=[], max_length=4)
+    photos: list[str] = Field(default=[], max_length=10)
 
 
 class LessonStart(BaseModel):

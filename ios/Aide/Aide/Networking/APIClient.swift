@@ -627,7 +627,7 @@ final class APIClient {
 
     /// Coach looks at the photos and logs the meal, which can take 30 s.
     func logFood(_ request: FoodLogRequest) async throws -> FoodLogReply {
-        try await send("POST", "/v1/food/log", body: request, timeout: 120)
+        try await send("POST", "/v1/food/log", body: request, timeout: 300) // up to 20 photos: a day's meals
     }
 
     /// Every meal from `from` to `to` (local days, at most 92), oldest first: what the app writes to Apple Health.
