@@ -78,6 +78,7 @@ class ChatIn(BaseModel):
     conversation_id: str | None = None  # None: the first chat, "main"
     stream: bool = False  # answer as text/event-stream, with team talk as it happens
     photos: list[str] = []  # ids from POST /v1/photos
+    files: list[str] = []  # PDFs from POST /v1/files (#78)
     voice: bool = False  # said in a voice chat: the reply is read aloud
 
 
@@ -888,9 +889,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/chat", dependencies=[Depends(auth)])
     async def chat(body: ChatIn):
         text = body.text.strip()
-        if not text and not body.photos:
+        if not text and not body.photos and not body.files:
             raise HTTPException(400, "text is empty")
         agent.check_photos(body.photos)  # a plain 400, before a stream starts
+        agent.check_files(body.files)
         conversation = body.conversation_id or CONVERSATION
         row = db.app_conversation(conversation) if conversation != CONVERSATION else None
         if conversation != CONVERSATION and row is None and body.stream:
@@ -899,7 +901,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         activity_turn = live.turn(conversation, speaker)
 
         async def respond(on_team=None, on_text=None, on_step=None) -> Turn:
-            mine = working[conversation] = {"agent": speaker, "text": text, "photos": body.photos,
+            mine = working[conversation] = {"agent": speaker, "text": text, "photos": body.photos, "files": body.files,
                                             "since": datetime.now(tz).replace(microsecond=0).isoformat()}
 
             def step(who: str, label: str | None, kind: str | None = None, page: str | None = None) -> None:
@@ -910,7 +912,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             try:
                 turn = await agent.respond(CONVERSATION, text, conversation, hooks(on_team, activity_turn.team),
                                            hooks(on_text, activity_turn.text) if on_text else None, body.photos,
-                                           body.voice, step)
+                                           body.voice, step, body.files)
             except BaseException:
                 activity_turn.failed()
                 raise
@@ -1892,7 +1894,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.post("/v1/files", dependencies=[Depends(auth)])
     async def add_file(request: Request, course: int | None = None, lecture: str | None = None,
-                       name: str = Query("Untitled.pdf", max_length=300)):
+                       name: str = Query("Untitled.pdf", max_length=300), conversation_id: str | None = None):
         kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
         if kind != "application/pdf":
             raise HTTPException(415, "send the file as application/pdf")
@@ -1900,6 +1902,12 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         target = lecture_or_404(lecture) if lecture else None
         if target is not None:
             course_id = target["course_id"] if course_id is None else course_id
+        source = "upload"
+        if conversation_id and course_id is None and target is None:  # for a chat message (#78)
+            if conversation_id != CONVERSATION and db.app_conversation(conversation_id) is None:
+                raise HTTPException(404, f"no conversation {conversation_id}")
+            course_id = study.chat_course(conversation_id)  # a course chat's PDF is that course's material
+            source = "upload" if course_id else "chat"
         public_id = study.files.new_id()
         tmp, size = study.files.folder / f".{public_id}.tmp", 0
         try:
@@ -1913,7 +1921,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                 raise HTTPException(400, "the file is empty")
             try:
                 f = await study.files.add(tmp, name, course_id, target["id"] if target else None,
-                                          public_id=public_id)
+                                          source=source, public_id=public_id)
             except PdfError as e:
                 raise HTTPException(400, str(e))
         finally:

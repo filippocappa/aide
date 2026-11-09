@@ -31,6 +31,10 @@ Omitting `conversation_id` means the first chat (`main`, from before there were 
 ```
 With photos: `{"text": "", "photos": ["p_3f9a…"]}`. Upload each one first (see Photos); up to 4 per message, and
 `text` may be empty when there are photos. An unknown photo id is `400`.
+With PDFs (since 2026-11-09, #78): `{"text": "what's due?", "files": ["f_3f9a1c2b4d5e"]}`. Upload each one first with
+`POST /v1/files?conversation_id=…` (see Study files); up to 4 per message, `text` may be empty, an unknown file id
+is `400`. Every agent reads them: their text in that turn (a scan not read yet: its first 3 pages as images), and
+again later with `read_file`. The message keeps a line per file, which `GET /v1/history` gives back as `files`.
 `"voice": true` (since 2026-10-27, default `false`) says the message was spoken in voice chat: the reply is then
 written to be read aloud (short plain sentences, no lists or markdown, numbers and formulas in words).
 → `200`
@@ -254,11 +258,13 @@ them when the whole chat is shown), oldest first: `[{"id": 3, "agent": "professo
 
 `GET /v1/history?limit=50` → `{"messages": [{"role": "user" | "assistant", "text": "…", "ts": "…", "attachments": [ … ], "consulted": [ … ], "team": [ … ]}], "smart": false, "calls": []}` (`smart`: Think harder is on in that chat, since 2026-10-30; `calls`: Voice calls, since 2026-11-06)
 (`attachments`, `consulted` and `team` as in `/v1/chat`, `[]` on user messages and plain replies; a user message
-sent with photos also has `"photos": ["p_…"]`, absent otherwise; reminders in them are reloaded as they are now,
+sent with photos also has `"photos": ["p_…"]`, absent otherwise; one sent with PDFs (since 2026-11-09) has
+`"files": [{"id": "f_…", "name": "Week 3 slides.pdf", "pages": 42}]`, absent otherwise (open one with
+`GET /v1/files/{id}/pdf`); reminders in them are reloaded as they are now,
 so a reminder ticked since shows `completed: true`, and one deleted since shows `deleted: true`, so hide it). The current conversation's visible text, oldest first, so the chat screen can show what was said before. Tool calls and internal notes are left out. Since 2026-11-03 a Confirm or Cancel shows as an assistant message in the chat that queued it: `/v1/confirm`'s `result` ("✓ Deleted: …", event ids left out) or "Cancelled. Nothing was changed."
 
 While a turn runs in that chat (since 2026-10-29), the history also has `"working": {"agent": "aide", "text":
-"plan my week", "photos": [], "since": "2026-10-29T15:03:12+01:00"}`: the message being answered, which isn't in
+"plan my week", "photos": [], "files": [], "since": "2026-10-29T15:03:12+01:00"}` (`files` since 2026-11-09): the message being answered, which isn't in
 `messages` yet (a turn is saved when it ends), and who answers; `step` (since 2026-11-02) once a tool with one ran,
 what it's doing (as the `step` event). Absent otherwise. An app that lost the stream shows
 the message with the agent working, and asks again every few seconds until `working` is gone.
@@ -1168,7 +1174,9 @@ PDFs: slides, handouts, the professor's notes (since 2026-10-21). A file belongs
 lecture, it's that lecture's slides: the notes are written with them (their text and their most visual pages as
 images), and a lecture that already has notes gets them rewritten (the old ones kept for one undo; the chat message
 says "I rewrote the notes…"). A file not attached to a lecture is course material, which Professor searches page by
-page and cites ("p. 34"). Files come from the app (`source` `upload`) or Moodle (`moodle`, below). A Moodle file put
+page and cites ("p. 34"). Files come from the app (`source` `upload`) or Moodle (`moodle`, below), or were sent
+in a chat that isn't a course's (`chat`, since 2026-11-09: unfiled, and left out of `GET /v1/files` with no `course`
+or `lecture` and of the vault until they're given a course with `PATCH`). A Moodle file put
 up within 36 hours of a lecture of its course is attached to it by itself (at most 3 per lecture).
 
 File object:
@@ -1183,7 +1191,7 @@ File object:
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /v1/files?course=2&lecture=l_…&name=Week%203%20slides.pdf` | the PDF as the raw body, `Content-Type: application/pdf`, up to 100 MB | the File, `201`. `lecture` makes it the lecture's slides (and takes the lecture's course when `course` is left out). `name` gets `.pdf` if missing. `400` empty, not a PDF, bad `course`; `404` unknown lecture; `413` too big; `415` another type. |
+| `POST /v1/files?course=2&lecture=l_…&name=Week%203%20slides.pdf` | the PDF as the raw body, `Content-Type: application/pdf`, up to 100 MB | the File, `201`. `lecture` makes it the lecture's slides (and takes the lecture's course when `course` is left out). `conversation_id` (since 2026-11-09, without `course` or `lecture`): it's for a message in that chat (`POST /v1/chat`'s `files`): a course chat's PDF is that course's material, any other chat's is `source` `chat`; `404` unknown chat. `name` gets `.pdf` if missing. `400` empty, not a PDF, bad `course`; `404` unknown lecture; `413` too big; `415` another type. |
 | `GET /v1/files?course=2&lecture=l_…` | both optional | `{"files": [File]}`, by section, then name |
 | `GET /v1/files/{id}` | | the File. `404` unknown. |
 | `GET /v1/files/{id}/pdf` | | the PDF itself |

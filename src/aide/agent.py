@@ -18,6 +18,7 @@ import anthropic
 
 from .agenda import Agenda
 from .lang import language
+from .material import FileStore, PdfError, page_image
 from . import activity, usage
 from .agents import (AGENTS, AIDE_VOICE_PROMPT, COMMON_TOOLS, ORCHESTRATOR, SPECIALISTS, WATCH_REFUSED, WRITES, check_agent,
                      mentions)
@@ -59,6 +60,9 @@ STABLE = {"type": "ephemeral", "ttl": "1h"}
 
 MAX_ASKS = 3  # ask_agent calls per turn
 MAX_PHOTOS = 4  # per message
+MAX_FILES = 4  # PDFs per message (#78)
+FILE_CHARS = 60_000  # the text of a message's PDFs the model reads in its turn, shared between them
+SCAN_PAGES = 3  # a scan whose pages aren't read yet: its first pages as images
 OLD_RESULT = 1500  # a tool result from an earlier turn longer than this is replayed cut short
 OLD_RESULT_KEPT = 300  # characters of it kept
 PLAN_CONTEXT = 20  # earlier messages a turn on the Claude plan reads, as text (tool results ride along)
@@ -129,6 +133,8 @@ class Agent:
         self.client = client
         self.db = db
         self.photos = photos
+        # The study files, for PDFs sent in a chat (#78): their text in the turn. None: a message can't carry files.
+        self.files: FileStore | None = None
         self.routines = RoutineStore(db, tz)
         # Routines, watches and chat titles go through it, on the Claude plan when the user chose that for
         # background work (engine.py). None: OpenRouter, through `client`.
@@ -185,6 +191,8 @@ class Agent:
             self._pass_to_aide)
         self._team: list[dict] = []  # its team messages
         self._photos: tuple[str, ...] = ()  # photos the user sent with the turn in progress; asked agents see them
+        self._files: tuple[str, ...] = ()  # PDFs the user sent with it (#78); asked agents see them too
+        self._file_parts: dict[str, list[dict]] = {}  # each one's text (or a scan's first pages) for this turn
         self._read: str | None = None  # what the smart model saw in them, once per turn (_describe)
         self._on_team: Callable[[dict], None] | None = None  # told about each one as it happens
         self._watching = False  # the turn in progress is a watch: tools that change something are refused
@@ -307,8 +315,12 @@ class Agent:
                 text = _STAMP.sub("", content, count=1).split(_QUEUE_MARK, 1)[0].split(_OLD_QUEUE_MARK, 1)[0].split(_READ_MARK, 1)[0]
                 if _NOTE.match(text):
                     continue  # a note for the model: a routine's prompt, the one before a post, a quiz's result
-                if photos := _PHOTO.findall(text):
-                    out.append({"role": role, "text": _PHOTO.sub("", text).strip(), "ts": ts, "photos": photos,
+                photos, files = _PHOTO.findall(text), _FILE_LINE.findall(text)
+                if photos or files:
+                    out.append({"role": role, "text": _FILE.sub("", _PHOTO.sub("", text)).strip(), "ts": ts,
+                                **({"photos": photos} if photos else {}),
+                                **({"files": [{"id": i, "name": n, "pages": int(p)} for i, n, p in files]}
+                                   if files else {}),
                                 "attachments": attachments, "consulted": consulted, "team": team})
                     continue
             elif isinstance(content, str):
@@ -420,11 +432,13 @@ class Agent:
                       on_team: Callable[[dict], None] | None = None,
                       on_text: Callable[[str, bool], None] | None = None,
                       photos: list[str] | tuple[str, ...] = (), voice: bool = False,
-                      on_step: Callable[..., None] | None = None) -> Turn:
+                      on_step: Callable[..., None] | None = None, files: list[str] | tuple[str, ...] = ()) -> Turn:
         """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
 
         `photos` are ids from the photo store, sent with the text (which may then be empty). The message stores a
         [Photo id] line for each, and the model sees them as images in this turn only (_with_photos).
+        `files` are PDFs from the study files (#78), the same way: a [File id · name · pages] line each, their text
+        in this turn only (_with_files), read_file after.
 
         `on_team` gets each team message as it happens: an ask when Aide sends it, the answer when it's back.
         `on_step` gets (agent, what it's doing, its kind) when a tool with a step starts ("Searching the web for …",
@@ -451,11 +465,15 @@ class Agent:
             self._voice = voice
             self._photos = tuple(photos)
             self.check_photos(photos)
-            body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])  # each on its own line, after the stamp
+            self.check_files(files)
+            self._files = tuple(files)
+            self._file_parts = await self._read_files(files)
+            body = "\n".join([text, *(f"[Photo {p}]" for p in photos), *self._file_lines(files)])  # after the stamp
             # A message to Aide: the router may hand it straight to a specialist (#59), asked while the stamp is made.
             # Not in a voice turn, where Aide uses every tool itself.
             lines = self._chat_lines(conversation_id) if agent == ORCHESTRATOR and self.router and not voice else None
-            route = (asyncio.create_task(self.router.pick(text, lines, len(photos), "chat"))
+            asked = text + "".join(f" [and a PDF: {line.split(' · ')[1]}]" for line in self._file_lines(files))
+            route = (asyncio.create_task(self.router.pick(asked, lines, len(photos), "chat"))
                      if lines is not None else None)
             if reads:
                 with usage.labels(purpose="photo read", agent=agent, conversation=conversation or channel):
@@ -532,7 +550,7 @@ class Agent:
         self._consulted.append(agent)
         activity.record(self.db.conn, ORCHESTRATOR, "ask", f"Handed to {name}", text or "(photos)",
                         conversation or channel)
-        body = "\n".join([text, *(f"[Photo {p}]" for p in photos)])
+        body = "\n".join([text, *(f"[Photo {p}]" for p in photos), *self._file_lines(self._files)])
         model = self.db.conversation_model(conversation_id) or self.model
         if photos and AGENTS[agent].reads_photos:
             with usage.labels(purpose="photo read", agent=agent, conversation=conversation or channel):
@@ -564,7 +582,7 @@ class Agent:
             self._passed = None
             return None
         call = {"type": "tool_use", "id": f"toolu_route_{secrets.token_hex(8)}", "name": "ask_agent",
-                "input": {"agent": agent, "request": text or "The photos the user sent."}}
+                "input": {"agent": agent, "request": text or f"The {'photos' if photos else 'files'} the user sent."}}
         turn += [{"role": "assistant", "content": [call]},
                  {"role": "user", "content": [{"type": "tool_result", "tool_use_id": call["id"],
                                                "content": f"{name} answered:\n{answer}", "is_error": False}]},
@@ -622,6 +640,73 @@ class Agent:
             if self.photos is None or not self.photos.exists(p):
                 raise ValueError(f"no photo {p}")
 
+    def check_files(self, files: list[str] | tuple[str, ...]) -> None:
+        """ValueError (a 400 in the API) unless every id is a study file (#78)."""
+        if len(files) > MAX_FILES:
+            raise ValueError(f"at most {MAX_FILES} files per message")
+        for f in files:
+            if self.files is None or self.files.get(f) is None:
+                raise ValueError(f"no file {f}")
+
+    def _file_lines(self, files: list[str] | tuple[str, ...]) -> list[str]:
+        """A [File f_… · name · N pages] line per PDF: what the message keeps, and what the app shows as a chip."""
+        out = []
+        for fid in files:
+            f = self.files.get(fid) if self.files else None
+            if f is not None:
+                name = re.sub(r"[\]\n·]", " ", f["name"]).strip()
+                out.append(f"[File {fid} · {name} · {f['pages']} page{'s' if f['pages'] != 1 else ''}]")
+        return out
+
+    async def _read_files(self, files: list[str] | tuple[str, ...]) -> dict[str, list[dict]]:
+        """What the model reads of each PDF in this turn, after its [File] line: its text (FILE_CHARS between them,
+        the rest through read_file), or a scan's first SCAN_PAGES pages as images while its text is being read."""
+        out: dict[str, list[dict]] = {}
+        share = FILE_CHARS // max(1, len(files))
+        for fid in files:
+            f = self.files.get(fid) if self.files else None
+            if f is None:
+                continue
+            unread = f["scanned"] and not self.files.read_pages(f)
+            text = "" if unread else self.files.text(f)
+            if text.strip():
+                more = (f"\n(cut here: {f['pages']} pages in all; read_file {fid} with first_page for the rest)"
+                        if len(text) > share else "")
+                out[fid] = [{"type": "text", "text": f"<file {fid}: {f['name']}>\n{text[:share]}{more}\n</file>"}]
+                continue
+            images = []
+            for n in range(1, min(f["pages"], SCAN_PAGES) + 1):
+                try:
+                    jpeg = await page_image(self.files.path(f), n)
+                except (PdfError, OSError):
+                    log.warning("page %s of %s couldn't be drawn", n, fid, exc_info=True)
+                    continue
+                images.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                           "data": base64.b64encode(jpeg).decode()}})
+            shown = f"its first {len(images)} of {f['pages']} pages are above as images" if images else \
+                "its pages couldn't be shown"
+            out[fid] = [*images, {"type": "text", "text": f"<file {fid}: {f['name']}>\nA scan with no text yet: {shown}. "
+                                  "Its text is being read in the background; read_file has it in a few minutes.\n</file>"}]
+        return out
+
+    def _with_files(self, messages: list[dict]) -> list[dict]:
+        """Copy of the turn's messages with each [File id] line's PDF to read after the message (_read_files).
+        Only the turn's own: stored history keeps the lines, and a later turn reads a file with read_file."""
+        if not self._file_parts:
+            return messages
+        out = list(messages)
+        for i, m in enumerate(out):
+            if m["role"] != "user":
+                continue
+            content = m["content"]
+            text = content if isinstance(content, str) else "\n".join(
+                b.get("text", "") for b in content if b.get("type") == "text")
+            parts = [b for fid in _FILE.findall(text) for b in self._file_parts.get(fid, [])]
+            if parts:
+                blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+                out[i] = {**m, "content": [*blocks, *parts]}
+        return out
+
     async def _stamp(self, channel: str, text: str, voice: bool = False, agent: str | None = None) -> str:
         """Stamped so the model never reuses a stale time from earlier in the conversation (with where the phone
         is, when that's known, "by voice" for a spoken message, and the agent's own context), and shown the real
@@ -664,6 +749,7 @@ class Agent:
         self._images = {}
         self._attachments, self._consulted, self._team, self._on_team = [], [], [], on_team
         self._watching, self._photos, self._read = False, (), None
+        self._files, self._file_parts = (), {}
         self._plan, self._plan_calls, self._plan_tools = False, 0, False
         # on_step(agent, label, kind) when a tool starts; on_step(agent, None, None, page) with a browsed page's picture
         self._on_step: Callable[..., None] | None = None
@@ -800,7 +886,8 @@ class Agent:
                             self._conversation or self._channel)
             # One stateless turn: the specialist sees only the request (and the turn's photos), and nothing is
             # stored in its chats.
-            photos = "".join(f"\n[Photo {p}]" for p in self._photos)
+            photos = "".join(f"\n[Photo {p}]" for p in self._photos) + "".join(
+                f"\n{line}" for line in self._file_lines(self._files))
             model = self._model
             if self._photos and AGENTS[agent].reads_photos:
                 with usage.labels(purpose="photo read", agent=agent):
@@ -1018,8 +1105,8 @@ class Agent:
             # Two cache breakpoints: tools + system, and the conversation so far.
             system=self._system(agent),
             tools=[t.definition() for t in self._offered(agent)],
-            messages=_with_cache_breakpoint(history + self._closing(self._with_screenshots(
-                turn if AGENTS[agent].reads_photos else self._with_photos(turn)))),
+            messages=_with_cache_breakpoint(history + self._closing(self._with_screenshots(self._with_files(
+                turn if AGENTS[agent].reads_photos else self._with_photos(turn))))),
             **({"tool_choice": {"type": "none"}} if self._last_round else {}),
             # A spoken turn doesn't think (asks included): ~1.5 s sooner for a turn that asks Secretary, the same
             # answers (measured 2026-11-06).
@@ -1301,6 +1388,8 @@ _CHANGES = (None, "found", "created", "proposed")  # an event card item's change
 
 _STAMP = re.compile(r"^\[[^\]]*\] ")
 _PHOTO = re.compile(r"^\[Photo (p_[0-9a-f]{16})\]$", re.M)
+_FILE = re.compile(r"^\[File (f_[0-9a-f]{12})(?: · [^\]\n]*)?\]$", re.M)
+_FILE_LINE = re.compile(r"^\[File (f_[0-9a-f]{12}) · (.*) · (\d+) pages?\]$", re.M)
 _QUEUE_MARK = "\n[Queued, waiting for the user's OK:"
 # Without it Haiku brought the queue up in every reply, by voice too ("the move is still waiting for your OK").
 _QUEUE_NOTE = "(On the user's screen already: bring these up only if the user asks or they change your answer.)"

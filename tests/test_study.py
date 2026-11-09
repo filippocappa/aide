@@ -81,6 +81,7 @@ def env(tmp_path):
         study = StudyStore(db, ROME, FakeCalendar(list(events)))
         agent = Agent(client, db, ToolRegistry(study_tools(study, ROME, tmp_path / "audio")), model="m",
                       smart_model="smart", tz=ROME, photos=PhotoStore(tmp_path / "photos"), delegate=False)
+        agent.files = study.files  # as __main__ does: PDFs sent in a chat (#78)
         push = FakePush(db.conn)
         worker = StudyWorker(study, agent, push, tmp_path / "audio", transcribe)
         app = create_app(agent, ReminderStore(db.conn), FakeCalendar(list(events)), ROME, TOKEN, push=push,
@@ -510,3 +511,39 @@ def test_english_goes_to_parakeet_and_the_rest_to_whisper(monkeypatch, capsys):
     assert run() == ("[0:01] Whisper's line.", "it", 32) and heard["parakeet"] == 1
     heard.update(lang="en", fail=True)
     assert run() == ("[0:01] Whisper's line.", "en", 32) and heard["parakeet"] == 2
+
+
+def test_a_pdf_sent_in_a_chat_is_read_in_its_turn_and_kept_as_a_line(env):
+    """#78: a PDF dropped on a chat goes up for that chat and rides on the message; the model reads its text in the
+    turn, the history keeps a line (a chip in the app), and a chat that isn't a course's keeps it out of Study."""
+    api, study, _, _, client = env([done("It's about the IS curve."), done("Week 3"), done("Page 3 is crowding out.")])
+    api.get("/v1/study", headers=AUTH)
+    chat = api.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    f = add_pdf(api, conversation_id=chat).json()
+    assert (f["course"], f["source"]) == (None, "chat")
+    assert api.get("/v1/files", headers=AUTH).json()["files"] == []  # not in Study's lists, nor the vault
+    r = api.post("/v1/chat", json={"text": "", "files": [f["id"]], "conversation_id": chat}, headers=AUTH)
+    assert r.status_code == 200 and r.json()["reply"] == "It's about the IS curve."
+    sent = client.requests[0]["messages"][-1]["content"]
+    assert f"[File {f['id']} · Week 3 slides.pdf · 3 pages]" in sent[0]["text"]
+    assert sent[1]["text"].startswith(f"<file {f['id']}: Week 3 slides.pdf>\n[p. 1]\nThe IS curve")
+    assert "[p. 3]\nCrowding out" in sent[1]["text"]
+    message = api.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"][0]
+    assert message["text"] == "" and message["files"] == [{"id": f["id"], "name": "Week 3 slides.pdf", "pages": 3}]
+    api.post("/v1/chat", json={"text": "and page 3?", "conversation_id": chat}, headers=AUTH)
+    later = client.requests[2]["messages"]  # [1] wrote the chat's title
+    assert f"[File {f['id']}" in str(later) and "Crowding out" not in str(later)  # read_file from now on
+    assert "read_file" in {t["name"] for t in client.requests[2]["tools"]}
+    assert api.post("/v1/chat", json={"text": "x", "files": ["f_000000000000"], "conversation_id": chat},
+                    headers=AUTH).status_code == 400
+    assert add_pdf(api, conversation_id="c_nope").status_code == 404
+
+
+def test_a_pdf_sent_in_a_course_chat_is_that_courses_material(env):
+    api, study, *_ = env()
+    api.get("/v1/study", headers=AUTH)
+    macro = study.course_by_name("macroeconomics")["id"]
+    chat = api.post(f"/v1/study/courses/{macro}/chat", headers=AUTH).json()["conversation_id"]
+    f = add_pdf(api, conversation_id=chat).json()
+    assert (f["course"], f["source"]) == (macro, "upload")
+    assert [x["id"] for x in api.get("/v1/files", headers=AUTH).json()["files"]] == [f["id"]]

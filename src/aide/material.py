@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS study_files (
     size        INTEGER NOT NULL,
     pages       INTEGER NOT NULL,
     scanned     INTEGER NOT NULL DEFAULT 0,  -- no text layer: pages only as images
-    source      TEXT NOT NULL DEFAULT 'upload',  -- upload, moodle
+    source      TEXT NOT NULL DEFAULT 'upload',  -- upload, moodle, chat (a PDF sent in a chat that isn't a course's)
     source_key  TEXT UNIQUE,  -- Moodle: the file's URL without the token
     source_time INTEGER,  -- Moodle: when it was last changed there (epoch seconds)
     added_at    TEXT NOT NULL,
@@ -226,11 +226,13 @@ class FileStore:
         return dict(row) if row else None
 
     def files(self, course_id: int | None = None, lecture_id: int | None = None, material: bool = False) -> list[dict]:
-        """A lecture's slides, a course's files (only its material with `material`), or all; by section, then
-        oldest first, the order a course is taught."""
+        """A lecture's slides, a course's files (only its material with `material`), or all but the PDFs sent in a
+        chat that isn't a course's (`source` chat, #78) until they're filed; by section, then oldest first, the
+        order a course is taught."""
         where = {"lecture_id = ?": lecture_id, "course_id = ?": course_id}
         where = {k: v for k, v in where.items() if v is not None}
-        sql = " AND ".join([*where, *(["lecture_id IS NULL"] if material else [])])
+        sql = " AND ".join([*where, *(["lecture_id IS NULL"] if material else []),
+                            *([] if where else ["(source != 'chat' OR course_id IS NOT NULL)"])])
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM study_files" + (f" WHERE {sql}" if sql else "")
             + " ORDER BY COALESCE(source_time, CAST(strftime('%s', added_at) AS INTEGER)), id", tuple(where.values()))]

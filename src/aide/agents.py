@@ -12,7 +12,9 @@ ORCHESTRATOR = "aide"
 # Tools every agent gets, whatever its domain.
 ROUTINES = ("list_routines", "create_routine", "update_routine", "rewrite_routine", "delete_routine")
 OBJECTIVES = ("list_objectives", "add_objective", "update_objective", "accept_objectives", "plan_objectives")
-COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", "open_page", *ROUTINES, *OBJECTIVES)
+# read_file: a PDF sent in any chat (#78) is read again in a later turn.
+COMMON_TOOLS = ("get_current_time", "remember", "forget", "cancel_queued", "open_page", "read_file", *ROUTINES,
+                *OBJECTIVES)
 SETTINGS = ("settings", "change_setting", "run_digest")
 CALENDAR_READ = ("list_calendars", "list_events", "search_events", "free_time")
 CALENDAR = (*CALENDAR_READ, "create_event", "edit_event", "delete_event")

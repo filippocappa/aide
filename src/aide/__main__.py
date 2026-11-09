@@ -362,6 +362,7 @@ def main() -> None:
         agent_tools=lambda agent_id, any_agent: objective_tools(objectives, planner, agent_id, any_agent),
     )
     esse3.post = agent.post  # a sign-up asked for in a chat: its card and result there
+    agent.files = study.files  # PDFs sent in a chat (#78)
     agent.agenda = agenda
     agent.engine = drafts.engine = engine  # background work on the Claude plan, when chosen
     agent.voice_quiz = VoiceQuiz(quizzes, study)  # "B" by voice in a quiz: marked with no model call
