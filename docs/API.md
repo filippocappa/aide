@@ -1431,7 +1431,10 @@ written, so nothing holds up the first. The app polls it every few seconds while
 
 Topic: `{"id": "t_…", "course": 2, "position": 1, "title": "The IS-LM model", "summary": "one line" or null,
 "written": true, "sections": ["Explanation", "Key terms", …], "questions": 5, "cards": 12, "edited": false,
-"updated_at": "…"}` (`edited`: the user changed it in Obsidian).
+"updated_at": "…", "builds_on": [{"id": "t_…", "title": "…"}]}` (`edited`: the user changed it in Obsidian).
+`builds_on` (since 2026-11-11, #66): the course's topics this one builds on, at most 3, worked out by the cheap model
+once the notebook's topics are written and again after each change applied; `[]` when none or not worked out yet.
+The vault's topic page lists them as `builds on:` links.
 
 Proposal: `{"id": "p_…", "course": 2, "kind": "outline" | "update", "status": "pending" | "applying" | "applied" |
 "declined" | "superseded" | "failed", "items": [{"n": 1, "topic": "t_…" or null (a new topic), "title": "…", "add":
@@ -1569,7 +1572,7 @@ score is a `quiz` card on that message (Chat, attachments) and the push says it 
 | `GET /v1/quizzes?course=2` | | Bank. `404` no such course. |
 | `POST /v1/quizzes` | `{"course": 2, "count": 30, "cards": 5, "exercises": 2, "minutes": 45, "topics": ["t_…"]}`; `count` the multiple-choice questions, 0–60 (default 30, fewer when the bank is smaller), `cards` flashcards and `exercises` the course's own exercises (since 2026-10-31, default 0; 60 in all at most), `minutes` null (default) for untimed, `topics` null for all. Or `{"course": 2, "mock": "m_…"}` (since 2026-10-29): that mock exam, its time and scoring | `201`, Quiz without keys. `409` the notebook has no questions. `404` the mock isn't the course's. |
 | `GET /v1/quizzes/{id}` | | Quiz (with keys once finished). `404`. |
-| `POST /v1/quizzes/{id}/check` | `{"n": 3, "answer": "B"}` (since 2026-10-31): one question answered while taking it, as in `finish` (a flashcard's `"right"` or `"wrong"`, or since 2026-11-07 how well it was known: `"again"`, `"hard"`, `"good"`, `"easy"`, kept as wrong or right; an open one's `{"text", "photos"}`, null blank). Optional `"seconds": 34.5` (since 2026-11-07): how long a multiple-choice answer took, for its grade. The answer is final: `finish` keeps it over what it's sent | That Question with its key, as once finished (an open one with `model_answer` and `rubric`, `awarded` and `correct` null until marked). `409` checked already or finished; `404` no such question, or a chat quiz. |
+| `POST /v1/quizzes/{id}/check` | `{"n": 3, "answer": "B"}` (since 2026-10-31): one question answered while taking it, as in `finish` (a flashcard's `"right"` or `"wrong"`, or since 2026-11-07 how well it was known: `"again"`, `"hard"`, `"good"`, `"easy"`, kept as wrong or right; an open one's `{"text", "photos"}`, null blank). Optional `"seconds": 34.5` (since 2026-11-07): how long a multiple-choice answer took, for its grade. The answer is final: `finish` keeps it over what it's sent | That Question with its key, as once finished (an open one with `model_answer` and `rubric`, `awarded` and `correct` null until marked). `409` checked already or finished; `404` no such question, or a chat quiz. Since 2026-11-11 (#66), a wrong answer may carry `"weak_prerequisite": {"id": "t_…", "title": "…", "retention": 0.42}`: a topic its topic builds on that's retained below 0.6 (0: never practised), the weakest; absent otherwise. |
 | `POST /v1/quizzes/{id}/finish` | `{"answers": {"1": "B", "2": null, "16": {"text": "…", "photos": ["p_…"]}}}`, by question number; left out or null is blank. An open question's answer: typed `text`, photos of the work on paper (`POST /v1/photos`, up to 10 since 2026-11-09), or both | Quiz, finished. `409` already finished. |
 
 Spaced repetition (since 2026-11-07, `srs.py`): each multiple-choice question and flashcard has a schedule (FSRS:
@@ -1686,10 +1689,15 @@ Check result: `{"step": 1, "check": 1, "type": "choice", "answer": "B", "correct
 B is wrong", "key_why": "why C is right", "awarded": null, "expected": null}`. A `write` check: `key` and `key_why`
 null, `awarded` 0, 0.5 or 1, `correct` (at least 0.5), `feedback` from the fast model, `expected` what a right answer
 has. When the marking failed, `correct`, `awarded` and `feedback` are null: show `expected` and let the user judge.
+A wrong answer may carry `weak_prerequisite` (since 2026-11-11, #66), as in a quiz check: a topic it builds on that
+isn't known yet (retained below 0.6 and its lesson not finished).
 
 Path: `{"course": 2, "next": "t_…" or null, "topics": [{"id": "t_…", "title": "…", "summary": "…" or null, "lesson":
-Lesson brief or null, "known": 4, "learning": 1, "unseen": 3}]}`: the written topics in order. `next` is the first
-whose lesson isn't finished, skipping topics already known (every question and flashcard last answered right).
+Lesson brief or null, "known": 4, "learning": 1, "unseen": 3, "builds_on": ["t_…"], "missing": [{"id": "t_…", "title":
+"…"}]}]}`: the written topics in order, a topic after the ones it builds on (since 2026-11-11, #66). `next` is the
+first whose lesson isn't finished, skipping topics already known (every question and flashcard last answered right).
+`missing`: what it builds on that isn't known yet (retained below 0.6, its lesson not finished), weakest first: the app
+asks before starting it ("Start X" or go ahead), never refuses.
 
 ### Quizzes and review sessions
 
