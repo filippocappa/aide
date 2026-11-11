@@ -9,7 +9,7 @@ what its lesson or answers show is known), practising it (its flashcards over th
 its exercise set's items, less those last answered right), then per target the mock exams left (the exam's length
 ×1.5, for taking and marking) and the last review. While lectures remain before the date, the estimate is stretched
 by the share still to come. The credits set a floor: 25 h of work each (Esse3's transcript, else the
-Introduction), less the course's lectures in the timetable, is the user's own study; while the notes count less, the
+Introduction), less the course's lectures (UniTo's timetable, else the calendar's), is the user's own study; while the notes count less, the
 rest is practice (exercises, past exams). The pace is the user's own where the Study page's answers show it (the gaps between
 answers in a run), else a default.
 
@@ -144,10 +144,13 @@ def _hours(minutes: float) -> str:
 
 
 class ExamPlan:
-    def __init__(self, conn, tz: ZoneInfo, study, notebook, quizzes, lessons=None, focus=None, bedtime=None):
+    def __init__(self, conn, tz: ZoneInfo, study, notebook, quizzes, lessons=None, focus=None, bedtime=None,
+                 timetable=None):
         self.conn, self.tz = conn, tz
         self.study, self.notebook, self.quizzes = study, notebook, quizzes
         self.lessons, self.focus, self.bedtime = lessons, focus, bedtime
+        self.timetable = timetable  # UniTo's planner (unitimetable.py): every lecture, not only the calendar's
+        self._uni: tuple[date, list] | None = None  # the planner's lectures, read once a day
         self.conn.executescript(SCHEMA)
         self._cache: tuple[datetime, dict] | None = None
         # From the last working out, for week(): each day's free stretches, the review sessions already in the
@@ -448,13 +451,44 @@ class ExamPlan:
                 "own_min": round(own), "share": round(share, 2), "studied_min": studied, "left_min": round(left),
                 "notes_min": round(notes), "applied": left > notes}
 
+    async def _planner(self, today: date) -> list:
+        """The UniTo planner's lectures from COURSE_RANGE back to COURSE_RANGE ahead (cancelled ones and exams
+        left out), read once a day; the last read, or none, when it fails."""
+        if self.timetable is None:
+            return []
+        if self._uni and self._uni[0] == today:
+            return self._uni[1]
+        from .study import COURSE_RANGE
+        from .unitimetable import MAX_DAYS
+        start, end = today - COURSE_RANGE, today + COURSE_RANGE
+        spans = []
+        while start <= end:
+            spans.append((start, min(end, start + timedelta(days=MAX_DAYS - 1))))
+            start += timedelta(days=MAX_DAYS)
+        try:
+            found = await asyncio.gather(*(self.timetable.lectures(a, b) for a, b in spans))
+        except Exception:
+            log.warning("exam plan: couldn't read UniTo's timetable; the calendar's lectures count", exc_info=True)
+            return self._uni[1] if self._uni else []
+        out = [l for part in found for l in part if not l.cancelled and "esam" not in l.kind.casefold()]
+        self._uni = (today, out)
+        return out
+
     async def _compute(self, now: datetime) -> dict:
         local = now.astimezone(self.tz)
         today = local.date()
         s = self.settings()
         courses = await self.study.courses()
         lectures = self.study._lectures(await self.study._events())
-        ahead = [e.start.astimezone(self.tz).date() for e in lectures if e.start > now]
+        uni: dict[int, list] = {}
+        if planned := await self._planner(today):
+            from .unitimetable import course_for
+            names = {c["name"]: c["id"] for c in courses}
+            for l in planned:
+                if (name := course_for(l.name, list(names))) is not None:
+                    uni.setdefault(names[name], []).append(l)
+        ahead = [e.start.astimezone(self.tz).date() for e in [*lectures, *(l for ls in uni.values() for l in ls)]
+                 if e.start > now]
         season_from = max(ahead) + timedelta(days=1) if ahead else (today if lectures else None)
         data = {c["id"]: self._course_data(c["id"]) for c in courses}
         pace = self._pace({cid: d["kinds"] for cid, d in data.items()}, now)
@@ -467,7 +501,8 @@ class ExamPlan:
                 continue
             target, fallback = found
             work = self._work(c, target, s, pace, data[c["id"]])
-            mine = [e for e in lectures if _name(e.title).casefold() == c["name"].casefold()]
+            mine = (uni.get(c["id"])  # the timetable's lectures, else the calendar's
+                    or [e for e in lectures if _name(e.title).casefold() == c["name"].casefold()])
             held = sum(1 for e in mine if e.end <= now)
             left = sum(1 for e in mine if e.start > now and e.start.astimezone(self.tz).date() < target["date"])
             stretch = (held + left) / held if held and left else 1.0

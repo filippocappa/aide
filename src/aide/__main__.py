@@ -331,7 +331,8 @@ def main() -> None:
     bedtime = Bedtime(db.conn, settings.timezone, health, push, live, locks,
                       calendar_events if cal else None, lambda event: digest.leave_at(event))
     tools += bedtime_tools(bedtime)
-    examplan = ExamPlan(db.conn, settings.timezone, study, notebook, quizzes, lessons, focus, bedtime)
+    examplan = ExamPlan(db.conn, settings.timezone, study, notebook, quizzes, lessons, focus, bedtime,
+                        UniTimetable(settings.unito_timetable, settings.timezone) if settings.unito_timetable else None)
     notebook.on_change.append(examplan.invalidate)
     date_reminders = DateReminders(notebook, reminders, settings.timezone)  # sign-ups and deadlines
     notebook.on_change.append(date_reminders.changed)

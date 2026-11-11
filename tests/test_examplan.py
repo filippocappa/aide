@@ -183,6 +183,35 @@ async def test_the_credits_set_a_floor_of_own_study(tmp_path):
     assert b["left_min"] < b["own_min"]
 
 
+class FakeTimetable:
+    def __init__(self, lectures):
+        self.items, self.reads = lectures, 0
+
+    async def lectures(self, start, end):
+        self.reads += 1
+        return [l for l in self.items if start <= l.start.date() <= end]
+
+
+async def test_the_lectures_come_from_unitos_timetable(tmp_path):
+    from aide.unitimetable import Lecture
+    db, study, notebook, quizzes, plan = make(tmp_path, lectures("macroeconomics", [-14, -7]))
+    macro = await course(study, "macroeconomics")
+    written(notebook, macro["id"], "IS-LM")
+    notebook.set_intro(macro["id"], "Written exam. 1 CFU", "The course.")
+    notebook.add_date(macro["id"], {"what": "exam", "kind": "exam", "date": (TODAY + timedelta(days=40)).isoformat()})
+    lecture = lambda d, cancelled=False, kind="Lezione": Lecture("MACROECONOMICS", at(d), at(d, 13), (), (), cancelled, kind)
+    plan.timetable = FakeTimetable([lecture(-14), lecture(-7), lecture(-3), lecture(5), lecture(6, cancelled=True),
+                                    lecture(8, kind="Esame"), Lecture("PRIVATE LAW", at(2), at(2, 13), (), (), False, "")])
+    out = await plan.plan(NOW)
+    t = out["targets"][0]
+    # four 3-hour lectures (not the cancelled one, the exam or another course's), held and to come
+    assert t["by_credits"]["lectures_min"] == 720 and (t["lectures_held"], t["lectures_left"]) == (3, 1)
+    assert out["season_from"] == (TODAY + timedelta(days=6)).isoformat()
+    reads = plan.timetable.reads
+    await plan.plan(NOW, fresh=True)
+    assert plan.timetable.reads == reads  # once a day
+
+
 async def test_short_of_time_and_the_fallback(tmp_path):
     db, study, notebook, quizzes, plan = make(tmp_path, lectures("macroeconomics", [-14, -7, -1]))
     macro = await course(study, "macroeconomics")
