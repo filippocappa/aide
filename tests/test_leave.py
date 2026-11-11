@@ -259,6 +259,6 @@ async def test_driving_ends_the_alert_and_twice_in_a_row_stops_them_for_the_plac
     w._went("Politecnico", "ask:politecnico", "x", "tram", utcnow() + timedelta(seconds=1))
     assert not w.drives("politecnico ", utcnow() + timedelta(seconds=2))
     # A tram alert that isn't leave-now's: gone, nothing learnt.
-    own = alerts.create("1", "4", "08:15", now=utc(at(7, 0)))
+    own = alerts.create("1", "4", "08:15", now=utcnow())
     assert c.post(f"/v1/transit/alerts/{own['id']}/driving", headers=AUTH).json() == {"ok": True, "learnt": False}
     assert c.post("/v1/transit/alerts/999/driving", headers=AUTH).status_code == 404
