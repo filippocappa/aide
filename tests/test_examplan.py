@@ -194,7 +194,7 @@ class FakeTimetable:
 
 async def test_the_lectures_come_from_unitos_timetable(tmp_path):
     from aide.unitimetable import Lecture
-    db, study, notebook, quizzes, plan = make(tmp_path, lectures("macroeconomics", [-14, -7]))
+    db, study, notebook, quizzes, plan = make(tmp_path, lectures("macroeconomics", [-14, -7, -3]))
     macro = await course(study, "macroeconomics")
     written(notebook, macro["id"], "IS-LM")
     notebook.set_intro(macro["id"], "Written exam. 1 CFU", "The course.")
