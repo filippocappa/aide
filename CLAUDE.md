@@ -53,7 +53,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
   `bedtime.py`: the steady wake time (learnt or set) and tonight's bedtime worked back from it, the evening nudge
   (a `bedtime` Live Activity or a push), the optional wind-down lock, each night against its plan.
-- `habits.py`: habits and streaks. `digest.py`: daily/weekly/monthly digests and their schedule.
+- `habits.py`: habits and streaks; never miss twice (#52): each evening Coach writes once about daily habits missed
+  yesterday and not done today, offering the habit's two-minute version (`minimum`). `digest.py`: daily/weekly/monthly digests and their schedule.
 - `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU
   (Parakeet for English, Whisper for the rest and to pick the language).
   `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes, served by
@@ -81,6 +82,13 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   voice turns and every other chat stay on OpenRouter's Haiku; if the plan fails before a tool ran, OpenRouter answers).
 - `notebook.py`: course notebooks (an Introduction on the exam, a page per topic with questions and flashcards),
   built and grown from the study material, each change proposed in the course chat first; the worker that writes them.
+  Prerequisites (#66): `builds_on` per topic (the cheap model, at most 3, no cycles), `in_order` (a topic after what it
+  builds on: the Learn path's order); `quiz.weak_prerequisites` (retained below `WEAK`) under a missed answer, and weak
+  bases first in practice exams and Due today.
+- `charts.py`: Professor's and Aide's `draw_chart` (#67): the spec checked (formulas in x through a small evaluator,
+  never `eval`), curves sampled, equilibria worked out; the app draws the card with Swift Charts.
+- `feedback.py`: 👍/👎 on a reply with the whole turn as it ran (tools, results, agent, model, the router's pick).
+  "Check the feedback" means `ssh cappa 'cd ~/Developer/aide && uv run --no-sync python -m aide.feedback'`.
 - `srs.py`: spaced repetition (#63): FSRS-4.5 over each question's and flashcard's answers in `quiz_answers`
   (one review a day, its worst grade; no state of its own), used by `quiz.py` for picking, mastery and the Due today deck;
   the user grades flashcards (Again/Hard/Good/Easy), a slow right MCQ is Hard, and from 21 days before the course's next
@@ -234,6 +242,10 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   in the shared view). Locks and limits take sites beside apps ("site:youtube.com" in the same sets, `MacSites.covers`
   matches subdomains), counted in any browser in front or playing on the side; when one holds `MacShield` closes the
   tab (not the browser) at the next tick and Open anyway opens it again.
+- Course folders (#73, `Mac/MacCourseFolders.swift`, Settings → This Mac → Course folders): each subfolder of the
+  chosen folder is a course (guessed by name, or chosen); its PDFs go up once (`POST /v1/files?from=folder`, by SHA-256),
+  the course's Moodle files come down into `<course>/moodle/` (never sent back, never copied again once deleted).
+  State in Application Support/Aide/course-folders.json, a log beside it; every 10 min and when the app comes forward.
 - `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
   `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
 - The Mac look (2026-10-31): `Mac/MacList.swift` makes `List` a grouped `Form` (rounded inset sections, no heavy
