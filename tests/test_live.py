@@ -121,7 +121,7 @@ async def test_a_tram_alert_starts_follows_and_ends_its_live_activity(env, timet
     assert start == {
         "timestamp": start["timestamp"], "event": "start", "attributes-type": "TramActivityAttributes",
         "attributes": {"key": key, "line": "4", "vehicle": "Tram", "stop": "Porta Nuova", "code": "252",
-                       "towards": "Falchera", "alert": a["id"]},
+                       "towards": "Falchera", "alert": a["id"], "event": None},
         "content-state": {"at": tram, "leave": tram - walk - 180, "walk": walk, "live": True, "delay": 120,
                           "next": int(at(8, 15).timestamp()), "gone": False, "stops": 0,
                           "near": "Vittorio Emanuele II Cap", "starts": None, "feed_down": False, "at_stop": False,
