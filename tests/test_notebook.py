@@ -1,4 +1,6 @@
+import asyncio
 import json
+import re
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -10,8 +12,8 @@ from aide.channels.api import create_app
 from aide.db import Database
 from aide.icloud import CalEvent
 from aide.material import visual_pages
-from aide.notebook import (DATES_PROMPT, SCAN_PROMPT, NotebookStore, NotebookWorker, _name_parts, _row_with, date_line,
-                           parse_page, sections)
+from aide.notebook import (DATES_PROMPT, PREREQUISITES_PROMPT, SCAN_PROMPT, NotebookStore, NotebookWorker,
+                           _name_parts, _row_with, date_line, parse_page, sections)
 from aide.photos import PhotoStore
 from aide.plans import PlanStore
 from aide.reminders import ReminderStore
@@ -67,11 +69,16 @@ class ByTopic(RecordingClient):
     scans: list[dict]
     dates: list | str = []
     dated: list[dict]
+    links: dict = {}  # the prerequisites' answer, or a function of the request's text
 
     async def _create(self, **kwargs):
         if kwargs.get("system") == DATES_PROMPT:
             self.__dict__.setdefault("dated", []).append(kwargs)
             answer = done(json.dumps(self.dates))
+            return SimpleNamespace(stop_reason=answer[0], content=answer[1])
+        if kwargs.get("system") == PREREQUISITES_PROMPT:
+            self.__dict__.setdefault("linked", []).append(kwargs)
+            answer = done(json.dumps(self.links(sent(kwargs)) if callable(self.links) else self.links))
             return SimpleNamespace(stop_reason=answer[0], content=answer[1])
         if kwargs.get("system") == SCAN_PROMPT:
             self.__dict__.setdefault("scans", []).append(kwargs)
@@ -942,3 +949,34 @@ async def test_writing_topics_shows_on_the_lock_screen(nb):
     assert calls[1] == ("start", "Writing 2 topics")
     assert sum(c == ("progress",) for c in calls) == 2 and any(c[0] == "step" for c in calls)
     assert calls[-1] == ("finished", "Wrote The IS-LM model, Crowding out.")
+
+
+async def test_topics_build_on_each_other(nb):
+    def links(text):  # Crowding out needs IS-LM; a self-link, a made-up topic and a cycle are dropped
+        ids = re.findall(r"\[(t_[0-9a-f]{12})\]", text)
+        return {ids[1]: [ids[0], ids[1], "t_000000000000"], ids[0]: [ids[1]]}
+    nb.client.links = links
+    is_lm, crowding = await built(nb)  # the prerequisites are worked out once the topics are written
+    [asked] = nb.client.linked
+    assert asked["model"] == "m" and f"[{is_lm['public_id']}] The IS-LM model" in sent(asked)
+    assert nb.notebook.prerequisites(nb.macro["id"]) == {is_lm["public_id"]: [], crowding["public_id"]: [is_lm["public_id"]]}
+    assert nb.notebook.without_prerequisites() == []
+    body = nb.api.get(f"/v1/topics/{crowding['public_id']}", headers=AUTH).json()
+    assert body["builds_on"] == [{"id": is_lm["public_id"], "title": "The IS-LM model"}]
+    assert nb.api.get(f"/v1/topics/{is_lm['public_id']}", headers=AUTH).json()["builds_on"] == []
+    # A topic comes after what it builds on, whatever the notebook's order.
+    nb.notebook.set_prerequisites(nb.macro["id"], {is_lm["public_id"]: [crowding["public_id"]]})
+    assert [t["title"] for t in nb.notebook.in_order(nb.macro["id"])] == ["Crowding out", "The IS-LM model"]
+    nb.notebook.set_prerequisites(nb.macro["id"], {crowding["public_id"]: [is_lm["public_id"]]})
+    await nb.vault.sync()
+    page = (nb.vault.folder / "Aide/macroeconomics/02 Crowding out.md").read_text()
+    assert 'builds on:\n  - "[[Aide/macroeconomics/01 The IS-LM model|The IS-LM model]]"\n' in page
+    # Topics from before: worked out once at start, in the background.
+    nb.db.conn.execute("UPDATE topics SET builds_on = NULL")
+    assert nb.notebook.without_prerequisites() == [nb.macro["id"]]
+    nb.client.links = {"oops": 1}
+    task = asyncio.create_task(nb.worker.run())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    assert len(nb.client.linked) == 2 and nb.notebook.prerequisites(nb.macro["id"])[crowding["public_id"]] == []
+    assert not any("prerequisites" in m["text"] for m in chat_messages(nb))  # a failure isn't posted either

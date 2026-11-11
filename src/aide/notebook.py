@@ -17,6 +17,10 @@ added, so the review data the Spaced Repetition plugin keeps in the vault's card
 A course's dates (exams, mid-terms, sign-up deadlines) are read by the model from its Moodle page and the files'
 pages on the exam, notebook or not: once for every course, after an Introduction, and when Moodle brings a change.
 
+Topics build on each other (#66): once a notebook is written or grows, the cheap model reads its outline and names
+each topic's prerequisites among the others (`builds_on`, checked: topics of the course, no cycles, at most
+MOST_PREREQUISITES). A missed question then points to a prerequisite that isn't retained (quiz.py, lessons.py).
+
 The model calls run in NotebookWorker, one job at a time, outside the chat turn that asked for them.
 """
 
@@ -52,6 +56,7 @@ CREATE TABLE IF NOT EXISTS topics (
     body       TEXT NOT NULL DEFAULT '',  -- markdown, without the title; '' until written
     sources    TEXT NOT NULL DEFAULT '[]',  -- [{"file": "f_…", "pages": [3, 4]}, {"lecture": "l_…"}]
     cards      TEXT NOT NULL DEFAULT '[]',  -- [[question, answer]], only ever added to
+    builds_on  TEXT,  -- ["t_…"]: the topics it needs first (#66); NULL until worked out
     prev_body  TEXT,  -- before Aide's last change, for one undo
     edited_at  TEXT,  -- when the user last changed it in the vault
     updated_at TEXT NOT NULL
@@ -165,6 +170,7 @@ SCAN_TOKENS = 1500  # the scan's answer, at most: room to spare (on Claude Code,
 SCAN_SIDE = 640  # pixels: enough to tell a graph from a bullet list, about 400 tokens a page
 TOPIC_IMAGE_SIDE = 1000  # pixels: a graph reads fine, at about 1,000 tokens instead of 2,500
 PARALLEL = 3  # topics written at once
+MOST_PREREQUISITES = 3  # a topic builds on at most this many others
 CARDS = "===CARDS==="
 INFO_CHARS = 20_000  # the course files' pages on the exam and the course, for the Introduction, at most
 INFO_PAGES = 12  # ... and at most this many
@@ -222,6 +228,9 @@ class NotebookStore:
         self.files = study.files
         self.conn = study.conn
         self.tz = study.tz
+        if self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'topics'").fetchone() and "builds_on" not in {
+                r[1] for r in self.conn.execute("PRAGMA table_info(topics)")}:
+            self.conn.execute("ALTER TABLE topics ADD COLUMN builds_on TEXT")
         self.conn.executescript(SCHEMA)
         columns = {r[1] for r in self.conn.execute("PRAGMA table_info(proposals)")}
         if "done" not in columns:
@@ -293,6 +302,76 @@ class NotebookStore:
 
     def _row(self, row_id: int) -> dict:
         return dict(self.conn.execute("SELECT * FROM topics WHERE id = ?", (row_id,)).fetchone())
+
+    # -- prerequisites (#66) -----------------------------------------------------------
+
+    @staticmethod
+    def builds_on(topic: dict) -> list[str]:
+        return json.loads(topic.get("builds_on") or "[]")
+
+    def prerequisites(self, course_id: int) -> dict[str, list[str]]:
+        """Each topic's prerequisites, by public id."""
+        return {t["public_id"]: self.builds_on(t) for t in self.topics(course_id)}
+
+    def set_prerequisites(self, course_id: int, links: dict) -> dict[str, list[str]]:
+        """Each topic's prerequisites as the model named them, checked: only the course's other topics, at most
+        MOST_PREREQUISITES each, and none that would close a cycle (links back to earlier topics win, then the
+        notebook's order). Every topic of the course gets its list, [] when none."""
+        topics = self.topics(course_id)
+        ids = {t["public_id"] for t in topics}
+        graph: dict[str, list[str]] = {t: [] for t in ids}
+
+        def reaches(start: str, goal: str) -> bool:
+            seen, stack = set(), [start]
+            while stack:
+                if (x := stack.pop()) == goal:
+                    return True
+                if x not in seen:
+                    seen.add(x)
+                    stack.extend(graph[x])
+            return False
+
+        position = {t["public_id"]: n for n, t in enumerate(topics)}
+        for backwards in (True, False):  # links to earlier topics first: the usual way, so they win a cycle
+            for t in topics:
+                asked = links.get(t["public_id"]) if isinstance(links, dict) else None
+                for pre in asked if isinstance(asked, list) else []:
+                    pre = str(pre)
+                    if (pre in ids and pre != t["public_id"] and pre not in graph[t["public_id"]]
+                            and (position[pre] < position[t["public_id"]]) == backwards
+                            and len(graph[t["public_id"]]) < MOST_PREREQUISITES and not reaches(pre, t["public_id"])):
+                        graph[t["public_id"]].append(pre)
+        for t in topics:
+            self.conn.execute("UPDATE topics SET builds_on = ? WHERE id = ?",
+                              (json.dumps(graph[t["public_id"]]), t["id"]))
+        return graph
+
+    def without_prerequisites(self) -> list[int]:
+        """Courses with a topic whose prerequisites haven't been worked out, and no job doing it yet."""
+        return [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT course_id FROM topics t WHERE builds_on IS NULL AND body != '' AND (SELECT COUNT(*) "
+            "FROM topics u WHERE u.course_id = t.course_id AND u.body != '') > 1 AND NOT EXISTS (SELECT 1 FROM "
+            "notebook_jobs j WHERE j.course_id = t.course_id AND j.kind = 'prerequisites' AND j.status IN "
+            "('queued', 'running'))")]
+
+    def in_order(self, course_id: int) -> list[dict]:
+        """The topics in the notebook's order, except that a topic comes after the ones it builds on."""
+        topics = self.topics(course_id)
+        by_id = {t["public_id"]: t for t in topics}
+        out, placed = [], set()
+
+        def place(t: dict, path: frozenset = frozenset()) -> None:
+            if t["public_id"] in placed or t["public_id"] in path:
+                return
+            for pre in self.builds_on(t):
+                if pre in by_id:
+                    place(by_id[pre], path | {t["public_id"]})
+            placed.add(t["public_id"])
+            out.append(t)
+
+        for t in topics:
+            place(t)
+        return out
 
     def set_body(self, topic_id: int, body: str, by_user: bool = False, summary: str | None = None,
                  cards: list | tuple = (), sources: list | tuple = (), study: bool = True) -> dict:
@@ -1125,6 +1204,8 @@ class NotebookStore:
                "summary": t["summary"] or None, "written": bool(t["body"]),
                "sections": [h for h, _ in sections(t["body"]) if h and " › " not in h],
                "questions": _questions(t["body"]), "cards": len(cards),
+               "builds_on": [{"id": x["public_id"], "title": x["title"]}
+                             for x in map(self.topic, self.builds_on(t)) if x],
                "edited": t["edited_at"] is not None, "updated_at": self.study.local(t["updated_at"])}
         if full:
             out |= {"body": t["body"], "cards_list": [{"q": q, "a": a} for q, a in cards],
@@ -1682,6 +1763,14 @@ material shows it's wrong, and then say so ("Correction (Lecture 6): …"). The 
 Then a line {CARDS} and 0 to 6 new flashcards for what's new, one per line, as question :: answer; none that \
 repeat the cards listed."""
 
+PREREQUISITES_PROMPT = """You map how the topics of a university course's notebook build on each other. You get \
+its outline: each topic's id, title, summary and subheadings. For each topic, name the topics a student must \
+understand first to follow it (the money market before IS-LM; elasticity before tax incidence): direct \
+prerequisites only, not their own prerequisites again, at most 3, none when it stands on its own. Mostly earlier \
+topics; never one that needs this topic itself.
+
+Answer with JSON only, every topic's id as a key: {"t_…": ["t_…"], "t_…": []}"""
+
 TRIAGE_PROMPT = """You keep a university student's course notebook up to date. You get the notebook's outline \
 (each topic's id, title, summary and subheadings, no text) and new material: a file as a map (each page's first \
 line) or a lecture's notes. Say what the material adds: which topics it expands, and any topic the notebook doesn't \
@@ -1894,6 +1983,8 @@ class NotebookWorker:
             log.info("requeued %d notebook job(s) cut off by a restart", n)
         for course_id in self.store.undated():
             self.store.reread_dates(course_id)
+        for course_id in self.store.without_prerequisites():
+            self.store.enqueue(course_id, "prerequisites")
         while True:
             job = self.store.next_job()
             if job is None:
@@ -1935,6 +2026,8 @@ class NotebookWorker:
                     await self.copy_papers(course)
                 case "grade":
                     await self.grade(course, job["args"]["quiz"])
+                case "prerequisites":
+                    await self.prerequisites(course)
         except Exception as e:
             log.exception("notebook job %s (%s) failed", job["id"], job["kind"])
             error = str(e)[:200] if isinstance(e, (RuntimeError, KeyError, ValueError)) else "something went wrong"
@@ -1951,7 +2044,7 @@ class NotebookWorker:
                                  + quizzes.summary(quiz), push=True, attachments=[quizzes.card(quiz)],
                                  alert=quizzes.headline(quiz) + " The open answers couldn't be marked.")
                 return
-            if course is not None and job["kind"] != "dates":  # a background read: the log is enough
+            if course is not None and job["kind"] not in ("dates", "prerequisites"):  # background: the log is enough
                 what = {"start": "set up the notebook", "intro": "rewrite the Introduction", "outline": "plan the topics", "triage": "look at the new "
                         "material", "apply": "write the notes", "figures": "add the figures",
                         "exercises": "write the exercises", "mock": "write the mock exam",
@@ -2250,6 +2343,21 @@ class NotebookWorker:
                 + " They're in Obsidian.")
         await self._post(course, f"[Notebook proposal {p['public_id']} applied: {result}]", text, push=True,
                          chat=p.get("chat"))
+        if p["course_id"] in self.store.without_prerequisites():  # new topics: which ones they build on
+            self.store.enqueue(p["course_id"], "prerequisites")
+
+    async def prerequisites(self, course: dict) -> dict[str, list[str]]:
+        """Which topics build on which (#66), from the outline, by the cheap model."""
+        cid = course["id"]
+        self.store.set_step(cid, "Linking the topics")
+        content = f"Course: {course['name']}\n\nThe notebook:\n{self.store.outline(cid)}"
+        answer = parse_json(await self._ask(PREREQUISITES_PROMPT, [{"type": "text", "text": content}], 3000,
+                                            model=self.agent.model))
+        if not isinstance(answer, dict):
+            raise RuntimeError("the prerequisites didn't come back as a map")
+        graph = self.store.set_prerequisites(cid, answer)
+        log.info("notebook: %s: %d links between %d topics", course["name"], sum(map(len, graph.values())), len(graph))
+        return graph
 
     async def write(self, topic: dict, note: str = "") -> dict:
         cid = topic["course_id"]

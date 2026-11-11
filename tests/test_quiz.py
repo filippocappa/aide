@@ -585,3 +585,31 @@ async def test_a_study_session_marks_as_it_goes_and_asks_the_missed_again(nb):
     nb.api.post(f"/v1/quizzes/{exam['id']}/check", json={"n": 1, "answer": "A"}, headers=AUTH)
     assert nb.api.post(f"/v1/quizzes/{exam['id']}/check", json={"n": 1, "answer": "B"}, headers=AUTH).status_code == 409
     assert nb.api.post(f"/v1/quizzes/{exam['id']}/mark", json={"n": 1, "correct": True}, headers=AUTH).status_code == 404
+
+
+def test_a_missed_question_points_to_a_weak_prerequisite(nb):
+    t = notebook_with_questions(nb)
+    cid = nb.macro["id"]
+    islm, pc = t["islm"]["public_id"], t["pc"]["public_id"]
+    nb.notebook.set_prerequisites(cid, {pc: [islm]})
+    quizzes = QuizStore(nb.notebook, random.Random(1))
+    quiz = quizzes.start(cid, count=3, topics=[pc], kind="study")
+    key = quiz["questions"][0]["key"]
+    wrong = {"A": "B", "B": "C", "C": "D", "D": "A"}[key]
+    missed = nb.api.post(f"/v1/quizzes/{quiz['public_id']}/check", json={"n": 1, "answer": wrong}, headers=AUTH).json()
+    assert missed["correct"] is False and missed["weak_prerequisite"] == \
+        {"id": islm, "title": "The IS-LM model", "retention": 0.0}
+    right = nb.api.post(f"/v1/quizzes/{quiz['public_id']}/check", json={"n": 2, "answer": quiz["questions"][1]["key"]},
+                        headers=AUTH).json()
+    assert "weak_prerequisite" not in right
+    # Weak topics others build on come first: in a practice exam and in the Due today deck's new ones.
+    assert quizzes.weak_bases(cid) == {islm}
+    first = quizzes.start(cid, count=3)  # never seen: IS-LM's first, up to its share
+    assert sum(q["topic"] == islm for q in first["questions"]) == 2
+    nb.notebook.set_prerequisites(cid, {islm: [pc]})  # now the Phillips curve comes first among the new ones
+    assert nb.notebook.in_order(cid)[0]["public_id"] == pc
+    assert quizzes.start_due(cid)["questions"][0]["topic"] == pc
+    # Once it's retained, it isn't weak.
+    for q in quizzes.bank(cid, [islm]):
+        quizzes._record(cid, q, q["key"], "2026-11-11T08:00:00+00:00")
+    assert quizzes.weak_prerequisites(pc) == []

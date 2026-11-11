@@ -12,11 +12,11 @@ import Foundation
 final class MacCourseFolders: ObservableObject {
     static let shared = MacCourseFolders()
 
-    static let moodleFolder = "moodle"
+    nonisolated static let moodleFolder = "moodle"
     private static let rootKey = "courseFoldersRoot"
     private static let mapKey = "courseFolderMap"
     private static let every: TimeInterval = 10 * 60
-    private static let biggest = 150 * 1024 * 1024 // a PDF over this stays on the Mac
+    nonisolated private static let biggest = 150 * 1024 * 1024 // a PDF over this stays on the Mac
 
     /// The folder holding a folder per course; nil: off.
     @Published private(set) var root: URL?
@@ -32,7 +32,7 @@ final class MacCourseFolders: ObservableObject {
     private var timer: Timer?
 
     private struct State: Codable {
-        struct Seen: Codable { var size: Int; var modified: Double; var sha: String }
+        struct Seen: Codable, Sendable { var size: Int; var modified: Double; var sha: String }
         /// path → the hash it had at that size and time, so a file is read again only when it changes.
         var seen: [String: Seen] = [:]
         /// sha → the study file it is on the server (sent, or the one it already was).
@@ -124,25 +124,32 @@ final class MacCourseFolders: ObservableObject {
     }
 
     func sync() async {
-        guard let root, !running, AppEnvironment.shared.settings.isConfigured else { return }
+        guard let root, !running else { return }
+        guard AppEnvironment.shared.settings.isConfigured else { note("not set up"); return }
         running = true
         defer { running = false; lastRun = Date() }
+        note("looking at \(root.path)")
         let api = AppEnvironment.shared.api
         do {
             courses = try await api.study().courses
         } catch {
             lastResult = "Couldn't reach Aide: \(error.localizedDescription)"
+            note(lastResult!)
             return
         }
         listSubfolders()
+        note("folders: \(subfolders.map { "\($0) → \(course(for: $0).map(String.init) ?? "none")" }.joined(separator: ", "))")
         var up = 0, down = 0, failed: [String] = []
         for folder in subfolders {
             guard let course = course(for: folder) else { continue }
             let dir = root.appendingPathComponent(folder, isDirectory: true)
             // Up: the folder's own PDFs.
             var here = Set<String>() // the study files the folder has
-            for pdf in pdfs(in: dir) {
-                guard let sha = hash(pdf) else { continue }
+            let seen = state.seen
+            let found = await Task.detached { Self.scan(dir, seen: seen) }.value
+            for (path, entry) in found { state.seen[path] = entry }
+            for (path, entry) in found.sorted(by: { $0.key < $1.key }) {
+                let pdf = URL(fileURLWithPath: path), sha = entry.sha
                 if let id = state.sent[sha] { here.insert(id); continue }
                 do {
                     let f = try await api.uploadFolderPDF(pdf, name: pdf.lastPathComponent, course: course)
@@ -151,6 +158,7 @@ final class MacCourseFolders: ObservableObject {
                     if f.duplicate != true { up += 1 }
                     save()
                 } catch {
+                    note("couldn't send \(pdf.lastPathComponent): \(error.localizedDescription)")
                     failed.append(pdf.lastPathComponent)
                 }
             }
@@ -168,6 +176,7 @@ final class MacCourseFolders: ObservableObject {
                     down += 1
                     save()
                 } catch {
+                    note("couldn't copy \(f.name): \(error.localizedDescription)")
                     failed.append(f.name)
                 }
             }
@@ -177,11 +186,21 @@ final class MacCourseFolders: ObservableObject {
         if down > 0 { parts.append("copied \(down) from Moodle") }
         if !failed.isEmpty { parts.append("couldn't do \(failed.count): \(failed.prefix(3).joined(separator: ", "))") }
         lastResult = parts.isEmpty ? "Up to date" : parts.joined(separator: "; ").capitalizedFirst
+        note(lastResult!)
         save()
     }
 
+    /// The folder's PDFs with their hashes, off the main thread (a first look reads every byte).
+    nonisolated private static func scan(_ dir: URL, seen: [String: State.Seen]) -> [String: State.Seen] {
+        var out: [String: State.Seen] = [:]
+        for pdf in pdfs(in: dir) {
+            if let entry = hash(pdf, seen: seen[pdf.path]) { out[pdf.path] = entry }
+        }
+        return out
+    }
+
     /// The folder's PDFs, its subfolders' too, but not its `moodle/` (Aide's copies).
-    private func pdfs(in dir: URL) -> [URL] {
+    nonisolated private static func pdfs(in dir: URL) -> [URL] {
         guard let walk = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isDirectoryKey],
                                                         options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
         var out: [URL] = []
@@ -195,19 +214,18 @@ final class MacCourseFolders: ObservableObject {
         return out
     }
 
-    /// The file's SHA-256, from memory while its size and time haven't changed.
-    private func hash(_ url: URL) -> String? {
+    /// The file's SHA-256, the one seen before while its size and time haven't changed.
+    nonisolated private static func hash(_ url: URL, seen: State.Seen?) -> State.Seen? {
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-              let size = values.fileSize, size > 0, size <= Self.biggest else { return nil }
+              let size = values.fileSize, size > 0, size <= biggest else { return nil }
         let modified = values.contentModificationDate?.timeIntervalSince1970 ?? 0
-        if let seen = state.seen[url.path], seen.size == size, seen.modified == modified { return seen.sha }
+        if let seen, seen.size == size, seen.modified == modified { return seen }
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         var hasher = SHA256()
         while let block = try? handle.read(upToCount: 1 << 20), !block.isEmpty { hasher.update(data: block) }
         let sha = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-        state.seen[url.path] = .init(size: size, modified: modified, sha: sha)
-        return sha
+        return .init(size: size, modified: modified, sha: sha)
     }
 
     /// Where a Moodle file goes: `moodle/<name>.pdf`, or `<name> 2.pdf` when that's taken.
@@ -229,6 +247,14 @@ final class MacCourseFolders: ObservableObject {
             .appendingPathComponent("Aide", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("course-folders.json")
+    }
+
+    /// A line in Application Support/Aide/course-folders.log (the last 200 kept), to see what it did.
+    private func note(_ line: String) {
+        let url = Self.stateFile.deletingLastPathComponent().appendingPathComponent("course-folders.log")
+        var lines = ((try? String(contentsOf: url, encoding: .utf8)) ?? "").split(separator: "\n").suffix(199).map(String.init)
+        lines.append("\(Date().formatted(.iso8601)) \(line)")
+        try? (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
     private func save() {

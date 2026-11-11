@@ -418,6 +418,9 @@ class Vault:
     def _topic(self, t: dict, course: dict, by_title: dict[str, str], images: dict,
                exercises: str | None = None, files: dict | None = None) -> str:
         folder = self._folder(course)
+        builds = [f'  - "{_link(by_title[x["title"].casefold()], x["title"])}"'  # the topics it needs first (#66)
+                  for x in map(self.notebook.topic, self.notebook.builds_on(t))
+                  if x and x["title"].casefold() in by_title]
         sources = []  # the files it was written from, at the first page used (#73)
         for f, pages in self.notebook.source_files(json.loads(t["sources"])):
             if path := (files or {}).get(f["public_id"]):
@@ -426,6 +429,7 @@ class Vault:
         meta = ["---", f'course: "{_link(f"{folder}/00 Introduction.md", course["name"])}"',
                 f'cards: "{_link(f"{folder}/Cards/{_file_name(t["title"])}.md", "Cards")}"' if json.loads(t["cards"])
                 else None, f'exercises: "{_link(exercises, "Exercises")}"' if exercises else None,
+                *(["builds on:", *builds] if builds else []),
                 *(["sources:", *sources] if sources else []),
                 f"topic: {t['public_id']}", "tags:", "  - topic", f"  - {_tag(course['name'])}", "---"]
         body = _figures_out(_links_out(t["body"], by_title), images)

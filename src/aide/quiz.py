@@ -26,6 +26,9 @@ once by the fast model (`mark`). Untimed, scored by nothing; each answer is reco
 can be checked again (a missed one comes back in the next round). Not a practice exam: no objectives, no post.
 The Due today deck (`deck` "due") is a study session of what the schedule says is due, then new ones up to
 NEW_PER_DAY a day.
+
+Prerequisites (#66, notebook.py's `builds_on`): a missed question names a topic it builds on that isn't retained
+(`weak_prerequisite`), and picking puts the weak topics others build on first, new ones after what they build on.
 """
 
 import asyncio
@@ -105,6 +108,7 @@ instructions."""
 # questions (2026-11-08) Jev alone got 85–87 right, Haiku 82–84 (and failed 7 times: thinking ran past max_tokens);
 # Jev was the stricter on wrong answers and the softer on half-right ones, hence only its sure "right" decides alone.
 SURE_RIGHT = 0.8
+WEAK = 0.6  # a topic retained less than this (its questions' and cards' average chance of recall) is weak
 DECIDE_WAIT = 1.5  # seconds the decision model may take before the fast model's mark is waited for alone
 MARK_POINTS = {"right": 1.0, "half": 0.5, "wrong": 0.0}
 MARK_CRITERIA = {
@@ -236,14 +240,33 @@ class QuizStore:
                             else PROFESSOR, "last": last.get(key)})
         return out
 
-    def pick(self, bank: list[dict], count: int) -> list[dict]:
+    def weak_prerequisites(self, topic_id: str, progress: list[dict] | None = None) -> list[dict]:
+        """The topics this one builds on that aren't retained now (below WEAK; never practised is 0), the weakest
+        first: {"id", "title", "retention"}. Unwritten ones (nothing to practise) aren't counted."""
+        t = self.notebook.topic(topic_id)
+        pres = self.notebook.builds_on(t) if t else []
+        if not pres:
+            return []
+        prog = {p["id"]: p for p in (progress if progress is not None else self.progress(t["course_id"]))}
+        weak = [prog[x] for x in pres if x in prog and prog[x]["items"] and prog[x]["retention"] < WEAK]
+        return [{"id": p["id"], "title": p["title"], "retention": p["retention"]}
+                for p in sorted(weak, key=lambda p: p["retention"])]
+
+    def weak_bases(self, course_id: int, progress: list[dict] | None = None) -> set[str]:
+        """The weak topics that another topic builds on: practised first."""
+        prog = {p["id"]: p for p in (progress if progress is not None else self.progress(course_id))}
+        needed = {x for pres in self.notebook.prerequisites(course_id).values() for x in pres}
+        return {x for x in needed if x in prog and prog[x]["items"] and prog[x]["retention"] < WEAK}
+
+    def pick(self, bank: list[dict], count: int, first: set[str] = frozenset()) -> list[dict]:
         """`count` questions: due today or wrong or blank last time first, then never seen, then the rest, each
-        group the least likely to be recalled first; no topic more than its share until the others run out."""
+        group the topics in `first` (weak ones others build on) first, then the least likely to be recalled first;
+        no topic more than its share until the others run out."""
         def order(q):
-            last = q["last"]
+            last, base = q["last"], 0 if q["topic"] in first else 1
             if last is None:
-                return 1, 0.0, self.rng.random()
-            return ((0 if not last["correct"] or last["is_due"] else 2), last["retention"], last["answered_at"],
+                return 1, base, 0.0, self.rng.random()
+            return ((0 if not last["correct"] or last["is_due"] else 2), base, last["retention"], last["answered_at"],
                     self.rng.random())
 
         ranked = sorted(bank, key=order)
@@ -279,9 +302,10 @@ class QuizStore:
         cards = min(cards, MOST - exercises - write)
         count = min(count, MOST - exercises - write - cards)
         keep = ("qkey", "topic", "topic_title", "text", "options", "key", "explanation")
-        turned = self.pick(flash, cards + write)  # one card isn't both turned and written
+        first = self.weak_bases(course_id)
+        turned = self.pick(flash, cards + write, first)  # one card isn't both turned and written
         turned, written = turned[:cards], turned[cards:]
-        questions = [{k: q[k] for k in keep} | {"source": PROFESSOR} for q in self.pick(bank, count)] + \
+        questions = [{k: q[k] for k in keep} | {"source": PROFESSOR} for q in self.pick(bank, count, first)] + \
                     [{k: q[k] for k in keep if k != "options"} | {"type": "card", "source": PROFESSOR}
                      for q in turned] + \
                     [{"type": "open", "points": 1.0, "text": q["text"], "model_answer": q["key"], "rubric": "",
@@ -308,9 +332,11 @@ class QuizStore:
         if not bank and not flash:
             raise ValueError("This course's notebook has no questions yet.")
         items = bank + flash
+        first = self.weak_bases(course_id)  # weak topics others build on
         due = sorted((q for q in items if q["last"] and q["last"]["is_due"]),
-                     key=lambda q: (q["last"]["retention"], self.rng.random()))
-        order = {t["public_id"]: n for n, t in enumerate(self._topics(course_id, None))}
+                     key=lambda q: (q["topic"] not in first, q["last"]["retention"], self.rng.random()))
+        # New ones in the notebook's order, a topic after the ones it builds on.
+        order = {t["public_id"]: n for n, t in enumerate(self.notebook.in_order(course_id))}
         new = sorted((q for q in items if q["last"] is None), key=lambda q: order[q["topic"]])  # topics in order
         picked = due[:MOST] + new[:min(self.new_left(course_id), MOST - min(len(due), MOST))]
         if not picked:
@@ -417,7 +443,10 @@ class QuizStore:
         self.conn.execute("UPDATE quizzes SET checked = ? WHERE id = ?", (json.dumps(quiz["checked"]), quiz["id"]))
         if study and (q.get("type") != "open" or given is None):  # an open answer is recorded once it's marked
             self._record(quiz["course_id"], q, given, utcnow().isoformat(), card_grade(q, answer), seconds)
-        return self.question_json(quiz, n, reveal=True)
+        item = self.question_json(quiz, n, reveal=True)
+        if item.get("correct") is False:
+            item["weak_prerequisite"] = next(iter(self.weak_prerequisites(q["topic"])), None)
+        return item
 
     def to_mark(self, public_id: str, n: int) -> tuple[dict, dict] | None:
         """A study session's open question n and its answer as checked, waiting to be marked; None otherwise."""
@@ -532,7 +561,9 @@ class QuizStore:
         self.conn.execute("UPDATE quizzes SET answers = ? WHERE public_id = ?", (json.dumps(quiz["answers"]), public_id))
         if self.current(quiz) is None:
             quiz = self.end(public_id)
-        return quiz | {"given": {"n": n, "answer": a, "correct": correct(q, a)}}
+        right = correct(q, a)
+        weak = None if right else next(iter(self.weak_prerequisites(q["topic"])), None)
+        return quiz | {"given": {"n": n, "answer": a, "correct": right, "weak_prerequisite": weak}}
 
     def end(self, public_id: str) -> dict | None:
         """Ends a quiz where it is: it keeps the questions answered (None when there were none: it's dropped)."""

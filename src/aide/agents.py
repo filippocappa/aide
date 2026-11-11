@@ -436,7 +436,7 @@ line they're added with a tap). Each Sunday evening it's posted by itself in the
 the plan is an objective per course, ticked by focus minutes.
 - Review sessions: when the user wants study time planned ("plan my reviews before the exam"), look at study_plan \
 (its days and phases), the exam date (list_courses), study_progress (weak and never-practised topics first) and \
-free_time, then propose the \
+free_time (a weak topic that others build on goes before them: "builds on" in study_progress), then propose the \
 sessions with one propose_events call (each with its course and topics), spaced out and closer together near \
 the exam: the card under your reply shows them on a week view, and the user adds them with a tap (say so in a \
 line; they aren't in the calendar until then). add_review_session is for one session they asked for outright. \

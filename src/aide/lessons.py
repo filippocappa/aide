@@ -34,6 +34,7 @@ from .db import utcnow
 from .engine import course_var
 from .notebook import NotebookStore, _sentences, parse_json
 from .decide import Decider
+from .quiz import WEAK
 from .quiz import mark as mark_answer
 
 log = logging.getLogger(__name__)
@@ -310,7 +311,31 @@ class LessonStore:
                     decider=self.decider)
             out |= {"awarded": points, "correct": points >= 0.5, "feedback": feedback}
         self._record(self._get(public_id), step, check, {"answer": out["answer"], "correct": out["correct"]})
+        if out["correct"] is False:  # what it builds on, when that isn't retained (#66)
+            out["weak_prerequisite"] = next(iter(self.missing(self.notebook._row(lesson["topic_id"]))), None)
         return out
+
+    def missing(self, topic: dict, mastery: dict | None = None, finished: set | None = None) -> list[dict]:
+        """The written topics this one builds on (#66) that aren't known yet: retained below WEAK (never practised:
+        0) and their lesson not finished; the weakest first, {"id", "title", "retention"}."""
+        pres = self.notebook.builds_on(topic)
+        if not pres:
+            return []
+        if mastery is None:
+            mastery = {t["id"]: t for t in (self.mastery(topic["course_id"]) if self.mastery else [])}
+        out = []
+        for x in pres:
+            t = self.notebook.topic(x)
+            if t is None or not t["body"].strip():
+                continue
+            m = mastery.get(x, {})
+            if m.get("retention", 0.0) >= WEAK:
+                continue
+            done = (x in finished) if finished is not None else bool(
+                (lesson := self.for_topic(t["id"])) and lesson["finished_at"])
+            if not done:
+                out.append({"id": x, "title": t["title"], "retention": m.get("retention", 0.0)})
+        return sorted(out, key=lambda w: w["retention"])
 
     def _record(self, lesson: dict, step: int, check: int, given: dict) -> None:
         answers = lesson["answers"] | {f"{step}.{check}": given}
@@ -386,15 +411,21 @@ class LessonStore:
     def path(self, course_id: int) -> dict:
         mastery = {t["id"]: t for t in (self.mastery(course_id) if self.mastery else [])}
         nxt = self.next_topic(course_id)
+        topics = self.notebook.topics(course_id)
+        lessons = {t["public_id"]: self.for_topic(t["id"]) for t in topics if t["body"].strip()}
+        finished = {x for x, lesson in lessons.items() if lesson and lesson["finished_at"]}
         out = []
-        for t in self.notebook.topics(course_id):
+        for t in topics:
             if not t["body"].strip():
                 continue
-            lesson = self.for_topic(t["id"])
+            lesson = lessons[t["public_id"]]
             m = mastery.get(t["public_id"], {})
             out.append({"id": t["public_id"], "title": t["title"], "summary": t["summary"] or None,
                         "lesson": self.brief(lesson, t) if lesson else None,
-                        "known": m.get("known", 0), "learning": m.get("learning", 0), "unseen": m.get("unseen", 0)})
+                        "known": m.get("known", 0), "learning": m.get("learning", 0), "unseen": m.get("unseen", 0),
+                        "builds_on": self.notebook.builds_on(t),
+                        "missing": [{"id": w["id"], "title": w["title"]}
+                                    for w in self.missing(t, mastery, finished)]})
         return {"course": course_id, "next": nxt["public_id"] if nxt else None, "topics": out}
 
     # -- JSON for the API --------------------------------------------------------------

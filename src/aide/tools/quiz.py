@@ -68,6 +68,9 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
             line = f"Wrong: the answer is {plain_math(q['key'])}."
         if q and q["explanation"]:
             line += f" Why: {plain_math(q['explanation'])}"
+        if weak := given.get("weak_prerequisite"):
+            line += (f" It builds on {weak['title']}, which is only about {round(weak['retention'] * 100)}% retained: "
+                     "say so in a few words and offer to go over it.")
         if done["finished_at"]:
             return f"{line}\n\n{result(done)}"
         so_far = sum(correct(done["questions"][int(k) - 1], a) for k, a in done["answers"].items())
@@ -95,9 +98,13 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
             out.append(f"Spaced repetition: {d['due']} questions and cards due today, {d['new']} new ones for today's "
                        "Due today deck (the app's Study tab)" + (f"; next due {d['next_due']}" if not d["due"] and
                                                                  d["next_due"] else "") + ".")
+        builds = {k: v for k, v in notebook.prerequisites(c["id"]).items() if v}
+        titles = {t["id"]: t["title"] for t in topics}
         for t in topics:
             seen = t["known"] + t["learning"]
             line = f"{t['title']}: {t['items']} questions and cards"
+            if pres := [titles[x] for x in builds.get(t["id"], []) if x in titles]:
+                line += f" (builds on {', '.join(pres)})"
             if seen:
                 line += (f"; {t['known']} known, {t['learning']} being learnt (due or missed), {t['due']} due today, "
                          f"about {round(t['retention'] * 100)}% retained now")
@@ -181,8 +188,8 @@ def quiz_tools(quizzes: QuizStore, reviews: ReviewStore | None, study: StudyStor
         Tool("end_quiz", "End a quiz early, when the user wants to stop: what they answered stays recorded.",
              _obj(qid, ["quiz"]), end_quiz),
         Tool("study_progress", "How the user is doing on a course, topic by topic (known, being learnt, due today "
-             "and retained now by the spaced-repetition schedule, never asked, when last practised; quizzes pick "
-             "what's due first), its mock exams and their scores, the next exam, and the review sessions coming. For "
+             "and retained now by the spaced-repetition schedule, never asked, when last practised, what each builds on; "
+             "quizzes pick what's due first), its mock exams and their scores, the next exam, and the review sessions coming. For "
              "planning reviews.", _obj(one_course, ["course"]), study_progress),
         Tool("write_mock_exam", "Write a mock exam for a course: a paper like the real exam (its kinds of questions, "
              "open ones included, its points, time and scoring), over every topic, in the style of its past exams. "
