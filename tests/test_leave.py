@@ -238,18 +238,18 @@ async def test_driving_ends_the_alert_and_twice_in_a_row_stops_them_for_the_plac
     day = timedelta(days=1)
     cal = FakeCal(lecture(uid="mon"), lecture(start=at(9, 0) + day, uid="tue"),
                   lecture(start=at(9, 0) + 2 * day, uid="wed"))
-    w = make(cal, FakeMaps(ride(), ride(departs=at(8, 15) + day), ride(departs=at(8, 15) + 2 * day)))
+    w = make(cal, FakeMaps(ride()))
     agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", tz=ROME, delegate=False)
     c = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN, leave=w, transit_alerts=alerts))
     for n in range(2):
         location.save(*HOME, 10, at(7, 25) + n * day)
-        w._events = None
+        w._events, w.maps = None, FakeMaps(ride(departs=at(8, 15) + n * day))
         await w.tick(utc(at(7, 27) + n * day))
         (a,) = alerts.all()
         assert c.post(f"/v1/transit/alerts/{a['id']}/driving", headers=AUTH).json() == {"ok": True, "learnt": True}
         assert alerts.all() == [] and a["id"] in alerts.dropped  # gone, and its countdown ends at the next tick
     location.save(*HOME, 10, at(7, 25) + 2 * day)
-    w._events = None
+    w._events, w.maps = None, FakeMaps(ride(departs=at(8, 15) + 2 * day))
     await w.tick(utc(at(7, 27) + 2 * day))
     assert alerts.all() == []
     assert dict(db.conn.execute("SELECT event, state FROM leave_plans").fetchall())["wed"] == "drives"
