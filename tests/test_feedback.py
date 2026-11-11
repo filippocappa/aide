@@ -4,17 +4,17 @@ from test_api import AUTH, call, done, env  # noqa: F401 (fixture)
 
 def test_a_rated_reply_keeps_its_whole_turn_and_shows_in_the_history(env):  # noqa: F811
     client, agent, _ = env([call("create_reminder", title="Bins"), done("Added it."), done("Hi again.")])
-    chat = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    chat = "main"  # the shared chat: an app chat would spend a model call on its title
     body = client.post("/v1/chat", json={"text": "remind me bins", "conversation_id": chat}, headers=AUTH).json()
     reply = body["message_id"]
     client.post("/v1/chat", json={"text": "hello", "conversation_id": chat}, headers=AUTH)
-    msgs = client.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"]
+    msgs = client.get("/v1/history", headers=AUTH).json()["messages"]
     assert [m["id"] for m in msgs if m["text"] == "Added it."] == [reply]
 
     r = client.post("/v1/feedback", json={"conversation_id": chat, "message_id": reply, "rating": "down",
                                           "note": "it should have asked which day"}, headers=AUTH)
     assert r.json() == {"ok": True, "rating": "down"}
-    msgs = client.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"]
+    msgs = client.get("/v1/history", headers=AUTH).json()["messages"]
     assert [(m["text"], m.get("feedback")) for m in msgs if m["role"] == "assistant"] == [
         ("Added it.", "down"), ("Hi again.", None)]
 
