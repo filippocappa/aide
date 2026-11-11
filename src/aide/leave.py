@@ -17,6 +17,10 @@ Nothing is set when the phone is already at the place, or far from it (not going
 user walks, drives or cycles there; when the first ride isn't GTT's (a train); when the user's own alert for
 that line already covers the time; or when an earlier event at the same place ends at most SAME_TRIP before it
 starts (a day of talks at one venue, a "Drive to the stadium" before them: one trip there, not one per event).
+
+Driving (2026-11-12): the countdown's Driving button (`driving`) ends that alert, and each leave to a place is kept
+(`leave_ways`: tram unless the button was tapped). Once the last DRIVES to a place, within KEEP, were by car, its events
+get none (`drives`), until the user asks for a way there (`trip`), which counts as tram.
 """
 
 import asyncio
@@ -44,6 +48,8 @@ STOP_NEAR = 150  # metres between the stop Maps names and GTT's
 FREQUENT = 4  # departures an hour (around the one taken) that make a line frequent
 SAME_TRIP = timedelta(minutes=90)  # an event at the same place ending this soon before another: the same trip there
 BEHIND = timedelta(hours=12)  # events this far back are read too, for the same trip
+DRIVES = 2  # leaves in a row by car to a place that stop its alerts
+KEEP = timedelta(days=60)  # older leaves don't count
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS leave_plans (
@@ -52,6 +58,14 @@ CREATE TABLE IF NOT EXISTS leave_plans (
     state    TEXT NOT NULL,     -- alert (set), or skipped: why not (walks, no_place, no_ride, not_gtt, covered,
                                 -- same_trip: an earlier event at the same place just before it)
     alert    INTEGER,           -- the tram alert it set
+    at       TEXT NOT NULL,     -- UTC
+    PRIMARY KEY (event, starts)
+);
+CREATE TABLE IF NOT EXISTS leave_ways (  -- how the user went to a place: tram unless they tapped Driving
+    place    TEXT NOT NULL,     -- the event's place, casefolded
+    event    TEXT NOT NULL,     -- the event's uid (a leave_for ask: "ask:" and the place)
+    starts   TEXT NOT NULL,
+    by       TEXT NOT NULL,     -- tram or car
     at       TEXT NOT NULL,     -- UTC
     PRIMARY KEY (event, starts)
 );
@@ -168,6 +182,8 @@ class LeaveWatcher:
             return self._mark(e, "no_place", now)
         if await self._same_trip(e, there, here):
             return self._mark(e, "same_trip", now)
+        if self.drives(place, now):
+            return self._mark(e, "drives", now)
         distance = metres(*here, *there)
         if distance < THERE or distance > AWAY:
             return  # already there, or not going (not yet, at least): looked at again later
@@ -187,7 +203,31 @@ class LeaveWatcher:
         a = self.alerts.create(stop["id"], line, f"{departs.astimezone(self.tz):%H:%M}", now=now,
                                event=f"{e['title']} at {local:%H:%M}", to_stop=self._get_off(route, line))
         self._mark(e, "alert", now, a["id"])
+        self._went(place, *self._key(e), "tram", now)
         log.info("leave-now: %s", self.alerts.describe(a))
+
+    # -- tram or car -------------------------------------------------------------------------------------------
+
+    def _went(self, place: str, event: str, starts: str, by: str, now: datetime) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO leave_ways (place, event, starts, by, at) VALUES (?, ?, ?, ?, ?)",
+                          (place.strip().casefold(), event, starts, by, now.isoformat()))
+
+    def drives(self, place: str, now: datetime) -> bool:
+        """The last DRIVES leaves to `place` (within KEEP) were all by car."""
+        last = [r["by"] for r in self.conn.execute(
+            "SELECT by FROM leave_ways WHERE place = ? AND at >= ? ORDER BY at DESC LIMIT ?",
+            (place.strip().casefold(), (now - KEEP).isoformat(), DRIVES))]
+        return len(last) == DRIVES and all(b == "car" for b in last)
+
+    def driving(self, alert_id: int, now: datetime) -> bool:
+        """The user tapped Driving on a leave-now alert's countdown: that leave was by car. False when the alert
+        wasn't one of leave-now's."""
+        row = self.conn.execute("SELECT event, starts FROM leave_plans WHERE alert = ?", (alert_id,)).fetchone()
+        if row is None:
+            return False
+        self.conn.execute("UPDATE leave_ways SET by = 'car', at = ? WHERE event = ? AND starts = ?",
+                          (now.isoformat(), row["event"], row["starts"]))
+        return True
 
     async def _same_trip(self, e: dict, there: tuple[float, float], here: tuple[float, float]) -> bool:
         """An earlier event (or one at the same time, first by uid) at the same place ends at most SAME_TRIP before
@@ -249,6 +289,7 @@ class LeaveWatcher:
         route, departs, stop, line = chosen
         walk = await self.walks.seconds(*here, stop)
         covered = self._covered(line, departs)
+        self._went(place, f"ask:{place.strip().casefold()}", arrive.isoformat(), "tram", now)  # asked: going by tram
         alert = None
         if not covered:
             local = departs.astimezone(self.tz)

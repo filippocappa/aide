@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from .. import activity, usage
 from ..agent import CONVERSATION, PENDING_TTL, SCANNED, TEAM, Agent, Turn, UnknownConversation
 from ..agents import AGENTS, ORCHESTRATOR, check_agent, connectors, mentions
-from ..db import Database
+from ..db import Database, utcnow
 from ..decide import Decider
 from ..feedback import FeedbackStore
 from ..digest import DigestService, check_kind
@@ -3090,6 +3090,15 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         alert_or_404(alert_id)
         transit_alerts.delete(alert_id)
         return {"ok": True}
+
+    @app.post("/v1/transit/alerts/{alert_id}/driving", dependencies=[Depends(auth)])
+    async def driving_instead(alert_id: int):
+        """The countdown's Driving button: the alert goes, its countdown ends, and leave-now learns the place."""
+        alert_or_404(alert_id)
+        learnt = bool(leave and leave.driving(alert_id, utcnow()))
+        transit_alerts.dropped.add(alert_id)
+        transit_alerts.delete(alert_id)
+        return {"ok": True, "learnt": learnt}
 
     def lock_or_404(lock_id: int) -> dict:
         try:

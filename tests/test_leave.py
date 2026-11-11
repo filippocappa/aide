@@ -231,3 +231,32 @@ async def test_leave_for_answers_with_the_line_the_stop_and_when_to_leave(leave,
     text = await tool.handler(destination="Politecnico", arrive_by="2026-10-22T09:00")
     assert "to Porta Nuova (stop 252), there 3 min before line 4 at" in text
     assert "Tram alert [1] set" in text
+
+
+async def test_driving_ends_the_alert_and_twice_in_a_row_stops_them_for_the_place(leave):
+    make, (db, timetable, location, alerts, push) = leave
+    day = timedelta(days=1)
+    cal = FakeCal(lecture(uid="mon"), lecture(start=at(9, 0) + day, uid="tue"),
+                  lecture(start=at(9, 0) + 2 * day, uid="wed"))
+    w = make(cal, FakeMaps(ride(), ride(departs=at(8, 15) + day), ride(departs=at(8, 15) + 2 * day)))
+    agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", tz=ROME, delegate=False)
+    c = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN, leave=w, transit_alerts=alerts))
+    for n in range(2):
+        location.save(*HOME, 10, at(7, 25) + n * day)
+        w._events = None
+        await w.tick(utc(at(7, 27) + n * day))
+        (a,) = alerts.all()
+        assert c.post(f"/v1/transit/alerts/{a['id']}/driving", headers=AUTH).json() == {"ok": True, "learnt": True}
+        assert alerts.all() == [] and a["id"] in alerts.dropped  # gone, and its countdown ends at the next tick
+    location.save(*HOME, 10, at(7, 25) + 2 * day)
+    w._events = None
+    await w.tick(utc(at(7, 27) + 2 * day))
+    assert alerts.all() == []
+    assert dict(db.conn.execute("SELECT event, state FROM leave_plans").fetchall())["wed"] == "drives"
+    # A way asked for there is by tram: the next lecture gets its alert again.
+    w._went("Politecnico", "ask:politecnico", "x", "tram", utc(at(10, 0) + 2 * day))
+    assert not w.drives("politecnico ", utc(at(10, 1) + 2 * day))
+    # A tram alert that isn't leave-now's: gone, nothing learnt.
+    own = alerts.create("1", "4", "08:15", now=utc(at(7, 0)))
+    assert c.post(f"/v1/transit/alerts/{own['id']}/driving", headers=AUTH).json() == {"ok": True, "learnt": False}
+    assert c.post("/v1/transit/alerts/999/driving", headers=AUTH).status_code == 404

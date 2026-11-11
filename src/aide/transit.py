@@ -953,6 +953,7 @@ class AlertStore:
 
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo, timetable: Timetable):
         self.conn, self.tz, self.timetable = conn, tz, timetable
+        self.dropped: set[int] = set()  # alerts the user is driving instead of (Driving): their countdowns end now
         self.conn.executescript(ALERTS_SCHEMA)
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(transit_alerts)")}
         if "event" not in columns:
@@ -1266,6 +1267,10 @@ class AlertWatcher:
         (`ride`); still at the stop once it has gone by, they've missed it, so the next one (told so). It ends when the
         tram has gone without them and they aren't waiting for another, or no tram will come."""
         f = self.following[key]
+        if key.split(":")[1].isdigit() and int(key.split(":")[1]) in self.store.dropped:  # Driving was tapped
+            del self.following[key]
+            await self.live.end(key, {**f["state"], "gone": True}, now)
+            return
         if now - f["started"] > LIVE_FOR or self.live.dismissed(key):
             del self.following[key]
             if not self.live.dismissed(key):  # followed too long: it goes, rather than waiting on iOS's 8 hours
