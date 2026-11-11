@@ -609,11 +609,12 @@ async def test_a_sitting_skipped_for_a_later_one_isnt_nagged_about():
     from aide.tools import ToolRegistry
     from aide.tools.esse3 import esse3_tools
     *_, reader, maths, exam = await booking()
-    [e] = reader.exams()
+    e = reader.exam_for(exam["id"])
     reader._set(f"error:{e['key']}", "evaluate the course on edumeter first")
     assert reader.signup(exam["id"])["error"] == "evaluate the course on edumeter first"
     later = e | {"key": e["key"].replace(e["day"], "2027-01-14"), "day": "2027-01-14", "opens": "2026-12-14",
                  "closes": "2027-01-10", "open": 0, "booked": 0}
+    reader.conn.execute("DELETE FROM esse3_exams WHERE course = ? AND day > ?", (e["course"], e["day"]))
     reader.conn.execute(f"INSERT INTO esse3_exams ({', '.join(later)}) VALUES ({', '.join('?' * len(later))})",
                         tuple(later.values()))
     reader.conn.execute("INSERT INTO esse3_wants (key, at) VALUES (?, ?)", (later["key"], "2026-11-09T11:33:05+00:00"))
