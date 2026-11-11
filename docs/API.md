@@ -1335,7 +1335,8 @@ Signup: `{"state": "open" | "soon" | "closed" | "booked", "opens": "2026-12-15" 
 "auto": false (signed up for when it opens), "busy": null or "signing up" | "cancelling" (while the errand works),
 "error": null or "…" (null while busy), "can_cancel": true, "errand_id": 412 or null (the errand, while it's open or
 waits for the user: Watch or Take over through its live view), "step": null or "Opening the booking page" (its
-latest line, or while it waits, what it needs)}`. On each Esse3 exam's course date (`signup`) and on Exam below.
+latest line, or while it waits, what it needs), "instead": null or "2027-01-14" (since 2026-11-12: not booked while
+a later sitting of the course is booked or wanted, so the user takes that one; `error` is then null)}`. On each Esse3 exam's course date (`signup`) and on Exam below.
 
 Esse3: `{"connected": true, "read_at": "2026-11-07T09:00:00+00:00" or null, "error": null or {"kind", "message"},
 "exams": [Exam], "transcript": [Course], "credits": {"passed": 21, "total": 180}, "average": 27.86 or null}`.

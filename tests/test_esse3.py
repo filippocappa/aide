@@ -575,7 +575,7 @@ async def test_professor_signs_up_from_chat():
     reader.post = post
     tools = ToolRegistry(esse3_tools(reader, lambda: "c-prof"))
     listed = await tools.call("exam_signups", {"course": "maths"})
-    assert f"[{exam['id']}] Maths for economics II (SEM0251), Fri 04 Dec 2026" in listed
+    assert f"[{exam['id']}] Maths for economics II (SEM0251), exam Fri 04 Dec 2026" in listed
     assert "sign-up open until Fri 27 Nov" in listed
     sign = tools.get("sign_up_for_exam")
     assert sign.confirm and sign.target_arg == "date_id"
@@ -601,6 +601,28 @@ async def test_professor_signs_up_from_chat():
         "Cancel the Esse3 sign-up for Maths for economics II (SEM0251)'s exam on Fri 04 Dec")
     with pytest.raises(ValueError, match="already signed up"):
         await sign.describe(date_id=exam["id"])
+
+
+async def test_a_sitting_skipped_for_a_later_one_isnt_nagged_about():
+    """Maths II on 4 Dec failed once (the course evaluation), then the user chose the January sitting: the December
+    one is described as skipped, its old error gone, not as a sign-up still to do."""
+    from aide.tools import ToolRegistry
+    from aide.tools.esse3 import esse3_tools
+    *_, reader, maths, exam = await booking()
+    [e] = reader.exams()
+    reader._set(f"error:{e['key']}", "evaluate the course on edumeter first")
+    assert reader.signup(exam["id"])["error"] == "evaluate the course on edumeter first"
+    later = e | {"key": e["key"].replace(e["day"], "2027-01-14"), "day": "2027-01-14", "opens": "2026-12-14",
+                 "closes": "2027-01-10", "open": 0, "booked": 0}
+    reader.conn.execute(f"INSERT INTO esse3_exams ({', '.join(later)}) VALUES ({', '.join('?' * len(later))})",
+                        tuple(later.values()))
+    reader.conn.execute("INSERT INTO esse3_wants (key, at) VALUES (?, ?)", (later["key"], "2026-11-09T11:33:05+00:00"))
+    s = reader.signup(exam["id"])
+    assert (s["instead"], s["error"]) == ("2027-01-14", None)
+    listed = await ToolRegistry(esse3_tools(reader)).call("exam_signups", {})
+    assert "Fri 04 Dec 2026: the user isn't taking this sitting: they're on the Thu 14 Jan one instead" in listed
+    assert "exam Thu 14 Jan 2027: sign-up opens Mon 14 Dec, closes Sun 10 Jan; queued: Aide signs the user up the " \
+        "moment it opens (Mon 14 Dec)" in listed
 
 
 def test_professor_has_the_esse3_tools():

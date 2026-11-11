@@ -32,12 +32,16 @@ def esse3_tools(esse3: Esse3Reader, chat: Callable[[], str | None] = lambda: Non
     def state(s: dict) -> str:
         if s["busy"]:
             return f"Aide is {s['busy']} on Esse3 now" + (f" ({s['step']})" if s["step"] else "")
+        if s.get("instead"):
+            return (f"the user isn't taking this sitting: they're on the {_day(s['instead'])} one instead (don't "
+                    "suggest signing up for this one)")
         out = {"booked": "signed up" + ("" if s["can_cancel"] else ", too late to cancel"),
                "open": f"sign-up open until {_day(s['closes'])}",
                "soon": f"sign-up opens {_day(s['opens'])}, closes {_day(s['closes'])}",
                "closed": "sign-up closed"}[s["state"]]
         if s["auto"] and s["state"] != "booked":
-            out += "; Aide signs the user up when it opens"
+            out += "; queued: Aide signs the user up the moment it opens" + (
+                f" ({_day(s['opens'])})" if s["state"] == "soon" else "")
         if s["errand_id"] and s["step"]:
             out += f"; waiting for the user: {s['step']}"
         if s["error"]:
@@ -52,7 +56,7 @@ def esse3_tools(esse3: Esse3Reader, chat: Callable[[], str | None] = lambda: Non
             if e["day"] < today or (want and want not in e["course"].casefold() and want not in name(e).casefold()):
                 continue
             s = esse3.signup(_id("exam", e))
-            lines.append(f"[{_id('exam', e)}] {name(e)}, {_day(e['day'])} {e['day'][:4]}"
+            lines.append(f"[{_id('exam', e)}] {name(e)}, exam {_day(e['day'])} {e['day'][:4]}"
                          + (f" {e['time']}" if e["time"] else "") + f": {state(s)}")
         if not lines:
             status = esse3.status()

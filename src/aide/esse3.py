@@ -610,9 +610,15 @@ class Esse3Reader:
         row, errand = self._errand(e["key"])
         working = errand is not None and errand["status"] in ("queued", "running", "scheduled")
         live = errand is not None and errand["status"] in OPEN_ERRAND
+        # Not booked while a later sitting of the course is booked or wanted: the user takes that one instead, and
+        # an old failed try here is no longer news.
+        instead = None if e["booked"] or e["key"] in wants or working else next(
+            (x["day"] for x in self.exams()
+             if x["course"] == e["course"] and x["day"] > e["day"] and (x["booked"] or x["key"] in wants)), None)
         return {"state": state, "opens": e["opens"], "closes": e["closes"], "auto": e["key"] in wants,
                 "busy": ("signing up" if row["action"] == "book" else "cancelling") if working else None,
-                "error": None if working else wants.get(e["key"]) or self._get(f"error:{e['key']}"),
+                "error": None if working or instead else wants.get(e["key"]) or self._get(f"error:{e['key']}"),
+                "instead": instead,
                 "can_cancel": e["booked"] and (e["closes"] is None or e["closes"] >= today),
                 "errand_id": errand["id"] if live else None,
                 "step": (errand["reason"] if errand["status"] == "needs_you" else errand["step"]) if live else None}
