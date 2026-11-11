@@ -147,6 +147,42 @@ async def test_what_is_known_comes_off_and_lectures_to_come_stretch_it(tmp_path)
     assert after["topics"][0]["known"] == 4 and after["need_min"] < before["need_min"]
 
 
+async def test_the_credits_set_a_floor_of_own_study(tmp_path):
+    db, study, notebook, quizzes, plan = make(tmp_path, lectures("macroeconomics", [-14, -7, -1]))
+    macro = await course(study, "macroeconomics")
+    written(notebook, macro["id"], "IS-LM")
+    notebook.add_date(macro["id"], {"what": "exam", "kind": "exam", "date": (TODAY + timedelta(days=40)).isoformat()})
+    notes_only = (await plan.plan(NOW))["targets"][0]
+    assert notes_only["by_credits"] is None  # nothing says the credits
+
+    notebook.set_intro(macro["id"], "Written exam, 2 hours. 1 CFU", "The course.")
+    t = (await plan.plan(NOW, fresh=True))["targets"][0]
+    b = t["by_credits"]
+    # 25 h less the three 2-hour lectures in the timetable: 19 h of the user's own, none of it done yet
+    assert (b["credits"], b["from"], b["lectures_min"], b["own_min"], b["left_min"]) == (1, "notes", 360, 1140, 1140)
+    assert b["applied"] and b["notes_min"] == notes_only["need_min"] and t["need_min"] == 1140
+    phases = {p["phase"]: p["minutes"] for p in t["phases"]}
+    before = {p["phase"]: p["minutes"] for p in notes_only["phases"]}
+    assert phases["learn"] == before["learn"] and phases["practise"] > before["practise"]  # the rest is practice
+    assert any("1 credits are 25 h of work; less 6 h of lectures, 19 h are your own study" in w for w in t["warnings"])
+    assert "from the credits: 1 CFU less 6 h of lectures, 19 h of own study left" in plan.text(await plan.plan(NOW))
+
+    # Esse3's transcript wins over the Introduction
+    db.conn.execute("CREATE TABLE esse3_courses (code TEXT, name TEXT, year INTEGER, credits REAL, course_id INTEGER)")
+    db.conn.execute("INSERT INTO esse3_courses VALUES ('X1', 'MACROECONOMICS', 2, 12, ?)", (macro["id"],))
+    db.conn.commit()
+    b = (await plan.plan(NOW, fresh=True))["targets"][0]["by_credits"]
+    assert (b["credits"], b["from"], b["own_min"]) == (12, "esse3", 12 * 25 * 60 - 360)
+
+    # what the notes show is done comes off the same share
+    for q in quizzes.bank(macro["id"]):
+        db.conn.execute("INSERT INTO quiz_answers (course_id, qkey, answer, correct, answered_at) VALUES (?, ?, 'A', 1, ?)",
+                        (macro["id"], q["qkey"], (NOW - timedelta(hours=1)).isoformat()))
+    db.conn.commit()
+    b = (await plan.plan(NOW, fresh=True))["targets"][0]["by_credits"]
+    assert b["left_min"] < b["own_min"]
+
+
 async def test_short_of_time_and_the_fallback(tmp_path):
     db, study, notebook, quizzes, plan = make(tmp_path, lectures("macroeconomics", [-14, -7, -1]))
     macro = await course(study, "macroeconomics")

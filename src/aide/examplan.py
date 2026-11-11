@@ -8,7 +8,9 @@ The work is counted per notebook topic, not per word of the course: learning it 
 what its lesson or answers show is known), practising it (its flashcards over three rounds, its checked questions,
 its exercise set's items, less those last answered right), then per target the mock exams left (the exam's length
 ×1.5, for taking and marking) and the last review. While lectures remain before the date, the estimate is stretched
-by the share still to come. The pace is the user's own where the Study page's answers show it (the gaps between
+by the share still to come. The credits set a floor: 25 h of work each (Esse3's transcript, else the
+Introduction), less the course's lectures in the timetable, is the user's own study; while the notes count less, the
+rest is practice (exercises, past exams). The pace is the user's own where the Study page's answers show it (the gaps between
 answers in a run), else a default.
 
 The days: from today to the day before the date, each one's free time (wake to bed, less the calendar's events with
@@ -20,6 +22,7 @@ short of learning: it should have started earlier.
 
 import asyncio
 import copy
+import sqlite3
 import json
 import logging
 import re
@@ -57,6 +60,7 @@ ROUNDS = 3  # a flashcard is learnt over three spaced rounds
 MOCKS = {"exam": 3, "mid-term": 2}
 MOCK_MIN = 90  # an exam's length when nothing says it
 MOCK_FACTOR = 1.5  # taking it and going through the marking
+CREDIT_H = 25  # hours of work a credit (CFU/ECTS) stands for, lectures included
 REVIEW_SHARE, REVIEW_FLOOR = 0.15, 60  # the last review: a share of the whole course's work, at least an hour
 WINDOW = (time(8, 30), time(22, 30))  # the day without a wake time
 READY = timedelta(hours=1)  # from waking to studying
@@ -408,7 +412,41 @@ class ExamPlan:
                                   "finished_at IS NOT NULL", (cid,)).fetchone()[0] if self.quizzes else 0
         return {"topics": topics, "items": items, "kinds": kinds, "exam_min": length, "mocks_taken": taken,
                 "past_exams": any(m["source"] for m in mocks),
-                "credits": credits(f"{intro['exam'] or ''}\n{intro['body'] or ''}") if intro else None}
+                "credits": self._credits(cid, intro)}
+
+    def _credits(self, cid: int, intro: dict | None) -> tuple[float, str] | None:
+        """The course's credits and where they're from: Esse3's transcript, else the notebook's Introduction."""
+        try:
+            row = self.conn.execute("SELECT credits FROM esse3_courses WHERE course_id = ? AND credits > 0 "
+                                    "ORDER BY year DESC LIMIT 1", (cid,)).fetchone()
+        except sqlite3.OperationalError:  # no Esse3 here
+            row = None
+        if row:
+            return row[0], "esse3"
+        found = credits(f"{intro['exam'] or ''}\n{intro['body'] or ''}") if intro else None
+        return (found, "notes") if found else None
+
+    def _by_credits(self, c: dict, work: dict, data: dict, mine: list, notes: float, now: datetime) -> dict | None:
+        """What the credits say is left of the user's own study for the target: 25 h a credit less the lectures in
+        the timetable (held and to come), the part of it the target's topics are (by words), less what's done: the
+        larger of the notes' work done and the focus time logged since the first lecture."""
+        if not data["credits"] or not work["topics"]:
+            return None
+        cr, source = data["credits"]
+        lectures = sum((e.end - e.start).total_seconds() / 60 for e in mine)
+        own = max(0.0, cr * CREDIT_H * 60 - lectures)
+        every = sum(words(t["body"]) for t in data["topics"])
+        share = sum(r["words"] for r in work["topics"]) / every if work["chosen"] and every else 1.0
+        studied = 0
+        if self.focus is not None and mine:
+            first = min(e.start for e in mine)
+            studied = sum(x["minutes"] for x in self.focus.totals(first, now) if x["course_id"] == c["id"])
+        base = own * share
+        notes_left = (work["learn"] + work["practise"]) / work["full"] if work["full"] else 1.0
+        left = min(base * notes_left, max(0.0, base - studied * share))
+        return {"credits": cr, "from": source, "total_min": round(cr * CREDIT_H * 60), "lectures_min": round(lectures),
+                "own_min": round(own), "share": round(share, 2), "studied_min": studied, "left_min": round(left),
+                "notes_min": round(notes), "applied": left > notes}
 
     async def _compute(self, now: datetime) -> dict:
         local = now.astimezone(self.tz)
@@ -435,8 +473,12 @@ class ExamPlan:
             stretch = (held + left) / held if held and left else 1.0
             phases = [("learn", work["learn"] * stretch), ("practise", work["practise"] * stretch),
                       ("mocks", work["mocks"]), ("review", work["review"] * stretch)]
+            notes = sum(m for _, m in phases)
+            by_credits = self._by_credits(c, work, data[c["id"]], mine, notes, now)
+            if by_credits and by_credits["applied"]:  # the rest of the credits' hours as practice
+                phases[1] = ("practise", phases[1][1] + by_credits["left_min"] - notes)
             targets.append({"course": c, "target": target, "fallback": fallback, "work": work, "phases": phases,
-                            "mine": mine,
+                            "mine": mine, "by_credits": by_credits,
                             "need": round(sum(m for _, m in phases)), "held": held, "left": left, "stretch": stretch,
                             "data": data[c["id"]]})
         targets.sort(key=lambda t: (t["target"]["date"], t["course"]["name"]))
@@ -504,6 +546,7 @@ class ExamPlan:
             "topics": [{k: v for k, v in r.items() if not k.startswith("_")} for r in work["topics"]],
             "mocks": work["mock"], "lectures_left": t["left"], "lectures_held": t["held"],
             "stretch": round(t["stretch"], 2), "studied_week_min": studied, "warnings": [],
+            "by_credits": t["by_credits"],
         }
 
     def _warnings(self, t: dict, earlier: list[dict], short: int, fallback_free: int | None, today: date) -> list[str]:
@@ -526,14 +569,18 @@ class ExamPlan:
                            f"{'' if gap == 1 else 's'} before: learn {c['name']}'s theory before it.")
         if work["mocks"] and not data["past_exams"]:
             out.append("No past exams yet: the mocks are Professor's own.")
-        if (cr := data["credits"]) and target["kind"] == "exam" and not work["chosen"]:
-            expected, counted = cr * 15 * 60, work["full"] * t["stretch"]
-            if counted < 0.4 * expected:
-                out.append(f"The notes add up to {_hours(counted)}; {cr} credits usually mean about "
-                           f"{_hours(expected)} of your own study: parts may be missing from the notes.")
-            elif counted > 2.5 * expected:
-                out.append(f"The notes add up to {_hours(counted)}, far above the {_hours(expected)} {cr} credits "
-                           f"suggest: the estimate may run high.")
+        if b := t["by_credits"]:
+            cr = f"{b['credits']:g} credits"
+            own = (f"{cr} are {_hours(b['total_min'])} of work; less {_hours(b['lectures_min'])} of lectures, "
+                   f"{_hours(b['own_min'])} are your own study")
+            if b["applied"]:
+                part = f", {round(b['share'] * 100)}% of it for these topics" if b["share"] < 1 else ""
+                out.append(f"{own}{part}: {_hours(b['left_min'])} still to do, more than the "
+                           f"{_hours(b['notes_min'])} the notes add up to. The rest is counted as practice: "
+                           f"exercises and past exams.")
+            elif b["notes_min"] > 2.5 * b["left_min"] and b["share"] == 1:
+                out.append(f"The notes add up to {_hours(b['notes_min'])}, far above what's left of the "
+                           f"{_hours(b['own_min'])} of your own study {cr} mean: the estimate may run high.")
         changes = self.notebook.changes(c["id"], utcnow() - timedelta(days=120)) if self.notebook else []
         if changes:
             since = datetime.fromisoformat(changes[0]["at"])
@@ -656,6 +703,9 @@ class ExamPlan:
                f"{source[item['from']]}): needs {_hours(item['need_min'])}")
         if parts:
             out += f" ({', '.join(parts)})"
+        if (b := item.get("by_credits")) and b["applied"]:
+            out += (f", from the credits: {b['credits']:g} CFU less {_hours(b['lectures_min'])} of lectures, "
+                    f"{_hours(b['left_min'])} of own study left; the notes alone {_hours(b['notes_min'])}")
         out += f"; {_hours(item['free_min'])} free before it"
         out += {"fits": ": fits", "tight": ": tight", "empty": "",
                 "short": f": SHORT by {_hours(item['short_min'])}"}[item["status"]]
