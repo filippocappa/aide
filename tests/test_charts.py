@@ -49,7 +49,9 @@ def test_points_outside_the_axes_leave_a_gap():
     ({"curves": [{"label": "AD", "fn": "import os"}]}, "not a formula"),
     ({"curves": [{"label": "AD", "fn": "50 + x"}]}, "outside the y axis"),
     ({"points": [{"label": "E", "at": ["AD", "Nope"]}]}, "names two of the curves"),
-    ({"points": [{"label": "E", "at": ["SRAS", "SRAS"]}]}, "don't meet"),
+    ({"points": [{"label": "E", "at": ["SRAS", "SRAS"]}]}, "names two of the curves"),
+    ({"curves": [{"label": "A", "fn": "1 + x"}, {"label": "B", "fn": "2 + x"}], "areas": [],
+      "points": [{"label": "E", "at": ["A", "B"]}]}, "don't meet"),
     ({"points": [{"label": "E", "x": 20, "y": 1}]}, "outside the axes"),
     ({"title": "x" * 100}, "80 characters"),
 ])

@@ -230,7 +230,7 @@ def build(spec: dict) -> dict:
         after = bool(p.get("after"))
         if p.get("at"):
             pair = [str(n).lower() for n in p["at"]]
-            if len(pair) != 2 or any(n not in states for n in pair):
+            if len(pair) != 2 or pair[0] == pair[1] or any(n not in states for n in pair):
                 raise ValueError(f"{name}: at names two of the curves ({', '.join(c['label'] for c in curves)})")
             a, b = ((states[n][1] or states[n][0]) if after else states[n][0] for n in pair)
             found = _meet(a, b, x_axis)
