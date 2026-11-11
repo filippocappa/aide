@@ -565,6 +565,41 @@ private struct NoteContents: View {
     }
 }
 
+/// The files a topic was written from, each a link that opens it at the first page used (#73).
+private struct TopicSources: View {
+    let files: [TopicSourceFile]
+    let open: (TopicSourceFile) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("From").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+            ForEach(files, id: \.self) { source in
+                Button { open(source) } label: {
+                    Label(label(source), systemImage: "doc.text")
+                        .font(.footnote)
+                        .multilineTextAlignment(.leading)
+                }
+                .buttonStyle(.borderless)
+                .tint(Theme.accent)
+            }
+        }
+    }
+
+    private func label(_ s: TopicSourceFile) -> String {
+        let name = s.file.name.hasSuffix(".pdf") ? String(s.file.name.dropLast(4)) : s.file.name
+        return s.pages.isEmpty ? name : "\(name), p. \(Self.ranges(s.pages))"
+    }
+
+    /// [1, 2, 3, 7] as "1–3, 7".
+    static func ranges(_ pages: [Int]) -> String {
+        var runs: [(Int, Int)] = []
+        for n in pages.sorted() {
+            if let last = runs.last, n == last.1 + 1 { runs[runs.count - 1].1 = n } else { runs.append((n, n)) }
+        }
+        return runs.map { $0 == $1 ? "\($0)" : "\($0)–\($1)" }.joined(separator: ", ")
+    }
+}
+
 /// A topic of a course's notebook: the notes, then its flashcards.
 struct TopicPageView: View {
     let topic: NotebookTopic
@@ -576,6 +611,7 @@ struct TopicPageView: View {
     @State private var studying: StudyTarget?
     @State private var learning: LessonTopicRef?
     @State private var focusing: FocusTarget?
+    @State private var openSource: TopicSourceFile?
 
     var body: some View {
         NoteScroll(headings: headings) {
@@ -605,7 +641,9 @@ struct TopicPageView: View {
                 if let page {
                     NoteText(markdown: page.body ?? "", anchored: true)
                     if let cards = page.cardsList, !cards.isEmpty { Flashcards(cards: cards).id("flashcards") }
-                    if let sources = page.sources, !sources.isEmpty {
+                    if let files = page.sourceFiles, !files.isEmpty {
+                        TopicSources(files: files) { openSource = $0 }.padding(.top, 8)
+                    } else if let sources = page.sources, !sources.isEmpty {
                         Text("From " + sources.joined(separator: "; "))
                             .font(.footnote).foregroundStyle(.secondary).padding(.top, 8)
                     }
@@ -627,6 +665,7 @@ struct TopicPageView: View {
                              afterFocus: target.afterFocus, due: target.due)
         }
         .sheet(item: $focusing, onDismiss: { Task { await env.refreshFocus() } }) { FocusStartSheet(target: $0) }
+        .sheet(item: $openSource) { PDFSheet(file: $0.file, page: $0.pages.first) }
         .macWindowCover(item: $learning) { ref in
             if let course { LessonView(topic: ref, course: course.id, courseName: course.title) }
         }
@@ -808,6 +847,8 @@ extension Lecture {
 /// A study file's PDF, fetched once.
 struct PDFSheet: View {
     let file: StudyFile
+    /// The page to open at (from 1); nil: the first.
+    var page: Int? = nil
     @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
     @State private var document: PDFDocument?
@@ -817,7 +858,7 @@ struct PDFSheet: View {
         NavigationStack {
             Group {
                 if let document {
-                    PDFKitView(document: document)
+                    PDFKitView(document: document, page: page)
                 } else if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).padding()
                 } else {
@@ -843,12 +884,16 @@ struct PDFSheet: View {
 
 private struct PDFKitView: UIViewRepresentable {
     let document: PDFDocument
+    var page: Int? = nil
 
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.document = document
+        if let page, page > 1, let target = document.page(at: page - 1) {
+            DispatchQueue.main.async { view.go(to: target) } // once it's laid out
+        }
         return view
     }
 

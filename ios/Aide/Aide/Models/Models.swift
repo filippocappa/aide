@@ -2101,6 +2101,8 @@ struct TopicPage: Decodable {
     var body: String?
     var cardsList: [Flashcard]?
     var sources: [String]?
+    /// The same sources' files, to open at the page (newer servers).
+    var sourceFiles: [TopicSourceFile]?
 }
 
 struct Flashcard: Decodable, Hashable { let q: String; let a: String }
@@ -2913,6 +2915,17 @@ struct StudyFile: Decodable, Identifiable, Hashable {
     var pages: Int?
     var scanned: Bool?
     var source: String?
+    /// The PDF's SHA-256 (newer servers).
+    var sha256: String? = nil
+    /// A course folder's file the course already had: this is that file (`from=folder`, #73).
+    var duplicate: Bool? = nil
+}
+
+/// A file a topic was written from, with the pages used ([]: all of it).
+struct TopicSourceFile: Decodable, Hashable, Identifiable {
+    var id: String { file.id }
+    let file: StudyFile
+    let pages: [Int]
 }
 
 struct StudyFileList: Decodable { let files: [StudyFile] }

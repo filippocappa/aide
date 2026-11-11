@@ -19,6 +19,7 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
         shield = MacShield(screenTime: env.screenTime)
         MacLoginItem.setUpOnce()
         MacPeek.shared.start()
+        MacCourseFolders.shared.start()
         Task { await env.screenTime.sync() }
     }
 

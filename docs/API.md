@@ -1197,7 +1197,8 @@ PDFs: slides, handouts, the professor's notes (since 2026-10-21). A file belongs
 lecture, it's that lecture's slides: the notes are written with them (their text and their most visual pages as
 images), and a lecture that already has notes gets them rewritten (the old ones kept for one undo; the chat message
 says "I rewrote the notes…"). A file not attached to a lecture is course material, which Professor searches page by
-page and cites ("p. 34"). Files come from the app (`source` `upload`) or Moodle (`moodle`, below), or were sent
+page and cites ("p. 34"). Files come from the app (`source` `upload`), Moodle (`moodle`, below), the course folders on
+the user's Mac (`folder`, since 2026-11-11, #73: see "Course folders" below), or were sent
 in a chat that isn't a course's (`chat`, since 2026-11-09: unfiled, and left out of `GET /v1/files` with no `course`
 or `lecture` and of the vault until they're given a course with `PATCH`). A Moodle file put
 up within 36 hours of a lecture of its course is attached to it by itself (at most 3 per lecture).
@@ -1205,8 +1206,10 @@ up within 36 hours of a lecture of its course is attached to it by itself (at mo
 File object:
 ```json
 {"id": "f_3f9a1c2b4d5e", "course": 2, "lecture": "l_…" or null, "name": "Week 3 slides.pdf", "section": "",
- "size": 2481920, "pages": 42, "scanned": false, "source": "upload", "added_at": "2026-10-21T12:00:00+02:00"}
+ "size": 2481920, "pages": 42, "scanned": false, "source": "upload", "sha256": "9f2c…",
+ "added_at": "2026-10-21T12:00:00+02:00"}
 ```
+- `sha256` (since 2026-11-11): the PDF's SHA-256, hex, to tell a file already sent.
 - `scanned`: no text layer (a scan). The server reads each of its pages once with the model, from the page's
   image (pages with no text in other files too), in the background; from then on they're searched and read as text.
   A lecture still sees its pages as images.
@@ -1215,6 +1218,7 @@ File object:
 | Endpoint | Body | Response |
 |---|---|---|
 | `POST /v1/files?course=2&lecture=l_…&name=Week%203%20slides.pdf` | the PDF as the raw body, `Content-Type: application/pdf`, up to 100 MB | the File, `201`. `lecture` makes it the lecture's slides (and takes the lecture's course when `course` is left out). `conversation_id` (since 2026-11-09, without `course` or `lecture`): it's for a message in that chat (`POST /v1/chat`'s `files`): a course chat's PDF is that course's material, any other chat's is `source` `chat`; `404` unknown chat. `name` gets `.pdf` if missing. `400` empty, not a PDF, bad `course`; `404` unknown lecture; `413` too big; `415` another type. |
+| `POST /v1/files?course=2&name=…&from=folder` | as above (since 2026-11-11) | A file from a course folder on the Mac. When the course already has it (the same bytes, or the same slides exported again: as many pages, nearly all alike) nothing is added: the File it already is, with `"duplicate": true`, `200`. Else the new File with `source` `folder`, `201`. `400` for another `from`. |
 | `GET /v1/files?course=2&lecture=l_…` | both optional | `{"files": [File]}`, by section, then name |
 | `GET /v1/files/{id}` | | the File. `404` unknown. |
 | `GET /v1/files/{id}/pdf` | | the PDF itself |
@@ -1223,6 +1227,12 @@ File object:
 | `DELETE /v1/files/{id}` | | `{"ok": true}` (immediate). The lecture's notes stay as they are. |
 
 Deleting a lecture keeps its files, as course material. Files are in the backups (`~/aide-backups/files`).
+
+**Course folders** (since 2026-11-11, #73; the Mac app, nothing new on the server but `from=folder`): the user keeps
+a folder per course on the Mac (`…/first semester/macroeconomics/`). The Mac app maps each to a course (by name,
+changeable in Settings → This Mac), sends each PDF in it (subfolders too) with `from=folder` once, remembering the
+answer by the file's SHA-256, and copies the course's Moodle files (`source` `moodle`) that aren't in the folder
+already (as a duplicate's answer says) into its `moodle/` subfolder, which it never sends back.
 
 ### Moodle
 
@@ -1385,7 +1395,7 @@ and posts the result in the same chat.
 | `POST /v1/notebook?course=2` | | `202`, Notebook: the Introduction and the outline proposal are on their way. `409` it already has topics. |
 | `POST /v1/notebook/figures?course=2` | | `202`, Notebook: every slide of the course gets one look (once; new files later), then figures go into the topics that miss good ones, from the pages they don't show yet. Nothing is rewritten; the result comes in the course chat. `409` no topics yet. |
 | `GET /v1/notebook/formulas?course=2&plain=true` | | `{"course": 2, "body": "markdown"}`: the formula sheet (below). `body` is `""` when no topic has formulas. `404` no such course. |
-| `GET /v1/topics/{id}?plain=true` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]` and `sources` (`["Week 3 slides, p. 1–2"]`). `404`. In `body`, a figure is `![The IS curve shifting right](figure:f_…/12)`: page 12 of that study file, with its caption. |
+| `GET /v1/topics/{id}?plain=true` | | Topic with `body` (markdown), `cards_list` `[{"q", "a"}]`, `sources` (`["Week 3 slides, p. 1–2"]`) and `source_files` (since 2026-11-11: `[{"file": File, "pages": [1, 2]}]`, each file once, `[]` pages: all of it; the vault's topic page lists them as `sources`, links to the PDF at the first page). `404`. In `body`, a figure is `![The IS curve shifting right](figure:f_…/12)`: page 12 of that study file, with its caption. |
 | `GET /v1/proposals?course=2&status=pending` | | `{"proposals": [Proposal]}`; both optional; `status` `pending` (default) or `all`. |
 | `POST /v1/proposals/{id}/apply` | `{"items": [1, 3], "note": "keep it short"}`, both optional (all items) | `202`, the Proposal, `status` `applying`. `400` an item out of range; `409` not pending. |
 | `POST /v1/proposals/{id}/decline` | | the Proposal, `declined`. `409` not pending. |

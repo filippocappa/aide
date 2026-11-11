@@ -56,6 +56,10 @@ struct SettingsView: View {
                 #else
                 Section {
                     row("Screen Time", "hourglass", .indigo, value: macScreenTimeValue) { MacScreenTimeView() }
+                    row("Course folders", "folder.fill", .blue,
+                        value: MacCourseFolders.shared.root == nil ? "Off" : MacCourseFolders.shared.root!.lastPathComponent) {
+                        MacCourseFoldersView()
+                    }
                     Toggle(isOn: Binding(get: { openAtLogin }, set: { on in
                         MacLoginItem.set(on)
                         openAtLogin = MacLoginItem.isOn
