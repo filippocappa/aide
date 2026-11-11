@@ -68,7 +68,7 @@ struct TramActivityAttributes: ActivityAttributes {
     var code: String
     var towards: String?
     var alert: Int
-    /// Set on leave-now's (an event's, or a way asked for): the countdown offers Driving.
+    /// Set on leave-now's (an event's, or a way asked for): the countdown offers Not going.
     var event: String? = nil
 }
 

@@ -2431,15 +2431,17 @@ after a 300 m move.
 - None when the phone is within 500 m of the place or over 20 km away, when a note in memory says the user walks,
   drives or cycles there, when the first ride isn't GTT's (a train), or when one of the user's alerts for that line
   already watches that time.
-- Driving (since 2026-11-12): the countdown of an alert with `event` has a Driving button, `POST
-  /v1/transit/alerts/{id}/driving`. The alert goes and its countdown ends; for leave-now's own alerts that leave counts
-  as by car. Once the last 2 leaves to a place (within 60 days) were by car, its events get no alert, until the user
-  asks for a way there (`leave_for`), which counts as by tram.
+- Only uni (since 2026-11-12): an event gets an alert only when it's in the study calendar (`AIDE_STUDY_CALENDAR`,
+  the lectures) or a note in memory says the user goes to its place by transit; everywhere else the user drives. A
+  way asked for (`leave_for`) is answered anywhere.
+- Not going: the countdown of an alert with `event` has a Not going button, `POST /v1/transit/alerts/{id}/not-going`.
+  The alert goes and its countdown ends; for leave-now's own alerts, that day's other events at the same place get
+  none either.
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/transit/settings` | | `{"calendar": true}` |
-| `POST /v1/transit/alerts/{id}/driving` | | `{"ok": true, "learnt": true}` (`learnt`: it was leave-now's, so the place counts it). `404` no such alert |
+| `POST /v1/transit/alerts/{id}/not-going` | | `{"ok": true, "today": true}` (`today`: it was leave-now's, so the day's other events there are skipped too). `404` no such alert |
 | `PATCH /v1/transit/settings` | `{"calendar": false}` | the settings |
 
 `calendar` (default true) turns the event alerts on or off. `404` when the server can't make them (GTT off, or no
