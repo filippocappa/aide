@@ -175,10 +175,9 @@ async def test_the_credits_are_a_ceiling_on_own_study(tmp_path):
     phases = {p["phase"]: p["minutes"] for p in t["phases"]}
     before = {p["phase"]: p["minutes"] for p in notes_only["phases"]}
     assert all(phases.get(k, 0) <= before[k] for k in before) and phases["mocks"] < before["mocks"]  # cut in proportion
-    assert any(w.startswith(f"The notes add up to {round(notes_only['need_min'])} min, more than the credits allow: "
-                            "0.5 credits are 12.5 h of work; less 6 h of lectures, 390 min are your own study at most")
-               for w in t["warnings"])
-    assert "cut to the credits' ceiling (0.5 CFU less 6 h of lectures: 390 min left)" in plan.text(out)
+    assert any("more than the credits allow: 0.5 credits are 12.5 h of work; less 6 h of lectures, 6.5 h are your "
+               "own study at most, 6.5 h still to do" in w for w in t["warnings"])
+    assert "cut to the credits' ceiling (0.5 CFU less 6 h of lectures: 6.5 h left)" in plan.text(out)
 
     # what the notes show is done comes off the ceiling too
     for q in quizzes.bank(macro["id"]):
