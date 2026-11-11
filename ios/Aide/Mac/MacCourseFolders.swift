@@ -5,14 +5,17 @@ import Foundation
 /// The user's course folders on this Mac and Aide's study files, kept in step both ways (#73, docs/API.md, "Course
 /// folders"): each subfolder of the chosen folder is a course (guessed by name, or chosen in Settings → This Mac);
 /// a PDF in it that Aide doesn't have goes up (`from=folder`: the server says when it has it already), and the
-/// course's Moodle files that aren't in the folder come down into its `moodle/` subfolder, which never goes up.
+/// course's Moodle files that aren't in the folder come down into a subfolder by kind (`slides/`, `exercises/`,
+/// `exams/`, `infos/`, `readings/`: `kind(name:section:)`), each with the Finder tag "Moodle"; they never go up.
+/// Copies from before (2026-11-12) in the old `moodle/` subfolder are moved there once.
 /// What was sent and copied is remembered by SHA-256 in Application Support/Aide/course-folders.json, so a file
 /// goes up once, and a Moodle copy the user deletes stays deleted.
 @MainActor
 final class MacCourseFolders: ObservableObject {
     static let shared = MacCourseFolders()
 
-    nonisolated static let moodleFolder = "moodle"
+    nonisolated static let moodleFolder = "moodle" // where copies went before subfolders by kind
+    nonisolated static let tag = "Moodle"
     private static let rootKey = "courseFoldersRoot"
     private static let mapKey = "courseFolderMap"
     private static let every: TimeInterval = 10 * 60
@@ -164,13 +167,16 @@ final class MacCourseFolders: ObservableObject {
             }
             // Down: the course's Moodle files the folder hasn't got.
             guard let files = try? await api.files(course: course) else { continue }
+            moveOld(files, in: dir)
             let mine = Set(state.sent.keys)
             for f in files where f.source == "moodle" && !here.contains(f.id) && state.copied[f.id] == nil
                 && !(f.sha256.map(mine.contains) ?? false) {
                 do {
-                    let target = try place(f, in: dir.appendingPathComponent(Self.moodleFolder, isDirectory: true))
+                    let target = try place(f, in: dir.appendingPathComponent(Self.kind(name: f.name, section: f.section),
+                                                                              isDirectory: true))
                     let data = try await api.fileData(f.id)
                     try data.write(to: target, options: .atomic)
+                    Self.addTag(target)
                     state.copied[f.id] = target.path
                     if let sha = f.sha256 { state.sent[sha] = f.id }
                     down += 1
@@ -228,10 +234,71 @@ final class MacCourseFolders: ObservableObject {
         return .init(size: size, modified: modified, sha: sha)
     }
 
-    /// Where a Moodle file goes: `moodle/<name>.pdf`, or `<name> 2.pdf` when that's taken.
+    /// The subfolder a Moodle file goes in, from its name and Moodle section, in the user's own style ("slides",
+    /// "infos"): what's about the course or the exam's arrangements, then past and sample exams, exercises and their
+    /// solutions, readings, and the lectures (the rest).
+    nonisolated static func kind(name: String, section: String?) -> String {
+        let n = name.lowercased(), s = (section ?? "").lowercased()
+        func has(_ text: String, _ patterns: [String]) -> Bool {
+            patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+        }
+        if has(n, [#"\binfo"#, #"\bcalendar"#, "introduction to the course", "syllabus", #"\bprogram"#,
+                   #"students?'? list"#, #"\bgroups?\b"#, #"\bresults?\b"#, #"\bplatform"#, "declaration",
+                   "instructions"]) || has(s, ["annunci", "announcement", "avvisi"]) { return "infos" }
+        if has(n, [#"\bexams?\b"#, #"mid-?\s?term"#, #"\b(sample|example) questions?"#, "past paper", #"\bmock"#,
+                   #"\besam"#]) { return "exams" }
+        if has(n + " " + s, ["exercis", "problem.?set", "solution", #"additional.?qu"#, "esercit", "practice"]) {
+            return "exercises"
+        }
+        if has(n, ["reading"]) { return "readings" }
+        if has(n, ["slide", #"\blect"#, "lesson", "chapter", "lezion"]) { return "slides" }
+        if has(n, ["article", "notes on", #"^resource"#]) || has(s, ["additional material", "reading"]) {
+            return "readings"
+        }
+        return "slides"
+    }
+
+    /// The Finder tag that says Aide brought it from Moodle, beside any the file has.
+    nonisolated private static func addTag(_ url: URL) {
+        let tags = ((try? url.resourceValues(forKeys: [.tagNamesKey]))?.tagNames) ?? []
+        guard !tags.contains(tag) else { return }
+        try? (url as NSURL).setResourceValue(tags + [tag], forKey: .tagNamesKey)
+    }
+
+    /// Copies from before, in `<course>/moodle/`: each into its subfolder by kind, tagged, then the old folder goes
+    /// when nothing of the user's is left in it.
+    private func moveOld(_ files: [StudyFile], in dir: URL) {
+        let old = dir.appendingPathComponent(Self.moodleFolder, isDirectory: true).standardizedFileURL
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: old.path) else { return }
+        var moved = 0
+        for f in files {
+            guard let path = state.copied[f.id], fm.fileExists(atPath: path),
+                  URL(fileURLWithPath: path).deletingLastPathComponent().standardizedFileURL == old else { continue }
+            do {
+                let target = try place(f, in: dir.appendingPathComponent(Self.kind(name: f.name, section: f.section),
+                                                                       isDirectory: true))
+                try fm.moveItem(at: URL(fileURLWithPath: path), to: target)
+                Self.addTag(target)
+                state.copied[f.id] = target.path
+                moved += 1
+            } catch {
+                note("couldn't move \(f.name): \(error.localizedDescription)")
+            }
+        }
+        let left = ((try? fm.contentsOfDirectory(atPath: old.path)) ?? []).filter { $0 != ".DS_Store" }
+        if left.isEmpty { try? fm.removeItem(at: old) }
+        if moved > 0 { note("moved \(moved) from \(dir.lastPathComponent)/moodle into subfolders"); save() }
+    }
+
+    /// Where a Moodle file goes: `<kind>/<name>.pdf`, or `<name> 2.pdf` when that's taken.
     private func place(_ f: StudyFile, in dir: URL) throws -> URL {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let name = f.name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        var name = f.name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        if (name as NSString).deletingPathExtension.range(of: #"^[\d\s._-]+$"#, options: .regularExpression) != nil,
+           let section = f.section?.trimmingCharacters(in: .whitespaces), !section.isEmpty {
+            name = "\(section.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")) \(name)"
+        }
         let base = (name as NSString).deletingPathExtension, ext = (name as NSString).pathExtension
         var url = dir.appendingPathComponent(ext.isEmpty ? "\(name).pdf" : name)
         var n = 2

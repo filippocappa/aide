@@ -20,8 +20,9 @@ struct MacCourseFoldersView: View {
                 }
             } footer: {
                 Text("Each folder in it is a course. Aide gets the PDFs you put there (once; the ones it has already, "
-                     + "from Moodle too, are skipped), and its Moodle files that aren't there yet go into the "
-                     + "course's moodle folder. Delete one there and it isn't copied again.")
+                     + "from Moodle too, are skipped), and its Moodle files that aren't there yet come down into "
+                     + "slides, exercises, exams, infos or readings, tagged Moodle in the Finder. Delete one and it "
+                     + "isn't copied again.")
             }
             if folders.root != nil {
                 Section {

@@ -1247,7 +1247,8 @@ class AlertWatcher:
         leave_by = (walk if walk is not None else DEFAULT_WALK) + AT_STOP if leave else None
         state = self.live_state(tram, after, leave_by, walk, where, at_stop=at_stop)
         attributes = {"key": key, "line": tram.line, "vehicle": tram.vehicle, "stop": stop["name"],
-                      "code": stop["code"], "towards": tram.headsign or None, "alert": a["id"]}
+                      "code": stop["code"], "towards": tram.headsign or None, "alert": a["id"],
+                      "event": a.get("event")}  # leave-now's: the countdown shows Driving
         try:
             ok = await self.live.start("tram", attributes, state,
                                        {"title": title, "body": body, "sound": "default"}, stale=tram.at + LIVE_STALE)

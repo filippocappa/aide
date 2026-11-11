@@ -68,6 +68,8 @@ struct TramActivityAttributes: ActivityAttributes {
     var code: String
     var towards: String?
     var alert: Int
+    /// Set on leave-now's (an event's, or a way asked for): the countdown offers Driving.
+    var event: String? = nil
 }
 
 /// An agent at work: on a chat reply (started here, kept up to date by the server), a scheduled routine or a notes job

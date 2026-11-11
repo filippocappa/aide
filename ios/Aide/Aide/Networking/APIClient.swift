@@ -320,6 +320,11 @@ final class APIClient {
         try await send("PATCH", "/v1/transit/alerts/\(id)", body: patch)
     }
 
+    /// Going by car instead: the alert and its countdown end, and leave-now learns the place.
+    func drivingInstead(_ id: Int) async throws {
+        let _: OKResponse = try await send("POST", "/v1/transit/alerts/\(id)/driving", body: EmptyBody())
+    }
+
     func deleteTransitAlert(_ id: Int) async throws {
         let _: OKResponse = try await send("DELETE", "/v1/transit/alerts/\(id)", body: EmptyBody())
     }

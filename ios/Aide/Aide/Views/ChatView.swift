@@ -848,34 +848,34 @@ private struct MessageRow: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 6) {
             Button {
                 UIPasteboard.general.string = message.text
                 copied = true
                 Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc").contentTransition(.symbolEffect(.replace))
+                    .actionTarget()
             }
             .accessibilityLabel("Copy")
-            ShareLink(item: message.text) { Image(systemName: "square.and.arrow.up") }
+            ShareLink(item: message.text) { Image(systemName: "square.and.arrow.up").actionTarget() }
                 .accessibilityLabel("Share")
             if let rate, message.serverID != nil {
                 thumb("up", rate)
                 thumb("down", rate)
             }
         }
-        .font(.footnote)
+        .font(.subheadline)
         .foregroundStyle(.secondary)
         .buttonStyle(.plain)
-        .padding(.horizontal, 2)
+        .padding(.leading, -8)
         .sensoryFeedback(.success, trigger: copied) { _, now in now }
         .sensoryFeedback(.selection, trigger: message.feedback)
-        .alert("What went wrong?", isPresented: $askingNote) {
-            TextField("Optional", text: $note, axis: .vertical)
-            Button("Send") { rate?("down", note); note = "" }
-            Button("Skip", role: .cancel) { note = "" }
-        } message: {
-            Text("The whole turn is saved for review, with what you write here.")
+        .sheet(isPresented: $askingNote) {
+            FeedbackNoteSheet(note: $note) { text in
+                if let text { rate?("down", text) }
+                note = ""
+            }
         }
     }
 
@@ -892,10 +892,61 @@ private struct MessageRow: View {
             }
         } label: {
             Image(systemName: chosen ? icon + ".fill" : icon).contentTransition(.symbolEffect(.replace))
+                .actionTarget()
         }
         .foregroundStyle(chosen ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .accessibilityLabel(rating == "up" ? "Good reply" : "Bad reply")
         .accessibilityAddTraits(chosen ? .isSelected : [])
+    }
+}
+
+private extension View {
+    /// A reply's action icon with a finger-sized target around it.
+    func actionTarget() -> some View {
+        frame(width: 36, height: 36).contentShape(Rectangle())
+    }
+}
+
+/// After 👎: what went wrong, in a box big enough to say it (optional; Skip keeps the 👎 without a note).
+private struct FeedbackNoteSheet: View {
+    @Binding var note: String
+    let done: (String?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("The whole turn is saved for review, with what you write here.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                TextEditor(text: $note)
+                    .focused($focused)
+                    .scrollContentBackground(.hidden)
+                    .padding(10)
+                    .frame(minHeight: 160)
+                    .background(Theme.chip, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(alignment: .topLeading) {
+                        if note.isEmpty {
+                            Text("What should it have said or done?")
+                                .foregroundStyle(.tertiary).padding(.horizontal, 15).padding(.vertical, 18)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .navigationTitle("What went wrong?")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Skip") { done(nil); dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Send") { done(note.trimmingCharacters(in: .whitespacesAndNewlines)); dismiss() }
+                        .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .onAppear { focused = true }
     }
 }
 

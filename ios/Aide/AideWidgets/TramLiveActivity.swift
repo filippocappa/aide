@@ -25,6 +25,7 @@ struct TramLiveActivity: Widget {
                     VStack(spacing: 8) {
                         TramTrack(state: s, color: LineBadge(line: a.line, vehicle: a.vehicle).color)
                         TramDetails(attributes: a, state: s)
+                        DrivingButton(attributes: a, state: s)
                     }
                     .padding(.horizontal, 4)
                 }
@@ -37,6 +38,25 @@ struct TramLiveActivity: Widget {
             }
             .widgetURL(URL(string: "aide://agent/secretary"))
             .keylineTint(LineBadge(line: a.line, vehicle: a.vehicle).color)
+        }
+    }
+}
+
+/// Not taking the tram this time: on leave-now's countdowns before boarding. Ends it; twice in a row to a place and
+/// Aide stops setting them there.
+struct DrivingButton: View {
+    let attributes: TramActivityAttributes
+    let state: TramActivityAttributes.ContentState
+
+    var body: some View {
+        if attributes.event != nil, !state.isRiding, !state.gone {
+            Button(intent: DrivingIntent(alert: attributes.alert)) {
+                Label("Driving", systemImage: "car.fill")
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.secondary)
         }
     }
 }
@@ -186,6 +206,7 @@ struct TramLockScreen: View {
             }
             TramTrack(state: state, color: LineBadge(line: attributes.line, vehicle: attributes.vehicle).color)
             TramDetails(attributes: attributes, state: state)
+            DrivingButton(attributes: attributes, state: state)
             if stale && !state.gone {
                 Text("Not updated for a while: times may be off.").font(.caption2).foregroundStyle(.secondary)
             }
