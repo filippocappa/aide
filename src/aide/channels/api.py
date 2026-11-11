@@ -1917,7 +1917,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.post("/v1/files", dependencies=[Depends(auth)])
     async def add_file(request: Request, course: int | None = None, lecture: str | None = None,
-                       name: str = Query("Untitled.pdf", max_length=300), conversation_id: str | None = None):
+                       name: str = Query("Untitled.pdf", max_length=300), conversation_id: str | None = None,
+                       from_: str | None = Query(None, alias="from")):
         kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
         if kind != "application/pdf":
             raise HTTPException(415, "send the file as application/pdf")
@@ -1926,6 +1927,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if target is not None:
             course_id = target["course_id"] if course_id is None else course_id
         source = "upload"
+        if from_ == "folder":  # the Mac's course folder (#73)
+            source = "folder"
+        elif from_ is not None:
+            raise HTTPException(400, "from is folder")
         if conversation_id and course_id is None and target is None:  # for a chat message (#78)
             if conversation_id != CONVERSATION and db.app_conversation(conversation_id) is None:
                 raise HTTPException(404, f"no conversation {conversation_id}")
@@ -1943,6 +1948,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             if size == 0:
                 raise HTTPException(400, "the file is empty")
             try:
+                if source == "folder" and (twin := await study.files.twin(tmp, course_id)):
+                    return JSONResponse({**file_json(twin), "duplicate": True})
                 f = await study.files.add(tmp, name, course_id, target["id"] if target else None,
                                           source=source, public_id=public_id)
             except PdfError as e:

@@ -443,6 +443,8 @@ async def test_applying_the_outline_writes_each_topic_from_its_own_pages(nb):
     body = nb.api.get(f"/v1/topics/{t['public_id']}", headers=AUTH).json()
     assert body["sections"] == ["Explanation", "Formulas", "Exam-style questions"] and body["questions"] == 1
     assert body["cards"] == 2 and body["sources"] == ["Week 3 slides, p. 1–2"]
+    assert [(x["file"]["id"], x["file"]["name"], x["pages"]) for x in body["source_files"]] == \
+           [(nb.file["id"], "Week 3 slides.pdf", [1, 2])]
     assert nb.api.post(f"/v1/proposals/{p['public_id']}/apply", headers=AUTH).status_code == 409
     assert nb.api.post(f"/v1/notebook?course={nb.macro['id']}", headers=AUTH).status_code == 409
 
@@ -455,7 +457,8 @@ async def test_applying_the_outline_writes_each_topic_from_its_own_pages(nb):
     assert not (root / "macroeconomics.md").exists()
     page = (root / "01 The IS-LM model.md").read_text()
     assert page.startswith('---\ncourse: "[[Aide/macroeconomics/00 Introduction|macroeconomics]]"\n'
-                           'cards: "[[Aide/macroeconomics/Cards/The IS-LM model|Cards]]"\ntopic: t_')
+                           'cards: "[[Aide/macroeconomics/Cards/The IS-LM model|Cards]]"\nsources:\n'
+                           '  - "[[Aide/macroeconomics/Files/Week 3 slides.pdf#page=1|Week 3 slides, p. 1–2]]"\ntopic: t_')
     assert "\n# The IS-LM model\n\nThe IS-LM model ties" in page
     cards = (root / "Cards/The IS-LM model.md").read_text()
     assert cards.startswith("#flashcards/macroeconomics\n") and cards.endswith(

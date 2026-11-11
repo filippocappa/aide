@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .material import page_image
-from .notebook import FIGURE, date_line, figures, max_points, mock_paper, mock_title
+from .notebook import FIGURE, _ranges, date_line, figures, max_points, mock_paper, mock_title
 from .study import StudyStore, stamp
 from .videos import watch_url
 
@@ -241,7 +241,7 @@ class Vault:
             while name.casefold() in seen:
                 name, n = f"{stem} ({n}).pdf", n + 1
             seen.add(name.casefold())
-            file_paths[f["id"]] = f"{folder}/Files/{name}"
+            file_paths[f["id"]] = file_paths[f["public_id"]] = f"{folder}/Files/{name}"
             items.append(Item(file_paths[f["id"]], f["public_id"], source=study.files.path(f),
                               version=f"{f['size']}:{f['updated_at']}"))
         # The notebook: topic pages and their cards, and which lectures each topic was built from.
@@ -267,7 +267,8 @@ class Vault:
             exercise_paths = {tid: f"{folders[cid]}/Exercises/{paths[tid].rsplit('/', 1)[1]}" for tid in sets}
             for t in topics:
                 items.append(Item(paths[t["id"]], f"topic:{t['public_id']}",
-                                  self._topic(t, course, by_title, images, exercise_paths.get(t["id"]))))
+                                  self._topic(t, course, by_title, images, exercise_paths.get(t["id"]),
+                                              file_paths)))
                 if cards := json.loads(t["cards"]):
                     items.append(Item(f"{folders[cid]}/Cards/{_file_name(t['title'])}.md", f"cards:{t['public_id']}",
                                       self._cards_head(t, course, paths[t["id"]]),
@@ -415,11 +416,17 @@ class Vault:
         return "\n\n".join(out) + "\n"
 
     def _topic(self, t: dict, course: dict, by_title: dict[str, str], images: dict,
-               exercises: str | None = None) -> str:
+               exercises: str | None = None, files: dict | None = None) -> str:
         folder = self._folder(course)
+        sources = []  # the files it was written from, at the first page used (#73)
+        for f, pages in self.notebook.source_files(json.loads(t["sources"])):
+            if path := (files or {}).get(f["public_id"]):
+                label = _file_name(f["name"].removesuffix(".pdf")) + (f", p. {_ranges(pages)}" if pages else "")
+                sources.append(f'  - "{_link(path + (f"#page={pages[0]}" if pages else ""), label)}"')
         meta = ["---", f'course: "{_link(f"{folder}/00 Introduction.md", course["name"])}"',
                 f'cards: "{_link(f"{folder}/Cards/{_file_name(t["title"])}.md", "Cards")}"' if json.loads(t["cards"])
                 else None, f'exercises: "{_link(exercises, "Exercises")}"' if exercises else None,
+                *(["sources:", *sources] if sources else []),
                 f"topic: {t['public_id']}", "tags:", "  - topic", f"  - {_tag(course['name'])}", "---"]
         body = _figures_out(_links_out(t["body"], by_title), images)
         return "\n".join(m for m in meta if m) + f"\n\n# {t['title']}\n\n{body}\n"

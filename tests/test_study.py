@@ -547,3 +547,26 @@ def test_a_pdf_sent_in_a_course_chat_is_that_courses_material(env):
     f = add_pdf(api, conversation_id=chat).json()
     assert (f["course"], f["source"]) == (macro, "upload")
     assert [x["id"] for x in api.get("/v1/files", headers=AUTH).json()["files"]] == [f["id"]]
+
+
+def test_a_file_from_the_course_folder_isnt_added_twice(env):
+    api, study, *_ = env()
+    api.get("/v1/study", headers=AUTH)
+    law = study.course_by_name("business law")["id"]
+    first = add_pdf(api, course=law).json()
+    assert len(first["sha256"]) == 64
+    same = add_pdf(api, course=law, **{"from": "folder", "name": "02 intro.pptx.pdf"})
+    assert same.status_code == 200 and same.json()["id"] == first["id"] and same.json()["duplicate"]
+    # The same slides exported again: other bytes, the same text page by page.
+    again = make_pdf(None, ["The IS curve:  investment equals saving, a long first slide with plenty of words",
+                            "LM: liquidity preference equals money supply, on the second slide of the deck",
+                            "Crowding out: when government spending raises the interest rate"])
+    assert again != SLIDES
+    twin = add_pdf(api, again, course=law, **{"from": "folder", "name": "Lecture 3.pdf"})
+    assert twin.status_code == 200 and twin.json()["id"] == first["id"]
+    other = add_pdf(api, make_pdf(None, ["A study guide for the midterm, nothing like the slides at all"]),
+                    course=law, **{"from": "folder", "name": "Midterm guide.pdf"})
+    assert other.status_code == 201 and other.json()["source"] == "folder" and "duplicate" not in other.json()
+    macro = study.course_by_name("macroeconomics")["id"]
+    assert add_pdf(api, again, course=macro, **{"from": "folder"}).status_code == 201  # another course's
+    assert add_pdf(api, course=law, **{"from": "elsewhere"}).status_code == 400

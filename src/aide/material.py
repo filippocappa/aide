@@ -2,12 +2,15 @@
 
 A file belongs to a course. Attached to a lecture it is that lecture's slides, and the lecture's notes are written
 (or rewritten) with it; otherwise it is course material, which Professor searches and reads. Files come from the
-app or from Moodle (moodle.py). Their text is taken out page by page with poppler's pdftotext, so a search can
+app, from Moodle (moodle.py) or from the course folders on the user's Mac (`folder`, #73: a file already here, the
+same bytes or the same slides under another name, isn't added twice; `twin`). Their text is taken out page by page with poppler's pdftotext, so a search can
 name the page; the notes see a deck's most visual pages as images too (pdftoppm).
 """
 
 import asyncio
 import base64
+import difflib
+import hashlib
 import logging
 import re
 import secrets
@@ -38,6 +41,7 @@ CREATE TABLE IF NOT EXISTS study_files (
     source      TEXT NOT NULL DEFAULT 'upload',  -- upload, moodle, chat (a PDF sent in a chat that isn't a course's)
     source_key  TEXT UNIQUE,  -- Moodle: the file's URL without the token
     source_time INTEGER,  -- Moodle: when it was last changed there (epoch seconds)
+    sha256      TEXT,     -- the PDF's, to know a file sent again (#73)
     added_at    TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -160,8 +164,14 @@ class FileStore:
         self.tz = tz
         self.folder = folder or Path(tempfile.mkdtemp(prefix="aide-files-"))  # tests
         self.folder.mkdir(parents=True, exist_ok=True)
+        if self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'study_files'").fetchone() and "sha256" not in {
+                c["name"] for c in self.conn.execute("PRAGMA table_info(study_files)")}:
+            self.conn.execute("ALTER TABLE study_files ADD COLUMN sha256 TEXT")
         self.conn.executescript(SCHEMA)
         self.on_add: list[Callable[[], None]] = []  # the page reader's kick
+        for row in self.conn.execute("SELECT id, public_id FROM study_files WHERE sha256 IS NULL").fetchall():
+            if (path := self.folder / f"{row['public_id']}.pdf").exists():
+                self.conn.execute("UPDATE study_files SET sha256 = ? WHERE id = ?", (_sha(path), row["id"]))
 
     @staticmethod
     def new_id() -> str:
@@ -180,19 +190,22 @@ class FileStore:
             raise PdfError("the PDF has no pages")
         name = _name(name)
         scanned = sum(len(p) for p in pages) < SCANNED_CHARS * len(pages)
+        sha = _sha(tmp)
         now = utcnow().isoformat()
         old = self.by_key(source_key) if source_key else None
         if old:
             self.conn.execute("UPDATE study_files SET name = ?, section = ?, size = ?, pages = ?, scanned = ?, "
-                              "source_time = ?, updated_at = ? WHERE id = ?",
-                              (name, section, tmp.stat().st_size, len(pages), scanned, source_time, now, old["id"]))
+                              "source_time = ?, sha256 = ?, updated_at = ? WHERE id = ?",
+                              (name, section, tmp.stat().st_size, len(pages), scanned, source_time, sha, now,
+                               old["id"]))
             row_id = old["id"]
         else:
             row_id = self.conn.execute(
                 "INSERT INTO study_files (public_id, course_id, lecture_id, name, section, size, pages, scanned, "
-                "source, source_key, source_time, added_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "source, source_key, source_time, sha256, added_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (public_id or self.new_id(), course_id, lecture_id, name, section, tmp.stat().st_size, len(pages),
-                 scanned, source, source_key, source_time, now, now)).lastrowid
+                 scanned, source, source_key, source_time, sha, now, now)).lastrowid
         f = self._row(row_id)
         shutil.move(tmp, self.path(f))
         self.conn.execute("DELETE FROM study_pages WHERE file_id = ?", (row_id,))
@@ -206,6 +219,28 @@ class FileStore:
         for kick in self.on_add:
             kick()
         return f
+
+    async def twin(self, tmp: Path, course_id: int | None) -> dict | None:
+        """A file of the course that `tmp` is already: the same bytes, or the same text page by page (the same
+        slides exported again under another name: as many pages, and nearly all of them alike). None: it's new."""
+        sha = _sha(tmp)
+        row = self.conn.execute("SELECT * FROM study_files WHERE sha256 = ? AND course_id IS ? ORDER BY id",
+                                (sha, course_id)).fetchone()
+        if row:
+            return dict(row)
+        pages = [_plain(p) for p in await pdf_pages(tmp)]
+        if not pages or sum(len(p) for p in pages) < SCANNED_CHARS * len(pages):
+            return None  # a scan: only its bytes can say
+        for f in self.conn.execute("SELECT * FROM study_files WHERE course_id IS ? AND pages = ? ORDER BY id",
+                                   (course_id, len(pages))).fetchall():
+            theirs = {r["page"]: _plain(r["text"]) for r in self.conn.execute(
+                "SELECT page, text FROM study_pages WHERE file_id = ?", (f["id"],))}
+            alike = sum(1 for n, mine in enumerate(pages, 1)
+                        if mine == theirs.get(n, "") or difflib.SequenceMatcher(
+                            None, mine, theirs.get(n, ""), autojunk=False).ratio() >= TWIN_PAGE)
+            if alike >= TWIN_FILE * len(pages):
+                return dict(f)
+        return None
 
     def _row(self, row_id: int) -> dict:
         return dict(self.conn.execute("SELECT * FROM study_files WHERE id = ?", (row_id,)).fetchone())
@@ -335,9 +370,25 @@ class FileStore:
     def as_json(self, f: dict, lecture_public_id: str | None = None) -> dict:
         return {"id": f["public_id"], "course": f["course_id"], "lecture": lecture_public_id, "name": f["name"],
                 "section": f["section"], "size": f["size"], "pages": f["pages"], "scanned": bool(f["scanned"]),
-                "source": f["source"],
+                "source": f["source"], "sha256": f.get("sha256"),
                 "added_at": self.local(datetime.fromtimestamp(f["source_time"], timezone.utc).isoformat()
                                        if f["source_time"] else f["added_at"])}
+
+
+TWIN_PAGE = 0.9  # a page this alike is the same page
+TWIN_FILE = 0.85  # and a file with this share of its pages alike is the same file
+
+
+def _sha(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _plain(text: str) -> str:
+    return " ".join((text or "").casefold().split())
 
 
 def _name(name: str) -> str:

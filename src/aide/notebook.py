@@ -1128,8 +1128,20 @@ class NotebookStore:
                "edited": t["edited_at"] is not None, "updated_at": self.study.local(t["updated_at"])}
         if full:
             out |= {"body": t["body"], "cards_list": [{"q": q, "a": a} for q, a in cards],
-                    "sources": self.source_names(json.loads(t["sources"]))}
+                    "sources": self.source_names(json.loads(t["sources"])),
+                    "source_files": [{"file": self.file_json(f), "pages": pages}
+                                     for f, pages in self.source_files(json.loads(t["sources"]))]}
         return out
+
+    def source_files(self, sources: list[dict]) -> list[tuple[dict, list[int]]]:
+        """The files among the sources, each once with the pages used (all of them: []), in the order first used."""
+        out: dict[str, tuple[dict, set[int] | None]] = {}
+        for s in sources:
+            if "file" not in s or (f := self.files.get(s["file"])) is None:
+                continue
+            _, pages = out.get(f["public_id"], (f, set()))
+            out[f["public_id"]] = (f, None if pages is None or not s.get("pages") else pages | set(s["pages"]))
+        return [(f, sorted(p) if p and len(p) < f["pages"] else []) for f, p in out.values()]
 
     def proposal_json(self, p: dict) -> dict:
         return {"id": p["public_id"], "course": p["course_id"], "kind": p["kind"], "status": p["status"],
