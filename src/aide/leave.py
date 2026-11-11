@@ -18,9 +18,12 @@ user walks, drives or cycles there; when the first ride isn't GTT's (a train); w
 that line already covers the time; or when an earlier event at the same place ends at most SAME_TRIP before it
 starts (a day of talks at one venue, a "Drive to the stadium" before them: one trip there, not one per event).
 
-Driving (2026-11-12): the countdown's Driving button (`driving`) ends that alert, and each leave to a place is kept
-(`leave_ways`: tram unless the button was tapped). Once the last DRIVES to a place, within KEEP, were by car, its events
-get none (`drives`), until the user asks for a way there (`trip`), which counts as tram.
+Only uni (2026-11-12, the user: "if it's university then tram, else 99% car"): an event gets an alert only when it's
+in the study calendar (lectures) or memory says the user goes to its place by transit; anything else is by car
+("car"). A way asked for (`trip`) is answered anywhere.
+
+Not going: the countdown's button (`not_going`) ends that alert, and the rest of that day's events at the same place
+get none (a skipped morning at uni isn't followed by an alert for the afternoon's lecture).
 """
 
 import asyncio
@@ -48,26 +51,24 @@ STOP_NEAR = 150  # metres between the stop Maps names and GTT's
 FREQUENT = 4  # departures an hour (around the one taken) that make a line frequent
 SAME_TRIP = timedelta(minutes=90)  # an event at the same place ending this soon before another: the same trip there
 BEHIND = timedelta(hours=12)  # events this far back are read too, for the same trip
-DRIVES = 2  # leaves in a row by car to a place that stop its alerts
-KEEP = timedelta(days=60)  # older leaves don't count
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS leave_plans (
     event    TEXT NOT NULL,     -- the calendar event's uid
     starts   TEXT NOT NULL,     -- its start, UTC: a moved event is a new plan
-    state    TEXT NOT NULL,     -- alert (set), or skipped: why not (walks, no_place, no_ride, not_gtt, covered,
-                                -- same_trip: an earlier event at the same place just before it)
+    state    TEXT NOT NULL,     -- alert (set), or skipped: why not (walks, car: not uni, no_place, no_ride, not_gtt,
+                                -- covered, same_trip: an earlier event at the same place just before it,
+                                -- not_going: the user isn't going there that day)
     alert    INTEGER,           -- the tram alert it set
     at       TEXT NOT NULL,     -- UTC
     PRIMARY KEY (event, starts)
 );
-CREATE TABLE IF NOT EXISTS leave_ways (  -- how the user went to a place: tram unless they tapped Driving
-    place    TEXT NOT NULL,     -- the event's place, casefolded
-    event    TEXT NOT NULL,     -- the event's uid (a leave_for ask: "ask:" and the place)
-    starts   TEXT NOT NULL,
-    by       TEXT NOT NULL,     -- tram or car
-    at       TEXT NOT NULL,     -- UTC
-    PRIMARY KEY (event, starts)
+DROP TABLE IF EXISTS leave_ways;  -- Driving's (2026-11-11, a day): replaced by the uni-only rule
+CREATE TABLE IF NOT EXISTS leave_skips (  -- Not going: no alerts for this place this day
+    day      TEXT NOT NULL,     -- local date
+    lat      REAL NOT NULL,
+    lon      REAL NOT NULL,
+    at       TEXT NOT NULL      -- UTC
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
@@ -75,12 +76,14 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 class LeaveWatcher:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo, cal, maps, alerts: AlertStore, location: Location,
-                 walks: Walks, travel_plan: Callable[[dict], Awaitable[Travel]] | None = None):
+                 walks: Walks, travel_plan: Callable[[dict], Awaitable[Travel]] | None = None,
+                 study_calendar: str | None = None):
         """`travel_plan(event)`: how the user gets there, from memory, as the wake briefing reads it; a mode other
-        than transit means no alert, `place` is where an event with no place is, `lines` the lines they prefer."""
+        than transit means no alert, `place` is where an event with no place is, `lines` the lines they prefer.
+        `study_calendar`: the lectures' calendar, whose events are at uni (by tram unless memory says otherwise)."""
         self.conn, self.tz, self.cal, self.maps = conn, tz, cal, maps
         self.alerts, self.timetable, self.location, self.walks = alerts, alerts.timetable, location, walks
-        self.travel_plan = travel_plan
+        self.travel_plan, self.study_calendar = travel_plan, study_calendar
         self.conn.executescript(SCHEMA)
         self._events: tuple[datetime, list[dict]] | None = None
         self._routes: dict[tuple[str, str], tuple[datetime, tuple[float, float], list[dict]]] = {}
@@ -168,6 +171,7 @@ class LeaveWatcher:
                 log.info("leave-now: event %s moved or went, its tram alert %s too", r["event"], r["alert"])
             self.conn.execute("DELETE FROM leave_plans WHERE event = ? AND starts = ?", (r["event"], r["starts"]))
         self.conn.execute("DELETE FROM leave_plans WHERE starts < ?", ((now - timedelta(days=2)).isoformat(),))
+        self.conn.execute("DELETE FROM leave_skips WHERE at < ?", ((now - timedelta(days=2)).isoformat(),))
 
     # -- one event --------------------------------------------------------------------------------------------
 
@@ -176,14 +180,16 @@ class LeaveWatcher:
         travel = await self._plan(e)
         if travel.mode not in (None, "transit"):
             return self._mark(e, "walks", now)
+        if travel.mode != "transit" and e.get("calendar") != self.study_calendar:
+            return self._mark(e, "car", now)  # not uni: by car
         place = e["location"] or travel.place
         there = await self._spot(place, here) if place else None
         if there is None:
             return self._mark(e, "no_place", now)
         if await self._same_trip(e, there, here):
             return self._mark(e, "same_trip", now)
-        if self.drives(place, now):
-            return self._mark(e, "drives", now)
+        if self._skipped(e, there):
+            return self._mark(e, "not_going", now)
         distance = metres(*here, *there)
         if distance < THERE or distance > AWAY:
             return  # already there, or not going (not yet, at least): looked at again later
@@ -203,33 +209,32 @@ class LeaveWatcher:
         a = self.alerts.create(stop["id"], line, f"{departs.astimezone(self.tz):%H:%M}", now=now,
                                event=f"{e['title']} at {local:%H:%M}", to_stop=self._get_off(route, line))
         self._mark(e, "alert", now, a["id"])
-        self._went(place, *self._key(e), "tram", now)
         log.info("leave-now: %s", self.alerts.describe(a))
 
-    # -- tram or car -------------------------------------------------------------------------------------------
+    # -- not going -------------------------------------------------------------------------------------------
 
-    def _went(self, place: str, event: str, starts: str, by: str, now: datetime) -> None:
-        self.conn.execute("INSERT OR REPLACE INTO leave_ways (place, event, starts, by, at) VALUES (?, ?, ?, ?, ?)",
-                          (place.strip().casefold(), event, starts, by, now.isoformat()))
-
-    def drives(self, place: str, now: datetime) -> bool:
-        """The last DRIVES leaves to `place` (within KEEP) were all by car."""
-        last = [r["by"] for r in self.conn.execute(
-            "SELECT by FROM leave_ways WHERE place = ? AND at >= ? ORDER BY at DESC LIMIT ?",
-            (place.strip().casefold(), (now - KEEP).isoformat(), DRIVES))]
-        return len(last) == DRIVES and all(b == "car" for b in last)
-
-    def driving(self, alert: dict, now: datetime) -> bool:
-        """The user tapped Driving on a leave-now alert's countdown: that leave was by car. False when the alert
-        wasn't one of leave-now's."""
+    def not_going(self, alert: dict, now: datetime) -> bool:
+        """The user tapped Not going on a leave-now alert's countdown: none for that day's other events at that
+        place either. False when the alert wasn't one of leave-now's (or its place is no longer known)."""
         row = self.conn.execute(  # ids are used again: the plan that set this one
             "SELECT event, starts FROM leave_plans WHERE alert = ? AND state = 'alert' AND at >= ? "
             "ORDER BY at DESC LIMIT 1", (alert["id"], alert["created_at"])).fetchone()
         if row is None:
             return False
-        self.conn.execute("UPDATE leave_ways SET by = 'car', at = ? WHERE event = ? AND starts = ?",
-                          (now.isoformat(), row["event"], row["starts"]))
+        key = (row["event"], row["starts"])
+        e = next((x for x in (self._events[1] if self._events else []) if self._key(x) == key), None)
+        place = e and (e["location"] or (self._plans[key].place if key in self._plans else None))
+        spot = self._spots.get(place) if place else None
+        if e is None or spot is None:
+            return False
+        self.conn.execute("INSERT INTO leave_skips (day, lat, lon, at) VALUES (?, ?, ?, ?)",
+                          (e["start"].astimezone(self.tz).date().isoformat(), *spot, now.isoformat()))
         return True
+
+    def _skipped(self, e: dict, there: tuple[float, float]) -> bool:
+        day = e["start"].astimezone(self.tz).date().isoformat()
+        return any(metres(r["lat"], r["lon"], *there) < THERE
+                   for r in self.conn.execute("SELECT lat, lon FROM leave_skips WHERE day = ?", (day,)))
 
     async def _same_trip(self, e: dict, there: tuple[float, float], here: tuple[float, float]) -> bool:
         """An earlier event (or one at the same time, first by uid) at the same place ends at most SAME_TRIP before
@@ -291,7 +296,6 @@ class LeaveWatcher:
         route, departs, stop, line = chosen
         walk = await self.walks.seconds(*here, stop)
         covered = self._covered(line, departs)
-        self._went(place, f"ask:{place.strip().casefold()}", arrive.isoformat(), "tram", now)  # asked: going by tram
         alert = None
         if not covered:
             local = departs.astimezone(self.tz)

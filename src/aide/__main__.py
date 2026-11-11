@@ -315,7 +315,7 @@ def main() -> None:
     if transit and cal and maps:
         # How the user travels comes from memory through the digest service, made below.
         leave = LeaveWatcher(db.conn, settings.timezone, cal, maps, alerts, location, walks,
-                             lambda event: digest.travel_plan(event))
+                             lambda event: digest.travel_plan(event), settings.study_calendar)
         tools += leave_tools(leave, settings.timezone)
     elif transit:
         log.info("leave-now alerts for events need the calendar and GOOGLE_MAPS_API_KEY: off")

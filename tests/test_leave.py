@@ -67,7 +67,7 @@ def leave(env):  # noqa: F811
              lines: tuple[str, ...] = ()) -> LeaveWatcher:
         async def travel_plan(event):
             return Travel(None, mode, place, lines)
-        return LeaveWatcher(db.conn, ROME, cal, maps, alerts, location, Walks(), travel_plan)
+        return LeaveWatcher(db.conn, ROME, cal, maps, alerts, location, Walks(), travel_plan, "Timetable")
     return make, env
 
 
@@ -148,7 +148,7 @@ async def test_a_run_of_events_at_one_place_is_one_trip_there(leave):
     location.save(*HOME, 10, at(7, 25))
 
     def talk(uid, start, minutes=30, place="Politecnico"):
-        return CalEvent(uid, "Finance", uid, start, start + timedelta(minutes=minutes), place)
+        return CalEvent(uid, "Timetable", uid, start, start + timedelta(minutes=minutes), place)
     cal = FakeCal(talk("drive", at(8, 0), 60), talk("kickoff", at(9, 0)), talk("panel", at(9, 0)),
                   talk("late", at(12, 0)), talk("elsewhere", at(9, 40), place="Zoom"))
     await make(cal, FakeMaps(ride())).tick(utc(at(7, 30)))
@@ -234,31 +234,43 @@ async def test_leave_for_answers_with_the_line_the_stop_and_when_to_leave(leave,
     assert "Tram alert [1] set" in text
 
 
-async def test_driving_ends_the_alert_and_twice_in_a_row_stops_them_for_the_place(leave):
+async def test_only_uni_gets_an_alert_anywhere_else_is_by_car(leave):
+    make, (db, timetable, location, alerts, push) = leave
+    talk = CalEvent("talk", "Personal", "Club-owned stadiums", at(9, 0), at(10, 0), "Politecnico")
+    location.save(*HOME, 10, at(7, 25))
+    await make(FakeCal(talk), FakeMaps(ride())).tick(utc(at(7, 27)))
+    assert alerts.all() == []
+    assert db.conn.execute("SELECT state FROM leave_plans").fetchone()["state"] == "car"
+    # Memory says the user takes the tram there: it counts as uni.
+    db.conn.execute("DELETE FROM leave_plans")
+    await make(FakeCal(talk), FakeMaps(ride()), mode="transit").tick(utc(at(7, 27)))
+    assert len(alerts.all()) == 1
+
+
+async def test_not_going_ends_the_alert_and_the_days_others_there(leave):
     make, (db, timetable, location, alerts, push) = leave
     day = timedelta(days=1)
-    cal = FakeCal(lecture(uid="mon"), lecture(start=at(9, 0) + day, uid="tue"),
-                  lecture(start=at(9, 0) + 2 * day, uid="wed"))
+    cal = FakeCal(lecture(uid="am"), lecture(start=at(14, 0), uid="pm"), lecture(start=at(9, 0) + day, uid="tue"))
     w = make(cal, FakeMaps(ride()))
     agent = Agent(FakeClient([]), db, ToolRegistry([]), model="m", tz=ROME, delegate=False)
     c = TestClient(create_app(agent, ReminderStore(db.conn), None, ROME, TOKEN, leave=w, transit_alerts=alerts))
-    for n in range(2):
-        location.save(*HOME, 10, at(7, 25) + n * day)
-        w._events, w.maps = None, FakeMaps(ride(departs=at(8, 15) + n * day))
-        await w.tick(utc(at(7, 27) + n * day))
-        (a,) = alerts.all()
-        assert c.post(f"/v1/transit/alerts/{a['id']}/driving", headers=AUTH).json() == {"ok": True, "learnt": True}
-        assert alerts.all() == [] and a["id"] in alerts.dropped  # gone, and its countdown ends at the next tick
-    location.save(*HOME, 10, at(7, 25) + 2 * day)
-    w._events, w.maps = None, FakeMaps(ride(departs=at(8, 15) + 2 * day))
-    await w.tick(utc(at(7, 27) + 2 * day))
+    location.save(*HOME, 10, at(7, 25))
+    await w.tick(utc(at(7, 27)))
+    (a,) = alerts.all()
+    assert c.post(f"/v1/transit/alerts/{a['id']}/not-going", headers=AUTH).json() == {"ok": True, "today": True}
+    assert alerts.all() == [] and a["id"] in alerts.dropped  # gone, and its countdown ends at the next tick
+    # The afternoon's lecture there: none.
+    location.save(*HOME, 10, at(12, 25))
+    w._events, w.maps = None, FakeMaps(ride(departs=at(13, 15)))
+    await w.tick(utc(at(12, 27)))
     assert alerts.all() == []
-    assert dict(db.conn.execute("SELECT event, state FROM leave_plans").fetchall())["wed"] == "drives"
-    # A way asked for there is by tram: the next lecture gets its alert again.
-    assert w.drives("politecnico ", utcnow())  # the API keeps the tap at the real time
-    w._went("Politecnico", "ask:politecnico", "x", "tram", utcnow() + timedelta(seconds=1))
-    assert not w.drives("politecnico ", utcnow() + timedelta(seconds=2))
-    # A tram alert that isn't leave-now's: gone, nothing learnt.
+    assert dict(db.conn.execute("SELECT event, state FROM leave_plans").fetchall())["pm"] == "not_going"
+    # The next day's: as usual.
+    location.save(*HOME, 10, at(7, 25) + day)
+    w._events, w.maps = None, FakeMaps(ride(departs=at(8, 15) + day))
+    await w.tick(utc(at(7, 27) + day))
+    assert len(alerts.all()) == 1
+    # A tram alert that isn't leave-now's: gone, nothing else skipped.
     own = alerts.create("1", "4", "08:15", now=utcnow())
-    assert c.post(f"/v1/transit/alerts/{own['id']}/driving", headers=AUTH).json() == {"ok": True, "learnt": False}
-    assert c.post("/v1/transit/alerts/999/driving", headers=AUTH).status_code == 404
+    assert c.post(f"/v1/transit/alerts/{own['id']}/not-going", headers=AUTH).json() == {"ok": True, "today": False}
+    assert c.post("/v1/transit/alerts/999/not-going", headers=AUTH).status_code == 404

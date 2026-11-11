@@ -3091,14 +3091,15 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         transit_alerts.delete(alert_id)
         return {"ok": True}
 
-    @app.post("/v1/transit/alerts/{alert_id}/driving", dependencies=[Depends(auth)])
-    async def driving_instead(alert_id: int):
-        """The countdown's Driving button: the alert goes, its countdown ends, and leave-now learns the place."""
+    @app.post("/v1/transit/alerts/{alert_id}/not-going", dependencies=[Depends(auth)])
+    async def not_going(alert_id: int):
+        """The countdown's Not going button: the alert goes, its countdown ends, and leave-now sets none for that
+        day's other events at the place."""
         alert = alert_or_404(alert_id)
-        learnt = bool(leave and leave.driving(alert, utcnow()))
+        today = bool(leave and leave.not_going(alert, utcnow()))
         transit_alerts.dropped.add(alert_id)
         transit_alerts.delete(alert_id)
-        return {"ok": True, "learnt": learnt}
+        return {"ok": True, "today": today}
 
     def lock_or_404(lock_id: int) -> dict:
         try:
