@@ -287,7 +287,8 @@ struct ChatView: View {
                             if let call = message.call {
                                 CallRow(call: call, agent: chat.agent(call.agent))
                             } else {
-                                MessageRow(message: message, foldedErrands: chat.errandsAgain(after: message))
+                                MessageRow(message: message, foldedErrands: chat.errandsAgain(after: message),
+                                           rate: { rating, note in Task { await chat.rate(message, rating, note: note) } })
                             }
                             if chat.startsWithDigest, message.id == chat.messages.first?.id { digestDetails }
                         }
@@ -415,6 +416,11 @@ struct ChatView: View {
     /// send sit above it.
     private var composer: some View {
         VStack(spacing: 0) {
+            let typed = SlashCommand.matches(draft, in: commands)
+            if !typed.isEmpty {
+                SlashCommandList(commands: typed, tint: chat.agent.tint, pick: pick)
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+            }
             if !photos.isEmpty || !files.isEmpty { photoStrip }
             MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused, reset: sent,
                        tint: chat.agent.tint, onReturn: { if canSend { sendDraft() } }) {
@@ -424,6 +430,73 @@ struct ChatView: View {
         }
         .animation(.easeOut(duration: 0.2), value: photos)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: files)
+        .animation(.easeOut(duration: 0.15), value: SlashCommand.matches(draft, in: commands).map(\.name))
+    }
+
+    /// What "/" offers in this chat (SlashCommands.swift).
+    private var commands: [SlashCommand] {
+        var list = [SlashCommand(name: "new", summary: "New chat with \(chat.agent.name)", icon: "square.and.pencil") { _ in
+            Task { await chat.startChat(with: chat.agent) }
+        }]
+        for agent in chat.agents {
+            list.append(SlashCommand(name: agent.name.lowercased(), summary: "New chat with \(agent.name)",
+                                     icon: "bubble.left", takesText: true) { text in
+                Task {
+                    await chat.startChat(with: agent)
+                    if !text.isEmpty { await chat.send(text) }
+                }
+            })
+        }
+        list.append(SlashCommand(name: "chats", summary: "Past chats with \(chat.agent.name)",
+                                 icon: "clock.arrow.circlepath") { _ in showPastChats = true })
+        if chat.conversationID != nil {
+            list.append(SlashCommand(name: "think", summary: chat.smart ? "Back to the usual model" : "Think harder here",
+                                     icon: "brain") { _ in Task { await chat.setSmart(!chat.smart) } })
+        }
+        list.append(SlashCommand(name: "voice", summary: "Talk instead of typing", icon: "waveform") { _ in
+            Task { await voice.toggle() }
+        })
+        if !chat.pending.isEmpty {
+            list.append(SlashCommand(name: "confirm", summary: "Do what's waiting", icon: "checkmark.circle") { _ in
+                Task { await chat.confirm() }
+            })
+            list.append(SlashCommand(name: "cancel", summary: "Drop what's waiting", icon: "xmark.circle") { _ in
+                Task { await chat.cancel() }
+            })
+        }
+        if let course = chat.course {
+            list.append(SlashCommand(name: "quiz", summary: "Study \(course.name ?? "this course")", icon: "rectangle.stack") { _ in
+                studying = StudyTarget(course: course.id, name: course.name)
+            })
+            list.append(SlashCommand(name: "practice", summary: "A practice exam", icon: "doc.text") { _ in
+                showPractice = true
+            })
+        }
+        list.append(SlashCommand(name: "routines", summary: "\(chat.agent.name)'s routines", icon: "alarm") { _ in
+            showRoutines = true
+        })
+        list.append(SlashCommand(name: "copy", summary: "Copy this chat as text", icon: "doc.on.doc") { _ in
+            UIPasteboard.general.string = chat.transcriptText
+        })
+        if chat.messages.contains(where: { $0.serverID != nil }) {
+            list.append(SlashCommand(name: "report", summary: "👎 the last reply, saying what went wrong",
+                                     icon: "hand.thumbsdown", takesText: true) { text in
+                Task { await chat.reportLast(text) }
+            })
+        }
+        return list
+    }
+
+    /// A command picked from the list: one that takes text goes into the box to finish, the rest run now.
+    private func pick(_ command: SlashCommand) {
+        if command.takesText {
+            draft = "/\(command.name) "
+            composerFocused = true
+        } else {
+            $draft.clearMessage()
+            sent += 1
+            command.run("")
+        }
     }
 
     /// Photos picked, taken or dropped on the chat. A packet on its own in Coach's chat: say how much and it's
@@ -539,6 +612,12 @@ struct ChatView: View {
     }
 
     private func sendDraft() {
+        if photos.isEmpty, files.isEmpty, let typed = SlashCommand.parse(draft, in: commands) {
+            $draft.clearMessage()
+            sent += 1
+            typed.0.run(typed.1)
+            return
+        }
         let text = draft, sending = photos, sendingFiles = files
         $draft.clearMessage()
         sent += 1
@@ -731,7 +810,11 @@ private struct CallRow: View {
 private struct MessageRow: View {
     let message: ChatViewModel.Message
     var foldedErrands: Set<Int> = []
+    /// 👍/👎 (a rating, or nil to take it back, and a note): the turn is kept for the developer to look at.
+    var rate: ((String?, String?) -> Void)?
     @State private var copied = false
+    @State private var askingNote = false
+    @State private var note = ""
 
     var body: some View {
         if message.role == .user {
@@ -776,12 +859,43 @@ private struct MessageRow: View {
             .accessibilityLabel("Copy")
             ShareLink(item: message.text) { Image(systemName: "square.and.arrow.up") }
                 .accessibilityLabel("Share")
+            if let rate, message.serverID != nil {
+                thumb("up", rate)
+                thumb("down", rate)
+            }
         }
         .font(.footnote)
         .foregroundStyle(.secondary)
         .buttonStyle(.plain)
         .padding(.horizontal, 2)
         .sensoryFeedback(.success, trigger: copied) { _, now in now }
+        .sensoryFeedback(.selection, trigger: message.feedback)
+        .alert("What went wrong?", isPresented: $askingNote) {
+            TextField("Optional", text: $note, axis: .vertical)
+            Button("Send") { rate?("down", note); note = "" }
+            Button("Skip", role: .cancel) { note = "" }
+        } message: {
+            Text("The whole turn is saved for review, with what you write here.")
+        }
+    }
+
+    /// 👍 or 👎: tapping the chosen one again takes it back; 👎 asks what went wrong (optional).
+    private func thumb(_ rating: String, _ rate: @escaping (String?, String?) -> Void) -> some View {
+        let chosen = message.feedback == rating
+        let icon = rating == "up" ? "hand.thumbsup" : "hand.thumbsdown"
+        return Button {
+            if chosen {
+                rate(nil, nil)
+            } else {
+                rate(rating, nil)
+                if rating == "down" { askingNote = true }
+            }
+        } label: {
+            Image(systemName: chosen ? icon + ".fill" : icon).contentTransition(.symbolEffect(.replace))
+        }
+        .foregroundStyle(chosen ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .accessibilityLabel(rating == "up" ? "Good reply" : "Bad reply")
+        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 }
 

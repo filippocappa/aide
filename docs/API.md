@@ -199,6 +199,20 @@ data: { the usual /v1/chat body, including the whole "team" }
 | `POST /v1/new` | `{}` | `{"ok": true}`. Starts a fresh conversation (like `!new`). |
 | `POST /v1/think` | `{}` | `{"ok": true}`. Smarter model for the rest of the conversation (like `!think`). |
 
+### Rating a reply (since 2026-11-11)
+
+👍 or 👎 on a reply keeps the whole turn as it ran (the message, the tool calls and their results, the reply, the
+agent, model and router's pick) for the developer to read on the server (`python -m aide.feedback`). No model sees
+it and nothing changes in the chat.
+
+- The `/v1/chat` body (and the stream's `reply`) has `message_id`: the reply's id. `GET /v1/history`'s messages have
+  `id` (a reply's is what to rate; some lines, like how a Confirm went, have none and can't be rated) and, once
+  rated, `feedback`: `"up"` or `"down"`.
+- `POST /v1/feedback` `{"conversation_id": "c_91f…", "message_id": 812, "rating": "down", "note": "it booked the
+  wrong day"}` → `{"ok": true, "rating": "down"}`. `rating` `null` takes it back. `note` is optional (≤ 2000
+  characters); rating again keeps the earlier note unless a new one comes. A `message_id` that isn't a reply in that
+  chat is `400`.
+
 ### Voice
 
 `POST /v1/transcribe` (optional `?language=it-IT`, the phone's speech language, a hint only) with the recording as

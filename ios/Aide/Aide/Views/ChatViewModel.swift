@@ -25,6 +25,9 @@ final class ChatViewModel: ObservableObject {
         var call: VoiceCall?
         /// The specialist who answered a message to Aide directly (the router's pick, #59).
         var routed: Routed?
+        /// The reply's id on the server, to rate it, and its rating: "up" or "down" (docs/API.md, "Rating a reply").
+        var serverID: Int?
+        var feedback: String?
     }
 
     /// A message written while the chat's agent was still answering (#69): it goes when that reply is done, one at a
@@ -458,6 +461,7 @@ final class ChatViewModel: ObservableObject {
                 list.map {
                     "\($0.role == .user ? "u" : "a")|\($0.text)|\($0.attachments.hashValue)|\($0.team.count)"
                         + "|\(max($0.photos.count, $0.localPhotos.count))|\($0.files.count)|\($0.call?.id ?? 0)"
+                        + "|\($0.serverID ?? 0)|\($0.feedback ?? "")"
                 }
             }
             if content(loaded) != content(messages.filter { !$0.isError }) {
@@ -482,7 +486,7 @@ final class ChatViewModel: ObservableObject {
             list.append(Message(role: message.role == "user" ? .user : .assistant, text: message.text,
                                 attachments: message.attachments, consulted: message.consulted, team: message.team,
                                 routine: message.routine, photos: message.photos, files: message.files,
-                                routed: message.routed))
+                                routed: message.routed, serverID: message.id, feedback: message.feedback))
         }
         list += calls.map { Message(role: .assistant, text: "", call: $0.0) }
         return list
@@ -657,7 +661,7 @@ final class ChatViewModel: ObservableObject {
             if here(), messages.contains(where: { $0.id == asked.id }) {
                 messages.append(Message(role: .assistant, text: reply.reply, attachments: reply.attachments,
                                         consulted: reply.consulted, team: reply.team.isEmpty ? liveTeam : reply.team,
-                                        routed: reply.routed))
+                                        routed: reply.routed, serverID: reply.messageId))
                 pending = reply.pending
                 if let id = reply.conversationId { conversationID = id }
                 liveTeam = []
@@ -721,6 +725,33 @@ final class ChatViewModel: ObservableObject {
             messages.append(Message(role: .assistant, text: error.localizedDescription, isError: true))
             isActing = false
         }
+    }
+
+    /// 👍 or 👎 on a reply, or taken back (nil): shown at once, put back when the server says no. The turn is kept on
+    /// the server for the developer to read (docs/API.md, "Rating a reply").
+    func rate(_ message: Message, _ rating: String?, note: String? = nil) async {
+        guard let serverID = message.serverID,
+              let index = messages.firstIndex(where: { $0.id == message.id }) else { return }
+        let before = messages[index].feedback
+        messages[index].feedback = rating
+        do {
+            try await api.rate(messageID: serverID, conversationID: conversationID, rating: rating, note: note)
+        } catch {
+            if let i = messages.firstIndex(where: { $0.id == message.id }) { messages[i].feedback = before }
+        }
+    }
+
+    /// 👎 on the latest reply that can be rated, with what went wrong ("/report …").
+    func reportLast(_ note: String) async {
+        guard let last = messages.last(where: { $0.role == .assistant && $0.serverID != nil }) else { return }
+        await rate(last, "down", note: note.isEmpty ? nil : note)
+    }
+
+    /// The chat as plain text, for "/copy": who said what, in order.
+    var transcriptText: String {
+        messages.filter { !$0.text.isEmpty }.map { message in
+            "\(message.role == .user ? "You" : agent.name): \(message.text)"
+        }.joined(separator: "\n\n")
     }
 
     /// Think harder on or off for this chat; flipped back when the server says no.

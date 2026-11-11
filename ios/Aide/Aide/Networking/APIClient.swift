@@ -197,6 +197,28 @@ final class APIClient {
 
     private struct ThinkBody: Encodable { let conversationId: String?; let on: Bool }
 
+    /// 👍 or 👎 on a reply (docs/API.md, "Rating a reply"); `rating` nil takes it back.
+    func rate(messageID: Int, conversationID: String?, rating: String?, note: String? = nil) async throws {
+        let _: OKResponse = try await send("POST", "/v1/feedback", body: RateBody(
+            conversationId: conversationID, messageId: messageID, rating: rating, note: note))
+    }
+
+    private struct RateBody: Encodable {
+        let conversationId: String?
+        let messageId: Int
+        let rating: String?
+        let note: String?
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(conversationId, forKey: .conversationId)
+            try c.encode(messageId, forKey: .messageId)
+            try c.encode(rating, forKey: .rating) // null takes the rating back
+            try c.encodeIfPresent(note, forKey: .note)
+        }
+        private enum CodingKeys: String, CodingKey { case conversationId, messageId, rating, note }
+    }
+
     func history(limit: Int = 50, conversationID: String? = nil) async throws -> HistoryResponse {
         var query = [URLQueryItem(name: "limit", value: String(limit))]
         if let conversationID { query.append(URLQueryItem(name: "conversation_id", value: conversationID)) }

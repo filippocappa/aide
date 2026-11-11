@@ -18,10 +18,13 @@ struct ChatReply: Decodable {
     let team: [TeamMessage]
     /// Set when the router handed the message straight to a specialist, who answered (docs/API.md, "Agents").
     let routed: Routed?
+    /// The reply's id, to rate it (docs/API.md, "Rating a reply"). Nil from an older server.
+    let messageId: Int?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         routed = try c.decodeIfPresent(Routed.self, forKey: .routed)
+        messageId = try c.decodeIfPresent(Int.self, forKey: .messageId)
         reply = try c.decode(String.self, forKey: .reply)
         pending = try c.decodeIfPresent([PendingAction].self, forKey: .pending) ?? []
         conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
@@ -29,7 +32,7 @@ struct ChatReply: Decodable {
         consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
         team = try c.decodeIfPresent([TeamMessage].self, forKey: .team) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments, consulted, team, routed }
+    private enum CodingKeys: String, CodingKey { case reply, pending, conversationId, attachments, consulted, team, routed, messageId }
 }
 
 /// Who the router handed a message for Aide to, and how sure it was (docs/API.md, "Agents": `routed`).
@@ -259,10 +262,15 @@ struct HistoryMessage: Decodable {
     let files: [StudyFile]
     /// The specialist the router handed it to, on a reply.
     let routed: Routed?
+    /// The message's id on the server (a reply's is what's rated), and its rating: "up" or "down".
+    let id: Int?
+    let feedback: String?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         routed = try c.decodeIfPresent(Routed.self, forKey: .routed)
+        id = try c.decodeIfPresent(Int.self, forKey: .id)
+        feedback = try c.decodeIfPresent(String.self, forKey: .feedback)
         routine = try c.decodeIfPresent(RoutineTag.self, forKey: .routine)
         photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? []
         files = try c.decodeIfPresent([StudyFile].self, forKey: .files) ?? []
@@ -273,7 +281,7 @@ struct HistoryMessage: Decodable {
         consulted = try c.decodeIfPresent([String].self, forKey: .consulted) ?? []
         team = try c.decodeIfPresent([TeamMessage].self, forKey: .team) ?? []
     }
-    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine, photos, files, routed }
+    private enum CodingKeys: String, CodingKey { case role, text, ts, attachments, consulted, team, routine, photos, files, routed, id, feedback }
 }
 
 struct RoutineTag: Decodable, Hashable {
