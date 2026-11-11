@@ -222,7 +222,8 @@ class LeaveWatcher:
     def driving(self, alert_id: int, now: datetime) -> bool:
         """The user tapped Driving on a leave-now alert's countdown: that leave was by car. False when the alert
         wasn't one of leave-now's."""
-        row = self.conn.execute("SELECT event, starts FROM leave_plans WHERE alert = ?", (alert_id,)).fetchone()
+        row = self.conn.execute("SELECT event, starts FROM leave_plans WHERE alert = ? AND state = 'alert' "
+                                "ORDER BY at DESC LIMIT 1", (alert_id,)).fetchone()  # ids are used again
         if row is None:
             return False
         self.conn.execute("UPDATE leave_ways SET by = 'car', at = ? WHERE event = ? AND starts = ?",

@@ -1031,6 +1031,7 @@ class AlertStore:
             "right_away) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (stop, line, time_, json.dumps(days) if days is not None else None, minutes, starts, ends, now.isoformat(),
              event, to_stop, int(right_away and days is None)))
+        self.dropped.discard(cur.lastrowid)  # an id used again
         return self.get(cur.lastrowid)
 
     def update(self, alert_id: int, now: datetime | None = None, **changes) -> dict:
