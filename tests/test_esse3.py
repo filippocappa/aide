@@ -629,7 +629,7 @@ async def test_a_sitting_skipped_for_a_later_one_isnt_nagged_about():
     course = e["course_id"]
     assert [d["date"] for d in reader.notebook.dates(course) if d["kind"] == "exam"] == ["2027-01-14"]
     shown = {d["date"]: d for d in reader.notebook.dates(course, archived=True) if d["kind"] == "exam"}
-    assert shown[e["day"]]["you"] == "Not taking it: you're on the Thu 14 Jan one"
+    assert shown[e["day"]]["you"] == "Not taking it: you're on the 14 Jan one"
 
 
 def test_professor_has_the_esse3_tools():

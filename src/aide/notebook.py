@@ -789,7 +789,8 @@ class NotebookStore:
             "SELECT id, item FROM course_date_edits WHERE course_id = ?", (course_id,))}
 
     def find_date(self, course_id: int, date_id: str) -> dict:
-        if (d := next((d for d in self.dates(course_id) if d["id"] == date_id), None)) is None:
+        if (d := next((d for d in self.dates(course_id, archived=True)  # a skipped sitting's too
+                       if d["id"] == date_id and not d.get("archived")), None)) is None:
             raise KeyError(f"no date {date_id} in this course")
         return d
 

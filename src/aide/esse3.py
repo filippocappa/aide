@@ -678,6 +678,7 @@ class Esse3Reader:
         """The exam was archived: no sign-up for it later."""
         if (e := self.exam_for(date_id)) is not None:
             self.conn.execute("DELETE FROM esse3_wants WHERE key = ?", (e["key"],))
+            self._redate()  # an earlier sitting skipped for this one is back
 
     def _session(self, date_id: str) -> dict:
         if (e := self.exam_for(date_id)) is None:
