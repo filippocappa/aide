@@ -1125,7 +1125,7 @@ kind, and whether the hours would fit by then. A course with none is in `undated
 - review: 15% of the whole course's learn and practise, at least an hour.
 While lectures remain before the date, learn, practise and review are stretched by (held + left) / held (`stretch`).
 - the credits (since 2026-11-11) set a floor: 25 h of work a credit (Esse3's transcript, else the Introduction), less
-  the course's lectures in the timetable (held and to come), is the user's own study; for a mid-term with topics
+  the course's lectures (UniTo's timetable, read once a day, else the study calendar's; held and to come), is the user's own study; for a mid-term with topics
   picked, its share by words; less what's done (the larger of the notes' work done and the focus time since the
   first lecture). While the notes count less, the rest is added to practise (exercises, past exams): `by_credits`.
 The paces are the user's own once the Study page's answers show 20 of a kind (gaps of 5 s to 10 min between answers in
