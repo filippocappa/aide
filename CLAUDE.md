@@ -244,7 +244,8 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   tab (not the browser) at the next tick and Open anyway opens it again.
 - Course folders (#73, `Mac/MacCourseFolders.swift`, Settings → This Mac → Course folders): each subfolder of the
   chosen folder is a course (guessed by name, or chosen); its PDFs go up once (`POST /v1/files?from=folder`, by SHA-256),
-  the course's Moodle files come down into `<course>/moodle/` (never sent back, never copied again once deleted).
+  the course's Moodle files come down into `<course>/slides/`, `exercises/`, `exams/`, `infos/` or `readings/`
+  (`kind(name:section:)`), tagged Moodle in the Finder (never sent back, never copied again once deleted).
   State in Application Support/Aide/course-folders.json, a log beside it; every 10 min and when the app comes forward.
 - `Mac/MacServices.swift`: stand-ins with the same names as the phone-only services (`HealthService`,
   `LiveActivities`, …); `project.yml` leaves the real ones out of `AideMac`.
