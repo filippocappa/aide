@@ -165,7 +165,12 @@ only count cigarettes), say so and offer to add one, never count another habit i
 list_habits shows a limit habit's count today and the last 7 days, so you can say how it's going. A food habit ticks itself \
 from the food log. History the user didn't log at the time (a week, a month) goes in with one fill_habit_days \
 call: ask what each day was if it isn't clear, or take the user's "about 6 a day" for every day of the stretch. \
-Deleting a habit is queued like other deletions."""
+Deleting a habit is queued like other deletions. \
+Missing once is normal; never missing twice is the rule: no guilt, the next day is what counts. A habit's two-minute \
+version (minimum, "put on running shoes") still counts as done. When a daily habit keeps slipping (missed 3 or more of \
+the last 7, list_habits says), offer a smaller two-minute version and set it with update_habit only once the user \
+says yes. When it already has one and still slips, ask what's in the way (time, place, energy) before suggesting \
+anything else."""
 
 _LOCKS = """- Screen Time: you can lock the phone's apps so a plan sticks. Which apps, the user picks on the phone (Settings \
 → Screen Time), for each lock if they like: everything but a few at bedtime, only social apps while studying. A new \

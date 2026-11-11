@@ -10,12 +10,19 @@ day it became a limit habit; nothing logged is 0. A limit habit can also count f
 inhaler_usage, the field of the health day the app uploads): a day's count is then the larger of Health's number and
 what was logged here, so one logged in both places counts once. What's logged here is also written to Health by the
 phone (`health_logged`: each day's net count logged through Aide, which the phone's own Health samples follow).
+
+Never miss twice (#52): a daily habit missed yesterday and not done yet today gets one nudge from
+Coach in the evening, in Coach's Habits chat (`HabitNudges`); `minimum` is a habit's two-minute version ("read one
+page"), which still counts, and the nudge offers it. `misses_7d` (the last 7 days before today) tells Coach when a
+habit keeps slipping, to propose a smaller version or ask what's in the way.
 """
 
+import asyncio
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from .db import utcnow
@@ -32,7 +39,15 @@ CREATE TABLE IF NOT EXISTS habits (
     max_count  INTEGER,  -- a limit habit: the most a day may count; NULL otherwise
     since      TEXT,     -- a limit habit: the local date it became one (days before don't count)
     food       TEXT,     -- logged, protein_g or calories: done on the days the food log meets it
-    health     TEXT      -- a limit habit: the health day's field it also counts from (inhaler_usage)
+    health     TEXT,     -- a limit habit: the health day's field it also counts from (inhaler_usage)
+    minimum    TEXT      -- the two-minute version ("read one page"): still counts, offered when it slips
+);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- A never-miss-twice nudge sent (one per habit per day).
+CREATE TABLE IF NOT EXISTS habit_nudges (
+    habit_id INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+    day      TEXT NOT NULL,  -- local date it was sent
+    PRIMARY KEY (habit_id, day)
 );
 CREATE TABLE IF NOT EXISTS habit_checks (
     habit_id INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
@@ -62,6 +77,11 @@ MAX_LIMIT = 100
 HEALTH_COUNTS = ("inhaler_usage",)  # health day fields a limit habit can count from
 HEALTH_WRITE_DAYS = 60  # the days the phone keeps Health's samples in line with what was logged here
 MAX_FILL = 92  # days set_days takes at once
+MAX_MINIMUM = 120  # characters of a two-minute version
+NUDGE_AT = time(19, 0)  # local: the never-miss-twice nudge, once a day from then
+NUDGE_UNTIL = time(22, 30)  # and not after this (a restart late in the evening doesn't nudge at midnight)
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -81,6 +101,9 @@ class Habit:
     counts: tuple[tuple[date, int], ...] = ()  # a limit habit: days over 0 in the last HISTORY_DAYS, newest first
     health: str | None = None  # a limit habit: the Apple Health count it follows
     health_logged: tuple[tuple[date, int], ...] = ()  # with health: logged here in the last HEALTH_WRITE_DAYS
+    minimum: str | None = None  # the two-minute version
+    missed_yesterday: bool = False  # a daily or limit habit not done yesterday (it existed then)
+    misses_7d: int = 0  # days missed in the 7 before today (since it began); weekly habits: 0
 
     @property
     def cadence(self) -> dict:
@@ -93,7 +116,8 @@ class Habit:
                 "done_today": self.done_today, "last_done": self.last_done.isoformat() if self.last_done else None,
                 "history": [d.isoformat() for d in self.history], "workouts": list(self.workouts),
                 "food": self.food, "count": self.count, "counts": {d.isoformat(): n for d, n in self.counts},
-                "health": self.health,
+                "health": self.health, "minimum": self.minimum, "missed_yesterday": self.missed_yesterday,
+                "misses_7d": self.misses_7d,
                 **({"health_logged": {d.isoformat(): n for d, n in self.health_logged}} if self.health else {})}
 
 
@@ -130,7 +154,7 @@ class HabitStore:
         if self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'habits'").fetchone():
             have = {c["name"] for c in self.conn.execute("PRAGMA table_info(habits)")}
             for column, kind in (("workouts", "TEXT NOT NULL DEFAULT '[]'"), ("max_count", "INTEGER"),
-                                 ("since", "TEXT"), ("food", "TEXT"), ("health", "TEXT")):
+                                 ("since", "TEXT"), ("food", "TEXT"), ("health", "TEXT"), ("minimum", "TEXT")):
                 if column not in have:
                     self.conn.execute(f"ALTER TABLE habits ADD COLUMN {column} {kind}")
         self.conn.executescript(SCHEMA)
@@ -185,10 +209,23 @@ class HabitStore:
         row = self.conn.execute("SELECT * FROM habits WHERE id = ?", (habit_id,)).fetchone()
         return self._done(row, first, last) if row else set()
 
+    def _misses(self, row, days: set[date], today: date) -> tuple[bool, int]:
+        """(missed yesterday, days missed in the 7 before today), counted from the day the habit began (its
+        creation, or for a limit habit the day it became one). Weekly habits miss weeks, not days: (False, 0)."""
+        if row["per_week"] is not None:
+            return False, 0
+        began = datetime.fromisoformat(row["created_at"]).astimezone(self.tz).date()
+        if row["max_count"] is not None and row["since"]:
+            began = date.fromisoformat(row["since"])
+        week = [today - timedelta(days=i) for i in range(1, 8) if today - timedelta(days=i) >= began]
+        missed = [d for d in week if d not in days]
+        return today - timedelta(days=1) in missed, len(missed)
+
     def _habit(self, row) -> Habit:
         today = self.today()
         start = self._first_day(row)
         days = self._done(row, start, today) if start else set()
+        missed_yesterday, misses = self._misses(row, days, today)
         window = today - timedelta(days=HISTORY_DAYS)
         history = tuple(sorted((d for d in days if window < d <= today), reverse=True))
         count, counts = None, ()
@@ -207,13 +244,15 @@ class HabitStore:
                          last_done=max(days, default=None), this_week=0, history=history,
                          workouts=tuple(json.loads(row["workouts"])), max_count=row["max_count"], count=count,
                          counts=counts, health=row["health"],
-                         health_logged=tuple((date.fromisoformat(d), n) for d, n in logged))
+                         health_logged=tuple((date.fromisoformat(d), n) for d, n in logged),
+                         minimum=row["minimum"], missed_yesterday=missed_yesterday, misses_7d=misses)
         return Habit(
             id=row["id"], name=row["name"], per_week=row["per_week"],
             streak=streak(days, row["per_week"], today), done_today=today in days,
             last_done=max((d for d in days if d <= today), default=None),
             this_week=sum(1 for d in days if monday(today) <= d <= today),
             history=history, workouts=tuple(json.loads(row["workouts"])), food=row["food"],
+            minimum=row["minimum"], missed_yesterday=missed_yesterday, misses_7d=misses,
         )
 
     def get(self, habit_id: int) -> Habit | None:
@@ -279,19 +318,27 @@ class HabitStore:
         if health is not None and max_count is None:
             raise ValueError("only a limit habit counts from Apple Health")
 
+    @staticmethod
+    def _minimum(minimum: str | None) -> str | None:
+        minimum = (minimum or "").strip()
+        if len(minimum) > MAX_MINIMUM:
+            raise ValueError(f"the two-minute version is at most {MAX_MINIMUM} characters")
+        return minimum or None
+
     def add(self, name: str, per_week: int | None = None, workouts: list[str] | None = None,
-            max_count: int | None = None, food: str | None = None, health: str | None = None) -> Habit:
+            max_count: int | None = None, food: str | None = None, health: str | None = None,
+            minimum: str | None = None) -> Habit:
         self._kind(self._per_week(per_week), self._max(max_count), self._food(food), self._health(health))
         cur = self.conn.execute(
-            "INSERT INTO habits (name, per_week, created_at, workouts, max_count, since, food, health) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO habits (name, per_week, created_at, workouts, max_count, since, food, health, minimum) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (self._name(name), per_week, utcnow().isoformat(), self._workouts(workouts or []), max_count,
-             self.today().isoformat() if max_count is not None else None, food, health))
+             self.today().isoformat() if max_count is not None else None, food, health, self._minimum(minimum)))
         return self.find(cur.lastrowid)
 
     def update(self, habit_id: int, **changes) -> Habit:
-        """Change any of name, per_week (None: daily), max_count (None: not a limit habit), food, health and
-        workouts."""
+        """Change any of name, per_week (None: daily), max_count (None: not a limit habit), food, health, minimum
+        (None or "": none) and workouts."""
         row = self.conn.execute("SELECT * FROM habits WHERE id = ?", (self.find(habit_id).id,)).fetchone()
         columns = {}
         if "name" in changes:
@@ -312,6 +359,8 @@ class HabitStore:
             columns["health"] = self._health(changes["health"])
         if "workouts" in changes:
             columns["workouts"] = self._workouts(changes["workouts"])
+        if "minimum" in changes:
+            columns["minimum"] = self._minimum(changes["minimum"])
         self._kind(*(columns[c] if c in columns else row[c] for c in ("per_week", "max_count", "food", "health")))
         if columns:
             self.conn.execute(f"UPDATE habits SET {', '.join(f'{c} = ?' for c in columns)} WHERE id = ?",
@@ -403,3 +452,72 @@ class HabitStore:
 
     def delete(self, habit_id: int) -> bool:
         return self.conn.execute("DELETE FROM habits WHERE id = ?", (habit_id,)).rowcount > 0
+
+
+class HabitNudges:
+    """Never miss twice (#52): in the evening, one message from Coach for the habits missed yesterday and not done
+    yet today, in Coach's Habits chat (made the first time, again if deleted), with a push. A habit gets at most one a
+    day; none on a habit's first days (it didn't exist yesterday) or once today is done."""
+
+    def __init__(self, store: HabitStore, agent=None, push=None):
+        self.store, self.agent, self.push = store, agent, push
+
+    def due(self, now: datetime) -> list[Habit]:
+        local = now.astimezone(self.store.tz)
+        if not NUDGE_AT <= local.time() < NUDGE_UNTIL:
+            return []
+        sent = {r["habit_id"] for r in self.store.conn.execute("SELECT habit_id FROM habit_nudges WHERE day = ?",
+                                                               (local.date().isoformat(),))}
+        return [h for h in self.store.all()
+                if h.max_count is None and h.missed_yesterday and not h.done_today and h.id not in sent]
+
+    @staticmethod
+    def text(habits: list[Habit]) -> str:
+        """What Coach says: no guilt, today keeps it going, and the two-minute version when there is one."""
+        lines = []
+        for h in habits:
+            line = f"{h.name} slipped yesterday. Today keeps it going"
+            lines.append(line + (f", even just the two-minute version: {h.minimum}." if h.minimum else "."))
+        if len(habits) == 1:
+            return "Never miss twice: " + lines[0]
+        return "Never miss twice:\n" + "\n".join(f"- {l}" for l in lines)
+
+    def chat(self) -> str:
+        """Coach's Habits chat, made the first time it's needed."""
+        db = self.agent.db
+        row = self.store.conn.execute("SELECT value FROM settings WHERE key = 'habits_chat'").fetchone()
+        if row and db.app_conversation(json.loads(row["value"])) is not None:
+            return json.loads(row["value"])
+        made = db.new_app_conversation("coach")
+        db.set_conversation_title(made["id"], "Habits")
+        self.store.conn.execute("INSERT INTO settings (key, value) VALUES ('habits_chat', ?) "
+                                "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(made["public_id"]),))
+        return made["public_id"]
+
+    async def tick(self, now: datetime) -> None:
+        habits = self.due(now)
+        if not habits or self.agent is None:
+            return
+        day = now.astimezone(self.store.tz).date().isoformat()
+        self.store.conn.executemany("INSERT OR IGNORE INTO habit_nudges (habit_id, day) VALUES (?, ?)",
+                                    [(h.id, day) for h in habits])
+        text = self.text(habits)
+        note = ("[Never miss twice: these habits were missed yesterday and aren't done yet today: "
+                + "; ".join(f"{h.name} (id {h.id}, missed {h.misses_7d} of the last 7 days"
+                            + (f", two-minute version: {h.minimum}" if h.minimum else ", no two-minute version yet")
+                            + ")" for h in habits)
+                + ". If the user answers, help: check it off when done; when one keeps slipping, offer a two-minute "
+                  "version (update_habit minimum) and set it only on their OK.]")
+        chat = self.chat()
+        await self.agent.post(chat, note, text)
+        if self.push is not None:
+            await self.push.send_message(chat, "Coach · Habits", text[:180])
+        log.info("habit nudge: %s", ", ".join(h.name for h in habits))
+
+    async def run(self) -> None:
+        while True:
+            await asyncio.sleep(300)
+            try:
+                await self.tick(datetime.now(self.store.tz))
+            except Exception:
+                log.exception("habit nudge failed")

@@ -112,7 +112,8 @@ CLOSING = {  # (title of the text section, what the model writes there)
                 "tonight for tomorrow, habits still open today, anything that can wait"),
 }
 LOOKING_AHEAD = ("Looking ahead", "looking ahead: two to five short markdown bullet lines: what to prepare for, "
-                 "clashes, deadlines, habits worth keeping up, what's coming after this period")
+                 "clashes, deadlines, habits worth keeping up (one that keeps slipping: its two-minute version, or a "
+                 "smaller one to try), what's coming after this period")
 
 
 @dataclass(frozen=True)
@@ -670,6 +671,10 @@ def to_text(greeting: str | None, sections: list[dict], tz: ZoneInfo) -> str:
                         today = f", {h['count']} of at most {h['cadence']['max']} today"
                     else:
                         today = " ✓ today" if h["done_today"] else ""
+                        if h.get("misses_7d"):
+                            today += f", missed {h['misses_7d']} of the last 7 days"
+                        if h.get("minimum"):
+                            today += f" (two-minute version: {h['minimum']})"
                     rows.append(f"{h['name']}: streak {h['streak']} {unit}{'s' if h['streak'] != 1 else ''}{today}")
             case "sleep":
                 sl, usual = s["sleep"], s.get("usual_asleep_min")

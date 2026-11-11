@@ -8,7 +8,7 @@ from aide.agent import CONVERSATION, Agent
 from aide.channels.api import create_app
 from aide.db import Database
 from aide.food import FoodStore
-from aide.habits import HabitStore, streak
+from aide.habits import HabitNudges, HabitStore, streak
 from aide.reminders import ReminderStore
 from aide.tools import ToolRegistry
 from aide.tools.habits import habit_tools
@@ -56,7 +56,8 @@ def test_habit_endpoints(api):
                       headers=AUTH).json()
     assert gym == {"id": 1, "name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "streak": 0,
                    "done_today": False, "last_done": None, "history": [], "workouts": [], "food": None,
-                   "count": None, "counts": {}, "health": None}
+                   "count": None, "counts": {}, "health": None, "minimum": None, "missed_yesterday": False,
+                   "misses_7d": 0}
     read = client.post("/v1/habits", json={"name": "Read"}, headers=AUTH).json()
     assert read["cadence"] == {"type": "daily"}
 
@@ -304,3 +305,49 @@ def test_food_habit_ticks_itself_from_the_food_log(api):
     assert client.get("/v1/habits", headers=AUTH).json()["habits"][0]["done_today"]
     off = client.patch(f"/v1/habits/{healthy['id']}", json={"food": None}, headers=AUTH).json()
     assert off["food"] is None and off["history"] == [(today - timedelta(days=1)).isoformat()]
+
+
+def _began(habits, habit_id, days_ago):
+    """Make a habit as old as `days_ago` days."""
+    then = datetime.now(ROME) - timedelta(days=days_ago)
+    habits.conn.execute("UPDATE habits SET created_at = ? WHERE id = ?", (then.isoformat(), habit_id))
+
+
+def test_two_minute_version_and_misses(api):
+    client, _, habits = api()
+    read = client.post("/v1/habits", json={"name": "Read", "minimum": " one page "}, headers=AUTH).json()
+    assert read["minimum"] == "one page" and read["misses_7d"] == 0 and not read["missed_yesterday"]  # new today
+    _began(habits, read["id"], 10)
+    today = habits.today()
+    for back in (2, 4, 5, 6):
+        habits.check(read["id"], today - timedelta(days=back))
+    h = client.get("/v1/habits", headers=AUTH).json()["habits"][0]
+    assert h["missed_yesterday"] and h["misses_7d"] == 3  # 1, 3 and 7 days ago
+    changed = client.patch(f"/v1/habits/{read['id']}", json={"minimum": None}, headers=AUTH).json()
+    assert changed["minimum"] is None
+    assert client.patch(f"/v1/habits/{read['id']}", json={"minimum": "x" * 121}, headers=AUTH).status_code == 400
+    gym = habits.add("Gym", per_week=3)
+    _began(habits, gym.id, 10)
+    assert habits.get(gym.id).misses_7d == 0  # weekly habits miss weeks, not days
+
+
+async def test_never_miss_twice_nudges_once_in_the_evening(api):
+    client, agent, habits = api()
+    read = habits.add("Read", minimum="one page")
+    walk = habits.add("Walk")
+    fresh = habits.add("Stretch")  # made today: it couldn't be missed yesterday
+    for h in (read, walk):
+        _began(habits, h.id, 5)
+    habits.check(walk.id)  # done today: no nudge
+    nudges = HabitNudges(habits, agent)
+    evening = datetime.now(ROME).replace(hour=20, minute=0)
+    assert nudges.due(evening.replace(hour=12)) == []  # not before 19:00
+    assert [h.name for h in nudges.due(evening)] == ["Read"]
+    await nudges.tick(evening)
+    assert nudges.due(evening) == []  # once a day
+    chat = nudges.chat()
+    assert agent.db.app_conversation(chat)["agent"] == "coach"
+    said = client.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"]
+    assert said[-1]["text"] == ("Never miss twice: Read slipped yesterday. Today keeps it going, even just the "
+                                "two-minute version: one page.")
+    assert fresh.id not in {h.id for h in nudges.due(evening)}

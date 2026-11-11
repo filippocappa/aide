@@ -31,7 +31,7 @@ from .gmail import Gmail
 from .food import FoodStore
 from .foods import FoodDB
 from .objectives import ObjectivePlanner, ObjectiveStore, StudyReplanner
-from .habits import HabitStore
+from .habits import HabitNudges, HabitStore
 from .health import HealthStore
 from .photos import PhotoStore
 from .icloud import ICloudCalendar
@@ -461,6 +461,7 @@ def main() -> None:
             lock_watch.run(),
             focus_watch.run(),
             bedtime.run(),
+            HabitNudges(habits, agent, push).run(),
             *([errands.run(), watches.run(), releases.run()] if errands else []),
             *([browsing.run()] if browsing else []),
             videos.run(),

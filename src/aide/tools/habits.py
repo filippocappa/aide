@@ -32,13 +32,16 @@ def fmt(h: Habit, today: datetime.date) -> str:
     streak = f"streak {h.streak} {unit}{'s' if h.streak != 1 else ''}"
     today = "done today" if h.done_today else "not done today"
     food = f" · {FOOD[h.food]}" if h.food else ""
-    return f"[{h.id}] {h.name} · {cadence}{food} · {streak} · {today}"
+    minimum = f" · two-minute version: {h.minimum}" if h.minimum else ""
+    missed = f" · missed {h.misses_7d} of the last 7 days" if h.misses_7d else ""
+    return f"[{h.id}] {h.name} · {cadence}{food}{minimum} · {streak} · {today}{missed}"
 
 
 def habit_tools(store: HabitStore) -> list[Tool]:
     async def add_habit(name: str, per_week: int | None = None, max: int | None = None,  # noqa: A002
-                        food: str | None = None, health: str | None = None) -> str:
-        return "Added: " + fmt(store.add(name, per_week, max_count=max, food=food, health=health), store.today())
+                        food: str | None = None, health: str | None = None, minimum: str | None = None) -> str:
+        return "Added: " + fmt(store.add(name, per_week, max_count=max, food=food, health=health, minimum=minimum),
+                               store.today())
 
     async def list_habits() -> str:
         habits = store.all()
@@ -68,7 +71,7 @@ def habit_tools(store: HabitStore) -> list[Tool]:
 
     async def update_habit(habit_id: int, name: str | None = None, per_week: int | None = None,
                            max: int | None = None, food: str | None = None, health: str | None = None,  # noqa: A002
-                           workouts: list[str] | None = None) -> str:
+                           workouts: list[str] | None = None, minimum: str | None = None) -> str:
         changes: dict = {}
         if name is not None:
             changes["name"] = name
@@ -86,6 +89,8 @@ def habit_tools(store: HabitStore) -> list[Tool]:
             changes["health"] = None if health == "none" else health
         if workouts is not None:
             changes["workouts"] = workouts
+        if minimum is not None:
+            changes["minimum"] = None if minimum in ("", "none") else minimum
         if not changes:
             raise ValueError("nothing to change")
         return "Updated: " + fmt(store.update(habit_id, **changes), store.today())
@@ -100,18 +105,22 @@ def habit_tools(store: HabitStore) -> list[Tool]:
         return f"Delete habit '{habit.name}' and its {habit.streak}-{'week' if habit.per_week else 'day'} streak"
 
     hid = {"habit_id": {"type": "integer"}}
+    MINIMUM = {"minimum": {"type": "string", "description": "the two-minute version, a few words: still counts as "
+                                                            "done (\"put on running shoes\", \"read one page\")"}}
     date = {"date": {"type": "string", "description": "YYYY-MM-DD, default today; not in the future"}}
     return [
         Tool("add_habit", "Start tracking a habit. Daily unless per_week is given (times per Monday-to-Sunday "
              "week, 1–7). max makes it a limit habit: a daily count that has to stay at or under max (e.g. at most "
              "3 coffees a day), logged with count_habit; with health it also counts from that Apple Health number "
              "(inhaler_usage: the Inhaler Usage the user logs there). food makes it tick itself from the food log: logged (a "
-             "meal logged), protein_g or calories (at that goal). Runs immediately.",
+             "meal logged), protein_g or calories (at that goal). minimum is its two-minute version (\"read one page\"), "
+             "which still counts as done. Runs immediately.",
              _obj({"name": {"type": "string"}, "per_week": {"type": "integer"}, "max": {"type": "integer"},
                    "food": {"type": "string", "enum": list(FOOD_METRICS)},
-                   "health": {"type": "string", "enum": list(HEALTH_COUNTS)}}, ["name"]), add_habit),
-        Tool("list_habits", "List habits with their id in brackets, cadence, streak and whether today is done; for "
-             "a limit habit, today's count and the last 7 days'.", _obj({}, []), list_habits),
+                   "health": {"type": "string", "enum": list(HEALTH_COUNTS)}, **MINIMUM}, ["name"]), add_habit),
+        Tool("list_habits", "List habits with their id in brackets, cadence, two-minute version, streak, whether "
+             "today is done and, for a daily habit, how many of the last 7 days were missed; for a limit habit, "
+             "today's count and the last 7 days'.", _obj({}, []), list_habits),
         Tool("check_habit", "Mark a habit as done for a day (default today). done=false undoes it. Not for limit "
              "habits (count_habit). Runs immediately.",
              _obj({**hid, **date, "done": {"type": "boolean"}}, ["habit_id"]), check_habit),
@@ -134,12 +143,12 @@ def habit_tools(store: HabitStore) -> list[Tool]:
         Tool("update_habit", "Change a habit: rename it, make it daily (per_week 0) or so many times a week, make it a "
              "limit habit or change its limit (max; 0 makes it an ordinary habit again), tick it from the food log "
              "(food; none stops), count it from Apple Health (health; none stops), or tick it from Watch workouts "
-             "(workouts: types like running, strength; [] stops). Pass only what changes; the history stays. Runs "
-             "immediately.",
+             "(workouts: types like running, strength; [] stops), or set its two-minute version (minimum; none "
+             "removes it). Pass only what changes; the history stays. Runs immediately.",
              _obj({**hid, "name": {"type": "string"}, "per_week": {"type": "integer"}, "max": {"type": "integer"},
                    "food": {"type": "string", "enum": [*FOOD_METRICS, "none"]},
                    "health": {"type": "string", "enum": [*HEALTH_COUNTS, "none"]},
-                   "workouts": {"type": "array", "items": {"type": "string"}}}, ["habit_id"]), update_habit),
+                   "workouts": {"type": "array", "items": {"type": "string"}}, **MINIMUM}, ["habit_id"]), update_habit),
         Tool("delete_habit", "Stop tracking a habit and drop its history. Needs the user's confirmation: it is "
              "queued, and runs only when the user taps Confirm in the app.", _obj(hid, ["habit_id"]),
              delete_habit, confirm=True, describe=describe_delete, target_arg="habit_id"),

@@ -408,6 +408,7 @@ class HabitIn(BaseModel):
     workouts: list[str] = []
     food: str | None = None
     health: str | None = None  # a limit habit's Apple Health count: inhaler_usage
+    minimum: str | None = None  # the two-minute version
 
 
 class HabitPatch(BaseModel):
@@ -416,6 +417,7 @@ class HabitPatch(BaseModel):
     workouts: list[str] | None = None
     food: str | None = None
     health: str | None = None
+    minimum: str | None = None
 
 
 class CountIn(BaseModel):
@@ -1328,14 +1330,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/habits", dependencies=[Depends(auth)])
     async def add_habit(body: HabitIn):
         return habits.add(body.name, workouts=body.workouts, food=body.food, health=body.health,
-                          **cadence(body.cadence)).as_json()
+                          minimum=body.minimum, **cadence(body.cadence)).as_json()
 
     @app.patch("/v1/habits/{habit_id}", dependencies=[Depends(auth)])
     async def edit_habit(habit_id: int, body: HabitPatch):
         if habits.get(habit_id) is None:
             raise HTTPException(404, f"no habit {habit_id}")
         changes = body.model_dump(exclude_unset=True, exclude={"cadence"})
-        changes = {k: v for k, v in changes.items() if v is not None or k in ("food", "health")}  # null stops it
+        changes = {k: v for k, v in changes.items() if v is not None or k in ("food", "health", "minimum")}  # null stops it
         if body.cadence is not None:
             changes |= cadence(body.cadence)
         return habits.update(habit_id, **changes).as_json()
