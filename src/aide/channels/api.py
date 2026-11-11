@@ -23,6 +23,7 @@ from ..agent import CONVERSATION, PENDING_TTL, SCANNED, TEAM, Agent, Turn, Unkno
 from ..agents import AGENTS, ORCHESTRATOR, check_agent, connectors, mentions
 from ..db import Database
 from ..decide import Decider
+from ..feedback import FeedbackStore
 from ..digest import DigestService, check_kind
 from ..drafts import Drafts
 from ..browser import BrowserError, check_site, full_url, site_of
@@ -377,6 +378,12 @@ class ConversationIn(BaseModel):
 
 class ThinkIn(ConversationIn):
     on: bool = True
+
+
+class FeedbackIn(ConversationIn):
+    message_id: int
+    rating: str | None  # up | down | None (taken back)
+    note: str | None = None
 
 
 class NewConversationIn(BaseModel):
@@ -737,6 +744,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                examplan: ExamPlan | None = None, passwords: PasswordStore | None = None,
                esse3: Esse3Reader | None = None, decider: Decider | None = None) -> FastAPI:
     db: Database = agent.db
+    rated_replies = FeedbackStore(db.conn)
     calls = calls or LiveCalls(agent, db.conn)  # no voice to connect: calls are off
     push = push or Push(db.conn)  # no key: devices are kept, nothing is sent
     food = food or FoodStore(db.conn, tz)
@@ -830,6 +838,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     def chat_json(conversation: str, turn: Turn) -> dict:
         return {"reply": turn.reply, "pending": pending(), "conversation_id": conversation,
+                "message_id": agent.last_reply_id(CONVERSATION, conversation),
                 "attachments": turn.attachments, "consulted": turn.consulted,
                 "team": [team_json(t) for t in turn.team], **({"routed": turn.routed} if turn.routed else {})}
 
@@ -1061,7 +1070,10 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.get("/v1/history", dependencies=[Depends(auth)])
     async def history(limit: int = 50, conversation_id: str | None = None):
         messages = agent.visible_history(CONVERSATION, max(1, min(limit, 500)), conversation_id)
+        rated = rated_replies.ratings(agent._resolve(CONVERSATION, conversation_id))
         for m in messages:
+            if m.get("id") in rated:
+                m["feedback"] = rated[m["id"]]
             m["team"] = [team_json(t) for t in m["team"]]  # reminders as they are now, so a reload shows ticks made since
             for a in m["attachments"]:
                 if a["type"] == "reminders":
@@ -1093,6 +1105,15 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         call_rows = calls.store.since(conversation_id, since) if conversation_id else []
         return {"messages": messages, "smart": agent.thinking(CONVERSATION, conversation_id), "calls": call_rows,
                 **({"working": running} if running else {})}
+
+    @app.post("/v1/feedback", dependencies=[Depends(auth)])
+    async def rate(body: FeedbackIn):
+        try:
+            saved = rated_replies.rate(agent._resolve(CONVERSATION, body.conversation_id), body.message_id, body.rating,
+                                  body.note)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "rating": saved["rating"] if saved else None}
 
     @app.get("/v1/team", dependencies=[Depends(auth)])
     async def team(limit: int = 100):

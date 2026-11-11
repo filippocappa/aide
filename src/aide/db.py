@@ -274,8 +274,8 @@ class Database:
         self.conn.execute("UPDATE conversations SET model = ? WHERE id = ?", (model, conversation_id))
 
     def history_with_ts(self, conversation_id: int) -> list[tuple[str, object, str, list, list, list, dict | None,
-                                                                  dict | None]]:
-        """(role, content, ts, attachments, consulted, team, routine, routed) per message, oldest first."""
+                                                                  dict | None, int]]:
+        """(role, content, ts, attachments, consulted, team, routine, routed, id) per message, oldest first."""
         rows = self.conn.execute(
             "SELECT id, role, content, ts, attachments, consulted, routine, routed FROM messages "
             "WHERE conversation_id = ? ORDER BY id",
@@ -290,7 +290,7 @@ class Database:
                 {"from": t["sender"], "to": t["recipient"], "text": t["text"], "ts": t["ts"]})
         return [(r["role"], json.loads(r["content"]), r["ts"], json.loads(r["attachments"] or "[]"),
                  json.loads(r["consulted"] or "[]"), team.get(r["id"], []), json.loads(r["routine"] or "null"),
-                 json.loads(r["routed"] or "null"))
+                 json.loads(r["routed"] or "null"), r["id"])
                 for r in rows]
 
     def team_messages(self, limit: int) -> list[dict]:

@@ -303,9 +303,15 @@ class Agent:
         """What a chat screen should show: the text both sides wrote, without tool calls or notes."""
         return self._visible(self._resolve(channel, conversation))[-limit:]
 
+    def last_reply_id(self, channel: str, conversation: str | None) -> int | None:
+        """The id of the chat's latest reply (`messages.id`), for rating it (docs/API.md, "Rating a reply")."""
+        row = self.db.conn.execute("SELECT MAX(id) FROM messages WHERE conversation_id = ? AND role = 'assistant'",
+                                   (self._resolve(channel, conversation),)).fetchone()
+        return row[0]
+
     def _visible(self, conversation_id: int) -> list[dict]:
         out = []
-        for role, content, ts, attachments, consulted, team, routine, routed in self.db.history_with_ts(conversation_id):
+        for role, content, ts, attachments, consulted, team, routine, routed, mid in self.db.history_with_ts(conversation_id):
             if role == "user":
                 if isinstance(content, str) and (shown := _answered(content)):
                     out.append({"role": "assistant", "text": shown, "ts": ts, "attachments": [], "consulted": [],
@@ -329,8 +335,8 @@ class Agent:
             else:
                 text = "\n\n".join(b["text"] for b in content if b.get("type") == "text").strip()
             if text:
-                out.append({"role": role, "text": text, "ts": ts, "attachments": attachments, "consulted": consulted,
-                            "team": team, **({"routine": routine} if routine else {}),
+                out.append({"id": mid, "role": role, "text": text, "ts": ts, "attachments": attachments,
+                            "consulted": consulted, "team": team, **({"routine": routine} if routine else {}),
                             **({"routed": routed} if routed else {})})
         return out
 
