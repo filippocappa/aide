@@ -98,6 +98,8 @@ enum Attachment: Decodable, Hashable {
     case payments([Payment])
     /// Buttons to pages of the app, opened only when tapped.
     case open([OpenLink])
+    /// Charts an agent drew of the user's own case.
+    case charts([ChartSpec])
     case unknown // a type this app version doesn't know: skipped
 
     init(from decoder: Decoder) throws {
@@ -123,17 +125,56 @@ enum Attachment: Decodable, Hashable {
         case "review": self = .review(try c.decode(ReviewSession.self, forKey: .review))
         case "payments": self = .payments(try c.decode([Payment].self, forKey: .payments))
         case "open": self = .open(try c.decode([OpenLink].self, forKey: .open))
+        case "charts": self = .charts(try c.decode([ChartSpec].self, forKey: .charts))
         default: self = .unknown
         }
     }
     private enum CodingKeys: String, CodingKey {
         case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
-        case quiz, review, payments, open, priceWatches, releases, errandId, site
+        case quiz, review, payments, open, charts, priceWatches, releases, errandId, site
     }
 
     static func known(_ list: [Attachment]?) -> [Attachment] {
         (list ?? []).filter { $0 != .unknown }
     }
+}
+
+/// A chart an agent drew of the user's own case (docs/API.md, Chat, attachments, `charts`; #67): curves, a shift
+/// that moves from before to after, equilibria with guide lines to the axes, shaded areas.
+struct ChartSpec: Decodable, Hashable, Identifiable {
+    struct Axis: Decodable, Hashable {
+        let label: String
+        let min: Double
+        let max: Double
+    }
+    struct Curve: Decodable, Hashable {
+        let label: String
+        /// [x, y] in x order; a nil y is off the axis (a gap).
+        let points: [[Double?]]
+        var after: [[Double?]]? = nil
+        var afterLabel: String? = nil
+        var dashed: Bool = false
+    }
+    struct Point: Decodable, Hashable {
+        let label: String
+        let x: Double
+        let y: Double
+        var after: Bool = false
+    }
+    struct Area: Decodable, Hashable {
+        let label: String
+        let points: [[Double]]
+    }
+    let id: String
+    let title: String
+    var caption: String? = nil
+    let x: Axis
+    let y: Axis
+    let curves: [Curve]
+    var points: [Point] = []
+    var areas: [Area] = []
+
+    var shifts: Bool { curves.contains { $0.after != nil } }
 }
 
 /// A button under a reply that opens a page of the app (`aide://…`; docs/API.md, Attachments, `open`).

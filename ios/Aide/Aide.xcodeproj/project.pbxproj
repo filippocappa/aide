@@ -38,6 +38,7 @@
 		12CFA31D41B26455213DAC89 /* MealIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D42096136F2F92641EAC10 /* MealIntents.swift */; };
 		134B9B0384FE48DECD7613EE /* VoiceLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67BBAA4A50EA4E94D5CE2C49 /* VoiceLog.swift */; };
 		143A571F111EC65BA92C06E9 /* SpeechDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B823567631C9266E89C0C5 /* SpeechDetector.swift */; };
+		1738245763538ECC8C18530B /* ChartCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4745FE6D2AFB699752059723 /* ChartCard.swift */; };
 		1893AFF4B1D54A156C62BC0B /* Arithmetic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BB2B4B8577CDF6823F8251 /* Arithmetic.swift */; };
 		18FD927E56D5759F9BF2BFA6 /* MacMenuBarPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A8D813CE0493DAE81AB8566 /* MacMenuBarPanel.swift */; };
 		1CCAA7C64E276A1A286C23BE /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63500D066A75FEEDD7B682E9 /* Keychain.swift */; };
@@ -190,6 +191,7 @@
 		AE0859B5C95E576736CFC536 /* UsageMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0907972D2ED227BDE1E5A9 /* UsageMath.swift */; };
 		AE18902BD0E8216C3EAD480D /* MacUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B681840D8379B92E739C78A /* MacUsage.swift */; };
 		AE4481965DD74DA5C291F29E /* LockMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1292B0F4A4E45229FB6C10E0 /* LockMonitor.swift */; };
+		AE8542172C3DA4A5425D9B56 /* ChartCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4745FE6D2AFB699752059723 /* ChartCard.swift */; };
 		AEEA7D4B2EB40173AC263CF1 /* PracticeExamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E89DCCE1ECE38E9C6D93676B /* PracticeExamView.swift */; };
 		B262BB3779D8168CC6BB3B0A /* VoiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA4BE14158F7F5103D13AB0 /* VoiceController.swift */; };
 		B498B793AEFA7987A267B6D0 /* Figure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E5D11C27686D088BF88108 /* Figure.swift */; };
@@ -383,6 +385,7 @@
 		415A5A55F6590C16207BD71D /* LockMonitor.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LockMonitor.entitlements; sourceTree = "<group>"; };
 		415C01E53630052EF49DC680 /* ScreenTimeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeView.swift; sourceTree = "<group>"; };
 		44C5DADD1850C6A342CB0F42 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		4745FE6D2AFB699752059723 /* ChartCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChartCard.swift; sourceTree = "<group>"; };
 		48684A5718D72337AAAA533D /* FocusLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusLiveActivity.swift; sourceTree = "<group>"; };
 		48BBC0402A6DEAC831D6D3F0 /* LiveActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityAttributes.swift; sourceTree = "<group>"; };
 		48D3B662149E81DAF5A28319 /* TouchTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchTracker.swift; sourceTree = "<group>"; };
@@ -543,6 +546,7 @@
 				FCC8A3B51912EF258E8FD9A4 /* BankViews.swift */,
 				F8C7557E4884EAD2417AE8DA /* BedtimeView.swift */,
 				CAD7E67230FC828BB66C66EC /* BodyViews.swift */,
+				4745FE6D2AFB699752059723 /* ChartCard.swift */,
 				9AEB482052BA9CB53D3B8410 /* ChatsView.swift */,
 				44C5DADD1850C6A342CB0F42 /* ChatView.swift */,
 				58AE8C76701A110B13945027 /* ChatViewModel.swift */,
@@ -1212,6 +1216,7 @@
 				EF6EE2F4E8AB74004D48675C /* BankViews.swift in Sources */,
 				3C310BD9B33D48E1640A8288 /* BedtimeView.swift in Sources */,
 				93C91AA0FC22D5E3A9EDF839 /* BodyViews.swift in Sources */,
+				1738245763538ECC8C18530B /* ChartCard.swift in Sources */,
 				25C294088E5C4958EA4A069A /* ChatView.swift in Sources */,
 				3175C7034C85CC1ECD2A322F /* ChatViewModel.swift in Sources */,
 				3C0ACD19CCAFE22FFC075630 /* ChatsView.swift in Sources */,
@@ -1331,6 +1336,7 @@
 				FA3FEF8775B40F8FF1172CD9 /* BankViews.swift in Sources */,
 				C5018E9FDE0C54B6F23F2CD2 /* BedtimeView.swift in Sources */,
 				9FB906D2A531CC060C95C877 /* BodyViews.swift in Sources */,
+				AE8542172C3DA4A5425D9B56 /* ChartCard.swift in Sources */,
 				7A1944AB03B3DAB2D824A08E /* ChatView.swift in Sources */,
 				DCEC0F33C64ACC4F4D889BCE /* ChatViewModel.swift in Sources */,
 				AAEBF323BEFFB372CAD82193 /* ChatsView.swift in Sources */,

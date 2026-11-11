@@ -1082,6 +1082,8 @@ struct AttachmentCard: View {
             ReviewStartCard(session: session)
         case .open(let links):
             if !links.isEmpty { OpenLinksCard(links: links) }
+        case .charts(let charts):
+            VStack(spacing: 10) { ForEach(charts) { ChartCard(chart: $0) } }
         case .unknown:
             EmptyView()
         }

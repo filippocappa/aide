@@ -119,6 +119,15 @@ from the tools the assistant used in that turn, not parsed from its text:
     (Claude plan), `browser`, `nutrition`, `videos`, `notifications`, `reminders`, `health`, `bedtime` (since
     2026-11-03), `location` (location and trams), `screentime`, `payments`, `moodle`, `obsidian`. A page the device doesn't have (the Mac has no
     `notifications`, `reminders`, `health`, `location`, `payments`) opens Settings.
+- `charts`: a chart an agent drew of the user's own case (since 2026-11-11, #67; Professor's and Aide's `draw_chart`),
+  `{"type": "charts", "charts": [Chart]}`. A Chart: `{"id": "ch_…", "title", "caption" (or null), "x": {"label",
+  "min", "max"}, "y": {"label", "min", "max"}, "curves": [Curve], "points": [{"label", "x", "y", "after"}], "areas":
+  [{"label", "points": [[x, y], …]}]}`. A Curve: `{"label", "points": [[x, y], …], "after": [[x, y], …] | null,
+  "after_label": "AD′" | null, "dashed": false}`: `points` are in x order, a `y` of `null` is off the y axis (a gap
+  in the line); `after` is the curve once shifted, sampled at the same x values as `points` when both are formulas
+  (81 each), so the app can move it from before to after. A point with `after` true sits on the shifted curves (an
+  equilibrium after the change); an area is a polygon to shade, within the axes. The server checked it all, so the
+  app draws it as given.
 - At most one attachment per type; an item shown twice in a turn appears once, in its latest state. The app
   skips types it doesn't know.
 - The model is told the app shows these as cards, so the text is a short sentence, not the list line by line.
