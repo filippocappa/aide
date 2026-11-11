@@ -8,9 +8,9 @@ The work is counted per notebook topic, not per word of the course: learning it 
 what its lesson or answers show is known), practising it (its flashcards over three rounds, its checked questions,
 its exercise set's items, less those last answered right), then per target the mock exams left (the exam's length
 ×1.5, for taking and marking) and the last review. While lectures remain before the date, the estimate is stretched
-by the share still to come. The credits set a floor: 25 h of work each (Esse3's transcript, else the
-Introduction), less the course's lectures (UniTo's timetable, else the calendar's), is the user's own study; while the notes count less, the
-rest is practice (exercises, past exams). The pace is the user's own where the Study page's answers show it (the gaps between
+by the share still to come. The credits are only a ceiling: 25 h of work each (Esse3's transcript, else the
+Introduction), less the course's lectures (UniTo's timetable, else the calendar's), is the most own study a course
+can take; when the notes count more (something's off with them), the phases are cut down to it. The pace is the user's own where the Study page's answers show it (the gaps between
 answers in a run), else a default.
 
 The days: from today to the day before the date, each one's free time (wake to bed, less the calendar's events with
@@ -430,7 +430,7 @@ class ExamPlan:
         return (found, "notes") if found else None
 
     def _by_credits(self, c: dict, work: dict, data: dict, mine: list, notes: float, now: datetime) -> dict | None:
-        """What the credits say is left of the user's own study for the target: 25 h a credit less the lectures in
+        """The ceiling the credits set on what's left of the user's own study for the target: 25 h a credit less the lectures in
         the timetable (held and to come), the part of it the target's topics are (by words), less what's done: the
         larger of the notes' work done and the focus time logged since the first lecture."""
         if not data["credits"] or not work["topics"]:
@@ -449,7 +449,7 @@ class ExamPlan:
         left = min(base * notes_left, max(0.0, base - studied * share))
         return {"credits": cr, "from": source, "total_min": round(cr * CREDIT_H * 60), "lectures_min": round(lectures),
                 "own_min": round(own), "share": round(share, 2), "studied_min": studied, "left_min": round(left),
-                "notes_min": round(notes), "applied": left > notes}
+                "notes_min": round(notes), "applied": notes > left}
 
     async def _planner(self, today: date) -> list:
         """The UniTo planner's lectures from COURSE_RANGE back to COURSE_RANGE ahead (cancelled ones and exams
@@ -510,8 +510,9 @@ class ExamPlan:
                       ("mocks", work["mocks"]), ("review", work["review"] * stretch)]
             notes = sum(m for _, m in phases)
             by_credits = self._by_credits(c, work, data[c["id"]], mine, notes, now)
-            if by_credits and by_credits["applied"]:  # the rest of the credits' hours as practice
-                phases[1] = ("practise", phases[1][1] + by_credits["left_min"] - notes)
+            if by_credits and by_credits["applied"]:  # the notes count more than the credits allow: cut down
+                k = by_credits["left_min"] / notes
+                phases = [(p, m * k) for p, m in phases]
             targets.append({"course": c, "target": target, "fallback": fallback, "work": work, "phases": phases,
                             "mine": mine, "by_credits": by_credits,
                             "need": round(sum(m for _, m in phases)), "held": held, "left": left, "stretch": stretch,
@@ -610,12 +611,8 @@ class ExamPlan:
                    f"{_hours(b['own_min'])} are your own study")
             if b["applied"]:
                 part = f", {round(b['share'] * 100)}% of it for these topics" if b["share"] < 1 else ""
-                out.append(f"{own}{part}: {_hours(b['left_min'])} still to do, more than the "
-                           f"{_hours(b['notes_min'])} the notes add up to. The rest is counted as practice: "
-                           f"exercises and past exams.")
-            elif b["notes_min"] > 2.5 * b["left_min"] and b["share"] == 1:
-                out.append(f"The notes add up to {_hours(b['notes_min'])}, far above what's left of the "
-                           f"{_hours(b['own_min'])} of your own study {cr} mean: the estimate may run high.")
+                out.append(f"The notes add up to {_hours(b['notes_min'])}, more than the credits allow: {own} at "
+                           f"most{part}, {_hours(b['left_min'])} still to do. The plan counts that.")
         changes = self.notebook.changes(c["id"], utcnow() - timedelta(days=120)) if self.notebook else []
         if changes:
             since = datetime.fromisoformat(changes[0]["at"])
@@ -739,8 +736,8 @@ class ExamPlan:
         if parts:
             out += f" ({', '.join(parts)})"
         if (b := item.get("by_credits")) and b["applied"]:
-            out += (f", from the credits: {b['credits']:g} CFU less {_hours(b['lectures_min'])} of lectures, "
-                    f"{_hours(b['left_min'])} of own study left; the notes alone {_hours(b['notes_min'])}")
+            out += (f", cut to the credits' ceiling ({b['credits']:g} CFU less {_hours(b['lectures_min'])} of lectures: "
+                    f"{_hours(b['left_min'])} left); the notes alone {_hours(b['notes_min'])}")
         out += f"; {_hours(item['free_min'])} free before it"
         out += {"fits": ": fits", "tight": ": tight", "empty": "",
                 "short": f": SHORT by {_hours(item['short_min'])}"}[item["status"]]

@@ -94,7 +94,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   the user grades flashcards (Again/Hard/Good/Easy), a slow right MCQ is Hard, and from 21 days before the course's next
   exam (`QuizStore.exam`: the exam plan's `targets`, else the course's dates) items come due at 95% instead of 90%.
 - `examplan.py`: the exam plan (#68): the hours each course's next exam still needs (learn, practise, mocks, review,
-  less what's known; at least the credits' own study: 25 h a CFU from Esse3 less the lectures in UniTo's timetable)
+  less what's known; at most the credits' own study: 25 h a CFU from Esse3 less the lectures in UniTo's timetable)
   against the free days before it, under a daily cap; no model call. Professor's `study_plan`.
 - `lessons.py`: a lesson per notebook topic (hook, goals, steps with checks), written from the topic's notes through
   `engine.py`; marking, Ask and the explanation back.
