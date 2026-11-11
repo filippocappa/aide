@@ -1124,6 +1124,10 @@ kind, and whether the hours would fit by then. A course with none is in `undated
   Introduction, else a mock's, else 90 min) ×1.5 for taking and going through it;
 - review: 15% of the whole course's learn and practise, at least an hour.
 While lectures remain before the date, learn, practise and review are stretched by (held + left) / held (`stretch`).
+- the credits (since 2026-11-11) set a floor: 25 h of work a credit (Esse3's transcript, else the Introduction), less
+  the course's lectures in the timetable (held and to come), is the user's own study; for a mid-term with topics
+  picked, its share by words; less what's done (the larger of the notes' work done and the focus time since the
+  first lecture). While the notes count less, the rest is added to practise (exercises, past exams): `by_credits`.
 The paces are the user's own once the Study page's answers show 20 of a kind (gaps of 5 s to 10 min between answers in
 a run; `assumptions`, with `learnt`).
 
@@ -1160,12 +1164,14 @@ Target: `{"course": 5, "name": "macroeconomics", "what": "written exam", "kind":
 "to": "2026-12-30"}], "days": [{"date": "2026-11-07", "minutes": 25, "phases": {"learn": 25}}], "topics": [{"id":
 "t_…", "title": "…", "words": 2100, "cards": 8, "questions": 6, "exercises": 3, "known": 5, "items": 17, "lesson":
 null | "3/7" | "done" | "writing", "learn_min": 30, "practise_min": 44}], "mocks": {"count": 3, "taken": 1,
-"minutes_each": 120}, "lectures_held": 9, "lectures_left": 3, "stretch": 1.33, "studied_week_min": 150, "warnings":
+"minutes_each": 120}, "lectures_held": 9, "lectures_left": 3, "stretch": 1.33, "studied_week_min": 150, "by_credits": null or {"credits": 12, "from": "esse3" | "notes",
+"total_min": 18000, "lectures_min": 4860, "own_min": 13140, "share": 1.0, "studied_min": 0, "left_min": 13140,
+"notes_min": 2453, "applied": true}, "warnings":
 ["Short by 6 h before the written exam on Wed 20 Jan. The February exam on 17 Feb would fit."], "history": [{"date":
 "2026-11-07", "need_min": 1840}], "moved": null or {"since": "2026-10-31", "minutes": 240, "topics": 2, "lectures": 2}}`.
 - `warnings`: short (and whether the fallback fits), another target within 7 days before it, no past exams (the mocks
-  are Professor's own), the notes far from what the course's credits suggest (25 h a credit, ~15 of them the user's
-  own), 3 or more lectures since the notes last changed, a date that's only the user's guess.
+  are Professor's own), the credits' own study above what the notes count (the floor applied), or the notes far
+  above it, 3 or more lectures since the notes last changed, a date that's only the user's guess.
 - `history`: the day's need for this date, one a day for 90 days; `moved`: against a week ago (more topics written,
   more lectures held).
 
