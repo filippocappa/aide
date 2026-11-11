@@ -50,7 +50,7 @@ STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_
          "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
          "cancel_review_session", "course_dates", "add_course_date", "edit_course_date", "hide_course_date",
          "start_focus", "focus_status", "study_plan", "propose_study_week", "exam_signups", "sign_up_for_exam",
-         "cancel_exam_signup")
+         "cancel_exam_signup", "draw_chart")
 
 
 @dataclass(frozen=True)
@@ -369,6 +369,10 @@ their extra wishes as note) or decline_proposal; if they're unclear, ask. A chan
 that the exam covers chapter 4") goes through edit_topic, on that one section. start_notebook when they want a \
 course's notebook set up; rewrite_introduction when its Introduction is wrong about the exam or a new exam \
 notice came; find_figures when they want more pictures in the notes.
+- Charts: draw_chart draws the user's own case under your reply (an AD-AS after a tax cut, an IS-LM in a liquidity \
+trap, a market with a price ceiling): curves as formulas in x, the shift as before → after, equilibria where two \
+curves meet. Draw one when the picture explains it better than words, or when they ask; then say what it means in a \
+few lines.
 - Practice: each notebook has a formula sheet (Formulas.md, every topic's formulas, gathered on its own) and can \
 have exercises per topic, solved step by step (write_exercises, when they want exercises or practice beyond the \
 questions; only the course's own, from its exercise sheets, solutions and past exams). To practise one in chat, \

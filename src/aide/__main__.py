@@ -84,6 +84,7 @@ from .tools.search import Tavily, search_tools
 from .tools.plans import plan_tools
 from .tools.quiz import quiz_tools
 from .tools.moodle import moodle_tools
+from .tools.charts import chart_tools
 from .tools.study import study_tools
 from .tools.transit import leave_tools, transit_tools
 from .tools.videos import video_tools
@@ -200,6 +201,7 @@ def main() -> None:
     if not engine.available:
         log.info("Claude Code not found: notes are written through OpenRouter only")
     tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
+    tools += chart_tools()
     moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push,  # its worker comes later
                         save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token), notebook=notebook)
     tools += moodle_tools(moodle)
