@@ -61,6 +61,7 @@ struct HabitRow: View {
         }
         if let food = habit.food { parts.append("\(FoodHabit.label(food)) ticks it") }
         if habit.health == "inhaler_usage" { parts.append("from Health") }
+        if let minimum = habit.minimum { parts.append("or just: \(minimum)") }
         return parts.joined(separator: " · ")
     }
 }
@@ -249,6 +250,7 @@ struct HabitSheet: View {
     @State private var workouts: Set<String>
     /// "" for none.
     @State private var food: String
+    @State private var minimum: String
     @State private var error: String?
 
     init(habit: Habit?, save: @escaping (HabitNew) async -> String?) {
@@ -260,6 +262,7 @@ struct HabitSheet: View {
         _most = State(initialValue: habit?.cadence.max ?? 5)
         _workouts = State(initialValue: Set(habit?.workouts ?? []))
         _food = State(initialValue: habit?.food ?? "")
+        _minimum = State(initialValue: habit?.minimum ?? "")
     }
 
     var body: some View {
@@ -280,6 +283,13 @@ struct HabitSheet: View {
                     }
                 }
                 if kind != "limit" {
+                    Section {
+                        TextField("e.g. Read one page", text: $minimum)
+                    } header: {
+                        Text("Two-minute version")
+                    } footer: {
+                        Text("The smallest version that still counts, for a day when the whole thing won't happen. Coach offers it the evening after a miss: never miss twice.")
+                    }
                     Section {
                         NavigationLink {
                             WorkoutPicker(selection: $workouts).macPageBack()
@@ -312,7 +322,8 @@ struct HabitSheet: View {
                                                cadence: .init(type: kind, perWeek: kind == "weekly" ? perWeek : nil,
                                                               max: limit ? most : nil),
                                                workouts: limit ? [] : workouts.contains("any") ? ["any"] : workouts.sorted(),
-                                               food: limit || food.isEmpty ? nil : food)
+                                               food: limit || food.isEmpty ? nil : food,
+                                               minimum: limit || minimum.trimmingCharacters(in: .whitespaces).isEmpty ? nil : minimum.trimmingCharacters(in: .whitespaces))
                             if let message = await save(new) { error = message } else { dismiss() }
                         }
                     }

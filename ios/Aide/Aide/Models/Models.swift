@@ -613,6 +613,8 @@ struct Habit: Decodable, Identifiable, Hashable {
     var health: String? = nil
     /// With `health`: what was logged through Aide on each of the last 7 days, which the app writes to Health.
     var healthLogged: [String: Int]? = nil
+    /// Its two-minute version ("read one page"), which still counts. nil: none (or an older server).
+    var minimum: String? = nil
 
     var isLimit: Bool { cadence.type == "limit" }
     var isWeekly: Bool { cadence.type == "weekly" }
@@ -645,8 +647,10 @@ struct HabitNew: Encodable {
     var workouts: [String] = []
     /// Always sent, so clearing it in the editor clears it on the server.
     var food: String?
+    /// The two-minute version; always sent, so clearing it clears it on the server.
+    var minimum: String? = nil
 
-    enum CodingKeys: String, CodingKey { case name, cadence, workouts, food }
+    enum CodingKeys: String, CodingKey { case name, cadence, workouts, food, minimum }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -654,6 +658,7 @@ struct HabitNew: Encodable {
         try c.encode(cadence, forKey: .cadence)
         try c.encode(workouts, forKey: .workouts)
         try c.encode(food, forKey: .food) // null too
+        try c.encode(minimum, forKey: .minimum)
     }
 }
 

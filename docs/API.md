@@ -1755,7 +1755,18 @@ round has no break, `break_min` 0). It starts now.
 Habits are what you always do: they never end, and they keep a streak and a grid. (What a day, week or month is
 about is an objective, see Objectives.)
 
-Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3} | {"type": "limit", "max": 5}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"], "food": null, "count": null, "counts": {}, "health": null}`.
+Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": "weekly", "per_week": 3} | {"type": "limit", "max": 5}, "streak": 4, "done_today": false, "last_done": "2026-10-18" | null, "history": ["2026-10-18", "2026-10-17", …], "workouts": ["strength"], "food": null, "count": null, "counts": {}, "health": null, "minimum": null, "missed_yesterday": false, "misses_7d": 0}`.
+
+**Never miss twice** (since 2026-11-11, #52):
+- `minimum` (default `null`, up to 120 characters) is the habit's two-minute version ("read one page"): doing it
+  still counts as done, so it's checked like the habit. Set it on `POST` or `PATCH` (`null` or `""` removes it).
+- `missed_yesterday` says a daily habit wasn't done yesterday (and existed then). `misses_7d` counts the days of the
+  7 before today it wasn't done, from the day it began. Both are `false`/`0` on weekly habits; on limit habits a miss
+  is a day over the limit.
+- Each evening (from 19:00) Coach writes once in its "Habits" chat, with a push, about the daily habits missed
+  yesterday and not done yet today, offering the two-minute version. When one keeps slipping (3 or more misses in
+  7 days), Coach offers a smaller version in chat and sets `minimum` only on the user's OK; when that slips too, it
+  asks what's in the way. The weekly digest's Looking ahead mentions a habit that keeps slipping.
 
 `workouts` (default `[]`) lists the Apple Watch workout types that check the habit by themselves (see Apple Health,
 "Workout types"; `"any"` matches every type). When a health upload has a workout of a listed type that lasted at
@@ -1795,8 +1806,8 @@ days, today included), newest first, for a GitHub-style grid. Every endpoint tha
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/habits` | | `{"habits": [Habit]}` |
-| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "workouts": ["strength"], "food": null}` (`workouts`, `food`, `health` optional) | the new Habit |
-| `PATCH /v1/habits/{id}` | any of `name`, `cadence`, `workouts`, `food`, `health` (`null` turns `food` or `health` off) | the updated Habit |
+| `POST /v1/habits` | `{"name": "Gym", "cadence": {"type": "weekly", "per_week": 3}, "workouts": ["strength"], "food": null}` (`workouts`, `food`, `health`, `minimum` optional) | the new Habit |
+| `PATCH /v1/habits/{id}` | any of `name`, `cadence`, `workouts`, `food`, `health`, `minimum` (`null` turns `food`, `health` or `minimum` off) | the updated Habit |
 | `POST /v1/habits/{id}/check` | `{"date": "2026-10-18"}` (optional, default today; send `"done": false` to undo) | the updated Habit |
 | `POST /v1/habits/{id}/count` | `{"add": 1}` (default 1; `-1` takes one back, never below 0), `"date"` optional (default today) | the updated Habit. `400` for a habit that isn't a limit habit, or a future date. |
 | `DELETE /v1/habits/{id}` | | `{"ok": true}` |
