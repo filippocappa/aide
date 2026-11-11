@@ -612,6 +612,7 @@ struct TopicPageView: View {
     @State private var learning: LessonTopicRef?
     @State private var focusing: FocusTarget?
     @State private var openSource: TopicSourceFile?
+    @State private var basis: NotebookTopic?
 
     var body: some View {
         NoteScroll(headings: headings) {
@@ -619,6 +620,15 @@ struct TopicPageView: View {
                 Text(topic.title).font(.largeTitle.bold())
                 if let summary = page?.summary ?? topic.summary {
                     Text(summary.markdown).font(.title3).foregroundStyle(.secondary)
+                }
+                if let bases = page?.buildsOn ?? topic.buildsOn, !bases.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("Builds on").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                        ForEach(bases, id: \.self) { b in
+                            Button(b.title) { basis = NotebookTopic(id: b.id, position: 0, title: b.title) }
+                                .font(.footnote).buttonStyle(.borderless).tint(Theme.study)
+                        }
+                    }
                 }
                 if let course {
                     HStack(spacing: 8) {
@@ -666,6 +676,7 @@ struct TopicPageView: View {
         }
         .sheet(item: $focusing, onDismiss: { Task { await env.refreshFocus() } }) { FocusStartSheet(target: $0) }
         .sheet(item: $openSource) { PDFSheet(file: $0.file, page: $0.pages.first) }
+        .navigationDestination(item: $basis) { TopicPageView(topic: $0, course: course) }
         .macWindowCover(item: $learning) { ref in
             if let course { LessonView(topic: ref, course: course.id, courseName: course.title) }
         }

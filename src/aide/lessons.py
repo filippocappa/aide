@@ -394,11 +394,12 @@ class LessonStore:
     # -- a course's path ---------------------------------------------------------------
 
     def next_topic(self, course_id: int, after: int | None = None) -> dict | None:
-        """The topic to learn next: the first written one in order (after `after`, when given) whose lesson isn't
+        """The topic to learn next: the first written one in order (a topic after what it builds on; after `after`,
+        when given) whose lesson isn't
         finished, skipping the ones already known (every question and flashcard last answered right)."""
         known = {t["id"] for t in (self.mastery(course_id) if self.mastery else [])
                  if t["known"] and not t["learning"] and not t["unseen"]}
-        topics = [t for t in self.notebook.topics(course_id) if t["body"].strip()]
+        topics = [t for t in self.notebook.in_order(course_id) if t["body"].strip()]  # what it builds on first
         if after is not None:
             ids = [t["id"] for t in topics]
             topics = topics[ids.index(after) + 1:] if after in ids else topics
@@ -411,7 +412,7 @@ class LessonStore:
     def path(self, course_id: int) -> dict:
         mastery = {t["id"]: t for t in (self.mastery(course_id) if self.mastery else [])}
         nxt = self.next_topic(course_id)
-        topics = self.notebook.topics(course_id)
+        topics = self.notebook.in_order(course_id)
         lessons = {t["public_id"]: self.for_topic(t["id"]) for t in topics if t["body"].strip()}
         finished = {x for x, lesson in lessons.items() if lesson and lesson["finished_at"]}
         out = []

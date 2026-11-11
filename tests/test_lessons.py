@@ -228,3 +228,34 @@ def test_a_lesson_that_cant_be_read_fails_and_can_be_asked_again(ls):
 def test_known_topics_are_skipped_on_the_path(ls):
     ls.store.mastery = lambda cid: [{"id": ls.topics[0]["public_id"], "known": 4, "learning": 0, "unseen": 0}]
     assert ls.api.get(f"/v1/lessons?course={ls.cid}", headers=AUTH).json()["next"] == ls.topics[1]["public_id"]
+
+
+def test_the_path_puts_what_a_topic_builds_on_first_and_says_so(ls):
+    demand, multiplier, _, islm = ls.topics
+    ls.nb.notebook.set_prerequisites(ls.cid, {demand["public_id"]: [islm["public_id"]],
+                                              multiplier["public_id"]: [demand["public_id"]]})
+    path = ls.api.get(f"/v1/lessons?course={ls.cid}", headers=AUTH).json()
+    assert [t["title"] for t in path["topics"]] == ["IS-LM", "Demand", "The multiplier"]
+    assert path["next"] == islm["public_id"]
+    by = {t["title"]: t for t in path["topics"]}
+    assert by["Demand"]["builds_on"] == [islm["public_id"]]
+    assert by["Demand"]["missing"] == [{"id": islm["public_id"], "title": "IS-LM"}]
+    assert by["IS-LM"]["missing"] == [] and by["IS-LM"]["builds_on"] == []
+    # Learning it anyway: a wrong check points back at what it builds on.
+    lesson = ls.api.post(f"/v1/topics/{demand['public_id']}/lesson", headers=AUTH).json()
+    build(ls)
+    raw = ls.store.lesson(lesson["id"])["content"]["steps"][0]["checks"][0]
+    wrong = next(o["letter"] for o in raw["options"] if o["letter"] != raw["key"])
+    got = ls.api.post(f"/v1/lessons/{lesson['id']}/check", json={"step": 1, "check": 1, "answer": wrong},
+                      headers=AUTH).json()
+    assert got["weak_prerequisite"] == {"id": islm["public_id"], "title": "IS-LM", "retention": 0.0}
+    key = ls.store.lesson(lesson["id"])["content"]["steps"][1]["checks"][0]["key"]
+    right = ls.api.post(f"/v1/lessons/{lesson['id']}/check", json={"step": 2, "check": 1, "answer": key},
+                        headers=AUTH).json()
+    assert right["correct"] is True and "weak_prerequisite" not in right
+    # Once IS-LM's lesson is finished, Demand no longer waits on it.
+    islm_lesson = ls.api.post(f"/v1/topics/{islm['public_id']}/lesson", headers=AUTH).json()
+    build(ls)
+    asyncio.run(ls.store.finish(islm_lesson["id"], None))
+    path = ls.api.get(f"/v1/lessons?course={ls.cid}", headers=AUTH).json()
+    assert {t["title"]: t["missing"] for t in path["topics"]}["Demand"] == []

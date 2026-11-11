@@ -415,6 +415,7 @@ private struct LessonRun: View {
                     MathText.text(expected).font(.subheadline).lineSpacing(2)
                 }
             }
+            if !right, let weak = r.weakPrerequisite { WeakBasis(topic: weak) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
@@ -770,8 +771,18 @@ struct LearnPathView: View {
     @State private var path: LessonPath?
     @State private var error: String?
     @State private var learning: LessonTopicRef?
+    /// A topic tapped while what it builds on isn't known yet: asked first, never refused (#66).
+    @State private var asking: LessonPathTopic?
 
     private var next: LessonPathTopic? { path?.topics.first { $0.id == path?.next } }
+
+    private func open(_ t: LessonPathTopic) {
+        if t.missing?.isEmpty == false, t.lesson?.finished != true { asking = t } else { learning = LessonTopicRef(id: t.id, title: t.title) }
+    }
+
+    private func names(_ topics: [QuizTopicRef]) -> String {
+        topics.count < 2 ? topics.first?.title ?? "" : topics.dropLast().map(\.title).joined(separator: ", ") + " and " + topics.last!.title
+    }
 
     /// Out of it: on the Mac it's a card in Aide's window, which `dismiss` doesn't close (`coverClose`).
     private func close() {
@@ -810,13 +821,24 @@ struct LearnPathView: View {
         }
         .tint(Theme.study)
         .task { await load() }
+        .confirmationDialog(asking.map { "\($0.title) builds on \(names($0.missing ?? []))" } ?? "",
+                            isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }),
+                            titleVisibility: .visible, presenting: asking) { t in
+            if let first = t.missing?.first {
+                Button("Start \(first.title)") { learning = LessonTopicRef(id: first.id, title: first.title) }
+            }
+            Button("Go ahead with \(t.title)") { learning = LessonTopicRef(id: t.id, title: t.title) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("It isn't known yet, and this lesson leans on it.")
+        }
         .macWindowCover(item: $learning, onDismiss: { Task { await load() } }) { topic in
             LessonView(topic: topic, course: course.id, courseName: course.title)
         }
     }
 
     private func upNext(_ t: LessonPathTopic) -> some View {
-        Button { learning = LessonTopicRef(id: t.id, title: t.title) } label: {
+        Button { open(t) } label: {
             VStack(alignment: .leading, spacing: 10) {
                 Text("UP NEXT").font(.caption.weight(.semibold)).tracking(0.5).foregroundStyle(.white.opacity(0.85))
                 Text(t.title).font(.title2.bold()).foregroundStyle(.white).multilineTextAlignment(.leading)
@@ -855,7 +877,7 @@ struct LearnPathView: View {
         DetailCard("Topics", padding: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
                 if i > 0 { RowDivider(leading: 56) }
-                Button { learning = LessonTopicRef(id: t.id, title: t.title) } label: {
+                Button { open(t) } label: {
                     HStack(spacing: 12) {
                         mark(t, i + 1).frame(width: 30)
                         VStack(alignment: .leading, spacing: 2) {
@@ -893,7 +915,8 @@ struct LearnPathView: View {
     }
 
     private func detail(_ t: LessonPathTopic) -> String {
-        let known = t.known + t.learning + t.unseen > 0 ? " · \(t.known) of \(t.known + t.learning + t.unseen) known" : ""
+        var known = t.known + t.learning + t.unseen > 0 ? " · \(t.known) of \(t.known + t.learning + t.unseen) known" : ""
+        if let missing = t.missing, !missing.isEmpty, t.lesson?.finished != true { known += " · after \(names(missing))" }
         guard let l = t.lesson else { return "Not written yet" + known }
         if l.building { return "Being written" }
         if l.status == "failed" { return "Couldn't be written · tap to try again" }

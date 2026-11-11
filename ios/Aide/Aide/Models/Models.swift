@@ -2091,6 +2091,15 @@ struct NotebookTopic: Decodable, Hashable, Identifiable {
     var questions: Int?
     var cards: Int?
     var edited: Bool?
+    /// The topics it builds on (#66; newer servers).
+    var buildsOn: [QuizTopicRef]? = nil
+}
+
+/// A topic a missed answer builds on, not retained now (#66): `retention` 0–1.
+struct WeakTopic: Decodable, Hashable {
+    let id: String
+    let title: String
+    var retention: Double?
 }
 
 /// A topic page, as `GET /v1/topics/{id}?plain=true`: maths as Unicode, links as text.
@@ -2103,6 +2112,8 @@ struct TopicPage: Decodable {
     var sources: [String]?
     /// The same sources' files, to open at the page (newer servers).
     var sourceFiles: [TopicSourceFile]?
+    /// The topics it builds on (#66).
+    var buildsOn: [QuizTopicRef]?
 }
 
 struct Flashcard: Decodable, Hashable { let q: String; let a: String }
@@ -2255,6 +2266,8 @@ struct QuizQuestion: Decodable, Identifiable, Hashable {
     var feedback: String?
     var modelAnswer: String?
     var rubric: String?
+    /// Checked wrong: a topic it builds on that isn't retained (#66).
+    var weakPrerequisite: WeakTopic? = nil
     var id: Int { n }
     var isOpen: Bool { type == "open" }
     var isCard: Bool { type == "card" }
@@ -2463,6 +2476,8 @@ struct LessonCheckResult: Decodable, Hashable {
     var keyWhy: String?
     var awarded: Double?
     var expected: String?
+    /// Wrong: a topic it builds on that isn't known yet (#66).
+    var weakPrerequisite: WeakTopic? = nil
 }
 
 struct LessonExplained: Decodable, Hashable {
@@ -2489,6 +2504,8 @@ struct LessonPathTopic: Decodable, Hashable, Identifiable {
     var known: Int
     var learning: Int
     var unseen: Int
+    /// The topics it builds on that aren't known yet (#66): asked about before starting it, never a lock.
+    var missing: [QuizTopicRef]? = nil
 }
 
 struct LessonStartBody: Encodable { var again = false; var restart = false }

@@ -776,10 +776,24 @@ struct Verdict: View {
             if let explanation = question.explanation, !explanation.isEmpty {
                 Text(explanation.markdown).font(.subheadline).foregroundStyle(.secondary).lineSpacing(2)
             }
+            if !right, let weak = question.weakPrerequisite { WeakBasis(topic: weak) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
         .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+}
+
+/// Under a missed answer: the topic it builds on that isn't retained, which may be why (#66).
+struct WeakBasis: View {
+    let topic: WeakTopic
+
+    var body: some View {
+        let kept = topic.retention.map { " · \(Int(($0 * 100).rounded()))% retained" } ?? ""
+        Label("This builds on \(topic.title)\(kept). Worth going over it first.", systemImage: "arrow.turn.left.up")
+            .font(.footnote).foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .padding(.top, 2)
     }
 }
 
