@@ -624,6 +624,12 @@ async def test_a_sitting_skipped_for_a_later_one_isnt_nagged_about():
     assert "Fri 04 Dec 2026: the user isn't taking this sitting: they're on the Thu 14 Jan one instead" in listed
     assert "exam Thu 14 Jan 2027: sign-up opens Mon 14 Dec, closes Sun 10 Jan; queued: Aide signs the user up the " \
         "moment it opens (Mon 14 Dec)" in listed
+    # The exam plan, the review schedule and the reminders go by the January one; the course page still shows both.
+    reader._redate()
+    course = e["course_id"]
+    assert [d["date"] for d in reader.notebook.dates(course) if d["kind"] == "exam"] == ["2027-01-14"]
+    shown = {d["date"]: d for d in reader.notebook.dates(course, archived=True) if d["kind"] == "exam"}
+    assert shown[e["day"]]["you"] == "Not taking it: you're on the Thu 14 Jan one"
 
 
 def test_professor_has_the_esse3_tools():

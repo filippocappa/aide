@@ -507,31 +507,38 @@ class Esse3Reader:
         """Every Aide course's sessions as official dates (a course with none left gets an empty list)."""
         by_course: dict[int, list[dict]] = {}
         wants = self.wants()
-        for e in self.exams():
+        exams = self.exams()
+        for e in exams:
             if e["course_id"] is None:
                 continue
+            # Not booked or queued while a later sitting is: the user takes that one (as `signup`'s `instead`).
+            later = None if e["booked"] or e["key"] in wants else next(
+                (x["day"] for x in exams if x["course"] == e["course"] and x["day"] > e["day"]
+                 and (x["booked"] or x["key"] in wants)), None)
+            skip = {"skipped": later} if later else {}
             items = by_course.setdefault(e["course_id"], [])
             when = _short(e["day"])
             teachers = f"Teachers: {e['teachers']}." if e["teachers"] else ""
             window = (f" Sign-up on MyUniTo {_short(e['opens'])}–{_short(e['closes'])}."
                       if e["opens"] and e["closes"] else "")
             wanted = e["key"] in wants and not e["booked"]
-            you = ("Signed up on Esse3" if e["booked"] else
+            you = (f"Not taking it: you're on the {_short(later)} one" if later else
+                   "Signed up on Esse3" if e["booked"] else
                    f"Aide signs you up when sign-up opens ({_short(e['opens'])})" if wanted and e["opens"] else
                    f"Sign-up open on MyUniTo until {_short(e['closes'])}" if e["open"] and e["closes"] else
                    "Sign-up open on MyUniTo" if e["open"] else None)
             items.append({"id": _id("exam", e), "what": "Exam", "kind": "exam", "date": e["day"], "time": e["time"],
-                          "you": you, "details": (teachers + window).strip(), "source": "Esse3"})
+                          "you": you, "details": (teachers + window).strip(), "source": "Esse3", **skip})
             if e["opens"]:
                 items.append({"id": _id("opens", e), "what": f"Sign-up opens for the {when} exam", "kind": "other",
                               "date": e["opens"], "of": _id("exam", e),
                               "you": "Signed up" if e["booked"] else "Aide signs you up" if wanted else None,
-                              "details": "On MyUniTo, Appelli disponibili.", "source": "Esse3"})
+                              "details": "On MyUniTo, Appelli disponibili.", "source": "Esse3", **skip})
             if e["closes"]:
                 items.append({"id": _id("closes", e), "what": f"Sign-up closes for the {when} exam",
                               "kind": "deadline", "date": e["closes"], "of": _id("exam", e),
                               "you": "Signed up" if e["booked"] else "Aide signs you up" if wanted else None,
-                              "details": "On MyUniTo, Appelli disponibili.", "source": "Esse3"})
+                              "details": "On MyUniTo, Appelli disponibili.", "source": "Esse3", **skip})
         known = {r[0] for r in self.conn.execute("SELECT course_id FROM official_dates")}
         for course_id in known | set(by_course):
             self.notebook.set_official_dates(course_id, by_course.get(course_id, []))

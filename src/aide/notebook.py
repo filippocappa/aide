@@ -644,9 +644,12 @@ class NotebookStore:
     def dates(self, course_id: int, since: date | None = None, archived: bool = False) -> list[dict]:
         """What the course's page and files say is coming (exams, mid-terms, sign-up deadlines), by date, with the
         user's edits laid over Professor's and Esse3's (`by`: "professor", "esse3" or "you"); from `since` on, if given. An edited item
-        whose date Professor has since read differently carries `differs`. An exam the user isn't taking (archived)
-        is left out with the dates of it, unless `archived`: then they're in, with `archived: true`."""
+        whose date Professor has since read differently carries `differs`. An exam the user isn't taking (archived,
+        or an Esse3 sitting `skipped` for a later one they're booked or queued for) is left out with the dates of it,
+        unless `archived`: then they're in, archived ones with `archived: true`."""
         out = self._dates(course_id, since)
+        if not archived:
+            out = [d for d in out if not d.get("skipped")]
         gone = self.archived_ids(course_id)
         if not gone:
             return out
@@ -725,6 +728,8 @@ class NotebookStore:
                 continue
             if it.get("of"):
                 d["of"] = str(it["of"])
+            if it.get("skipped"):
+                d["skipped"] = str(it["skipped"])
             if all(o["id"] != d["id"] for o in out):
                 out.append(d)
         out.sort(key=lambda d: (d["date"], d["time"] or ""))
