@@ -142,6 +142,21 @@ async def test_the_latest_frequent_line_wins_over_a_rare_one(leave, monkeypatch)
     assert (a["line"], a["time"]) == ("4", "08:05")
 
 
+async def test_a_run_of_events_at_one_place_is_one_trip_there(leave):
+    make, (db, timetable, location, alerts, push) = leave
+    location.save(*HOME, 10, at(7, 25))
+
+    def talk(uid, start, minutes=30, place="Politecnico"):
+        return CalEvent(uid, "Finance", uid, start, start + timedelta(minutes=minutes), place)
+    cal = FakeCal(talk("drive", at(8, 0), 60), talk("kickoff", at(9, 0)), talk("panel", at(9, 0)),
+                  talk("late", at(12, 0)), talk("elsewhere", at(9, 40), place="Zoom"))
+    await make(cal, FakeMaps(ride())).tick(utc(at(7, 30)))
+    states = dict(db.conn.execute("SELECT event, state FROM leave_plans").fetchall())
+    # the drive before them and the first talk cover the talks right after; one 2.5 h later is a trip of its own
+    assert states == {"drive": "alert", "kickoff": "same_trip", "panel": "same_trip", "elsewhere": "no_place"}
+    assert len(alerts.all()) == 1
+
+
 async def test_not_while_there_or_far_away_and_not_without_a_fix(leave):
     make, (db, timetable, location, alerts, push) = leave
     maps = FakeMaps(ride())

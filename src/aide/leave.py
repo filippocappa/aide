@@ -14,8 +14,9 @@ sets the one-off tram alert straight away.
 One alert per event: deleting it in the app is final. An event that moves or goes takes its alert with it.
 An event with no place gets one from memory when the notes say where such events are (a lecture: the uni).
 Nothing is set when the phone is already at the place, or far from it (not going); when a note in memory says the
-user walks, drives or cycles there; when the first ride isn't GTT's (a train); or when the user's own alert for
-that line already covers the time.
+user walks, drives or cycles there; when the first ride isn't GTT's (a train); when the user's own alert for
+that line already covers the time; or when an earlier event at the same place ends at most SAME_TRIP before it
+starts (a day of talks at one venue, a "Drive to the stadium" before them: one trip there, not one per event).
 """
 
 import asyncio
@@ -41,12 +42,15 @@ COMMIT = timedelta(minutes=45)  # the tram alert is set once leaving is this clo
 THERE = 500  # metres: the phone this close to the place is already there
 STOP_NEAR = 150  # metres between the stop Maps names and GTT's
 FREQUENT = 4  # departures an hour (around the one taken) that make a line frequent
+SAME_TRIP = timedelta(minutes=90)  # an event at the same place ending this soon before another: the same trip there
+BEHIND = timedelta(hours=12)  # events this far back are read too, for the same trip
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS leave_plans (
     event    TEXT NOT NULL,     -- the calendar event's uid
     starts   TEXT NOT NULL,     -- its start, UTC: a moved event is a new plan
-    state    TEXT NOT NULL,     -- alert (set), or skipped: why not (walks, no_place, no_ride, not_gtt, covered)
+    state    TEXT NOT NULL,     -- alert (set), or skipped: why not (walks, no_place, no_ride, not_gtt, covered,
+                                -- same_trip: an earlier event at the same place just before it)
     alert    INTEGER,           -- the tram alert it set
     at       TEXT NOT NULL,     -- UTC
     PRIMARY KEY (event, starts)
@@ -116,15 +120,16 @@ class LeaveWatcher:
 
     async def _upcoming(self, now: datetime) -> list[dict] | None:
         """Timed events starting in the next AHEAD, with a place (or memory to find one in); None when the
-        calendar can't be read."""
+        calendar can't be read. The ones since BEHIND are kept too (`_same_trip`)."""
         if self._events is None or now - self._events[0] >= EVENTS_EVERY:
             try:
-                found = await asyncio.to_thread(self.cal.events, now, now + AHEAD)
+                found = await asyncio.to_thread(self.cal.events, now - BEHIND, now + AHEAD)
             except Exception:
                 log.warning("leave-now: couldn't read the calendar", exc_info=True)
                 return None
             self._events = (now, [{"uid": e.uid, "title": e.title, "calendar": e.calendar,
-                                   "location": e.location.strip(), "start": e.start.astimezone(timezone.utc)}
+                                   "location": e.location.strip(), "start": e.start.astimezone(timezone.utc),
+                                   "end": e.end.astimezone(timezone.utc)}
                                   for e in found if not e.all_day and (e.location.strip() or self.travel_plan)])
         return [e for e in self._events[1] if now < e["start"] <= now + AHEAD]
 
@@ -161,6 +166,8 @@ class LeaveWatcher:
         there = await self._spot(place, here) if place else None
         if there is None:
             return self._mark(e, "no_place", now)
+        if await self._same_trip(e, there, here):
+            return self._mark(e, "same_trip", now)
         distance = metres(*here, *there)
         if distance < THERE or distance > AWAY:
             return  # already there, or not going (not yet, at least): looked at again later
@@ -181,6 +188,19 @@ class LeaveWatcher:
                                event=f"{e['title']} at {local:%H:%M}", to_stop=self._get_off(route, line))
         self._mark(e, "alert", now, a["id"])
         log.info("leave-now: %s", self.alerts.describe(a))
+
+    async def _same_trip(self, e: dict, there: tuple[float, float], here: tuple[float, float]) -> bool:
+        """An earlier event (or one at the same time, first by uid) at the same place ends at most SAME_TRIP before
+        this one starts: the user goes there once, for the first."""
+        for o in self._events[1] if self._events else []:
+            if o["uid"] == e["uid"] or not o["location"]:
+                continue
+            if (o["start"], o["uid"]) >= (e["start"], e["uid"]) or o["end"] < e["start"] - SAME_TRIP:
+                continue
+            spot = await self._spot(o["location"], here)
+            if spot and metres(*spot, *there) < THERE:
+                return True
+        return False
 
     # -- asked: "I need to be there by 9:30" ------------------------------------------------------------------
 
