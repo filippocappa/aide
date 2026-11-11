@@ -155,7 +155,7 @@ async def test_the_credits_set_a_floor_of_own_study(tmp_path):
     notes_only = (await plan.plan(NOW))["targets"][0]
     assert notes_only["by_credits"] is None  # nothing says the credits
 
-    notebook.set_intro(macro["id"], "Written exam, 2 hours. 1 CFU", "The course.")
+    notebook.set_intro(macro["id"], "Written exam. 1 CFU", "The course.")
     t = (await plan.plan(NOW, fresh=True))["targets"][0]
     b = t["by_credits"]
     # 25 h less the three 2-hour lectures in the timetable: 19 h of the user's own, none of it done yet
