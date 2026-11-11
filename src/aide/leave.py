@@ -219,11 +219,12 @@ class LeaveWatcher:
             (place.strip().casefold(), (now - KEEP).isoformat(), DRIVES))]
         return len(last) == DRIVES and all(b == "car" for b in last)
 
-    def driving(self, alert_id: int, now: datetime) -> bool:
+    def driving(self, alert: dict, now: datetime) -> bool:
         """The user tapped Driving on a leave-now alert's countdown: that leave was by car. False when the alert
         wasn't one of leave-now's."""
-        row = self.conn.execute("SELECT event, starts FROM leave_plans WHERE alert = ? AND state = 'alert' "
-                                "ORDER BY at DESC LIMIT 1", (alert_id,)).fetchone()  # ids are used again
+        row = self.conn.execute(  # ids are used again: the plan that set this one
+            "SELECT event, starts FROM leave_plans WHERE alert = ? AND state = 'alert' AND at >= ? "
+            "ORDER BY at DESC LIMIT 1", (alert["id"], alert["created_at"])).fetchone()
         if row is None:
             return False
         self.conn.execute("UPDATE leave_ways SET by = 'car', at = ? WHERE event = ? AND starts = ?",

@@ -3094,8 +3094,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     @app.post("/v1/transit/alerts/{alert_id}/driving", dependencies=[Depends(auth)])
     async def driving_instead(alert_id: int):
         """The countdown's Driving button: the alert goes, its countdown ends, and leave-now learns the place."""
-        alert_or_404(alert_id)
-        learnt = bool(leave and leave.driving(alert_id, utcnow()))
+        alert = alert_or_404(alert_id)
+        learnt = bool(leave and leave.driving(alert, utcnow()))
         transit_alerts.dropped.add(alert_id)
         transit_alerts.delete(alert_id)
         return {"ok": True, "learnt": learnt}
