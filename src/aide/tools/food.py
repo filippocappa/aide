@@ -5,7 +5,7 @@ saved as they're logged; the server works out the totals, and the water from the
 water comes on its own, as plain_water_ml). Meals logged before items only have their totals.
 """
 
-from datetime import date as Date, datetime
+from datetime import date as Date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..food import DRINKS, MACROS, FoodStore, logging_day, totals
@@ -17,6 +17,7 @@ from . import Tool, ToolOutput
 from .nutrition import OpenFoodFacts, nutrition_tools, quality_schema
 from .pages import open_card
 
+MAX_LIST_DAYS = 14
 WHEN_HELP = "Local time as YYYY-MM-DDTHH:MM. Omit for now."
 NAMES = {"calories": "kcal", "protein_g": "protein", "carbs_g": "carbs", "fat_g": "fat"}
 
@@ -75,6 +76,19 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
     def day_line(d: Date) -> str:
         return food_day_line(store, nutrition, d)
 
+    def whole_day(meal: dict) -> list[str]:
+        """The rest of the meal's day, so a reply about a day that had meals already speaks of all of it."""
+        d = store.local_day(meal)
+        meals = store.day(d)
+        if len(meals) < 2:
+            return []
+        lines = [f"{d:%a %d %b} now, the whole day:"]
+        for m in meals:
+            at = datetime.fromisoformat(m["eaten_at"]).astimezone(tz)
+            mark = " (this one)" if m["id"] == meal["id"] else ""
+            lines.append(f"  {at:%H:%M} · {m['name']} · {m['calories']} kcal · P {m['protein_g']} g{mark}")
+        return lines
+
     def on_logging_day(eaten_at: str | None) -> str | None:
         """eaten_at moved onto the past day the Food page was on (logging_day), keeping its time of day (now's, when
         none was given); as given when there's no such day or it's already on it."""
@@ -99,7 +113,7 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         meal = store.add(name, **sums, eaten_at=eaten_at, photo=photo_id, notes=notes,
                          water_ml=foods.water(rows) + (plain_water_ml or 0), caffeine_mg=caffeine_mg, emoji=emoji)
         foods.keep_items(meal["id"], rows, count=True)
-        lines = [f"Logged: {fmt(meal)}{quality_line(meal)}", day_line(store.local_day(meal))]
+        lines = [f"Logged: {fmt(meal)}{quality_line(meal)}", *whole_day(meal), day_line(store.local_day(meal))]
         new = [f"[food {r['food_id']}] {r['name']}" for r in rows if r["food_id"] > top]
         lines += [f"Saved as new foods: {', '.join(new)}"] if new else []
         return cards("\n".join(lines), [meal])
@@ -123,14 +137,22 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
                             caffeine_mg=caffeine_mg, emoji=emoji)
         if rows:
             foods.keep_items(meal_id, rows, count=False)
-        return cards(f"Updated: {fmt(meal)}\n{day_line(store.local_day(meal))}", [meal])
+        return cards("\n".join([f"Updated: {fmt(meal)}", *whole_day(meal), day_line(store.local_day(meal))]), [meal])
 
-    async def list_meals(date: str | None = None) -> str:  # noqa: A002
-        d = Date.fromisoformat(date) if date else store.today()
-        meals = store.day(d)
-        if not meals:
-            return f"No meals logged on {d:%a %d %b}."
-        return cards("\n".join([*(fmt(m) for m in meals), day_line(d)]), meals)
+    async def list_meals(date: str | None = None, to: str | None = None) -> str:  # noqa: A002
+        first = Date.fromisoformat(date) if date else store.today()
+        last = Date.fromisoformat(to) if to else first
+        if last < first or (last - first).days >= MAX_LIST_DAYS:
+            raise ValueError(f"to must be on or after date, at most {MAX_LIST_DAYS} days")
+        lines, shown = [], []
+        for n in range((last - first).days + 1):
+            d = first + timedelta(days=n)
+            meals = store.day(d)
+            if first != last:
+                lines.append(f"— {d:%a %d %b} —")
+            lines += [*(fmt(m) for m in meals), day_line(d)] if meals else [f"No meals logged on {d:%a %d %b}."]
+            shown += meals
+        return cards("\n".join(lines), shown) if shown else "\n".join(lines)
 
     async def set_food_goals(calories: int | None = None, protein_g: int | None = None,
                              carbs_g: int | None = None, fat_g: int | None = None) -> str:
@@ -213,9 +235,12 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
              _obj({**mid, "name": {"type": "string"}, **items, **drinks,
                    "eaten_at": {"type": "string", "description": WHEN_HELP},
                    "notes": {"type": "string"}}, ["meal_id"]), update_meal),
-        Tool("list_meals", "List the meals logged on a day (default today), each with its id in brackets, and the "
-             "day's totals against the goals.",
-             _obj({"date": {"type": "string", "description": "YYYY-MM-DD"}}, []), list_meals),
+        Tool("list_meals", "List the meals logged on a day (default today), or on each day from date to `to`, each "
+             "meal with its id in brackets, and each day's totals against the goals. Read it again for any question "
+             "about a day: meals may have been added, moved or changed since earlier in the chat.",
+             _obj({"date": {"type": "string", "description": "YYYY-MM-DD"},
+                   "to": {"type": "string", "description": "YYYY-MM-DD, the last day of a range (\"the last three "
+                          f"days\"), at most {MAX_LIST_DAYS} days; omit for one day"}}, []), list_meals),
         Tool("set_food_goals", "Set daily goals for calories and macros (grams). Give only the ones that change; "
              "0 removes a goal. Runs immediately.", _obj(dict(numbers), []), set_food_goals),
         Tool("food_targets", "The nutrition targets: the rest-day base (set with set_food_goals), what the Watch's "

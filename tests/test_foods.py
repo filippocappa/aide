@@ -417,3 +417,27 @@ def test_scans_and_meals_again_count_their_drinks_water(app_env):
     old = food.add("Acqua e cola", 210, 0, 53, 0, water_ml=1500)
     foods.keep_items(old["id"], foods.resolve([{"food_id": cola["id"], "grams": 500}]), count=False)
     assert api.post(f"/v1/food/meals/{old['id']}/again", json={}, headers=AUTH).json()["meal"]["water_ml"] == 1500
+
+
+async def test_adding_to_a_day_shows_the_whole_day_and_list_meals_reads_a_range(env):
+    """A meal added to a day that had others: the result lists the whole day, so Coach speaks of all of it. Asked
+    about several days, one list_meals reads each of them as they are now."""
+    tools, food, *_ = env()
+    today = food.today()
+    two_ago, yesterday = today - timedelta(days=2), today - timedelta(days=1)
+    pasta = {"name": "Pasta", "grams": 100, "kcal_100g": 360, "protein_100g": 12, "carbs_100g": 72, "fat_100g": 1.5}
+    egg = {"name": "Uova", "grams": 120, "kcal_100g": 135, "protein_100g": 12.5, "carbs_100g": 0, "fat_100g": 9}
+    said = await tools.call("log_meal", {"name": "Uova", "items": [egg], "eaten_at": f"{yesterday}T08:00"})
+    assert "the whole day" not in said  # the day's first meal: nothing else to list
+    said = await tools.call("log_meal", {"name": "Pasta", "items": [pasta], "eaten_at": f"{yesterday}T20:30"})
+    whole = said.split("the whole day:\n")[1]
+    assert "08:00 · Uova · 160 kcal" in whole and "20:30 · Pasta · 360 kcal · P 12 g (this one)" in whole
+    said = await tools.call("update_meal", {"meal_id": 2, "items": [{**pasta, "grams": 200}]})
+    assert "08:00 · Uova" in said and "720 kcal" in said.split("the whole day:\n")[1]
+
+    said = await tools.call("list_meals", {"date": str(two_ago), "to": str(today)})
+    assert said.index(f"{two_ago:%a %d %b}") < said.index(f"{yesterday:%a %d %b} —")
+    assert f"No meals logged on {two_ago:%a %d %b}." in said and f"No meals logged on {today:%a %d %b}." in said
+    assert [m["id"] for m in said.attachment["meals"]] == [1, 2]
+    with pytest.raises(ValueError, match="at most 14"):
+        await tools.call("list_meals", {"date": str(today - timedelta(days=14)), "to": str(today)})
