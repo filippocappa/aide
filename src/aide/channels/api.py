@@ -32,7 +32,7 @@ from ..examplan import ExamPlan
 from ..errands import ErrandRunner, ErrandStore
 from ..pricewatch import PriceWatches
 from ..releases import Releases
-from ..food import MACROS, MAX_RANGE as MAX_MEAL_DAYS, FoodStore, totals
+from ..food import MACROS, MAX_RANGE as MAX_MEAL_DAYS, FoodStore, logging_day, totals
 from ..foods import MAX_NAME as MAX_FOOD_NAME, FoodDB, free_notes
 from ..nutrition import PROPOSE_PROMPT, PROPOSE_TOKENS, Nutrition, parse_proposal, proposal_input
 from ..habits import HabitStore
@@ -1430,7 +1430,11 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                                                   "each one; one it doesn't have, save from its label in the photos "
                                                   "with that barcode.)"]))
         conversation = food_chat()
-        turn = await agent.respond(CONVERSATION, text or "Log this.", conversation, photos=body.photos)
+        past = logging_day.set(body.day if body.day and body.day != food.today() else None)
+        try:  # a meal Coach logs in this turn goes on that day, even when it names another
+            turn = await agent.respond(CONVERSATION, text or "Log this.", conversation, photos=body.photos)
+        finally:
+            logging_day.reset(past)
         meals = next((a["meals"] for a in turn.attachments if a["type"] == "meals"), [])
         return {"reply": turn.reply, "meals": meals, "conversation_id": conversation}
 

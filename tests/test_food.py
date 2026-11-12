@@ -239,6 +239,24 @@ def test_food_log_goes_to_coachs_food_chat(env):
     assert api.post("/v1/food/log", json={}, headers=AUTH).status_code == 400
 
 
+def test_a_meal_logged_from_a_past_day_lands_on_it(env):
+    """The app on yesterday's Food page: the meal goes on yesterday even when Coach names today or no time."""
+    api, _, food, *_ = env()
+    yesterday = food.today() - timedelta(days=1)
+    api, *_ = env([log_meal(name="Pizza", items=[PIZZA], eaten_at=f"{food.today()}T20:30"), done("Pizza.")])
+    body = api.post("/v1/food/log", json={"text": "pizza", "date": yesterday.isoformat()}, headers=AUTH).json()
+    pizza = food.get(body["meals"][0]["id"])
+    at = datetime.fromisoformat(pizza["eaten_at"]).astimezone(ROME)
+    assert at.date() == yesterday and (at.hour, at.minute) == (20, 30)
+    api, *_ = env([log_meal(name="Rice", items=[RICE]), done("Rice.")])
+    body = api.post("/v1/food/log", json={"text": "rice", "date": yesterday.isoformat()}, headers=AUTH).json()
+    assert food.local_day(food.get(body["meals"][0]["id"])) == yesterday
+    # Today (or no date): eaten_at as Coach gave it.
+    api, *_ = env([log_meal(name="Espresso", items=[ESPRESSO], eaten_at=f"{yesterday}T08:00"), done("Espresso.")])
+    body = api.post("/v1/food/log", json={"text": "espresso", "date": food.today().isoformat()}, headers=AUTH).json()
+    assert food.local_day(food.get(body["meals"][0]["id"])) == yesterday
+
+
 def test_barcodes_the_app_read_go_to_coach(env):
     api, agent, *_ = env()
     photo = upload(api).json()["id"]

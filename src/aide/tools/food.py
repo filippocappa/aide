@@ -8,7 +8,7 @@ water comes on its own, as plain_water_ml). Meals logged before items only have 
 from datetime import date as Date, datetime
 from zoneinfo import ZoneInfo
 
-from ..food import DRINKS, MACROS, FoodStore, totals
+from ..food import DRINKS, MACROS, FoodStore, logging_day, totals
 from ..foods import FoodDB, free_notes
 from ..health import HealthStore
 from ..nutrition import GOALS, Nutrition, weakest
@@ -75,9 +75,21 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
     def day_line(d: Date) -> str:
         return food_day_line(store, nutrition, d)
 
+    def on_logging_day(eaten_at: str | None) -> str | None:
+        """eaten_at moved onto the past day the Food page was on (logging_day), keeping its time of day (now's, when
+        none was given); as given when there's no such day or it's already on it."""
+        if (day := logging_day.get()) is None:
+            return eaten_at
+        when = datetime.fromisoformat(eaten_at) if eaten_at else datetime.now(tz)
+        when = when.astimezone(tz) if when.tzinfo else when
+        if when.date() == day:
+            return eaten_at
+        return datetime.combine(day, when.time().replace(second=0, microsecond=0, tzinfo=None)).isoformat()
+
     async def log_meal(name: str, items: list[dict], eaten_at: str | None = None, photo_id: str | None = None,
                        notes: str | None = None, plain_water_ml: int = 0, caffeine_mg: int = 0,
                        emoji: str | None = None) -> str:
+        eaten_at = on_logging_day(eaten_at)
         if photo_id and not photos.exists(photo_id):
             raise ValueError(f"no photo {photo_id}")
         if not items and not (plain_water_ml or caffeine_mg):

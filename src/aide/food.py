@@ -8,10 +8,15 @@ grams to 1. Days are local days (AIDE_TIMEZONE); eaten_at is stored in UTC. Wate
 import json
 import re
 import sqlite3
+from contextvars import ContextVar
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from .db import utcnow
+
+# The day the app's Food page was on when it sent a meal (POST /v1/food/log with a past `date`): a meal Coach logs in
+# that turn goes on that day, whatever day its eaten_at names (the time of day is kept).
+logging_day: ContextVar[date | None] = ContextVar("logging_day", default=None)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meals (
