@@ -44,9 +44,11 @@ final class APIClient {
     }
 
     /// What's going on on cappa (docs/API.md, "Host status"): served by tailscaled, not Aide, so it answers while
-    /// Aide is down.
+    /// Aide is down. A static file with no Cache-Control: the query keeps URLSession from answering from its cache.
     func hostStatus() async throws -> HostStatus {
-        try await send("GET", "/aide-status/host.json", auth: false, timeout: 6)
+        try await send("GET", "/aide-status/host.json",
+                       query: [URLQueryItem(name: "t", value: String(Int(Date().timeIntervalSince1970)))],
+                       auth: false, timeout: 6)
     }
 
     /// A reply can take 5–30 s, so the timeout is generous.
