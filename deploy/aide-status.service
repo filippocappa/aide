@@ -1,0 +1,13 @@
+# What's happening on cappa for the app's status glyph (deploy/aide-status.py), outside Aide so it keeps going while
+# Aide is stopped. Install: README.md, "Running as a service".
+[Unit]
+Description=Aide's host status for the app
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/Developer/aide/deploy/aide-status.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

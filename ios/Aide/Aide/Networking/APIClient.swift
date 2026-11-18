@@ -40,7 +40,13 @@ final class APIClient {
     // MARK: Endpoints
 
     func health() async throws -> HealthResponse {
-        try await send("GET", "/v1/health", auth: false)
+        try await send("GET", "/v1/health", auth: false, timeout: 6)
+    }
+
+    /// What's going on on cappa (docs/API.md, "Host status"): served by tailscaled, not Aide, so it answers while
+    /// Aide is down.
+    func hostStatus() async throws -> HostStatus {
+        try await send("GET", "/aide-status/host.json", auth: false, timeout: 6)
     }
 
     /// A reply can take 5–30 s, so the timeout is generous.

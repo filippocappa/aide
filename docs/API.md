@@ -21,6 +21,30 @@ The contract between the server (Ubuntu, `src/`) and the iOS app (`ios/`). See C
 
 `GET /v1/health` (no auth) → `200 {"ok": true, "version": "0.2.0"}`
 
+### Host status (since 2026-11-18)
+
+`GET /aide-status/host.json` (no auth, tailnet only), on the same host as the API but **not** served by Aide:
+tailscaled serves the file that `deploy/aide-status.py` rewrites every 10 s, so it answers while Aide is stopped,
+restarting or broken. The app's status glyph reads it beside `/v1/health`.
+
+```json
+{"at": "2026-11-18T17:04:17Z",
+ "aide": {"state": "active", "since": "2026-11-18T16:57:10Z"},
+ "voice": {"state": "active", "since": "2026-11-18T16:57:10Z"},
+ "claude": [{"project": "roenlabs", "busy": true}],
+ "dev": ["Android emulator", "Metro"],
+ "memory": {"total_mb": 15391, "available_mb": 7829, "aide_max_mb": 8192}}
+```
+
+- `at`: when it was written (UTC). Older than a minute or two: the watcher isn't running; trust only `/v1/health`.
+- `aide`, `voice`: the systemd units' `ActiveState` (`active`, `activating`, `deactivating`, `inactive`, `failed`)
+  and when it last changed (UTC).
+- `claude`: the Claude Code sessions on the server, the project each works in (`aide` is this checkout) and `busy`
+  (using the CPU, or did in the last minute). A busy one in `aide` may restart the server; one elsewhere may stop it
+  to make room.
+- `dev`: app development running beside Aide (roenlabs): its memory budget drops and it may be stopped.
+- `memory`: what's free, and Aide's budget (`aide.slice`).
+
 ## Chat
 
 Omitting `conversation_id` means the first chat (`main`, from before there were many). One confirmation queue for all chats. (There used to be a Discord bot sharing that chat; it was removed on 2026-10-21.)

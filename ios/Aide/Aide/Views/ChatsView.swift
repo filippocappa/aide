@@ -661,7 +661,10 @@ private struct Greeting: View {
                 .padding(.horizontal, -20)
                 .padding(.top, 2)
             } trailing: {
-                SettingsButton()
+                HStack(spacing: 8) {
+                    ServerStatusGlyph(status: env.server)
+                    SettingsButton()
+                }
             }
         }
         .task { await load() }

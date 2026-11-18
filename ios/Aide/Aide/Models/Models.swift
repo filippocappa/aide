@@ -4438,3 +4438,39 @@ struct FocusCheckBody: Encodable {
     let right: Int
     let total: Int
 }
+
+// MARK: Host status (docs/API.md, "Host status")
+
+/// What cappa says is going on there (docs/API.md, "Host status"): served by tailscaled, so it answers while Aide
+/// is stopped.
+struct HostStatus: Decodable, Equatable {
+    struct Unit: Decodable, Equatable { let state: String; var since: String? }
+    struct Session: Decodable, Equatable { let project: String; let busy: Bool }
+    struct Memory: Decodable, Equatable { let totalMb: Int; let availableMb: Int; var aideMaxMb: Int? }
+    let at: String
+    let aide: Unit
+    var voice: Unit?
+    var claude: [Session] = []
+    var dev: [String] = []
+    var memory: Memory?
+
+    enum CodingKeys: String, CodingKey { case at, aide, voice, claude, dev, memory }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        at = try c.decode(String.self, forKey: .at)
+        aide = try c.decode(Unit.self, forKey: .aide)
+        voice = try c.decodeIfPresent(Unit.self, forKey: .voice)
+        claude = try c.decodeIfPresent([Session].self, forKey: .claude) ?? []
+        dev = try c.decodeIfPresent([String].self, forKey: .dev) ?? []
+        memory = try c.decodeIfPresent(Memory.self, forKey: .memory)
+    }
+
+    init(at: String, aide: Unit, voice: Unit? = nil, claude: [Session] = [], dev: [String] = [], memory: Memory? = nil) {
+        self.at = at; self.aide = aide; self.voice = voice; self.claude = claude; self.dev = dev; self.memory = memory
+    }
+
+    static func date(_ text: String?) -> Date? {
+        guard let text else { return nil }
+        return ISO8601DateFormatter().date(from: text)
+    }
+}

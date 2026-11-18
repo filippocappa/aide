@@ -135,6 +135,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `videos.py`: YouTube videos (yt-dlp, captions or Whisper, the brief, frames), posted back in the chat it came from.
 - `finance.py`: payments, categories, the month, subscriptions, budget, accounts. `banks.py`: bank accounts through
   Enable Banking (PSD2, read-only): linking, the reads (4 a day and when Money opens), matching taps to the bank's records.
+- `deploy/aide-status.py` (`aide-status.service`, system python, outside Aide): every 10 s what's going on on cappa
+  (Aide's and the voice's state, this user's Claude Code sessions with their project and busy or idle, roenlabs'
+  emulator, Expo, Metro or Gradle, memory) into `~/.local/state/aide-status/host.json`, which tailscaled serves at
+  `/aide-status/host.json`, so the app can say why Aide is down: the glyph by Settings' gear (`Support/ServerStatus.swift`).
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
