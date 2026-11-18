@@ -43,6 +43,7 @@ restarting or broken. The app's status glyph reads it beside `/v1/health`.
   (using the CPU, or did in the last minute). A busy one in `aide` may restart the server; one elsewhere may stop it
   to make room.
 - `dev`: app development running beside Aide (roenlabs): its memory budget drops and it may be stopped.
+  The app's line turns yellow (Busy) for this, or under 2.5 GB `available_mb`; a busy Claude elsewhere alone doesn't.
 - `memory`: what's free, and Aide's budget (`aide.slice`).
 
 ## Chat

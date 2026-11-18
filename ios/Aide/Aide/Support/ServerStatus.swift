@@ -24,6 +24,8 @@ struct ServerCondition: Equatable {
     static let stale: TimeInterval = 90
     /// Up for less than this: just restarted (the voice still loading).
     static let fresh: TimeInterval = 75
+    /// Less free memory than this on cappa: Aide may be squeezed (earlyoom steps in under ~1 GB).
+    static let lowMemoryMb = 2500
 
     /// `answering`: `/v1/health` said ok. `reached`: the host answered at all (either request). `host`: the status,
     /// nil when it couldn't be read.
@@ -63,9 +65,16 @@ struct ServerCondition: Equatable {
             return ServerCondition(symbol: "hammer.fill", title: "Claude is working on Aide", short: "Claude on it",
                                    detail: "It may restart the server in a moment.", level: .warning)
         }
-        if !live.dev.isEmpty || live.claude.contains(where: \.busy) {
+        // Busy only when Aide is at risk: app development running beside it, or little memory left. A Claude session
+        // at work in another project alone isn't.
+        let low = live.memory.map { $0.availableMb < lowMemoryMb } ?? false
+        if !live.dev.isEmpty || low {
+            let running = live.dev.isEmpty ? ""
+                : "\(live.dev.formatted(.list(type: .and))) \(live.dev.count == 1 ? "is" : "are") running. "
+            let memory = live.memory.map { String(format: "%.1f GB free. ", Double($0.availableMb) / 1024) } ?? ""
             return ServerCondition(symbol: "memorychip", title: "cappa is busy", short: "Busy",
-                                   detail: reasons + " Aide may be slow, or stopped to make room.", level: .info)
+                                   detail: running + (low ? memory : "") + "Aide may be slow, or stopped to make room.",
+                                   level: .info)
         }
         return nil
     }
@@ -159,7 +168,7 @@ final class ServerStatus: ObservableObject {
 }
 
 /// A short coloured line and a word after Aide's name on the Team page: green when Aide is ready, yellow while
-/// cappa is busy or Aide warms up, orange while it's stopped, starting or being worked on, red when it's down.
+/// app development runs beside it on cappa, memory is low or Aide warms up, orange while it's stopped, starting or being worked on, red when it's down.
 /// A tap says why. Nothing until the first check.
 struct ServerStatusLine: View {
     @ObservedObject var status: ServerStatus

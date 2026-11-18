@@ -47,8 +47,20 @@ final class ServerStatusTests: XCTestCase {
         XCTAssertEqual(ServerCondition.from(answering: true, reached: true, host: h, now: now)?.title,
                        "Claude is working on Aide")
         let elsewhere = host(claude: [.init(project: "roenlabs", busy: true)])
-        XCTAssertEqual(ServerCondition.from(answering: true, reached: true, host: elsewhere, now: now)?.title,
-                       "cappa is busy")
+        XCTAssertNil(ServerCondition.from(answering: true, reached: true, host: elsewhere, now: now)) // not a risk alone
+    }
+
+    func testBusyWhileDevRunsOrMemoryIsLow() {
+        let dev = host(dev: ["Android emulator", "Expo"])
+        let c = ServerCondition.from(answering: true, reached: true, host: dev, now: now)
+        XCTAssertEqual(c?.short, "Busy")
+        XCTAssertEqual(c?.detail, "Android emulator and Expo are running. Aide may be slow, or stopped to make room.")
+        var low = host()
+        low.memory = .init(totalMb: 15391, availableMb: 1800, aideMaxMb: 8192)
+        XCTAssertEqual(ServerCondition.from(answering: true, reached: true, host: low, now: now)?.short, "Busy")
+        var fine = host()
+        fine.memory = .init(totalMb: 15391, availableMb: 7000, aideMaxMb: 8192)
+        XCTAssertNil(ServerCondition.from(answering: true, reached: true, host: fine, now: now))
     }
 
     func testJustRestarted() {
