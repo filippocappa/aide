@@ -103,6 +103,12 @@ struct MacRootView: View {
                         .sharedBackgroundVisibility(.hidden)
                     }
                 }
+                if #available(macOS 26, *) {
+                    ToolbarItem(placement: .navigation) { MacWindowTitle(server: env.server) }
+                        .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .navigation) { MacWindowTitle(server: env.server) }
+                }
             }
         .onAppear {
             if !settings.isConfigured { nav.section = .settings }
@@ -366,5 +372,20 @@ struct SoftTitleBar: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// The window's title, "Aide", with the server's status after it: a coloured line and a word (`ServerStatusLine`).
+private struct MacWindowTitle: View {
+    @EnvironmentObject private var settings: AppSettings
+    let server: ServerStatus
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Aide").font(.system(size: 15, weight: .semibold))
+            if settings.isConfigured { ServerStatusLine(status: server) }
+        }
+        .fixedSize()
+        .padding(.leading, 4)
     }
 }

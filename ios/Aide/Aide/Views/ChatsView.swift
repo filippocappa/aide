@@ -41,7 +41,7 @@ struct ChatsView: View {
                             SettingsButton()
                         }
                     }
-                    AideCard(agent: chat.orchestrator, latest: chat.chats(with: chat.orchestrator).first,
+                    AideCard(agent: chat.orchestrator, latest: chat.chats(with: chat.orchestrator).first, server: env.server,
                              working: chat.working(for: chat.orchestrator), mood: mood(chat.orchestrator),
                              loading: loading,
                              open: { Task { await chat.talk(to: chat.orchestrator) } },
@@ -210,6 +210,8 @@ struct ChatsView: View {
 private struct AideCard: View {
     let agent: Agent
     let latest: Conversation?
+    /// Whether the server's up, as a coloured line after the name.
+    let server: ServerStatus
     var working: String?
     let mood: String
     var loading = false
@@ -224,7 +226,7 @@ private struct AideCard: View {
                     LivePebble(mood: mood, size: 52, figure: agent.figure)
                         .foregroundStyle(agent.tint)
                         .allowsHitTesting(false)
-                    AgentText(agent: agent, latest: latest, working: working, loading: loading, lines: 1)
+                    AgentText(agent: agent, latest: latest, working: working, loading: loading, lines: 1, server: server)
                 }
                 .contentShape(Rectangle())
             }
@@ -264,11 +266,16 @@ private struct AgentText: View {
     var working: String?
     var loading = false
     var lines = 2
+    /// Aide's card: the server's status after the name.
+    var server: ServerStatus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline) {
                 Text(agent.name).font(.headline).foregroundStyle(.primary)
+                #if os(iOS) // the Mac has it after the window's title
+                if let server { ServerStatusLine(status: server).padding(.leading, 4) }
+                #endif
                 Spacer(minLength: 4)
                 if let date = latest?.updatedAt.flatMap(Wire.parse) {
                     Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.tertiary)
@@ -661,10 +668,7 @@ private struct Greeting: View {
                 .padding(.horizontal, -20)
                 .padding(.top, 2)
             } trailing: {
-                HStack(spacing: 8) {
-                    ServerStatusGlyph(status: env.server)
-                    SettingsButton()
-                }
+                SettingsButton()
             }
         }
         .task { await load() }

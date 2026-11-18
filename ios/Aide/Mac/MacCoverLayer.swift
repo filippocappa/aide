@@ -86,7 +86,8 @@ struct MacCoverLayer: View {
 
     private func showTitleBar(_ shown: Bool) {
         guard let window else { return }
-        window.titleVisibility = shown ? .visible : .hidden
+        // The system's title stays hidden: the toolbar has its own "Aide" with the server's status (`MacWindowTitle`).
+        window.titleVisibility = .hidden
         window.toolbar?.isVisible = shown
     }
 

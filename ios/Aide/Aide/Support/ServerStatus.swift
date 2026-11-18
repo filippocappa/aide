@@ -5,12 +5,14 @@ struct ServerCondition: Equatable {
     enum Level { case info, warning, problem }
     let symbol: String
     let title: String
+    /// A word or two by Aide's name ("Stopped").
+    let short: String
     let detail: String
     let level: Level
 
     var color: Color {
         switch level {
-        case .info: .secondary
+        case .info: .yellow
         case .warning: .orange
         case .problem: .red
         }
@@ -32,37 +34,37 @@ struct ServerCondition: Equatable {
 
         guard answering else {
             if !reached {
-                return ServerCondition(symbol: "wifi.slash", title: "Can't reach cappa",
+                return ServerCondition(symbol: "wifi.slash", title: "Can't reach cappa", short: "Offline",
                                        detail: "Tailscale is off on this device, or cappa is down.", level: .problem)
             }
             switch live?.aide.state {
             case "inactive", "deactivating":
-                return ServerCondition(symbol: "pause.circle.fill", title: "Aide is stopped",
+                return ServerCondition(symbol: "pause.circle.fill", title: "Aide is stopped", short: "Stopped",
                                        detail: reasons.isEmpty ? "Someone stopped it on cappa." : reasons,
                                        level: .warning)
             case "failed":
-                return ServerCondition(symbol: "exclamationmark.triangle.fill", title: "Aide crashed",
+                return ServerCondition(symbol: "exclamationmark.triangle.fill", title: "Aide crashed", short: "Down",
                                        detail: reasons.isEmpty ? "It's in the logs on cappa." : reasons,
                                        level: .problem)
             case "activating", "active":
-                return ServerCondition(symbol: "arrow.clockwise.circle.fill", title: "Aide is starting",
+                return ServerCondition(symbol: "arrow.clockwise.circle.fill", title: "Aide is starting", short: "Starting",
                                        detail: reasons.isEmpty ? "Back in a moment." : reasons, level: .warning)
             default:
-                return ServerCondition(symbol: "exclamationmark.triangle.fill", title: "Aide isn't answering",
+                return ServerCondition(symbol: "exclamationmark.triangle.fill", title: "Aide isn't answering", short: "Down",
                                        detail: "cappa is up, but Aide doesn't answer.", level: .problem)
             }
         }
         guard let live else { return nil }
         if let since = HostStatus.date(live.aide.since), now.timeIntervalSince(since) < fresh {
-            return ServerCondition(symbol: "arrow.clockwise.circle.fill", title: "Aide just restarted",
+            return ServerCondition(symbol: "arrow.clockwise.circle.fill", title: "Aide just restarted", short: "Warming up",
                                    detail: "The voice is still loading for a minute.", level: .info)
         }
         if live.claude.contains(where: { $0.busy && $0.project == aideProject }) {
-            return ServerCondition(symbol: "hammer.fill", title: "Claude is working on Aide",
+            return ServerCondition(symbol: "hammer.fill", title: "Claude is working on Aide", short: "Claude on it",
                                    detail: "It may restart the server in a moment.", level: .warning)
         }
         if !live.dev.isEmpty || live.claude.contains(where: \.busy) {
-            return ServerCondition(symbol: "memorychip", title: "cappa is busy",
+            return ServerCondition(symbol: "memorychip", title: "cappa is busy", short: "Busy",
                                    detail: reasons + " Aide may be slow, or stopped to make room.", level: .info)
         }
         return nil
@@ -156,33 +158,44 @@ final class ServerStatus: ObservableObject {
     }
 }
 
-/// A little glyph by Settings' gear when something's off with the server; a tap says what.
-struct ServerStatusGlyph: View {
+/// A short coloured line and a word after Aide's name on the Team page: green when Aide is ready, yellow while
+/// cappa is busy or Aide warms up, orange while it's stopped, starting or being worked on, red when it's down.
+/// A tap says why. Nothing until the first check.
+struct ServerStatusLine: View {
     @ObservedObject var status: ServerStatus
     @Environment(\.scenePhase) private var scenePhase
     @State private var showing = false
 
+    private var color: Color { status.condition?.color ?? .green }
+
     var body: some View {
         // A ZStack, not a Group: an empty Group drops its modifiers, and the task below would never run.
         ZStack {
-            if let c = status.condition {
-                Button { showing = true } label: {
-                    Image(systemName: c.symbol)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(c.color)
-                        .symbolEffect(.pulse, isActive: c.level != .info)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
-                        .glass(in: Circle())
+            if status.checked != nil {
+                HStack(spacing: 5) {
+                    let line = Capsule().fill(color.gradient).frame(width: 14, height: 4)
+                    if let c = status.condition, c.level != .info { // breathing only while it's stopped or down
+                        line.phaseAnimator([1.0, 0.35]) { $0.opacity($1) } animation: { _ in .easeInOut(duration: 0.9) }
+                    } else {
+                        line
+                    }
+                    Text(status.condition?.short ?? "Ready")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(color)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(c.title)
+                .padding(.vertical, 6) // a bigger target
+                .contentShape(Rectangle())
+                // Over the card's own button, which opens the chat.
+                .highPriorityGesture(TapGesture().onEnded { showing = true })
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(status.condition?.title ?? "Aide is ready")
+                .accessibilityAddTraits(.isButton)
                 .popover(isPresented: $showing) { ServerStatusPopover(status: status) }
-                .transition(.scale.combined(with: .opacity))
+                .transition(.opacity)
             }
         }
-        .animation(.spring(duration: 0.3), value: status.condition)
-        // Often while something's off, so it goes away soon after Aide is back.
+        .animation(.easeInOut(duration: 0.25), value: status.condition)
+        // Often while something's off, so it turns green soon after Aide is back.
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
