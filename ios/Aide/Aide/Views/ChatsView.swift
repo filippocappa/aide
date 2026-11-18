@@ -41,7 +41,7 @@ struct ChatsView: View {
                             SettingsButton()
                         }
                     }
-                    AideCard(agent: chat.orchestrator, latest: chat.chats(with: chat.orchestrator).first, server: env.server,
+                    AideCard(agent: chat.orchestrator, latest: chat.chats(with: chat.orchestrator).first,
                              working: chat.working(for: chat.orchestrator), mood: mood(chat.orchestrator),
                              loading: loading,
                              open: { Task { await chat.talk(to: chat.orchestrator) } },
@@ -210,8 +210,6 @@ struct ChatsView: View {
 private struct AideCard: View {
     let agent: Agent
     let latest: Conversation?
-    /// Whether the server's up, as a coloured line after the name.
-    let server: ServerStatus
     var working: String?
     let mood: String
     var loading = false
@@ -226,7 +224,7 @@ private struct AideCard: View {
                     LivePebble(mood: mood, size: 52, figure: agent.figure)
                         .foregroundStyle(agent.tint)
                         .allowsHitTesting(false)
-                    AgentText(agent: agent, latest: latest, working: working, loading: loading, lines: 1, server: server)
+                    AgentText(agent: agent, latest: latest, working: working, loading: loading, lines: 1)
                 }
                 .contentShape(Rectangle())
             }
@@ -266,16 +264,11 @@ private struct AgentText: View {
     var working: String?
     var loading = false
     var lines = 2
-    /// Aide's card: the server's status after the name.
-    var server: ServerStatus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline) {
                 Text(agent.name).font(.headline).foregroundStyle(.primary)
-                #if os(iOS) // the Mac has it after the window's title
-                if let server { ServerStatusLine(status: server).padding(.leading, 4) }
-                #endif
                 Spacer(minLength: 4)
                 if let date = latest?.updatedAt.flatMap(Wire.parse) {
                     Text(ConversationRow.when(date)).font(.caption).foregroundStyle(.tertiary)
@@ -654,7 +647,8 @@ private struct Greeting: View {
     var body: some View {
         TimelineView(.everyMinute) { context in
             TopBlock(Self.title(at: context.date),
-                     overline: context.date.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
+                     overline: context.date.formatted(.dateTime.weekday(.wide).day().month(.wide)),
+                     overlineAccessory: statusLine) {
                 briefing
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -708,6 +702,15 @@ private struct Greeting: View {
         case 12..<18: "Good afternoon"
         default: "Good evening"
         }
+    }
+
+    /// The server's status at the top, after the date (the Mac has it after the window's title instead).
+    private var statusLine: AnyView? {
+        #if os(iOS)
+        AnyView(ServerStatusLine(status: env.server))
+        #else
+        nil
+        #endif
     }
 
     /// "3 of 5 habits". Counted habits (a daily limit) aren't in it: they're never "done" during the day.

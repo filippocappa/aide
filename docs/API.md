@@ -33,7 +33,8 @@ restarting or broken. The app's status glyph reads it beside `/v1/health`.
  "voice": {"state": "active", "since": "2026-11-18T16:57:10Z"},
  "claude": [{"project": "roenlabs", "busy": true}],
  "dev": ["Android emulator", "Metro"],
- "memory": {"total_mb": 15391, "available_mb": 7829, "aide_max_mb": 8192}}
+ "memory": {"total_mb": 15391, "available_mb": 7829, "aide_max_mb": 8192},
+ "port": {"project": "roenlabs", "command": "local_engine.py"}}
 ```
 
 - `at`: when it was written (UTC). Older than a minute or two: the watcher isn't running; trust only `/v1/health`.
@@ -45,6 +46,8 @@ restarting or broken. The app's status glyph reads it beside `/v1/health`.
 - `dev`: app development running beside Aide (roenlabs): its memory budget drops and it may be stopped.
   The app's line turns yellow (Busy) for this, or under 2.5 GB `available_mb`; a busy Claude elsewhere alone doesn't.
 - `memory`: what's free, and Aide's budget (`aide.slice`).
+- `port` (only when it isn't Aide): what listens on Aide's port 8787, its project and script. Aide can't start while
+  it's there, and whatever answers `/v1/health` then isn't Aide: the app trusts `aide.state` over it ("Port taken").
 
 ## Chat
 

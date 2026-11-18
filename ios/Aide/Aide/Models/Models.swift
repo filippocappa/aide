@@ -4447,14 +4447,17 @@ struct HostStatus: Decodable, Equatable {
     struct Unit: Decodable, Equatable { let state: String; var since: String? }
     struct Session: Decodable, Equatable { let project: String; let busy: Bool }
     struct Memory: Decodable, Equatable { let totalMb: Int; let availableMb: Int; var aideMaxMb: Int? }
+    /// Something else on Aide's port 8787 ("local_engine.py" in roenlabs): Aide can't start while it's there.
+    struct Port: Decodable, Equatable { let project: String; let command: String }
     let at: String
     let aide: Unit
     var voice: Unit?
     var claude: [Session] = []
     var dev: [String] = []
     var memory: Memory?
+    var port: Port?
 
-    enum CodingKeys: String, CodingKey { case at, aide, voice, claude, dev, memory }
+    enum CodingKeys: String, CodingKey { case at, aide, voice, claude, dev, memory, port }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         at = try c.decode(String.self, forKey: .at)
@@ -4463,6 +4466,7 @@ struct HostStatus: Decodable, Equatable {
         claude = try c.decodeIfPresent([Session].self, forKey: .claude) ?? []
         dev = try c.decodeIfPresent([String].self, forKey: .dev) ?? []
         memory = try c.decodeIfPresent(Memory.self, forKey: .memory)
+        port = try c.decodeIfPresent(Port.self, forKey: .port)
     }
 
     init(at: String, aide: Unit, voice: Unit? = nil, claude: [Session] = [], dev: [String] = [], memory: Memory? = nil) {

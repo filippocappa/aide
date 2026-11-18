@@ -63,6 +63,16 @@ final class ServerStatusTests: XCTestCase {
         XCTAssertNil(ServerCondition.from(answering: true, reached: true, host: fine, now: now))
     }
 
+    func testPortTakenWhileStopped() {
+        var h = host("inactive", claude: [.init(project: "roenlabs", busy: true)])
+        h.port = .init(project: "roenlabs", command: "local_engine.py")
+        // The test server answers /v1/health (here even with ok): it still isn't Aide.
+        let c = ServerCondition.from(answering: true, reached: true, host: h, now: now)
+        XCTAssertEqual(c?.short, "Port taken")
+        XCTAssertEqual(c?.detail, "local_engine.py (roenlabs) is on Aide's port 8787, so Aide can't start until it's "
+                       + "moved or stopped. Claude is working in roenlabs.")
+    }
+
     func testJustRestarted() {
         let h = host(since: "2026-11-18T17:09:30Z")
         XCTAssertEqual(ServerCondition.from(answering: true, reached: true, host: h, now: now)?.title, "Aide just restarted")

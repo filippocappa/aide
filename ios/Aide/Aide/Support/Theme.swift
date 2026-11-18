@@ -308,11 +308,14 @@ struct TopBlock<Content: View, Trailing: View>: View {
     let content: Content
     /// A control on the title's line, at its end (a tab's corner button, in place of a navigation bar of its own).
     let trailing: Trailing
+    /// Something small after the overline (the server's status on Team).
+    var overlineAccessory: AnyView?
 
-    init(_ title: String, overline: String? = nil, @ViewBuilder content: () -> Content,
-         @ViewBuilder trailing: () -> Trailing) {
+    init(_ title: String, overline: String? = nil, overlineAccessory: AnyView? = nil,
+         @ViewBuilder content: () -> Content, @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.overline = overline
+        self.overlineAccessory = overlineAccessory
         self.content = content()
         self.trailing = trailing()
     }
@@ -321,7 +324,10 @@ struct TopBlock<Content: View, Trailing: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 if let overline {
-                    Text(overline).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        Text(overline).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                        overlineAccessory
+                    }
                 }
                 HStack(spacing: 12) {
                     Text(title).font(.largeTitle.bold()).frame(maxWidth: .infinity, alignment: .leading)

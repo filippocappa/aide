@@ -2,7 +2,7 @@
 """What's happening on cappa, for the app's status glyph (docs/API.md, "Host status").
 
 Every 10 s: Aide's and the voice's service state, the Claude Code sessions of this user (the project each works in,
-busy or idle), what's running for app development (an Android emulator, Expo, Metro, Gradle: roenlabs) and the memory
+busy or idle), whatever else holds Aide's port 8787, what's running for app development (an Android emulator, Expo, Metro, Gradle: roenlabs) and the memory
 left, written to ~/.local/state/aide-status/host.json. tailscaled serves that folder itself at /aide-status/, so the
 app can read it while Aide is stopped, restarting or broken. Standard library only, run by the system python3, so a
 venv being re-synced doesn't stop it. `--once` prints one reading and writes nothing.
@@ -20,6 +20,7 @@ from pathlib import Path
 
 OUT = Path.home() / ".local/state/aide-status/host.json"
 EVERY = 10
+PORT = 8787  # Aide's API (tailscale serve's / proxies it)
 # A Claude session using more than this share of a core (with what it runs) is busy; it stays busy for LINGER
 # seconds after, so the wait for the model between two steps doesn't flicker.
 BUSY_SHARE = 0.03
@@ -102,6 +103,44 @@ def service(unit: str) -> dict:
     return out
 
 
+def port_holder(procs: dict[int, dict], aide: int) -> dict | None:
+    """Who listens on Aide's port when it isn't Aide (a test server left there keeps Aide from starting, and gets the
+    apps' requests): the project it runs in and the script or program, e.g. {"project": "roenlabs",
+    "command": "local_engine.py"}. Only this user's processes show their pid."""
+    try:
+        text = subprocess.run(["ss", "-ltnpH", f"sport = :{PORT}"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if not text.strip():
+        return None
+    pids = [int(m) for m in re.findall(r"pid=(\d+)", text)]
+    if aide and (aide in pids or any(is_child(procs, pid, aide) for pid in pids)):
+        return None
+    if not pids:
+        return {"project": "?", "command": "another user's program"}
+    pid = pids[0]
+    args = procs.get(pid, {}).get("cmd", "").split()
+    script = next((a for a in args[1:] if re.search(r"\.(py|js|ts|mjs)$", a)), args[0] if args else "?")
+    return {"project": project(pid), "command": Path(script).name}
+
+
+def is_child(procs: dict[int, dict], pid: int, ancestor: int) -> bool:
+    while pid > 1 and pid in procs:
+        if pid == ancestor:
+            return True
+        pid = procs[pid]["ppid"]
+    return False
+
+
+def main_pid(unit: str) -> int:
+    try:
+        out = subprocess.run(["systemctl", "--user", "show", unit, "-p", "MainPID", "--value"],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        return int(out or 0)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return 0
+
+
 def memory() -> dict:
     info = {}
     for line in Path("/proc/meminfo").read_text().splitlines():
@@ -145,8 +184,12 @@ def reading(before: dict[int, tuple[float, int]], busy_until: dict[int, float]) 
         if any(p["uid"] == UID and pattern.search(p["cmd"]) and not NOT_DEV.search(p["cmd"]) for p in procs.values()):
             dev.append(label)
     sessions.sort(key=lambda s: (not s["busy"], s["project"]))
-    return {"at": iso(now), "aide": service("aide"), "voice": service("aide-voice"),
-            "claude": sessions, "dev": dev, "memory": memory()}
+    out = {"at": iso(now), "aide": service("aide"), "voice": service("aide-voice"),
+           "claude": sessions, "dev": dev, "memory": memory()}
+    holder = port_holder(procs, main_pid("aide"))
+    if holder:
+        out["port"] = holder
+    return out
 
 
 def write(data: dict) -> None:

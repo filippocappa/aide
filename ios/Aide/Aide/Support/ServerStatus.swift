@@ -33,11 +33,20 @@ struct ServerCondition: Equatable {
         let live = host.flatMap { h in HostStatus.date(h.at).map { now.timeIntervalSince($0) < stale } } == true
             ? host : nil
         let reasons = live.map(Self.reasons) ?? ""
+        // Whatever answers on Aide's port while its unit is down isn't Aide (a test server left there).
+        let up = answering && !(live.map { ["inactive", "deactivating", "failed"].contains($0.aide.state) } ?? false)
 
-        guard answering else {
+        guard up else {
             if !reached {
                 return ServerCondition(symbol: "wifi.slash", title: "Can't reach cappa", short: "Offline",
                                        detail: "Tailscale is off on this device, or cappa is down.", level: .problem)
+            }
+            if let port = live?.port, live?.aide.state != "active" {
+                return ServerCondition(symbol: "exclamationmark.triangle.fill", title: "Aide's port is taken",
+                                       short: "Port taken",
+                                       detail: "\(port.command) (\(port.project)) is on Aide's port 8787, so Aide can't start "
+                                           + "until it's moved or stopped. " + reasons,
+                                       level: .problem)
             }
             switch live?.aide.state {
             case "inactive", "deactivating":
@@ -113,6 +122,7 @@ struct ServerCondition: Equatable {
             out.append("Claude in \(s.project): \(s.busy ? "working" : "idle")")
         }
         if !host.dev.isEmpty { out.append("Running: \(host.dev.formatted(.list(type: .and)))") }
+        if let port = host.port { out.append("Port 8787: \(port.command) (\(port.project))") }
         if let m = host.memory {
             let free = String(format: "%.1f", Double(m.availableMb) / 1024)
             let budget = m.aideMaxMb.map { " · Aide's budget \($0 / 1024) GB" } ?? ""
