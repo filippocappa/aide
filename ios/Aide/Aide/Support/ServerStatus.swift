@@ -163,7 +163,8 @@ struct ServerStatusGlyph: View {
     @State private var showing = false
 
     var body: some View {
-        Group {
+        // A ZStack, not a Group: an empty Group drops its modifiers, and the task below would never run.
+        ZStack {
             if let c = status.condition {
                 Button { showing = true } label: {
                     Image(systemName: c.symbol)
