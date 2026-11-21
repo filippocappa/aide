@@ -116,7 +116,8 @@ struct ServerCondition: Equatable {
         }
         out.append(state)
         if let voice = host.voice, voice.state != "active", host.aide.state == "active" {
-            out.append("Voice \(voice.state)")
+            // aide-voice restarts by itself, so stopped means Live calls were turned off (Settings → Voice).
+            out.append(voice.state == "inactive" ? "Voice off (Live calls)" : "Voice \(voice.state)")
         }
         for s in host.claude {
             out.append("Claude in \(s.project): \(s.busy ? "working" : "idle")")
