@@ -663,30 +663,34 @@ async def test_new_material_is_proposed_from_the_outline_and_merged_into_the_use
                "sources": [{"file": f2["id"], "pages": "1"}]},
               {"topic": None, "title": "Fiscal policy", "add": "Debt-financed spending.",
                "sources": [{"file": f2["id"], "pages": "2"}], "after": is_lm["public_id"]},
+              {"topic": None, "title": "Public debt", "add": "Debt dynamics.",
+               "sources": [{"file": f2["id"], "pages": "2"}], "after": is_lm["public_id"]},
               {"topic": None, "title": "Nothing", "add": "", "sources": []}]
     nb.client.responses.append(done(json.dumps(triage)))
     await drain(nb)
-    assert nb.client.requests[-1]["model"] == "m"  # sorting is the cheap model's
-    request = sent(nb.client.requests[-1])
+    asked = next(r for r in reversed(nb.client.requests) if "New material:" in sent(r))
+    assert asked["model"] == "smart"  # sorting is the smart model's (the cheap one missed modules)
+    request = sent(asked)
     # The triage sees the notebook's outline and the new file's map, not the topics' text.
     assert f"[{is_lm['public_id']}] The IS-LM model: Goods" in request and "The IS curve; The LM curve" in request
     assert "a lower interest rate raises investment" not in request and "p.1: Problem 1: a liquidity trap" in request
     p = nb.notebook.proposals(nb.macro["id"])[0]
-    assert p["kind"] == "update" and [it["title"] for it in p["items"]] == ["The IS-LM model", "Fiscal policy"]
+    assert p["kind"] == "update" and [it["title"] for it in p["items"]] == ["The IS-LM model", "Fiscal policy",
+                                                                                "Public debt"]
     # In a chat of its own (about the course), with the file to open and the proposal to answer as cards.
     chat = p["chat"]
     assert chat and chat != nb.study.chat(nb.macro["id"]) and nb.push.messages[-1][0] == chat
     row = next(c for c in nb.api.get("/v1/conversations", headers=AUTH).json()["conversations"] if c["id"] == chat)
     assert row["title"] == "Macroeconomics: Problem set 2" and row["course"] == nb.macro["id"]
     message = nb.api.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"][-1]
-    assert message["text"] == ("New in macroeconomics: **Problem set 2**. From it I'd expand 1 topic and add 1 new one "
+    assert message["text"] == ("New in macroeconomics: **Problem set 2**. From it I'd expand 1 topic and add 2 new ones "
                                "in the notes. Pick below, or tell me which (\"only 1 and 3\", \"also stress the "
                                "graphs\").")
     files, card = message["attachments"]
     assert files["type"] == "files" and [f["id"] for f in files["files"]] == [f2["id"]]
     assert card["type"] == "proposal" and card["proposal"]["id"] == p["public_id"]
     assert card["proposal"]["conversation_id"] == chat and card["proposal"]["status"] == "pending"
-    assert [it["title"] for it in card["proposal"]["items"]] == ["The IS-LM model", "Fiscal policy"]
+    assert [it["title"] for it in card["proposal"]["items"]] == ["The IS-LM model", "Fiscal policy", "Public debt"]
     # The model reads the items in the note before it.
     note = nb.db.history(nb.db.app_conversation(chat)["id"])[-2]["content"]
     assert "1. Expand **The IS-LM model**: The liquidity-trap exercise." in note
@@ -722,6 +726,20 @@ async def test_new_material_is_proposed_from_the_outline_and_merged_into_the_use
     assert "[[Aide/macroeconomics/02 Crowding out|Crowding out]]" in page.read_text()
     # Cards are only added to: the plugin's review note stays.
     assert cards.read_text() == reviewed + "What is a liquidity trap?::LM flat at zero\n"
+
+
+async def test_new_topics_after_the_same_one_keep_their_order(nb):
+    is_lm, _ = await built(nb)
+    f2 = add_pdf(nb.api, data=PROBLEMS, name="Problem set 2", course=nb.macro["id"]).json()
+    items = [{"topic": None, "title": title, "add": "x", "sources": [{"file": f2["id"], "pages": [1]}],
+              "after": is_lm["public_id"]} for title in ("Fiscal policy", "Public debt", "Austerity")]
+    p = nb.notebook.add_proposal(nb.macro["id"], "update", items, [{"file": f2["id"]}])
+    nb.client.responses.extend(done(PAGE) for _ in items)
+    assert nb.api.post(f"/v1/proposals/{p['public_id']}/apply", json={"items": [1, 2, 3]},
+                       headers=AUTH).status_code == 202
+    await drain(nb)
+    assert [t["title"] for t in nb.notebook.topics(nb.macro["id"])] == [
+        "The IS-LM model", "Fiscal policy", "Public debt", "Austerity", "Crowding out"]
 
 
 async def test_a_new_file_before_the_outline_is_answered_replans_it(nb):

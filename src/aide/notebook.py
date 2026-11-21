@@ -2227,9 +2227,10 @@ class NotebookWorker:
         if not mapped.strip():
             return None
         content = (f"Course: {course['name']}\n\nThe notebook:\n{self.store.outline(cid)}\n\nNew material:\n{mapped}")
-        # Sorting material against the outline needs no judgement of the writing kind: the cheap model.
-        answer = parse_json(await self._ask(TRIAGE_PROMPT, [{"type": "text", "text": content}], 4000,
-                                            model=self.agent.model))
+        # The smart model: the cheap one judged whole new modules as adding nothing (Optimization's notes, Linear
+        # Algebra's lessons 3-9) or put 60 pages in one topic, and a long chapter's list overran 4000 tokens or came
+        # back unreadable (2026-11-21: Macroeconomics' second half never reached the notes).
+        answer = parse_json(await self._ask(TRIAGE_PROMPT, [{"type": "text", "text": content}], 16000))
         by_id = {t["public_id"]: t for t in self.store.topics(cid)}
         items = []
         for it in answer if isinstance(answer, list) else []:
@@ -2274,13 +2275,17 @@ class NotebookWorker:
         if self.vault is not None:
             self.vault.pull()  # the user's latest edits, before building on them
         jobs: list[tuple[dict, dict]] = []  # (topic, item)
+        placed: dict[str, str] = {}  # an "after" topic → the last new topic put after it, so several keep their order
         for it in picked:
             if it.get("topic") and (topic := self.store.topic(it["topic"])):
                 jobs.append((topic, it))
             else:
-                after = self.store.topic(it["after"]) if it.get("after") else None
+                anchor = placed.get(it["after"], it["after"]) if it.get("after") else None
+                after = self.store.topic(anchor) if anchor else None
                 topic = self.store.add_topic(p["course_id"], it["title"], it.get("summary") or it.get("add") or "",
                                              it["sources"], after["position"] if after else None)
+                if it.get("after"):
+                    placed[it["after"]] = topic["public_id"]
                 jobs.append((topic, {**it, "new": True}))
         gate = asyncio.Semaphore(PARALLEL)
         active: list[str] = []
