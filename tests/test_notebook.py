@@ -733,13 +733,20 @@ async def test_new_topics_after_the_same_one_keep_their_order(nb):
     f2 = add_pdf(nb.api, data=PROBLEMS, name="Problem set 2", course=nb.macro["id"]).json()
     items = [{"topic": None, "title": title, "add": "x", "sources": [{"file": f2["id"], "pages": [1]}],
               "after": is_lm["public_id"]} for title in ("Fiscal policy", "Public debt", "Austerity")]
+    # Two items on one topic: one merge with both, not two written side by side (the last undoing the first).
+    items += [{"topic": is_lm["public_id"], "title": "The IS-LM model", "add": add,
+               "sources": [{"file": f2["id"], "pages": [n]}]} for n, add in ((1, "The trap."), (2, "The debt."))]
     p = nb.notebook.add_proposal(nb.macro["id"], "update", items, [{"file": f2["id"]}])
-    nb.client.responses.extend(done(PAGE) for _ in items)
-    assert nb.api.post(f"/v1/proposals/{p['public_id']}/apply", json={"items": [1, 2, 3]},
+    nb.client.responses.append({t: [done(PAGE), done('{"1": "A"}')]
+                                for t in ("Fiscal policy", "Public debt", "Austerity", "The IS-LM model")})
+    assert nb.api.post(f"/v1/proposals/{p['public_id']}/apply", json={"items": [1, 2, 3, 4, 5]},
                        headers=AUTH).status_code == 202
     await drain(nb)
     assert [t["title"] for t in nb.notebook.topics(nb.macro["id"])] == [
         "The IS-LM model", "Fiscal policy", "Public debt", "Austerity", "Crowding out"]
+    merges = [sent(r) for r in nb.client.requests if "What to add:" in sent(r)]
+    assert len(merges) == 1 and "What to add: The trap. Also: The debt." in merges[0]
+    assert "[Problem set 2.pdf, p. 1]" in merges[0] and "[Problem set 2.pdf, p. 2]" in merges[0]
 
 
 async def test_a_new_file_before_the_outline_is_answered_replans_it(nb):

@@ -2278,7 +2278,13 @@ class NotebookWorker:
         placed: dict[str, str] = {}  # an "after" topic → the last new topic put after it, so several keep their order
         for it in picked:
             if it.get("topic") and (topic := self.store.topic(it["topic"])):
-                jobs.append((topic, it))
+                # Several items on one topic are one merge: written side by side, the last would undo the others.
+                if (n := next((i for i, (t, _) in enumerate(jobs) if t["id"] == topic["id"]), None)) is not None:
+                    prev = jobs[n][1]
+                    jobs[n] = (topic, {**prev, "add": f"{prev['add']} Also: {it['add']}",
+                                       "sources": [*prev["sources"], *it["sources"]]})
+                else:
+                    jobs.append((topic, it))
             else:
                 anchor = placed.get(it["after"], it["after"]) if it.get("after") else None
                 after = self.store.topic(anchor) if anchor else None
