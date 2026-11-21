@@ -363,12 +363,17 @@ private struct GlassPanel<S: Shape>: ViewModifier {
 /// band with a line at its bottom.
 struct SoftTitleBar: ViewModifier {
     func body(content: Content) -> some View {
+        // The system's title is gone for good (`MacWindowTitle` has "Aide" and the status); setting the window's
+        // `titleVisibility` alone didn't hold, the system "Aide" came back after it (2026-11-21).
         if #available(macOS 26, *) {
             content
+                .toolbar(removing: .title)
                 .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
                 .scrollEdgeEffectStyle(.soft, for: .top)
         } else if #available(macOS 15, *) {
-            content.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+            content
+                .toolbar(removing: .title)
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         } else {
             content
         }
