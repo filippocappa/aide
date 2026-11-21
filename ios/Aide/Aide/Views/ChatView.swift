@@ -4,6 +4,7 @@ struct ChatView: View {
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var voice: VoiceController
+    @EnvironmentObject private var dictation: Dictation
     @EnvironmentObject private var digest: DigestViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
@@ -425,6 +426,7 @@ struct ChatView: View {
             MessageBox("Message \(chat.agent.name)", text: $draft, focused: $composerFocused, reset: sent,
                        tint: chat.agent.tint, onReturn: { if canSend { sendDraft() } }) {
                 attachMenu
+                if !voice.isActive { DictateButton(insert: dictated) }
                 sendOrTalk
             }
         }
@@ -594,6 +596,12 @@ struct ChatView: View {
         }
     }
 
+    /// Dictated words into the box, after what's typed there.
+    private func dictated(_ text: String) {
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = typed.isEmpty ? text : typed + " " + text
+    }
+
     @ViewBuilder private var sendOrTalk: some View {
         if showsMic {
                 Button { Task { await voice.toggle() } } label: {
@@ -605,6 +613,8 @@ struct ChatView: View {
                         .tintedGlass(Theme.accent, in: Capsule())
                 }
                 .buttonStyle(.plain)
+                .disabled(dictation.isActive)
+                .opacity(dictation.isActive ? 0.4 : 1)
                 .accessibilityLabel(voice.isActive ? "Stop voice chat" : "Talk to \(chat.agent.name)")
             } else {
                 SendButton(enabled: canSend, action: sendDraft)
@@ -765,6 +775,65 @@ extension Binding where Value == String {
 }
 
 /// The round send button in a message box.
+/// The microphone in a message box: dictation (Support/Dictation.swift). Tap, talk, tap again: the words go into the
+/// box to edit and send. While it records it's a stop button that pulses with your voice; then a spinner.
+struct DictateButton: View {
+    @EnvironmentObject private var dictation: Dictation
+    let insert: (String) -> Void
+
+    var body: some View {
+        Button {
+            Task {
+                switch dictation.state {
+                case .idle: await dictation.start()
+                case .recording: if let text = await dictation.stop() { insert(text) }
+                case .transcribing: break
+                }
+            }
+        } label: {
+            ZStack {
+                switch dictation.state {
+                case .idle:
+                    Image(systemName: "mic")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.primary)
+                case .recording:
+                    Circle()
+                        .fill(Color.red.opacity(0.18))
+                        .scaleEffect(0.75 + dictation.level * 0.35)
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.red)
+                case .transcribing:
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(width: 34, height: 34)
+            .contentShape(Circle())
+            .animation(.easeOut(duration: 0.1), value: dictation.level)
+        }
+        .buttonStyle(.plain)
+        .disabled(dictation.state == .transcribing)
+        .popover(isPresented: Binding(get: { dictation.error != nil }, set: { if !$0 { dictation.error = nil } })) {
+            Text(dictation.error ?? "")
+                .font(.footnote)
+                .padding(12)
+                .presentationCompactAdaptation(.popover)
+        }
+        .onAppear { dictation.onLimit = insert }
+        .onDisappear { dictation.cancel() }
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        switch dictation.state {
+        case .idle: "Dictate"
+        case .recording: "Stop dictating"
+        case .transcribing: "Writing it down"
+        }
+    }
+}
+
 struct SendButton: View {
     let enabled: Bool
     let action: () -> Void

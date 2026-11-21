@@ -18,6 +18,8 @@ final class AppEnvironment: ObservableObject {
     let live: LiveActivities
     let screenTime: ScreenTimeService
     let voice = VoiceController()
+    /// The message box's microphone: dictation, written down on the server.
+    let dictation = Dictation()
     /// Whether the server answers, and what's going on on cappa (the glyph by Settings' gear).
     let server: ServerStatus
     /// The Moodle screen as a sheet, from a `moodle` notification.
@@ -73,6 +75,9 @@ final class AppEnvironment: ObservableObject {
         voice.transcribe = { [weak settings] wav in
             try await api.transcribe(wav: wav, language: settings?.voiceLanguage ?? "en-US")
         }
+        dictation.transcribe = { [weak settings] wav in
+            try await api.transcribe(wav: wav, language: settings?.voiceLanguage ?? "en-US")
+        }
         voice.onUtterance = { [weak self] text in
             guard let self else { return }
             // You talked over a reply that's still being written: yours goes once it's in.
@@ -88,8 +93,8 @@ final class AppEnvironment: ObservableObject {
             }
         }
 
-        voice.callRequest = { [weak self, weak settings] in
-            guard let self, settings?.liveCalls ?? false, await self.serverMakesCalls(),
+        voice.callRequest = { [weak self] in
+            guard let self, await self.serverMakesCalls(),
                   let id = await self.chat.openConversation(), id != "main" else { return nil }
             return try? api.voiceCallRequest(conversationID: id)
         }
@@ -105,6 +110,11 @@ final class AppEnvironment: ObservableObject {
 
     /// The server's answer to "do you make live calls?", for a few minutes: asked when you start talking.
     private var callsChecked: (live: Bool, at: Date)?
+
+    /// Live calls turned on or off in Settings → Voice: the next Talk goes by what the server said.
+    func voiceChanged(_ status: VoiceStatus) {
+        callsChecked = (status.live, .now)
+    }
 
     private func serverMakesCalls() async -> Bool {
         if let checked = callsChecked, checked.at > .now.addingTimeInterval(-300) { return checked.live }

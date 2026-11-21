@@ -4,7 +4,8 @@ Silero (speech or not, ONNX on the CPU), smart-turn v3.2 (finished or not, ONNX 
 words, GPU) and the voice: Chatterbox, cloned from a clip per language, in a service of its own
 (`deploy/chatterbox/server.py`, ~3 GB of the GPU, streamed over HTTP on 127.0.0.1), with Kokoro on the CPU while
 that's not there; or Kokoro on the GPU without it (AIDE_VOICE_URL=off). Loading takes ~25 s, so it's done when the
-service starts and kept. A lecture or a video for Whisper borrows the GPU: it waits for any call to end, the GPU
+service starts and kept, unless live calls are off (Settings → Voice): then nothing is loaded, and turning them
+off lets everything go (`unload`; the libraries themselves stay in the process until it restarts). A lecture or a video for Whisper borrows the GPU: it waits for any call to end, the GPU
 models are let go, and they're loaded again after (`lend_gpu`); a call asked for meanwhile doesn't start, and the
 phone uses its turn-at-a-time voice."""
 
@@ -62,6 +63,18 @@ class Speaker:
             self.up = False
         return self.up
 
+    async def wait(self, seconds: float = 90) -> bool:
+        """Whether the service answers within `seconds` (it takes a while to start)."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                async with self._client(5) as client:
+                    (await client.get("/health")).raise_for_status()
+                return True
+            except Exception:
+                await asyncio.sleep(2)
+        return False
+
     async def release(self) -> None:
         try:
             async with self._client(30) as client:
@@ -91,6 +104,7 @@ class VoiceModels:
         self.speaker = Speaker(speaker_url) if speaker_url else None
         self.calls = 0
         self.lent = 0
+        self.wanted = True  # live calls on: loaded again after a lecture borrowed the GPU
         self._asr = self._pipes = None
         self._turn = self._features = None
         self._loading = asyncio.Lock()
@@ -169,6 +183,20 @@ class VoiceModels:
         torch.cuda.empty_cache()
         give_back()
 
+    async def unload(self) -> None:
+        """Live calls turned off: every model let go, the CPU ones too, and none loaded again until they're on."""
+        self.wanted = False
+        if self._warming and not self._warming.done():
+            self._warming.cancel()
+        async with self._loading:
+            if self._asr is not None or self._pipes is not None:
+                await asyncio.to_thread(self.release)
+            self._turn = self._features = None
+        if self.speaker:
+            self.speaker.up = False
+        give_back()
+        log.info("live call voice let go: live calls are off")
+
     @contextlib.asynccontextmanager
     async def lend(self):
         self.lent += 1
@@ -185,7 +213,7 @@ class VoiceModels:
             yield
         finally:
             self.lent -= 1
-            if not self.lent:
+            if not self.lent and self.wanted:
                 self._warming = asyncio.create_task(self._warm_quietly())
 
     async def _warm_quietly(self) -> None:

@@ -266,8 +266,16 @@ the app can't tell and needn't), the chat's agent does the work. Each request sa
 agent's tools, memory and confirm queue), so it's in the history like a typed one. The voice gets the agent's steps
 as private notes while it works and reads the reply back in the first person.
 
-`GET /v1/voice` → `{"live": true}` when the server can make calls, else `false`: then use
-`/v1/transcribe` and `/v1/chat` as above.
+`GET /v1/voice` → `{"live": true, "enabled": true, "engine": "local", "loading": false}`. `live`: the server can make
+calls now, else use `/v1/transcribe` and `/v1/chat` as above. Since 2026-11-21 (the rest are new):
+- `enabled`: the Live calls setting (Settings → Voice), on the server for every device; default `true`.
+- `engine`: `"local"` (cappa's own voice), `"gpt-live"`, or `null` when this server can't make calls at all (hide the
+  setting then).
+- `loading`: turned on a moment ago and the voice is still loading (~1 min); `live` is `false` meanwhile.
+
+`PUT /v1/voice` `{"enabled": false}` → the same shape. Off ends any call on now (`ended` with `"turned off"`) and
+the local voice lets its models go and stops its service, so cappa has the memory back (~3 GB; all of it after the
+next restart); on loads them again in the background (`loading`).
 
 `WS /v1/voice/call?conversation=c_91f…` with `Authorization: Bearer <token>`. An app chat only (not `main`); a bad
 token or an unknown chat is closed with 1008, calls off with 1011. A second call in the same chat ends the first
@@ -298,7 +306,7 @@ token or an unknown chat is closed with 1008, calls off with 1011. A second call
     to those queued actions; `result` as `/v1/confirm`'s (or `/v1/cancel`'s). Drop them from the Confirm card and show
     `result` as an assistant message, as after a tap. A spoken yes counts only for what that request queued, never
     for money or mail leaving (errand orders, drops, sending mail: "It's on your screen to confirm").
-  - `{"type": "ended", "reason": "hung up" | "goodbye" | "idle" | "replaced" | "voice closed" | "voice failed" | …,
+  - `{"type": "ended", "reason": "hung up" | "goodbye" | "idle" | "replaced" | "turned off" | "voice closed" | "voice failed" | …,
     "seconds": 252}` last; the server then closes the socket. A goodbye ("ok bye", "basta così") ends the call; so do
     5 minutes with nothing said.
 

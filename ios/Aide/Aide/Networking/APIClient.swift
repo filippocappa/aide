@@ -547,6 +547,12 @@ final class APIClient {
         }
     }
 
+    /// Live calls on or off for every device (Settings → Voice): off, the server lets its voice models go.
+    func setLiveCalls(_ on: Bool) async throws -> VoiceStatus {
+        struct Body: Encodable { let enabled: Bool }
+        return try await send("PUT", "/v1/voice", body: Body(enabled: on))
+    }
+
     /// A live call's socket in that chat (docs/API.md, "Voice calls"). The token goes in the header.
     func voiceCallRequest(conversationID: String) throws -> URLRequest {
         var req = try request("GET", "/v1/voice/call", query: [URLQueryItem(name: "conversation", value: conversationID)],

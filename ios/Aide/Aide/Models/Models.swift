@@ -497,7 +497,14 @@ struct VoiceCall: Decodable, Equatable, Hashable {
 
 /// Whether the server makes live calls.
 struct VoiceStatus: Decodable {
+    /// The server can make a call now.
     let live: Bool
+    /// The Live calls setting, on the server for every device. Older servers: absent (on).
+    var enabled: Bool? = nil
+    /// "local", "gpt-live", or nil when this server can't make calls at all.
+    var engine: String? = nil
+    /// Just turned on: the voice is still loading.
+    var loading: Bool? = nil
 }
 
 struct HistoryResponse: Decodable {

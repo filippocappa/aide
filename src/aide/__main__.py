@@ -120,16 +120,46 @@ def live_voice(settings: Settings):
             from .localvoice import LocalVoice
             await models.warm()
             return LocalVoice(models)
+        async def switch(on: bool) -> None:
+            """Live calls turned on or off in the app: the models and the Chatterbox service with them."""
+            if on:
+                models.wanted = True
+                if models.speaker:
+                    await systemctl("start", VOICE_UNIT)
+                    await models.speaker.wait()
+                await models.warm()
+            else:
+                await models.unload()
+                if models.speaker:
+                    await systemctl("stop", VOICE_UNIT)
         connect.warm = models.warm
+        connect.switch = switch
+        connect.engine = "local"
         return connect
     if engine == "gpt-live" and settings.openai_api_key:
         async def connect(instructions: str):
             from .gptlive import GptLive
             return await GptLive.open(settings.openai_api_key, instructions, settings.live_model, settings.live_voice)
+        connect.engine = "gpt-live"
         return connect
     if engine != "off":
         log.warning("live calls are off: AIDE_LIVE=%s can't run here", engine)
     return None
+
+
+VOICE_UNIT = "aide-voice.service"  # Chatterbox (deploy/aide-voice.service)
+
+
+async def systemctl(*args: str) -> None:
+    """A `systemctl --user` command, for the voice's own unit."""
+    try:
+        proc = await asyncio.create_subprocess_exec("systemctl", "--user", *args, stdout=asyncio.subprocess.DEVNULL,
+                                                    stderr=asyncio.subprocess.PIPE)
+        _, err = await proc.communicate()
+        if proc.returncode:
+            log.warning("systemctl --user %s: %s", " ".join(args), err.decode().strip())
+    except OSError as e:
+        log.warning("systemctl --user %s: %s", " ".join(args), e)
 
 
 async def warm_voice(warm) -> None:
@@ -476,7 +506,9 @@ def main() -> None:
                            if settings.openrouter_api_key else None)
             voice = live_voice(settings)
             calls = LiveCalls(agent, db.conn, voice, settings.live_idle_minutes)
-            if warm := getattr(voice, "warm", None):
+            if not calls.enabled and calls.switch:  # off in the app: nothing loaded, Chatterbox stopped
+                jobs.append(calls.settle())
+            elif warm := getattr(voice, "warm", None):
                 jobs.append(warm_voice(warm))
             app = create_app(agent, reminders, cal, settings.timezone, settings.api_token, habits, digest, push,
                              health, wake, transcriber, food, study, worker, vault_info, moodle,

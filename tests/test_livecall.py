@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -299,10 +300,11 @@ def test_the_call_endpoint(monkeypatch):
         return voices[-1]
 
     off = TestClient(create_app(agent, store, FakeCalendar([]), ROME, TOKEN))
-    assert off.get("/v1/voice", headers=AUTH).json() == {"live": False}
+    assert off.get("/v1/voice", headers=AUTH).json() == {"live": False, "enabled": True, "engine": None,
+                                                         "loading": False}
     client = TestClient(create_app(agent, store, FakeCalendar([]), ROME, TOKEN,
                                    calls=LiveCalls(agent, db.conn, connect)))
-    assert client.get("/v1/voice", headers=AUTH).json() == {"live": True}
+    assert client.get("/v1/voice", headers=AUTH).json()["live"] is True
     chat = agent.new_conversation(agent="secretary")["id"]
     with pytest.raises(Exception):
         with client.websocket_connect(f"/v1/voice/call?conversation={chat}") as ws:  # no token
@@ -334,3 +336,35 @@ def test_a_queued_reply_loses_how_to_confirm_it():
         == "Ho preparato lo spostamento della corsa alle 18."
     assert unconfirmed("I'll move the run to 18:00. Tap Confirm in the app.") == "I'll move the run to 18:00."
     assert unconfirmed("Confermi?") == "Confermi?"  # nothing left: kept as it was
+
+
+def test_turning_live_calls_off_and_on():
+    db = Database(":memory:")
+    store = ReminderStore(db.conn)
+    agent = Agent(FakeClient([]), db, ToolRegistry(reminder_tools(store, ROME)), model="m", delegate=False, tz=ROME)
+    switched = []
+
+    async def connect(text):
+        return FakeLive()
+
+    async def switch(on):
+        switched.append(on)
+    connect.engine, connect.switch = "local", switch
+    client = TestClient(create_app(agent, store, FakeCalendar([]), ROME, TOKEN,
+                                   calls=LiveCalls(agent, db.conn, connect)))
+    assert client.get("/v1/voice", headers=AUTH).json() == {"live": True, "enabled": True, "engine": "local",
+                                                            "loading": False}
+    off = client.put("/v1/voice", headers=AUTH, json={"enabled": False}).json()
+    assert off["live"] is False and off["enabled"] is False
+    chat = agent.new_conversation(agent="secretary")["id"]
+    with pytest.raises(Exception):  # no calls while off
+        with client.websocket_connect(f"/v1/voice/call?conversation={chat}", headers=AUTH) as ws:
+            ws.receive_json()
+    assert LiveCalls(agent, db.conn, connect).enabled is False  # kept across restarts
+    assert client.put("/v1/voice", headers=AUTH, json={"enabled": True}).json()["enabled"] is True
+    for _ in range(50):
+        if switched == [False, True]:
+            break
+        time.sleep(0.01)
+    assert switched == [False, True]
+    assert client.get("/v1/voice", headers=AUTH).json()["live"] is True

@@ -240,11 +240,13 @@
 		D8472E4E57E042B2A1A7D857 /* MacPeek.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D4476D260137D9B37A65E59 /* MacPeek.swift */; };
 		D96AE9A8C21393E5189CCF29 /* MacScreenTimeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582BAE089C17E030C634DB60 /* MacScreenTimeView.swift */; };
 		D9BB213F0ACB49E376E8B2A6 /* MacPeekTiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBE579DBA796461E027A974 /* MacPeekTiles.swift */; };
+		DAAADFCFA7B16A1BD70DF202 /* Dictation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFBADD392732DE9CADE7601 /* Dictation.swift */; };
 		DAFEE2E684BC48DD701D876F /* DigestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F4F63D7C636512F7DD2BAF /* DigestSettingsView.swift */; };
 		DB01843DAFBCA6B96BC5AAA6 /* MoodleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F289CE8321C0A5A80F6B92C /* MoodleView.swift */; };
 		DCCB151C61A44732969A6427 /* FoodViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDFDB90CA977D76111828E4F /* FoodViews.swift */; };
 		DCEC0F33C64ACC4F4D889BCE /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58AE8C76701A110B13945027 /* ChatViewModel.swift */; };
 		DD8C7BFE0F07FFAABDD8DC63 /* DigestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5ED0D6A1A2E1D99A90095F3 /* DigestSheet.swift */; };
+		DF39F32CCF58921FDEAED51C /* Dictation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFBADD392732DE9CADE7601 /* Dictation.swift */; };
 		DF67394A3A18D94603A30688 /* SpeechDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B823567631C9266E89C0C5 /* SpeechDetector.swift */; };
 		DF9621FEE0EB3B406582F0BE /* LivePebble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B4431689B0F772EB8EDA27 /* LivePebble.swift */; };
 		DFBDF3B9BAA93D0DEB902233 /* HabitControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FF2F172DF24BB3119602573 /* HabitControl.swift */; };
@@ -466,6 +468,7 @@
 		AB1BD6CD4D4C474584D9A8A2 /* ReleaseViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseViews.swift; sourceTree = "<group>"; };
 		ACCD638FA0D9F230CF15238B /* LockShield.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LockShield.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		ADE4DEA766E09C8CD558DC9B /* WidgetSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSupport.swift; sourceTree = "<group>"; };
+		ADFBADD392732DE9CADE7601 /* Dictation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dictation.swift; sourceTree = "<group>"; };
 		AE34FAE9A713F5C8D1AE1DA5 /* TransitAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransitAlertsView.swift; sourceTree = "<group>"; };
 		B080CFFD5248A57D95546299 /* TodayWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayWidget.swift; sourceTree = "<group>"; };
 		B21264FA61ED8665DC82B517 /* ShieldConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShieldConfig.swift; sourceTree = "<group>"; };
@@ -671,6 +674,7 @@
 				0DFEF5446D771554DAAA7229 /* AppSettings.swift */,
 				16BB2B4B8577CDF6823F8251 /* Arithmetic.swift */,
 				BF01ED5407EDD683110116BF /* Columns.swift */,
+				ADFBADD392732DE9CADE7601 /* Dictation.swift */,
 				97DA5F380FF3736EA25D8301 /* Drops.swift */,
 				77E5D11C27686D088BF88108 /* Figure.swift */,
 				63500D066A75FEEDD7B682E9 /* Keychain.swift */,
@@ -1242,6 +1246,7 @@
 				2C47EB0568EF58D2534C38AC /* Columns.swift in Sources */,
 				4A39A8C780609596BE9A3670 /* CourseDateViews.swift in Sources */,
 				E16C8767B048CC165C4ACDB7 /* DeparturesCard.swift in Sources */,
+				DAAADFCFA7B16A1BD70DF202 /* Dictation.swift in Sources */,
 				DAFEE2E684BC48DD701D876F /* DigestSettingsView.swift in Sources */,
 				49D558E5EAC98E90D2EC5DBE /* DigestSheet.swift in Sources */,
 				546E6E5560D3B5212B87B103 /* DigestView.swift in Sources */,
@@ -1365,6 +1370,7 @@
 				55A4F8B285147A2EED1394FF /* Columns.swift in Sources */,
 				E42D1D100C72EAD253601644 /* CourseDateViews.swift in Sources */,
 				491F45628A791B6298C0076C /* DeparturesCard.swift in Sources */,
+				DF39F32CCF58921FDEAED51C /* Dictation.swift in Sources */,
 				6050EEA9BDAD57AB18630D2E /* DigestSettingsView.swift in Sources */,
 				DD8C7BFE0F07FFAABDD8DC63 /* DigestSheet.swift in Sources */,
 				08BB6AC1F6922CF4EB1C4878 /* DigestView.swift in Sources */,

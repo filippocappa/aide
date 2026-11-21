@@ -52,6 +52,7 @@ extension View {
             .environmentObject(env.chat)
             .environmentObject(env.digest)
             .environmentObject(env.voice)
+            .environmentObject(env.dictation)
             .environmentObject(env.push)
             .environmentObject(env.health)
             .environmentObject(env.location)

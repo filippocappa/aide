@@ -13,6 +13,7 @@ here from the pieces and the quiet between them. A voice that knows when you sta
 the phone stops playing at once."""
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -698,12 +699,58 @@ class LiveCall:
 
 
 class LiveCalls:
-    """Calls for the API: on only with a voice to connect. A second call in a chat ends the first."""
+    """Calls for the API: on only with a voice to connect and the setting on (Settings → Voice → Live calls, kept in
+    `settings` as `live_calls`). Turned off, the voice's `switch` lets its models go, so the memory is cappa's again;
+    on, it loads them back (~25 s). A second call in a chat ends the first."""
 
     def __init__(self, agent: Agent, conn, connect: Connect | None = None, idle_minutes: float = 5):
         self.agent, self.store, self.connect, self.idle_minutes = agent, CallStore(conn), connect, idle_minutes
         self.active: dict[str, LiveCall] = {}
+        self.engine: str | None = getattr(connect, "engine", None) if connect else None
+        self.switch: Callable[[bool], Awaitable[None]] | None = getattr(connect, "switch", None)
+        self._switching: asyncio.Task | None = None
+        conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+
+    @property
+    def enabled(self) -> bool:
+        row = self.store.conn.execute("SELECT value FROM settings WHERE key = 'live_calls'").fetchone()
+        return row is None or row[0] != "off"
 
     @property
     def on(self) -> bool:
-        return self.connect is not None
+        return self.connect is not None and self.enabled
+
+    @property
+    def loading(self) -> bool:
+        return self._switching is not None and not self._switching.done()
+
+    def as_json(self) -> dict:
+        return {"live": self.on and not self.loading, "enabled": self.enabled, "engine": self.engine,
+                "loading": self.on and self.loading}
+
+    async def set_enabled(self, enabled: bool) -> None:
+        """The setting; off ends the calls on now. The models are loaded or let go in the background."""
+        with self.store.conn:
+            self.store.conn.execute("INSERT INTO settings (key, value) VALUES ('live_calls', ?) "
+                                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value", ("on" if enabled else "off",))
+        if not enabled:
+            for call in list(self.active.values()):
+                await call.end("turned off")
+        if self.switch:
+            previous = self._switching
+            self._switching = asyncio.create_task(self._switch(enabled, previous))
+
+    async def settle(self) -> None:
+        """At the service's start: the voice as the setting says (off: nothing loaded, the voice's service stopped)."""
+        await self._switch(self.enabled, None)
+
+    async def _switch(self, enabled: bool, previous: asyncio.Task | None) -> None:
+        if previous and not previous.done():  # one after the other, the last one wins
+            with contextlib.suppress(Exception):
+                await previous
+        if enabled != self.enabled:
+            return
+        try:
+            await self.switch(enabled)
+        except Exception:
+            log.exception("live calls: turning the voice %s failed", "on" if enabled else "off")

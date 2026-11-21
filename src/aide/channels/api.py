@@ -74,6 +74,10 @@ log = logging.getLogger(__name__)
 VERSION = "0.2.0"
 
 
+class VoiceIn(BaseModel):
+    enabled: bool
+
+
 class ChatIn(BaseModel):
     text: str = ""
     conversation_id: str | None = None  # None: the first chat, "main"
@@ -3547,7 +3551,13 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/voice", dependencies=[Depends(auth)])
     async def voice_info():
-        return {"live": calls.on}
+        return calls.as_json()
+
+    @app.put("/v1/voice", dependencies=[Depends(auth)])
+    async def set_voice(body: VoiceIn):
+        """Live calls on or off (Settings → Voice): off lets the voice's models go, on loads them back."""
+        await calls.set_enabled(body.enabled)
+        return calls.as_json()
 
     @app.websocket("/v1/voice/call")
     async def voice_call(ws: WebSocket, conversation: str):

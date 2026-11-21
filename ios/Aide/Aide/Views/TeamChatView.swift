@@ -151,6 +151,10 @@ struct TeamChatView: View {
             }
             MessageBox("Message the team, @ to mention", text: $draft, focused: $focused, reset: sent,
                        tint: Theme.glow, onReturn: { if canPost { post() } }) {
+                DictateButton { text in
+                    let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    draft = typed.isEmpty ? text : typed + " " + text
+                }
                 SendButton(enabled: canPost, action: post)
             }
         }

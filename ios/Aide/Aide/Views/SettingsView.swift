@@ -424,6 +424,11 @@ private struct ConnectionSettingsView: View {
 
 private struct VoiceSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var env: AppEnvironment
+    /// Live calls on the server (docs/API.md, "Voice calls"): nil until it answers.
+    @State private var status: VoiceStatus?
+    @State private var saving = false
+    @State private var failed = false
 
     var body: some View {
         Form {
@@ -435,21 +440,79 @@ private struct VoiceSettingsView: View {
             } footer: {
                 Text("For the live preview of your words. Aide understands both, even mixed.")
             }
+            if status?.engine != nil || status == nil {
+                Section {
+                    Toggle(isOn: liveCalls) {
+                        HStack {
+                            Text("Live calls")
+                            if status?.loading == true || saving {
+                                Spacer()
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                    .tint(Theme.toggle)
+                    .disabled(status == nil || saving)
+                } footer: {
+                    Text(liveCallsFooter)
+                }
+            }
             Section {
-                Toggle("Live calls", isOn: $settings.liveCalls).tint(Theme.toggle)
-            } footer: {
-                Text("Talking is like a phone call: Aide answers as soon as you've finished, says what it's doing while it works, and stops when you talk over it. Say “bye” to hang up. Needs the server's voice model; without it Aide answers a turn at a time, as below.")
+                Label("Tap the microphone in the message box to dictate: what you say is written in the box, to edit and send.", systemImage: "mic")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Read replies aloud", isOn: $settings.speakReplies).tint(Theme.toggle)
             } footer: {
-                Text("Tap the microphone in a chat to talk. Aide answers out loud and keeps listening until you tap stop.")
+                Text("Tap Talk in a chat to talk to Aide. It answers out loud and keeps listening until you tap stop.")
             }
         }
         .scrollContentBackground(.hidden)
         .background(Theme.grouped)
         .navigationTitle("Voice")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private var liveCallsFooter: String {
+        if failed { return "Couldn't reach the server. Try again in a moment." }
+        if status?.loading == true { return "Loading the voice on the server, about a minute." }
+        let what = "Talking is like a phone call: Aide answers as soon as you've finished, says what it's doing while it works, and stops when you talk over it. Say “bye” to hang up."
+        if status?.engine == "local" {
+            return what + " Off, the server lets its voice models go (about 3 GB of memory) and Aide answers a turn at a time, as below. For every device."
+        }
+        return what + " Off, Aide answers a turn at a time, as below. For every device."
+    }
+
+    private var liveCalls: Binding<Bool> {
+        Binding(get: { status?.enabled ?? status?.live ?? false }, set: { on in Task { await set(on) } })
+    }
+
+    private func load() async {
+        status = try? await env.api.voiceStatus()
+        // Still loading after it was turned on: ask again until it's ready.
+        while status?.loading == true, !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(3))
+            if let fresh = try? await env.api.voiceStatus() { status = fresh }
+        }
+        if let status { env.voiceChanged(status) }
+    }
+
+    private func set(_ on: Bool) async {
+        saving = true
+        failed = false
+        defer { saving = false }
+        guard let fresh = try? await env.api.setLiveCalls(on) else {
+            failed = true
+            return
+        }
+        status = fresh
+        env.voiceChanged(fresh)
+        if fresh.loading == true {
+            saving = false
+            await load()
+        }
     }
 }
 

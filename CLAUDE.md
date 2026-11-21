@@ -130,7 +130,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   Chatterbox speaks in its own service (`deploy/chatterbox/`, voices cloned from `data/voices/en.wav` and `it.wav`,
   streamed, `deploy/aide-voice.service`; Kokoro on the CPU while it's down); `voicemodels.py` loads them in the service at start, ~25 s and
   ~5 GB of the GPU, and lets them go while Whisper has a recording) or OpenAI's GPT-Live (`gptlive.py`, `AIDE_LIVE`); each spoken request is a normal turn for the chat's agent (Aide on a call, or in the voice mode, uses every tool itself, with the specialists' rules in `AIDE_VOICE_PROMPT`, instead of asking: ~2.5–3 s against ~5 s; no thinking in spoken turns; the cache warmed when a call opens), a spoken yes or
-  no to queued actions is decided in code (`consent.py`), the call kept in `calls`. Off with `AIDE_LIVE=off`, or with neither a GPU nor the key.
+  no to queued actions is decided in code (`consent.py`), the call kept in `calls`. Off with `AIDE_LIVE=off`, or with neither a GPU nor the key; the app's Settings → Voice → Live calls (`PUT /v1/voice`, 2026-11-21) turns them off for every device: the models let go, `aide-voice` stopped, nothing loaded at the next start. The message box's microphone is dictation (`Support/Dictation.swift`, `/v1/transcribe`).
   `voicequiz.py`: a spoken multiple-choice answer in a course chat's quiz marked with no model call.
 - `videos.py`: YouTube videos (yt-dlp, captions or Whisper, the brief, frames), posted back in the chat it came from.
 - `finance.py`: payments, categories, the month, subscriptions, budget, accounts. `banks.py`: bank accounts through
