@@ -1167,7 +1167,7 @@ a run; `assumptions`, with `learnt`).
 **The days:** from today (from now, less what's been studied today in focus sessions) to the day before the date: the
 time between waking + 1 h and the next wake − 8h30 (Bedtime's wake times; 08:30–22:30 without), less every timed
 calendar event with 15 min around it (not "Review: …" sessions or the user's study blocks: those are study), at most
-the day's cap: `term_cap_min` until the last lecture in the timetable, `season_cap_min` from the day after.
+the day's cap: `term_cap_min` until the last lecture of a course with an exam ahead, `season_cap_min` from the day after.
 Targets take their days in date order; each spreads its hours as evenly as the days allow, and its phases are laid
 backwards from the date (review last, then mocks, practise, learn): a target that doesn't fit is short of learning.
 

@@ -117,9 +117,10 @@ async def test_a_course_with_an_exam_date_is_planned(tmp_path):
         "learn": round(learn), "practise": round(practise), "mocks": round(mocks), "review": round(review)}
     assert t["status"] == "fits" and t["short_min"] == 0 and t["planned_min"] == t["need_min"]
     assert t["lectures_left"] == 0 and t["stretch"] == 1.0
-    # Business law has a lecture tomorrow, so the season starts after it: today and tomorrow are term days.
-    assert out["season_from"] == (TODAY + timedelta(days=2)).isoformat()
-    assert all(d["minutes"] <= (120 if d["date"] < out["season_from"] else 240) for d in t["days"])
+    # Business law has a lecture tomorrow but no exam ahead (like a series of talks), so it isn't term: Macro's
+    # lectures are over and the season starts today.
+    assert out["season_from"] == TODAY.isoformat()
+    assert all(d["minutes"] <= 240 for d in t["days"])
     assert t["days"][-1]["phases"].get("review") and t["phases"][-1]["to"] < t["date"]
     assert out["today"] and all(b["course"] == macro["id"] for b in out["today"])
     assert "No past exams yet: the mocks are Professor's own." in t["warnings"]

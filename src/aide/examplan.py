@@ -487,9 +487,6 @@ class ExamPlan:
             for l in planned:
                 if (name := course_for(l.name, list(names))) is not None:
                     uni.setdefault(names[name], []).append(l)
-        ahead = [e.start.astimezone(self.tz).date() for e in [*lectures, *(l for ls in uni.values() for l in ls)]
-                 if e.start > now]
-        season_from = max(ahead) + timedelta(days=1) if ahead else (today if lectures else None)
         data = {c["id"]: self._course_data(c["id"]) for c in courses}
         pace = self._pace({cid: d["kinds"] for cid, d in data.items()}, now)
 
@@ -522,6 +519,10 @@ class ExamPlan:
             self.quizzes.targets = {t["course"]["id"]: (t["target"]["date"], set(t["work"]["chosen"] or []) or None)
                                     for t in targets}
 
+        # Exam season starts the day after the last lecture of a course with an exam ahead: a series of talks in the
+        # study calendar with no exam (the FZTS programme, until March) isn't term (2026-11-21).
+        ahead = [e.start.astimezone(self.tz).date() for t in targets for e in t["mine"] if e.start > now]
+        season_from = max(ahead) + timedelta(days=1) if ahead else (today if lectures or uni else None)
         last = max([t["target"]["date"] for t in targets] + [t["fallback"]["date"] for t in targets if t["fallback"]],
                    default=today)
         room = await self._days(today, last, now, s, season_from)
