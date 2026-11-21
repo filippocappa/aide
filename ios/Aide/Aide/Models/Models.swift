@@ -1941,6 +1941,8 @@ struct Approvals: Decodable {
     var plans: [ObjectiveBlock]?
     var objectives: [Objective]
     var proposals: [NotebookProposal]
+    /// Proposals applied and being written, the one at work first; nil from a server before them.
+    var writing: [NotebookProposal]?
     /// Reply drafts waiting to be sent; nil from a server before them.
     var drafts: [MailDraft]?
     var writer: WriterPause?
@@ -2069,6 +2071,8 @@ struct NotebookProposal: Decodable, Hashable, Identifiable {
     /// In approvals only: the course's name and its Professor chat.
     var courseName: String?
     var conversationId: String?
+    /// In approvals' `writing` only: what the one at work is doing; nil while it waits its turn.
+    var step: String?
 }
 
 struct ProposalItem: Decodable, Hashable, Identifiable {

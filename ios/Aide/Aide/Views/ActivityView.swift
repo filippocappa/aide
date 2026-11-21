@@ -298,12 +298,13 @@ struct WaitingSection: View {
         }
         let rows = plans == nil ? objectives : []
         let proposals = agent == nil || agent?.id == "professor" ? approvals?.proposals ?? [] : []
+        let writing = agent == nil || agent?.id == "professor" ? approvals?.writing ?? [] : []
         let writer = agent == nil || agent?.id == "professor" ? approvals?.writer : nil
         let errands = agent == nil || agent?.id == "aide" ? approvals?.errands ?? [] : []
         // Orders are confirmed one at a time, from their own page.
         let plain = actions.filter { !$0.reviewed }
         if !actions.isEmpty || !drafts.isEmpty || !objectives.isEmpty || !proposals.isEmpty || writer != nil
-            || !errands.isEmpty {
+            || !errands.isEmpty || !writing.isEmpty {
             Section {
                 ForEach(errands) { e in
                     ErrandWaitingRow(errand: e, agent: chat.agent("aide"), busy: busy.contains("e\(e.id)"),
@@ -377,6 +378,12 @@ struct WaitingSection: View {
                         .onTapGesture { go(p.conversationId) }
                         .listRowBackground(Theme.row)
                 }
+                ForEach(writing) { p in
+                    WritingRow(proposal: p, agent: chat.agent("professor"))
+                        .contentShape(Rectangle())
+                        .onTapGesture { go(p.conversationId) }
+                        .listRowBackground(Theme.row)
+                }
                 if let writer {
                     WriterPauseCard(pause: writer) { _ in Task { await load() } }
                         .listRowBackground(Theme.row)
@@ -392,6 +399,13 @@ struct WaitingSection: View {
             }
             .sheet(item: $editing) { draft in
                 DraftEditor(draft: draft, send: { await answer(draft, send: $0) }, dismiss: { await answer(draft, send: nil) })
+            }
+            // While notes are being written, look again every few seconds: the progress moves, and a finished
+            // one leaves the list.
+            .task(id: writing.map { "\($0.id) \($0.progress?.done ?? 0) \($0.step ?? "")" }) {
+                guard !writing.isEmpty else { return }
+                try? await Task.sleep(for: .seconds(5))
+                if !Task.isCancelled { await load() }
             }
             .sheet(item: $reviewing) { action in
                 PurchaseConfirmSheet(action: action) { await load() }
@@ -670,6 +684,34 @@ private struct ProposalRow: View {
         let topics = items.count == 1 ? "1 topic" : "\(items.count) topics"
         let titles = items.prefix(3).map(\.title).joined(separator: ", ") + (items.count > 3 ? "…" : "")
         return [proposal.courseName, topics, titles.isEmpty ? nil : titles].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+/// A proposal the user applied, while its topics are written: what it's doing (or that it waits its turn) and how far.
+private struct WritingRow: View {
+    let proposal: NotebookProposal
+    let agent: Agent
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            AgentMark(agent: agent, size: 22).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Writing notes · \((proposal.courseName ?? "").capitalizedFirst)")
+                    Text(proposal.step ?? "Waiting its turn")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                if let progress = proposal.progress, progress.total > 0 {
+                    HStack(spacing: 8) {
+                        ProgressView(value: Double(progress.done), total: Double(progress.total))
+                            .tint(agent.tint)
+                        Text("\(progress.done) of \(progress.total)")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 

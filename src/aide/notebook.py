@@ -1062,6 +1062,13 @@ class NotebookStore:
         return {"topics": sum(1 for t in topics if t["body"]), "questions": sum(_questions(t["body"]) for t in topics),
                 "proposals": len(self.proposals(course_id)), "writing": bool(self.proposals(course_id, "applying"))}
 
+    def writing_now(self) -> dict | None:
+        """The proposal being applied right now, with what it's at ("Writing IS-LM, Crowding out"), or None."""
+        row = self.conn.execute("SELECT course_id, args FROM notebook_jobs WHERE kind = 'apply' AND status = 'running' "
+                                "ORDER BY id LIMIT 1").fetchone()
+        return {"proposal": json.loads(row["args"]).get("proposal"), "step": self.steps.get(row["course_id"])} \
+            if row else None
+
     def busy(self, course_id: int) -> bool:
         return bool(self.conn.execute("SELECT 1 FROM notebook_jobs WHERE course_id = ? AND status IN "
                                       "('queued', 'running')", (course_id,)).fetchone())

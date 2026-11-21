@@ -749,6 +749,26 @@ async def test_new_topics_after_the_same_one_keep_their_order(nb):
     assert "[Problem set 2.pdf, p. 1]" in merges[0] and "[Problem set 2.pdf, p. 2]" in merges[0]
 
 
+async def test_proposals_being_written_show_in_approvals_with_their_progress(nb):
+    is_lm, _ = await built(nb)
+    f2 = add_pdf(nb.api, data=PROBLEMS, name="Problem set 2", course=nb.macro["id"]).json()
+    item = {"topic": is_lm["public_id"], "title": "The IS-LM model", "add": "x",
+            "sources": [{"file": f2["id"], "pages": [1]}]}
+    first, second, waiting = (nb.notebook.add_proposal(nb.macro["id"], "update", [item, item], [{"file": f2["id"]}])
+                              for _ in range(3))
+    nb.notebook.apply(first["public_id"])
+    nb.notebook.apply(second["public_id"], [2])
+    nb.notebook.conn.execute("UPDATE notebook_jobs SET status = 'running' WHERE kind = 'apply' AND args LIKE ?",
+                             (f"%{first['public_id']}%",))
+    nb.notebook.set_step(nb.macro["id"], "Writing The IS-LM model")
+    r = nb.api.get("/v1/approvals", headers=AUTH).json()
+    assert r["waiting"] == 1 and [p["id"] for p in r["proposals"]] == [waiting["public_id"]]
+    assert [(w["id"], w["step"], w["progress"]) for w in r["writing"]] == [
+        (first["public_id"], "Writing The IS-LM model", {"done": 0, "total": 2}),
+        (second["public_id"], None, {"done": 0, "total": 1})]
+    assert r["writing"][0]["course_name"] == "macroeconomics" and r["writing"][0]["conversation_id"]
+
+
 async def test_a_new_file_before_the_outline_is_answered_replans_it(nb):
     first = await started(nb)
     f2 = add_pdf(nb.api, data=PROBLEMS, name="Problem set 2", course=nb.macro["id"]).json()

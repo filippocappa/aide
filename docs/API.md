@@ -659,6 +659,10 @@ A meal scanned in the app is "Logged a meal" with the food in `detail` (before 2
              Objectives) with only its proposals in "objectives", and its "starts_at" */ ],
  "objectives": [ /* Objective objects with "status": "proposed", for this month, week and day (the plans' together) */ ],
  "proposals": [ /* notebook Proposals still pending, plus "course_name" and "conversation_id" (the course chat, or null) */ ],
+ "writing": [ /* since 2026-11-21: Proposals the user applied, being written ("status": "applying", "progress":
+               {"done", "total"} topics), as in "proposals", plus "step": what the one at work is doing ("Writing
+               Present Value and Bond Prices, The COVID Recession"), null for those waiting their turn. The one at work
+               first, then in the order they'll run. Not counted in "waiting". */ ],
  "drafts": [ /* reply Drafts waiting to be sent, newest mail first (see Mail drafts) */ ],
  "writer": null,
  "upcoming": [ /* the next 5 enabled routines (watches too), soonest first: Routine objects */ ]}

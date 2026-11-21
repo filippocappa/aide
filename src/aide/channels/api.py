@@ -992,13 +992,23 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             course = study.course(p["course_id"]) or {}
             proposals.append({**notebook.proposal_json(p), "course_name": course.get("name"),
                               "conversation_id": p["chat"] or course.get("chat")})
+        # Proposals the user said yes to, being written one at a time: the one at work says what it's at.
+        now = notebook.writing_now() or {}
+        writing = []
+        for p in reversed(notebook.proposals(None, "applying")):  # oldest first: the order they run in
+            course = study.course(p["course_id"]) or {}
+            writing.append({**notebook.proposal_json(p), "course_name": course.get("name"),
+                            "conversation_id": p["chat"] or course.get("chat"),
+                            "step": now.get("step") if now.get("proposal") == p["public_id"] else None})
+        writing.sort(key=lambda w: w["id"] != now.get("proposal"))  # the one at work first, then in the queue's order
         paused = engine.status()["paused"] if engine else None
         coming = sorted(((n, r) for r in routines.all() if (n := routines.next_run(r))), key=lambda x: x[0])
         replies = drafts.waiting()
         stuck = [errand_store.as_json(e) for e in errands.waiting()] if errands else []
         return {"waiting": len(actions) + len(plans) + len(proposals) + len(replies) + len(stuck)
                 + (1 if paused else 0),
-                "actions": actions, "plans": plans, "objectives": proposed, "proposals": proposals, "drafts": replies,
+                "actions": actions, "plans": plans, "objectives": proposed, "proposals": proposals, "writing": writing,
+                "drafts": replies,
                 "errands": stuck,
                 "writer": paused, "upcoming": [routines.as_json(r) for _, r in coming[:5]]}
 
