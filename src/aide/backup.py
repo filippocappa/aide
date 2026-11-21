@@ -9,6 +9,11 @@ and each night copies only the new ones. Study files (data/files, PDFs) go the s
 (a Moodle file changed there keeps its name, so the backup keeps the first version; Moodle has the rest).
 Pruning dated folders leaves both alone. Lecture recordings (data/audio) aren't backed up: they're large, and
 their transcripts are in the database. Nor is GTT's timetable (data/gtt.db, 85 MB): it's rebuilt from GTT every night.
+
+The Obsidian vault (AIDE_VAULT_DIR, data/obsidian) goes into each dated folder as obsidian/, text only: notes,
+cards with their review data, and anything else the user keeps there (Verbatim's meeting notes in Meetings/).
+Its PDFs, images and videos are left out: Aide writes them again from data/files and the study store, and with
+them each copy would be ~450 MB.
 """
 
 import logging
@@ -75,7 +80,10 @@ def mirror_photos(src: Path, dst: Path) -> int:
     return copied
 
 
-def backup(data_dir: Path, dest_root: Path, env_file: Path, day: date) -> Path:
+VAULT_SKIP = ("*.pdf", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.webp", "*.mp4", "*.mov", ".*")
+
+
+def backup(data_dir: Path, dest_root: Path, env_file: Path, day: date, vault_dir: Path | None = None) -> Path:
     """Write one backup folder for `day`, replacing an earlier one from the same day."""
     if not data_dir.is_dir():
         raise BackupError(f"no data folder at {data_dir}")
@@ -97,6 +105,8 @@ def backup(data_dir: Path, dest_root: Path, env_file: Path, day: date) -> Path:
             fd = os.open(tmp / "gmail.env", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w") as f:
                 f.write(token)
+        if vault_dir is not None and vault_dir.is_dir():
+            shutil.copytree(vault_dir, tmp / "obsidian", ignore=shutil.ignore_patterns(*VAULT_SKIP))
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
@@ -135,8 +145,10 @@ def main() -> None:
         os.environ.setdefault(key, value or "")
     data_dir = Path(os.environ.get("AIDE_DB_PATH") or "./data/aide.db").resolve().parent
     dest_root = Path(os.environ.get("AIDE_BACKUP_DIR") or "~/aide-backups").expanduser()
+    vault_dir = Path(os.environ.get("AIDE_VAULT_DIR") or "./data/obsidian").resolve()
     try:
-        folder = backup(data_dir, dest_root, env_file, datetime.now(ZoneInfo(os.environ.get("AIDE_TIMEZONE") or "UTC")).date())
+        folder = backup(data_dir, dest_root, env_file, datetime.now(ZoneInfo(os.environ.get("AIDE_TIMEZONE") or "UTC")).date(),
+                        vault_dir)
         removed = prune(dest_root)
     except Exception as e:
         log.error("backup FAILED: %s", e, exc_info=not isinstance(e, BackupError))

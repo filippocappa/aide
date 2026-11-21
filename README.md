@@ -758,7 +758,8 @@ run fails and no folder is written. The Gmail refresh token lives in `.env`, not
 and none of it is in git. It keeps the newest 14 backups plus the newest of each of the last 8 weeks.
 Photos (`data/photos/`) never change, so they go once into `~/aide-backups/photos/`, which pruning leaves alone;
 study PDFs (`data/files/`) go the same way into `~/aide-backups/files/`. Lecture recordings (`data/audio/`) aren't
-backed up (their transcripts are).
+backed up (their transcripts are). The Obsidian vault (`data/obsidian/`) goes into each dated folder as `obsidian/`,
+text only (notes, cards, meeting notes); its PDFs and images are skipped, since Aide writes them again.
 
 ```bash
 ln -sf "$PWD/deploy/aide-backup.service" ~/.config/systemd/user/aide-backup.service

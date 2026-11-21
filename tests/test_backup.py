@@ -73,3 +73,25 @@ def test_prune_removes_only_dated_folders_outside_the_policy(tmp_path):
     assert len(removed) == 30 - len(to_keep([date(2026, 10, 18) - timedelta(days=i) for i in range(30)]))
     assert (tmp_path / "manual-copy").exists()
     assert os.path.exists(tmp_path / "2026-10-18")
+
+
+def test_vault_is_backed_up_as_text_only(live, tmp_path):
+    data, env = live
+    vault = data / "obsidian" / "Obsidian"
+    (vault / "Meetings").mkdir(parents=True)
+    (vault / "Meetings" / "call.md").write_text("# Call")
+    (vault / "Aide" / "Macro" / "Files").mkdir(parents=True)
+    (vault / "Aide" / "Macro" / "Files" / "slides.pdf").write_bytes(b"%PDF")
+    (vault / "Aide" / "Macro" / "Cards").mkdir()
+    (vault / "Aide" / "Macro" / "Cards" / "01.md").write_text("Q::A <!--SR:!2026-11-22,1,230-->")
+    folder = backup(data, tmp_path / "b", env, date(2026, 11, 21), vault_dir=data / "obsidian")
+    copy = folder / "obsidian" / "Obsidian"
+    assert (copy / "Meetings" / "call.md").read_text() == "# Call"
+    assert (copy / "Aide" / "Macro" / "Cards" / "01.md").exists()
+    assert not (copy / "Aide" / "Macro" / "Files" / "slides.pdf").exists()
+
+
+def test_missing_vault_is_skipped(live, tmp_path):
+    data, env = live
+    folder = backup(data, tmp_path / "b", env, date(2026, 11, 21), vault_dir=data / "nowhere")
+    assert not (folder / "obsidian").exists()
