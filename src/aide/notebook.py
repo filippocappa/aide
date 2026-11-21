@@ -2289,7 +2289,8 @@ class NotebookWorker:
                 if (n := next((i for i, (t, _) in enumerate(jobs) if t["id"] == topic["id"]), None)) is not None:
                     prev = jobs[n][1]
                     jobs[n] = (topic, {**prev, "add": f"{prev['add']} Also: {it['add']}",
-                                       "sources": [*prev["sources"], *it["sources"]]})
+                                       "sources": [*prev["sources"], *it["sources"]],
+                                       "items": prev.get("items", 1) + 1})  # each counts in the progress
                 else:
                     jobs.append((topic, it))
             else:
@@ -2306,7 +2307,7 @@ class NotebookWorker:
         if self.live is not None:
             name = f"{course['name'][:1].upper()}{course['name'][1:]}"
             run = self.live.notes(f"notes:{p['public_id']}", p.get("chat") or self.study.chat(p["course_id"]), name,
-                                  total=len(jobs))
+                                  total=len(picked))  # merged items count one each, as in the progress
             run.start(f"Writing {len(jobs)} topic{'s' * (len(jobs) != 1)}")
 
         def writing() -> None:
@@ -2331,17 +2332,19 @@ class NotebookWorker:
                         await self.write(topic, note)
                     else:
                         await self.merge(self.store.topic(topic["public_id"]), it, note)
-                    self.store.topic_done(p["id"])
-                    if run:
-                        run.progress()
+                    finished(it)
                     return None
                 except Exception as e:
                     log.warning("topic %s, attempt %d: %s", topic["public_id"], attempt, e)
                     error = str(e)
-            self.store.topic_done(p["id"])
-            if run:
-                run.progress()
+            finished(it)
             return error
+
+        def finished(it: dict) -> None:
+            for _ in range(it.get("items", 1)):
+                self.store.topic_done(p["id"])
+                if run:
+                    run.progress()
 
         try:
             errors = await asyncio.gather(*(one(t, it) for t, it in jobs))

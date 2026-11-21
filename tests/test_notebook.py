@@ -744,6 +744,7 @@ async def test_new_topics_after_the_same_one_keep_their_order(nb):
     await drain(nb)
     assert [t["title"] for t in nb.notebook.topics(nb.macro["id"])] == [
         "The IS-LM model", "Fiscal policy", "Public debt", "Austerity", "Crowding out"]
+    assert nb.notebook.proposal(p["public_id"])["done"] == 5  # the merged items count one each
     merges = [sent(r) for r in nb.client.requests if "What to add:" in sent(r)]
     assert len(merges) == 1 and "What to add: The trap. Also: The debt." in merges[0]
     assert "[Problem set 2.pdf, p. 1]" in merges[0] and "[Problem set 2.pdf, p. 2]" in merges[0]
