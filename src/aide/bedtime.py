@@ -132,6 +132,7 @@ class Bedtime:
         `leave_at(event)`: when to leave for it and how ("tram, 25 min"), or None (digest.DigestService.leave_at)."""
         self.conn, self.tz, self.health, self.push, self.live, self.locks = conn, tz, health, push, live, locks
         self.events, self.leave_at = events, leave_at
+        self.nudges = None  # nudges.Nudges: the evening's nudges per night, for Coach (#84)
         self.conn.executescript(SCHEMA)
         self._leaves: dict[tuple[str, str], tuple[datetime, str] | None] = {}  # (event id, start) -> leave_at
 
@@ -348,6 +349,9 @@ class Bedtime:
                              f"{_clock(_local(r['wake'], self.tz))} ({self._off(r['wake_off_min'], 'late', 'early')})")
         else:
             lines.append("No nights with a plan yet.")
+        if self.nudges is not None and (nudged := self.nudges.week_nights(  # tonight's (tomorrow morning) first
+                [(local.date() - timedelta(days=i)).isoformat() for i in range(-1, 7)])):
+            lines += ["Bedtime nudges while still at the Mac or the phone (#84; data, not a verdict):", *nudged]
         return "\n".join(lines)
 
     def section(self, plan: dict | None) -> dict | None:

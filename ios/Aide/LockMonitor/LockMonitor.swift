@@ -6,10 +6,11 @@ import Foundation
 /// ("Daily app limits") lock their apps when their threshold fires and open them when the next day starts; the
 /// usage estimate ("Screen time estimates") keeps the day's highest step for the app to send. A ration's open
 /// ("Rations") is watched for a minute of use, which keeps it open `gap` minutes more; its interval's end, with no
-/// use meanwhile, locks the apps again.
+/// use meanwhile, locks the apps again. Nudges (#84) are `NudgeBook`'s.
 final class LockMonitor: DeviceActivityMonitor {
     override func intervalDidStart(for activity: DeviceActivityName) {
         super.intervalDidStart(for: activity)
+        if NudgeBook.isNudge(activity.rawValue) { return }
         if LockBook.rationID(of: activity.rawValue) != nil { return }
         if let id = LockBook.limitID(of: activity.rawValue) {
             LockBook.openLimit(id) // a new day
@@ -33,6 +34,7 @@ final class LockMonitor: DeviceActivityMonitor {
 
     override func eventDidReachThreshold(_ event: DeviceActivityEvent.Name, activity: DeviceActivityName) {
         super.eventDidReachThreshold(event, activity: activity)
+        if NudgeBook.isNudge(activity.rawValue) { return NudgeBook.fired(event, in: activity) }
         let now = Date()
         let today = LockBook.day(now)
         if let id = LockBook.rationID(of: event.rawValue) {

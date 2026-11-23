@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().setNotificationCategories(NudgeBook.categories) // #84
         // HealthKit's background wake-ups only reach observers set up during launch.
         Task { if !env.settings.isPreview { await env.health.startObserving() } }
         // A significant move relaunches the app in the background only if monitoring starts again at launch.
@@ -137,7 +138,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let route = PushRoute(userInfo: response.notification.request.content.userInfo)
+        let userInfo = response.notification.request.content.userInfo
+        if userInfo["nudge"] != nil {
+            // A nudge (#84): the answer kept and sent; Back to it (or a tap on an off-task one) opens the course.
+            let action = response.actionIdentifier
+            Task { @MainActor in
+                if let answer = NudgeBook.answer(userInfo, action: action), answer.answer == "back",
+                   let url = (userInfo["url"] as? String).flatMap(URL.init(string:)) {
+                    env.push.route = PushRoute(url: url)
+                }
+                await env.screenTime.sendNudges()
+                completionHandler()
+            }
+            return
+        }
+        let route = PushRoute(userInfo: userInfo)
         Task { @MainActor in
             env.push.route = route
             completionHandler()

@@ -53,6 +53,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.
   `bedtime.py`: the steady wake time (learnt or set) and tonight's bedtime worked back from it, the evening nudge
   (a `bedtime` Live Activity or a push), the optional wind-down lock, each night against its plan.
+  `nudges.py` (#84): what the devices need for their nudges (tonight's bedtime steps, an hour before to three hours
+  after; the next day's events as study, `#focus` or other, with the course; the Work list), and what they showed and
+  the answers, for Coach (evening digest, `sleep_plan`) and Professor (`study_plan`, the study week) as data. The Mac
+  (`Mac/MacNudges.swift`, in Aide Guard) and the phone (`ScreenTime/NudgeBook.swift`, DeviceActivity) decide when.
 - `habits.py`: habits and streaks; never miss twice (#52): each evening Coach writes once about daily habits missed
   yesterday and not done today, offering the habit's two-minute version (`minimum`). `digest.py`: daily/weekly/monthly digests and their schedule.
 - `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU
@@ -322,7 +326,9 @@ came about, with dates and what was tried, is in [docs/HISTORY.md](docs/HISTORY.
   some counted from Health); the Health tab is Body · Food · Screen.
 - **Food:** meals from a photo, a description, a barcode or Recent; saved foods; targets and the day score.
 - **Screen Time:** locks (strict ones end early only with a pass), daily limits, the usage report; the Mac holds the
-  same locks and limits itself, apps and websites (#30).
+  same locks and limits itself, apps and websites (#30). Nudges while still at a device (#84): firmer ones toward
+  bedtime, and off the Work list during a study or `#focus` event; Pebble on the Mac, notifications on the phone.
+  Not tried for real on the phone yet.
 - **Study:** Moodle files, lecture notes from recordings, notebooks, lessons, quizzes and the Study page, practice and
   mock exams, spaced repetition (#63), the exam plan and study week (#68), focus sessions (#54), Esse3 (#74: sessions,
   bookings, transcript; sign-up as an errand, #75). Recording on the phone and an Esse3 sign-up aren't tried for real yet.
@@ -340,10 +346,12 @@ Worth remembering:
 - The first install on a phone needs the App Group and the `.widgets` bundle ID on the team (automatic signing adds them).
 - yt-dlp must be kept current (README, "YouTube videos").
 - Debug launch arguments: `-previewMonth 2026-10`, `-previewRoute <aide:// link>`, `-shieldTest 2` (Mac).
+  Nudges on the Mac (debug): `defaults write <bundle id> nudgeTest -string bedtime` (or `offtask`, with
+  `nudgeTestApps` as the Work list; Notes by default), then `defaults delete` it and `nudgesShown`.
 
 **Next** (GitHub issues):
-0. Try #71 on a few real calls (a calendar question, one with a tool, one that queues an action), then close it.
-   No call has been made since it went live (2026-11-06 23:48); the checklist is on the issue.
+0. Live with #84's nudges for a few evenings: on the phone, check its notifications come while it's in use (and only
+   then), and that Coach's evening digest mentions them kindly.
 1. Record a real lecture with the app. Notebooks for the other courses.
 2. A real Esse3 sign-up from the app (#74 and #75 are closed and reading works; the two tries on 2026-11-07 stopped
    at need_user, before the #76 fixes).

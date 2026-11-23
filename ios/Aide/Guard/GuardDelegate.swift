@@ -7,6 +7,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     private var server = MacGuard.config
     private var screenTime: ScreenTimeService?
     private var shield: MacShield?
+    private var nudges: MacNudges?
     private var observers: [NSObjectProtocol] = []
     private var binary: Stamp?
     private var watch: Timer?
@@ -20,6 +21,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         self.screenTime = screenTime
         MacUsage.shared.start()
         shield = MacShield(screenTime: screenTime)
+        nudges = MacNudges(api: api)
         Task { await screenTime.sync() }
         NSLog("Aide Guard: started (\(server == nil ? "no server yet" : "server known"))")
 
@@ -42,6 +44,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         server = MacGuard.config
         NSLog("Aide Guard: server handed over")
         if first, let screenTime { Task { await screenTime.sync() } }
+        nudges?.refreshNow()
     }
 
     private func checkBinary() {

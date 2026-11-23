@@ -2204,6 +2204,52 @@ time every day counts as much as the hours.
   first, the last 7 mornings with a plan and a night; `*_off_min` positive is late.
 - **Coach** has `sleep_plan` and `set_sleep_plan`.
 
+### Nudges
+
+Since 2026-11-23 (#84). Nudges from the devices themselves, only while you're there using one (each device decides
+that; nothing goes out to an idle or sleeping one). Nudges only: nothing is locked, quit or moved, and Bedtime's own
+lock is never touched.
+
+- **Bedtime:** while still active near tonight's bedtime (the plan above), firmer as it comes: an hour before ("Start
+  wrapping up"), half an hour before ("Save and close what you're on"), ten minutes before ("It's time to sleep: stop
+  what you're doing"), then every ten minutes up to three hours after the bedtime. A step not shown while you were
+  away is shown when you come back within its window (until the next step). Answers: `snooze` (quiet 10 min) and
+  `going` (quiet 20 min; then the repeating ones go on if you're still there).
+- **Off task:** while an event that asks for focus is on (any timed event in the study calendar, or one with
+  `#focus` in its title or notes) and what's in front is on the app list named **Work** (its `mac` entries on the
+  Mac; this phone's pick of that list on the phone): one nudge after a minute off task, one more after fifteen minutes
+  more. Answers: `back` (the course's page, or back to work) and `not_now`.
+- **Quiet:** during a call (the Mac's microphone in use), while a focus session is on (`focus`), and for bedtime while
+  a timed `other` event is on (a film night).
+- **On the Mac** (Aide Guard, or the app while the Guard isn't running): Pebble over the front app's Dock icon with
+  the step's words, or "You're on youtube.com: the calendar says Study Macro until 17:00". It stays up until it's
+  answered, or until the nudge is no longer due. "There" is touched in the last 2 minutes, or a video playing.
+- **On the phone:** a notification, with the answers as its actions. DeviceActivity says the phone is in use: an
+  event every 2 minutes of use from an hour before bedtime, and for each of the next 3 focus events a minute, then
+  16 minutes, on that list's apps. The phone can't name the app or see a call, so its off-task nudge names the event
+  only. What's shown waits on the phone until it can be sent.
+- **Who sees them:** Coach (the evening digest, `sleep_plan`) and Professor (`study_plan`, the study week) get them as
+  data.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/nudges` | | `{"bedtime": Bedtime \| null, "events": [Event], "list": {"id": 1, "name": "Work", "mac": ["site:youtube.com"]} \| null, "focus": false}` |
+| `POST /v1/nudges` | a Nudge | the Nudge as kept; `422` for a bad kind, step, device or answer |
+
+- **Bedtime:** `{"date": "2026-11-24", "bedtime": "…", "wake": "…", "steps": [{"step": "hour", "at": "…", "until": "…",
+  "title": "An hour to bed", "body": "Start wrapping up: in bed by 0:00."}, …]}`, null while there's no plan (Bedtime
+  off) or after its last step. `step` is `hour`, `half`, `now` or `late` (one every ten minutes from the bedtime).
+- **Event:** `{"id": "…", "title": "Study Macro", "start": "…", "end": "…", "kind": "study", "course": {"id": 4,
+  "name": "Macroeconomics"} | null}`, timed events on now or starting in the next 24 hours, by start. `kind` is
+  `study`, `asked` (`#focus`, taken out of the title) or `other`. `course` is the course the title names (its name, a
+  review session of it, or a word starting a word of its name), else null.
+- **Nudge:** `{"key": "mac-bedtime-2026-11-24-late-0010", "device": "mac" | "phone", "kind": "bedtime" | "offtask",
+  "step": "hour" | "half" | "now" | "late" | "first" | "again", "at": "…", "night": "2026-11-24", "app": "YouTube",
+  "event": "Study Macro", "event_start": "…", "event_end": "…", "course_id": 4, "answer": null}`. `key` is the
+  device's own: sending it again (with the answer, once there is one) updates the same nudge. `night` (bedtime) is the
+  plan's `date`; `event*` and `course_id` are for off-task ones. `answer` is `snooze` or `going` (bedtime), `back` or
+  `not_now` (off task), or null. Kept 120 days.
+
 ### Wake-up briefing
 
 A digest of kind `wake`, sent once per day when the user gets up. It comes **in addition to** the scheduled

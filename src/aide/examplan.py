@@ -149,6 +149,7 @@ class ExamPlan:
         self.conn, self.tz = conn, tz
         self.study, self.notebook, self.quizzes = study, notebook, quizzes
         self.lessons, self.focus, self.bedtime = lessons, focus, bedtime
+        self.nudges = None  # nudges.Nudges: off-task nudges during study events, for study_plan (#84)
         self.timetable = timetable  # UniTo's planner (unitimetable.py): every lecture, not only the calendar's
         self._uni: tuple[date, list] | None = None  # the planner's lectures, read once a day
         self.conn.executescript(SCHEMA)
@@ -919,6 +920,8 @@ class WeekProposer:
         text = week_message(items, warnings)
         note = (f"[The exam plan's week from {monday:%a %d %b}, proposed as review sessions (plan "
                 f"{plan['public_id']}); they're not in the calendar until the user taps Add.]")
+        if self.store.nudges is not None and (off := self.store.nudges.study_text(now)):
+            note = note[:-1] + "\n" + off + "]"
         await self.agent.post(chat, note, text, [{"type": "events", "events": self.plans.card_items(plan)}])
         if self.push is not None:
             try:
@@ -939,7 +942,10 @@ def examplan_tools(store: ExamPlan, study, plans=None, where=None) -> list[Tool]
             if c is None:
                 raise ValueError(f"no course {course!r}; see list_courses")
             cid = c["id"]
-        return store.text(await store.plan(), cid)
+        text = store.text(await store.plan(), cid)
+        if store.nudges is not None and (off := store.nudges.study_text(course_id=cid)):
+            text += "\n\n" + off
+        return text
 
     async def propose_study_week(start: str | None = None) -> str:
         if plans is None or plans.cal is None:

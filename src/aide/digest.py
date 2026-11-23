@@ -237,6 +237,7 @@ class DigestService:
         self.whereabouts: "Whereabouts | None" = None  # where the phone is; set by the app when Maps is on
         self.weather: "Weather | None" = None  # weather.Weather: the day's weather in the one-day digests
         self.bedtime: "Bedtime | None" = None  # bedtime.Bedtime: tonight's plan in the evening, last night's at wake
+        self.nudges = None  # nudges.Nudges: today's off-task and last night's bedtime nudges, for the evening (#84)
         self._spots: dict[str, tuple[float, float] | None] = {}  # an address (home, a place) -> where it is
         self.conn.executescript(SCHEMA)
 
@@ -423,6 +424,10 @@ class DigestService:
         if mail:  # what the mail says, so the greeting can pick the one that wants an answer
             lines += ["", "Mail in more detail:", *(f"- {m['from']}: {m['subject']}{' (unread)' if m['unread'] else ''}"
                                                     f" — {m['preview'][:200]}" for m in mail)]
+        if kind == "evening" and self.nudges is not None and (nudged := self.nudges.evening_lines(now)):
+            lines += ["", "Nudges from the Mac and the phone (still active near bedtime, or a Work-list app while the "
+                      "calendar said study). Data for you, not a scolding: mention it only if it helps tomorrow, in a "
+                      "few kind words:", *(f"- {l}" for l in nudged)]
         if later:
             lines += ["", "After that period:", *(f"- {_event_line(event_json(e, self.tz), self.tz)}"
                                                   for e in later[:30])]

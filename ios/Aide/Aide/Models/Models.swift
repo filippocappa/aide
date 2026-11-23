@@ -2012,6 +2012,73 @@ enum Wire {
     static func dayString(_ d: Date) -> String { dayFormatter.string(from: d) }
 }
 
+// MARK: Nudges (docs/API.md, "Nudges")
+
+/// What a device needs for its nudges (#84): tonight's bedtime steps, the timed events of the next day, the Work list
+/// (off task while a focus event is on) and whether a focus session is on (then it stays quiet).
+struct NudgePlan: Decodable {
+    var bedtime: BedtimeNudges?
+    var events: [NudgeEvent]
+    var list: ScreenList?
+    var focus: Bool
+}
+
+struct BedtimeNudges: Decodable, Equatable {
+    /// The morning the night ends on (the plan's date).
+    let date: String
+    let bedtime: String
+    let wake: String
+    let steps: [BedtimeStep]
+}
+
+/// One of the evening's nudges: due from `at` until `until` (the next one).
+struct BedtimeStep: Decodable, Hashable {
+    /// `hour`, `half`, `now` or `late`.
+    let step: String
+    let at: String
+    let until: String
+    let title: String
+    let body: String
+}
+
+struct NudgeEvent: Decodable, Hashable {
+    let id: String?
+    let title: String
+    let start: String
+    let end: String
+    /// `study` (the study calendar), `asked` (#focus) or `other` (quiets the bedtime nudges while on).
+    let kind: String
+    let course: NudgeCourse?
+}
+
+struct NudgeCourse: Decodable, Hashable {
+    let id: Int
+    let name: String
+}
+
+/// A nudge shown on this device, or its answer later under the same key.
+struct NudgeLog: Encodable {
+    let key: String
+    let device: String
+    /// `bedtime` or `offtask`.
+    let kind: String
+    /// `hour`, `half`, `now`, `late`; `first`, `again`.
+    let step: String
+    let at: String
+    var night: String?
+    var app: String?
+    var event: String?
+    var eventStart: String?
+    var eventEnd: String?
+    var courseId: Int?
+    /// `snooze`, `going`; `back`, `not_now`; nil before there's one.
+    var answer: String?
+}
+
+struct NudgeKept: Decodable {
+    let key: String
+}
+
 extension JSONDecoder {
     static let api: JSONDecoder = {
         let d = JSONDecoder()

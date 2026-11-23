@@ -1029,6 +1029,16 @@ final class APIClient {
         try await send("PATCH", "/v1/health/bedtime/settings", body: settings)
     }
 
+    /// What the nudges need now (docs/API.md, "Nudges"): tonight's bedtime steps, the next day's events, the Work list.
+    func nudges() async throws -> NudgePlan {
+        try await send("GET", "/v1/nudges")
+    }
+
+    /// A nudge shown, or its answer (the same key again).
+    func logNudge(_ nudge: NudgeLog) async throws {
+        let _: NudgeKept = try await send("POST", "/v1/nudges", body: nudge)
+    }
+
     func liveSettings() async throws -> LiveSettings {
         try await send("GET", "/v1/live/settings")
     }

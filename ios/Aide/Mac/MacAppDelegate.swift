@@ -8,6 +8,7 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
     @MainActor var env: AppEnvironment { .shared }
     /// Covers the apps a Screen Time lock covers while it holds, while Aide Guard doesn't (`MacGuard`).
     @MainActor private var shield: MacShield?
+    @MainActor private var nudges: MacNudges?
     @MainActor private var guardWatch: MacGuardWatch?
     @MainActor private var serverChanges: AnyCancellable?
 
@@ -55,9 +56,12 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
             guard shield == nil else { return }
             MacUsage.shared.start()
             shield = MacShield(screenTime: env.screenTime)
+            nudges = MacNudges(api: env.api)
         } else {
             shield?.stop()
             shield = nil
+            nudges?.stop()
+            nudges = nil
             MacUsage.shared.follow()
             MacGuard.handOff(env.settings.apiConfig)
         }

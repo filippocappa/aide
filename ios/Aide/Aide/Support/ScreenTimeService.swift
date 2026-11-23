@@ -197,6 +197,22 @@ final class ScreenTimeService: ObservableObject {
             lastError = error.localizedDescription
         }
         apply()
+        await watchNudges()
+    }
+
+    /// The nudges' activities (`applyNudges`), the ones no longer wanted stopped.
+    private func watchNudges() async {
+        guard isAuthorized else { return }
+        var scheduled = LockBook.scheduled
+        var wanted = Set<DeviceActivityName>()
+        await applyNudges(&scheduled, &wanted)
+        for name in center.activities where NudgeBook.isNudge(name.rawValue) && !wanted.contains(name) {
+            center.stopMonitoring([name])
+        }
+        for key in Array(scheduled.keys) where NudgeBook.isNudge(key) && !wanted.contains(DeviceActivityName(key)) {
+            scheduled[key] = nil
+        }
+        LockBook.scheduled = scheduled
     }
 
     /// The last 7 days' usage steps and today's limits reached, to the server (Coach reads them).
@@ -207,6 +223,7 @@ final class ScreenTimeService: ObservableObject {
         let hits = LockBook.limitHits.filter { $0.value.date >= since }
             .map { UsageUpload.Hit(id: $0.key, date: $0.value.date, at: $0.value.at) }
         if !days.isEmpty || !hits.isEmpty { try? await api.uploadUsage(UsageUpload(days: days, limits: hits)) }
+        await sendNudges()
         // Opens LockAction couldn't send.
         for open in LockBook.rationOpens where !open.sent {
             do {
@@ -220,6 +237,88 @@ final class ScreenTimeService: ObservableObject {
             if let i = opens.firstIndex(where: { $0.key == open.key }) { opens[i].sent = true }
             LockBook.rationOpens = opens
         }
+    }
+
+    /// The nudges shown and answered on this phone, to the server, in order; what fails waits for the next sync.
+    func sendNudges() async {
+        for nudge in NudgeBook.pending {
+            do {
+                try await api.logNudge(NudgeLog(key: nudge.key, device: "phone", kind: nudge.kind, step: nudge.step,
+                                                at: nudge.at, night: nudge.night, event: nudge.event,
+                                                eventStart: nudge.eventStart, eventEnd: nudge.eventEnd,
+                                                courseId: nudge.courseID, answer: nudge.answer))
+            } catch APIError.server(let code, _) where code == 404 || code == 422 {
+                // An older server, or one it won't take: dropped.
+            } catch {
+                return
+            }
+            NudgeBook.pending.removeAll { $0 == nudge }
+        }
+    }
+
+    /// Tonight's bedtime steps and the next focus events watched (#84): the bedtime activity on anything counted,
+    /// one per focus event (at most 3) on the Work list's apps. Restarted only when they change.
+    private func applyNudges(_ scheduled: inout [String: String], _ wanted: inout Set<DeviceActivityName>) async {
+        guard let plan = try? await api.nudges() else {
+            // Unreachable: what's watched stays (a 404, an older server, ends with it).
+            for name in center.activities where NudgeBook.isNudge(name.rawValue) { wanted.insert(name) }
+            return
+        }
+        let now = Date()
+        if let bed = plan.bedtime {
+            let steps = bed.steps.compactMap { step -> NudgeBook.Step? in
+                guard let at = LockClock.date(step.at), let until = LockClock.date(step.until) else { return nil }
+                return NudgeBook.Step(step: step.step, at: at, until: until, title: step.title, body: step.body)
+            }
+            NudgeBook.night = NudgeBook.Night(date: bed.date, steps: steps)
+            let name = NudgeBook.bedtimeActivity
+            if counted != FamilyActivitySelection(), let first = steps.first, let last = steps.last,
+               let schedule = NudgeBook.schedule(first.at, last.until, now: now) {
+                wanted.insert(name)
+                let key = "\(bed.date)-\(bed.bedtime)"
+                if scheduled[name.rawValue] != key || !center.activities.contains(name) {
+                    let events = Dictionary(uniqueKeysWithValues: NudgeBook.useSteps.map {
+                        (NudgeBook.useEvent($0), NudgeBook.use(counted, minutes: $0))
+                    })
+                    do {
+                        try center.startMonitoring(name, during: schedule, events: events)
+                        scheduled[name.rawValue] = key
+                    } catch {
+                        lastError = "Couldn't set the bedtime nudges: \(error.localizedDescription)"
+                    }
+                }
+            }
+        } else {
+            NudgeBook.night = nil
+        }
+        let timed = plan.events.compactMap { event -> (NudgeEvent, Date, Date)? in
+            guard let start = LockClock.date(event.start), let end = LockClock.date(event.end), end > now else { return nil }
+            return (event, start, end)
+        }
+        NudgeBook.others = timed.filter { $0.0.kind == "other" }.map { DateInterval(start: $0.1, end: max($0.2, $0.1)) }
+        let pick = plan.list.flatMap { listApps[$0.id] } ?? FamilyActivitySelection()
+        var watches: [NudgeBook.Watch] = []
+        if pick != FamilyActivitySelection() {
+            for (i, (event, start, end)) in timed.filter({ $0.0.kind != "other" }).prefix(3).enumerated() {
+                let name = NudgeBook.watchActivity(i)
+                guard let schedule = NudgeBook.schedule(start, end, now: now) else { continue }
+                watches.append(NudgeBook.Watch(activity: name.rawValue, title: event.title, start: start, end: end,
+                                               startISO: event.start, endISO: event.end, courseID: event.course?.id))
+                wanted.insert(name)
+                let key = "\(event.start)-\(event.end)-\(event.title)-\(plan.list?.id ?? 0)-\(pick.applicationTokens.count).\(pick.categoryTokens.count).\(pick.webDomainTokens.count)"
+                guard scheduled[name.rawValue] != key || !center.activities.contains(name) else { continue }
+                do {
+                    try center.startMonitoring(name, during: schedule, events: [
+                        NudgeBook.first: NudgeBook.use(pick, minutes: 1),
+                        NudgeBook.again: NudgeBook.use(pick, minutes: NudgeBook.againMinutes),
+                    ])
+                    scheduled[name.rawValue] = key
+                } catch {
+                    lastError = "Couldn't watch '\(event.title)': \(error.localizedDescription)"
+                }
+            }
+        }
+        NudgeBook.watches = watches
     }
 
     /// Each lock's schedule watched (restarted only when it changed), the ones gone stopped, and the shields set
@@ -248,7 +347,7 @@ final class ScreenTimeService: ObservableObject {
         }
         // A lock that's gone from the server (deleted, ended early, over) opens if it had shielded anything.
         let known = Set(locks.map(\.id))
-        for key in Array(scheduled.keys) where !wanted.contains(DeviceActivityName(key)) {
+        for key in Array(scheduled.keys) where !wanted.contains(DeviceActivityName(key)) && !NudgeBook.isNudge(key) {
             scheduled[key] = nil
             if let id = LockBook.id(of: DeviceActivityName(key)), !known.contains(id) { LockBook.open(id) }
             if let id = LockBook.limitID(of: key) { LockBook.openLimit(id) } // deleted, turned off, no apps

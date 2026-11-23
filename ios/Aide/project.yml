@@ -326,6 +326,7 @@ targets:
       - Mac/MacShield.swift
       - Mac/MacBrowser.swift
       - Mac/MacUsage.swift
+      - Mac/MacNudges.swift
       - Mac/iOSCompat.swift
       - ScreenTime/ScreenLock.swift
       - ScreenTime/LockClock.swift

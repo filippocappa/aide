@@ -85,6 +85,29 @@ final class MacUsage: ObservableObject {
     var limitApps: [Int: Set<String>] = [:]
     /// Each tick, the browsers' tabs seen (the one in front, those playing a video), for the shield.
     var onTabs: (([MacBrowser.Tab]) -> Void)?
+    /// Each tick, who's here and what's in front, for the nudges (`MacNudges`, #84).
+    var onLook: ((Look) -> Void)?
+
+    /// What a tick saw.
+    struct Look {
+        let at: Date
+        /// Someone's using the Mac: touched in the last 2 minutes, or a video playing; awake and unlocked.
+        let present: Bool
+        /// The app in front (bundle ID and name) and its front tab's site, in a browser Aide may ask.
+        let front: String?
+        let frontName: String?
+        let site: String?
+        /// The apps playing a video (bundle ID: name), and their tabs' sites.
+        let playing: [String: String]
+        let playingSites: [String]
+
+        static func away(_ at: Date) -> Look {
+            Look(at: at, present: false, front: nil, frontName: nil, site: nil, playing: [:], playingSites: [])
+        }
+    }
+
+    /// Touched this recently: there, for the nudges.
+    private static let presentLimit: TimeInterval = 120
 
     private init() {
         folder = URL.applicationSupportDirectory.appending(path: "Aide/usage", directoryHint: .isDirectory)
@@ -154,6 +177,7 @@ final class MacUsage: ObservableObject {
         lastTick = now
         guard !screenAsleep, !screenLocked else {
             away(now, since: now)
+            onLook?(.away(now))
             return saveIfDue(now)
         }
         let front = NSWorkspace.shared.frontmostApplication
@@ -176,6 +200,9 @@ final class MacUsage: ObservableObject {
         defer { saveIfDue(now) }
         let frontID = front?.bundleIdentifier.flatMap { Self.ignored.contains($0) ? nil : $0 }
         onTabs?(Array(tabs.values))
+        onLook?(Look(at: now, present: idle < Self.presentLimit || !playing.isEmpty, front: frontID,
+                     frontName: front?.localizedName, site: frontID.flatMap { tabs[$0]?.site }, playing: playing,
+                     playingSites: playing.keys.compactMap { tabs[$0]?.site }))
         // What plays on the side, for the limits: the apps and their sites.
         let alongside = Set(playing.keys).union(playing.keys.compactMap { tabs[$0].map { MacSites.entry($0.site) } })
         if let front, let frontID, idle < Self.activeLimit {

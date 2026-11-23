@@ -431,7 +431,7 @@ private final class LockNudge {
 }
 
 /// A borderless panel that takes the keyboard (the reason field) without activating Aide, and Esc.
-private final class NudgePanel: NSPanel {
+final class NudgePanel: NSPanel {
     var onEscape: (() -> Void)?
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { onEscape?() }
@@ -658,7 +658,7 @@ private struct LockNudgeView: View {
 
 /// Liquid Glass that doesn't react to clicks (the interactive kind flashes and redraws the text field inside), or a
 /// frosted material before macOS 26.
-private struct StillGlass<S: Shape>: ViewModifier {
+struct StillGlass<S: Shape>: ViewModifier {
     let shape: S
 
     func body(content: Content) -> some View {
@@ -671,7 +671,7 @@ private struct StillGlass<S: Shape>: ViewModifier {
 }
 
 /// A capsule button in the nudge: plain words, or the accent filled in for the one that goes ahead.
-private struct NudgeButton: View {
+struct NudgeButton: View {
     let title: String
     var prominent = false
     var enabled = true

@@ -98,6 +98,7 @@ from .shapes import event_json
 from .bedtime import Bedtime, bedtime_tools
 from .focus import FocusStore, FocusWatcher, focus_tools
 from .livecall import LiveCalls
+from .nudges import Nudges
 from .wake import WakeService
 from .whisper import available as whisper_available
 
@@ -361,9 +362,13 @@ def main() -> None:
     bedtime = Bedtime(db.conn, settings.timezone, health, push, live, locks,
                       calendar_events if cal else None, lambda event: digest.leave_at(event))
     tools += bedtime_tools(bedtime)
+    nudges = Nudges(db.conn, settings.timezone, bedtime, calendar_events if cal else None, settings.study_calendar,
+                    locks, focus)
+    bedtime.nudges = nudges
     examplan = ExamPlan(db.conn, settings.timezone, study, notebook, quizzes, lessons, focus, bedtime,
                         UniTimetable(settings.unito_timetable, settings.timezone) if settings.unito_timetable else None)
     notebook.on_change.append(examplan.invalidate)
+    examplan.nudges = nudges
     date_reminders = DateReminders(notebook, reminders, settings.timezone)  # sign-ups and deadlines
     notebook.on_change.append(date_reminders.changed)
     date_reminders.sync_all()
@@ -425,6 +430,7 @@ def main() -> None:
     digest.whereabouts = whereabouts
     digest.weather = weather
     digest.bedtime = bedtime
+    digest.nudges = nudges
     digest.drafts = drafts if gmail else None
 
     if not whisper_available():
@@ -519,7 +525,7 @@ def main() -> None:
                              weights=weights, videos=videos, lessons=lessons, decider=decider, finance=finance, examplan=examplan,
                              banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
                              focus=focus, focus_watch=focus_watch, calls=calls,
-                             passwords=passwords, esse3=esse3)
+                             passwords=passwords, esse3=esse3, nudges=nudges)
             # Localhost only: `tailscale serve` publishes it to the tailnet over HTTPS.
             config = uvicorn.Config(app, host="127.0.0.1", port=settings.api_port, log_level="warning")
             jobs.append(uvicorn.Server(config).serve())

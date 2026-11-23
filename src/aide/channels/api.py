@@ -67,6 +67,7 @@ from ..weight import WeightStore
 from ..banks import Banks, BankError
 from ..bedtime import Bedtime
 from ..focus import PRESETS as FOCUS_PRESETS, FocusStore, FocusWatcher
+from ..nudges import Nudges
 from ..finance import CATEGORIES as FINANCE_CATEGORIES, NOT_SPENDING, FinanceStore, parse_amount
 
 log = logging.getLogger(__name__)
@@ -792,7 +793,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None,
                releases: Releases | None = None, calls: LiveCalls | None = None,
                examplan: ExamPlan | None = None, passwords: PasswordStore | None = None,
-               esse3: Esse3Reader | None = None, decider: Decider | None = None) -> FastAPI:
+               esse3: Esse3Reader | None = None, decider: Decider | None = None,
+               nudges: Nudges | None = None) -> FastAPI:
     db: Database = agent.db
     rated_replies = FeedbackStore(db.conn)
     calls = calls or LiveCalls(agent, db.conn)  # no voice to connect: calls are off
@@ -820,6 +822,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     notebook = notebook or NotebookStore(study)  # without a worker, nothing queued runs
     quizzes = quizzes or QuizStore(notebook)
     focus = focus or FocusStore(db.conn, tz, locks, study)
+    nudges = nudges or Nudges(db.conn, tz, bedtime, None, study.study_calendar, locks, focus)
 
     async def lesson_ask(system: str, content: list[dict], max_tokens: int, fast: bool, live: bool) -> str:
         """A lesson's model call: through the engine (the Claude plan first, when it writes notes), never waiting at
@@ -2872,6 +2875,19 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         return {"tonight": await bedtime.tonight(), "settings": settings, "usual": bedtime.usual()}
+
+    @app.get("/v1/nudges", dependencies=[Depends(auth)])
+    async def nudges_now():
+        """What the devices need for the nudges (#84): tonight's bedtime steps, the next day's events, the Work list."""
+        return await nudges.plan()
+
+    @app.post("/v1/nudges", dependencies=[Depends(auth)])
+    async def log_nudge(body: dict = Body(...)):
+        """A nudge shown on a device, or its answer later (the same key)."""
+        try:
+            return nudges.log(body)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
 
     @app.get("/v1/health/weight", dependencies=[Depends(auth)])
     async def weight(days: int = Query(90, ge=1, le=366)):
