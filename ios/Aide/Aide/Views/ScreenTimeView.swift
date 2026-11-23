@@ -15,6 +15,8 @@ struct ScreenTimeView: View {
     @State private var countingPicker = false
     @State private var addingLimit = false
     @State private var unlockingLimit: ScreenLimit?
+    @State private var addingList = false
+    @State private var addingRation = false
 
     /// The sheet that ends a lock early: with a reason, or for a strict one an emergency pass.
     struct Unlocking: Identifiable {
@@ -52,6 +54,8 @@ struct ScreenTimeView: View {
             }
         }
         .sheet(isPresented: $addingLimit) { NavigationStack { LimitEditor(limit: nil, apps: FamilyActivitySelection()) } }
+        .sheet(isPresented: $addingList) { NavigationStack { ListEditor(list: nil) } }
+        .sheet(isPresented: $addingRation) { NavigationStack { RationEditor(ration: nil) } }
         .familyActivityPicker(isPresented: $countingPicker, selection: $screenTime.counted)
         .sheet(isPresented: $adding) { NavigationStack { LockEditor(lock: nil, apps: LockApps(only: false, selection: screenTime.allowed)) } }
         .refreshable { await screenTime.sync() }
@@ -164,6 +168,15 @@ struct ScreenTimeView: View {
                     } label: {
                         Label("Strict", systemImage: "lock.shield")
                     }
+                    ForEach(screenTime.lists.filter { screenTime.listPick($0.id) != nil }) { list in
+                        Menu {
+                            ForEach([15, 30, 60, 120], id: \.self) { minutes in
+                                Button(Self.length(minutes)) { Task { await screenTime.lockNow(minutes: minutes, list: list.id) } }
+                            }
+                        } label: {
+                            Label(list.name, systemImage: "square.stack")
+                        }
+                    }
                 } label: {
                     Label("Lock now", systemImage: "lock")
                 }
@@ -203,6 +216,30 @@ struct ScreenTimeView: View {
         } footer: {
             Text("Some apps get so much time a day, then they lock until midnight: Social, 30 minutes. Ending one "
                  + "early for the day takes a reason (a strict one, an emergency pass). Coach sees them.")
+        }
+        Section {
+            ForEach(screenTime.rations) { ration in
+                NavigationLink { RationEditor(ration: ration).macPageBack() } label: { RationRow(ration: ration) }
+            }
+            Button { addingRation = true } label: { Label("Add a ration", systemImage: "plus") }
+                .disabled(!screenTime.isAuthorized)
+        } header: {
+            Text("Rations")
+        } footer: {
+            Text("Some apps stay locked but for so many opens a day: Telegram, 3. Its lock screen has Open; an open "
+                 + "lasts while you use the app and ends once it's been closed a few minutes. The Mac shares the count.")
+        }
+        Section {
+            ForEach(screenTime.lists) { list in
+                NavigationLink { ListEditor(list: list).macPageBack() } label: { ListRow(list: list) }
+            }
+            Button { addingList = true } label: { Label("Add a list", systemImage: "plus") }
+        } header: {
+            Text("App lists")
+        } footer: {
+            Text("Pick a set of apps once and use it in any lock, limit or ration: Lavoro, Sonno. Each device has its "
+                 + "own pick (the Mac's are in its Settings). For Work Focus: iOS Settings → Focus → Work → Add "
+                 + "Filter → Aide, and choose a list.")
         }
         Section {
             PickRow(title: "Counted", value: screenTime.countedCount == 0 ? "Nothing yet"
@@ -308,9 +345,12 @@ private struct LockEditor: View {
     @State private var kept: FamilyActivitySelection
     @State private var blocked: FamilyActivitySelection
     @State private var picking = false
+    /// An app list instead of its own apps.
+    @State private var list: Int?
 
     init(lock: ScreenLock?, apps: LockApps) {
         self.lock = lock
+        _list = State(initialValue: lock?.list)
         _title = State(initialValue: lock?.title ?? "Bedtime")
         _start = State(initialValue: RoutineEditor.date(from: lock?.start ?? "23:00"))
         _end = State(initialValue: RoutineEditor.date(from: lock?.end ?? "07:00"))
@@ -343,17 +383,21 @@ private struct LockEditor: View {
             .listRowBackground(Theme.row)
             .disabled(lock?.locked == true)
             Section {
-                Picker("Lock", selection: $only) {
-                    Text("Everything except…").tag(false)
-                    Text("Only some apps").tag(true)
+                ListPicker(list: $list)
+                if list == nil {
+                    Picker("Lock", selection: $only) {
+                        Text("Everything except…").tag(false)
+                        Text("Only some apps").tag(true)
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                    PickRow(title: only ? "Apps to lock" : "Stays open", value: appsValue) { picking = true }
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
-                PickRow(title: only ? "Apps to lock" : "Stays open", value: appsValue) { picking = true }
             } header: {
                 Text("Apps")
             } footer: {
-                Text(only ? (blocked == FamilyActivitySelection() ? "Pick what to lock: nothing is locked until you do."
+                Text(list != nil ? ListPicker.footer(screenTime, list)
+                     : only ? (blocked == FamilyActivitySelection() ? "Pick what to lock: nothing is locked until you do."
                              : "Only these are locked; everything else stays open. Picking a category (Social) "
                                 + "covers apps you install later too.")
                      : "Everything else is locked. Pick Aide too, so you can still end the lock early. Calls always "
@@ -416,7 +460,7 @@ private struct LockEditor: View {
         defer { isBusy = false }
         if await screenTime.save(lock, title: title.trimmingCharacters(in: .whitespaces),
                                  start: RoutineEditor.string(from: start), end: RoutineEditor.string(from: end),
-                                 days: days.sorted(), enabled: enabled, strict: strict, apps: apps) {
+                                 days: days.sorted(), enabled: enabled, strict: strict, list: list, apps: apps) {
             dismiss()
         }
     }
@@ -515,9 +559,9 @@ private struct LimitRow: View {
     }
 
     private var appsLine: String {
-        let picked = screenTime.limitApps[limit.id] ?? FamilyActivitySelection()
-        let text = LockApps(only: true, selection: picked).text
-        return text == "Nothing picked" ? "No apps on this phone yet: pick them" : "Counts " + text
+        let text = LockApps(only: true, selection: screenTime.limitPick(limit)).text
+        let list = screenTime.list(limit.list).map { "\($0.name): " } ?? ""
+        return text == "Nothing picked" ? "\(list)No apps on this phone yet: pick them" : "Counts \(list)" + text
     }
 
     private var note: String? {
@@ -549,11 +593,13 @@ private struct LimitEditor: View {
     @State private var apps: FamilyActivitySelection
     @State private var picking = false
     @State private var isBusy = false
+    @State private var list: Int?
 
     static let choices = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240]
 
     init(limit: ScreenLimit?, apps: FamilyActivitySelection) {
         self.limit = limit
+        _list = State(initialValue: limit?.list)
         _title = State(initialValue: limit?.title ?? "Social")
         _minutes = State(initialValue: limit?.minutes ?? 30)
         _days = State(initialValue: Set(limit?.days ?? []))
@@ -591,11 +637,15 @@ private struct LimitEditor: View {
             }
             .listRowBackground(Theme.row)
             Section {
-                PickRow(title: "Apps", value: appsValue) { picking = true }
-                    .disabled(held)
+                ListPicker(list: $list).disabled(held)
+                if list == nil {
+                    PickRow(title: "Apps", value: appsValue) { picking = true }
+                        .disabled(held)
+                }
             } footer: {
-                Text("Their time is added up; once it reaches the limit, they all lock until midnight. Picking a "
-                     + "category (Social) covers apps you install later too.")
+                Text(list != nil ? ListPicker.footer(screenTime, list)
+                     : "Their time is added up; once it reaches the limit, they all lock until midnight. Picking a "
+                        + "category (Social) covers apps you install later too.")
             }
             .listRowBackground(Theme.row)
             Section {
@@ -638,13 +688,14 @@ private struct LimitEditor: View {
                             isBusy = true
                             if await screenTime.saveLimit(limit, title: title.trimmingCharacters(in: .whitespaces),
                                                           minutes: minutes, days: days.sorted(), enabled: enabled,
-                                                          strict: strict, apps: apps) {
+                                                          strict: strict, list: list, apps: apps) {
                                 dismiss()
                             }
                             isBusy = false
                         }
                     }
-                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || apps == FamilyActivitySelection())
+                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty
+                              || (list == nil && apps == FamilyActivitySelection()))
                 }
             }
         }
@@ -659,5 +710,287 @@ private struct LimitEditor: View {
     static func amount(_ minutes: Int) -> String {
         let h = minutes / 60, m = minutes % 60
         return [h > 0 ? "\(h) h" : nil, m > 0 ? "\(m) min" : nil].compactMap { $0 }.joined(separator: " ")
+    }
+}
+
+/// "Its own apps" or one of the app lists.
+private struct ListPicker: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    @Binding var list: Int?
+
+    var body: some View {
+        Picker("List", selection: $list) {
+            Text("Its own apps").tag(Int?.none)
+            ForEach(screenTime.lists) { list in Text(list.name).tag(Int?.some(list.id)) }
+        }
+    }
+
+    @MainActor
+    static func footer(_ screenTime: ScreenTimeService, _ id: Int?) -> String {
+        let name = screenTime.list(id)?.name ?? "The list"
+        guard let picked = screenTime.listPick(id) else {
+            return "\(name) has no apps on this phone yet: pick them under App lists. Until then a lock falls back "
+                + "to its own apps, and a limit or ration counts nothing here."
+        }
+        return "\(name): \(LockApps(only: true, selection: picked).text.lowercased()) on this phone (change them under "
+            + "App lists). The Mac uses its own pick of the same list."
+    }
+}
+
+/// A list: its name, and how many apps it has here and on the Mac.
+private struct ListRow: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    let list: ScreenList
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(list.name)
+            Text(line).font(.subheadline).foregroundStyle(.secondary)
+        }
+    }
+
+    private var line: String {
+        let here = screenTime.listPick(list.id).map { LockApps(only: true, selection: $0).text } ?? "Nothing picked here"
+        return list.mac.isEmpty ? here : "\(here) · \(list.mac.count) on the Mac"
+    }
+}
+
+/// A list's name and this phone's pick of it. While a lock or limit using it holds, apps can't be taken out.
+private struct ListEditor: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    @Environment(\.dismiss) private var dismiss
+    let list: ScreenList?
+
+    @State private var name: String
+    @State private var apps: FamilyActivitySelection
+    @State private var picking = false
+    @State private var isBusy = false
+
+    init(list: ScreenList?) {
+        self.list = list
+        _name = State(initialValue: list?.name ?? "")
+        _apps = State(initialValue: list.flatMap { LockBook.listApps[$0.id] } ?? FamilyActivitySelection())
+    }
+
+    private var inUse: Bool { list.map { screenTime.listInUse($0.id) } ?? false }
+    private var original: FamilyActivitySelection { list.flatMap { screenTime.listApps[$0.id] } ?? FamilyActivitySelection() }
+    /// Taking apps out while it holds would unlock them early.
+    private var removes: Bool {
+        inUse && (!original.applicationTokens.isSubset(of: apps.applicationTokens)
+                  || !original.categoryTokens.isSubset(of: apps.categoryTokens)
+                  || !original.webDomainTokens.isSubset(of: apps.webDomainTokens))
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Name", text: $name)
+            } footer: {
+                Text("Aide's server and Coach see this name, not the apps.")
+            }
+            .listRowBackground(Theme.row)
+            Section {
+                PickRow(title: "Apps on this phone", value: appsValue) { picking = true }
+            } footer: {
+                Text(removes ? "A lock or limit using it is on now: you can add apps, not take them out."
+                     : "Picking a category (Social, Games) covers apps you install later too. Lock screens can't "
+                        + "tell which list holds an app, only what holds it.")
+            }
+            .listRowBackground(Theme.row)
+            if let list, !list.mac.isEmpty {
+                Section {
+                    Text(list.mac.map { $0.hasPrefix("site:") ? String($0.dropFirst(5)) : $0 }.joined(separator: ", "))
+                        .font(.footnote).foregroundStyle(.secondary)
+                } header: {
+                    Text("On the Mac")
+                } footer: {
+                    Text("Change them in the Mac app's Settings → This Mac → Screen Time.")
+                }
+                .listRowBackground(Theme.row)
+            }
+            if let list {
+                Section {
+                    Button("Delete list", role: .destructive) {
+                        Task {
+                            isBusy = true
+                            if await screenTime.delete(list) { dismiss() }
+                            isBusy = false
+                        }
+                    }
+                } footer: {
+                    Text("What uses it goes back to its own apps.")
+                }
+                .listRowBackground(Theme.row)
+                .disabled(isBusy || inUse)
+            }
+            if let error = screenTime.lastError {
+                Text(error).foregroundStyle(.red).listRowBackground(Theme.row)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Theme.grouped)
+        .familyActivityPicker(isPresented: $picking, selection: $apps)
+        .navigationTitle(list?.name ?? "New list")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if list == nil {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                if isBusy { ProgressView() } else {
+                    Button("Save") {
+                        Task {
+                            isBusy = true
+                            if await screenTime.saveList(list, name: name.trimmingCharacters(in: .whitespaces), apps: apps) {
+                                dismiss()
+                            }
+                            isBusy = false
+                        }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || removes)
+                }
+            }
+        }
+    }
+
+    private var appsValue: String {
+        let text = LockApps(only: true, selection: apps).text
+        return text == "Nothing picked" ? "Pick" : text
+    }
+}
+
+/// A ration: its title, how many opens a day, and today's count (every device's), or Open now.
+private struct RationRow: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    let ration: ScreenRation
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ration.title)
+                Text(today).font(.subheadline).foregroundStyle(.secondary)
+                Text(appsLine).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle(ration.title, isOn: Binding(get: { ration.enabled },
+                                               set: { on in Task { await screenTime.setEnabled(ration, on) } }))
+                .labelsHidden()
+                .tint(Theme.toggle)
+        }
+        .opacity(ration.enabled ? 1 : 0.6)
+    }
+
+    private var today: String {
+        if screenTime.rationOpenNow(ration) { return "\(ration.summary) · open now" }
+        let left = screenTime.opensLeft(ration)
+        return "\(ration.summary) · \(left == 0 ? "none" : "\(left)") left today"
+    }
+
+    private var appsLine: String {
+        let text = LockApps(only: true, selection: screenTime.rationPick(ration)).text
+        let list = screenTime.list(ration.list).map { "\($0.name): " } ?? ""
+        return text == "Nothing picked" ? "\(list)No apps on this phone yet: pick them" : "\(list)" + text
+    }
+}
+
+/// A ration: its name, opens a day, how long closed ends an open, and its apps (a list's, or its own).
+private struct RationEditor: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    @Environment(\.dismiss) private var dismiss
+    let ration: ScreenRation?
+
+    @State private var title: String
+    @State private var opens: Int
+    @State private var gap: Int
+    @State private var list: Int?
+    @State private var apps: FamilyActivitySelection
+    @State private var picking = false
+    @State private var isBusy = false
+
+    static let gaps = [2, 3, 5, 10, 15, 30]
+
+    init(ration: ScreenRation?) {
+        self.ration = ration
+        _title = State(initialValue: ration?.title ?? "Telegram")
+        _opens = State(initialValue: ration?.opens ?? 3)
+        _gap = State(initialValue: ration?.gap ?? 3)
+        _list = State(initialValue: ration?.list)
+        _apps = State(initialValue: ration.flatMap { LockBook.rationApps[$0.id] } ?? FamilyActivitySelection())
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Name", text: $title)
+            }
+            .listRowBackground(Theme.row)
+            Section {
+                Stepper("\(opens) open\(opens == 1 ? "" : "s") a day", value: $opens, in: 1...20)
+                Picker("Closed for", selection: $gap) {
+                    ForEach(Set(Self.gaps + [gap]).sorted(), id: \.self) { m in Text("\(m) minutes").tag(m) }
+                }
+            } footer: {
+                Text("An open lasts while you use the app; it ends once the app has been closed this long, so a "
+                     + "quick look elsewhere doesn't spend another. The phone and the Mac share the day's opens.")
+            }
+            .listRowBackground(Theme.row)
+            Section {
+                ListPicker(list: $list)
+                if list == nil {
+                    PickRow(title: "Apps", value: appsValue) { picking = true }
+                }
+            } footer: {
+                Text(list != nil ? ListPicker.footer(screenTime, list)
+                     : "Locked but for the opens. A lock or a daily limit that holds still wins.")
+            }
+            .listRowBackground(Theme.row)
+            if let ration {
+                Section {
+                    Button("Delete ration", role: .destructive) {
+                        Task {
+                            isBusy = true
+                            if await screenTime.delete(ration) { dismiss() }
+                            isBusy = false
+                        }
+                    }
+                }
+                .listRowBackground(Theme.row)
+                .disabled(isBusy)
+            }
+            if let error = screenTime.lastError {
+                Text(error).foregroundStyle(.red).listRowBackground(Theme.row)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Theme.grouped)
+        .familyActivityPicker(isPresented: $picking, selection: $apps)
+        .navigationTitle(ration?.title ?? "New ration")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if ration == nil {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                if isBusy { ProgressView() } else {
+                    Button("Save") {
+                        Task {
+                            isBusy = true
+                            if await screenTime.saveRation(ration, title: title.trimmingCharacters(in: .whitespaces),
+                                                           opens: opens, gap: gap, list: list, apps: apps) {
+                                dismiss()
+                            }
+                            isBusy = false
+                        }
+                    }
+                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty
+                              || (list == nil && apps == FamilyActivitySelection()))
+                }
+            }
+        }
+    }
+
+    private var appsValue: String {
+        let text = LockApps(only: true, selection: apps).text
+        return text == "Nothing picked" ? "Pick" : text
     }
 }

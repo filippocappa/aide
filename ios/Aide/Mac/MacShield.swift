@@ -48,7 +48,10 @@ final class MacShield {
     private func saw(_ tabs: [MacBrowser.Tab]) {
         for tab in tabs {
             let entry = MacSites.entry(tab.site)
-            guard let hold = screenTime.covering(entry) else { continue }
+            guard let hold = screenTime.covering(entry) else {
+                screenTime.rationInUse(entry) // a ration's open goes on while its site is used
+                continue
+            }
             let browser = NSRunningApplication.runningApplications(withBundleIdentifier: tab.app).first
             let icon = browser.flatMap(DockIcon.top(of:))
             Task { await MacBrowser.closeTab(tab) }
@@ -63,8 +66,11 @@ final class MacShield {
 
     /// An app opened or came forward: close it if a lock covers it, and say so above its Dock icon.
     private func tried(_ app: NSRunningApplication) {
-        guard app.processIdentifier != Self.me, let id = app.bundleIdentifier,
-              let hold = screenTime.covering(id) else { return }
+        guard app.processIdentifier != Self.me, let id = app.bundleIdentifier else { return }
+        guard let hold = screenTime.covering(id) else {
+            screenTime.rationInUse(id)
+            return
+        }
         // Before it quits: an app not kept in the Dock has its icon there only while it runs.
         let icon = DockIcon.top(of: app)
         close(app)
@@ -198,6 +204,8 @@ private final class LockNudgeModel: ObservableObject {
     @Published var hold: MacHold?
     @Published var shown = false
     @Published var expanded = false
+    /// A ration's open just spent: the app comes back once its shield is gone.
+    @Published var rationOpening: String?
     /// The pointer is on Pebble or the bubble.
     @Published var hovering = false
     /// The pointer is near: Pebble wakes up and leans toward it.
@@ -239,7 +247,7 @@ private final class LockNudge {
     init(screenTime: ScreenTimeService) { self.screenTime = screenTime }
 
     /// The app being opened anyway: brought back once its lock is gone.
-    var opening: String? { model.expanded ? model.bundleID : nil }
+    var opening: String? { model.expanded ? model.bundleID : model.rationOpening }
 
     func show(app: String, bundleID: String, hold: MacHold, above icon: NSPoint?) {
         if model.bundleID != bundleID { model.expanded = false; model.typing = false }
@@ -268,6 +276,7 @@ private final class LockNudge {
 
     /// Unlocked: a happy hop, then back down.
     func unlocked() {
+        model.rationOpening = nil
         model.typing = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { model.expanded = false }
         model.happy = true
@@ -438,6 +447,8 @@ private struct LockNudgeView: View {
 
     private var hold: MacHold? { model.hold }
     private var isStrict: Bool { hold?.isStrict == true }
+    /// A ration's opens left today, when a ration holds it.
+    private var opensLeft: Int? { hold?.ration.map { screenTime.opensLeft($0) } }
     private var noPasses: Bool { isStrict && screenTime.passes?.left == 0 }
     /// The content moves with the icon only as far as the panel lets it; Pebble goes the rest of the way.
     private var slide: CGFloat { max(-20, min(20, model.shift)) }
@@ -466,12 +477,19 @@ private struct LockNudgeView: View {
         if model.happy { return "Go on then" }
         guard let hold = model.hold else { return "\(model.appName)'s asleep" }
         if hold.limit != nil { return "\(model.appName)'s used up for today" }
+        if hold.list != nil { return "\(model.appName)'s asleep while you focus" }
+        if let left = opensLeft { return left == 0 ? "No opens of \(model.appName) left today" : "\(model.appName)'s rationed" }
         return "\(model.appName)'s asleep till \(MacGlanceCard.time(hold.until))"
     }
 
     private var detail: String? {
         guard let hold, !model.happy else { return nil }
         if noPasses { return "No emergency passes left this month" }
+        if let list = hold.list { return "\(list.name) is locked while this Focus is on" }
+        if let ration = hold.ration, let left = opensLeft {
+            return left == 0 ? "\(ration.summary): they come back at midnight"
+                : "\(left) of \(ration.opens) opens left today · ends \(ration.gap) min after you stop"
+        }
         let title = hold.limit.map { "\($0.title) · \($0.summary), used up" } ?? hold.title
         return hold.agent.map { "\(title) · set by \($0.prefix(1).uppercased() + $0.dropFirst())" } ?? title
     }
@@ -490,7 +508,16 @@ private struct LockNudgeView: View {
                     }
                 }
                 .contentTransition(.opacity)
-                if !model.expanded && !model.happy && !noPasses && hold != nil {
+                if let ration = hold?.ration, let left = opensLeft {
+                    if left > 0 && !model.happy {
+                        NudgeButton(isBusy ? "Opening…" : "Open · \(left) left", prominent: true, enabled: !isBusy) {
+                            spend(ration)
+                        }
+                        .transition(.opacity)
+                    }
+                } else if hold?.list != nil {
+                    // Ends with the Focus: nothing to open here.
+                } else if !model.expanded && !model.happy && !noPasses && hold != nil {
                     NudgeButton(isStrict ? "Use a pass" : "Open anyway", prominent: true, action: start)
                         .transition(.opacity)
                 }
@@ -517,7 +544,7 @@ private struct LockNudgeView: View {
         }
         .fixedSize()
         .padding(.leading, 18)
-        .padding(.trailing, model.expanded || model.happy || noPasses ? 18 : 6)
+        .padding(.trailing, model.expanded || model.happy || noPasses || hold?.list != nil || opensLeft == 0 ? 18 : 6)
         .padding(.vertical, 6)
         .frame(minHeight: 46)
         .padding(.vertical, model.expanded ? 8 : 0)
@@ -550,8 +577,17 @@ private struct LockNudgeView: View {
             .offset(x: pebbleX, y: model.shown ? 0 : 130)
     }
 
+    /// One of the ration's opens: no reason asked, it's the day's allowance.
+    private func spend(_ ration: ScreenRation) {
+        Task {
+            isBusy = true
+            if await screenTime.openRation(ration) { model.rationOpening = model.bundleID }
+            isBusy = false
+        }
+    }
+
     private func start() {
-        guard !noPasses, hold != nil else { return }
+        guard !noPasses, let hold, hold.ration == nil, hold.list == nil else { return }
         reason = ""
         left = 10
         open()

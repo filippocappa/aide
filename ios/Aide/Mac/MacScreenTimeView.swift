@@ -13,6 +13,18 @@ struct MacScreenTimeView: View {
     @State private var unlocking: Unlocking?
     @State private var editing: Editing?
     @State private var editingLimit: EditingLimit?
+    @State private var editingList: EditingList?
+    @State private var editingRation: EditingRation?
+
+    struct EditingList: Identifiable {
+        let list: ScreenList?
+        var id: Int { list?.id ?? 0 }
+    }
+
+    struct EditingRation: Identifiable {
+        let ration: ScreenRation?
+        var id: Int { ration?.id ?? 0 }
+    }
 
     struct Unlocking: Identifiable {
         let hold: MacHold
@@ -53,6 +65,8 @@ struct MacScreenTimeView: View {
                 MacLimitEditor(limit: item.limit, apps: item.limit.flatMap { screenTime.limitApps[$0.id] } ?? [])
             }
         }
+        .sheet(item: $editingList) { item in NavigationStack { MacListEditor(list: item.list) } }
+        .sheet(item: $editingRation) { item in NavigationStack { MacRationEditor(ration: item.ration) } }
         .sheet(item: $editing) { item in
             NavigationStack {
                 MacLockEditor(lock: item.lock, apps: item.lock.map { screenTime.lockApps[$0.id] } ?? nil)
@@ -135,6 +149,13 @@ struct MacScreenTimeView: View {
                     Label(strict ? "Lock now, strict" : "Lock now", systemImage: strict ? "lock.shield" : "lock")
                 }
                 .disabled(screenTime.usualApps.isEmpty)
+                ForEach(screenTime.lists.filter { !$0.mac.isEmpty }) { list in
+                    Button {
+                        Task { await screenTime.lockNow(minutes: minutes, strict: strict, list: list.id) }
+                    } label: {
+                        Label("Lock \(list.name) now", systemImage: "square.stack")
+                    }
+                }
             }
         } header: {
             Text("Now")
@@ -194,6 +215,31 @@ struct MacScreenTimeView: View {
         } footer: {
             Text("So many minutes a day in some apps, then they're closed until midnight. Each device counts its own "
                  + "time: here, this Mac's time in the apps picked here; on the phone, the phone's.")
+        }
+        Section {
+            ForEach(screenTime.rations) { ration in
+                Button { editingRation = EditingRation(ration: ration) } label: { MacRationRow(ration: ration) }
+                    .buttonStyle(.plain)
+            }
+            Button { editingRation = EditingRation(ration: nil) } label: { Label("Add a ration", systemImage: "plus") }
+        } header: {
+            Text("Rations")
+        } footer: {
+            Text("Some apps stay closed but for so many opens a day, shared with the phone: Telegram, 3. Pebble offers "
+                 + "the open when you try one; it lasts while you use the app and ends a few minutes after you stop.")
+        }
+        Section {
+            ForEach(screenTime.lists) { list in
+                Button { editingList = EditingList(list: list) } label: { MacListRow(list: list) }
+                    .buttonStyle(.plain)
+            }
+            Button { editingList = EditingList(list: nil) } label: { Label("Add a list", systemImage: "plus") }
+        } header: {
+            Text("App lists")
+        } footer: {
+            Text("A set of apps and websites, named once, for any lock, limit or ration: Lavoro, Sonno. The phone has "
+                 + "its own pick of each. For Work Focus: System Settings → Focus → Work → Add Filter → Aide, and "
+                 + "choose a list" + (screenTime.list(screenTime.focusFilterList).map { " (now: \($0.name))" } ?? "") + ".")
         }
     }
 
@@ -358,9 +404,11 @@ private struct MacLockEditor: View {
     @State private var ownApps: Bool
     @State private var apps: Set<String>
     @State private var isBusy = false
+    @State private var list: Int?
 
     init(lock: ScreenLock?, apps: Set<String>?) {
         self.lock = lock
+        _list = State(initialValue: lock?.list)
         _title = State(initialValue: lock?.title ?? "Bedtime")
         _start = State(initialValue: RoutineEditor.date(from: lock?.start ?? "23:00"))
         _end = State(initialValue: RoutineEditor.date(from: lock?.end ?? "07:00"))
@@ -390,17 +438,21 @@ private struct MacLockEditor: View {
             }
             .disabled(on)
             Section {
-                Picker("On this Mac", selection: $ownApps) {
-                    Text("The usual apps").tag(false)
-                    Text("Its own apps").tag(true)
-                }
-                if ownApps {
-                    AppList(apps: apps) { apps = $0 }
+                MacListPicker(list: $list)
+                if list == nil {
+                    Picker("On this Mac", selection: $ownApps) {
+                        Text("The usual apps").tag(false)
+                        Text("Its own apps").tag(true)
+                    }
+                    if ownApps {
+                        AppList(apps: apps) { apps = $0 }
+                    }
                 }
             } header: {
                 Text("Apps")
             } footer: {
-                Text(ownApps ? "Only these are closed on this Mac while it holds. The phone keeps its own pick."
+                Text(list != nil ? MacListPicker.footer(screenTime, list)
+                     : ownApps ? "Only these are closed on this Mac while it holds. The phone keeps its own pick."
                      : "The usual apps from the Screen Time page. The phone keeps its own pick.")
             }
             .disabled(on)
@@ -445,7 +497,8 @@ private struct MacLockEditor: View {
         defer { isBusy = false }
         if await screenTime.save(lock, title: title.trimmingCharacters(in: .whitespaces),
                                  start: RoutineEditor.string(from: start), end: RoutineEditor.string(from: end),
-                                 days: days.sorted(), enabled: enabled, strict: strict, apps: ownApps ? apps : nil) {
+                                 days: days.sorted(), enabled: enabled, strict: strict, list: list,
+                                 apps: ownApps ? apps : nil) {
             dismiss()
         }
     }
@@ -536,7 +589,7 @@ private struct MacLimitRow: View {
     }
 
     private var appsLine: String {
-        let apps = MacApp.sorted(screenTime.limitApps[limit.id] ?? []).map(\.name)
+        let apps = MacApp.sorted(screenTime.apps(for: limit)).map(\.name)
         if apps.isEmpty { return "No apps on this Mac yet: it counts only on the phone" }
         let names = apps.count <= 3 ? apps.formatted(.list(type: .and)) : "\(apps.prefix(2).joined(separator: ", ")) and \(apps.count - 2) more"
         return "Counts " + names
@@ -549,7 +602,7 @@ private struct MacLimitRow: View {
             parts.append("Used up\(at), closed until midnight")
         } else if limit.openToday {
             parts.append("Ended early for today")
-        } else if limit.enabled, limit.counts(on: Date()), screenTime.limitApps[limit.id] != nil {
+        } else if limit.enabled, limit.counts(on: Date()), !screenTime.apps(for: limit).isEmpty {
             let used = Int(screenTime.usedToday(limit) / 60)
             parts.append("\(used) of \(limit.minutes) min today on this Mac")
         } else if limit.enabled, !limit.counts(on: Date()) {
@@ -576,11 +629,13 @@ private struct MacLimitEditor: View {
     @State private var strict: Bool
     @State private var apps: Set<String>
     @State private var isBusy = false
+    @State private var list: Int?
 
     private static let choices = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360]
 
     init(limit: ScreenLimit?, apps: Set<String>) {
         self.limit = limit
+        _list = State(initialValue: limit?.list)
         _title = State(initialValue: limit?.title ?? "Social")
         _minutes = State(initialValue: limit?.minutes ?? 30)
         _days = State(initialValue: Set(limit?.days ?? []))
@@ -606,11 +661,15 @@ private struct MacLimitEditor: View {
                 Text("None of the days picked is every day. The same limit counts on the phone, over the phone's own apps.")
             }
             Section {
-                AppList(apps: apps, locked: held) { apps = $0 }
+                MacListPicker(list: $list).disabled(held)
+                if list == nil {
+                    AppList(apps: apps, locked: held) { apps = $0 }
+                }
             } header: {
                 Text("Apps and websites on this Mac")
             } footer: {
-                Text(held ? "Used up today: its apps change tomorrow, or end it early."
+                Text(list != nil ? MacListPicker.footer(screenTime, list)
+                     : held ? "Used up today: its apps change tomorrow, or end it early."
                      : "This Mac's time in these, added up (a website in any browser, in front or playing on the side). "
                         + "Once it reaches the limit the apps are closed and the website's tab too, until midnight.")
             }
@@ -651,8 +710,243 @@ private struct MacLimitEditor: View {
         isBusy = true
         defer { isBusy = false }
         if await screenTime.saveLimit(limit, title: title.trimmingCharacters(in: .whitespaces), minutes: minutes,
-                                      days: days.sorted(), enabled: enabled, strict: strict, apps: apps) {
+                                      days: days.sorted(), enabled: enabled, strict: strict, list: list, apps: apps) {
             dismiss()
+        }
+    }
+}
+
+/// "Its own apps" or one of the app lists.
+private struct MacListPicker: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    @Binding var list: Int?
+
+    var body: some View {
+        Picker("List", selection: $list) {
+            Text("Its own apps").tag(Int?.none)
+            ForEach(screenTime.lists) { list in Text(list.name).tag(Int?.some(list.id)) }
+        }
+    }
+
+    @MainActor
+    static func footer(_ screenTime: ScreenTimeService, _ id: Int?) -> String {
+        guard let list = screenTime.list(id) else { return "" }
+        let apps = MacApp.sorted(Set(list.mac)).map(\.name)
+        if apps.isEmpty {
+            return "\(list.name) has no apps on this Mac yet: add them under App lists. Until then a lock falls back to "
+                + "its own apps, and a limit or ration counts nothing here."
+        }
+        let names = apps.count <= 4 ? apps.formatted(.list(type: .and))
+            : "\(apps.prefix(3).joined(separator: ", ")) and \(apps.count - 3) more"
+        return "\(list.name): \(names) (change them under App lists). The phone uses its own pick of the same list."
+    }
+}
+
+/// A list: its name and its Mac apps.
+private struct MacListRow: View {
+    let list: ScreenList
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(list.name)
+            Text(line).font(.subheadline).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private var line: String {
+        let apps = MacApp.sorted(Set(list.mac)).map(\.name)
+        if apps.isEmpty { return "Nothing on this Mac yet" }
+        return apps.count <= 4 ? apps.formatted(.list(type: .and))
+            : "\(apps.prefix(3).joined(separator: ", ")) and \(apps.count - 3) more"
+    }
+}
+
+/// A list's name and Mac apps, kept on the server (so the phone sees the name, and another Mac the apps).
+private struct MacListEditor: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    @Environment(\.dismiss) private var dismiss
+    let list: ScreenList?
+
+    @State private var name: String
+    @State private var apps: Set<String>
+    @State private var isBusy = false
+
+    init(list: ScreenList?) {
+        self.list = list
+        _name = State(initialValue: list?.name ?? "")
+        _apps = State(initialValue: Set(list?.mac ?? []))
+    }
+
+    private var inUse: Bool { list.map { screenTime.listInUse($0.id) } ?? false }
+    private var removes: Bool { inUse && !Set(list?.mac ?? []).isSubset(of: apps) }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Name", text: $name)
+            }
+            Section {
+                AppList(apps: apps) { apps = $0 }
+            } header: {
+                Text("Apps and websites on this Mac")
+            } footer: {
+                Text(removes ? "A lock or limit using it is on now: you can add apps, not take them out."
+                     : "A website is closed as a tab in Safari and the Chromium browsers. The phone has its own pick "
+                        + "of this list, in its Screen Time page.")
+            }
+            if let list {
+                Section {
+                    Button("Delete list", role: .destructive) {
+                        Task {
+                            isBusy = true
+                            if await screenTime.delete(list) { dismiss() }
+                            isBusy = false
+                        }
+                    }
+                } footer: {
+                    Text("What uses it goes back to its own apps.")
+                }
+                .disabled(isBusy || inUse)
+            }
+            if let error = screenTime.lastError {
+                Text(error).foregroundStyle(.red)
+            }
+        }
+        .macSheetTitle(list?.name ?? "New list")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if isBusy { ProgressView().controlSize(.small) } else {
+                    Button("Save") {
+                        Task {
+                            isBusy = true
+                            if await screenTime.saveList(list, name: name.trimmingCharacters(in: .whitespaces), mac: apps) {
+                                dismiss()
+                            }
+                            isBusy = false
+                        }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || removes)
+                }
+            }
+        }
+    }
+}
+
+/// A ration: its title, today's opens (every device's), or open now.
+private struct MacRationRow: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    let ration: ScreenRation
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ration.title)
+                Text(today).font(.subheadline).foregroundStyle(.secondary)
+                Text(appsLine).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle(ration.title, isOn: Binding(get: { ration.enabled },
+                                               set: { on in Task { await screenTime.setEnabled(ration, on) } }))
+                .labelsHidden()
+        }
+        .contentShape(Rectangle())
+        .opacity(ration.enabled ? 1 : 0.6)
+    }
+
+    private var today: String {
+        if screenTime.rationOpenNow(ration) { return "\(ration.summary) · open now" }
+        let left = screenTime.opensLeft(ration)
+        return "\(ration.summary) · \(left == 0 ? "none" : "\(left)") left today"
+    }
+
+    private var appsLine: String {
+        let apps = MacApp.sorted(screenTime.apps(for: ration)).map(\.name)
+        let list = screenTime.list(ration.list)?.name
+        if apps.isEmpty { return list.map { "\($0): nothing on this Mac yet" } ?? "Pick a list for its Mac apps" }
+        return apps.count <= 3 ? apps.formatted(.list(type: .and)) : "\(apps.prefix(2).joined(separator: ", ")) and \(apps.count - 2) more"
+    }
+}
+
+/// A ration: its name, opens a day, how long unused ends an open, and its list (the Mac's apps come from a list).
+private struct MacRationEditor: View {
+    @EnvironmentObject private var screenTime: ScreenTimeService
+    @Environment(\.dismiss) private var dismiss
+    let ration: ScreenRation?
+
+    @State private var title: String
+    @State private var opens: Int
+    @State private var gap: Int
+    @State private var list: Int?
+    @State private var isBusy = false
+
+    private static let gaps = [2, 3, 5, 10, 15, 30]
+
+    init(ration: ScreenRation?) {
+        self.ration = ration
+        _title = State(initialValue: ration?.title ?? "Telegram")
+        _opens = State(initialValue: ration?.opens ?? 3)
+        _gap = State(initialValue: ration?.gap ?? 3)
+        _list = State(initialValue: ration?.list)
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Name", text: $title)
+            }
+            Section {
+                Stepper("\(opens) open\(opens == 1 ? "" : "s") a day", value: $opens, in: 1...20)
+                Picker("Ends after", selection: $gap) {
+                    ForEach(Set(Self.gaps + [gap]).sorted(), id: \.self) { Text("\($0) minutes unused").tag($0) }
+                }
+            } footer: {
+                Text("An open lasts while you use the app (in front, or its website in a tab); it ends once it's gone "
+                     + "unused this long. The phone and the Mac share the day's opens.")
+            }
+            Section {
+                Picker("List", selection: $list) {
+                    Text("None on this Mac").tag(Int?.none)
+                    ForEach(screenTime.lists) { list in Text(list.name).tag(Int?.some(list.id)) }
+                }
+            } footer: {
+                Text(list != nil ? MacListPicker.footer(screenTime, list)
+                     : "Without a list it covers nothing on this Mac; the phone uses its own pick.")
+            }
+            if let ration {
+                Section {
+                    Button("Delete ration", role: .destructive) {
+                        Task {
+                            isBusy = true
+                            if await screenTime.delete(ration) { dismiss() }
+                            isBusy = false
+                        }
+                    }
+                }
+                .disabled(isBusy)
+            }
+            if let error = screenTime.lastError {
+                Text(error).foregroundStyle(.red)
+            }
+        }
+        .macSheetTitle(ration?.title ?? "New ration")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if isBusy { ProgressView().controlSize(.small) } else {
+                    Button("Save") {
+                        Task {
+                            isBusy = true
+                            if await screenTime.saveRation(ration, title: title.trimmingCharacters(in: .whitespaces),
+                                                           opens: opens, gap: gap, list: list) {
+                                dismiss()
+                            }
+                            isBusy = false
+                        }
+                    }
+                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
         }
     }
 }

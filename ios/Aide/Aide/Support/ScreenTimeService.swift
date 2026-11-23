@@ -5,7 +5,8 @@ import Foundation
 /// Screen Time locks (docs/API.md, "Screen Time"). The server keeps the locks; this sets them on the phone: one
 /// DeviceActivity schedule per lock, so the monitor extension shields and opens the apps on time with the app
 /// closed, and the shield straight away for a lock that's already on. It syncs when the app opens, after a chat
-/// turn and on a silent `sync` push.
+/// turn and on a silent `sync` push. App lists ("App lists") are picked here once each and used by any lock, limit
+/// or ration; a ration ("Rations") keeps its apps shielded but for the opens its shield offers (LockAction).
 @MainActor
 final class ScreenTimeService: ObservableObject {
     @Published private(set) var authorization: AuthorizationStatus
@@ -33,6 +34,12 @@ final class ScreenTimeService: ObservableObject {
     /// Daily app limits (docs/API.md, "Daily app limits") and the apps each counts.
     @Published private(set) var limits: [ScreenLimit] = LockBook.limits
     @Published private(set) var limitApps: [Int: FamilyActivitySelection] = LockBook.limitApps
+    /// App lists, and this phone's pick of each.
+    @Published private(set) var lists: [ScreenList] = LockBook.lists
+    @Published private(set) var listApps: [Int: FamilyActivitySelection] = LockBook.listApps
+    /// Rations, and the apps of each without a list.
+    @Published private(set) var rations: [ScreenRation] = LockBook.rations
+    @Published private(set) var rationApps: [Int: FamilyActivitySelection] = LockBook.rationApps
     /// What the estimate for Coach counts (every category, picked once).
     @Published var counted: FamilyActivitySelection = LockBook.counted {
         didSet {
@@ -68,12 +75,40 @@ final class ScreenTimeService: ObservableObject {
     /// A focus round is on: its apps can't change until it's over.
     var focusInUse: Bool { locks.contains { $0.focus != nil && LockClock.until($0) != nil } }
     /// A lock on now uses the usual apps: they can't change until it's over (that would be unlocking early).
-    var usualInUse: Bool { locks.contains { $0.focus == nil && apps[$0.id] == nil && LockClock.until($0) != nil } }
+    var usualInUse: Bool {
+        locks.contains { $0.focus == nil && apps[$0.id] == nil && listPick($0.list) == nil && LockClock.until($0) != nil }
+    }
 
     func apps(for lock: ScreenLock) -> LockApps {
         if lock.focus != nil { return LockApps(only: false, selection: LockBook.focusAllowed) }
+        if let picked = listPick(lock.list) { return LockApps(only: true, selection: picked) }
         return apps[lock.id] ?? LockApps(only: false, selection: allowed)
     }
+
+    /// This phone's pick of a list, nil when it hasn't picked it (or no list).
+    func listPick(_ id: Int?) -> FamilyActivitySelection? {
+        guard let id, let picked = listApps[id], picked != FamilyActivitySelection() else { return nil }
+        return picked
+    }
+
+    func list(_ id: Int?) -> ScreenList? { id.flatMap { id in lists.first { $0.id == id } } }
+
+    /// A lock or a limit using the list holds now: its apps can be added to, not taken out.
+    func listInUse(_ id: Int) -> Bool {
+        locks.contains { $0.list == id && LockClock.until($0) != nil } || limits.contains { $0.list == id && holds($0) }
+    }
+
+    /// What a limit counts here.
+    func limitPick(_ limit: ScreenLimit) -> FamilyActivitySelection {
+        limit.list.map { listApps[$0] ?? FamilyActivitySelection() } ?? limitApps[limit.id] ?? FamilyActivitySelection()
+    }
+
+    func rationPick(_ ration: ScreenRation) -> FamilyActivitySelection {
+        ration.list.map { listApps[$0] ?? FamilyActivitySelection() } ?? rationApps[ration.id] ?? FamilyActivitySelection()
+    }
+
+    func opensLeft(_ ration: ScreenRation) -> Int { LockBook.opensLeft(ration) }
+    func rationOpenNow(_ ration: ScreenRation) -> Bool { LockBook.rationInUse(ration.id) }
 
     var focusAllowedCount: Int {
         let picked = LockBook.focusAllowed
@@ -121,6 +156,31 @@ final class ScreenTimeService: ObservableObject {
             LockBook.locks = list.locks
             passes = list.passes
             line = list.line
+            if let got = list.lists {
+                lists = got
+                LockBook.lists = got
+                let known = Set(got.map(\.id))
+                if listApps.keys.contains(where: { !known.contains($0) }) {
+                    listApps = listApps.filter { known.contains($0.key) }
+                    LockBook.listApps = listApps
+                }
+            }
+            if let got = list.rations {
+                // Gone (deleted on the server): open what it shielded.
+                let kept = Set(got.map(\.id))
+                for old in rations where !kept.contains(old.id) {
+                    LockBook.openRationStore(old.id)
+                    DeviceActivityCenter().stopMonitoring([LockBook.rationActivity(old.id)])
+                }
+                // The opens sent before this read are in the server's count now.
+                var opens = LockBook.rationOpens
+                for i in opens.indices where opens[i].sent { opens[i].counted = true }
+                LockBook.rationOpens = opens
+                rations = got
+                LockBook.rations = got
+                rationApps = rationApps.filter { kept.contains($0.key) }
+                LockBook.rationApps = rationApps
+            }
             if let got = list.limits {
                 limits = got
                 LockBook.limits = got
@@ -146,8 +206,20 @@ final class ScreenTimeService: ObservableObject {
             .map { UsageUpload.Day(date: $0.key, minutes: $0.value) }
         let hits = LockBook.limitHits.filter { $0.value.date >= since }
             .map { UsageUpload.Hit(id: $0.key, date: $0.value.date, at: $0.value.at) }
-        guard !days.isEmpty || !hits.isEmpty else { return }
-        try? await api.uploadUsage(UsageUpload(days: days, limits: hits))
+        if !days.isEmpty || !hits.isEmpty { try? await api.uploadUsage(UsageUpload(days: days, limits: hits)) }
+        // Opens LockAction couldn't send.
+        for open in LockBook.rationOpens where !open.sent {
+            do {
+                try await api.openRation(open.ration, RationOpenBody(key: open.key, device: "phone", at: open.at, granted: true))
+            } catch APIError.server(404, _) {
+                // The ration is gone: nothing to count.
+            } catch {
+                continue
+            }
+            var opens = LockBook.rationOpens
+            if let i = opens.firstIndex(where: { $0.key == open.key }) { opens[i].sent = true }
+            LockBook.rationOpens = opens
+        }
     }
 
     /// Each lock's schedule watched (restarted only when it changed), the ones gone stopped, and the shields set
@@ -189,6 +261,14 @@ final class ScreenTimeService: ObservableObject {
         for lock in locks {
             if LockClock.until(lock) != nil { LockBook.shield(lock.id) } else { LockBook.open(lock.id) }
         }
+        for ration in rations {
+            if LockBook.rationHolds(ration) {
+                LockBook.shieldRation(ration)
+            } else if !LockBook.rationInUse(ration.id) {
+                LockBook.openRationStore(ration.id) // off, or no apps
+            }
+        }
+        LockBook.applyFocusFilter()
     }
 
     /// A daily activity per limit with its apps (one threshold event), restarted when its minutes or apps change;
@@ -196,9 +276,10 @@ final class ScreenTimeService: ObservableObject {
     private func applyLimits(_ scheduled: inout [String: String], _ wanted: inout Set<DeviceActivityName>) {
         for limit in limits {
             let name = LockBook.limitActivity(limit.id)
-            guard limit.enabled, let picked = limitApps[limit.id], picked != FamilyActivitySelection() else { continue }
+            let picked = limitPick(limit)
+            guard limit.enabled, picked != FamilyActivitySelection() else { continue }
             wanted.insert(name)
-            let key = "\(limit.minutes)"
+            let key = "\(limit.minutes)-\(limit.list ?? 0)"
             if scheduled[name.rawValue] != key || !center.activities.contains(name) {
                 do {
                     try center.startMonitoring(name, during: LockBook.wholeDay,
@@ -232,28 +313,31 @@ final class ScreenTimeService: ObservableObject {
 
     // MARK: Changes from the app
 
-    func lockNow(minutes: Int, strict: Bool = false) async {
+    func lockNow(minutes: Int, strict: Bool = false, list: Int? = nil) async {
         await change {
-            _ = try await self.api.createLock(NewLock(title: strict ? "Strict focus" : "Focus", minutes: minutes,
-                                                      strict: strict ? true : nil))
+            _ = try await self.api.createLock(NewLock(title: strict ? "Strict focus" : self.list(list)?.name ?? "Focus",
+                                                      minutes: minutes, strict: strict ? true : nil, list: list))
         }
     }
 
-    /// A lock that's on keeps its times and apps: only its title changes, or it becomes strict.
+    /// A lock that's on keeps its times, list and apps: only its title changes, or it becomes strict. With a list,
+    /// the list's apps; else `picked`.
     func save(_ lock: ScreenLock?, title: String, start: String, end: String, days: [Int], enabled: Bool,
-              strict: Bool, apps picked: LockApps) async -> Bool {
+              strict: Bool, list: Int?, apps picked: LockApps) async -> Bool {
         await change {
             if let lock {
                 let on = lock.locked
+                let listChange = on || list == lock.list ? nil : (list ?? 0)
                 _ = try await self.api.updateLock(lock.id, LockPatch(title: title, start: on ? nil : start,
                                                                      end: on ? nil : end, days: on ? nil : days,
                                                                      enabled: on ? nil : enabled,
-                                                                     strict: on && !strict ? nil : strict))
-                if !on { self.setApps(picked, for: lock.id) }
+                                                                     strict: on && !strict ? nil : strict,
+                                                                     list: listChange))
+                if !on && list == nil { self.setApps(picked, for: lock.id) }
             } else {
                 let made = try await self.api.createLock(NewLock(title: title, start: start, end: end, days: days,
-                                                                 strict: strict ? true : nil))
-                self.setApps(picked, for: made.id)
+                                                                 strict: strict ? true : nil, list: list))
+                if list == nil { self.setApps(picked, for: made.id) }
             }
         }
     }
@@ -284,15 +368,17 @@ final class ScreenTimeService: ObservableObject {
     }
 
     func saveLimit(_ limit: ScreenLimit?, title: String, minutes: Int, days: [Int], enabled: Bool, strict: Bool,
-                   apps picked: FamilyActivitySelection) async -> Bool {
+                   list: Int?, apps picked: FamilyActivitySelection) async -> Bool {
         await change {
             if let limit {
                 _ = try await self.api.updateLimit(limit.id, LimitPatch(title: title, minutes: minutes, days: days,
-                                                                        enabled: enabled, strict: strict))
-                if picked != self.limitApps[limit.id] { self.setLimitApps(picked, for: limit.id) }
+                                                                        enabled: enabled, strict: strict,
+                                                                        list: list == limit.list ? nil : (list ?? 0)))
+                if list == nil && picked != self.limitApps[limit.id] { self.setLimitApps(picked, for: limit.id) }
             } else {
-                let made = try await self.api.createLimit(NewLimit(title: title, minutes: minutes, days: days, strict: strict))
-                self.setLimitApps(picked, for: made.id)
+                let made = try await self.api.createLimit(NewLimit(title: title, minutes: minutes, days: days,
+                                                                   strict: strict, list: list))
+                if list == nil { self.setLimitApps(picked, for: made.id) }
             }
         }
     }
@@ -318,6 +404,67 @@ final class ScreenTimeService: ObservableObject {
             LockBook.limitApps = limitApps
         }
         return done
+    }
+
+    // MARK: Lists from the app
+
+    /// This phone's pick of a list. Limits using it start counting afresh.
+    private func setListApps(_ picked: FamilyActivitySelection, for id: Int) {
+        listApps[id] = picked
+        LockBook.listApps = listApps
+        var scheduled = LockBook.scheduled
+        for limit in limits where limit.list == id { scheduled[LockBook.limitActivity(limit.id).rawValue] = nil }
+        LockBook.scheduled = scheduled
+    }
+
+    /// The name (and the Mac's apps, kept as they are) on the server, the phone's pick here.
+    func saveList(_ list: ScreenList?, name: String, apps picked: FamilyActivitySelection) async -> Bool {
+        await change {
+            if let list {
+                if name != list.name { _ = try await self.api.updateList(list.id, ScreenListBody(name: name)) }
+                if picked != self.listApps[list.id] { self.setListApps(picked, for: list.id) }
+            } else {
+                let made = try await self.api.createList(ScreenListBody(name: name, mac: []))
+                self.setListApps(picked, for: made.id)
+            }
+        }
+    }
+
+    func delete(_ list: ScreenList) async -> Bool {
+        let done = await change { try await self.api.deleteList(list.id) }
+        if done {
+            listApps[list.id] = nil
+            LockBook.listApps = listApps
+        }
+        return done
+    }
+
+    // MARK: Rations from the app
+
+    func saveRation(_ ration: ScreenRation?, title: String, opens: Int, gap: Int, list: Int?,
+                    apps picked: FamilyActivitySelection) async -> Bool {
+        await change {
+            let id: Int
+            if let ration {
+                _ = try await self.api.updateRation(ration.id, RationBody(title: title, opens: opens, gap: gap,
+                                                                          list: list == ration.list ? nil : (list ?? 0)))
+                id = ration.id
+            } else {
+                id = try await self.api.createRation(RationBody(title: title, opens: opens, gap: gap, list: list)).id
+            }
+            if list == nil {
+                self.rationApps[id] = picked
+                LockBook.rationApps = self.rationApps
+            }
+        }
+    }
+
+    func setEnabled(_ ration: ScreenRation, _ on: Bool) async {
+        await change { _ = try await self.api.updateRation(ration.id, RationBody(enabled: on)) }
+    }
+
+    func delete(_ ration: ScreenRation) async -> Bool {
+        await change { try await self.api.deleteRation(ration.id) }
     }
 
     /// One change on the server, then the list again. False (with `lastError`) if the server said no.

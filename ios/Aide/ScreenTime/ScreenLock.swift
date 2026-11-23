@@ -27,8 +27,36 @@ struct ScreenLock: Codable, Identifiable, Hashable {
     let summary: String
     /// A focus session's round (its id, `f_…`): everything but the apps allowed for focus. nil for any other lock.
     var focus: String? = nil
+    /// The app list it locks (`ScreenList`), else each device's own pick.
+    var list: Int? = nil
 
     var isStrict: Bool { strict == true }
+}
+
+/// An app list (docs/API.md, "App lists"): a name for a set of apps, picked once on each device and used by any
+/// lock, limit or ration. The server has the name and the Mac's apps; the phone's pick stays on the phone
+/// (`LockBook.listApps`).
+struct ScreenList: Codable, Identifiable, Hashable {
+    let id: Int
+    var name: String
+    /// The Mac's bundle IDs and "site:youtube.com" entries.
+    var mac: [String]
+}
+
+/// A ration (docs/API.md, "Rations"): its apps stay locked but for `opens` a day, each open lasting while they're
+/// used and ending once they've been closed `gap` minutes. The day's opens are shared with the Mac.
+struct ScreenRation: Codable, Identifiable, Hashable {
+    let id: Int
+    let title: String
+    let opens: Int
+    let gap: Int
+    /// The app list it covers, else each device's own pick.
+    var list: Int?
+    let enabled: Bool
+    /// As of the last sync: the server's count, every device's.
+    let usedToday: Int
+    let leftToday: Int
+    let summary: String
 }
 
 /// A daily app limit (docs/API.md, "Daily app limits"): its apps get `minutes` a day, then lock until midnight. Which
@@ -47,6 +75,8 @@ struct ScreenLimit: Codable, Identifiable, Hashable {
     /// Ended early for today: open until midnight.
     let openToday: Bool
     let summary: String
+    /// The app list it counts, else this device's own pick.
+    var list: Int? = nil
 
     /// Whether it counts on the day of `date`.
     func counts(on date: Date = Date(), calendar: Calendar = .current) -> Bool {

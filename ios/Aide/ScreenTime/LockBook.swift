@@ -68,8 +68,214 @@ enum LockBook {
     /// What a lock covers: a focus round everything but the focus apps, else the lock's own pick or everything but
     /// the usual ones.
     static func apps(for id: Int) -> LockApps {
-        if locks.first(where: { $0.id == id })?.focus != nil { return LockApps(only: false, selection: focusAllowed) }
+        let lock = locks.first { $0.id == id }
+        if lock?.focus != nil { return LockApps(only: false, selection: focusAllowed) }
+        // A list this phone has picked; one it hasn't falls back to the lock's own apps, so it never opens anything.
+        if let list = lock?.list, let picked = listApps[list], picked != FamilyActivitySelection() {
+            return LockApps(only: true, selection: picked)
+        }
         return apps[id] ?? LockApps(only: false, selection: allowed)
+    }
+
+    // MARK: App lists (docs/API.md, "App lists")
+
+    static var lists: [ScreenList] {
+        get { defaults?.data(forKey: "screenLists").flatMap { try? JSONDecoder().decode([ScreenList].self, from: $0) } ?? [] }
+        set { defaults?.set(try? JSONEncoder().encode(newValue), forKey: "screenLists") }
+    }
+
+    /// This phone's pick of each list, by list id.
+    static var listApps: [Int: FamilyActivitySelection] {
+        get { intKeyed("screenListApps") }
+        set { setIntKeyed(newValue, "screenListApps") }
+    }
+
+    /// What a limit counts: its list's apps (none until the list is picked here), else its own.
+    static func limitSelection(_ id: Int) -> FamilyActivitySelection {
+        if let list = limits.first(where: { $0.id == id })?.list { return listApps[list] ?? FamilyActivitySelection() }
+        return limitApps[id] ?? FamilyActivitySelection()
+    }
+
+    /// The selection covers the app, site or category.
+    static func covers(_ picked: FamilyActivitySelection, app: ApplicationToken?, category: ActivityCategoryToken?,
+                       domain: WebDomainToken?) -> Bool {
+        app.map(picked.applicationTokens.contains) == true || category.map(picked.categoryTokens.contains) == true
+            || domain.map(picked.webDomainTokens.contains) == true
+    }
+
+    // MARK: Rations (docs/API.md, "Rations")
+
+    /// The server's rations, as of the last sync, and the local day that was.
+    static var rations: [ScreenRation] {
+        get { defaults?.data(forKey: "screenRations").flatMap { try? JSONDecoder().decode([ScreenRation].self, from: $0) } ?? [] }
+        set {
+            defaults?.set(try? JSONEncoder().encode(newValue), forKey: "screenRations")
+            defaults?.set(day(), forKey: "screenRationsDay")
+        }
+    }
+
+    private static var rationsDay: String? { defaults?.string(forKey: "screenRationsDay") }
+
+    /// A ration's own pick, when it has no list.
+    static var rationApps: [Int: FamilyActivitySelection] {
+        get { intKeyed("screenRationApps") }
+        set { setIntKeyed(newValue, "screenRationApps") }
+    }
+
+    static func rationSelection(_ ration: ScreenRation) -> FamilyActivitySelection {
+        if let list = ration.list { return listApps[list] ?? FamilyActivitySelection() }
+        return rationApps[ration.id] ?? FamilyActivitySelection()
+    }
+
+    /// An open spent on this phone. `counted`: the server's numbers (`rations`) include it.
+    struct RationOpen: Codable, Equatable {
+        let ration: Int
+        let key: String
+        let at: String
+        let date: String
+        var sent = false
+        var counted = false
+    }
+
+    static var rationOpens: [RationOpen] {
+        get { defaults?.data(forKey: "screenRationOpens").flatMap { try? JSONDecoder().decode([RationOpen].self, from: $0) } ?? [] }
+        set { defaults?.set(try? JSONEncoder().encode(newValue), forKey: "screenRationOpens") }
+    }
+
+    /// The open going on now, per ration: it ends at this time unless the app is used again before.
+    static var rationOpenUntil: [Int: Date] {
+        get { intKeyed("screenRationOpenUntil") }
+        set { setIntKeyed(newValue, "screenRationOpenUntil") }
+    }
+
+    /// Today's opens left: the server's count at the last sync (every device's), less the ones spent here since.
+    static func opensLeft(_ ration: ScreenRation, at now: Date = Date()) -> Int {
+        let today = day(now)
+        let server = rationsDay == today ? ration.usedToday : 0
+        let here = rationOpens.filter { $0.ration == ration.id && $0.date == today && !$0.counted }.count
+        return max(ration.opens - server - here, 0)
+    }
+
+    static func rationInUse(_ id: Int, at now: Date = Date()) -> Bool { (rationOpenUntil[id] ?? .distantPast) > now }
+
+    /// Locked now: on, with apps picked here, and no open going on.
+    static func rationHolds(_ ration: ScreenRation, at now: Date = Date()) -> Bool {
+        ration.enabled && rationSelection(ration) != FamilyActivitySelection() && !rationInUse(ration.id, at: now)
+    }
+
+    /// The ration that has this app locked now, for the shield's words and its Open button.
+    static func rationHolding(app: ApplicationToken? = nil, category: ActivityCategoryToken? = nil,
+                              domain: WebDomainToken? = nil) -> ScreenRation? {
+        rations.first { rationHolds($0) && covers(rationSelection($0), app: app, category: category, domain: domain) }
+    }
+
+    private static func rationStore(_ id: Int) -> ManagedSettingsStore { ManagedSettingsStore(named: .init("ration-\(id)")) }
+
+    static func shieldRation(_ ration: ScreenRation) {
+        let picked = rationSelection(ration)
+        let store = rationStore(ration.id)
+        store.shield.applications = picked.applicationTokens.isEmpty ? nil : picked.applicationTokens
+        store.shield.webDomains = picked.webDomainTokens.isEmpty ? nil : picked.webDomainTokens
+        store.shield.applicationCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+        store.shield.webDomainCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+    }
+
+    static func openRationStore(_ id: Int) { rationStore(id).clearAllSettings() }
+
+    static func rationActivity(_ id: Int) -> DeviceActivityName { DeviceActivityName("ration-\(id)") }
+    static func rationEvent(_ id: Int) -> DeviceActivityEvent.Name { .init("ration-\(id)") }
+    static func rationID(of name: String) -> Int? { name.hasPrefix("ration-") ? Int(name.dropFirst(7)) : nil }
+
+    /// Spends one of today's opens (the shield's Open): the apps open, and stay open while they're used. False when
+    /// none are left.
+    @discardableResult
+    static func startRationOpen(_ id: Int, at now: Date = Date()) -> Bool {
+        guard let ration = rations.first(where: { $0.id == id }), ration.enabled, opensLeft(ration, at: now) > 0 else { return false }
+        var opens = rationOpens.filter { $0.date >= day(now.addingTimeInterval(-2 * 86400)) }
+        opens.append(RationOpen(ration: id, key: UUID().uuidString, at: ISO8601DateFormatter().string(from: now), date: day(now)))
+        rationOpens = opens
+        keepRationOpen(ration, at: now)
+        openRationStore(id)
+        return true
+    }
+
+    /// The open goes on for `gap` minutes more: watched again with a one-minute-of-use event, so each minute the
+    /// apps are used pushes the end on, and the interval's end (no use for `gap` minutes) locks them again. The
+    /// interval starts in the past, as DeviceActivity wants 15 minutes at least.
+    static func keepRationOpen(_ ration: ScreenRation, at now: Date = Date()) {
+        let until = now.addingTimeInterval(Double(ration.gap) * 60)
+        var open = rationOpenUntil
+        open[ration.id] = until
+        rationOpenUntil = open
+        let fields: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
+        let start = min(now, until.addingTimeInterval(-15 * 60 - 30))
+        let schedule = DeviceActivitySchedule(intervalStart: Calendar.current.dateComponents(fields, from: start),
+                                              intervalEnd: Calendar.current.dateComponents(fields, from: until),
+                                              repeats: false)
+        let picked = rationSelection(ration)
+        let event: DeviceActivityEvent
+        if #available(iOS 17.4, *) {
+            event = DeviceActivityEvent(applications: picked.applicationTokens, categories: picked.categoryTokens,
+                                        webDomains: picked.webDomainTokens, threshold: DateComponents(minute: 1),
+                                        includesPastActivity: false)
+        } else {
+            event = DeviceActivityEvent(applications: picked.applicationTokens, categories: picked.categoryTokens,
+                                        webDomains: picked.webDomainTokens, threshold: DateComponents(minute: 1))
+        }
+        let center = DeviceActivityCenter()
+        center.stopMonitoring([rationActivity(ration.id)])
+        try? center.startMonitoring(rationActivity(ration.id), during: schedule, events: [rationEvent(ration.id): event])
+    }
+
+    /// The open is over (unused for `gap` minutes): locked again.
+    static func endRationOpen(_ id: Int, at now: Date = Date()) {
+        guard let until = rationOpenUntil[id], until <= now.addingTimeInterval(15) else { return }
+        var open = rationOpenUntil
+        open[id] = nil
+        rationOpenUntil = open
+        DeviceActivityCenter().stopMonitoring([rationActivity(id)])
+        if let ration = rations.first(where: { $0.id == id }), rationHolds(ration, at: now) { shieldRation(ration) }
+    }
+
+    // MARK: A Focus filter (Work): the list it blocks while that Focus is on
+
+    static var focusFilterList: Int? {
+        get { (defaults?.object(forKey: "screenFocusFilterList") as? Int) }
+        set { defaults?.set(newValue, forKey: "screenFocusFilterList") }
+    }
+
+    private static var focusFilterStore: ManagedSettingsStore { ManagedSettingsStore(named: .init("focus-filter")) }
+
+    /// Shield the Focus filter's list, or nothing when no Focus asks for one.
+    static func applyFocusFilter() {
+        guard let list = focusFilterList, let picked = listApps[list], picked != FamilyActivitySelection() else {
+            focusFilterStore.clearAllSettings()
+            return
+        }
+        let store = focusFilterStore
+        store.shield.applications = picked.applicationTokens.isEmpty ? nil : picked.applicationTokens
+        store.shield.webDomains = picked.webDomainTokens.isEmpty ? nil : picked.webDomainTokens
+        store.shield.applicationCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+        store.shield.webDomainCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+    }
+
+    /// The Focus filter's list, if it covers this app now.
+    static func focusFilterHolding(app: ApplicationToken? = nil, category: ActivityCategoryToken? = nil,
+                                   domain: WebDomainToken? = nil) -> ScreenList? {
+        guard let id = focusFilterList, let picked = listApps[id],
+              covers(picked, app: app, category: category, domain: domain) else { return nil }
+        return lists.first { $0.id == id } ?? ScreenList(id: id, name: "Focus", mac: [])
+    }
+
+    /// A lock holding now that covers this app (its own "only" apps, or everything but the ones it keeps open).
+    static func lockHolding(app: ApplicationToken? = nil, category: ActivityCategoryToken? = nil,
+                            domain: WebDomainToken? = nil, at now: Date = Date()) -> (lock: ScreenLock, until: Date)? {
+        locks.compactMap { lock -> (ScreenLock, Date)? in
+            guard let until = LockClock.until(lock, at: now) else { return nil }
+            let apps = apps(for: lock.id)
+            let inIt = covers(apps.selection, app: app, category: category, domain: domain)
+            return apps.only == inIt ? (lock, until) : nil
+        }.max { $0.1 < $1.1 }
     }
 
     /// What each lock was last scheduled with, so a sync only restarts the ones that changed.
@@ -183,7 +389,7 @@ enum LockBook {
 
     /// Lock a limit's apps, until midnight (the monitor opens them when the day starts again).
     static func shieldLimit(_ id: Int) {
-        let picked = limitApps[id] ?? FamilyActivitySelection()
+        let picked = limitSelection(id)
         let store = limitStore(id)
         store.shield.applications = picked.applicationTokens.isEmpty ? nil : picked.applicationTokens
         store.shield.webDomains = picked.webDomainTokens.isEmpty ? nil : picked.webDomainTokens
@@ -195,15 +401,10 @@ enum LockBook {
         limitStore(id).clearAllSettings()
     }
 
-    /// The limit whose apps include this one (for the shield's words), else any that holds now.
+    /// The limit used up now whose apps include this one, for the shield's words.
     static func limitHolding(app: ApplicationToken? = nil, category: ActivityCategoryToken? = nil,
                              domain: WebDomainToken? = nil) -> ScreenLimit? {
-        let holding = limits.filter { limitHolds($0) }
-        return holding.first { limit in
-            let picked = limitApps[limit.id] ?? FamilyActivitySelection()
-            return app.map(picked.applicationTokens.contains) == true || category.map(picked.categoryTokens.contains) == true
-                || domain.map(picked.webDomainTokens.contains) == true
-        } ?? holding.first
+        limits.filter { limitHolds($0) }.first { covers(limitSelection($0.id), app: app, category: category, domain: domain) }
     }
 
     static func activity(_ id: Int) -> DeviceActivityName { DeviceActivityName("lock-\(id)") }

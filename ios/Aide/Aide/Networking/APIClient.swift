@@ -387,6 +387,37 @@ final class APIClient {
         let _: OKResponse = try await send("PUT", "/v1/screen/usage", body: usage)
     }
 
+    // App lists and rations (docs/API.md, "App lists", "Rations")
+
+    func createList(_ body: ScreenListBody) async throws -> ScreenList {
+        try await send("POST", "/v1/lists", body: body)
+    }
+
+    func updateList(_ id: Int, _ body: ScreenListBody) async throws -> ScreenList {
+        try await send("PATCH", "/v1/lists/\(id)", body: body)
+    }
+
+    func deleteList(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/lists/\(id)", body: EmptyBody())
+    }
+
+    func createRation(_ body: RationBody) async throws -> ScreenRation {
+        try await send("POST", "/v1/rations", body: body)
+    }
+
+    func updateRation(_ id: Int, _ body: RationBody) async throws -> ScreenRation {
+        try await send("PATCH", "/v1/rations/\(id)", body: body)
+    }
+
+    func deleteRation(_ id: Int) async throws {
+        let _: OKResponse = try await send("DELETE", "/v1/rations/\(id)", body: EmptyBody())
+    }
+
+    @discardableResult
+    func openRation(_ id: Int, _ body: RationOpenBody) async throws -> ScreenRation {
+        try await send("POST", "/v1/rations/\(id)/open", body: body)
+    }
+
     // MARK: Browser errands (docs/API.md, "Browser errands")
 
     func errands(open: Bool = false, limit: Int = 30) async throws -> ErrandList {

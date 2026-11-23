@@ -4,10 +4,13 @@ import Foundation
 /// Turns each lock on and off on time with the app closed (docs/API.md, "Screen Time"). A schedule is watched
 /// every day, so this checks the lock's days, and whether it was unlocked early, before shielding. Daily limits
 /// ("Daily app limits") lock their apps when their threshold fires and open them when the next day starts; the
-/// usage estimate ("Screen time estimates") keeps the day's highest step for the app to send.
+/// usage estimate ("Screen time estimates") keeps the day's highest step for the app to send. A ration's open
+/// ("Rations") is watched for a minute of use, which keeps it open `gap` minutes more; its interval's end, with no
+/// use meanwhile, locks the apps again.
 final class LockMonitor: DeviceActivityMonitor {
     override func intervalDidStart(for activity: DeviceActivityName) {
         super.intervalDidStart(for: activity)
+        if LockBook.rationID(of: activity.rawValue) != nil { return }
         if let id = LockBook.limitID(of: activity.rawValue) {
             LockBook.openLimit(id) // a new day
             return
@@ -19,7 +22,9 @@ final class LockMonitor: DeviceActivityMonitor {
 
     override func intervalDidEnd(for activity: DeviceActivityName) {
         super.intervalDidEnd(for: activity)
-        if let id = LockBook.limitID(of: activity.rawValue) {
+        if let id = LockBook.rationID(of: activity.rawValue) {
+            LockBook.endRationOpen(id)
+        } else if let id = LockBook.limitID(of: activity.rawValue) {
             LockBook.openLimit(id)
         } else if let id = LockBook.id(of: activity) {
             LockBook.open(id)
@@ -30,6 +35,13 @@ final class LockMonitor: DeviceActivityMonitor {
         super.eventDidReachThreshold(event, activity: activity)
         let now = Date()
         let today = LockBook.day(now)
+        if let id = LockBook.rationID(of: event.rawValue) {
+            // Still in use: open `gap` minutes more, watched afresh.
+            if LockBook.rationInUse(id, at: now), let ration = LockBook.rations.first(where: { $0.id == id }) {
+                LockBook.keepRationOpen(ration, at: now)
+            }
+            return
+        }
         if let minutes = LockBook.usageMinutes(of: event) {
             var usage = LockBook.usage
             usage[today] = max(usage[today] ?? 0, minutes)

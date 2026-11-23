@@ -33,6 +33,7 @@ targets:
       - target: AideShare
       - target: LockMonitor
       - target: LockShield
+      - target: LockAction
       - target: UsageReport
       - package: SwiftMath
     info:
@@ -175,6 +176,29 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).lockshield
         CODE_SIGN_ENTITLEMENTS: LockShield/LockShield.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+  # The shield's buttons: a ration's Open (docs/API.md, "Rations"); it sends the open to the server itself.
+  LockAction:
+    type: app-extension
+    platform: iOS
+    sources:
+      - LockAction
+      - ScreenTime
+      - Aide/Support/Keychain.swift
+    info:
+      path: LockAction/Info.plist
+      properties:
+        CFBundleDisplayName: Aide
+        AideKeychainService: $(AIDE_BUNDLE_ID)
+        AideAppGroup: group.$(AIDE_BUNDLE_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ManagedSettings.shield-action-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).LockAction
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID).lockaction
+        CODE_SIGN_ENTITLEMENTS: LockAction/LockAction.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
   # The Screen tab's usage (Views/ScreenView.swift): only this extension can read which apps were used and for how

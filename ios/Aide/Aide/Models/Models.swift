@@ -3135,6 +3135,9 @@ struct LockList: Decodable {
     let limits: [ScreenLimit]?
     /// Coach's line over the phone's Screen half (what holds now or comes next); nil from an older server.
     var line: String?
+    /// App lists and rations (docs/API.md, "App lists", "Rations"); nil from an older server.
+    var lists: [ScreenList]?
+    var rations: [ScreenRation]?
 }
 
 /// A new daily limit (docs/API.md, "Daily app limits").
@@ -3143,6 +3146,8 @@ struct NewLimit: Encodable {
     var minutes: Int
     var days: [Int]
     var strict: Bool
+    /// An app list's id, or nil: this device's own pick.
+    var list: Int? = nil
 }
 
 /// Only what changes.
@@ -3152,6 +3157,32 @@ struct LimitPatch: Encodable {
     var days: [Int]?
     var enabled: Bool?
     var strict: Bool?
+    /// 0 takes the list off.
+    var list: Int? = nil
+}
+
+/// An app list, new or changed (docs/API.md, "App lists"). `mac` replaces the whole list.
+struct ScreenListBody: Encodable {
+    var name: String?
+    var mac: [String]?
+}
+
+/// A ration, new or changed (docs/API.md, "Rations"): only what's set is sent; `list` 0 takes the list off.
+struct RationBody: Encodable {
+    var title: String?
+    var opens: Int?
+    var gap: Int?
+    var list: Int?
+    var enabled: Bool?
+}
+
+/// One of the day's opens of a ration, spent on this device. `key` makes sending it again harmless; `granted`: it
+/// already opened (counted from what the device last knew).
+struct RationOpenBody: Encodable {
+    let key: String
+    let device: String
+    var at: String?
+    var granted: Bool?
 }
 
 /// The day's screen time, at least, and the limits reached (docs/API.md, "Screen time estimates").
@@ -3190,6 +3221,8 @@ struct NewLock: Encodable {
     var end: String?
     var days: [Int]?
     var strict: Bool?
+    /// An app list's id, or nil: each device's own pick.
+    var list: Int? = nil
 }
 
 /// Only what changes.
@@ -3200,6 +3233,8 @@ struct LockPatch: Encodable {
     var days: [Int]?
     var enabled: Bool?
     var strict: Bool?
+    /// 0 takes the list off.
+    var list: Int? = nil
 }
 
 struct UnlockReason: Encodable {
