@@ -24,13 +24,33 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
         at = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
         return (at if at > local else at + timedelta(days=1)).astimezone(timezone.utc)
 
+    def list_id(name: str | None) -> int | None:
+        """A list by its name (any case), for the tools' `list`."""
+        if not name:
+            return None
+        for found in store.lists():
+            if found["name"].casefold() == name.strip().casefold():
+                return found["id"]
+        raise ValueError(f"no list called '{name}'; the lists are "
+                         + (", ".join(x["name"] for x in store.lists()) or "none yet"))
+
+    def list_name(list_id_: int | None) -> str:
+        names = {x["id"]: x["name"] for x in store.lists()}
+        return f" · apps: {names[list_id_]}" if list_id_ in names else ""
+
     async def list_locks() -> str:
         now = utcnow()
         device = store.device()
-        lines = [store.line(lock, now) for lock in store.all(now)] or ["No locks yet."]
+        lines = [store.line(lock, now) + list_name(lock["list_id"]) for lock in store.all(now)] or ["No locks yet."]
         if limits := store.limits():
             lines.append("Daily app limits (the apps each covers are picked on the phone):")
-            lines += [f"- {store.limit_line(limit, now)}" for limit in limits]
+            lines += [f"- {store.limit_line(limit, now)}{list_name(limit['list_id'])}" for limit in limits]
+        if rations := store.rations():
+            lines.append("Rations (apps locked but for so many opens a day, each lasting while they're used):")
+            lines += [f"- {store.ration_line(r, now)}{list_name(r['list_id'])}" for r in rations]
+        if lists := store.lists():
+            lines.append("App lists, for `list` (the phone's apps in each are picked there): "
+                         + ", ".join(x["name"] for x in lists))
         if not device["authorized"]:
             lines.append("The phone hasn't allowed Screen Time yet (Settings → Screen Time in the app), so locks "
                          "don't hold until it does.")
@@ -50,16 +70,19 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
         return text
 
     async def lock_now(title: str, minutes: int | None = None, until: str | None = None,
-                       start: str | None = None, strict: bool = False) -> str:
+                       start: str | None = None, strict: bool = False, list: str | None = None) -> str:
         now = utcnow()
         begin = until_time(start, now) if start else None
         end = until_time(until, begin or now) if until else None
-        lock = store.lock_for(title, minutes=minutes, until=end, start=begin, agent=agent, strict=strict, now=now)
+        lock = store.lock_for(title, minutes=minutes, until=end, start=begin, agent=agent, strict=strict, now=now,
+                              list_id=list_id(list))
         return "Locked: " + store.line(lock, now)
 
-    async def add_lock_schedule(title: str, start: str, end: str, days: list[int], strict: bool = False) -> str:
+    async def add_lock_schedule(title: str, start: str, end: str, days: list[int], strict: bool = False,
+                                list: str | None = None) -> str:
         now = utcnow()
-        return "Set: " + store.line(store.schedule(title, start, end, days, agent=agent, strict=strict, now=now), now)
+        lock = store.schedule(title, start, end, days, agent=agent, strict=strict, now=now, list_id=list_id(list))
+        return "Set: " + store.line(lock, now)
 
     async def update_lock(lock_id: int, title: str | None = None, start: str | None = None, end: str | None = None,
                           days: list[int] | None = None, enabled: bool | None = None,
@@ -103,9 +126,12 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
 
     # -- daily app limits: the apps each covers are picked on the phone (Apple's picker), the rest is here ----------
 
-    async def add_limit(title: str, minutes: int, days: list[int] | None = None, strict: bool = False) -> str:
+    async def add_limit(title: str, minutes: int, days: list[int] | None = None, strict: bool = False,
+                        list: str | None = None) -> str:
         now = utcnow()
-        limit = store.add_limit(title, minutes, days=days, strict=strict, now=now)
+        limit = store.add_limit(title, minutes, days=days, strict=strict, now=now, list_id=list_id(list))
+        if limit["list_id"]:
+            return "Set: " + store.limit_line(limit, now) + list_name(limit["list_id"])
         return ToolOutput(f"Set: {store.limit_line(limit, now)}. It counts nothing until the user picks its apps on "
                           "the phone (Screen Time → the limit): say so, the card opens that page.",
                           open_card("Pick the apps", f"For the limit '{limit['title']}'", "aide://settings/screentime"))
@@ -154,9 +180,12 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
             "description": "ISO weekdays it starts on, 1 = Monday … 7 = Sunday; [] for every day"}
     strict = {"type": "boolean", "description": "only when the user asks for it: once on, it can't be ended early "
               f"from chat or with a reason, only with one of the {PASSES} emergency passes a month, in the app"}
+    applist = {"type": "string", "description": "an app list's name from list_locks (Lavoro, Sonno): it locks those "
+               "apps; leave out for the usual ones"}
     return [
         Tool("list_locks", "List the Screen Time locks: id in brackets, title, when, whether it's on now, who set it; "
-             "the daily app limits and whether they were reached today; whether the phone allows Screen Time; and "
+             "the daily app limits and whether they were reached today; the rations (opens a day) and app lists; "
+             "whether the phone allows Screen Time; and "
              "the times the user unlocked early this week, with reasons.",
              _obj({}, []), list_locks),
         Tool("screen_usage", "How much the user was on their phone, day by day (at least so much, from the phone's "
@@ -169,12 +198,12 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
                    "minutes": {"type": "integer", "description": "how long; or give until"},
                    "until": {**hhmm, "description": "HH:MM local, when it ends (the next time it comes)"},
                    "start": {**hhmm, "description": "HH:MM local, when it starts; default now"},
-                   "strict": strict},
+                   "strict": strict, "list": applist},
                   ["title"]), lock_now),
         Tool("add_lock_schedule", "Lock the apps every week from `start` to `end` (an end before the start is the "
              "next morning: 22:30 to 07:00), on `days`. Runs immediately.",
              _obj({"title": {"type": "string", "description": "short: Bedtime, Morning, Study"},
-                   "start": hhmm, "end": hhmm, "days": days, "strict": strict},
+                   "start": hhmm, "end": hhmm, "days": days, "strict": strict, "list": applist},
                   ["title", "start", "end", "days"]), add_lock_schedule),
         Tool("update_lock", "Change a schedule (title, start, end, days, strict, or turn it off and on with enabled), "
              "or a one-off's title or strict. Pass only what changes. Refused for a lock that's on now (except the "
@@ -195,7 +224,9 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
              _obj({"title": {"type": "string", "description": "short: what the apps are, Social, YouTube, Games"},
                    "minutes": {"type": "integer", "description": "minutes a day, 5 to 720"}, "days": days,
                    "strict": {**strict, "description": "only when the user asks for it: once reached, it can't be "
-                              f"ended early from chat, only with one of the {PASSES} emergency passes a month"}},
+                              f"ended early from chat, only with one of the {PASSES} emergency passes a month"},
+                   "list": {**applist, "description": "an app list's name from list_locks: the limit counts those "
+                            "apps, already picked, so no card is needed"}},
                   ["title", "minutes"]), add_limit),
         Tool("update_limit", "Change a daily app limit: title, minutes, days, strict, or turn it off and on with "
              "enabled. Pass only what changes. A strict limit reached today can only be tightened until tomorrow. "

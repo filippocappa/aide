@@ -527,6 +527,7 @@ class LockIn(BaseModel):
     end: str | None = None
     days: list[int] = []
     strict: bool = False
+    list_id: int | None = Field(None, alias="list")  # a list's apps; else each device's usual ones
 
 
 class LockPatch(BaseModel):
@@ -536,6 +537,7 @@ class LockPatch(BaseModel):
     days: list[int] | None = None
     enabled: bool | None = None
     strict: bool | None = None
+    list_id: int | None = Field(None, alias="list")  # 0: no list
 
 
 class UnlockIn(BaseModel):
@@ -569,6 +571,7 @@ class LimitIn(BaseModel):
     minutes: int
     days: list[int] = []
     strict: bool = False
+    list_id: int | None = Field(None, alias="list")
 
 
 class LimitPatch(BaseModel):
@@ -577,6 +580,39 @@ class LimitPatch(BaseModel):
     days: list[int] | None = None
     enabled: bool | None = None
     strict: bool | None = None
+    list_id: int | None = Field(None, alias="list")  # 0: no list
+
+
+class ScreenListIn(BaseModel):
+    name: str
+    mac: list[str] = []  # bundle IDs and "site:youtube.com"
+
+
+class ScreenListPatch(BaseModel):
+    name: str | None = None
+    mac: list[str] | None = None
+
+
+class RationIn(BaseModel):
+    title: str
+    opens: int
+    gap: int = 3
+    list_id: int | None = Field(None, alias="list")
+
+
+class RationPatch(BaseModel):
+    title: str | None = None
+    opens: int | None = None
+    gap: int | None = None
+    list_id: int | None = Field(None, alias="list")  # 0: no list
+    enabled: bool | None = None
+
+
+class RationOpenIn(BaseModel):
+    key: str  # the device's, so a retry isn't a second open
+    device: str = "phone"
+    at: str | None = None  # ISO, when it opened (the phone may send it later)
+    granted: bool = False  # the device already let it open
 
 
 class UsageDayIn(BaseModel):
@@ -3129,21 +3165,24 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     async def list_locks():
         return {"locks": [locks.as_json(lock) for lock in locks.all()], "device": locks.device(),
                 "passes": locks.passes(), "limits": [locks.limit_json(limit) for limit in locks.limits()],
+                "lists": locks.lists(), "rations": [locks.ration_json(r) for r in locks.rations()],
                 "line": locks.coach_line()}
 
     @app.post("/v1/locks", dependencies=[Depends(auth)])
     async def create_lock(body: LockIn):
         if body.minutes is not None:
-            return locks.as_json(locks.lock_for(body.title, minutes=body.minutes, strict=body.strict))
+            return locks.as_json(locks.lock_for(body.title, minutes=body.minutes, strict=body.strict,
+                                                list_id=body.list_id))
         if body.start is None or body.end is None:
             raise HTTPException(400, "a lock needs minutes, or a start and an end")
-        return locks.as_json(locks.schedule(body.title, body.start, body.end, body.days, strict=body.strict))
+        return locks.as_json(locks.schedule(body.title, body.start, body.end, body.days, strict=body.strict,
+                                            list_id=body.list_id))
 
     @app.patch("/v1/locks/{lock_id}", dependencies=[Depends(auth)])
     async def edit_lock(lock_id: int, body: LockPatch):
         lock_or_404(lock_id)
         lock = locks.update(lock_id, title=body.title, start_time=body.start, end_time=body.end, days=body.days,
-                            enabled=body.enabled, strict=body.strict)
+                            enabled=body.enabled, strict=body.strict, list_id=body.list_id)
         return locks.as_json(lock)
 
     @app.post("/v1/locks/{lock_id}/unlock", dependencies=[Depends(auth)])
@@ -3224,13 +3263,14 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.post("/v1/limits", dependencies=[Depends(auth)])
     async def create_limit(body: LimitIn):
-        return locks.limit_json(locks.add_limit(body.title, body.minutes, body.days, strict=body.strict))
+        return locks.limit_json(locks.add_limit(body.title, body.minutes, body.days, strict=body.strict,
+                                                list_id=body.list_id))
 
     @app.patch("/v1/limits/{limit_id}", dependencies=[Depends(auth)])
     async def edit_limit(limit_id: int, body: LimitPatch):
         limit_or_404(limit_id)
         return locks.limit_json(locks.update_limit(limit_id, title=body.title, minutes=body.minutes, days=body.days,
-                                                   enabled=body.enabled, strict=body.strict))
+                                                   enabled=body.enabled, strict=body.strict, list_id=body.list_id))
 
     @app.post("/v1/limits/{limit_id}/unlock", dependencies=[Depends(auth)])
     async def unlock_limit(limit_id: int, body: UnlockIn):
@@ -3246,6 +3286,59 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         limit_or_404(limit_id)
         locks.delete_limit(limit_id)
         return {"ok": True}
+
+    # -- app lists and rations ------------------------------------------------------
+
+    def list_or_404(list_id: int) -> dict:
+        try:
+            return locks.get_list(list_id)
+        except ValueError:
+            raise HTTPException(404, f"no list {list_id}") from None
+
+    @app.post("/v1/lists", dependencies=[Depends(auth)])
+    async def create_screen_list(body: ScreenListIn):
+        return locks.add_list(body.name, body.mac)
+
+    @app.patch("/v1/lists/{list_id}", dependencies=[Depends(auth)])
+    async def edit_screen_list(list_id: int, body: ScreenListPatch):
+        list_or_404(list_id)
+        return locks.update_list(list_id, name=body.name, mac=body.mac)
+
+    @app.delete("/v1/lists/{list_id}", dependencies=[Depends(auth)])
+    async def delete_screen_list(list_id: int):
+        list_or_404(list_id)
+        locks.delete_list(list_id)
+        return {"ok": True}
+
+    def ration_or_404(ration_id: int) -> dict:
+        try:
+            return locks.get_ration(ration_id)
+        except ValueError:
+            raise HTTPException(404, f"no ration {ration_id}") from None
+
+    @app.post("/v1/rations", dependencies=[Depends(auth)])
+    async def create_ration(body: RationIn):
+        return locks.ration_json(locks.add_ration(body.title, body.opens, body.gap, body.list_id))
+
+    @app.patch("/v1/rations/{ration_id}", dependencies=[Depends(auth)])
+    async def edit_ration(ration_id: int, body: RationPatch):
+        ration_or_404(ration_id)
+        return locks.ration_json(locks.update_ration(ration_id, title=body.title, opens=body.opens, gap=body.gap,
+                                                     list_id=body.list_id, enabled=body.enabled))
+
+    @app.delete("/v1/rations/{ration_id}", dependencies=[Depends(auth)])
+    async def delete_ration(ration_id: int):
+        ration_or_404(ration_id)
+        locks.delete_ration(ration_id)
+        return {"ok": True}
+
+    @app.post("/v1/rations/{ration_id}/open", dependencies=[Depends(auth)])
+    async def open_ration(ration_id: int, body: RationOpenIn):
+        ration_or_404(ration_id)
+        at = datetime.fromisoformat(body.at) if body.at else None
+        if at is not None and at.tzinfo is None:
+            raise HTTPException(400, "at needs its offset")
+        return locks.ration_json(locks.open_ration(ration_id, body.key, body.device, at=at, granted=body.granted))
 
     @app.put("/v1/screen/usage", dependencies=[Depends(auth)])
     async def screen_usage_in(body: UsageIn):

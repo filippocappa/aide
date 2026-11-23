@@ -2530,6 +2530,8 @@ chat (`lock_now`, `add_lock_schedule`); ending one early there is queued and nee
 }
 ```
 - `focus` (since 2026-11-03): a focus session's round, its id (see Study, Focus sessions); null for any other lock.
+- `list` (since 2026-11-23): the app list it locks (see App lists below), else null: each device's own pick. `POST`
+  and `PATCH` take it too (`"list": 0` takes it off); changing it is refused while the lock is on.
 - `locked` and `until`: on right now, until then. `open_until`: unlocked early, open until then. `next`: the next
   start (null for a one-off already started, or a schedule that's off). `agent`: who set it, null for the user.
 - Every change (from chat or the app) sends a silent `sync` push; the app fetches the list and sets the device's
@@ -2577,6 +2579,58 @@ so it never touches the phone's estimate). `reached_today` is whichever reached 
   "reached": "2026-11-01T14:20:00+01:00", "reached_today": true, "open_today": false, "summary": "30 min a day"
 }
 ```
+
+### App lists
+
+A list (since 2026-11-23) names a set of apps once, for any lock, limit or ration to use: "Lavoro", "Sonno" (both made
+empty at the first start). The server keeps its `name` and the Mac's apps (`mac`: bundle IDs and `"site:youtube.com"`
+entries, which aren't secret, so an agent or another Mac can fill them); the phone keeps its own pick of each list
+(Apple's tokens, per list id) and says nothing back. A lock, limit or ration with a `list` covers that list's apps
+on each device: on a phone that hasn't picked the list yet, a lock falls back to its own apps or the usual ones (so a
+list never opens what was locked), a limit or ration counts nothing.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/locks` | | carries `"lists": [{"id": 1, "name": "Lavoro", "mac": ["com.valvesoftware.steam", "site:youtube.com"]}]` |
+| `POST /v1/lists` | `{"name": "Giochi", "mac": []}` | the list |
+| `PATCH /v1/lists/{id}` | any of `{"name", "mac"}` (`mac` replaces the whole list) | the list; `400` taking Mac apps out while a lock or limit using it holds (adding is fine) |
+| `DELETE /v1/lists/{id}` | | `{"ok": true}`; what used it goes back to each device's own pick; `400` while a lock or limit using it holds |
+
+Locks' and limits' `list` (both in `POST` and `PATCH`, `0` for none; a limit reached today can't change it, as with
+any loosening). Lists' entries are trimmed and kept once each, at most 300.
+
+### Rations
+
+A ration (since 2026-11-23) keeps some apps locked but for so many opens a day: "Telegram, 3 opens a day". The
+locked app's shield offers the open ("Open · 2 left today"); an open lasts while the app is used and ends once it's
+been closed `gap` minutes (2 to 30, default 3; the phone sees use in one-minute steps). The day's opens are shared:
+the phone and the Mac each send theirs, and a device that can't reach the server opens from what it last knew and
+sends it later (`granted`). A lock or a daily limit that holds still wins over an open.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `GET /v1/locks` | | carries `"rations": [ration]` |
+| `POST /v1/rations` | `{"title": "Telegram", "opens": 3, "gap": 3, "list": 4}` (`list` optional: else each device's own pick) | the ration |
+| `PATCH /v1/rations/{id}` | any of `{"title", "opens", "gap", "list", "enabled"}` (`"list": 0`: none) | the ration |
+| `DELETE /v1/rations/{id}` | | `{"ok": true}` |
+| `POST /v1/rations/{id}/open` | `{"key": "<uuid>", "device": "phone", "at": "2026-11-23T09:00:00+01:00", "granted": false}` | the ration; the same `key` again changes nothing. Without `granted`, `400` when none are left today or it's off |
+
+```json
+{
+  "id": 1, "title": "Telegram", "opens": 3, "gap": 3, "list": 4, "enabled": true,
+  "used_today": 1, "left_today": 2, "opened": [{"at": "2026-11-23T09:00:00+01:00", "device": "mac"}],
+  "summary": "3 opens a day"
+}
+```
+- `opens`: 1 to 20 a day. An open counts on the local day it happened (`at`, default now); a new day starts at
+  midnight. Every change and every open sends the sync push.
+- Turned off (`enabled` false), its apps are simply open.
+
+### Work Focus
+
+Blocking while a Focus is on (Work) happens on each device, with no server part: the app's Focus filter (iOS Settings
+→ Focus → Work → Add Filter → Aide, and the same on the Mac) names an app list, and while that Focus is on the device
+locks the list's apps. A Focus shared across devices turns on each device's own filter.
 
 ### Screen time estimates
 

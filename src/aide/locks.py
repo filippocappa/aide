@@ -6,6 +6,11 @@ shielded is chosen on the phone: Apple doesn't let it leave there.
 
 A strict lock can't be ended early with a reason, from the app or through Coach: only with an emergency pass, of
 which there are PASSES a month. While one is on, the app locks its Screen Time page too.
+
+Lists ("Lavoro", "Sonno") name a set of apps once, for any lock, limit or ration to use: the server keeps the name
+and the Mac's apps (bundle IDs and "site:" entries, which aren't secret); the phone keeps its own pick of the list.
+A ration lets its apps open only so many times a day: each open lasts while they're used and ends once they've been
+closed `gap` minutes; the phone and the Mac spend the same day's opens.
 """
 
 import json
@@ -60,6 +65,29 @@ CREATE TABLE IF NOT EXISTS screen_limits (
     open_on    TEXT,              -- local date it was ended early, open until midnight
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS screen_lists (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    mac        TEXT NOT NULL DEFAULT '[]', -- JSON: the Mac's bundle IDs and "site:youtube.com" entries
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS screen_rations (
+    id         INTEGER PRIMARY KEY,
+    title      TEXT NOT NULL,
+    opens      INTEGER NOT NULL,  -- a day
+    gap        INTEGER NOT NULL DEFAULT 3, -- minutes closed that end an open
+    list_id    INTEGER,           -- the apps; NULL: each device's own pick
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS screen_opens (
+    id        INTEGER PRIMARY KEY,
+    ration_id INTEGER NOT NULL,
+    key       TEXT NOT NULL UNIQUE, -- the device's, so a retry isn't a second open
+    device    TEXT NOT NULL,      -- phone, mac
+    date      TEXT NOT NULL,      -- local
+    at        TEXT NOT NULL       -- UTC
+);
 CREATE TABLE IF NOT EXISTS screen_days (
     date       TEXT PRIMARY KEY,  -- local
     minutes    INTEGER NOT NULL,  -- at least this much screen time (the phone's last 15-minute step reached)
@@ -68,6 +96,10 @@ CREATE TABLE IF NOT EXISTS screen_days (
 """
 
 LIMIT_SHORTEST, LIMIT_LONGEST = 5, 12 * 60  # minutes a day
+LIST_SEEDS = ("Lavoro", "Sonno")  # made once, empty: the user picks their apps
+LIST_MOST = 300  # Mac entries in a list
+OPENS_MOST = 20  # a ration's opens a day
+GAP_SHORTEST, GAP_LONGEST, GAP_USUAL = 2, 30, 3  # minutes closed that end an open (the phone checks each minute)
 USAGE_KEPT = timedelta(days=400)
 
 
@@ -103,6 +135,13 @@ class LockStore:
             self.conn.execute("ALTER TABLE screen_unlocks ADD COLUMN limit_id INTEGER")  # lock_id 0 then
         if "focus" not in {r[1] for r in self.conn.execute("PRAGMA table_info(screen_locks)")}:
             self.conn.execute("ALTER TABLE screen_locks ADD COLUMN focus TEXT")  # a focus session's round (focus.py)
+        for table in ("screen_locks", "screen_limits"):
+            if "list_id" not in {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN list_id INTEGER")  # a list's apps
+        if not self.conn.execute("SELECT 1 FROM settings WHERE key = 'screen_lists_seeded'").fetchone():
+            for name in LIST_SEEDS:
+                self.conn.execute("INSERT INTO screen_lists (name, created_at) VALUES (?, ?)", (name, utcnow().isoformat()))
+            self.conn.execute("INSERT INTO settings (key, value) VALUES ('screen_lists_seeded', '1')")
         self.on_change: list[Callable[[], None]] = []  # the sync push, so the phone picks the change up
         self.focus = None  # focus.FocusStore, which sets itself here: its sessions go with the screen time
 
@@ -133,9 +172,11 @@ class LockStore:
 
     def lock_for(self, title: str, minutes: int | None = None, until: datetime | None = None,
                  start: datetime | None = None, agent: str | None = None, strict: bool = False,
-                 now: datetime | None = None, focus: str | None = None, quiet: bool = False) -> dict:
+                 now: datetime | None = None, focus: str | None = None, quiet: bool = False,
+                 list_id: int | None = None) -> dict:
         """A one-off: from `start` (default now) for `minutes`, or until `until`. `focus`: a focus session's round
-        (focus.py). `quiet`: no change hooks (the caller makes several and calls them once)."""
+        (focus.py). `quiet`: no change hooks (the caller makes several and calls them once). `list_id`: a list's
+        apps, else each device's usual ones."""
         now = (now or utcnow()).replace(microsecond=0)
         start = max(start or now, now)
         if (minutes is None) == (until is None):
@@ -148,33 +189,38 @@ class LockStore:
         if start - now > AHEAD:
             raise ValueError("a one-off starts within the next 7 days")
         cur = self.conn.execute(
-            "INSERT INTO screen_locks (title, starts_at, ends_at, agent, strict, focus, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO screen_locks (title, starts_at, ends_at, agent, strict, focus, list_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (_title(title), start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat(),
-             agent, int(strict), focus, now.isoformat()))
+             agent, int(strict), focus, self._list_id(list_id), now.isoformat()))
         if not quiet:
             self._changed()
         return self.get(cur.lastrowid)
 
     def schedule(self, title: str, start: str, end: str, days: list[int] | None = None, agent: str | None = None,
-                 strict: bool = False, now: datetime | None = None) -> dict:
+                 strict: bool = False, now: datetime | None = None, list_id: int | None = None) -> dict:
         """Every week: from `start` to `end` (the next morning when it's earlier) on `days` ([] every day)."""
         start, end, days = check_time(start), check_time(end), check_days(days or [])
         _check_length(start, end)
         cur = self.conn.execute(
-            "INSERT INTO screen_locks (title, start_time, end_time, days, agent, strict, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (_title(title), start, end, json.dumps(days), agent, int(strict), (now or utcnow()).isoformat()))
+            "INSERT INTO screen_locks (title, start_time, end_time, days, agent, strict, list_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (_title(title), start, end, json.dumps(days), agent, int(strict), self._list_id(list_id),
+             (now or utcnow()).isoformat()))
         self._changed()
         return self.get(cur.lastrowid)
 
     def update(self, lock_id: int, now: datetime | None = None, **changes) -> dict:
-        """A schedule's title, start, end, days, enabled or strict; a one-off's title or strict. Turning off, moving
-        or loosening a lock that's on now is refused: that's unlocking early (`unlock`), which takes a reason. Making
-        it strict is fine any time."""
+        """A schedule's title, start, end, days, enabled, strict or list; a one-off's title or strict. Turning off,
+        moving or loosening a lock that's on now is refused: that's unlocking early (`unlock`), which takes a reason.
+        Making it strict is fine any time. `list_id` 0 takes the list off (the usual apps again)."""
         now = now or utcnow()
         lock = self.get(lock_id)
         changes = {k: v for k, v in changes.items() if v is not None}
+        if "list_id" in changes:
+            changes["list_id"] = self._list_id(changes["list_id"] or None)
+            if changes["list_id"] == lock["list_id"]:
+                del changes["list_id"]
         if changes.get("strict") == lock["strict"]:
             del changes["strict"]
         free = {"title"} | ({"strict"} if changes.get("strict") else set())  # a stricter lock is never a way out
@@ -190,10 +236,10 @@ class LockStore:
             start, end = check_time(lock["start_time"]), check_time(lock["end_time"])
             _check_length(start, end)
             self.conn.execute(
-                "UPDATE screen_locks SET title = ?, start_time = ?, end_time = ?, days = ?, enabled = ?, strict = ? "
-                "WHERE id = ?",
+                "UPDATE screen_locks SET title = ?, start_time = ?, end_time = ?, days = ?, enabled = ?, strict = ?, "
+                "list_id = ? WHERE id = ?",
                 (title, start, end, json.dumps(check_days(lock["days"])), int(bool(lock["enabled"])),
-                 int(bool(lock["strict"])), lock_id))
+                 int(bool(lock["strict"])), lock["list_id"], lock_id))
         else:
             self.conn.execute("UPDATE screen_locks SET title = ?, strict = ? WHERE id = ?",
                               (title, int(bool(lock["strict"])), lock_id))
@@ -333,11 +379,11 @@ class LockStore:
         return self.counts_today(limit, now) and limit["reached_on"] == today and limit["open_on"] != today
 
     def add_limit(self, title: str, minutes: int, days: list[int] | None = None, strict: bool = False,
-                  now: datetime | None = None) -> dict:
+                  now: datetime | None = None, list_id: int | None = None) -> dict:
         cur = self.conn.execute(
-            "INSERT INTO screen_limits (title, minutes, days, strict, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO screen_limits (title, minutes, days, strict, list_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (_title(title), self._limit_minutes(minutes), json.dumps(check_days(days or [])), int(strict),
-             (now or utcnow()).isoformat()))
+             self._list_id(list_id), (now or utcnow()).isoformat()))
         self._changed()
         return self.get_limit(cur.lastrowid)
 
@@ -354,9 +400,12 @@ class LockStore:
             changes["minutes"] = self._limit_minutes(changes["minutes"])
         if "days" in changes:
             changes["days"] = check_days(changes["days"])
+        if "list_id" in changes:
+            changes["list_id"] = self._list_id(changes["list_id"] or None)
         after = {**limit, **changes}
         looser = (after["minutes"] > limit["minutes"] or not after["enabled"]
-                  or (limit["strict"] and not after["strict"]) or not self.counts_today(after, now))
+                  or (limit["strict"] and not after["strict"]) or not self.counts_today(after, now)
+                  or after["list_id"] != limit["list_id"])
         if limit["strict"] and self.reached(limit, now) and looser:
             raise ValueError(f"'{limit['title']}' is strict and reached today: it can be loosened from tomorrow, or "
                              "ended for today with an emergency pass")
@@ -364,9 +413,10 @@ class LockStore:
             raise ValueError(f"'{limit['title']}' is reached today: loosening it now would open its apps. Use "
                              "end_limit, with the user's reason, or change it from tomorrow")
         self.conn.execute(
-            "UPDATE screen_limits SET title = ?, minutes = ?, days = ?, enabled = ?, strict = ? WHERE id = ?",
+            "UPDATE screen_limits SET title = ?, minutes = ?, days = ?, enabled = ?, strict = ?, list_id = ? "
+            "WHERE id = ?",
             (_title(after["title"]), after["minutes"], json.dumps(after["days"]), int(bool(after["enabled"])),
-             int(bool(after["strict"])), limit_id))
+             int(bool(after["strict"])), after["list_id"], limit_id))
         self._changed()
         return self.get_limit(limit_id)
 
@@ -422,7 +472,7 @@ class LockStore:
                 "reached": self._local(datetime.fromisoformat(limit["reached_at"]))
                 if reached_today and limit["reached_at"] else None,
                 "reached_today": reached_today, "open_today": limit["open_on"] == today,
-                "summary": self.limit_summary(limit)}
+                "summary": self.limit_summary(limit), "list": limit["list_id"]}
 
     def limit_line(self, limit: dict, now: datetime) -> str:
         """'[2] Social · 30 min a day · strict · reached at 14:20, locked until midnight', for the agents."""
@@ -436,6 +486,191 @@ class LockStore:
         elif not self.counts_today(limit, now):
             text += " · not today"
         return text
+
+    # -- lists ---------------------------------------------------------------
+
+    def _list_row(self, row) -> dict:
+        return {"id": row["id"], "name": row["name"], "mac": json.loads(row["mac"])}
+
+    def lists(self) -> list[dict]:
+        return [self._list_row(r) for r in self.conn.execute("SELECT * FROM screen_lists ORDER BY id")]
+
+    def get_list(self, list_id: int) -> dict:
+        row = self.conn.execute("SELECT * FROM screen_lists WHERE id = ?", (list_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"no list {list_id}")
+        return self._list_row(row)
+
+    def _list_id(self, list_id: int | None) -> int | None:
+        """A list that exists, or None."""
+        if list_id is None:
+            return None
+        return self.get_list(int(list_id))["id"]
+
+    @staticmethod
+    def _mac(entries: list[str] | None) -> list[str]:
+        """The Mac's bundle IDs and "site:" entries: trimmed, each once, in order."""
+        out: list[str] = []
+        for entry in entries or []:
+            entry = str(entry).strip()[:200]
+            if entry and entry not in out:
+                out.append(entry)
+        if len(out) > LIST_MOST:
+            raise ValueError(f"a list holds at most {LIST_MOST} Mac apps and sites")
+        return out
+
+    def _list_holding(self, list_id: int, now: datetime) -> str | None:
+        """The lock or limit using the list that holds now: its apps can't loosen until it's over."""
+        for lock in self.all(now):
+            if lock["list_id"] == list_id and self.locked_until(lock, now):
+                return lock["title"]
+        for limit in self.limits():
+            if limit["list_id"] == list_id and self.reached(limit, now):
+                return limit["title"]
+        return None
+
+    def add_list(self, name: str, mac: list[str] | None = None, now: datetime | None = None) -> dict:
+        cur = self.conn.execute("INSERT INTO screen_lists (name, mac, created_at) VALUES (?, ?, ?)",
+                                (_title(name), json.dumps(self._mac(mac)), (now or utcnow()).isoformat()))
+        self._changed()
+        return self.get_list(cur.lastrowid)
+
+    def update_list(self, list_id: int, name: str | None = None, mac: list[str] | None = None,
+                    now: datetime | None = None) -> dict:
+        """Its name, or its Mac apps. Taking apps out while a lock or limit using it holds is refused: that would be
+        unlocking early. Adding is fine any time."""
+        now = now or utcnow()
+        current = self.get_list(list_id)
+        entries = current["mac"] if mac is None else self._mac(mac)
+        if set(current["mac"]) - set(entries) and (holding := self._list_holding(list_id, now)):
+            raise ValueError(f"'{holding}' uses {current['name']} and holds now: apps can be added to it, and taken "
+                             "out once it's over")
+        self.conn.execute("UPDATE screen_lists SET name = ?, mac = ? WHERE id = ?",
+                          (_title(name if name is not None else current["name"]), json.dumps(entries), list_id))
+        self._changed()
+        return self.get_list(list_id)
+
+    def delete_list(self, list_id: int, now: datetime | None = None) -> None:
+        """Gone; the locks, limits and rations that used it go back to each device's own pick."""
+        current = self.get_list(list_id)
+        if holding := self._list_holding(list_id, now or utcnow()):
+            raise ValueError(f"'{holding}' uses {current['name']} and holds now: delete it once that's over")
+        for table in ("screen_locks", "screen_limits", "screen_rations"):
+            self.conn.execute(f"UPDATE {table} SET list_id = NULL WHERE list_id = ?", (list_id,))
+        self.conn.execute("DELETE FROM screen_lists WHERE id = ?", (list_id,))
+        self._changed()
+
+    # -- rations: so many opens a day ---------------------------------------------
+
+    def _ration_row(self, row) -> dict:
+        ration = dict(row)
+        ration["enabled"] = bool(ration["enabled"])
+        return ration
+
+    def rations(self) -> list[dict]:
+        return [self._ration_row(r) for r in self.conn.execute("SELECT * FROM screen_rations ORDER BY id")]
+
+    def get_ration(self, ration_id: int) -> dict:
+        row = self.conn.execute("SELECT * FROM screen_rations WHERE id = ?", (ration_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"no ration {ration_id}")
+        return self._ration_row(row)
+
+    @staticmethod
+    def _opens(opens) -> int:
+        opens = int(opens)
+        if not 1 <= opens <= OPENS_MOST:
+            raise ValueError(f"a ration is 1 to {OPENS_MOST} opens a day")
+        return opens
+
+    @staticmethod
+    def _gap(gap) -> int:
+        gap = int(gap)
+        if not GAP_SHORTEST <= gap <= GAP_LONGEST:
+            raise ValueError(f"an open ends {GAP_SHORTEST} to {GAP_LONGEST} minutes after the app is closed")
+        return gap
+
+    def add_ration(self, title: str, opens: int, gap: int = GAP_USUAL, list_id: int | None = None,
+                   now: datetime | None = None) -> dict:
+        cur = self.conn.execute(
+            "INSERT INTO screen_rations (title, opens, gap, list_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            (_title(title), self._opens(opens), self._gap(gap), self._list_id(list_id), (now or utcnow()).isoformat()))
+        self._changed()
+        return self.get_ration(cur.lastrowid)
+
+    def update_ration(self, ration_id: int, **changes) -> dict:
+        """Its title, opens a day, gap, list (0: none) or enabled."""
+        ration = self.get_ration(ration_id)
+        changes = {k: v for k, v in changes.items() if v is not None}
+        if "opens" in changes:
+            changes["opens"] = self._opens(changes["opens"])
+        if "gap" in changes:
+            changes["gap"] = self._gap(changes["gap"])
+        if "list_id" in changes:
+            changes["list_id"] = self._list_id(changes["list_id"] or None)
+        after = {**ration, **changes}
+        self.conn.execute(
+            "UPDATE screen_rations SET title = ?, opens = ?, gap = ?, list_id = ?, enabled = ? WHERE id = ?",
+            (_title(after["title"]), after["opens"], after["gap"], after["list_id"], int(bool(after["enabled"])),
+             ration_id))
+        self._changed()
+        return self.get_ration(ration_id)
+
+    def delete_ration(self, ration_id: int) -> None:
+        self.get_ration(ration_id)
+        self.conn.execute("DELETE FROM screen_rations WHERE id = ?", (ration_id,))
+        self.conn.execute("DELETE FROM screen_opens WHERE ration_id = ?", (ration_id,))
+        self._changed()
+
+    def opens_on(self, ration_id: int, day: str) -> list[dict]:
+        rows = self.conn.execute("SELECT * FROM screen_opens WHERE ration_id = ? AND date = ? ORDER BY at",
+                                 (ration_id, day))
+        return [dict(r) for r in rows]
+
+    def open_ration(self, ration_id: int, key: str, device: str, at: datetime | None = None, granted: bool = False,
+                    now: datetime | None = None) -> dict:
+        """One of today's opens, spent on `device`. `key` is the device's, so sending it again changes nothing.
+        `granted`: the device already let it open (the phone counts offline, from what it last knew), so it's kept
+        even past the day's opens; otherwise none left is refused."""
+        now = now or utcnow()
+        ration = self.get_ration(ration_id)
+        key = (key or "").strip()[:80]
+        if not key:
+            raise ValueError("an open needs the device's key")
+        if self.conn.execute("SELECT 1 FROM screen_opens WHERE key = ?", (key,)).fetchone():
+            return ration
+        at = min(at or now, now)
+        day = at.astimezone(self.tz).date().isoformat()
+        if not granted:
+            if not ration["enabled"]:
+                raise ValueError(f"'{ration['title']}' is off: its apps are open anyway")
+            if len(self.opens_on(ration_id, day)) >= ration["opens"]:
+                raise ValueError(f"no opens of '{ration['title']}' left today; they come back at midnight")
+        self.conn.execute("INSERT INTO screen_opens (ration_id, key, device, date, at) VALUES (?, ?, ?, ?, ?)",
+                          (ration_id, key, (device or "phone")[:20], day, at.astimezone(timezone.utc).isoformat()))
+        self.conn.execute("DELETE FROM screen_opens WHERE date < ?",
+                          ((now - timedelta(days=30)).astimezone(self.tz).date().isoformat(),))
+        self._changed()
+        return ration
+
+    def ration_summary(self, ration: dict) -> str:
+        """'3 opens a day'."""
+        return f"{ration['opens']} open{'' if ration['opens'] == 1 else 's'} a day"
+
+    def ration_json(self, ration: dict, now: datetime | None = None) -> dict:
+        now = now or utcnow()
+        opened = self.opens_on(ration["id"], self._today(now))
+        return {"id": ration["id"], "title": ration["title"], "opens": ration["opens"], "gap": ration["gap"],
+                "list": ration["list_id"], "enabled": ration["enabled"], "used_today": len(opened),
+                "left_today": max(ration["opens"] - len(opened), 0),
+                "opened": [{"at": self._local(datetime.fromisoformat(o["at"])), "device": o["device"]} for o in opened],
+                "summary": self.ration_summary(ration)}
+
+    def ration_line(self, ration: dict, now: datetime) -> str:
+        """'[1] Telegram · 3 opens a day · 1 left today', for the agents."""
+        j = self.ration_json(ration, now)
+        text = f"[{ration['id']}] {ration['title']} · {j['summary']}"
+        return text + (" · off" if not ration["enabled"] else f" · {j['left_today']} left today")
 
     # -- usage: estimates from the phone -------------------------------------
 
@@ -525,7 +760,7 @@ class LockStore:
                 "locked": until is not None, "until": self._local(until),
                 "open_until": self._local(window[1]) if opened else None,
                 "next": self._local(self.next_start(lock, now)), "summary": self.summary(lock, now),
-                "focus": lock.get("focus")}
+                "focus": lock.get("focus"), "list": lock.get("list_id")}
 
     def line(self, lock: dict, now: datetime) -> str:
         """'[3] Bedtime · every day 22:30–07:00 · on now, until 07:00 · set by Coach', for the agents."""

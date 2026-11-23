@@ -288,3 +288,95 @@ def test_coachs_screen_line_says_what_holds_or_comes_next(store):
     store.record_usage([((date(2026, 11, 2) - timedelta(days=n)).isoformat(), 120 if n > 7 else 180)
                         for n in range(1, 15)], now)
     assert store.coach_line(now).endswith(" This week's about 1h00 a day more than the week before.")
+
+
+def test_lists_seeded_and_used_by_locks_and_limits(store):
+    assert [x["name"] for x in store.lists()] == ["Lavoro", "Sonno"]
+    assert LockStore(store.conn, ROME).lists() == store.lists()  # seeded once, not again on the next start
+    sonno = store.lists()[1]
+    sonno = store.update_list(sonno["id"], mac=["com.valvesoftware.steam", " site:youtube.com ", "com.valvesoftware.steam"])
+    assert sonno["mac"] == ["com.valvesoftware.steam", "site:youtube.com"]
+
+    bed = store.schedule("Bedtime", "23:00", "07:00", [], list_id=sonno["id"], now=at("2026-10-27T12:00"))
+    assert store.as_json(bed, at("2026-10-27T12:00"))["list"] == sonno["id"]
+    with pytest.raises(ValueError, match="no list"):
+        store.schedule("Nap", "14:00", "15:00", [], list_id=99)
+    # On now: apps can be added to its list, not taken out; the list can't change or go.
+    night = at("2026-10-27T23:30")
+    store.update_list(sonno["id"], mac=["com.valvesoftware.steam", "site:youtube.com", "site:reddit.com"], now=night)
+    with pytest.raises(ValueError, match="holds now"):
+        store.update_list(sonno["id"], mac=["site:reddit.com"], now=night)
+    with pytest.raises(ValueError, match="holds now"):
+        store.delete_list(sonno["id"], now=night)
+    with pytest.raises(ValueError, match="is on now"):
+        store.update(bed["id"], list_id=0, now=night)
+    assert store.update(bed["id"], list_id=0, now=at("2026-10-28T12:00"))["list_id"] is None
+
+    limit = store.add_limit("Social", 30, list_id=sonno["id"])
+    assert store.limit_json(limit)["list"] == sonno["id"]
+    store.delete_list(sonno["id"], now=at("2026-10-28T12:00"))
+    assert store.get_limit(limit["id"])["list_id"] is None
+    assert [x["name"] for x in store.lists()] == ["Lavoro"]
+
+
+def test_rations_count_the_days_opens(store):
+    telegram = store.add_ration("Telegram", 3)
+    assert telegram["gap"] == 3
+    morning = at("2026-10-27T09:00")
+    for n in range(3):
+        store.open_ration(telegram["id"], f"k{n}", "phone", now=morning + timedelta(minutes=n))
+    store.open_ration(telegram["id"], "k0", "phone", now=morning + timedelta(hours=1))  # sent again: the same open
+    j = store.ration_json(telegram, morning + timedelta(hours=1))
+    assert j["used_today"] == 3 and j["left_today"] == 0 and j["summary"] == "3 opens a day"
+    with pytest.raises(ValueError, match="no opens"):
+        store.open_ration(telegram["id"], "mac-1", "mac", now=morning + timedelta(hours=2))
+    # The phone already let it open (offline, from what it last knew): kept anyway.
+    store.open_ration(telegram["id"], "k3", "phone", granted=True, now=morning + timedelta(hours=2))
+    assert store.ration_json(telegram, morning + timedelta(hours=2))["used_today"] == 4
+    # A new day.
+    assert store.ration_json(telegram, at("2026-10-28T08:00"))["left_today"] == 3
+    # Sent late, it counts on the day it happened.
+    store.open_ration(telegram["id"], "late", "phone", at=at("2026-10-27T23:50"), granted=True,
+                      now=at("2026-10-28T08:00"))
+    assert store.ration_json(telegram, at("2026-10-28T08:00"))["used_today"] == 0
+    with pytest.raises(ValueError, match="1 to"):
+        store.update_ration(telegram["id"], opens=0)
+    with pytest.raises(ValueError, match="minutes after"):
+        store.update_ration(telegram["id"], gap=1)
+    assert store.update_ration(telegram["id"], enabled=False)["enabled"] is False
+    with pytest.raises(ValueError, match="is off"):
+        store.open_ration(telegram["id"], "k9", "mac", now=at("2026-10-28T08:00"))
+    store.delete_ration(telegram["id"])
+    assert store.rations() == []
+
+
+def test_api_lists_and_rations(client):
+    got = client.get("/v1/locks", headers=AUTH).json()
+    lavoro = got["lists"][0]
+    assert lavoro == {"id": lavoro["id"], "name": "Lavoro", "mac": []} and got["rations"] == []
+    made = client.post("/v1/lists", json={"name": "Games", "mac": ["com.valvesoftware.steam"]}, headers=AUTH).json()
+    assert made["mac"] == ["com.valvesoftware.steam"]
+    assert client.patch(f"/v1/lists/{made['id']}", json={"name": "Giochi"}, headers=AUTH).json()["name"] == "Giochi"
+    limit = client.post("/v1/limits", json={"title": "Games", "minutes": 30, "list": made["id"]}, headers=AUTH).json()
+    assert limit["list"] == made["id"]
+    assert client.patch(f"/v1/limits/{limit['id']}", json={"list": 0}, headers=AUTH).json()["list"] is None
+    lock = client.post("/v1/locks", json={"title": "Focus", "minutes": 30, "list": lavoro["id"]}, headers=AUTH).json()
+    assert lock["list"] == lavoro["id"]
+    assert client.delete(f"/v1/lists/{lavoro['id']}", headers=AUTH).status_code == 400  # Focus holds now
+    assert client.delete(f"/v1/lists/{made['id']}", headers=AUTH).json() == {"ok": True}
+
+    ration = client.post("/v1/rations", json={"title": "Telegram", "opens": 2, "gap": 5}, headers=AUTH).json()
+    assert ration["left_today"] == 2 and ration["gap"] == 5 and ration["list"] is None
+    body = {"key": "mac-a", "device": "mac"}
+    assert client.post(f"/v1/rations/{ration['id']}/open", json=body, headers=AUTH).json()["left_today"] == 1
+    assert client.post(f"/v1/rations/{ration['id']}/open", json=body, headers=AUTH).json()["left_today"] == 1
+    opened = client.post(f"/v1/rations/{ration['id']}/open", json={"key": "p1", "at": datetime.now(ROME).isoformat()},
+                         headers=AUTH).json()
+    assert opened["left_today"] == 0 and [o["device"] for o in opened["opened"]] == ["mac", "phone"]
+    assert client.post(f"/v1/rations/{ration['id']}/open", json={"key": "p2"}, headers=AUTH).status_code == 400
+    assert client.post(f"/v1/rations/{ration['id']}/open", json={"key": "p3", "at": "2026-10-27T09:00"},
+                       headers=AUTH).status_code == 400  # no offset
+    assert client.patch(f"/v1/rations/{ration['id']}", json={"opens": 4}, headers=AUTH).json()["left_today"] == 2
+    assert client.get("/v1/locks", headers=AUTH).json()["rations"][0]["title"] == "Telegram"
+    assert client.delete(f"/v1/rations/{ration['id']}", headers=AUTH).json() == {"ok": True}
+    assert client.post(f"/v1/rations/{ration['id']}/open", json=body, headers=AUTH).status_code == 404
