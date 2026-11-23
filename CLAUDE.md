@@ -228,7 +228,8 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   won't quit) and Pebble pops up asleep over its Dock icon with Open anyway. Settings → This Mac → Screen Time
   (`Mac/MacScreenTimeView.swift`): Lock now, the usual apps, weekly locks with their own apps. Debug builds:
   `-shieldTest 2` adds a local 2-minute lock. During a strict lock Quit is refused (`applicationShouldTerminate`;
-  logging out and shutting down still quit, Force Quit always works).
+  logging out and shutting down still quit, Force Quit always works); during any other lock it asks first (#85: a quit
+  Aide left Bedtime unenforced). After installing over /Applications/Aide.app, open it again: nothing else does.
   Daily limits on the Mac (2026-11-01): the phone's limits, each with its own Mac apps (`MacLockApps.perLimit`),
   counted from this Mac's own time (`Mac/MacUsage.swift`) and held until midnight when used up (`MacHold` is a lock
   or a limit holding now, what the shield and the unlock sheet show); a hit goes to the server with `days: []`.

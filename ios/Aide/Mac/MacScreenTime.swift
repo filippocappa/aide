@@ -334,19 +334,20 @@ final class ScreenTimeService: ObservableObject {
     }
 
     /// Debug builds only: `-shieldTest 2` on launch (`-shieldStrict YES` for a strict one) adds a local 2-minute
-    /// one-off over the usual apps (or `-shieldApps com.apple.iCal,com.apple.mail`), never sent to the server, to try
-    /// the shield without locking the phone.
+    /// one-off over the usual apps (or `-shieldApps com.apple.iCal,com.apple.mail`, or a list's: `-shieldList 2`),
+    /// never sent to the server, to try the shield without locking the phone.
     private var testLocks: [ScreenLock] = {
         #if DEBUG
         let minutes = UserDefaults.standard.integer(forKey: "shieldTest")
         guard minutes > 0 else { return [] }
         let strict = UserDefaults.standard.bool(forKey: "shieldStrict")
+        let list = UserDefaults.standard.integer(forKey: "shieldList")
         let now = Date(), end = now.addingTimeInterval(Double(minutes) * 60)
         let iso = ISO8601DateFormatter()
         return [ScreenLock(id: -1, title: "Shield test", once: true, start: nil, end: nil, days: nil,
                            startsAt: iso.string(from: now), endsAt: iso.string(from: end), enabled: true,
                            strict: strict, agent: nil, locked: true, until: iso.string(from: end), openUntil: nil,
-                           next: nil, summary: "Test")]
+                           next: nil, summary: "Test", list: list > 0 ? list : nil)]
         #else
         return []
         #endif

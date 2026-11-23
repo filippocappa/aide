@@ -37,17 +37,29 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     /// A strict lock holds until its end: Quit (⌘Q, the Dock, the menu bar panel) is refused while one is on, since
-    /// only Aide enforces it here. Logging out, restarting and shutting down still go through, and Force Quit always
-    /// works: it's a commitment, not a jail.
+    /// only Aide enforces it here. Any other lock asks first: quitting is what left Bedtime unenforced one night
+    /// (#85). Logging out, restarting and shutting down still go through, and Force Quit always works: it's a
+    /// commitment, not a jail.
     @MainActor func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let (lock, until) = env.screenTime.strictOn, !Self.systemIsEnding else { return .terminateNow }
+        guard !Self.systemIsEnding else { return .terminateNow }
+        if let (lock, until) = env.screenTime.strictOn {
+            let alert = NSAlert()
+            alert.messageText = "Aide stays open during a strict lock"
+            alert.informativeText = "\(lock.title) holds until \(MacGlanceCard.time(until)). Quit works again once it's over."
+            alert.addButton(withTitle: "OK")
+            NSApplication.shared.activate()
+            alert.runModal()
+            return .terminateCancel
+        }
+        guard let (lock, until) = env.screenTime.current else { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = "Aide stays open during a strict lock"
-        alert.informativeText = "\(lock.title) holds until \(MacGlanceCard.time(until)). Quit works again once it's over."
-        alert.addButton(withTitle: "OK")
+        alert.messageText = "Quit Aide during \(lock.title)?"
+        alert.informativeText = "\(lock.title) holds until \(MacGlanceCard.time(until)). Aide is what locks this Mac's "
+            + "apps and sites: quit it, and they're open until Aide runs again."
+        alert.addButton(withTitle: "Keep Aide Open")
+        alert.addButton(withTitle: "Quit Anyway")
         NSApplication.shared.activate()
-        alert.runModal()
-        return .terminateCancel
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
     }
 
     /// Whether this quit comes from logging out, restarting or shutting down (the quit Apple Event's reason).
