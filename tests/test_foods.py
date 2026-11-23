@@ -66,6 +66,17 @@ def test_search_needs_every_word_ignores_accents_and_puts_the_most_eaten_first(e
     assert normalize("  Müller  Fitline ") == "muller fitline"
 
 
+def test_two_servings_leave_the_usual_portion_one_serving(env):
+    _, _, foods, _ = env()
+    espresso = foods.save("Espresso", 9, 0.1, 1.7, 0.2, "estimate", kind="drink")
+    foods.touch(espresso["id"], 25)
+    foods.touch(espresso["id"], 50)  # two espressos
+    foods.touch(espresso["id"], 76)  # three, roughly
+    assert foods.get(espresso["id"])["usual_g"] == 25 and foods.get(espresso["id"])["uses"] == 3
+    foods.touch(espresso["id"], 40)  # a bigger one: the new usual
+    assert foods.get(espresso["id"])["usual_g"] == 40
+
+
 def test_saving_again_updates_by_name_and_brand_or_barcode(env):
     _, _, foods, _ = env()
     a = foods.save("Pasta (dry)", 350, 12, 72, 1.5, "estimate")

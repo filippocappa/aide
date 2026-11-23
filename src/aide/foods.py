@@ -317,7 +317,12 @@ class FoodDB:
         return self.find(food_id)
 
     def touch(self, food_id: int, grams: float, count: bool = True) -> None:
-        """The user had `grams` of it: that's the usual portion now, and (with count) one more use."""
+        """The user had `grams` of it: that's the usual portion now, and (with count) one more use. Two or more of
+        the usual (two espressos, 50 g against 25) leaves the usual as it is: it stays one serving."""
+        food = self.get(food_id)
+        usual = food and food["usual_g"]
+        if usual and grams and (n := round(grams / usual)) >= 2 and abs(grams - n * usual) <= 0.05 * n * usual:
+            grams = usual
         self.conn.execute("UPDATE foods SET usual_g = ?, uses = uses + ?, last_used = ? WHERE id = ?",
                           (grams, 1 if count else 0, utcnow().isoformat(), food_id))
 

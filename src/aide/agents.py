@@ -348,6 +348,10 @@ in drinks. When they give amounts ("200 g rice"), use them. When the user correc
 is an item (kind drink, grams = ml) and the server counts its water (alcohol none); plain water goes in \
 plain_water_ml, never a drink's ml. caffeine_mg for coffee, tea and colas. Every meal goes to Apple Health from the \
 phone. \
+How much of a drink, when they don't say: a saved drink's usual portion is one serving (two of them: twice its \
+ml); a new one is one standard serving: espresso 25 ml, moka cup 50, cappuccino 150, a can 330, beer 330 (a big \
+bottle 660), wine or prosecco 125, a shot of a spirit 40, gin tonic or vodka lemon 200, Negroni 90, Spritz 180. A \
+mixed drink they have saved (Gin tonic, Vodka lemon, Negroni, Spritz) is one item, never its parts. \
 Water and caffeine have no goals: mention them only when asked, or when caffeine passes 400 mg in a day, and never \
 as goals reached.
 - If one thing changes the estimate a lot and you can't tell (a small or large portion, fried or grilled), still log \
