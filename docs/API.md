@@ -2659,7 +2659,7 @@ on each device: only the list's own apps there, so on a device that hasn't picke
 |---|---|---|
 | `GET /v1/locks` | | carries `"lists": [{"id": 1, "name": "Work", "mac": ["com.valvesoftware.steam", "site:youtube.com"]}]` |
 | `POST /v1/lists` | `{"name": "Giochi", "mac": []}` | the list |
-| `PATCH /v1/lists/{id}` | any of `{"name", "mac"}` (`mac` replaces the whole list) | the list; `400` taking Mac apps out while a lock or limit using it holds (adding is fine) |
+| `PATCH /v1/lists/{id}` | any of `{"name", "mac"}` (`mac` replaces the whole list) | the list; `400` taking Mac apps out while a strict lock or limit using it holds (adding is fine; any other lock can be unlocked with a reason anyway, so since 2026-11-23 its list can lose apps while it's on) |
 | `DELETE /v1/lists/{id}` | | `{"ok": true}`; what used it goes back to each device's own pick; `400` while a lock or limit using it holds |
 
 Locks' and limits' `list` (both in `POST` and `PATCH`, `0` for none; a limit reached today can't change it, as with

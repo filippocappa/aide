@@ -301,16 +301,20 @@ def test_lists_seeded_and_used_by_locks_and_limits(store):
     assert store.as_json(bed, at("2026-10-27T12:00"))["list"] == sonno["id"]
     with pytest.raises(ValueError, match="no list"):
         store.schedule("Nap", "14:00", "15:00", [], list_id=99)
-    # On now: apps can be added to its list, not taken out; the list can't change or go.
+    # On now: apps can be added to its list, and taken out while it isn't strict; strict, only added. The list
+    # can't go, nor the lock change list.
     night = at("2026-10-27T23:30")
     store.update_list(sonno["id"], mac=["com.valvesoftware.steam", "site:youtube.com", "site:reddit.com"], now=night)
-    with pytest.raises(ValueError, match="holds now"):
+    store.update_list(sonno["id"], mac=["com.valvesoftware.steam", "site:youtube.com"], now=night)
+    store.update(bed["id"], strict=True, now=night)
+    store.update_list(sonno["id"], mac=["com.valvesoftware.steam", "site:youtube.com", "site:reddit.com"], now=night)
+    with pytest.raises(ValueError, match="is strict.*holds now"):
         store.update_list(sonno["id"], mac=["site:reddit.com"], now=night)
     with pytest.raises(ValueError, match="holds now"):
         store.delete_list(sonno["id"], now=night)
     with pytest.raises(ValueError, match="is on now"):
         store.update(bed["id"], list_id=0, now=night)
-    assert store.update(bed["id"], list_id=0, now=at("2026-10-28T12:00"))["list_id"] is None
+    assert store.update(bed["id"], list_id=0, strict=False, now=at("2026-10-28T12:00"))["list_id"] is None
 
     limit = store.add_limit("Social", 30, list_id=sonno["id"])
     assert store.limit_json(limit)["list"] == sonno["id"]

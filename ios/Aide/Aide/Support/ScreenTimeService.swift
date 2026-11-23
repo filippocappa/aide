@@ -25,6 +25,15 @@ final class ScreenTimeService: ObservableObject {
             apply()
         }
     }
+    /// Apps and sites nothing ever locks here (Messages, Phone). Changing them reshields what holds now.
+    @Published var alwaysOpen: FamilyActivitySelection = LockBook.alwaysOpen {
+        didSet {
+            LockBook.alwaysOpen = alwaysOpen
+            apply()
+        }
+    }
+    var alwaysOpenCount: Int { alwaysOpen.applicationTokens.count + alwaysOpen.webDomainTokens.count }
+
     /// The apps each lock picked for itself.
     @Published private(set) var apps: [Int: LockApps] = LockBook.apps
     @Published private(set) var lastError: String?
@@ -93,9 +102,24 @@ final class ScreenTimeService: ObservableObject {
 
     func list(_ id: Int?) -> ScreenList? { id.flatMap { id in lists.first { $0.id == id } } }
 
-    /// A lock or a limit using the list holds now: its apps can be added to, not taken out.
+    /// A lock or a limit using the list holds now: the list can't go.
     func listInUse(_ id: Int) -> Bool {
         locks.contains { $0.list == id && LockClock.until($0) != nil } || limits.contains { $0.list == id && holds($0) }
+    }
+
+    /// A strict lock or limit using the list holds now: its apps can be added to, not taken out (that would be
+    /// unlocking it early, which takes a pass). Any other can be unlocked with a reason, so its list can change.
+    func listHeldStrictly(_ id: Int) -> Bool {
+        locks.contains { $0.list == id && $0.isStrict && LockClock.until($0) != nil }
+            || limits.contains { $0.list == id && $0.strict && holds($0) }
+    }
+
+    /// What uses the list: "Bedtime, 23:00–08:00", the limits' and rations' titles.
+    func listUsers(_ id: Int) -> [String] {
+        locks.filter { $0.list == id }.map { lock in
+            if let start = lock.start, let end = lock.end { return "\(lock.title), \(start)–\(end)" }
+            return lock.title
+        } + limits.filter { $0.list == id }.map(\.title) + rations.filter { $0.list == id }.map(\.title)
     }
 
     /// What a limit counts here.

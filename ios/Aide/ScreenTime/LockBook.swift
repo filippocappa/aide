@@ -43,6 +43,29 @@ enum LockBook {
         set { defaults?.set(try? JSONEncoder().encode(newValue), forKey: "screenAllowed") }
     }
 
+    /// Apps and sites no lock, limit, ration or list ever covers on this phone (Messages, Phone, Maps), even inside a
+    /// picked category. Only apps and sites: a whole category can't be kept open.
+    static var alwaysOpen: FamilyActivitySelection {
+        get {
+            defaults?.data(forKey: "screenAlwaysOpen").flatMap { try? JSONDecoder().decode(FamilyActivitySelection.self, from: $0) }
+                ?? FamilyActivitySelection()
+        }
+        set { defaults?.set(try? JSONEncoder().encode(newValue), forKey: "screenAlwaysOpen") }
+    }
+
+    /// Shield the picked apps, sites and categories in a store, all but the always-open ones.
+    static func shieldOnly(_ picked: FamilyActivitySelection, in store: ManagedSettingsStore) {
+        let open = alwaysOpen
+        let apps = picked.applicationTokens.subtracting(open.applicationTokens)
+        let sites = picked.webDomainTokens.subtracting(open.webDomainTokens)
+        store.shield.applications = apps.isEmpty ? nil : apps
+        store.shield.webDomains = sites.isEmpty ? nil : sites
+        store.shield.applicationCategories = picked.categoryTokens.isEmpty ? nil
+            : .specific(picked.categoryTokens, except: open.applicationTokens)
+        store.shield.webDomainCategories = picked.categoryTokens.isEmpty ? nil
+            : .specific(picked.categoryTokens, except: open.webDomainTokens)
+    }
+
     /// The apps each lock picked for itself, by lock id. A lock without its own locks everything but `allowed`.
     static var apps: [Int: LockApps] {
         get {
@@ -171,11 +194,7 @@ enum LockBook {
 
     static func shieldRation(_ ration: ScreenRation) {
         let picked = rationSelection(ration)
-        let store = rationStore(ration.id)
-        store.shield.applications = picked.applicationTokens.isEmpty ? nil : picked.applicationTokens
-        store.shield.webDomains = picked.webDomainTokens.isEmpty ? nil : picked.webDomainTokens
-        store.shield.applicationCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
-        store.shield.webDomainCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+        shieldOnly(picked, in: rationStore(ration.id))
     }
 
     static func openRationStore(_ id: Int) { rationStore(id).clearAllSettings() }
@@ -250,11 +269,7 @@ enum LockBook {
             focusFilterStore.clearAllSettings()
             return
         }
-        let store = focusFilterStore
-        store.shield.applications = picked.applicationTokens.isEmpty ? nil : picked.applicationTokens
-        store.shield.webDomains = picked.webDomainTokens.isEmpty ? nil : picked.webDomainTokens
-        store.shield.applicationCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
-        store.shield.webDomainCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+        shieldOnly(picked, in: focusFilterStore)
     }
 
     /// The Focus filter's list, if it covers this app now.
@@ -388,11 +403,7 @@ enum LockBook {
     /// Lock a limit's apps, until midnight (the monitor opens them when the day starts again).
     static func shieldLimit(_ id: Int) {
         let picked = limitSelection(id)
-        let store = limitStore(id)
-        store.shield.applications = picked.applicationTokens.isEmpty ? nil : picked.applicationTokens
-        store.shield.webDomains = picked.webDomainTokens.isEmpty ? nil : picked.webDomainTokens
-        store.shield.applicationCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
-        store.shield.webDomainCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+        shieldOnly(picked, in: limitStore(id))
     }
 
     static func openLimit(_ id: Int) {
@@ -419,15 +430,13 @@ enum LockBook {
         let picked = apps.selection
         let store = store(id)
         if apps.only {
-            store.shield.applications = picked.applicationTokens.isEmpty ? nil : picked.applicationTokens
-            store.shield.webDomains = picked.webDomainTokens.isEmpty ? nil : picked.webDomainTokens
-            store.shield.applicationCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
-            store.shield.webDomainCategories = picked.categoryTokens.isEmpty ? nil : .specific(picked.categoryTokens)
+            shieldOnly(picked, in: store)
         } else {
+            let open = alwaysOpen
             store.shield.applications = nil
             store.shield.webDomains = nil
-            store.shield.applicationCategories = .all(except: picked.applicationTokens)
-            store.shield.webDomainCategories = .all(except: picked.webDomainTokens)
+            store.shield.applicationCategories = .all(except: picked.applicationTokens.union(open.applicationTokens))
+            store.shield.webDomainCategories = .all(except: picked.webDomainTokens.union(open.webDomainTokens))
         }
     }
 

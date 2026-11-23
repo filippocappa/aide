@@ -9,6 +9,7 @@ struct ScreenTimeView: View {
     @EnvironmentObject private var screenTime: ScreenTimeService
     @State private var picking = false
     @State private var focusPicking = false
+    @State private var alwaysPicking = false
     @State private var unlocking: Unlocking?
     @State private var adding = false
 
@@ -42,6 +43,7 @@ struct ScreenTimeView: View {
         .navigationBarTitleDisplayMode(.inline)
         .familyActivityPicker(isPresented: $picking, selection: $screenTime.allowed)
         .familyActivityPicker(isPresented: $focusPicking, selection: $screenTime.focusAllowed)
+        .familyActivityPicker(isPresented: $alwaysPicking, selection: $screenTime.alwaysOpen)
         .sheet(item: $unlocking) { item in
             UnlockSheet(name: item.lock.title, pass: item.pass,
                         after: item.lock.once ? "It ends for good." : "It's back next time, as usual.") { reason in
@@ -121,6 +123,15 @@ struct ScreenTimeView: View {
                      : "Locks keep you off your phone when you've decided to be: \"no phone for an hour\", nothing "
                         + "after 23:00. iOS asks for Face ID or your passcode once.")
             }
+        }
+        Section {
+            PickRow(title: "Always open", value: screenTime.alwaysOpenCount == 0 ? "Nothing yet"
+                    : "\(screenTime.alwaysOpenCount) app\(screenTime.alwaysOpenCount == 1 ? "" : "s")") { alwaysPicking = true }
+                .disabled(!screenTime.isAuthorized || strictLimitHolds)
+        } footer: {
+            Text(strictLimitHolds ? "A strict limit is used up now: change these once it's over."
+                 : "Never locked by any lock, limit, list or focus round: Messages, Phone, Maps. Pick apps, not "
+                    + "categories: an app here stays open even inside a category a list blocks.")
         }
         Section {
             PickRow(title: "Stays open", value: screenTime.allowedCount == 0 ? "Nothing yet"
@@ -252,6 +263,9 @@ struct ScreenTimeView: View {
                  + "phone each day, to the nearest 15 minutes. Which apps stays on this phone.")
         }
     }
+
+    /// Always open can't change while a strict limit holds: that would open its apps early.
+    private var strictLimitHolds: Bool { screenTime.limits.contains { $0.strict && screenTime.holds($0) } }
 
     static func length(_ minutes: Int) -> String {
         minutes < 60 ? "\(minutes) minutes" : "\(minutes / 60) hour\(minutes > 60 ? "s" : "")"
@@ -732,8 +746,8 @@ private struct ListPicker: View {
             return "\(name) has no apps on this phone yet: pick them under App lists. Until then it locks and counts "
                 + "nothing here."
         }
-        return "\(name): \(LockApps(only: true, selection: picked).text.lowercased()) on this phone (change them under "
-            + "App lists). The Mac uses its own pick of the same list."
+        return "\(name) blocks \(LockApps(only: true, selection: picked).text.lowercased()) on this phone, and "
+            + "nothing else (change them under App lists). The Mac uses its own pick of the same list."
     }
 }
 
@@ -750,12 +764,14 @@ private struct ListRow: View {
     }
 
     private var line: String {
-        let here = screenTime.listPick(list.id).map { LockApps(only: true, selection: $0).text } ?? "Nothing picked here"
+        let here = screenTime.listPick(list.id).map { "Blocks " + LockApps(only: true, selection: $0).text.lowercased() }
+            ?? "Nothing picked here"
         return list.mac.isEmpty ? here : "\(here) · \(list.mac.count) on the Mac"
     }
 }
 
-/// A list's name and this phone's pick of it. While a lock or limit using it holds, apps can't be taken out.
+/// A list's name and this phone's pick of it: the apps it blocks. While a strict lock or limit using it holds, apps
+/// can't be taken out (any other can be unlocked with a reason anyway).
 private struct ListEditor: View {
     @EnvironmentObject private var screenTime: ScreenTimeService
     @Environment(\.dismiss) private var dismiss
@@ -774,9 +790,9 @@ private struct ListEditor: View {
 
     private var inUse: Bool { list.map { screenTime.listInUse($0.id) } ?? false }
     private var original: FamilyActivitySelection { list.flatMap { screenTime.listApps[$0.id] } ?? FamilyActivitySelection() }
-    /// Taking apps out while it holds would unlock them early.
+    /// Taking apps out while a strict lock or limit holds would unlock them early, which takes a pass.
     private var removes: Bool {
-        inUse && (!original.applicationTokens.isSubset(of: apps.applicationTokens)
+        (list.map { screenTime.listHeldStrictly($0.id) } ?? false) && (!original.applicationTokens.isSubset(of: apps.applicationTokens)
                   || !original.categoryTokens.isSubset(of: apps.categoryTokens)
                   || !original.webDomainTokens.isSubset(of: apps.webDomainTokens))
     }
@@ -790,11 +806,15 @@ private struct ListEditor: View {
             }
             .listRowBackground(Theme.row)
             Section {
-                PickRow(title: "Apps on this phone", value: appsValue) { picking = true }
+                PickRow(title: "Apps it blocks", value: appsValue) { picking = true }
+            } header: {
+                if let users = list.map({ screenTime.listUsers($0.id) }), !users.isEmpty {
+                    Text("Used by " + users.joined(separator: " · "))
+                }
             } footer: {
-                Text(removes ? "A lock or limit using it is on now: you can add apps, not take them out."
-                     : "Picking a category (Social, Games) covers apps you install later too. Lock screens can't "
-                        + "tell which list holds an app, only what holds it.")
+                Text(removes ? "A strict lock or limit using it is on now: you can add apps, not take them out."
+                     : "Pick what to block: everything else stays open. A category (Social, Games) covers apps you "
+                        + "install later too, and Social holds Messages: keep that under Always open.")
             }
             .listRowBackground(Theme.row)
             if let list, !list.mac.isEmpty {

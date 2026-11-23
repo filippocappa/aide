@@ -780,7 +780,9 @@ private struct MacListEditor: View {
     }
 
     private var inUse: Bool { list.map { screenTime.listInUse($0.id) } ?? false }
-    private var removes: Bool { inUse && !Set(list?.mac ?? []).isSubset(of: apps) }
+    private var removes: Bool {
+        (list.map { screenTime.listHeldStrictly($0.id) } ?? false) && !Set(list?.mac ?? []).isSubset(of: apps)
+    }
 
     var body: some View {
         Form {
@@ -792,7 +794,7 @@ private struct MacListEditor: View {
             } header: {
                 Text("Apps and websites on this Mac")
             } footer: {
-                Text(removes ? "A lock or limit using it is on now: you can add apps, not take them out."
+                Text(removes ? "A strict lock or limit using it is on now: you can add apps, not take them out."
                      : "A website is closed as a tab in Safari and the Chromium browsers. The phone has its own pick "
                         + "of this list, in its Screen Time page.")
             }

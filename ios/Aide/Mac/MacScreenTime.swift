@@ -251,6 +251,12 @@ final class ScreenTimeService: ObservableObject {
         locks.contains { $0.list == id && LockClock.until($0) != nil } || limits.contains { $0.list == id && holds($0) }
     }
 
+    /// A strict lock or limit using the list holds now: its apps can be added, not taken out.
+    func listHeldStrictly(_ id: Int) -> Bool {
+        locks.contains { $0.list == id && $0.isStrict && LockClock.until($0) != nil }
+            || limits.contains { $0.list == id && $0.strict && holds($0) }
+    }
+
     func saveRation(_ ration: ScreenRation?, title: String, opens: Int, gap: Int, list: Int?) async -> Bool {
         await change {
             if let ration {

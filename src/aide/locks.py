@@ -519,13 +519,14 @@ class LockStore:
             raise ValueError(f"a list holds at most {LIST_MOST} Mac apps and sites")
         return out
 
-    def _list_holding(self, list_id: int, now: datetime) -> str | None:
-        """The lock or limit using the list that holds now: its apps can't loosen until it's over."""
+    def _list_holding(self, list_id: int, now: datetime, strict: bool = False) -> str | None:
+        """The lock or limit using the list that holds now (with strict, only a strict one: its apps can't loosen
+        until it's over)."""
         for lock in self.all(now):
-            if lock["list_id"] == list_id and self.locked_until(lock, now):
+            if lock["list_id"] == list_id and (lock["strict"] or not strict) and self.locked_until(lock, now):
                 return lock["title"]
         for limit in self.limits():
-            if limit["list_id"] == list_id and self.reached(limit, now):
+            if limit["list_id"] == list_id and (limit["strict"] or not strict) and self.reached(limit, now):
                 return limit["title"]
         return None
 
@@ -537,14 +538,15 @@ class LockStore:
 
     def update_list(self, list_id: int, name: str | None = None, mac: list[str] | None = None,
                     now: datetime | None = None) -> dict:
-        """Its name, or its Mac apps. Taking apps out while a lock or limit using it holds is refused: that would be
-        unlocking early. Adding is fine any time."""
+        """Its name, or its Mac apps. Taking apps out while a strict lock or limit using it holds is refused: that
+        would be unlocking it early, which takes a pass. Any other lock can be unlocked with a reason, so its list
+        can change while it's on (2026-11-23). Adding is fine any time."""
         now = now or utcnow()
         current = self.get_list(list_id)
         entries = current["mac"] if mac is None else self._mac(mac)
-        if set(current["mac"]) - set(entries) and (holding := self._list_holding(list_id, now)):
-            raise ValueError(f"'{holding}' uses {current['name']} and holds now: apps can be added to it, and taken "
-                             "out once it's over")
+        if set(current["mac"]) - set(entries) and (holding := self._list_holding(list_id, now, strict=True)):
+            raise ValueError(f"'{holding}' is strict, uses {current['name']} and holds now: apps can be added to it, "
+                             "and taken out once it's over")
         self.conn.execute("UPDATE screen_lists SET name = ?, mac = ? WHERE id = ?",
                           (_title(name if name is not None else current["name"]), json.dumps(entries), list_id))
         self._changed()
