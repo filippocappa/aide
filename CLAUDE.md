@@ -308,7 +308,12 @@ came about, with dates and what was tried, is in [docs/HISTORY.md](docs/HISTORY.
 - **Chat and the team:** Aide and the specialists (Secretary, Professor, Coach, Finance), each with its chats, tools,
   memory and Pebble colour; `ask_agent`, the Team chat with @mentions, the router (#59), queued messages (#69),
   streamed replies, photos, cards under replies (`attachments`, `open` links into the app), the confirm queue,
-  Activity and approvals (#12).
+  Activity and approvals (#12). Chats readable offline (#79, `Support/ChatCache.swift`: the server's JSON kept per
+  device, 30 chats per agent and the course chats, photos up to 200 MB) and written offline (#80: the #69 queue kept
+  on the device, each message's `client_id` answered once, `written_at` in the stamp; on the phone a background
+  refresh sends it too). Old chats (#81): grouped Pinned, Today, This week, Earlier; archived after 14 days untouched
+  (`archive_idle`, not course or routine chats) or by hand, a new message brings one back; Delete asks first and
+  leaves the agent's memory as it is; no compression yet.
 - **Calendar, reminders, mail:** iCloud Calendar, Apple Reminders sync (every list, EventKit alarms), Gmail (read,
   send after Confirm), Secretary's reply drafts (#7), the events card as a week with proposed plans (#25).
 - **Digests, objectives, routines:** the wake-up briefing, evening, weekly and monthly digests (the morning one is

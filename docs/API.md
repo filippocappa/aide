@@ -65,6 +65,13 @@ is `400`. Every agent reads them: their text in that turn (a scan not read yet: 
 again later with `read_file`. The message keeps a line per file, which `GET /v1/history` gives back as `files`.
 `"voice": true` (since 2026-10-27, default `false`) says the message was spoken in voice chat: the reply is then
 written to be read aloud (short plain sentences, no lists or markdown, numbers and formulas in words).
+Sent again safely (since 2026-11-23, #80): `"client_id": "9F2C…"` (the app's own key for this message, 1–64
+characters) makes a retry harmless. The same key again gets the first turn's answer as plain JSON (also when
+`stream` is true; no second turn), `409` while that turn is still running (follow it in `/v1/history`'s `working`),
+and a new turn only if the first one failed. Keys are kept 30 days. `"written_at": "2026-11-23T22:10:00+01:00"`
+(ISO 8601, since 2026-11-23) is when it was written, for a message that waited on the device while the server
+couldn't be reached: from two minutes late on, the stamp the model reads says "written 22:10 while offline", so
+"in an hour" counts from then. Older apps send neither and nothing changes for them.
 → `200`
 ```json
 {
@@ -339,12 +346,20 @@ The app keeps many chats. Every chat endpoint takes an optional `conversation_id
 
 | Endpoint | Body / query | Response |
 |---|---|---|
-| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the first chat (`id` `main`), titled "First chat". A chat with a turn running has `"working": true` (since 2026-10-29). `?q=dentist` (since 2026-10-30): only the chats whose title or messages have it (any case), each with `match`, the latest message line that has it cut to ~50 characters each side (`null` when only the title has it). |
+| `GET /v1/conversations` | | `{"conversations": [{"id": "c_91f…", "agent": "aide", "title": "Dentist on Friday" \| null, "preview": "last message text…", "updated_at": "2026-10-18T11:20:00+02:00"}]}` newest first. Includes the first chat (`id` `main`), titled "First chat". A chat with a turn running has `"working": true` (since 2026-10-29). `?q=dentist` (since 2026-10-30): only the chats whose title or messages have it (any case), each with `match`, the latest message line that has it cut to ~50 characters each side (`null` when only the title has it). `pinned` and `archived` (since 2026-11-23, #81; always present): see below. |
 | `POST /v1/conversations` | `{}`, `{"agent": "coach"}`, or `{"digest": "daily" \| "evening"}` | The new conversation (same shape as a list row, `title: null`). `agent` defaults to `aide`; an unknown one is `400`. With `digest`, the chat is Aide's (`agent` is ignored) and starts with that digest's greeting as Aide's first message: it's in `/v1/history` and `preview`, and the model knows it said it. See Digest. |
+| `PATCH /v1/conversations/{id}` | `{"pinned": true}`, `{"archived": true}` (either or both) | The chat's list row (since 2026-11-23, #81). `main` is `400`, an unknown id `404`. |
 | `DELETE /v1/conversations/{id}` | | `{"ok": true}`. The shared conversation can't be deleted (400). |
 | `POST /v1/chat` | `{"text": "…", "conversation_id": "c_91f…"}` | Same as before, plus `"conversation_id"`. The server sets `title` from the first exchange. |
 | `GET /v1/history` | `?limit=50&conversation_id=c_91f…` | As before, for that conversation. |
 | `POST /v1/think` | `{"conversation_id": "c_91f…", "on": true}` (both optional) | `{"ok": true, "smart": true}`. Smarter model for that conversation; `"on": false` (since 2026-10-30) goes back to the usual one. `GET /v1/history` says which with `smart`. |
+
+**Pinned and archived** (since 2026-11-23, #81). Every row has `pinned` and `archived` (both `false` on `main`). A
+chat untouched for 14 days is archived when the list is asked for, unless it's pinned, a routine's or a course's
+chat; one brought back with `{"archived": false}` gets another 14 days from then. A new message in an archived chat
+(yours, or an agent's post) brings it back. Archiving unpins; pinning takes it out of the archive. Archived chats are
+still in the list and in `?q=` results: the app shows them under Archive. Nothing is deleted and what the agents
+remember doesn't change.
 
 The app creates a conversation with `POST /v1/conversations` before the first message of each new chat. If that returns 404 or 405 (older server), it falls back to the shared conversation.
 

@@ -85,6 +85,13 @@ class ChatIn(BaseModel):
     photos: list[str] = []  # ids from POST /v1/photos
     files: list[str] = []  # PDFs from POST /v1/files (#78)
     voice: bool = False  # said in a voice chat: the reply is read aloud
+    client_id: str | None = Field(None, min_length=1, max_length=64)  # the app's key: sent again, answered once (#80)
+    written_at: datetime | None = None  # when it was written, for a message that waited offline (#80)
+
+
+class ConversationChange(BaseModel):
+    pinned: bool | None = None
+    archived: bool | None = None
 
 
 class FoodLogIn(BaseModel):
@@ -753,6 +760,7 @@ class SyncIn(BaseModel):
 
 UNAVAILABLE = "The assistant is unavailable right now. Try again."
 PING = 15.0  # seconds of quiet on a stream before a keep-alive comment
+ARCHIVE_AFTER = timedelta(days=14)  # an app chat untouched this long goes to the archive (#81)
 MAX_EVENT_DAYS = 42  # GET /v1/events
 
 
@@ -873,6 +881,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     def conversation_json(c: dict) -> dict:
         return {"id": c["id"], "agent": c["agent"], "title": c["title"], "routine": c["routine"],
                 "course": study.chat_course(c["id"]), "preview": c["preview"], "updated_at": local(c["updated_at"]),
+                "pinned": c.get("pinned", False), "archived": c.get("archived", False),
                 **({"working": True} if c["id"] in working else {}), **({"match": c["match"]} if "match" in c else {})}
 
     def team_json(t: dict) -> dict:
@@ -887,6 +896,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
     turns: set[asyncio.Task] = set()  # streamed turns, held so they finish even if the app hangs up
     # conversation -> the chat turn running in it: the app that hung up on the stream asks for it in /v1/history
     working: dict[str, dict] = {}
+    answering: set[str] = set()  # the app's keys (`client_id`) of the chat turns running now (#80)
 
     def streamed(run: Callable[[Callable[[str, dict], None]], Awaitable], done: Callable[[object], str],
                  hung_up: Callable[[], None] | None = None):
@@ -949,11 +959,21 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if conversation != CONVERSATION and row is None and body.stream:
             raise UnknownConversation(f"no conversation {conversation}")  # a plain 404, before the stream starts
         speaker = (row["agent"] if row else None) or ORCHESTRATOR
+        key = body.client_id
+        if key:  # sent again (#80): the first turn's answer, never a second turn
+            seen = db.claim_chat_client(key, conversation)
+            if seen is not None and seen["reply"]:
+                return JSONResponse(json.loads(seen["reply"]))
+            if seen is not None and key in answering:
+                raise HTTPException(409, "this message is being answered")
+            # else the first try died with the server before its answer: this one answers it
         activity_turn = live.turn(conversation, speaker)
 
         async def respond(on_team=None, on_text=None, on_step=None) -> Turn:
             mine = working[conversation] = {"agent": speaker, "text": text, "photos": body.photos, "files": body.files,
                                             "since": datetime.now(tz).replace(microsecond=0).isoformat()}
+            if key:
+                answering.add(key)
 
             def step(who: str, label: str | None, kind: str | None = None, page: str | None = None) -> None:
                 if label is not None:
@@ -963,13 +983,18 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             try:
                 turn = await agent.respond(CONVERSATION, text, conversation, hooks(on_team, activity_turn.team),
                                            hooks(on_text, activity_turn.text) if on_text else None, body.photos,
-                                           body.voice, step, body.files)
+                                           body.voice, step, body.files, written_at=body.written_at)
             except BaseException:
                 activity_turn.failed()
+                if key:
+                    db.answer_chat_client(key, None)
                 raise
             finally:
                 if working.get(conversation) is mine:  # a second message, waiting its turn, may have taken the slot
                     working.pop(conversation)
+                answering.discard(key)
+            if key:
+                db.answer_chat_client(key, chat_json(conversation, turn))
             activity_turn.finished(turn.reply)
             return turn
 
@@ -1287,7 +1312,16 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     @app.get("/v1/conversations", dependencies=[Depends(auth)])
     async def conversations(q: str | None = None):
+        db.archive_idle(ARCHIVE_AFTER, keep=study.chats())
         return {"conversations": [conversation_json(c) for c in agent.conversations(CONVERSATION, q)]}
+
+    @app.patch("/v1/conversations/{conversation_id}", dependencies=[Depends(auth)])
+    async def change_conversation(conversation_id: str, body: ConversationChange):
+        if conversation_id == CONVERSATION:
+            raise HTTPException(400, "the first chat can't be pinned or archived")
+        if db.set_conversation_kept(conversation_id, body.pinned, body.archived) is None:
+            raise UnknownConversation(f"no conversation {conversation_id}")
+        return next(conversation_json(c) for c in agent.conversations(CONVERSATION) if c["id"] == conversation_id)
 
     @app.post("/v1/conversations", dependencies=[Depends(auth)])
     async def new_conversation(body: NewConversationIn | None = None):

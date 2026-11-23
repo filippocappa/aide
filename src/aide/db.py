@@ -147,6 +147,13 @@ class Database:
             self.conn.execute("ALTER TABLE conversations ADD COLUMN title TEXT")
         if "agent" not in columns:  # databases created before agents: every chat is Aide's
             self.conn.execute("ALTER TABLE conversations ADD COLUMN agent TEXT NOT NULL DEFAULT 'aide'")
+        if "pinned" not in columns:  # databases created before chats were pinned and archived (#81)
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN archived_at TEXT")
+            self.conn.execute("ALTER TABLE conversations ADD COLUMN restored_at TEXT")
+        # A chat message sent again (an app that lost the answer, #80): the first turn's reply, by the app's key.
+        self.conn.execute("CREATE TABLE IF NOT EXISTS chat_clients (client_id TEXT PRIMARY KEY, "
+                          "conversation TEXT NOT NULL, reply TEXT, created_at TEXT NOT NULL)")
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS conversations_public ON conversations(public_id)")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(messages)")}
         if "attachments" not in columns:  # databases created before replies had cards
@@ -238,7 +245,8 @@ class Database:
         )
         return self.app_conversation(public_id)
 
-    _APP_CONVERSATION = ("SELECT c.id, c.public_id, c.title, c.last_active_at, c.agent, r.id AS routine "
+    _APP_CONVERSATION = ("SELECT c.id, c.public_id, c.title, c.last_active_at, c.agent, c.pinned, c.archived_at, "
+                         "r.id AS routine "
                          "FROM conversations c LEFT JOIN routines r ON r.conversation_id = c.id ")
 
     def app_conversation(self, public_id: str) -> sqlite3.Row | None:
@@ -259,6 +267,56 @@ class Database:
             self.conn.execute("DELETE FROM messages WHERE conversation_id = ?", (row["id"],))
             self.conn.execute("DELETE FROM conversations WHERE id = ?", (row["id"],))
         return True
+
+    def set_conversation_kept(self, public_id: str, pinned: bool | None = None,
+                              archived: bool | None = None) -> sqlite3.Row | None:
+        """Pins or unpins an app chat, archives it or brings it back (#81). Back from the archive, it's archived
+        again only after another stretch untouched (`archive_idle`). A pinned chat is never archived."""
+        row = self.app_conversation(public_id)
+        if row is None:
+            return None
+        now = utcnow().isoformat()
+        if pinned is not None:
+            self.conn.execute("UPDATE conversations SET pinned = ? WHERE id = ?", (int(pinned), row["id"]))
+            if pinned:
+                self.conn.execute("UPDATE conversations SET archived_at = NULL WHERE id = ?", (row["id"],))
+        if archived is not None:
+            self.conn.execute("UPDATE conversations SET archived_at = ?, restored_at = ?, pinned = pinned * ? "
+                              "WHERE id = ?", (now if archived else None, None if archived else now,
+                                                0 if archived else 1, row["id"]))
+        return self.app_conversation(public_id)
+
+    def archive_idle(self, idle: timedelta, keep: set[str] = frozenset()) -> int:
+        """Archives the app chats untouched for `idle` (since their last message, or since they came back from
+        the archive), except pinned ones, routines' and those in `keep` (course chats). Returns how many."""
+        before = (utcnow() - idle).isoformat()
+        rows = self.conn.execute(
+            "SELECT c.public_id FROM conversations c LEFT JOIN routines r ON r.conversation_id = c.id "
+            "WHERE c.public_id IS NOT NULL AND c.archived_at IS NULL AND c.pinned = 0 AND r.id IS NULL "
+            "AND c.last_active_at < ? AND COALESCE(c.restored_at, '') < ?", (before, before)).fetchall()
+        ids = [r["public_id"] for r in rows if r["public_id"] not in keep]
+        now = utcnow().isoformat()
+        self.conn.executemany("UPDATE conversations SET archived_at = ? WHERE public_id = ?", [(now, i) for i in ids])
+        return len(ids)
+
+    # -- a chat message sent again (#80) -----------------------------------
+
+    def claim_chat_client(self, client_id: str, conversation: str) -> sqlite3.Row | None:
+        """Claims the app's key for a message about to be answered: None when it's new (answer it), else its row:
+        `reply` is the first turn's answer (JSON), or NULL while that turn still runs. Keys older than 30 days go."""
+        now = utcnow()
+        self.conn.execute("DELETE FROM chat_clients WHERE created_at < ?", ((now - timedelta(days=30)).isoformat(),))
+        if self.conn.execute("INSERT OR IGNORE INTO chat_clients (client_id, conversation, created_at) "
+                             "VALUES (?, ?, ?)", (client_id, conversation, now.isoformat())).rowcount:
+            return None
+        return self.conn.execute("SELECT * FROM chat_clients WHERE client_id = ?", (client_id,)).fetchone()
+
+    def answer_chat_client(self, client_id: str, reply: dict | None) -> None:
+        """The turn's answer for its key; None when the turn failed, so the same message can be sent again."""
+        if reply is None:
+            self.conn.execute("DELETE FROM chat_clients WHERE client_id = ?", (client_id,))
+        else:
+            self.conn.execute("UPDATE chat_clients SET reply = ? WHERE client_id = ?", (json.dumps(reply), client_id))
 
     def set_conversation_title(self, conversation_id: int, title: str) -> None:
         self.conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
@@ -352,8 +410,8 @@ class Database:
                     "INSERT INTO team_messages (conversation_id, message_id, sender, recipient, text, ts) "
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     [(conversation_id, reply_id, t["from"], t["to"], t["text"], t["ts"]) for t in team])
-            self.conn.execute(
-                "UPDATE conversations SET last_active_at = ? WHERE id = ?", (now, conversation_id)
+            self.conn.execute(  # a new message brings an archived chat back (#81)
+                "UPDATE conversations SET last_active_at = ?, archived_at = NULL WHERE id = ?", (now, conversation_id)
             )
 
     # -- pending actions -----------------------------------------------------

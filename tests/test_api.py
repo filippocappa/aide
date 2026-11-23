@@ -211,6 +211,67 @@ def test_delete_conversation(env):
     assert client.delete(f"/v1/conversations/{cid}", headers=AUTH).status_code == 404
 
 
+def test_chats_can_be_pinned_and_archived(env):
+    client, agent, _ = env([done("ok"), done("Title")])
+    cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    row = next(r for r in client.get("/v1/conversations", headers=AUTH).json()["conversations"] if r["id"] == cid)
+    assert (row["pinned"], row["archived"]) == (False, False)
+    row = client.patch(f"/v1/conversations/{cid}", json={"pinned": True}, headers=AUTH).json()
+    assert (row["pinned"], row["archived"]) == (True, False)
+    row = client.patch(f"/v1/conversations/{cid}", json={"archived": True}, headers=AUTH).json()
+    assert (row["pinned"], row["archived"]) == (False, True)  # archiving unpins
+    client.post("/v1/chat", json={"text": "hi", "conversation_id": cid}, headers=AUTH)  # a new message brings it back
+    row = next(r for r in client.get("/v1/conversations", headers=AUTH).json()["conversations"] if r["id"] == cid)
+    assert row["archived"] is False
+    assert client.patch("/v1/conversations/main", json={"pinned": True}, headers=AUTH).status_code == 400
+    assert client.patch("/v1/conversations/c_nope", json={"pinned": True}, headers=AUTH).status_code == 404
+
+
+def test_chats_untouched_for_two_weeks_are_archived(env):
+    client, agent, _ = env()
+    old, kept, fresh, back = (client.post("/v1/conversations", json={}, headers=AUTH).json()["id"] for _ in range(4))
+    weeks_ago = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
+    agent.db.conn.execute("UPDATE conversations SET last_active_at = ? WHERE public_id IN (?, ?, ?)",
+                          (weeks_ago, old, kept, back))
+    client.patch(f"/v1/conversations/{kept}", json={"pinned": True}, headers=AUTH)
+    client.patch(f"/v1/conversations/{back}", json={"archived": False}, headers=AUTH)  # brought back by hand
+    rows = {r["id"]: r["archived"] for r in client.get("/v1/conversations", headers=AUTH).json()["conversations"]}
+    assert rows == {old: True, kept: False, fresh: False, back: False, "main": False}
+
+
+def test_a_message_sent_again_is_answered_once(env):
+    client, agent, _ = env([done("Booked."), done("Dentist")])
+    cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    ask = {"text": "book the dentist", "conversation_id": cid, "client_id": "k-1"}
+    first = client.post("/v1/chat", json=ask, headers=AUTH).json()
+    again = client.post("/v1/chat", json={**ask, "stream": True}, headers=AUTH)
+    assert again.headers["content-type"].startswith("application/json") and again.json() == first
+    texts = [m["text"] for m in client.get(f"/v1/history?conversation_id={cid}", headers=AUTH).json()["messages"]]
+    assert texts == ["book the dentist", "Booked."]
+
+
+def test_a_failed_turn_can_be_sent_again(env):
+    client, agent, _ = env([])  # no scripted reply: the turn fails
+    cid = client.post("/v1/conversations", json={}, headers=AUTH).json()["id"]
+    ask = {"text": "hi", "conversation_id": cid, "client_id": "k-2"}
+    with pytest.raises(Exception):
+        client.post("/v1/chat", json=ask, headers=AUTH)
+    agent.client.responses.append(done("Hello."))
+    assert client.post("/v1/chat", json=ask, headers=AUTH).json()["reply"] == "Hello."
+
+
+def test_a_message_written_offline_says_when(env):
+    client, agent, _ = env([done("ok"), done("Title")])
+    written = (datetime.now(ROME) - timedelta(minutes=35)).replace(second=0, microsecond=0)
+    client.post("/v1/chat", json={"text": "remind me in an hour", "written_at": written.isoformat()}, headers=AUTH)
+    first = agent.db.history(agent.db.current_conversation(CONVERSATION, agent.idle))[0]["content"]
+    assert f", written {written:%H:%M} while offline" in first
+    client.post("/v1/chat", json={"text": "now", "written_at": datetime.now(ROME).isoformat()}, headers=AUTH)
+    last = [m for m in agent.db.history(agent.db.current_conversation(CONVERSATION, agent.idle))
+            if m["role"] == "user"][-1]["content"]
+    assert "written" not in last
+
+
 def test_shared_conversation_cannot_be_deleted(env):
     client, _, _ = env()
     r = client.delete("/v1/conversations/main", headers=AUTH)

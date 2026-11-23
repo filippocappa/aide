@@ -248,6 +248,11 @@ class StudyStore:
         self.conn.execute("INSERT INTO course_chats (chat, course_id) VALUES (?, ?)", (row["public_id"], course_id))
         return row["public_id"]
 
+    def chats(self) -> set[str]:
+        """Every course's chats: its main one and the others."""
+        return {r[0] for r in self.conn.execute("SELECT chat FROM courses WHERE chat IS NOT NULL UNION "
+                                                "SELECT chat FROM course_chats")}
+
     def chat_course(self, chat: str) -> int | None:
         """The course a chat is about: its main chat or one of the others."""
         row = self.conn.execute("SELECT id FROM courses WHERE chat = ? UNION ALL "

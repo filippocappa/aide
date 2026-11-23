@@ -247,9 +247,10 @@ class Agent:
             self.db.new_conversation(channel)
             shared = self.db.latest_conversation(channel)
         idle = utcnow() - datetime.fromisoformat(shared["last_active_at"]) >= self.idle
-        rows = [{"id": channel, "agent": ORCHESTRATOR, "title": SHARED_TITLE, "routine": None,
-                 "internal": None if idle else shared["id"], "updated_at": shared["last_active_at"]}]
+        rows = [{"id": channel, "agent": ORCHESTRATOR, "title": SHARED_TITLE, "routine": None, "pinned": False,
+                 "archived": False, "internal": None if idle else shared["id"], "updated_at": shared["last_active_at"]}]
         rows += [{"id": r["public_id"], "agent": r["agent"], "title": r["title"], "routine": r["routine"],
+                  "pinned": bool(r["pinned"]), "archived": r["archived_at"] is not None,
                   "internal": r["id"], "updated_at": r["last_active_at"]} for r in self.db.app_conversations()]
         rows.sort(key=lambda r: r["updated_at"], reverse=True)
         needle = (query or "").strip().casefold()
@@ -275,8 +276,8 @@ class Agent:
             self.db.append_turn(row["id"], "app", [{"role": "user", "content": note},
                                                    {"role": "assistant", "content": [{"type": "text", "text": opening}]}])
             row = self.db.app_conversation(row["public_id"])
-        return {"id": row["public_id"], "agent": row["agent"], "title": None, "routine": None, "preview": opening,
-                "updated_at": row["last_active_at"]}
+        return {"id": row["public_id"], "agent": row["agent"], "title": None, "routine": None, "pinned": False,
+                "archived": False, "preview": opening, "updated_at": row["last_active_at"]}
 
     async def post(self, conversation: str, note: str, text: str, attachments: list[dict] | None = None,
                    record: bool = True) -> None:
@@ -439,7 +440,8 @@ class Agent:
                       on_team: Callable[[dict], None] | None = None,
                       on_text: Callable[[str, bool], None] | None = None,
                       photos: list[str] | tuple[str, ...] = (), voice: bool = False,
-                      on_step: Callable[..., None] | None = None, files: list[str] | tuple[str, ...] = ()) -> Turn:
+                      on_step: Callable[..., None] | None = None, files: list[str] | tuple[str, ...] = (),
+                      written_at: datetime | None = None) -> Turn:
         """Like reply, plus the turn's cards and team talk. The conversation's own agent answers.
 
         `photos` are ids from the photo store, sent with the text (which may then be empty). The message stores a
@@ -454,6 +456,7 @@ class Agent:
         `on_text` gets the reply as it's written, piece by piece, and True with the first piece of a model round
         after one that called tools: the draft starts over (the reply is the last round's text).
         `voice`: the user said it in a voice chat, and the reply is read aloud; the stamp says so.
+        `written_at`: when the app had it written, for a message that waited offline (#80); the stamp says so.
         """
         conversation = self._key(channel, conversation)
         times = {"start": time.monotonic()}
@@ -485,7 +488,8 @@ class Agent:
             if reads:
                 with usage.labels(purpose="photo read", agent=agent, conversation=conversation or channel):
                     body += await self._describe(text)
-            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice, agent)}]
+            turn: list[dict] = [{"role": "user", "content": await self._stamp(channel, body, voice, agent,
+                                                                              written_at)}]
             picked = await route if route else None
             times["stamp"] = time.monotonic()
             self._plan = self._plan_tools = (agent in PLAN_CHATS and not voice and self.engine is not None
@@ -714,13 +718,15 @@ class Agent:
                 out[i] = {**m, "content": [*blocks, *parts]}
         return out
 
-    async def _stamp(self, channel: str, text: str, voice: bool = False, agent: str | None = None) -> str:
+    async def _stamp(self, channel: str, text: str, voice: bool = False, agent: str | None = None,
+                     written_at: datetime | None = None) -> str:
         """Stamped so the model never reuses a stale time from earlier in the conversation (with where the phone
-        is, when that's known, "by voice" for a spoken message, and the agent's own context), and shown the real
-        queue, which may differ from what it remembers queuing."""
+        is, when that's known, "by voice" for a spoken message, when it was written if it waited offline, and the
+        agent's own context), and shown the real queue, which may differ from what it remembers queuing."""
         where = await self.whereabouts() if self.whereabouts else None
         calendar = await self._agenda(agent) if voice else None
-        stamped = (f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{', ' + where if where else ''}"
+        stamped = (f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{_written(written_at, self.tz)}"
+                   f"{', ' + where if where else ''}"
                    f"{_spoken(text) if voice else ''}{self._context(agent)}{', ' + calendar if calendar else ''}] {text}")
         # Not on a spoken turn: Haiku brought the queue up in every spoken reply ("the move still waits for your
         # OK"), and a call asks the yes or no itself (livecall.py); what it queued is in the turns before.
@@ -1516,6 +1522,19 @@ def _cut_old_results(history: list[dict]) -> list[dict]:
             m = {**m, "content": blocks}
         out.append(m)
     return out
+
+
+def _written(at: datetime | None, tz) -> str:
+    """", written 22:10 while offline" for a message the app held back a while (#80): times in it count from then.
+    Nothing for one sent within two minutes (or from the future, a clock off)."""
+    if at is None:
+        return ""
+    at = (at if at.tzinfo else at.replace(tzinfo=tz)).astimezone(tz)
+    now = datetime.now(tz)
+    if not timedelta(minutes=2) <= now - at <= timedelta(days=30):
+        return ""
+    when = f"{at:%H:%M}" if at.date() == now.date() else f"{at:%a %d %b %H:%M}"
+    return f", written {when} while offline"
 
 
 def _spoken(text: str) -> str:
