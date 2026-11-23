@@ -496,7 +496,7 @@ struct VoiceCall: Decodable, Equatable, Hashable {
 }
 
 /// Whether the server makes live calls.
-struct VoiceStatus: Decodable {
+struct VoiceStatus: Decodable, Equatable {
     /// The server can make a call now.
     let live: Bool
     /// The Live calls setting, on the server for every device. Older servers: absent (on).

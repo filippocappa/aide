@@ -1252,6 +1252,8 @@ struct ReviewStartCard: View {
     let session: ReviewSession
     @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var voice: VoiceController
+    /// Live calls off: no "By voice" (#82).
+    @EnvironmentObject private var env: AppEnvironment
     @State private var studying: StudyTarget?
 
     private var when: String? {
@@ -1288,13 +1290,16 @@ struct ReviewStartCard: View {
                         .foregroundStyle(Theme.onAccent)
                         .background(Theme.accent, in: Capsule())
                 }
-                Button { Task { await voice.start(saying: "Quiz me") } } label: {
-                    Label("By voice", systemImage: "waveform")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .foregroundStyle(Theme.accent)
-                        .background(Theme.background.opacity(0.6), in: Capsule())
+                if !env.talkOff {
+                    Button { Task { await voice.start(saying: "Quiz me") } } label: {
+                        Label("By voice", systemImage: "waveform")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .foregroundStyle(Theme.accent)
+                            .background(Theme.background.opacity(0.6), in: Capsule())
+                    }
+                    .disabled(env.talkLoading)
                 }
             }
             .buttonStyle(.plain)

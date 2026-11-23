@@ -350,8 +350,10 @@ def test_turning_live_calls_off_and_on():
     async def switch(on):
         switched.append(on)
     connect.engine, connect.switch = "local", switch
-    client = TestClient(create_app(agent, store, FakeCalendar([]), ROME, TOKEN,
-                                   calls=LiveCalls(agent, db.conn, connect)))
+    calls = LiveCalls(agent, db.conn, connect)
+    synced = []
+    calls.on_change.append(lambda: synced.append(calls.as_json()["live"]))  # the silent sync push (#82)
+    client = TestClient(create_app(agent, store, FakeCalendar([]), ROME, TOKEN, calls=calls))
     assert client.get("/v1/voice", headers=AUTH).json() == {"live": True, "enabled": True, "engine": "local",
                                                             "loading": False}
     off = client.put("/v1/voice", headers=AUTH, json={"enabled": False}).json()
@@ -368,3 +370,8 @@ def test_turning_live_calls_off_and_on():
         time.sleep(0.01)
     assert switched == [False, True]
     assert client.get("/v1/voice", headers=AUTH).json()["live"] is True
+    for _ in range(50):
+        if len(synced) == 3:
+            break
+        time.sleep(0.01)
+    assert synced == [False, False, True]  # off, on (loading), and again once the voice is ready

@@ -506,6 +506,8 @@ def main() -> None:
                            if settings.openrouter_api_key else None)
             voice = live_voice(settings)
             calls = LiveCalls(agent, db.conn, voice, settings.live_idle_minutes)
+            if push.enabled:
+                calls.on_change.append(push.request_sync)  # the phone hides or shows Talk (#82)
             if not calls.enabled and calls.switch:  # off in the app: nothing loaded, Chatterbox stopped
                 jobs.append(calls.settle())
             elif warm := getattr(voice, "warm", None):

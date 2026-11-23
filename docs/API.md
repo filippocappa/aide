@@ -277,6 +277,11 @@ calls now, else use `/v1/transcribe` and `/v1/chat` as above. Since 2026-11-21 (
 the local voice lets its models go and stops its service, so cappa has the memory back (~3 GB; all of it after the
 next restart); on loads them again in the background (`loading`).
 
+Since 2026-11-23 (#82), a change to the setting sends the silent `sync` push, and on sends it again once the voice has
+loaded, so every phone knows without opening Settings. The apps read `GET /v1/voice` at launch, on coming forward and
+on that push; while `enabled` is `false` they show no Talk (the message box's Talk, `/voice`, Quiz me by voice, the
+Team tab's microphone), only dictation; while `loading`, Talk is greyed with a spinner.
+
 `WS /v1/voice/call?conversation=c_91f…` with `Authorization: Bearer <token>`. An app chat only (not `main`); a bad
 token or an unknown chat is closed with 1008, calls off with 1011. A second call in the same chat ends the first
 (`ended` with `"replaced"`).
@@ -3291,7 +3296,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 
 | `aide.kind` | Type | When | Extra fields | On tap |
 |---|---|---|---|---|
-| `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server, a habit with `health` was counted, a meal or a Screen Time lock changed | | (not shown) the app runs a reminders sync, writes `health_logged` and meals to Health, and sets the locks |
+| `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server, a habit with `health` was counted, a meal or a Screen Time lock changed, live calls turned on or off (and the voice ready) | | (not shown) the app runs a reminders sync, writes `health_logged` and meals to Health, sets the locks, and reads `GET /v1/voice` |
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
 | `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens Today on the digest (since 2026-10-26; before: a new chat with it) |
 | `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal; or a chat reply finished after the app hung up on the stream (since 2026-10-29; title the agent's name, body the reply's first line; since 2026-10-30 also when a Live Activity was there, which the server ends first) | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |

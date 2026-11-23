@@ -709,6 +709,9 @@ class LiveCalls:
         self.engine: str | None = getattr(connect, "engine", None) if connect else None
         self.switch: Callable[[bool], Awaitable[None]] | None = getattr(connect, "switch", None)
         self._switching: asyncio.Task | None = None
+        # Called when the setting changes and when the voice is ready after it was turned on: the apps hide or show
+        # Talk (the silent `sync` push, #82).
+        self.on_change: list[Callable[[], None]] = []
         conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 
     @property
@@ -739,6 +742,16 @@ class LiveCalls:
         if self.switch:
             previous = self._switching
             self._switching = asyncio.create_task(self._switch(enabled, previous))
+            if enabled:
+                self._switching.add_done_callback(lambda _: self._changed())  # loaded: Talk is ready
+        self._changed()
+
+    def _changed(self) -> None:
+        for listener in self.on_change:
+            try:
+                listener()
+            except Exception:
+                log.exception("live calls: a change listener failed")
 
     async def settle(self) -> None:
         """At the service's start: the voice as the setting says (off: nothing loaded, the voice's service stopped)."""

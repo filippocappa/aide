@@ -465,7 +465,9 @@ private struct VoiceSettingsView: View {
             Section {
                 Toggle("Read replies aloud", isOn: $settings.speakReplies).tint(Theme.toggle)
             } footer: {
-                Text("Tap Talk in a chat to talk to Aide. It answers out loud and keeps listening until you tap stop.")
+                Text(liveCalls.wrappedValue || status == nil
+                     ? "Tap Talk in a chat to talk to Aide. It answers out loud and keeps listening until you tap stop."
+                     : "With live calls off there's no Talk in chats, only the microphone to dictate. Turn them on above to talk to Aide.")
             }
         }
         .scrollContentBackground(.hidden)
@@ -480,9 +482,9 @@ private struct VoiceSettingsView: View {
         if status?.loading == true { return "Loading the voice on the server, about a minute." }
         let what = "Talking is like a phone call: Aide answers as soon as you've finished, says what it's doing while it works, and stops when you talk over it. Say “bye” to hang up."
         if status?.engine == "local" {
-            return what + " Off, the server lets its voice models go (about 3 GB of memory) and Aide answers a turn at a time, as below. For every device."
+            return what + " Off, chats have no Talk, only dictation, and the server lets its voice models go (about 3 GB of memory). For every device."
         }
-        return what + " Off, Aide answers a turn at a time, as below. For every device."
+        return what + " Off, chats have no Talk, only dictation. For every device."
     }
 
     private var liveCalls: Binding<Bool> {

@@ -7,6 +7,8 @@ struct AgentInfoSheet: View {
     enum Action { case newChat, starter(String), pastChats, routines, activity, quiz, quizByVoice, practiceExam }
 
     @EnvironmentObject private var chat: ChatViewModel
+    /// Live calls off: no "Quiz me by voice" (#82).
+    @EnvironmentObject private var env: AppEnvironment
     let agent: Agent
     /// Nil: a profile to read only, without the buttons.
     var act: ((Action) -> Void)?
@@ -150,8 +152,11 @@ struct AgentInfoSheet: View {
                 Button { act(.quiz) } label: {
                     linkRow("Quiz me", icon: "rectangle.on.rectangle.angled", detail: "Flashcards, questions, answers in your words")
                 }
-                RowDivider(leading: 52)
-                Button { act(.quizByVoice) } label: { linkRow("Quiz me by voice", icon: "waveform", detail: "Professor asks out loud") }
+                if !env.talkOff {
+                    RowDivider(leading: 52)
+                    Button { act(.quizByVoice) } label: { linkRow("Quiz me by voice", icon: "waveform", detail: "Professor asks out loud") }
+                        .disabled(env.talkLoading)
+                }
                 RowDivider(leading: 52)
                 Button { act(.practiceExam) } label: { linkRow("Practice exam", icon: "checklist") }
             }

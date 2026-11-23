@@ -6,6 +6,8 @@ struct ChatView: View {
     @EnvironmentObject private var voice: VoiceController
     @EnvironmentObject private var dictation: Dictation
     @EnvironmentObject private var digest: DigestViewModel
+    /// Live calls on or off (Settings → Voice): Talk only while they're on (#82).
+    @EnvironmentObject private var env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
     @State private var showPastChats = false
@@ -455,9 +457,11 @@ struct ChatView: View {
             list.append(SlashCommand(name: "think", summary: chat.smart ? "Back to the usual model" : "Think harder here",
                                      icon: "brain") { _ in Task { await chat.setSmart(!chat.smart) } })
         }
-        list.append(SlashCommand(name: "voice", summary: "Talk instead of typing", icon: "waveform") { _ in
-            Task { await voice.toggle() }
-        })
+        if !env.talkOff {
+            list.append(SlashCommand(name: "voice", summary: "Talk instead of typing", icon: "waveform") { _ in
+                Task { await voice.toggle() }
+            })
+        }
         if !chat.pending.isEmpty {
             list.append(SlashCommand(name: "confirm", summary: "Do what's waiting", icon: "checkmark.circle") { _ in
                 Task { await chat.confirm() }
@@ -602,23 +606,32 @@ struct ChatView: View {
         draft = typed.isEmpty ? text : typed + " " + text
     }
 
+    /// Talk while the box is empty and live calls are on (a voice chat on now can always be stopped); else send.
     @ViewBuilder private var sendOrTalk: some View {
-        if showsMic {
-                Button { Task { await voice.toggle() } } label: {
-                    Label("Talk", systemImage: voice.isActive ? "stop.fill" : "waveform")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.onAccent)
-                        .padding(.horizontal, 14)
-                        .frame(height: 34)
-                        .tintedGlass(Theme.accent, in: Capsule())
+        if showsMic, voice.isActive || !env.talkOff {
+            let loading = env.talkLoading && !voice.isActive // just turned on: the voice is still loading
+            Button { Task { await voice.toggle() } } label: {
+                HStack(spacing: 6) {
+                    if loading {
+                        ProgressView().controlSize(.small).tint(Theme.onAccent)
+                    } else {
+                        Image(systemName: voice.isActive ? "stop.fill" : "waveform")
+                    }
+                    Text("Talk")
                 }
-                .buttonStyle(.plain)
-                .disabled(dictation.isActive)
-                .opacity(dictation.isActive ? 0.4 : 1)
-                .accessibilityLabel(voice.isActive ? "Stop voice chat" : "Talk to \(chat.agent.name)")
-            } else {
-                SendButton(enabled: canSend, action: sendDraft)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.onAccent)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .tintedGlass(Theme.accent, in: Capsule())
             }
+            .buttonStyle(.plain)
+            .disabled(dictation.isActive || loading)
+            .opacity(dictation.isActive || loading ? 0.4 : 1)
+            .accessibilityLabel(voice.isActive ? "Stop voice chat" : loading ? "Voice loading" : "Talk to \(chat.agent.name)")
+        } else {
+            SendButton(enabled: canSend, action: sendDraft)
+        }
     }
 
     private func sendDraft() {

@@ -95,6 +95,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Task {
             await env.sync.sync()
             await env.screenTime.sync()
+            await env.refreshVoice() // live calls turned on or off on another device: Talk shows or hides
             await env.health.writeLogged()
             await env.health.writeMeals()
             await env.health.writeWeights()

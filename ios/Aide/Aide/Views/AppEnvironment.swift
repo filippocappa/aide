@@ -108,18 +108,46 @@ final class AppEnvironment: ObservableObject {
         digest.completeReminder = { [weak sync] reminder, done in await sync?.setCompleted(reminder, done) ?? false }
     }
 
-    /// The server's answer to "do you make live calls?", for a few minutes: asked when you start talking.
-    private var callsChecked: (live: Bool, at: Date)?
+    /// Live calls as the server last said (docs/API.md, "Voice calls"): read at launch, on coming forward, on a
+    /// `sync` push and when Settings → Voice changes them. nil until it answers.
+    @Published private(set) var voiceStatus: VoiceStatus?
+    private var voiceCheckedAt: Date?
+    /// While the voice loads after being turned on: asks again until it's ready.
+    private var voiceWatch: Task<Void, Never>?
 
-    /// Live calls turned on or off in Settings → Voice: the next Talk goes by what the server said.
+    /// Live calls off in Settings → Voice: no Talk anywhere, only dictation (#82). Not known yet: Talk shows.
+    var talkOff: Bool { voiceStatus?.enabled == false }
+    /// Just turned on, the voice still loading: Talk is greyed with a spinner.
+    var talkLoading: Bool { voiceStatus?.loading == true }
+
+    /// Live calls on or off, again from the server.
+    func refreshVoice() async {
+        guard settings.isConfigured, !settings.isPreview else { return }
+        guard let status = try? await api.voiceStatus() else { return } // unreachable: keep what we knew
+        voiceChanged(status)
+    }
+
+    /// What the server said about live calls (here, or from Settings → Voice): the next Talk goes by it.
     func voiceChanged(_ status: VoiceStatus) {
-        callsChecked = (status.live, .now)
+        voiceStatus = status
+        voiceCheckedAt = .now
+        guard status.loading == true, voiceWatch == nil else { return }
+        voiceWatch = Task { [weak self] in
+            while let self, self.voiceStatus?.loading == true, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if let fresh = try? await self.api.voiceStatus() {
+                    self.voiceStatus = fresh
+                    self.voiceCheckedAt = .now
+                }
+            }
+            self?.voiceWatch = nil
+        }
     }
 
     private func serverMakesCalls() async -> Bool {
-        if let checked = callsChecked, checked.at > .now.addingTimeInterval(-300) { return checked.live }
+        if let status = voiceStatus, let at = voiceCheckedAt, at > .now.addingTimeInterval(-300) { return status.live }
         guard let status = try? await api.voiceStatus() else { return false } // unreachable: the turns say why
-        callsChecked = (status.live, .now)
+        voiceChanged(status)
         return status.live
     }
 
@@ -151,6 +179,7 @@ final class AppEnvironment: ObservableObject {
         async let digestLoad: Void = digest.loadLatest()
         async let pushRefresh: Void = push.refresh()
         async let healthUpload = health.upload()
+        async let voiceLoad: Void = refreshVoice()
         location.refresh()
         live.appBecameActive()
         await sync.sync()
@@ -161,6 +190,7 @@ final class AppEnvironment: ObservableObject {
         await conversations
         await digestLoad
         await pushRefresh
+        await voiceLoad
         _ = await healthUpload
         await health.writeLogged()
         await health.writeMeals()
@@ -189,8 +219,10 @@ final class AppEnvironment: ObservableObject {
             if chat.conversations.isEmpty { await chat.loadConversations() }
             await chat.talk(to: chat.agent(id))
         case .voice:
+            let off = talkOff // live calls off: the widget's Talk opens the box to type
+            if off { chat.typeOnOpen = true }
             await chat.newChat(with: chat.orchestrator)
-            if !voice.isActive { await voice.toggle() }
+            if !off, !voice.isActive { await voice.toggle() }
         case .errand(let id):
             guard let errand = try? await api.errand(id) else { return }
             if errand.needsLiveView {

@@ -46,7 +46,7 @@ struct ChatsView: View {
                              loading: loading,
                              open: { Task { await chat.talk(to: chat.orchestrator) } },
                              write: { Task { chat.typeOnOpen = true; await chat.startChat(with: chat.orchestrator) } },
-                             talk: { Task { await chat.startChat(with: chat.orchestrator); await env.voice.toggle() } })
+                             talk: env.talkOff ? nil : { Task { await chat.startChat(with: chat.orchestrator); await env.voice.toggle() } })
                         .disabled(!settings.isConfigured)
                         .contextMenu { menu(chat.orchestrator) }
                     VStack(spacing: 0) {
@@ -215,7 +215,8 @@ private struct AideCard: View {
     var loading = false
     let open: () -> Void
     let write: () -> Void
-    let talk: () -> Void
+    /// Nil while live calls are off (#82): no microphone, only the box to write in.
+    let talk: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 14) {
@@ -241,14 +242,16 @@ private struct AideCard: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Starts a new chat")
-                Button(action: talk) {
-                    Image(systemName: "mic.fill")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 44, height: 40)
-                        .contentShape(Rectangle())
+                if let talk {
+                    Button(action: talk) {
+                        Image(systemName: "mic.fill")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Talk to \(agent.name)")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Talk to \(agent.name)")
             }
             .background(Theme.chip, in: Capsule())
         }
