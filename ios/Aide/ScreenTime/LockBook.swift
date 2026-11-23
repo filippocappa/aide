@@ -70,10 +70,8 @@ enum LockBook {
     static func apps(for id: Int) -> LockApps {
         let lock = locks.first { $0.id == id }
         if lock?.focus != nil { return LockApps(only: false, selection: focusAllowed) }
-        // A list this phone has picked; one it hasn't falls back to the lock's own apps, so it never opens anything.
-        if let list = lock?.list, let picked = listApps[list], picked != FamilyActivitySelection() {
-            return LockApps(only: true, selection: picked)
-        }
+        // A list locks only what this phone picked for it: nothing until it's picked.
+        if let list = lock?.list { return LockApps(only: true, selection: listApps[list] ?? FamilyActivitySelection()) }
         return apps[id] ?? LockApps(only: false, selection: allowed)
     }
 

@@ -2586,8 +2586,8 @@ A list (since 2026-11-23) names a set of apps once, for any lock, limit or ratio
 empty at the first start). The server keeps its `name` and the Mac's apps (`mac`: bundle IDs and `"site:youtube.com"`
 entries, which aren't secret, so an agent or another Mac can fill them); the phone keeps its own pick of each list
 (Apple's tokens, per list id) and says nothing back. A lock, limit or ration with a `list` covers that list's apps
-on each device: on a phone that hasn't picked the list yet, a lock falls back to its own apps or the usual ones (so a
-list never opens what was locked), a limit or ration counts nothing.
+on each device: only the list's own apps there, so on a device that hasn't picked the list yet (or a Mac list with no
+`mac` entries) it locks and counts nothing.
 
 | Endpoint | Body | Response |
 |---|---|---|

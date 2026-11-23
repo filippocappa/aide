@@ -733,8 +733,8 @@ private struct MacListPicker: View {
         guard let list = screenTime.list(id) else { return "" }
         let apps = MacApp.sorted(Set(list.mac)).map(\.name)
         if apps.isEmpty {
-            return "\(list.name) has no apps on this Mac yet: add them under App lists. Until then a lock falls back to "
-                + "its own apps, and a limit or ration counts nothing here."
+            return "\(list.name) has no apps on this Mac yet: add them under App lists. Until then it locks and counts "
+                + "nothing here."
         }
         let names = apps.count <= 4 ? apps.formatted(.list(type: .and))
             : "\(apps.prefix(3).joined(separator: ", ")) and \(apps.count - 3) more"

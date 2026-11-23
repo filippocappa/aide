@@ -729,8 +729,8 @@ private struct ListPicker: View {
     static func footer(_ screenTime: ScreenTimeService, _ id: Int?) -> String {
         let name = screenTime.list(id)?.name ?? "The list"
         guard let picked = screenTime.listPick(id) else {
-            return "\(name) has no apps on this phone yet: pick them under App lists. Until then a lock falls back "
-                + "to its own apps, and a limit or ration counts nothing here."
+            return "\(name) has no apps on this phone yet: pick them under App lists. Until then it locks and counts "
+                + "nothing here."
         }
         return "\(name): \(LockApps(only: true, selection: picked).text.lowercased()) on this phone (change them under "
             + "App lists). The Mac uses its own pick of the same list."

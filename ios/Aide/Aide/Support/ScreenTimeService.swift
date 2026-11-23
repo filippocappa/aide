@@ -76,12 +76,12 @@ final class ScreenTimeService: ObservableObject {
     var focusInUse: Bool { locks.contains { $0.focus != nil && LockClock.until($0) != nil } }
     /// A lock on now uses the usual apps: they can't change until it's over (that would be unlocking early).
     var usualInUse: Bool {
-        locks.contains { $0.focus == nil && apps[$0.id] == nil && listPick($0.list) == nil && LockClock.until($0) != nil }
+        locks.contains { $0.focus == nil && apps[$0.id] == nil && $0.list == nil && LockClock.until($0) != nil }
     }
 
     func apps(for lock: ScreenLock) -> LockApps {
         if lock.focus != nil { return LockApps(only: false, selection: LockBook.focusAllowed) }
-        if let picked = listPick(lock.list) { return LockApps(only: true, selection: picked) }
+        if let list = lock.list { return LockApps(only: true, selection: listApps[list] ?? FamilyActivitySelection()) }
         return apps[lock.id] ?? LockApps(only: false, selection: allowed)
     }
 

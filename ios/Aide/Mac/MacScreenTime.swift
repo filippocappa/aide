@@ -98,8 +98,8 @@ final class ScreenTimeService: ObservableObject {
             return Set(test.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
         }
         #endif
-        // A list with Mac apps; one without falls back to the lock's own, so a list never opens what was locked.
-        if let mac = listApps(lock.list), !mac.isEmpty { return mac }
+        // A list locks only its Mac apps: nothing while it has none.
+        if let mac = listApps(lock.list) { return mac }
         return lockApps[lock.id] ?? usualApps
     }
 
@@ -386,7 +386,7 @@ final class ScreenTimeService: ObservableObject {
     /// A lock that uses the usual apps is on: they can't change until it's over.
     var usualInUse: Bool {
         locks.contains { lock in
-            lock.focus == nil && lockApps[lock.id] == nil && (listApps(lock.list) ?? []).isEmpty && LockClock.until(lock) != nil
+            lock.focus == nil && lockApps[lock.id] == nil && lock.list == nil && LockClock.until(lock) != nil
         }
     }
 
