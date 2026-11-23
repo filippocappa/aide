@@ -2582,7 +2582,7 @@ so it never touches the phone's estimate). `reached_today` is whichever reached 
 
 ### App lists
 
-A list (since 2026-11-23) names a set of apps once, for any lock, limit or ration to use: "Lavoro", "Sonno" (both made
+A list (since 2026-11-23) names a set of apps once, for any lock, limit or ration to use: "Work", "Sleep" (both made
 empty at the first start). The server keeps its `name` and the Mac's apps (`mac`: bundle IDs and `"site:youtube.com"`
 entries, which aren't secret, so an agent or another Mac can fill them); the phone keeps its own pick of each list
 (Apple's tokens, per list id) and says nothing back. A lock, limit or ration with a `list` covers that list's apps
@@ -2591,7 +2591,7 @@ on each device: only the list's own apps there, so on a device that hasn't picke
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `GET /v1/locks` | | carries `"lists": [{"id": 1, "name": "Lavoro", "mac": ["com.valvesoftware.steam", "site:youtube.com"]}]` |
+| `GET /v1/locks` | | carries `"lists": [{"id": 1, "name": "Work", "mac": ["com.valvesoftware.steam", "site:youtube.com"]}]` |
 | `POST /v1/lists` | `{"name": "Giochi", "mac": []}` | the list |
 | `PATCH /v1/lists/{id}` | any of `{"name", "mac"}` (`mac` replaces the whole list) | the list; `400` taking Mac apps out while a lock or limit using it holds (adding is fine) |
 | `DELETE /v1/lists/{id}` | | `{"ok": true}`; what used it goes back to each device's own pick; `400` while a lock or limit using it holds |

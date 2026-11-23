@@ -237,7 +237,7 @@ struct MacScreenTimeView: View {
         } header: {
             Text("App lists")
         } footer: {
-            Text("A set of apps and websites, named once, for any lock, limit or ration: Lavoro, Sonno. The phone has "
+            Text("A set of apps and websites, named once, for any lock, limit or ration: Work, Sleep. The phone has "
                  + "its own pick of each. For Work Focus: System Settings → Focus → Work → Add Filter → Aide, and "
                  + "choose a list" + (screenTime.list(screenTime.focusFilterList).map { " (now: \($0.name))" } ?? "") + ".")
         }

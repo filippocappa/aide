@@ -237,7 +237,7 @@ struct ScreenTimeView: View {
         } header: {
             Text("App lists")
         } footer: {
-            Text("Pick a set of apps once and use it in any lock, limit or ration: Lavoro, Sonno. Each device has its "
+            Text("Pick a set of apps once and use it in any lock, limit or ration: Work, Sleep. Each device has its "
                  + "own pick (the Mac's are in its Settings). For Work Focus: iOS Settings → Focus → Work → Add "
                  + "Filter → Aide, and choose a list.")
         }

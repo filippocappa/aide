@@ -7,7 +7,7 @@ shielded is chosen on the phone: Apple doesn't let it leave there.
 A strict lock can't be ended early with a reason, from the app or through Coach: only with an emergency pass, of
 which there are PASSES a month. While one is on, the app locks its Screen Time page too.
 
-Lists ("Lavoro", "Sonno") name a set of apps once, for any lock, limit or ration to use: the server keeps the name
+Lists ("Work", "Sleep") name a set of apps once, for any lock, limit or ration to use: the server keeps the name
 and the Mac's apps (bundle IDs and "site:" entries, which aren't secret); the phone keeps its own pick of the list.
 A ration lets its apps open only so many times a day: each open lasts while they're used and ends once they've been
 closed `gap` minutes; the phone and the Mac spend the same day's opens.
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS screen_days (
 """
 
 LIMIT_SHORTEST, LIMIT_LONGEST = 5, 12 * 60  # minutes a day
-LIST_SEEDS = ("Lavoro", "Sonno")  # made once, empty: the user picks their apps
+LIST_SEEDS = ("Work", "Sleep")  # made once, empty: the user picks their apps
 LIST_MOST = 300  # Mac entries in a list
 OPENS_MOST = 20  # a ration's opens a day
 GAP_SHORTEST, GAP_LONGEST, GAP_USUAL = 2, 30, 3  # minutes closed that end an open (the phone checks each minute)

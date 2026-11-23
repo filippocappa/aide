@@ -7,7 +7,7 @@ import Foundation
 /// quits its apps (`MacScreenTime`). No server part: each device has its own filter.
 struct AideFocusFilter: SetFocusFilterIntent {
     static var title: LocalizedStringResource = "Lock an app list"
-    static var description: IntentDescription? = "While this Focus is on, Aide locks the apps of a list you pick (Lavoro)."
+    static var description: IntentDescription? = "While this Focus is on, Aide locks the apps of a list you pick (Work)."
 
     @Parameter(title: "List")
     var list: ScreenListEntity?

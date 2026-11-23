@@ -291,7 +291,7 @@ def test_coachs_screen_line_says_what_holds_or_comes_next(store):
 
 
 def test_lists_seeded_and_used_by_locks_and_limits(store):
-    assert [x["name"] for x in store.lists()] == ["Lavoro", "Sonno"]
+    assert [x["name"] for x in store.lists()] == ["Work", "Sleep"]
     assert LockStore(store.conn, ROME).lists() == store.lists()  # seeded once, not again on the next start
     sonno = store.lists()[1]
     sonno = store.update_list(sonno["id"], mac=["com.valvesoftware.steam", " site:youtube.com ", "com.valvesoftware.steam"])
@@ -316,7 +316,7 @@ def test_lists_seeded_and_used_by_locks_and_limits(store):
     assert store.limit_json(limit)["list"] == sonno["id"]
     store.delete_list(sonno["id"], now=at("2026-10-28T12:00"))
     assert store.get_limit(limit["id"])["list_id"] is None
-    assert [x["name"] for x in store.lists()] == ["Lavoro"]
+    assert [x["name"] for x in store.lists()] == ["Work"]
 
 
 def test_rations_count_the_days_opens(store):
@@ -353,7 +353,7 @@ def test_rations_count_the_days_opens(store):
 def test_api_lists_and_rations(client):
     got = client.get("/v1/locks", headers=AUTH).json()
     lavoro = got["lists"][0]
-    assert lavoro == {"id": lavoro["id"], "name": "Lavoro", "mac": []} and got["rations"] == []
+    assert lavoro == {"id": lavoro["id"], "name": "Work", "mac": []} and got["rations"] == []
     made = client.post("/v1/lists", json={"name": "Games", "mac": ["com.valvesoftware.steam"]}, headers=AUTH).json()
     assert made["mac"] == ["com.valvesoftware.steam"]
     assert client.patch(f"/v1/lists/{made['id']}", json={"name": "Giochi"}, headers=AUTH).json()["name"] == "Giochi"

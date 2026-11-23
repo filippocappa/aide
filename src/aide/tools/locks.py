@@ -180,7 +180,7 @@ def lock_tools(store: LockStore, tz: ZoneInfo, agent: str = "coach") -> list[Too
             "description": "ISO weekdays it starts on, 1 = Monday … 7 = Sunday; [] for every day"}
     strict = {"type": "boolean", "description": "only when the user asks for it: once on, it can't be ended early "
               f"from chat or with a reason, only with one of the {PASSES} emergency passes a month, in the app"}
-    applist = {"type": "string", "description": "an app list's name from list_locks (Lavoro, Sonno): it locks those "
+    applist = {"type": "string", "description": "an app list's name from list_locks (Work, Sleep): it locks those "
                "apps; leave out for the usual ones"}
     return [
         Tool("list_locks", "List the Screen Time locks: id in brackets, title, when, whether it's on now, who set it; "
