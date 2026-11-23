@@ -1,12 +1,15 @@
 import AppKit
+import Combine
 import UserNotifications
 
 /// APNs on the Mac (docs/API.md, Push, `app: "mac"`): the device token and taps on notifications. The Mac gets the
 /// alert pushes only; the silent ones (reminders sync, location) are the phone's, so there's nothing to run here.
 final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     @MainActor var env: AppEnvironment { .shared }
-    /// Covers the apps a Screen Time lock covers while it holds.
+    /// Covers the apps a Screen Time lock covers while it holds, while Aide Guard doesn't (`MacGuard`).
     @MainActor private var shield: MacShield?
+    @MainActor private var guardWatch: MacGuardWatch?
+    @MainActor private var serverChanges: AnyCancellable?
 
     /// Aide's windows never go in tabs (Aide is one window, its lessons and quizzes cards in it). Off for the whole
     /// app, before any window opens.
@@ -16,7 +19,15 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
 
     @MainActor func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
-        shield = MacShield(screenTime: env.screenTime)
+        MacGuard.register()
+        guardWatch = MacGuardWatch { [weak self] runs in self?.enforce(here: !runs) }
+        // A new server or token in Settings: the Guard gets it too.
+        serverChanges = env.settings.objectWillChange
+            .debounce(for: .seconds(1), scheduler: RunLoop.main)
+            .map { [weak self] _ in self?.env.settings.apiConfig }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { MacGuard.handOff($0) }
         MacLoginItem.setUpOnce()
         MacPeek.shared.start()
         MacCourseFolders.shared.start()
@@ -36,12 +47,29 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    /// A strict lock holds until its end: Quit (⌘Q, the Dock, the menu bar panel) is refused while one is on, since
-    /// only Aide enforces it here. Any other lock asks first: quitting is what left Bedtime unenforced one night
-    /// (#85). Logging out, restarting and shutting down still go through, and Force Quit always works: it's a
-    /// commitment, not a jail.
+    /// Screen Time here (shield and counting) only while Aide Guard isn't running; when it is, the Guard gets the
+    /// server and does both.
+    @MainActor private func enforce(here: Bool) {
+        env.screenTime.enforces = here
+        if here {
+            guard shield == nil else { return }
+            MacUsage.shared.start()
+            shield = MacShield(screenTime: env.screenTime)
+        } else {
+            shield?.stop()
+            shield = nil
+            MacUsage.shared.follow()
+            MacGuard.handOff(env.settings.apiConfig)
+        }
+    }
+
+    /// While Aide Guard runs, quitting changes nothing for the locks. Without it (turned off in Login Items), a strict
+    /// lock holds until its end: Quit (⌘Q, the Dock, the menu bar panel) is refused while one is on, since then only
+    /// Aide enforces it here, and any other lock asks first: quitting is what left Bedtime unenforced one night (#85).
+    /// Logging out, restarting and shutting down still go through, and Force Quit always works: it's a commitment,
+    /// not a jail.
     @MainActor func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !Self.systemIsEnding else { return .terminateNow }
+        guard !Self.systemIsEnding, shield != nil else { return .terminateNow }
         if let (lock, until) = env.screenTime.strictOn {
             let alert = NSAlert()
             alert.messageText = "Aide stays open during a strict lock"

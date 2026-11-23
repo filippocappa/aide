@@ -84,10 +84,7 @@ struct MacGlanceCard: View {
     }
 
     /// "07:00" today, else "Sat 07:00" (as the phone's Screen Time page says it).
-    static func time(_ date: Date) -> String {
-        Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened)
-            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
-    }
+    static func time(_ date: Date) -> String { MacHold.time(date) }
 }
 
 /// One score as a small ring with its number, filling from empty.

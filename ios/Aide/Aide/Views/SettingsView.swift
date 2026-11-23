@@ -79,7 +79,10 @@ struct SettingsView: View {
                 } header: {
                     Text("This Mac")
                 } footer: {
-                    Text("Aide counts this Mac's screen time and holds its limits only while it runs. "
+                    Text((MacGuard.isOn
+                          ? "Aide Guard counts this Mac's screen time and holds its locks and limits, with Aide open or not. "
+                          : "Aide Guard is off in System Settings → General → Login Items, so Aide counts this Mac's "
+                            + "screen time and holds its locks and limits only while it runs. ")
                          + "Hold \(MacPeek.shortcut) to see Aide over any app, full-screen ones too; tap it to keep it open. "
                          + "Peek needs Aide on in Privacy & Security → Accessibility.")
                 }

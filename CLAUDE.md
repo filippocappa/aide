@@ -227,16 +227,25 @@ the phone sent; a reminder ticked on the Mac goes through the server and the pho
   this Mac (`MacLockApps`). `Mac/MacShield.swift` quits a covered app when it opens or comes forward (hides it if it
   won't quit) and Pebble pops up asleep over its Dock icon with Open anyway. Settings → This Mac → Screen Time
   (`Mac/MacScreenTimeView.swift`): Lock now, the usual apps, weekly locks with their own apps. Debug builds:
-  `-shieldTest 2` adds a local 2-minute lock. During a strict lock Quit is refused (`applicationShouldTerminate`;
-  logging out and shutting down still quit, Force Quit always works); during any other lock it asks first (#85: a quit
-  Aide left Bedtime unenforced). After installing over /Applications/Aide.app, open it again: nothing else does.
+  `-shieldTest 2` adds a local 2-minute lock.
+  Aide Guard (#85, 2026-11-23, `Mac/MacGuard.swift`, `Guard/`): a quit Aide left Bedtime unenforced, so the shield,
+  Pebble's nudge and `MacUsage`'s counting run in a helper, `AideGuard.app` in Aide.app's `Contents/Library/LoginItems`,
+  a LaunchAgent (`SMAppService.agent`, KeepAlive; its plist written at build time by AideMac's script phase) that
+  launchd starts at login and again whenever it stops, and that restarts itself when a new Aide is installed. It's
+  registered only from /Applications. The app hands it the server and token (a 0600 file it takes into its own keychain
+  items), both read the Mac's picks from the app's defaults (`MacGuard.defaults`), and each tells the other after a
+  change (`MacGuard.tell`, a distributed notification). While it runs the app's own shield and counting stand down and
+  Quit is free; turned off in Login Items, the app enforces while open: Quit refused in a strict lock, asked in any
+  other. Its own TCC asks (Automation per browser, Accessibility for the Dock icon) are "AideGuard". Debug locks for
+  it: `defaults write <id>.mac.guard shieldTest -int 2` (and `shieldApps`), `launchctl kickstart -k
+  gui/$(id -u)/<id>.mac.guard`, then `defaults delete` both. After installing over /Applications/Aide.app, open it again.
   Daily limits on the Mac (2026-11-01): the phone's limits, each with its own Mac apps (`MacLockApps.perLimit`),
   counted from this Mac's own time (`Mac/MacUsage.swift`) and held until midnight when used up (`MacHold` is a lock
   or a limit holding now, what the shield and the unlock sheet show); a hit goes to the server with `days: []`.
 - The Screen section (`Mac/MacScreenPage.swift`): the phone's Screen tab for this Mac, Day · Week · Month, Lock now and
   a gear (Locks and limits, ⇧⌘,) in the corner, a line under the date only while a lock or limit holds, the report drawn by the phone's `Usage/UsageReportView.swift` (shared;
-  on the Mac app icons come from the bundle ID). `MacUsage` records it while Aide runs (it opens at login,
-  `Mac/MacLoginItem.swift`, Settings → This Mac): every 5 s one app gets the time, so it's never doubled: the app in
+  on the Mac app icons come from the bundle ID). `MacUsage` records it in Aide Guard (the app reads the files; it
+  opens at login too, `Mac/MacLoginItem.swift`, Settings → This Mac): every 5 s one app gets the time, so it's never doubled: the app in
   front if touched in the last minute; else an app playing a video (it holds the display awake; `runningboardd` holds it
   for Safari's WebKit) up to 30 min, in front or on the other screen; else, still up to 5 min (reading), the app in
   front once you touch something again (dropped after 5 min). A video on the side also counts for the limits covering it

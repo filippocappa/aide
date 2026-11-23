@@ -2,7 +2,7 @@ import AppKit
 import IOKit.pwr_mgt
 
 /// Where this Mac's time goes, for the Screen page and the daily limits. Apple's Screen Time can't be read on the Mac,
-/// so Aide counts its own (while Aide runs; it opens at login). Every few seconds the time since the last look goes to
+/// so Aide counts its own (Aide Guard, from login, the app open or not). Every few seconds the time since the last look goes to
 /// one app, so the total is real time, never doubled by two screens:
 /// - touched in the last minute (a key, the pointer, a scroll): the app in front, where the focus is;
 /// - a video playing (an app keeping the display awake, as Safari does for a video, not for music), up to 30 minutes
@@ -15,6 +15,7 @@ import IOKit.pwr_mgt
 /// for the Websites list and for limits on sites; a browser Aide may not ask (or Firefox) is the app alone.
 /// A pickup is coming back after 5 minutes or more away, put on the first app used. Kept on this Mac only, a file a day
 /// in Application Support (120 days); nothing goes to the server but the limits reached.
+/// Aide Guard counts (`MacGuard`); the app counts only while the Guard isn't running, and otherwise reads the files.
 @MainActor
 final class MacUsage: ObservableObject {
     static let shared = MacUsage()
@@ -67,6 +68,9 @@ final class MacUsage: ObservableObject {
     private var days: [String: StoredDay] = [:]
     private var dirty = false
     private var timer: Timer?
+    /// Reading what another process counts (the Guard): today's file again each half minute.
+    private var follower: Timer?
+    private var loadedAt: [String: Date] = [:]
     private var lastTick = Date()
     /// A tick is waiting for the browsers' tabs.
     private var readingTabs = false
@@ -99,9 +103,14 @@ final class MacUsage: ObservableObject {
         watch(NotificationCenter.default, NSApplication.willTerminateNotification) { $0.save() }
     }
 
-    /// Starts counting (once).
+    /// Starts counting (once), from what's on disk.
     func start() {
         guard timer == nil else { return }
+        follower?.invalidate()
+        follower = nil
+        days = [:]
+        loadedAt = [:]
+        pending = []
         lastTick = Date()
         let timer = Timer(timeInterval: Self.interval, repeats: true) { _ in
             Task { @MainActor in MacUsage.shared.tick() }
@@ -109,6 +118,24 @@ final class MacUsage: ObservableObject {
         timer.tolerance = 1
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    /// Stops counting (the Guard counts now) and reads the files instead, the open pages drawn again each minute.
+    func follow() {
+        if let timer {
+            timer.invalidate()
+            self.timer = nil
+            commitPending()
+            save()
+        }
+        guard follower == nil else { return }
+        let follower = Timer(timeInterval: 60, repeats: true) { _ in
+            Task { @MainActor in MacUsage.shared.revision += 1 }
+        }
+        follower.tolerance = 5
+        RunLoop.main.add(follower, forMode: .common)
+        self.follower = follower
+        revision += 1
     }
 
     private func watch(_ center: NotificationCenter, _ name: Notification.Name, _ run: @escaping (MacUsage) -> Void) {
@@ -341,12 +368,14 @@ final class MacUsage: ObservableObject {
         return day
     }
 
+    #if !AIDE_GUARD
     /// What the Screen page shows for a day, a week or a month, with the days it's compared with.
     func data(_ kind: UsageKind, containing date: Date, now: Date = Date()) -> UsageReportData {
         let asked = UsageMath.asked(kind, containing: date)
         let days = UsageMath.days(of: asked).filter { $0 <= now }.map(day)
         return UsageReportData(kind: kind, days: days, period: UsageMath.period(kind, containing: date))
     }
+    #endif
 
     /// Since when this Mac has been counting (the oldest day kept).
     var since: Date? {
@@ -369,9 +398,12 @@ final class MacUsage: ObservableObject {
     private func file(_ key: String) -> URL { folder.appending(path: "\(key).json") }
 
     private func stored(_ key: String) -> StoredDay {
-        if let day = days[key] { return day }
+        let fresh = follower == nil || loadedAt[key].map { Date().timeIntervalSince($0) < 30 } == true
+            || key < Self.key(Date().addingTimeInterval(-86400))
+        if fresh, let day = days[key] { return day }
         let day = load(key)
         days[key] = day
+        loadedAt[key] = Date()
         return day
     }
 

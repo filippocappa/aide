@@ -1,7 +1,7 @@
 import ServiceManagement
 
-/// Aide opens at login, so the Screen page and the daily limits count from the start of the day (they count only while
-/// Aide runs). On by default: turned on the first time the app starts, then left to Settings → This Mac.
+/// Aide opens at login (Aide Guard, `MacGuard`, starts at login on its own and counts the time and holds the locks
+/// either way). On by default: turned on the first time the app starts, then left to Settings → This Mac.
 enum MacLoginItem {
     private static let setKey = "loginItemSet"
 

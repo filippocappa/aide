@@ -44,6 +44,16 @@ final class MacShield {
         check()
     }
 
+    /// Aide Guard took over (`MacGuard`): this one does nothing more. What it closed stays closed; the Guard looks
+    /// again at once.
+    func stop() {
+        observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
+        observers = []
+        changes = nil
+        MacUsage.shared.onTabs = nil
+        nudge.close()
+    }
+
     /// The browsers' tabs at a tick: close one showing a site that's covered, and say so above its browser.
     private func saw(_ tabs: [MacBrowser.Tab]) {
         for tab in tabs {
@@ -479,7 +489,7 @@ private struct LockNudgeView: View {
         if hold.limit != nil { return "\(model.appName)'s used up for today" }
         if hold.list != nil { return "\(model.appName)'s asleep while you focus" }
         if let left = opensLeft { return left == 0 ? "No opens of \(model.appName) left today" : "\(model.appName)'s rationed" }
-        return "\(model.appName)'s asleep till \(MacGlanceCard.time(hold.until))"
+        return "\(model.appName)'s asleep till \(MacHold.time(hold.until))"
     }
 
     private var detail: String? {

@@ -172,6 +172,7 @@ extension View {
 
     func textInputAutocapitalization(_ style: MacAutocapitalization?) -> some View { self }
 
+    #if !AIDE_GUARD // Aide Guard has no windows (it compiles this file for Theme's colours)
     /// The phone's full-screen pages come up as sheets.
     func fullScreenCover<Content: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil,
                                         @ViewBuilder content: @escaping () -> Content) -> some View {
@@ -190,6 +191,7 @@ extension View {
     func macCoverSize() -> some View {
         modifier(MacCoverFrame()).macSheet()
     }
+    #endif
 }
 
 extension ToolbarItemPlacement {

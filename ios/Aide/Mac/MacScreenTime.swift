@@ -9,6 +9,8 @@ import Foundation
 /// `MacShield` covers them while a lock holds. App lists ("App lists") carry their Mac apps on the server, so a lock,
 /// limit or ration with a list covers the list's; a ration ("Rations") keeps its apps closed but for the day's opens,
 /// shared with the phone; the Focus filter (`AideFocusFilter`) closes a list's apps while a Focus is on.
+/// The app and Aide Guard (`MacGuard`) each have one: the Guard's enforces (`enforces`), the app's is for its pages
+/// and enforces only while the Guard isn't running. Each tells the other after a change.
 @MainActor
 final class ScreenTimeService: ObservableObject {
     @Published private(set) var locks: [ScreenLock] = []
@@ -47,6 +49,11 @@ final class ScreenTimeService: ObservableObject {
     @Published private(set) var heldLimits: Set<Int> = []
     private var limitHits: [Int: MacLimitHit] = MacLockApps.limitHits
     private var limitOpened: [Int: String] = [:]
+    /// This process keeps the limits: it notices when one is reached and tells the server. Off in the app while the
+    /// Guard runs: then the app reads the Guard's hits.
+    var enforces = true {
+        didSet { if enforces != oldValue { checkLimits() } }
+    }
 
     private let api: APIClient
     private var poll: Task<Void, Never>?
@@ -67,10 +74,19 @@ final class ScreenTimeService: ObservableObject {
             Task { @MainActor [weak self] in await self?.sync() }
         })
         MacUsage.shared.limitApps = countedApps
-        MacUsage.shared.start()
+        #if !AIDE_GUARD
         observers.append(NotificationCenter.default.addObserver(forName: FocusFilterState.changed, object: nil,
                                                                 queue: .main) { _ in
-            Task { @MainActor [weak self] in self?.focusFilterList = MacLockApps.focusFilterList }
+            Task { @MainActor [weak self] in
+                self?.focusFilterList = MacLockApps.focusFilterList
+                MacGuard.tell()
+            }
+        })
+        #endif
+        // The other side changed something: the picks again, then the server's locks.
+        observers.append(MacGuard.listen { [weak self] in
+            self?.reloadPicks()
+            await self?.sync()
         })
         limitCheck = Task { [weak self] in
             while !Task.isCancelled {
@@ -87,6 +103,16 @@ final class ScreenTimeService: ObservableObject {
                 Task { @MainActor [weak self] in self?.tick() }
             })
         }
+    }
+
+    /// What this Mac picked, read again (the other side may have changed it).
+    func reloadPicks() {
+        usualApps = MacLockApps.usual
+        lockApps = MacLockApps.perLock
+        focusApps = MacLockApps.focus
+        limitApps = MacLockApps.perLimit
+        focusFilterList = MacLockApps.focusFilterList
+        if !enforces { limitHits = MacLockApps.limitHits }
     }
 
     /// Nothing to allow on the Mac: Aide enforces the locks itself.
@@ -257,6 +283,7 @@ final class ScreenTimeService: ObservableObject {
         guard !focusInUse else { return }
         focusApps = apps
         MacLockApps.focus = apps
+        MacGuard.tell()
     }
 
     var focusInUse: Bool { locks.contains { $0.focus != nil && LockClock.until($0) != nil } }
@@ -266,6 +293,7 @@ final class ScreenTimeService: ObservableObject {
         guard !usualInUse else { return }
         usualApps = apps
         MacLockApps.usual = apps
+        MacGuard.tell()
     }
 
     /// A lock's own apps, or nil for the usual ones. Not for a lock that's on.
@@ -273,6 +301,7 @@ final class ScreenTimeService: ObservableObject {
         guard LockClock.until(lock) == nil else { return }
         lockApps[lock.id] = apps == usualApps ? nil : apps
         MacLockApps.perLock = lockApps
+        MacGuard.tell()
     }
 
     /// The server's locks, then what holds now.
@@ -431,7 +460,8 @@ final class ScreenTimeService: ObservableObject {
         let now = Date()
         let today = MacUsage.key(now)
         var reached: [UsageUpload.Hit] = []
-        for limit in limits where limit.enabled && limit.counts(on: now) && limitHits[limit.id]?.date != today {
+        if !enforces { limitHits = MacLockApps.limitHits }
+        for limit in limits where enforces && limit.enabled && limit.counts(on: now) && limitHits[limit.id]?.date != today {
             let apps = apps(for: limit)
             guard !apps.isEmpty,
                   MacUsage.shared.limitSeconds(limit.id, apps: apps, on: now) >= Double(limit.minutes) * 60 else { continue }
@@ -441,6 +471,7 @@ final class ScreenTimeService: ObservableObject {
         if !reached.isEmpty {
             limitHits = limitHits.filter { $0.value.date >= MacUsage.key(now.addingTimeInterval(-7 * 86400)) }
             MacLockApps.limitHits = limitHits
+            MacGuard.tell()
             Task { try? await api.uploadUsage(UsageUpload(days: [], limits: reached)) }
         }
         let held = Set(limits.filter { limit in
@@ -455,6 +486,7 @@ final class ScreenTimeService: ObservableObject {
         limitApps[limit.id] = apps.isEmpty ? nil : apps
         MacLockApps.perLimit = limitApps
         checkLimits()
+        MacGuard.tell()
     }
 
     /// A limit, new or changed, with its Mac apps.
@@ -510,6 +542,7 @@ final class ScreenTimeService: ObservableObject {
             return false
         }
         await sync()
+        MacGuard.tell()
         return true
     }
 }
@@ -532,6 +565,12 @@ struct MacHold: Equatable {
     var title: String { lock?.title ?? limit?.title ?? list?.name ?? ration?.title ?? "" }
     var isStrict: Bool { lock?.isStrict ?? limit?.strict ?? false }
     var agent: String? { lock?.agent }
+    /// A time as the shield and the glance say it: 07:00 today, else with the day.
+    static func time(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+
     /// What ending it early does.
     var afterUnlock: String {
         if limit != nil { return "Open until midnight; it counts again tomorrow." }
@@ -545,53 +584,54 @@ struct MacLimitHit: Codable {
     let at: Date
 }
 
-/// What the Mac's locks cover, kept in this Mac's defaults: the phone's picks are tokens that mean nothing here.
+/// What the Mac's locks cover, kept in the app's defaults (the Guard reads them, `MacGuard.defaults`): the phone's
+/// picks are tokens that mean nothing here.
 enum MacLockApps {
-    /// Never covered: Aide (the shield and unlocking live here), Finder and System Settings.
-    static let never: Set<String> = Set([Bundle.main.bundleIdentifier, "com.apple.finder", "com.apple.systempreferences",
-                                         "com.apple.loginwindow"].compactMap { $0 })
+    /// Never covered: Aide and its Guard (the shield and unlocking live there), Finder and System Settings.
+    static let never: Set<String> = [MacGuard.appID, MacGuard.guardID, "com.apple.finder", "com.apple.systempreferences",
+                                     "com.apple.loginwindow"]
 
     /// Until the app picker (#30, step 2), Safari.
     static var usual: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: "macLockUsual") ?? ["com.apple.Safari"]) }
-        set { UserDefaults.standard.set(newValue.sorted(), forKey: "macLockUsual") }
+        get { Set(MacGuard.defaults.stringArray(forKey: "macLockUsual") ?? ["com.apple.Safari"]) }
+        set { MacGuard.defaults.set(newValue.sorted(), forKey: "macLockUsual") }
     }
 
     /// Open in a focus round: notes, the PDFs, a calculator, a dictionary (Aide itself always is).
     static var focus: Set<String> {
         get {
-            Set(UserDefaults.standard.stringArray(forKey: "macFocusApps")
+            Set(MacGuard.defaults.stringArray(forKey: "macFocusApps")
                 ?? ["com.apple.Notes", "com.apple.Preview", "md.obsidian", "com.apple.TextEdit", "com.apple.calculator",
                     "com.apple.Dictionary"])
         }
-        set { UserDefaults.standard.set(newValue.sorted(), forKey: "macFocusApps") }
+        set { MacGuard.defaults.set(newValue.sorted(), forKey: "macFocusApps") }
     }
 
     /// The app lists as last synced, for the Focus filter's choices.
     static var lists: [ScreenList] {
-        get { UserDefaults.standard.data(forKey: "macScreenLists").flatMap { try? JSONDecoder().decode([ScreenList].self, from: $0) } ?? [] }
-        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "macScreenLists") }
+        get { MacGuard.defaults.data(forKey: "macScreenLists").flatMap { try? JSONDecoder().decode([ScreenList].self, from: $0) } ?? [] }
+        set { MacGuard.defaults.set(try? JSONEncoder().encode(newValue), forKey: "macScreenLists") }
     }
 
     static var focusFilterList: Int? {
-        get { UserDefaults.standard.object(forKey: "macFocusFilterList") as? Int }
-        set { UserDefaults.standard.set(newValue, forKey: "macFocusFilterList") }
+        get { MacGuard.defaults.object(forKey: "macFocusFilterList") as? Int }
+        set { MacGuard.defaults.set(newValue, forKey: "macFocusFilterList") }
     }
 
     static var perLimit: [Int: Set<String>] {
-        get { ids(UserDefaults.standard.dictionary(forKey: "macLimitApps")) }
-        set { UserDefaults.standard.set(strings(newValue), forKey: "macLimitApps") }
+        get { ids(MacGuard.defaults.dictionary(forKey: "macLimitApps")) }
+        set { MacGuard.defaults.set(strings(newValue), forKey: "macLimitApps") }
     }
 
     static var limitHits: [Int: MacLimitHit] {
         get {
-            guard let data = UserDefaults.standard.data(forKey: "macLimitHits"),
+            guard let data = MacGuard.defaults.data(forKey: "macLimitHits"),
                   let hits = try? JSONDecoder().decode([String: MacLimitHit].self, from: data) else { return [:] }
             return Dictionary(uniqueKeysWithValues: hits.compactMap { key, value in Int(key).map { ($0, value) } })
         }
         set {
             let hits = Dictionary(uniqueKeysWithValues: newValue.map { (String($0.key), $0.value) })
-            UserDefaults.standard.set(try? JSONEncoder().encode(hits), forKey: "macLimitHits")
+            MacGuard.defaults.set(try? JSONEncoder().encode(hits), forKey: "macLimitHits")
         }
     }
 
@@ -606,11 +646,11 @@ enum MacLockApps {
 
     static var perLock: [Int: Set<String>] {
         get {
-            let stored = UserDefaults.standard.dictionary(forKey: "macLockApps") as? [String: [String]] ?? [:]
+            let stored = MacGuard.defaults.dictionary(forKey: "macLockApps") as? [String: [String]] ?? [:]
             return Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in Int(key).map { ($0, Set(value)) } })
         }
         set {
-            UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: newValue.map { (String($0.key), $0.value.sorted()) }),
+            MacGuard.defaults.set(Dictionary(uniqueKeysWithValues: newValue.map { (String($0.key), $0.value.sorted()) }),
                                       forKey: "macLockApps")
         }
     }
