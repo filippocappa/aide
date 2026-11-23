@@ -1169,6 +1169,15 @@ struct MealChanges: Encodable, Equatable {
     var notes: String
 }
 
+extension MealChanges {
+    /// The meal as it is, at another time (moving it to another day).
+    init(_ meal: Meal, eatenAt: Date) {
+        self.init(name: meal.name, eatenAt: Wire.local(eatenAt), calories: meal.calories, proteinG: meal.proteinG,
+                  carbsG: meal.carbsG, fatG: meal.fatG, waterMl: meal.waterMl, caffeineMg: meal.caffeineMg,
+                  notes: meal.notes)
+    }
+}
+
 struct MealList: Decodable {
     let meals: [Meal]
 }

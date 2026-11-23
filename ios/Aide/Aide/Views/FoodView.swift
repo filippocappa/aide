@@ -51,6 +51,8 @@ struct FoodPage: View {
     @State private var typedCode: String?
     @State private var showGoals = false
     @State private var editingMeal: Meal?
+    /// The meal's page opens with its time's calendar showing (Move to → Pick a date and time).
+    @State private var pickingTime = false
     /// The meal being logged, shown at the top of Meals until Coach is done.
     @State private var pending: PendingMeal?
     /// Bumped on each reload of the day, so the week's rings catch up.
@@ -106,9 +108,9 @@ struct FoodPage: View {
         .sheet(isPresented: $showGoals, onDismiss: { Task { await loadFood() } }) {
             NavigationStack { NutritionTargetsView(inSheet: true) }
         }
-        .sheet(item: $editingMeal) { meal in
+        .sheet(item: $editingMeal, onDismiss: { pickingTime = false }) { meal in
             MealPage(meal: meal, coach: coach, save: { await update(meal, $0) }, delete: { await remove(meal) },
-                     askCoach: openFoodChat, again: { await logAgain(meal) })
+                     askCoach: openFoodChat, again: { await logAgain(meal) }, pickTime: pickingTime)
         }
         .sheet(isPresented: $showRecent) {
             RecentFoodsSheet(date: isToday ? nil : Wire.dayString(day), tint: coach.tint, logged: loggedPacket)
@@ -326,11 +328,7 @@ struct FoodPage: View {
                     }
                     .buttonStyle(CardPress())
                     .accessibilityHint("Opens the meal")
-                    .contextMenu {
-                        Button("Delete", systemImage: "trash", role: .destructive) {
-                            Task { if let message = await remove(meal) { foodError = message } }
-                        }
-                    }
+                    .contextMenu { mealMenu(meal) }
                 }
             }
             if pending == nil, meals.isEmpty {
@@ -362,11 +360,7 @@ struct FoodPage: View {
                     }
                     .buttonStyle(RowPress())
                     .accessibilityHint("Opens the meal")
-                    .contextMenu {
-                        Button("Delete", systemImage: "trash", role: .destructive) {
-                            Task { if let message = await remove(meal) { foodError = message } }
-                        }
-                    }
+                    .contextMenu { mealMenu(meal) }
                 }
             }
             .background(Theme.row)
@@ -406,10 +400,11 @@ struct FoodPage: View {
             noFood = false
             reloads += 1
             #if DEBUG
-            // Simulator screenshots: `-previewFood meal`, `score` or `logging`.
+            // Simulator screenshots: `-previewFood meal`, `pick` (its time's calendar), `score` or `logging`.
             if settings.isPreview, reloads == 1 {
                 switch UserDefaults.standard.string(forKey: "previewFood") {
                 case "meal": editingMeal = Meal.newestFirst(loaded.meals).first
+                case "pick": pickingTime = true; editingMeal = Meal.newestFirst(loaded.meals).first
                 case "score": previewScore = true
                 case "logging": pending = PendingMeal(photo: nil, text: "a bowl of pasta with tomato and basil")
                 case "recent": showRecent = true
@@ -489,6 +484,28 @@ struct FoodPage: View {
             Task { await health.writeMeals() }
             return nil
         } catch { return error.localizedDescription }
+    }
+
+    /// A long press on a meal: move it a day or two (at the same time of day), or to any time; delete it.
+    @ViewBuilder private func mealMenu(_ meal: Meal) -> some View {
+        if let date = meal.eatenDate {
+            Menu("Move to", systemImage: "calendar") {
+                ForEach([-1, -2, 1], id: \.self) { days in
+                    if let to = Calendar.current.date(byAdding: .day, value: days, to: date), to <= .now {
+                        Button(MealPage.day(to)) {
+                            Task { if let message = await update(meal, MealChanges(meal, eatenAt: to)) { foodError = message } }
+                        }
+                    }
+                }
+                Button("Pick a date and time…") {
+                    pickingTime = true
+                    editingMeal = meal
+                }
+            }
+        }
+        Button("Delete", systemImage: "trash", role: .destructive) {
+            Task { if let message = await remove(meal) { foodError = message } }
+        }
     }
 
     private func remove(_ meal: Meal) async -> String? {

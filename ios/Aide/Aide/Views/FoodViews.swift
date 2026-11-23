@@ -371,9 +371,17 @@ struct MealPage: View {
     let askCoach: () -> Void
     /// Logs the same meal again now (an error message, or nil when done); nil hides it.
     var again: (() async -> String?)?
+    /// Opens with the time's calendar showing (Move to → Pick a date and time).
+    var pickTime = false
     @Environment(\.dismiss) private var dismiss
     @State private var loggingAgain = false
     @State private var againError: String?
+    @State private var picking = false
+    @State private var picked = Date.now
+    @State private var moving = false
+    @State private var moveError: String?
+    /// Where the meal was moved here; the meal itself is as the sheet opened with it.
+    @State private var moved: Date?
 
     var body: some View {
         NavigationStack {
@@ -445,6 +453,12 @@ struct MealPage: View {
             .background(Theme.grouped)
             .navigationBarTitleDisplayMode(.inline)
             .macSheetTitle(meal.name)
+            .task {
+                guard pickTime, let date = meal.eatenDate else { return }
+                try? await Task.sleep(for: .milliseconds(400)) // the sheet up first, then its popover
+                picked = date
+                picking = true
+            }
             .toolbar {
                 #if os(iOS) // the Mac's sheets have their own close button
                 ToolbarItem(placement: .cancellationAction) {
@@ -474,7 +488,23 @@ struct MealPage: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(meal.name).font(.title2.weight(.bold)).multilineTextAlignment(.leading)
                 HStack(spacing: 8) {
-                    if let when { Text(when).font(.subheadline).foregroundStyle(.secondary) }
+                    if let date = moved ?? meal.eatenDate {
+                        Button {
+                            picked = date
+                            moveError = nil
+                            picking = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(Self.when(date))
+                                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+                            }
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Changes when you had it")
+                        .popover(isPresented: $picking) { timePicker }
+                    }
                     if let quality = meal.quality {
                         let color = Grade.scoreColor(quality, tint: coach.tint)
                         Text("Quality \(quality)")
@@ -491,12 +521,47 @@ struct MealPage: View {
     }
 
     /// "Today 13:10", "Yesterday 20:30", "Fri 30 Oct 12:45".
-    private var when: String? {
-        guard let date = meal.eatenDate else { return nil }
-        let time = date.formatted(date: .omitted, time: .shortened)
-        if Calendar.current.isDateInToday(date) { return "Today \(time)" }
-        if Calendar.current.isDateInYesterday(date) { return "Yesterday \(time)" }
-        return "\(date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))) \(time)"
+    static func when(_ date: Date) -> String {
+        "\(day(date)) \(date.formatted(date: .omitted, time: .shortened))"
+    }
+
+    /// "Today", "Yesterday", "Fri 30 Oct".
+    static func day(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return "Today" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    }
+
+    /// Tapping the time: a calendar and the time, saved with Save (closing it leaves the meal where it was).
+    private var timePicker: some View {
+        VStack(spacing: 12) {
+            DatePicker("When", selection: $picked, in: ...Date.now, displayedComponents: [.date, .hourAndMinute])
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .tint(coach.tint)
+            if let moveError {
+                Label(moveError, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
+            }
+            Button {
+                Task {
+                    moving = true
+                    moveError = await save(MealChanges(meal, eatenAt: picked))
+                    moving = false
+                    if moveError == nil {
+                        moved = picked
+                        picking = false
+                    }
+                }
+            } label: {
+                Text(moving ? "Saving…" : "Save").font(.body.weight(.semibold)).frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(coach.tint)
+            .disabled(moving)
+        }
+        .padding(16)
+        .frame(minWidth: 320)
+        .presentationCompactAdaptation(.popover)
     }
 
     /// Calories, protein, carbs and fat side by side; water and caffeine under them when there are any.
