@@ -6,6 +6,10 @@
 	<string>group.$(AIDE_BUNDLE_ID)</string>
 	<key>AideKeychainService</key>
 	<string>$(AIDE_BUNDLE_ID)</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(AIDE_BUNDLE_ID).outbox</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -64,6 +68,7 @@
 		<string>remote-notification</string>
 		<string>location</string>
 		<string>audio</string>
+		<string>fetch</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict>

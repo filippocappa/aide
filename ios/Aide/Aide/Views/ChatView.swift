@@ -104,10 +104,15 @@ struct ChatView: View {
                 NotebookBar(progress: writing, step: chat.writingStep)
                     .padding(.top, Self.headerHeight + 4)
                     .transition(.move(edge: .top).combined(with: .opacity))
+            } else if chat.isOffline, !voice.isActive {
+                OfflineLine(since: chat.shownFrom)
+                    .padding(.top, Self.headerHeight - 2)
+                    .transition(.opacity)
             }
         }
         .animation(.spring(response: 0.6, dampingFraction: 0.78), value: voice.isActive)
         .animation(.easeInOut(duration: 0.3), value: chat.writing)
+        .animation(.easeInOut(duration: 0.3), value: chat.isOffline)
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: replying)
         .animation(.easeInOut(duration: 0.3), value: isEmpty)
         .background(Theme.background)
@@ -319,8 +324,21 @@ struct ChatView: View {
                         ThinkingRow()
                     }
                     ForEach(chat.queued) { waiting in
-                        QueuedRow(waiting: waiting, edit: { edit(waiting) }, remove: { chat.unqueue(waiting.id) })
+                        QueuedRow(waiting: waiting, message: chat.row(for: waiting), offline: chat.isOffline,
+                                  edit: { edit(waiting) }, remove: { chat.unqueue(waiting.id) },
+                                  retry: { chat.retry(waiting.id) })
                             .transition(.opacity.combined(with: .offset(y: 10)))
+                    }
+                    if chat.isOffline, !chat.queued.isEmpty {
+                        // The app's own line, not the model's (#80).
+                        HStack {
+                            Text("\(chat.agent.name)'s offline right now. I'll send this as soon as it's back.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 32)
+                        }
+                        .padding(.horizontal, 2)
+                        .transition(.opacity)
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -650,7 +668,7 @@ struct ChatView: View {
     }
 
     /// A waiting message back into the message box, out of the queue.
-    private func edit(_ waiting: ChatViewModel.Queued) {
+    private func edit(_ waiting: Outgoing) {
         guard let waiting = chat.unqueue(waiting.id) else { return }
         draft = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? waiting.text : draft + "\n" + waiting.text
         photos = Array((photos + waiting.photos).prefix(maxPhotos))
@@ -1251,19 +1269,27 @@ struct AttachmentCard: View {
 
 /// A message written while the reply was still coming (#69), dimmed until it goes. Tap or hold for Edit and Don't send.
 private struct QueuedRow: View {
-    let waiting: ChatViewModel.Queued
+    let waiting: Outgoing
+    /// The message as a row, its photos read from the device.
+    let message: ChatViewModel.Message
+    let offline: Bool
     let edit: () -> Void
     let remove: () -> Void
+    let retry: () -> Void
+
+    private var label: (String, String) {
+        if waiting.failed != nil { return ("Didn't send · tap to try again", "exclamationmark.circle") }
+        return offline ? ("Waiting to send", "wifi.slash") : ("Waiting", "clock")
+    }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
             Menu {
+                if waiting.failed != nil { Button("Try again", systemImage: "arrow.clockwise", action: retry) }
                 Button("Edit", systemImage: "pencil", action: edit)
                 Button("Don't send", systemImage: "trash", role: .destructive, action: remove)
             } label: {
-                MessageRow(message: .init(role: .user, text: waiting.text, localPhotos: waiting.photos.map(\.jpeg),
-                                          files: waiting.files.map { StudyFile(id: $0.id.uuidString, name: $0.name,
-                                                                              pages: $0.pages) }))
+                MessageRow(message: message)
                     .opacity(0.5)
             }
             .buttonStyle(.plain)
@@ -1271,14 +1297,21 @@ private struct QueuedRow: View {
             .menuStyle(.button)
             .menuIndicator(.hidden)
             #endif
-            Label("Waiting", systemImage: "clock")
+            Label(label.0, systemImage: label.1)
                 .font(.caption2.weight(.medium))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(waiting.failed != nil ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
                 .padding(.trailing, 4)
+            if let why = waiting.failed {
+                Text(why)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .padding(.trailing, 4)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Waiting to send: \(waiting.text)")
+        .accessibilityLabel("\(label.0): \(waiting.text)")
         .accessibilityAction(named: "Edit", edit)
         .accessibilityAction(named: "Don't send", remove)
     }
@@ -1459,7 +1492,12 @@ struct PendingCard: View {
                 Button(role: .cancel) { Task { await chat.cancel() } } label: { Text("Cancel").frame(maxWidth: .infinity) }
                     .buttonStyle(.bordered)
             }
-            .disabled(chat.isActing)
+            .disabled(chat.isActing || chat.isOffline)
+            if chat.isOffline {
+                Label("Needs a connection", systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(14)
         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

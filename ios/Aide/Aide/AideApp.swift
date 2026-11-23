@@ -1,3 +1,4 @@
+import BackgroundTasks
 import SwiftUI
 import UserNotifications
 import WidgetKit
@@ -39,7 +40,10 @@ struct AideApp: App {
                         }
                     }
                     // Leaving the app: the widgets show what changed in it (check-ins, meals, objectives).
-                    if phase == .background { WidgetCenter.shared.reloadAllTimelines() }
+                    if phase == .background {
+                        WidgetCenter.shared.reloadAllTimelines()
+                        if env.chat.hasWaiting { Outbox.schedule() }
+                    }
                 }
                 .onOpenURL { url in env.push.route = PushRoute(url: url) }
                 #if DEBUG
@@ -69,6 +73,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         if !env.settings.isPreview { env.location.start() }
         // A Live Activity the server starts wakes the app in the background to hand over its token.
         if !env.settings.isPreview { env.live.start() }
+        // Messages written offline go out in the background too, once the server answers (#80).
+        Outbox.register(env)
         // The Control Center's meal buttons open the app and run here.
         MealLog.open = { [env] way in env.push.route = .meal(way) }
         return true
@@ -257,5 +263,29 @@ struct ContentView: View {
             DigestSheet()
         }
         .stage(item: $env.browser)
+    }
+}
+
+/// A background refresh while messages wait to be sent (#80): iOS runs it when it sees fit (often within the hour),
+/// it sends what it can, and asks again while anything is left.
+enum Outbox {
+    static var id: String { (Bundle.main.bundleIdentifier ?? "aide") + ".outbox" }
+
+    @MainActor
+    static func register(_ env: AppEnvironment) {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: nil) { task in
+            let work = Task { @MainActor in
+                await env.chat.sendWaiting()
+                if env.chat.hasWaiting { schedule() }
+                task.setTaskCompleted(success: !env.chat.hasWaiting)
+            }
+            task.expirationHandler = { work.cancel() }
+        }
+    }
+
+    static func schedule() {
+        let request = BGAppRefreshTaskRequest(identifier: id)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 5 * 60)
+        try? BGTaskScheduler.shared.submit(request)
     }
 }

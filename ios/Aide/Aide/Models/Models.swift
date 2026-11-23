@@ -240,7 +240,13 @@ struct EmptyBody: Encodable {}
 struct NewConversation: Encodable { var digest: String?; var agent: String? }
 /// `conversationId` nil keeps the old behaviour: the one shared conversation. `photos` nil when there are none.
 /// `voice`: spoken in voice chat, so the reply is written to be read aloud.
-struct ChatRequest: Encodable { let text: String; var conversationId: String?; var stream: Bool?; var photos: [String]?; var files: [String]?; var voice: Bool? }
+/// `clientId` and `writtenAt` (#80): the app's key for the message, so sending it again is answered once, and when it was
+/// written, for one that waited offline.
+struct ChatRequest: Encodable {
+    let text: String; var conversationId: String?; var stream: Bool?; var photos: [String]?; var files: [String]?; var voice: Bool?
+    var clientId: String?; var writtenAt: String?
+}
+struct ConversationChange: Encodable { var pinned: Bool?; var archived: Bool? }
 struct PhotoUpload: Decodable { let id: String }
 struct ConversationBody: Encodable { var conversationId: String? }
 /// `agent` nil: shared by every agent.
@@ -275,6 +281,12 @@ struct Conversation: Decodable, Identifiable, Hashable {
     var course: Int? = nil
     /// In a search's results: the line that has the words, cut around them (nil when only the title has them).
     var match: String? = nil
+    /// Kept at the top of its agent's chats, or moved to the Archive (#81). Nil from older servers: neither.
+    var pinned: Bool? = nil
+    var archived: Bool? = nil
+
+    var isPinned: Bool { pinned == true }
+    var isArchived: Bool { archived == true }
 }
 struct ConversationList: Decodable { let conversations: [Conversation] }
 

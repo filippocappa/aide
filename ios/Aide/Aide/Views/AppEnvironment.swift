@@ -50,6 +50,7 @@ final class AppEnvironment: ObservableObject {
     private init() {
         let settings = AppSettings()
         let api = APIClient(config: { [weak settings] in settings?.apiConfig })
+        api.store = ChatCache.shared // the chats and photos, offline too (#79)
         let sync = ReminderSyncService(api: api, settings: settings)
         let chat = ChatViewModel(api: api)
         self.settings = settings

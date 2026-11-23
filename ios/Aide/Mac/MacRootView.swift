@@ -383,12 +383,16 @@ struct SoftTitleBar: ViewModifier {
 /// The window's title, "Aide", with the server's status after it: a coloured line and a word (`ServerStatusLine`).
 private struct MacWindowTitle: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var chat: ChatViewModel
     let server: ServerStatus
 
     var body: some View {
         HStack(spacing: 8) {
             Text("Aide").font(.system(size: 15, weight: .semibold))
             if settings.isConfigured { ServerStatusLine(status: server) }
+            if chat.isOffline, let updated = OfflineLine.updated(chat.shownFrom) { // the chats show what was kept (#79)
+                Text(updated).font(.caption).foregroundStyle(.secondary)
+            }
         }
         .fixedSize()
         .padding(.leading, 4)

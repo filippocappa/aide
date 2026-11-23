@@ -63,11 +63,15 @@ targets:
         NSHealthShareUsageDescription: Aide reads your sleep, heart rate, HRV, steps and workouts to write your wake-up briefing and tick off workout habits.
         NSHealthUpdateUsageDescription: Aide writes the meals and drinks you log through it (calories, protein, carbs, fat, water, caffeine), and a limit habit's counts to Inhaler Usage, so you don't have to log them twice.
         NSFaceIDUsageDescription: Aide asks for Face ID before a saved password is added, changed or deleted.
-        # Silent pushes wake the app to sync reminders (docs/API.md, Push); audio keeps a lecture recording locked.
+        # Silent pushes wake the app to sync reminders (docs/API.md, Push); audio keeps a lecture recording locked;
+        # fetch sends messages written offline (Outbox in AideApp.swift, #80).
         UIBackgroundModes:
           - remote-notification
           - location
           - audio
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - $(AIDE_BUNDLE_ID).outbox
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(AIDE_BUNDLE_ID)  # Config/Base.xcconfig; your own in Signing.local.xcconfig

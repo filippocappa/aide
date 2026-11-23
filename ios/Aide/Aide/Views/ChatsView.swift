@@ -388,8 +388,9 @@ private struct TeamRow: View {
     }
 }
 
-/// One agent's chats, newest first, New chat in the corner. Swipe to delete. Search looks through the titles and
-/// every message, on the server.
+/// One agent's chats by when they were last used (Pinned, Today, This week, Earlier), the Archive folded at the end
+/// (#81), New chat in the corner. Swipe right to pin, left to archive or delete (asked first); on the Mac the same from
+/// a right-click. Search looks through the titles and every message, archived chats too, on the server.
 struct PastChatsSheet: View {
     enum Choice { case new(Agent), open(Conversation), openID(String) }
 
@@ -400,8 +401,28 @@ struct PastChatsSheet: View {
     @State private var query = ""
     @State private var results: [Conversation]?
     @State private var searchError: String?
+    @State private var showArchive = false
+    @State private var doomed: Conversation?
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    struct Group { let title: String; let chats: [Conversation] }
+
+    /// Pinned first, then by the day each was last used.
+    static func groups(_ chats: [Conversation], now: Date = Date(), calendar: Calendar = .current) -> [Group] {
+        let week = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: now)) ?? now
+        var pinned: [Conversation] = [], today: [Conversation] = [], thisWeek: [Conversation] = [], earlier: [Conversation] = []
+        for c in chats {
+            let used = c.updatedAt.flatMap(Wire.parse)
+            if c.isPinned { pinned.append(c) }
+            else if let used, calendar.isDate(used, inSameDayAs: now) { today.append(c) }
+            else if let used, used >= week { thisWeek.append(c) }
+            else { earlier.append(c) }
+        }
+        return [Group(title: "Pinned", chats: pinned), Group(title: "Today", chats: today),
+                Group(title: "This week", chats: thisWeek), Group(title: "Earlier", chats: earlier)]
+            .filter { !$0.chats.isEmpty }
+    }
 
     var body: some View {
         NavigationStack {
@@ -410,16 +431,48 @@ struct PastChatsSheet: View {
                     found
                 } else {
                     let chats = chat.chats(with: agent)
+                    let archived = chat.archivedChats(with: agent)
                     if chats.isEmpty {
-                        Text("No chats with \(agent.name) yet.").foregroundStyle(.secondary)
+                        Text(archived.isEmpty ? "No chats with \(agent.name) yet." : "Every chat with \(agent.name) is in the Archive.")
+                            .foregroundStyle(.secondary)
                             .listRowBackground(Theme.row)
                     }
-                    ForEach(chats) { c in row(c) }
-                        .onDelete { offsets in
-                            let doomed = offsets.map { chats[$0] }
-                            Task { for c in doomed { await chat.delete(c) } }
+                    ForEach(Self.groups(chats), id: \.title) { group in
+                        Section(group.title) {
+                            ForEach(group.chats) { c in row(c) }
                         }
+                    }
+                    if !archived.isEmpty {
+                        Section {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) { showArchive.toggle() }
+                            } label: {
+                                HStack {
+                                    Label("Archive", systemImage: "archivebox")
+                                    Spacer()
+                                    Text("\(archived.count)").foregroundStyle(.secondary)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.tertiary)
+                                        .rotationEffect(.degrees(showArchive ? 90 : 0))
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Theme.row)
+                            .accessibilityHint(showArchive ? "Hides the archived chats" : "Shows the archived chats")
+                            if showArchive { ForEach(archived) { c in row(c) } }
+                        } footer: {
+                            Text("Chats untouched for two weeks move here. A new message brings one back.")
+                        }
+                    }
                 }
+            }
+            .confirmationDialog("Delete this chat?", isPresented: Binding(get: { doomed != nil }, set: { if !$0 { doomed = nil } }),
+                                titleVisibility: .visible, presenting: doomed) { c in
+                Button("Delete", role: .destructive) { Task { await chat.delete(c) } }
+            } message: { _ in
+                Text("Its messages go from the app and the server. What \(agent.name) remembers stays.")
             }
             .listSectionSpacing(.compact)
             .contentMargins(.top, 4, for: .scrollContent)
@@ -505,6 +558,35 @@ struct PastChatsSheet: View {
     private func row(_ c: Conversation) -> some View {
         Button { choose(.open(c)) } label: { ConversationRow(conversation: c, highlight: searching ? query : nil) }
             .listRowBackground(Theme.row)
+            .swipeActions(edge: .leading) {
+                if c.id != "main" {
+                    Button(c.isPinned ? "Unpin" : "Pin", systemImage: c.isPinned ? "pin.slash" : "pin") {
+                        Task { await chat.setPinned(c, !c.isPinned) }
+                    }
+                    .tint(.orange)
+                }
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button("Delete", systemImage: "trash") { doomed = c }
+                    .tint(.red)
+                if c.id != "main" {
+                    Button(c.isArchived ? "Unarchive" : "Archive", systemImage: c.isArchived ? "tray.and.arrow.up" : "archivebox") {
+                        Task { await chat.setArchived(c, !c.isArchived) }
+                    }
+                    .tint(.indigo)
+                }
+            }
+            .contextMenu {
+                if c.id != "main" {
+                    Button(c.isPinned ? "Unpin" : "Pin", systemImage: c.isPinned ? "pin.slash" : "pin") {
+                        Task { await chat.setPinned(c, !c.isPinned) }
+                    }
+                    Button(c.isArchived ? "Unarchive" : "Archive", systemImage: c.isArchived ? "tray.and.arrow.up" : "archivebox") {
+                        Task { await chat.setArchived(c, !c.isArchived) }
+                    }
+                }
+                Button("Delete…", systemImage: "trash", role: .destructive) { doomed = c }
+            }
     }
 
     /// A moment after the typing stops, so each letter doesn't ask the server.
@@ -642,6 +724,7 @@ private struct RevealText: View {
 /// Today there.
 private struct Greeting: View {
     @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var chat: ChatViewModel
     @EnvironmentObject private var digest: DigestViewModel
     @Environment(\.scenePhase) private var scenePhase
     @Binding var waiting: Int
@@ -710,7 +793,12 @@ private struct Greeting: View {
     /// The server's status at the top, after the date (the Mac has it after the window's title instead).
     private var statusLine: AnyView? {
         #if os(iOS)
-        AnyView(ServerStatusLine(status: env.server))
+        AnyView(HStack(spacing: 6) {
+            ServerStatusLine(status: env.server)
+            if chat.isOffline, let updated = OfflineLine.updated(chat.shownFrom) { // what shows was kept (#79)
+                Text(updated).font(.caption).foregroundStyle(.secondary)
+            }
+        })
         #else
         nil
         #endif
@@ -749,5 +837,32 @@ private struct SettingsButton: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Settings")
         #endif
+    }
+}
+
+/// While the server can't be reached (#79): "Offline · updated 14:32", what shows being what was kept on the device.
+struct OfflineLine: View {
+    let since: Date?
+
+    var body: some View {
+        Label(Self.text(since), systemImage: "wifi.slash")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.regularMaterial, in: Capsule())
+    }
+
+    /// "updated 14:32", or with the day when it isn't today. Nil when nothing was ever loaded.
+    static func updated(_ date: Date?) -> String? {
+        guard let date else { return nil }
+        let when = Calendar.current.isDateInToday(date)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.day().month(.abbreviated).hour().minute())
+        return "updated \(when)"
+    }
+
+    static func text(_ date: Date?) -> String {
+        ["Offline", updated(date)].compactMap { $0 }.joined(separator: " · ")
     }
 }

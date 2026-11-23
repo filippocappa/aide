@@ -18,11 +18,20 @@ enum APIError: LocalizedError, Equatable {
     }
 }
 
+/// Where the app keeps what the server last said, by key: the offline chats and photos (#79). The extensions have none.
+@MainActor
+protocol ResponseStore: AnyObject {
+    func save(_ data: Data, as key: String)
+    func load(_ key: String) -> (Data, Date)?
+}
+
 /// Talks to docs/API.md. Reads its configuration on every call so Settings changes apply immediately.
 @MainActor
 final class APIClient {
     private let config: () -> APIConfig?
     private let session: URLSession
+    /// The chat list, the Team chat, the agents, each history and the photos, kept as they come (#79).
+    var store: ResponseStore?
     /// Photos by id: what this app uploaded and what it fetched, so each is loaded once per launch.
     private var photos: [String: Data] = [:]
     /// Study PDFs and page images by path; dropped first under memory pressure.
@@ -61,6 +70,7 @@ final class APIClient {
     /// `onStep` what a tool is doing (agent, label, kind), `onPage` a picture of the page Aide is browsing (JPEG).
     /// A server without streaming answers plain JSON: same reply, nothing live. `photos` are uploaded ids.
     func chatLive(_ text: String, photos: [String] = [], files: [String] = [], conversationID: String? = nil, voice: Bool = false,
+                  clientID: UUID? = nil, writtenAt: Date? = nil,
                   onText: @escaping @MainActor (String, Bool) -> Void = { _, _ in },
                   onTeam: @escaping @MainActor (TeamMessage) -> Void,
                   onStep: @escaping @MainActor (String, String, String?) -> Void = { _, _, _ in },
@@ -68,7 +78,9 @@ final class APIClient {
         let body = try JSONEncoder.api.encode(ChatRequest(text: text, conversationId: conversationID, stream: true,
                                                           photos: photos.isEmpty ? nil : photos,
                                                           files: files.isEmpty ? nil : files,
-                                                          voice: voice ? true : nil))
+                                                          voice: voice ? true : nil,
+                                                          clientId: clientID?.uuidString,
+                                                          writtenAt: writtenAt.map(Wire.local)))
         return try await stream("/v1/chat", body: body, onEvent: { event in
             switch event {
             case .team(let message): onTeam(message)
@@ -111,7 +123,7 @@ final class APIClient {
     }
 
     func team(limit: Int = 100) async throws -> [TeamMessage] {
-        let list: TeamList = try await send("GET", "/v1/team", query: [URLQueryItem(name: "limit", value: String(limit))])
+        let list: TeamList = try await remembered("team", "/v1/team", query: [URLQueryItem(name: "limit", value: String(limit))])
         return list.messages
     }
 
@@ -230,12 +242,28 @@ final class APIClient {
     func history(limit: Int = 50, conversationID: String? = nil) async throws -> HistoryResponse {
         var query = [URLQueryItem(name: "limit", value: String(limit))]
         if let conversationID { query.append(URLQueryItem(name: "conversation_id", value: conversationID)) }
-        return try await send("GET", "/v1/history", query: query)
+        return try await remembered(Self.historyKey(conversationID), "/v1/history", query: query)
     }
 
+    static func historyKey(_ conversationID: String?) -> String { "history-\(conversationID ?? "main")" }
+
     func conversations() async throws -> [Conversation] {
-        let list: ConversationList = try await send("GET", "/v1/conversations")
+        let list: ConversationList = try await remembered("conversations", "/v1/conversations")
         return list.conversations
+    }
+
+    /// Pins or archives a chat, or takes it back (docs/API.md, "Pinned and archived"): its row as it is now.
+    func changeConversation(_ id: String, pinned: Bool? = nil, archived: Bool? = nil) async throws -> Conversation {
+        try await send("PATCH", "/v1/conversations/\(id)", body: ConversationChange(pinned: pinned, archived: archived))
+    }
+
+    /// What the server said for `key` the last time it answered (`remembered`), and when: shown while it can't be
+    /// reached. Nil when there's nothing kept, or it no longer reads.
+    func cached<T: Decodable>(_ key: String, as type: T.Type = T.self) -> (T, Date)? {
+        guard let (data, saved) = store?.load(key), let value = try? JSONDecoder.api.decode(T.self, from: data) else {
+            return nil
+        }
+        return (value, saved)
     }
 
     /// The chats whose title or messages have `query`, each with the line that matched.
@@ -252,7 +280,7 @@ final class APIClient {
     }
 
     func agents() async throws -> [Agent] {
-        let list: AgentList = try await send("GET", "/v1/agents")
+        let list: AgentList = try await remembered("agents", "/v1/agents")
         return list.agents
     }
 
@@ -273,17 +301,24 @@ final class APIClient {
         req.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
         let reply: PhotoUpload = try await perform(req)
         photos[reply.id] = jpeg
+        store?.save(jpeg, as: "photo-\(reply.id)")
         return reply.id
     }
 
-    /// A photo's bytes, from memory after the first time.
+    /// A photo's bytes, from memory after the first time, and from the device's own copy when it was seen before
+    /// (a photo never changes): so a chat's photos show offline too (#79).
     func photo(_ id: String) async throws -> Data {
         if let data = photos[id] { return data }
+        if let (data, _) = store?.load("photo-\(id)") {
+            photos[id] = data
+            return data
+        }
         var req = try request("GET", "/v1/photos/\(id)", query: [], auth: true, timeout: 30, body: nil)
         req.setValue("image/*", forHTTPHeaderField: "Accept")
         let (data, http) = try await fetch(req)
         try check(data, http)
         photos[id] = data
+        store?.save(data, as: "photo-\(id)")
         return data
     }
 
@@ -1485,6 +1520,14 @@ final class APIClient {
         return try await perform(try request(method, path, query: query, auth: true, timeout: timeout, body: data))
     }
 
+    /// A GET whose answer is kept under `key` when it reads, for `cached` to give back offline.
+    private func remembered<T: Decodable>(_ key: String, _ path: String, query: [URLQueryItem] = []) async throws -> T {
+        let (data, http) = try await fetch(try request("GET", path, query: query, auth: true, timeout: 30, body: nil))
+        let value: T = try decode(data, http)
+        store?.save(data, as: key)
+        return value
+    }
+
     private func request(
         _ method: String, _ path: String, query: [URLQueryItem], auth: Bool, timeout: TimeInterval, body: Data?
     ) throws -> URLRequest {
@@ -1527,8 +1570,12 @@ final class APIClient {
     private func check(_ data: Data, _ http: HTTPURLResponse) throws {
         guard !(200..<300).contains(http.statusCode) else { return }
         if http.statusCode == 401 { throw APIError.unauthorized }
-        let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error
-            ?? "Server error (\(http.statusCode))."
+        guard let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error else {
+            // A gateway's error page, not Aide's: tailscale serve on cappa with Aide stopped. As good as unreachable,
+            // so what's kept shows and waiting messages wait (#79, #80).
+            if [502, 503, 504].contains(http.statusCode) { throw APIError.transport("Aide isn't answering on cappa.") }
+            throw APIError.server(status: http.statusCode, message: "Server error (\(http.statusCode)).")
+        }
         throw APIError.server(status: http.statusCode, message: message)
     }
 

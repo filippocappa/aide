@@ -30,18 +30,6 @@ final class ChatViewModel: ObservableObject {
         var feedback: String?
     }
 
-    /// A message written while the chat's agent was still answering (#69): it goes when that reply is done, one at a
-    /// time, in order. Kept per chat (`chat`, nil for a blank chat not yet made on the server) while the app runs.
-    struct Queued: Identifiable, Equatable {
-        let id = UUID()
-        var chat: String?
-        let text: String
-        let photos: [PickedPhoto]
-        var files: [PickedFile] = []
-
-        static func == (a: Queued, b: Queued) -> Bool { a.id == b.id && a.chat == b.chat }
-    }
-
     private static let conversationKey = "conversationID"
     private static let agentKey = "agentID"
 
@@ -76,8 +64,22 @@ final class ChatViewModel: ObservableObject {
     }
     /// A reply is on its way in the open chat.
     @Published private(set) var isSending = false
-    /// Messages waiting for the reply on its way, in every chat (`queued` is this chat's).
-    @Published private(set) var queue: [Queued] = []
+    /// Messages waiting to go, in every chat (`queued` is this chat's): written while a reply was on its way (#69), or
+    /// while the server couldn't be reached (#80). Kept on the device (`ChatCache`), so they outlive the app.
+    @Published private(set) var queue: [Outgoing] = [] {
+        didSet { if queue != oldValue { cache.saveOutbox(queue) } }
+    }
+    /// The server can't be reached: the chats show what was kept (#79) and messages wait to be sent (#80).
+    @Published private(set) var isOffline = false
+    /// While offline: when what shows was last loaded from the server.
+    @Published private(set) var shownFrom: Date?
+    private var lastLoaded: Date?
+    /// Which blank chat is open, for its waiting messages before it's made on the server.
+    private var blankID = UUID()
+    /// Waiting messages on their way out from another chat than the open one.
+    private var inFlight: Set<UUID> = []
+    private var flushing = false
+    private var reconnect: Task<Void, Never>?
     /// Team chat messages waiting for the answers on their way.
     @Published private(set) var teamQueue: [String] = []
     /// Chats with a reply on its way, by conversation id, also after you've left them: the agent's card says so.
@@ -138,11 +140,15 @@ final class ChatViewModel: ObservableObject {
     var onServerChange: (() async -> Void)?
 
     private let api: APIClient
+    private let cache: ChatCache
 
-    init(api: APIClient) {
+    init(api: APIClient, cache: ChatCache? = nil) {
         self.api = api
+        self.cache = cache ?? .shared
         conversationID = UserDefaults.standard.string(forKey: Self.conversationKey)
         agentID = UserDefaults.standard.string(forKey: Self.agentKey) ?? Agent.aide.id
+        queue = self.cache.loadOutbox()
+        self.cache.trimPhotos()
     }
 
     var agent: Agent { agent(agentID) }
@@ -155,7 +161,9 @@ final class ChatViewModel: ObservableObject {
 
     func loadAgents() async {
         defer { agentsLoaded = true }
-        guard let list = try? await api.agents(), !list.isEmpty else { return } // older server: Aide alone
+        // Offline: the ones last seen. An older server: Aide alone.
+        guard let list = (try? await api.agents()) ?? api.cached("agents", as: AgentList.self)?.0.agents,
+              !list.isEmpty else { return }
         agents = list
     }
 
@@ -201,10 +209,52 @@ final class ChatViewModel: ObservableObject {
         if let latest = chats(with: agent).first { await open(latest) } else { await startChat(with: agent) }
     }
 
-    /// The agent's chats, newest first. Not routine chats: their posts are notes on Today, which opens them.
-    /// The old shared chat ("main", from before the app had chats of its own) only while it has something in it.
+    /// The agent's chats, newest first, not the archived ones (#81). Not routine chats: their posts are notes on
+    /// Today, which opens them. The old shared chat ("main", from before the app had chats of its own) only while it
+    /// has something in it.
     func chats(with agent: Agent) -> [Conversation] {
+        allChats(with: agent).filter { !$0.isArchived }
+    }
+
+    /// The agent's archived chats, newest first: untouched for two weeks, or archived by hand (#81).
+    func archivedChats(with agent: Agent) -> [Conversation] {
+        allChats(with: agent).filter(\.isArchived)
+    }
+
+    private func allChats(with agent: Agent) -> [Conversation] {
         conversations.filter { self.agent($0.agent).id == agent.id && $0.routine == nil && ($0.id != "main" || $0.preview != nil) }
+    }
+
+    /// Pins a chat (out of the Archive) or unpins it: shown at once, put back when the server says no.
+    func setPinned(_ conversation: Conversation, _ on: Bool) async {
+        await change(conversation, pinned: on, archived: nil)
+    }
+
+    /// Archives a chat (unpinned) or brings it back.
+    func setArchived(_ conversation: Conversation, _ on: Bool) async {
+        await change(conversation, pinned: nil, archived: on)
+    }
+
+    private func change(_ conversation: Conversation, pinned: Bool?, archived: Bool?) async {
+        guard let index = conversations.firstIndex(where: { $0.id == conversation.id }) else { return }
+        let before = conversations[index]
+        if let pinned {
+            conversations[index].pinned = pinned
+            if pinned { conversations[index].archived = false }
+        }
+        if let archived {
+            conversations[index].archived = archived
+            if archived { conversations[index].pinned = false }
+        }
+        do {
+            let row = try await api.changeConversation(conversation.id, pinned: pinned, archived: archived)
+            if let i = conversations.firstIndex(where: { $0.id == row.id }) {
+                conversations[i].pinned = row.pinned
+                conversations[i].archived = row.archived
+            }
+        } catch {
+            if let i = conversations.firstIndex(where: { $0.id == conversation.id }) { conversations[i] = before }
+        }
     }
 
     /// `agent`'s chats that have `query` in their title or messages, newest first.
@@ -220,6 +270,7 @@ final class ChatViewModel: ObservableObject {
     private func reset() {
         openedDigest = nil
         conversationID = nil
+        blankID = UUID()
         messages = []
         pending = []
         smart = false
@@ -247,13 +298,53 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// This chat's messages waiting to go.
-    var queued: [Queued] { queue.filter { $0.chat == conversationID } }
+    var queued: [Outgoing] { queue.filter(isHere) }
 
-    /// Takes a waiting message back out of the queue (to edit it, or not send it at all).
+    /// The waiting message belongs to the open chat.
+    private func isHere(_ item: Outgoing) -> Bool {
+        if let conversationID { return item.chat == conversationID }
+        return item.chat == nil && item.blank == blankID
+    }
+
+    /// Takes a waiting message back out of the queue (to edit it, or not send it at all), with its photos and PDFs.
     @discardableResult
-    func unqueue(_ id: UUID) -> Queued? {
-        guard let index = queue.firstIndex(where: { $0.id == id }) else { return nil }
-        return queue.remove(at: index)
+    func unqueue(_ id: UUID) -> (text: String, photos: [PickedPhoto], files: [PickedFile])? {
+        guard let index = queue.firstIndex(where: { $0.id == id }), !inFlight.contains(id) else { return nil }
+        let item = queue[index]
+        let (photos, files) = contents(of: item)
+        queue.remove(at: index)
+        return (item.text, photos, files)
+    }
+
+    /// Sends a message the server said no to again.
+    func retry(_ id: UUID) {
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        queue[index].failed = nil
+        sendNextQueued()
+        Task { await flushOutbox() }
+    }
+
+    /// A waiting message as a chat row, greyed out by the view.
+    func row(for item: Outgoing) -> Message {
+        Message(role: .user, text: item.text,
+                localPhotos: item.photos.compactMap { try? Data(contentsOf: cache.outboxURL($0)) },
+                files: item.files.map { StudyFile(id: $0, name: URL(filePath: $0).lastPathComponent) })
+    }
+
+    /// The photos and PDFs kept for a waiting message, read back (PDFs as copies, since the kept ones go once it's sent).
+    private func contents(of item: Outgoing) -> ([PickedPhoto], [PickedFile]) {
+        (item.photos.compactMap { (try? Data(contentsOf: cache.outboxURL($0))).flatMap(PickedPhoto.init(jpeg:)) },
+         item.files.compactMap { PickedFile.copy(of: cache.outboxURL($0)) })
+    }
+
+    /// A message to wait, its photos and PDFs kept on the device: for the open chat, or `chat` (`blank` when it isn't
+    /// made yet) with `agent`.
+    private func outgoing(_ text: String, photos: [PickedPhoto], files: [PickedFile], id: UUID, writtenAt: Date,
+                          chat: String?? = nil, blank: UUID? = nil, agent: String? = nil) -> Outgoing {
+        let chat = chat ?? conversationID
+        return Outgoing(id: id, chat: chat, blank: chat == nil ? (blank ?? blankID) : nil, agent: agent ?? agentID, text: text,
+                 photos: photos.compactMap { cache.keepPhoto($0.jpeg) }, files: files.compactMap { cache.keepFile($0.url) },
+                 writtenAt: writtenAt)
     }
 
     func unqueueTeam(at index: Int) {
@@ -263,9 +354,137 @@ final class ChatViewModel: ObservableObject {
 
     /// Sends this chat's next waiting message once nothing is on its way.
     private func sendNextQueued() {
-        guard !isSending, !isOpening, let index = queue.firstIndex(where: { $0.chat == conversationID }) else { return }
-        let next = queue.remove(at: index)
-        Task { await send(next.text, photos: next.photos, files: next.files) }
+        guard !isSending, !isOpening, !isOffline,
+              let next = queue.first(where: { isHere($0) && $0.failed == nil && !inFlight.contains($0.id) }) else { return }
+        let (photos, files) = contents(of: next)
+        queue.removeAll { $0.id == next.id }
+        Task { await send(next.text, photos: photos, files: files, id: next.id, writtenAt: next.writtenAt) }
+    }
+
+    // MARK: Offline (#79, #80)
+
+    /// The server didn't answer: what was kept shows, and it's asked again every so often until it does.
+    private func wentOffline() {
+        if !isOffline {
+            isOffline = true
+            shownFrom = lastLoaded ?? shownFrom
+        }
+        guard reconnect == nil else { return }
+        reconnect = Task { [weak self] in
+            var wait = 5.0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(wait))
+                guard let self, !Task.isCancelled else { return }
+                if (try? await self.api.health()) != nil {
+                    self.reconnect = nil
+                    self.cameOnline()
+                    return
+                }
+                wait = min(wait * 1.5, 60)
+            }
+        }
+    }
+
+    /// The server answered. Back from offline: the list, the Team chat and the open chat load again, and what waited
+    /// goes out (`loadConversations` sends it).
+    private func cameOnline() {
+        lastLoaded = .now
+        guard isOffline else { return }
+        isOffline = false
+        shownFrom = nil
+        reconnect?.cancel()
+        reconnect = nil
+        Task {
+            await loadConversations()
+            await loadTeam()
+            if isChatOpen { await loadHistory() }
+        }
+    }
+
+    /// Sends what waited (#80), oldest first: the open chat's as usual, the other chats' here, one at a time, each with
+    /// its key, so one sent twice is answered once. From the app coming forward, the server coming back, and on the
+    /// phone a background task.
+    func flushOutbox() async {
+        sendNextQueued()
+        guard !flushing, !isOffline else { return }
+        flushing = true
+        defer { flushing = false }
+        var sent = false
+        while !isOffline, let next = queue.first(where: { item in
+            !isHere(item) && item.failed == nil && !inFlight.contains(item.id) && item.chat.map { working[$0] == nil } ?? true
+        }) {
+            await sendAway(next)
+            sent = true
+        }
+        if sent { await loadConversations() }
+    }
+
+    /// Sends what waited and waits for it: a background task's work.
+    func sendWaiting() async {
+        await loadConversations()
+        while flushing { try? await Task.sleep(for: .milliseconds(300)) }
+        await flushOutbox()
+    }
+
+    /// Whether anything waits to be sent (a background task is scheduled for it).
+    var hasWaiting: Bool { queue.contains { $0.failed == nil } }
+
+    /// A waiting message from a chat that isn't open: the reply lands in the chat's history, the card says it's on its way.
+    private func sendAway(_ item: Outgoing) async {
+        inFlight.insert(item.id)
+        defer { inFlight.remove(item.id) }
+        var turn: String?
+        do {
+            var chat = item.chat
+            if chat == nil { // a new chat, written offline
+                let made = try await api.createConversation(agent: agent(item.agent).orchestrator ? nil : item.agent).id
+                for i in queue.indices where queue[i].chat == nil && queue[i].blank == item.blank {
+                    queue[i].chat = made
+                    queue[i].blank = nil
+                }
+                chat = made
+            }
+            guard let chat else { return }
+            let (photos, files) = contents(of: item)
+            var ids: [String] = []
+            for photo in photos { ids.append(try await api.uploadPhoto(photo.jpeg)) }
+            var fileIDs: [String] = []
+            for file in files { fileIDs.append(try await api.uploadChatPDF(file.url, name: file.name, conversationID: chat).id) }
+            turn = chat
+            working[chat] = Working(agent: item.agent, status: "Thinking…")
+            let reply = try await api.chatLive(item.text, photos: ids, files: fileIDs, conversationID: chat,
+                                               clientID: item.id, writtenAt: item.writtenAt, onTeam: { _ in })
+            working[chat] = nil
+            queue.removeAll { $0.id == item.id }
+            live?.agentFinished(conversation: chat, reply: reply.reply)
+            if conversationID == chat, !isSending { await loadHistory() }
+        } catch APIError.transport {
+            if let turn { working[turn] = nil }
+            wentOffline()
+        } catch APIError.server(let status, _) where status == 409 { // already being answered: it'll be in the history
+            if let turn { working[turn] = nil }
+            queue.removeAll { $0.id == item.id }
+        } catch {
+            if let turn { working[turn] = nil }
+            if let i = queue.firstIndex(where: { $0.id == item.id }) { queue[i].failed = error.localizedDescription }
+        }
+    }
+
+    /// Keeps the histories of the chats that matter offline: each agent's newest that aren't archived, course chats,
+    /// and chats with messages waiting. The rest are dropped from the device.
+    private func pruneCache() {
+        var keep: Set<String> = ["main"]
+        var perAgent: [String: Int] = [:]
+        for chat in conversations where !chat.isArchived {
+            if chat.course != nil { keep.insert(chat.id); continue }
+            let agent = chat.agent ?? ""
+            if perAgent[agent, default: 0] < ChatCache.chatsPerAgent {
+                keep.insert(chat.id)
+                perAgent[agent, default: 0] += 1
+            }
+        }
+        keep.formUnion(queue.compactMap(\.chat))
+        cache.keepHistories(keep)
     }
 
     func open(_ conversation: Conversation) async {
@@ -326,6 +545,15 @@ final class ChatViewModel: ObservableObject {
         defer { conversationsLoaded = true }
         do {
             conversations = try await api.conversations()
+            cameOnline()
+            pruneCache()
+            if hasWaiting { Task { await flushOutbox() } }
+        } catch APIError.transport {
+            if conversations.isEmpty, let (kept, saved) = api.cached("conversations", as: ConversationList.self) {
+                conversations = kept.conversations
+                lastLoaded = lastLoaded ?? saved
+            }
+            wentOffline()
         } catch APIError.server(let status, _) where status == 404 {
             conversations = [] // server without conversations yet
         } catch {
@@ -333,9 +561,17 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    /// An older server has no team chat: it stays empty.
+    /// An older server has no team chat: it stays empty. Offline, it's what was kept.
     func loadTeam() async {
-        team = (try? await api.team()) ?? []
+        do {
+            team = try await api.team()
+            cameOnline()
+        } catch APIError.transport {
+            if team.isEmpty { team = api.cached("team", as: TeamList.self)?.0.messages ?? [] }
+            wentOffline()
+        } catch {
+            team = []
+        }
     }
 
     /// Writes in the Team chat. Your message shows at once; the answers come in one by one, with whoever is
@@ -430,6 +666,7 @@ final class ChatViewModel: ObservableObject {
     func delete(_ conversation: Conversation) async {
         do {
             try await api.deleteConversation(conversation.id)
+            cache.remove(APIClient.historyKey(conversation.id))
             if conversation.id == conversationID { reset() }
             await loadConversations()
         } catch {
@@ -468,6 +705,16 @@ final class ChatViewModel: ObservableObject {
                 messages = loaded
             }
             loadError = nil
+            cameOnline()
+        } catch APIError.transport(let reason) {
+            // Offline: the chat as it was last seen here (#79), or why there's nothing.
+            if messages.isEmpty, let (kept, saved) = api.cached(APIClient.historyKey(id), as: HistoryResponse.self) {
+                smart = kept.smart ?? false
+                messages = Self.messages(kept)
+                lastLoaded = lastLoaded ?? saved
+            }
+            loadError = messages.isEmpty ? reason : nil
+            wentOffline()
         } catch {
             loadError = error.localizedDescription
         }
@@ -543,21 +790,40 @@ final class ChatViewModel: ObservableObject {
     /// The stream was lost after the message went out (the app in the background, the network gone), but the server
     /// carries on with the turn and saves it; its history says `working` meanwhile. Asks every few seconds until the
     /// reply is in. The agent's Live Activity is left to the server, which ends it with the reply (docs/API.md, "Chat").
-    private func recover(turn: String, asked: Message, reason: String) async {
+    ///
+    /// `park` is the message again, when it was sent from here: if the server isn't heard from at all, it may never
+    /// have got it, so it waits to be sent again with the same key (#80) instead of being given up on.
+    private func recover(turn: String, asked: Message, reason: String, park: (() -> Outgoing)? = nil) async {
         working[turn]?.status = "Still working…"
         var misses = 0
+        var reached = false
         var history: HistoryResponse?
         while history == nil || history?.working != nil {
             if history != nil || misses > 0 { try? await Task.sleep(for: .seconds(3)) }
             do {
                 history = try await api.history(limit: 200, conversationID: turn)
                 misses = 0
+                reached = true
                 if let step = history?.working?.step {
                     working[turn]?.status = step
                     if (conversationID ?? "main") == turn { liveStep = step }
                 }
             } catch {
                 misses += 1
+                if !reached, misses >= 3, let park { // ~10 s and not a word from the server: it waits
+                    working[turn] = nil
+                    live?.agentFinished(conversation: turn, reply: "Waiting to send", failed: true)
+                    queue.insert(park(), at: 0)
+                    if (conversationID ?? "main") == turn {
+                        messages.removeAll { $0.id == asked.id }
+                        liveTeam = []
+                        liveReply = ""
+                        liveStep = nil
+                        isSending = false
+                    }
+                    wentOffline()
+                    return
+                }
                 if misses >= 20 { break } // a minute without the server: give up
             }
         }
@@ -596,12 +862,17 @@ final class ChatViewModel: ObservableObject {
     /// Sends a message; the reply shows as it's written. `onDraft` gets the draft each time it grows, and true
     /// when it started over (text written before a tool call is dropped). Photos and PDFs go up first; the text
     /// may then be empty. A PDF goes up for its chat (#78), so a new chat is made before it.
+    ///
+    /// `id` is the message's key (`client_id`), the same however often it's sent; `writtenAt` is when it was written,
+    /// for one that waited (#80). While offline it waits, kept on the device, and goes when the server is back.
     func send(_ raw: String, photos: [PickedPhoto] = [], files: [PickedFile] = [], voice: Bool = false,
-              onDraft: ((String, Bool) -> Void)? = nil) async {
+              id: UUID = UUID(), writtenAt: Date = .now, onDraft: ((String, Bool) -> Void)? = nil) async {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !photos.isEmpty || !files.isEmpty else { return }
-        guard !isSending, !isOpening else { // a reply is on its way: this one goes after it (#69)
-            queue.append(Queued(chat: conversationID, text: text, photos: photos, files: files))
+        // A reply is on its way: this one goes after it (#69). Or the server can't be reached: it goes when it's back.
+        guard !isSending, !isOpening, !isOffline else {
+            queue.append(outgoing(text, photos: photos, files: files, id: id, writtenAt: writtenAt))
+            if isOffline { wentOffline() }
             return
         }
         let asked = Message(role: .user, text: text, localPhotos: photos.map(\.jpeg),
@@ -611,14 +882,20 @@ final class ChatViewModel: ObservableObject {
         liveReply = ""
         liveStep = nil
         let speaker = agentID
+        let blank = blankID
+        var chat = conversationID // the chat it's for, once made
         var started: String? // the turn's chat, once known
         do {
             var ids: [String] = []
             for photo in photos { ids.append(try await api.uploadPhoto(photo.jpeg)) }
             if conversationID == nil {
                 conversationID = try await newConversationID()
+                chat = conversationID
                 // What was queued in the blank chat belongs to the one just made.
-                for i in queue.indices where queue[i].chat == nil { queue[i].chat = conversationID }
+                for i in queue.indices where queue[i].chat == nil && queue[i].blank == blankID {
+                    queue[i].chat = conversationID
+                    queue[i].blank = nil
+                }
             }
             var fileIDs: [String] = []
             for file in files {
@@ -632,7 +909,8 @@ final class ChatViewModel: ObservableObject {
             started = turn
             working[turn] = Working(agent: speaker, status: "Thinking…")
             live?.agentStarted(conversation: turn, agent: agent)
-            let reply = try await api.chatLive(text, photos: ids, files: fileIDs, conversationID: conversationID, voice: voice, onText: { [weak self] delta, restart in
+            let reply = try await api.chatLive(text, photos: ids, files: fileIDs, conversationID: conversationID, voice: voice,
+                                               clientID: id, writtenAt: writtenAt, onText: { [weak self] delta, restart in
                 guard let self else { return }
                 working[turn]?.status = "Writing…"
                 live?.agentUpdate(conversation: turn, status: "writing")
@@ -670,6 +948,7 @@ final class ChatViewModel: ObservableObject {
                 isSending = false
                 if writing == nil { watchNotebook() } // "yes" to a proposal starts the writing
                 sendNextQueued()
+                Task { _ = try? await api.history(limit: 200, conversationID: turn) } // kept for offline, with the reply
             } else if here() { // left and came back while it was on its way: the history has it all now
                 liveTeam = []
                 liveReply = ""
@@ -682,7 +961,20 @@ final class ChatViewModel: ObservableObject {
             }
             await onServerChange?()
         } catch APIError.transport(let reason) where started != nil {
-            await recover(turn: started ?? "main", asked: asked, reason: reason)
+            await recover(turn: started ?? "main", asked: asked, reason: reason) { [unowned self] in
+                outgoing(text, photos: photos, files: files, id: id, writtenAt: writtenAt, chat: .some(started),
+                         agent: speaker)
+            }
+        } catch APIError.transport {
+            // It never reached the server (a photo, the new chat or a PDF couldn't go up): it waits, first in line.
+            if messages.contains(where: { $0.id == asked.id }) {
+                messages.removeAll { $0.id == asked.id }
+                liveTeam = []
+                isSending = false
+            }
+            queue.insert(outgoing(text, photos: photos, files: files, id: id, writtenAt: writtenAt, chat: .some(chat),
+                                  blank: blank, agent: speaker), at: 0)
+            wentOffline()
         } catch {
             let turn = started ?? conversationID ?? "main"
             working[turn] = nil

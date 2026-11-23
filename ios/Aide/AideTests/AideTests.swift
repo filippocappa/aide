@@ -2619,7 +2619,7 @@ final class LiveCallTests: XCTestCase {
     }
 
     func testATurnAndASpokenYesShowAsTyped() throws {
-        let chat = ChatViewModel(api: APIClient(config: { nil }))
+        let chat = ChatViewModel(api: APIClient(config: { nil }), cache: ChatCache(folder: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)))
         let json = #"{"text":"delete bins","reply":"Shall I?","pending":[{"id":12,"summary":"Delete Bins"},{"id":13,"summary":"Other"}],"attachments":[]}"#
         chat.appendTurn(try JSONDecoder.api.decode(LiveCall.Turn.self, from: Data(json.utf8)))
         XCTAssertEqual(chat.messages.map(\.text), ["delete bins", "Shall I?"])
@@ -2649,5 +2649,88 @@ final class LiveCallTests: XCTestCase {
         var pcm = Data([0xFF]) // odd start, so the samples aren't aligned
         for v: Int16 in [0, 16384, -32768, 32767] { withUnsafeBytes(of: v.littleEndian) { pcm.append(contentsOf: $0) } }
         XCTAssertEqual(LiveCall.floats(pcm.dropFirst()), [0, 0.5, -1, 32767.0 / 32768])
+    }
+}
+
+/// Chats offline (#79), messages that wait (#80), and the chat list's groups (#81).
+@MainActor
+final class OfflineChatTests: XCTestCase {
+    private var folder: URL!
+
+    override func setUp() {
+        folder = FileManager.default.temporaryDirectory.appending(path: "chats-\(UUID().uuidString)")
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: folder)
+        StubURLProtocol.handler = nil
+    }
+
+    private func makeClient(_ cache: ChatCache) -> APIClient {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [StubURLProtocol.self]
+        let api = APIClient(session: URLSession(configuration: cfg),
+                            config: { APIConfig(baseURL: URL(string: "https://aide.test/")!, token: "secret") })
+        api.store = cache
+        return api
+    }
+
+    func testTheChatListIsKeptForOffline() async throws {
+        let cache = ChatCache(folder: folder)
+        let api = makeClient(cache)
+        StubURLProtocol.handler = { _ in
+            (200, #"{"conversations":[{"id":"c_1","agent":"coach","title":"Runs","preview":"5 km","updated_at":"2026-11-23T10:00:00+00:00","pinned":true}]}"#)
+        }
+        _ = try await api.conversations()
+        StubURLProtocol.handler = { _ in (502, "Bad Gateway") } // tailscaled with Aide down: as good as offline
+        do { _ = try await api.conversations(); XCTFail("expected failure") }
+        catch { guard case .transport = error as? APIError else { return XCTFail("\(error)") } }
+        let kept = try XCTUnwrap(api.cached("conversations", as: ConversationList.self))
+        XCTAssertEqual(kept.0.conversations.map(\.id), ["c_1"])
+        XCTAssertTrue(kept.0.conversations[0].isPinned)
+    }
+
+    func testOfflineTheChatsShowWhatWasKeptAndMessagesWait() async throws {
+        let cache = ChatCache(folder: folder)
+        let api = makeClient(cache)
+        StubURLProtocol.handler = { _ in (200, #"{"conversations":[{"id":"c_1","agent":"aide","title":"Plans"}]}"#) }
+        let chat = ChatViewModel(api: api, cache: cache)
+        await chat.loadConversations()
+        XCTAssertFalse(chat.isOffline)
+
+        StubURLProtocol.handler = { _ in (503, "") }
+        let offline = ChatViewModel(api: api, cache: cache) // the app opened again with no connection
+        await offline.loadConversations()
+        XCTAssertTrue(offline.isOffline)
+        XCTAssertEqual(offline.conversations.map(\.id), ["c_1"])
+        XCTAssertNotNil(offline.shownFrom)
+
+        await offline.send("remind me in an hour")
+        XCTAssertEqual(offline.queued.map(\.text), ["remind me in an hour"])
+        XCTAssertTrue(offline.messages.isEmpty) // it waits, greyed out, rather than failing
+        XCTAssertEqual(ChatCache(folder: folder).loadOutbox().map(\.text), ["remind me in an hour"]) // and outlives the app
+    }
+
+    func testAWaitingMessageGoesWithItsKeyAndWhenItWasWritten() throws {
+        let written = Date(timeIntervalSince1970: 1_790_000_000)
+        let item = Outgoing(chat: "c_1", agent: "aide", text: "hi", writtenAt: written)
+        let body = try JSONEncoder.api.encode(ChatRequest(text: item.text, conversationId: item.chat, stream: true,
+                                                          clientId: item.id.uuidString, writtenAt: Wire.local(written)))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["client_id"] as? String, item.id.uuidString)
+        XCTAssertNotNil((json["written_at"] as? String).flatMap(Wire.parse))
+    }
+
+    func testChatsAreGroupedPinnedTodayThisWeekEarlier() {
+        let now = Wire.parse("2026-11-23T15:00:00+01:00")!
+        func chat(_ id: String, _ used: String, pinned: Bool = false) -> Conversation {
+            Conversation(id: id, agent: "aide", title: id, preview: nil, updatedAt: used, pinned: pinned)
+        }
+        let groups = PastChatsSheet.groups([
+            chat("a", "2026-11-23T09:00:00+01:00"), chat("b", "2026-11-01T09:00:00+01:00", pinned: true),
+            chat("c", "2026-11-19T09:00:00+01:00"), chat("d", "2026-11-02T09:00:00+01:00"),
+        ], now: now)
+        XCTAssertEqual(groups.map(\.title), ["Pinned", "Today", "This week", "Earlier"])
+        XCTAssertEqual(groups.map { $0.chats.map(\.id) }, [["b"], ["a"], ["c"], ["d"]])
     }
 }
