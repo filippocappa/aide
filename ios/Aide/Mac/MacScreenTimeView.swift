@@ -515,45 +515,65 @@ private struct MacUnlockSheet: View {
     @State private var reason = ""
     @State private var left = 10
     @State private var isBusy = false
+    @FocusState private var focused: Bool
 
+    private var trimmed: String { reason.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var ready: Bool { left == 0 && !trimmed.isEmpty && !isBusy }
+
+    /// A small dialog, not the usual sheet (a grouped form most of the window's size put the label on the left, the
+    /// words on the right of one line and empty space below): a box to write in, the note, Keep it and Unlock.
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField(pass ? "What's the emergency?" : "Why now?", text: $reason, axis: .vertical)
-                        .lineLimit(2...4)
-                } footer: {
-                    Text((pass ? "Uses one of your \(screenTime.passes?.left ?? 0) passes left this month. " : "")
-                         + hold.afterUnlock + " Coach sees the reason.")
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            Text(pass ? "Emergency pass" : "End \(hold.title) early")
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+            TextField("", text: $reason, prompt: Text(pass ? "What's the emergency?" : "Why do you need it now?"),
+                      axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, design: .rounded))
+                .lineLimit(3...6)
+                .focused($focused)
+                .onSubmit { if ready { unlock() } }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            Group {
                 if let error = screenTime.lastError {
                     Text(error).foregroundStyle(.red)
+                } else {
+                    Text((pass ? "Uses one of your \(screenTime.passes?.left ?? 0) passes left this month. " : "")
+                         + hold.afterUnlock + " Coach sees the reason.")
+                        .foregroundStyle(.secondary)
                 }
             }
-            .macSheetTitle(pass ? "Emergency pass" : "End \(hold.title) early")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    if isBusy { ProgressView().controlSize(.small) } else {
-                        Button(left > 0 ? "Unlock (\(left))" : "Unlock") {
-                            Task {
-                                isBusy = true
-                                if await screenTime.unlock(hold, reason: reason.trimmingCharacters(in: .whitespacesAndNewlines),
-                                                           pass: pass) {
-                                    dismiss()
-                                }
-                                isBusy = false
-                            }
-                        }
-                        .disabled(left > 0 || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                NudgeButton("Keep it") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                if isBusy {
+                    ProgressView().controlSize(.small).frame(width: 100)
+                } else {
+                    NudgeButton(left > 0 ? "Unlock in \(left)" : "Unlock", prominent: true, enabled: ready) { unlock() }
                 }
             }
-            .task {
-                while left > 0 {
-                    try? await Task.sleep(for: .seconds(1))
-                    left -= 1
-                }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onAppear { focused = true }
+        .task {
+            while left > 0 {
+                try? await Task.sleep(for: .seconds(1))
+                left -= 1
             }
+        }
+    }
+
+    private func unlock() {
+        Task {
+            isBusy = true
+            if await screenTime.unlock(hold, reason: trimmed, pass: pass) { dismiss() }
+            isBusy = false
         }
     }
 }
