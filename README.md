@@ -712,6 +712,7 @@ ln -sf "$PWD/deploy/aide-user.service" ~/.config/systemd/user/aide.service
 ln -sf "$PWD/deploy/aide.slice" ~/.config/systemd/user/aide.slice   # Aide's memory budget (8 GB with the voice)
 ln -sf "$PWD/deploy/aide-budget.service" ~/.config/systemd/user/   # 10 GB of it while no emulator or Expo runs
 ln -sf "$PWD/deploy/aide-status.service" ~/.config/systemd/user/   # what's going on, for the app's status glyph
+ln -sf "$PWD/deploy/host-claim" ~/.local/bin/host-claim   # other projects tell Aide before a big start (#83)
 systemctl --user daemon-reload
 systemctl --user enable --now aide aide-budget aide-status
 sudo tailscale serve --bg --set-path /aide-status ~/.local/state/aide-status   # served by tailscaled, Aide up or not

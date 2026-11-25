@@ -53,6 +53,7 @@ STATUS_EVERY = 30.0  # a "still working" note while a turn runs
 PROGRESS_EVERY = 4.0  # at most one step note this often
 GOODBYE_SECONDS = 4.0  # the voice says goodbye, then the call ends
 IDLE_TICK = 15.0
+HOLD_POLL = 2.0  # how often stepping back for app development (#83) looks whether the call going has ended
 PRICE_MINUTE = 0.05  # gpt-live-1, billed by the second (OpenAI, 2026-11)
 
 # What the call says itself, in the language last spoken.
@@ -709,6 +710,9 @@ class LiveCalls:
         self.engine: str | None = getattr(connect, "engine", None) if connect else None
         self.switch: Callable[[bool], Awaitable[None]] | None = getattr(connect, "switch", None)
         self._switching: asyncio.Task | None = None
+        # What Aide stepped back for (#83, host.py: "Roen's Android emulator"): no new calls and the local voice let go
+        # until it's over; the setting stays as the user left it.
+        self.held: str | None = None
         # Called when the setting changes and when the voice is ready after it was turned on: the apps hide or show
         # Talk (the silent `sync` push, #82).
         self.on_change: list[Callable[[], None]] = []
@@ -721,15 +725,18 @@ class LiveCalls:
 
     @property
     def on(self) -> bool:
-        return self.connect is not None and self.enabled
+        return self.connect is not None and self.enabled and not self.held
 
     @property
     def loading(self) -> bool:
         return self._switching is not None and not self._switching.done()
 
     def as_json(self) -> dict:
-        return {"live": self.on and not self.loading, "enabled": self.enabled, "engine": self.engine,
-                "loading": self.on and self.loading}
+        out = {"live": self.on and not self.loading, "enabled": self.enabled, "engine": self.engine,
+               "loading": self.on and self.loading}
+        if self.held and self.connect is not None:
+            out["held_by"] = self.held
+        return out
 
     async def set_enabled(self, enabled: bool) -> None:
         """The setting; off ends the calls on now. The models are loaded or let go in the background."""
@@ -754,14 +761,39 @@ class LiveCalls:
                 log.exception("live calls: a change listener failed")
 
     async def settle(self) -> None:
-        """At the service's start: the voice as the setting says (off: nothing loaded, the voice's service stopped)."""
-        await self._switch(self.enabled, None)
+        """At the service's start: the voice as the setting says (off, or held for app development: nothing loaded,
+        the voice's service stopped)."""
+        await self._switch(self.enabled and not self.held, None)
+
+    async def step_back(self, why: str) -> None:
+        """App development needs the memory (#83): no new calls from now, a call going is finished first, then the
+        voice is let go."""
+        self.held = why
+        self._changed()  # the apps hide Talk
+        while self.active:
+            await asyncio.sleep(HOLD_POLL)
+        if self.switch and self.enabled:
+            previous = self._switching
+            self._switching = asyncio.create_task(self._switch(False, previous))
+            await self._switching
+
+    async def come_back(self) -> None:
+        """It's over: the voice loaded again if Live calls are on."""
+        self.held = None
+        if self.switch and self.enabled:
+            previous = self._switching
+            self._switching = asyncio.create_task(self._switch(True, previous))
+            self._switching.add_done_callback(lambda _: self._changed())  # loaded: Talk is ready
+        self._changed()
+
+    def finishing(self) -> str | None:
+        return "a live call" if self.active else None
 
     async def _switch(self, enabled: bool, previous: asyncio.Task | None) -> None:
         if previous and not previous.done():  # one after the other, the last one wins
             with contextlib.suppress(Exception):
                 await previous
-        if enabled != self.enabled:
+        if enabled != (self.enabled and not self.held):
             return
         try:
             await self.switch(enabled)

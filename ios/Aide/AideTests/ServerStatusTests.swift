@@ -63,6 +63,35 @@ final class ServerStatusTests: XCTestCase {
         XCTAssertNil(ServerCondition.from(answering: true, reached: true, host: fine, now: now))
     }
 
+    func testSteppedBackForAppDevelopment() {
+        var h = host(dev: ["Android emulator"])
+        h.claims = [.init(who: "Roen", what: "emulator", since: "2026-11-18T17:05:00Z")]
+        h.held = .init(by: "Roen's emulator", since: "2026-11-18T17:05:01Z", ready: true)
+        let c = ServerCondition.from(answering: true, reached: true, host: h, now: now)
+        XCTAssertEqual(c?.short, "Busy")
+        XCTAssertEqual(c?.detail, "Android emulator is running. Aide let its voice go for Roen's emulator, and recordings "
+                       + "wait to be transcribed. Both come back a couple of minutes after it stops; meanwhile Talk works a turn at a time.")
+        let lines = ServerCondition.lines(h, now: now)
+        XCTAssertTrue(lines.contains("Voice off while Roen's emulator runs"))
+        XCTAssertTrue(lines.contains("Claimed by Roen: emulator"))
+        h.held = .init(by: "Roen's emulator", since: "2026-11-18T17:05:01Z", ready: false)
+        XCTAssertEqual(ServerCondition.from(answering: true, reached: true, host: h, now: now)?.detail,
+                       "Android emulator is running. Aide is finishing a call, then lets its voice go for Roen's emulator.")
+        var quiet = host()  // it stopped: the quiet while before the voice comes back
+        quiet.held = .init(by: nil, since: "2026-11-18T17:05:01Z", ready: true)
+        XCTAssertEqual(ServerCondition.from(answering: true, reached: true, host: quiet, now: now)?.short, "Busy")
+        XCTAssertTrue(ServerCondition.lines(quiet, now: now).contains("Voice back in a couple of minutes"))
+    }
+
+    func testHostStatusDecodesClaims() throws {
+        let json = #"{"at":"2026-11-18T17:09:55Z","aide":{"state":"active"},"claims":[{"who":"Roen","what":"emulator","since":"2026-11-18T17:05:00Z"}],"held":{"by":"Roen's emulator","since":"2026-11-18T17:05:01Z","ready":true}}"#
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        let h = try d.decode(HostStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(h.claims.first?.what, "emulator")
+        XCTAssertEqual(h.held?.by, "Roen's emulator")
+    }
+
     func testPortTakenWhileStopped() {
         var h = host("inactive", claude: [.init(project: "roenlabs", busy: true)])
         h.port = .init(project: "roenlabs", command: "local_engine.py")

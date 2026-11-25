@@ -147,6 +147,12 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   emulator, Expo, Metro or Gradle, memory) into `~/.local/state/aide-status/host.json`, which tailscaled serves at
   `/aide-status/host.json`, so the app can say why Aide is down: a coloured line and a word at the top (after "Aide" in the
   Mac's window title, after the date on the phone's Team tab), a tap says why (`Support/ServerStatus.swift`; the Mac's system title stays hidden).
+- `host.py` (#83): Aide steps back for app development on cappa (Roen). `deploy/host-claim <what> -- <command>`
+  (on PATH as `host-claim`, said in roenlabs' CLAUDE.md) claims the host while the command runs (a file per claim in
+  `~/.local/state/aide-host/claims/`), and what runs without it is seen from its processes; meanwhile Aide takes no
+  new calls (a call going is finished first, at most a minute's wait for the claim), lets the voice go, and holds
+  Whisper (a lecture `waiting_for`); 2 min after it all stops the voice loads again if Live calls are on. Aide's
+  side in `aide.json` beside the claims; aide-status.py and aide-budget.sh read both.
 - `backup.py`: nightly backup to `~/aide-backups` (`deploy/aide-backup.timer`; restore notes in README.md).
 
 ```bash
@@ -163,7 +169,7 @@ Rules that matter here:
 - Times: store UTC, talk to the user in `AIDE_TIMEZONE` (Europe/Rome).
 - Memory: cappa has 15 GB and is also the user's dev box (an Android emulator, Expo). Aide and its voice share
   `deploy/aide.slice` (8 GB, 1 GB of swap; killed inside it, never cappa frozen, 2026-11-07; 10 GB while no
-  emulator, Expo or Gradle runs: `deploy/aide-budget.sh`); each restart reloads
+  emulator, Expo or Gradle runs or is claimed: `deploy/aide-budget.sh`; the voice let go meanwhile: `host.py`); each restart reloads
   the voice models (~5 GB for a minute), so one restart per deploy. Tests on cappa go in a capped scope:
   `systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 uv run pytest`.
 

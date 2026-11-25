@@ -1,11 +1,12 @@
 #!/bin/sh
 # Aide's memory budget follows what else runs on cappa: 10 GB while it's free, aide.slice's own 8 GB while an Android
-# emulator, Expo, Metro or Gradle runs, or anything else uses more than 4 GB. It grows back only after 2 min of that
-# gone (Expo restarts often). Checked every 15 s; a change is logged. --dry: say what it would do, once, and change
-# nothing. Install: README.md, "Running as a service".
+# emulator, Expo, Metro or Gradle runs, something is claimed with deploy/host-claim (#83), or anything else uses more
+# than 4 GB. It grows back only after 2 min of that gone (Expo restarts often). Checked every 15 s; a change is logged.
+# --dry: say what it would do, once, and change nothing. Install: README.md, "Running as a service".
 BIG=${AIDE_BUDGET_BIG:-'qemu-system|Android/Sdk/emulator|expo start|metro|GradleDaemon|KotlinCompileDaemon'}
 OTHER_MAX_MB=4096
 QUIET_S=120
+CLAIMS=${AIDE_HOST_STATE:-$HOME/.local/state/aide-host}/claims
 uid=$(id -u)
 slice=/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/aide.slice
 current=""
@@ -13,7 +14,13 @@ last_big=0
 
 while true; do
   now=$(date +%s)
-  why=$(pgrep -fa -- "$BIG" | grep -v -e aide-budget -e earlyoom | head -1 | cut -d' ' -f2- | cut -c1-70)
+  why=$(pgrep -fa -- "$BIG" | grep -v -e aide-budget -e earlyoom -e host-claim -e '/claude ' -e '^[0-9]* claude ' \
+    | head -1 | cut -d' ' -f2- | cut -c1-70)
+  for f in "$CLAIMS"/*.json; do  # deploy/host-claim's claims (#83), while their process runs
+    [ -e "$f" ] || continue
+    pid=${f##*/}; pid=${pid%%.*}
+    kill -0 "$pid" 2>/dev/null && why="claimed: $(sed -n 's/.*"what": *"\([^"]*\)".*/\1/p' "$f")" && break
+  done
   used_kb=$(awk '/^MemTotal/ {t=$2} /^MemAvailable/ {a=$2} END {print t-a}' /proc/meminfo)
   aide_kb=$(awk '$1 == "anon" {print int($2/1024)}' "$slice/memory.stat" 2>/dev/null || echo 0)
   other_mb=$(( (used_kb - ${aide_kb:-0}) / 1024 ))

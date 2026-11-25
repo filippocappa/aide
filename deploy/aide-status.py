@@ -2,8 +2,8 @@
 """What's happening on cappa, for the app's status glyph (docs/API.md, "Host status").
 
 Every 10 s: Aide's and the voice's service state, the Claude Code sessions of this user (the project each works in,
-busy or idle), whatever else holds Aide's port 8787, what's running for app development (an Android emulator, Expo, Metro, Gradle: roenlabs) and the memory
-left, written to ~/.local/state/aide-status/host.json. tailscaled serves that folder itself at /aide-status/, so the
+busy or idle), whatever else holds Aide's port 8787, what's running for app development (an Android emulator, Expo, Metro, Gradle: roenlabs), the claims
+made with host-claim and what Aide stepped back for (#83), and the memory left, written to ~/.local/state/aide-status/host.json. tailscaled serves that folder itself at /aide-status/, so the
 app can read it while Aide is stopped, restarting or broken. Standard library only, run by the system python3, so a
 venv being re-synced doesn't stop it. `--once` prints one reading and writes nothing.
 Install: README.md, "Running as a service".
@@ -25,14 +25,10 @@ PORT = 8787  # Aide's API (tailscale serve's / proxies it)
 # seconds after, so the wait for the model between two steps doesn't flicker.
 BUSY_SHARE = 0.03
 LINGER = 60
-DEV = [  # what each is called in the app, and the command line that gives it away
-    ("Android emulator", re.compile(r"qemu-system|Android/Sdk/emulator")),
-    ("Expo", re.compile(r"expo start|expo run")),
-    ("Metro", re.compile(r"metro")),
-    ("Gradle", re.compile(r"GradleDaemon|KotlinCompileDaemon")),
-]
-# Never these: earlyoom's own command line names qemu-system, and so does Aide's budget watcher.
-NOT_DEV = re.compile(r"earlyoom|aide-budget|aide-status")
+# What app development looks like, the claims made with deploy/host-claim and what Aide stepped back for (#83):
+# src/aide/host.py, standard library only.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from aide import host as hostlib  # noqa: E402
 TICK = os.sysconf("SC_CLK_TCK")
 UID = os.getuid()
 HOME = str(Path.home())
@@ -180,8 +176,9 @@ def reading(before: dict[int, tuple[float, int]], busy_until: dict[int, float]) 
         before.pop(pid, None)
         busy_until.pop(pid, None)
     dev = []
-    for label, pattern in DEV:
-        if any(p["uid"] == UID and pattern.search(p["cmd"]) and not NOT_DEV.search(p["cmd"]) for p in procs.values()):
+    for label, pattern in hostlib.DEV:
+        if any(p["uid"] == UID and pattern.search(p["cmd"]) and p["name"] not in hostlib.NOT_DEV_NAMES
+               and not hostlib.NOT_DEV.search(p["cmd"]) for p in procs.values()):
             dev.append(label)
     sessions.sort(key=lambda s: (not s["busy"], s["project"]))
     out = {"at": iso(now), "aide": service("aide"), "voice": service("aide-voice"),
@@ -189,7 +186,22 @@ def reading(before: dict[int, tuple[float, int]], busy_until: dict[int, float]) 
     holder = port_holder(procs, main_pid("aide"))
     if holder:
         out["port"] = holder
+    claims = [{"who": hostlib.name(c["who"]), "what": c["what"], "since": c["since"]} for c in hostlib.claims()]
+    if claims:
+        out["claims"] = claims
+    if held := stepped_back(out["aide"]):
+        out["held"] = held
     return out
+
+
+def stepped_back(aide: dict) -> dict | None:
+    """What Aide stepped back for, as it last wrote it, while it runs: {"by": "Roen's Android emulator", "since": …,
+    "ready": true}; "ready" false while it finishes a call first, "by" null in the quiet while before it comes back."""
+    state = hostlib.read_state()
+    if aide.get("state") != "active" or not state or not state.get("since"):
+        return None
+    return {"by": hostlib.describe(state.get("held_by") or []) or None, "since": state["since"],
+            "ready": bool(state.get("stepped_back"))}
 
 
 def write(data: dict) -> None:

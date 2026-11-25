@@ -846,7 +846,7 @@ extension Lecture {
 
     var statusText: String {
         switch status {
-        case "queued": "Waiting to be written up"
+        case "queued": waitingFor.map { "Queued behind \($0)" } ?? "Waiting to be written up"
         case "transcribing": "Transcribing"
         case "writing": "Writing the notes"
         case "failed": error.map { "Failed: \($0)" } ?? "Failed"

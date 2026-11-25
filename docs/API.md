@@ -49,6 +49,19 @@ restarting or broken. The app's status glyph reads it beside `/v1/health`.
 - `port` (only when it isn't Aide): what listens on Aide's port 8787, its project and script. Aide can't start while
   it's there, and whatever answers `/v1/health` then isn't Aide: the app trusts `aide.state` over it ("Port taken").
 
+Since 2026-11-25 (#83), Aide steps back for app development on cappa, and two more keys say so:
+
+```json
+{"claims": [{"who": "Roen", "what": "emulator", "since": "2026-11-25T18:29:16Z"}],
+ "held": {"by": "Roen's Android emulator", "since": "2026-11-25T18:29:17Z", "ready": true}}
+```
+
+- `claims` (only when there are some): what app development announced with `deploy/host-claim` before starting it.
+- `held` (only while Aide runs and has stepped back): what for (`by`, from the claims and from `dev`; `null` in the
+  quiet two minutes after it all stopped, before the voice comes back), since when, and `ready`: `false` while Aide
+  finishes a live call first. Meanwhile the local voice is let go (`GET /v1/voice` says `held_by`) and recordings
+  wait to be transcribed (a lecture's `waiting_for`). The app shows Busy and says this in the popover.
+
 ## Chat
 
 Omitting `conversation_id` means the first chat (`main`, from before there were many). One confirmation queue for all chats. (There used to be a Discord bot sharing that chat; it was removed on 2026-10-21.)
@@ -279,6 +292,9 @@ calls now, else use `/v1/transcribe` and `/v1/chat` as above. Since 2026-11-21 (
 - `engine`: `"local"` (cappa's own voice), `"gpt-live"`, or `null` when this server can't make calls at all (hide the
   setting then).
 - `loading`: turned on a moment ago and the voice is still loading (~1 min); `live` is `false` meanwhile.
+- `held_by` (since 2026-11-25, #83; only then): the local voice is let go while app development runs on cappa
+  ("Roen's Android emulator"), and comes back by itself two minutes after it stops if `enabled`. `live` is `false`
+  meanwhile (the turn-at-a-time voice); `enabled` stays as the user left it, and turning it on loads nothing until then.
 
 `PUT /v1/voice` `{"enabled": false}` → the same shape. Off ends any call on now (`ended` with `"turned off"`) and
 the local voice lets its models go and stops its service, so cappa has the memory back (~3 GB; all of it after the
@@ -1069,6 +1085,8 @@ Lecture object:
 ```
 - `status`: `queued`, `transcribing` (only with a recording), `writing`, `ready` or `failed`. `error` is a short
   reason, when `failed`. A 90-minute lecture takes a few minutes.
+- `waiting_for` (since 2026-11-25, #83; only then): a `queued` recording waits for app development on cappa to stop
+  ("Roen's Android emulator"), and is transcribed a couple of minutes after. The app says "Queued behind …".
 - `title`: the user's, or the one the notes suggest when it was empty. `summary` is the notes' first line, for lists
   (null before they're written).
 - The single-lecture GET and every write add `notes` (markdown), `text` (what the user typed with it), `language`

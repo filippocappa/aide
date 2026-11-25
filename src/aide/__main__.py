@@ -99,6 +99,7 @@ from .shapes import event_json
 from .bedtime import Bedtime, bedtime_tools
 from .focus import FocusStore, FocusWatcher, focus_tools
 from .livecall import LiveCalls
+from .host import HostWatcher
 from .nudges import Nudges
 from .wake import WakeService
 from .whisper import available as whisper_available
@@ -490,7 +491,10 @@ def main() -> None:
         await live.sweep()  # activities of jobs the last stop cut off
         replanner.start()
         wake = WakeService(digest, health, settings.timezone, push)
+        host_watch = HostWatcher()  # what else runs on cappa (#83): a first look now, before the voice loads
+        host_watch.look()
         jobs = [
+            host_watch.run(),
             reminder_fallback(reminders, settings.timezone, push),
             digest_schedule(digest, push),
             routine_schedule(agent, CONVERSATION, push),
@@ -521,7 +525,11 @@ def main() -> None:
             calls = LiveCalls(agent, db.conn, voice, settings.live_idle_minutes)
             if push.enabled:
                 calls.on_change.append(push.request_sync)  # the phone hides or shows Talk (#82)
-            if not calls.enabled and calls.switch:  # off in the app: nothing loaded, Chatterbox stopped
+            if calls.engine == "local":  # app development on cappa takes the voice's memory first (#83)
+                host_watch.step_back, host_watch.come_back = calls.step_back, calls.come_back
+                host_watch.finishing = calls.finishing
+                calls.held = host_watch.held
+            if calls.switch and not calls.on:  # off in the app, or held: nothing loaded, Chatterbox stopped
                 jobs.append(calls.settle())
             elif warm := getattr(voice, "warm", None):
                 jobs.append(warm_voice(warm))

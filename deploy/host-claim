@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Runs a command that needs cappa's memory after telling Aide, so Aide steps back first (#83, src/aide/host.py).
+
+    host-claim emulator -- ~/Android/Sdk/emulator/emulator -avd Pixel_8
+    host-claim --mb 3000 gradle -- npx expo run:android
+    host-claim --list
+
+The claim holds while the command runs and goes when it ends. Before starting, it waits for Aide to say it has let its
+voice go: at once when there's nothing to let go, longer while Aide finishes a live call, at most --wait seconds (60)
+and then it starts anyway; it doesn't wait at all when Aide isn't running. Who claims is the project you're in
+(roenlabs), or --who. Install: ln -sf ~/Developer/aide/deploy/host-claim ~/.local/bin/host-claim
+"""
+
+import argparse
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from aide import host  # noqa: E402  (standard library only)
+
+FRESH = 15  # Aide's state older than this: Aide isn't running
+
+
+def say(text: str) -> None:
+    print(f"host-claim: {text}", file=sys.stderr, flush=True)
+
+
+def age(state: dict) -> float:
+    try:
+        at = datetime.strptime(state["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (KeyError, ValueError):
+        return float("inf")
+    return time.time() - at.timestamp()
+
+
+def wait_for_aide(cid: str, what: str, limit: float) -> None:
+    started = time.monotonic()
+    told = None
+    while True:
+        state = host.read_state()
+        if state is None or age(state) > FRESH:  # it writes every second while it runs
+            say("Aide isn't running; going ahead")
+            return
+        if cid in state.get("ready", []):
+            waited = time.monotonic() - started
+            say(f"Aide stepped back for the {what}" + (f" ({waited:.0f} s)" if waited >= 1 else ""))
+            return
+        if (finishing := state.get("finishing")) and finishing != told:
+            say(f"Aide is finishing {finishing} first (up to {limit:.0f} s)")
+            told = finishing
+        if time.monotonic() - started >= limit:
+            say(f"Aide didn't step back within {limit:.0f} s; going ahead anyway")
+            return
+        time.sleep(0.25)
+
+
+def show() -> None:
+    held = host.claims()
+    for c in held:
+        mb = f", {c['mb']} MB" if c.get("mb") else ""
+        print(f"{c['id']}: {host.name(c['who'])}'s {c['what']} (pid {c['pid']}{mb}) since {c['since']}")
+    if not held:
+        print("No claims.")
+    state = host.read_state()
+    if state is None or age(state) > FRESH:
+        print("Aide: not running")
+    elif state.get("held_by"):
+        print(f"Aide: {'stepped back' if state.get('stepped_back') else 'stepping back'} for "
+              f"{host.describe(state['held_by'])} since {state.get('since')}")
+    elif state.get("since"):
+        print("Aide: nothing holds cappa; the voice comes back after a quiet while")
+    else:
+        print("Aide: has cappa to itself")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="host-claim", description=__doc__.split("\n\n")[0],
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("what", nargs="?", help="what it is: emulator, expo, metro, gradle, build…")
+    parser.add_argument("--who", help="who claims (default: the project you're in)")
+    parser.add_argument("--mb", type=int, help="about how much memory it takes")
+    parser.add_argument("--wait", type=float, default=60, help="the longest wait for Aide, in seconds (60)")
+    parser.add_argument("--list", action="store_true", help="the claims now and what Aide is doing")
+    argv = sys.argv[1:]
+    command: list[str] = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, command = argv[:i], argv[i + 1:]
+    args = parser.parse_args(argv)
+    if args.list:
+        show()
+        return 0
+    if not args.what or not command:
+        parser.error("say what it is and the command after --: host-claim emulator -- emulator -avd Pixel_8")
+    who = args.who or project_here()
+    cid = host.claim(args.what, who, args.mb)
+    try:
+        wait_for_aide(cid, args.what, args.wait)
+        try:
+            child = subprocess.Popen(command)
+        except OSError as e:
+            say(f"can't run {command[0]}: {e}")
+            return 127
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):  # passed on; the claim goes when it ends
+            signal.signal(sig, lambda s, _f: child.send_signal(s))
+        code = child.wait()
+        return 128 - code if code < 0 else code  # killed by a signal: the shell's way
+    finally:
+        host.release(cid)
+
+
+def project_here() -> str:
+    try:
+        rest = Path.cwd().relative_to(Path.home() / "Developer").parts
+    except ValueError:
+        return Path.cwd().name
+    if not rest:
+        return "Developer"
+    return rest[1] if rest[0] == "apps" and len(rest) > 1 else rest[0]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -517,6 +517,9 @@ struct VoiceStatus: Decodable, Equatable {
     var engine: String? = nil
     /// Just turned on: the voice is still loading.
     var loading: Bool? = nil
+    /// Let go while app development holds the server (#83): "Roen's Android emulator". Talk uses the turn-at-a-time
+    /// voice meanwhile (`live` is false); the setting stays as it was.
+    var heldBy: String? = nil
 }
 
 struct HistoryResponse: Decodable {
@@ -3017,6 +3020,8 @@ struct Lecture: Decodable, Identifiable, Hashable {
     var error: String?
     var summary: String?
     var notes: String?
+    /// Queued behind app development on the server (#83): "Roen's Android emulator".
+    var waitingFor: String?
 
     var isWorking: Bool { ["queued", "transcribing", "writing"].contains(status) }
 }
@@ -4585,6 +4590,11 @@ struct HostStatus: Decodable, Equatable {
     struct Memory: Decodable, Equatable { let totalMb: Int; let availableMb: Int; var aideMaxMb: Int? }
     /// Something else on Aide's port 8787 ("local_engine.py" in roenlabs): Aide can't start while it's there.
     struct Port: Decodable, Equatable { let project: String; let command: String }
+    /// What app development claimed with `host-claim` (#83): who ("Roen") and what ("emulator").
+    struct Claim: Decodable, Equatable { let who: String; let what: String; var since: String? }
+    /// Aide stepped back for app development (#83): its voice let go, transcriptions waiting. `by` nil in the quiet
+    /// couple of minutes before it comes back; `ready` false while it finishes a call first.
+    struct Held: Decodable, Equatable { var by: String?; var since: String?; var ready: Bool = true }
     let at: String
     let aide: Unit
     var voice: Unit?
@@ -4592,8 +4602,10 @@ struct HostStatus: Decodable, Equatable {
     var dev: [String] = []
     var memory: Memory?
     var port: Port?
+    var claims: [Claim] = []
+    var held: Held?
 
-    enum CodingKeys: String, CodingKey { case at, aide, voice, claude, dev, memory, port }
+    enum CodingKeys: String, CodingKey { case at, aide, voice, claude, dev, memory, port, claims, held }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         at = try c.decode(String.self, forKey: .at)
@@ -4603,10 +4615,14 @@ struct HostStatus: Decodable, Equatable {
         dev = try c.decodeIfPresent([String].self, forKey: .dev) ?? []
         memory = try c.decodeIfPresent(Memory.self, forKey: .memory)
         port = try c.decodeIfPresent(Port.self, forKey: .port)
+        claims = (try? c.decodeIfPresent([Claim].self, forKey: .claims)) ?? []
+        held = try? c.decodeIfPresent(Held.self, forKey: .held)
     }
 
-    init(at: String, aide: Unit, voice: Unit? = nil, claude: [Session] = [], dev: [String] = [], memory: Memory? = nil) {
+    init(at: String, aide: Unit, voice: Unit? = nil, claude: [Session] = [], dev: [String] = [], memory: Memory? = nil,
+         claims: [Claim] = [], held: Held? = nil) {
         self.at = at; self.aide = aide; self.voice = voice; self.claude = claude; self.dev = dev; self.memory = memory
+        self.claims = claims; self.held = held
     }
 
     static func date(_ text: String?) -> Date? {

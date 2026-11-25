@@ -30,6 +30,7 @@ from .engine import course_var
 from .icloud import CalendarBackend, CalEvent, unread
 from .material import FileStore
 from .photos import PhotoStore
+from . import host
 from .voicemodels import lend_gpu
 from .whisper import cuda_libs
 
@@ -98,6 +99,7 @@ async def whisper_transcribe(path: Path) -> tuple[str, str | None, int | None]:
     env = dict(os.environ)
     if libs := cuda_libs():
         env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, [libs, env.get("LD_LIBRARY_PATH")]))
+    await host.until_free()  # not while app development holds cappa (#83)
     async with lend_gpu():  # a live call's voice steps aside
         started = clock.monotonic()
         proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "aide.whisper", str(path), env=env,
@@ -437,6 +439,8 @@ class StudyStore:
             out |= {"notes": lecture["notes"], "text": lecture["text"], "language": lecture["language"]}
         if transcript:
             out["transcript"] = lecture["transcript"]
+        if lecture["status"] == "queued" and lecture["audio"] and not lecture["transcript"] and (by := host.holder()):
+            out["waiting_for"] = by  # #83: "Roen's Android emulator"
         return out
 
     def course_json(self, c: dict) -> dict:
@@ -565,6 +569,7 @@ class StudyWorker:
             if lecture["audio"] and not lecture["transcript"]:  # a rewrite with new slides has one
                 if self.transcribe is None:
                     raise RuntimeError("transcription isn't set up on the server")
+                await host.until_free()  # queued while app development holds cappa (#83)
                 lecture = self.store.set_status(lid, "transcribing")
                 if run:
                     run.start("Transcribing the lecture")

@@ -77,15 +77,26 @@ struct ServerCondition: Equatable {
         // Busy only when Aide is at risk: app development running beside it, or little memory left. A Claude session
         // at work in another project alone isn't.
         let low = live.memory.map { $0.availableMb < lowMemoryMb } ?? false
-        if !live.dev.isEmpty || low {
+        if !live.dev.isEmpty || !live.claims.isEmpty || live.held != nil || low {
             let running = live.dev.isEmpty ? ""
                 : "\(live.dev.formatted(.list(type: .and))) \(live.dev.count == 1 ? "is" : "are") running. "
             let memory = live.memory.map { String(format: "%.1f GB free. ", Double($0.availableMb) / 1024) } ?? ""
             return ServerCondition(symbol: "memorychip", title: "cappa is busy", short: "Busy",
-                                   detail: running + (low ? memory : "") + "Aide may be slow, or stopped to make room.",
+                                   detail: running + (low ? memory : "") + steppedBack(live),
                                    level: .info)
         }
         return nil
+    }
+
+    /// What Aide did about app development beside it (#83), for the Busy popover.
+    static func steppedBack(_ host: HostStatus) -> String {
+        guard let held = host.held else { return "Aide may be slow, or stopped to make room." }
+        guard let by = held.by else {
+            return "Aide let its voice go to make room; it loads again in a couple of minutes."
+        }
+        if !held.ready { return "Aide is finishing a call, then lets its voice go for \(by)." }
+        return "Aide let its voice go for \(by), and recordings wait to be transcribed. Both come back a couple of "
+            + "minutes after it stops; meanwhile Talk works a turn at a time."
     }
 
     /// "Claude is working in roenlabs. Android emulator and Metro are running."
@@ -115,7 +126,10 @@ struct ServerCondition: Equatable {
         default: "Aide: \(host.aide.state)"
         }
         out.append(state)
-        if let voice = host.voice, voice.state != "active", host.aide.state == "active" {
+        if let held = host.held, host.aide.state == "active" {
+            out.append(held.by.map { held.ready ? "Voice off while \($0) runs" : "Voice off once the call ends, for \($0)" }
+                       ?? "Voice back in a couple of minutes")
+        } else if let voice = host.voice, voice.state != "active", host.aide.state == "active" {
             // aide-voice restarts by itself, so stopped means Live calls were turned off (Settings → Voice).
             out.append(voice.state == "inactive" ? "Voice off (Live calls)" : "Voice \(voice.state)")
         }
@@ -123,6 +137,7 @@ struct ServerCondition: Equatable {
             out.append("Claude in \(s.project): \(s.busy ? "working" : "idle")")
         }
         if !host.dev.isEmpty { out.append("Running: \(host.dev.formatted(.list(type: .and)))") }
+        for c in host.claims { out.append("Claimed by \(c.who): \(c.what)") }
         if let port = host.port { out.append("Port 8787: \(port.command) (\(port.project))") }
         if let m = host.memory {
             let free = String(format: "%.1f", Double(m.availableMb) / 1024)
@@ -179,7 +194,7 @@ final class ServerStatus: ObservableObject {
 }
 
 /// A short coloured line and a word after Aide's name on the Team page: green when Aide is ready, yellow while
-/// app development runs beside it on cappa, memory is low or Aide warms up, orange while it's stopped, starting or being worked on, red when it's down.
+/// app development runs beside it on cappa (or Aide stepped back for it, #83), memory is low or Aide warms up, orange while it's stopped, starting or being worked on, red when it's down.
 /// A tap says why. Nothing until the first check.
 struct ServerStatusLine: View {
     @ObservedObject var status: ServerStatus

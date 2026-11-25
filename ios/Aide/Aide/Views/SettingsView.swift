@@ -483,6 +483,10 @@ private struct VoiceSettingsView: View {
     private var liveCallsFooter: String {
         if failed { return "Couldn't reach the server. Try again in a moment." }
         if status?.loading == true { return "Loading the voice on the server, about a minute." }
+        if let by = status?.heldBy, status?.enabled != false {
+            return "Let go on the server while \(by) runs, to leave it the memory. Talk uses the turn-at-a-time voice "
+                + "until a couple of minutes after it stops, then the voice loads again by itself."
+        }
         let what = "Talking is like a phone call: Aide answers as soon as you've finished, says what it's doing while it works, and stops when you talk over it. Say “bye” to hang up."
         if status?.engine == "local" {
             return what + " Off, chats have no Talk, only dictation, and the server lets its voice models go (about 3 GB of memory). For every device."
