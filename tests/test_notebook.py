@@ -351,6 +351,37 @@ def test_the_users_row_is_found_in_a_list_read_column_by_column():
     assert _row_with("Filippo Rossi\nAda Cappa", _name_parts("Filippo Cappa")) is None
 
 
+def test_the_users_row_is_found_by_student_number():
+    ids = ["1208714", "1213458", "1213471", "1213639", "1213811"]
+    grades = ["26", "24", "FAIL/INSUFF.", "18", "22"]
+    # the page's number under the grades, then headings above both columns
+    assert _row_with("\n".join(ids) + "\n\n" + "\n".join([*grades, "4"]), [], "1213458", 4) == "1213458 | 24"
+    first = "Business Law\nResults\nStudents ID\n" + "\n".join(ids) + "\n\nGrade/30\n" + "\n".join(grades)
+    assert _row_with(first, [], "1213458", 1) == "1213458 | 24"
+    # groups side by side are groups, not columns: the group's heading instead
+    groups = "\n\n".join("\n".join([f"Group {g}", *(str(1200000 + g * 10 + i) for i in range(5))]) for g in (6, 7, 8))
+    assert _row_with(groups, [], "1200072", 1) == "Group 7: 1200072"
+    rows = "\n".join(["1213231 FAIL/INSUFF.", *(f"{1213400 + i} 24" for i in range(60, 66))])
+    assert _row_with(rows, [], "1213461") == "1213461 24"  # a list of rows: the first isn't a heading
+    assert _row_with("12134589\n1213458", [], "1213458") == "1213458"  # not inside a longer number
+    assert _row_with("12134589", [], "1213458") is None
+
+
+async def test_a_results_list_by_student_number_has_the_users_row(nb):
+    cid = nb.macro["id"]
+    nb.db.conn.execute("CREATE TABLE IF NOT EXISTS esse3_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    nb.db.conn.execute("INSERT INTO esse3_state (key, value) VALUES ('student_id', '1213458')")
+    await started(nb)
+    asked = len(nb.client.dated)
+    results = make_pdf(None, ["1st mid-term results", "1213231 FAIL\n1213458 24\n1213471 18"])
+    assert add_pdf(nb.api, results, course=cid, name="Results").status_code == 201
+    assert nb.notebook.dates_reading(cid)
+    await drain(nb)
+    request = sent(nb.client.dated[asked])
+    assert "[Results.pdf, p. 2] 1213458 24" in request
+    assert "student ID 1213458" in request
+
+
 async def test_a_list_with_the_users_name_has_the_dates_read_with_their_row(nb):
     cid = nb.macro["id"]
     nb.db.conn.execute("INSERT INTO moodle_state (key, value) VALUES ('user', ?)",

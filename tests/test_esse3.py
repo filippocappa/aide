@@ -12,7 +12,7 @@ from aide.channels.api import create_app
 from aide.db import Database
 import pytest
 
-from aide.esse3 import (BOOKED, EXAMS, TRANSCRIPT, Esse3Reader, SignUpFailed, read_booked, read_exams,
+from aide.esse3 import (BOOKED, EXAMS, TRANSCRIPT, Esse3Reader, SignUpFailed, read_booked, read_exams, student_number,
                         read_transcript)
 from aide.icloud import CalEvent
 from aide.moodle import MoodleSync
@@ -649,3 +649,8 @@ def test_aide_does_other_university_sites_as_errands():
     prompt = AGENTS["aide"].prompt
     assert "Edumeter" in prompt and "Professor has no browser" in prompt
     assert "Edumeter" in GENERAL
+
+def test_the_student_number_from_esse3s_pages():
+    assert student_number("<p>Nothing</p>", "<div class='user'>Mario Rossi<br>Matricola: <b>1213458</b></div>") == "1213458"
+    assert student_number("<span>Mat. 1213458</span>") == "1213458"
+    assert student_number("<p>Appelli</p>") is None

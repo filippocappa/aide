@@ -276,6 +276,14 @@ def _text(html: str) -> str:
     return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style).*?</\1>", "", html))))
 
 
+def student_number(*pages: str) -> str | None:
+    """The student's matricola, as Esse3's pages show it ("Matricola: 1213458", "Mat. 1213458")."""
+    for html in pages:
+        if m := re.search(r"(?i)\b(?:matricola|mat\.|student id|student number)\W{0,5}(\d{5,8})\b", _text(html)):
+            return m.group(1)
+    return None
+
+
 def _json(text: str) -> dict:
     m = re.search(r"\{.*\}", text or "", re.S)
     try:
@@ -404,6 +412,8 @@ class Esse3Reader:
         except LoginFailed as e:
             self._set("error", json.dumps({"kind": e.kind, "message": str(e)}))
             return False
+        if number := student_number(exams_html, booked_html, transcript_html):
+            self._set("student_id", number)  # for the course lists that go by number (notebook.student_rows)
         exams = read_exams(exams_html) or await self._read_by_model(exams_html, "exams")
         booked = await self._booked(booked_html, exams)
         transcript = read_transcript(transcript_html)
