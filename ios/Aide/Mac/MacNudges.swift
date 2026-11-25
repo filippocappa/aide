@@ -8,9 +8,11 @@ import SwiftUI
 ///   each shown once while it's due; Pebble stays up until it's answered: Snooze 10 min, or I'm going (20 min quiet).
 /// - **Off task:** while a study event (or a `#focus` one) is on and the app or site in front, or a video playing, is
 ///   on the Work list: after a minute, then once more after 15 minutes more. Back to it opens the course's page in
-///   Aide (or hides the app); Not now. Pebble goes by itself once you're back on task.
+///   Aide (or hides the app); Not now. Pebble goes by itself once you're back on task. Still off task 15 minutes
+///   after the second (and it wasn't answered Back to it): the `lock` step, for which the server makes a 15-minute
+///   lock on the Work list; the locks are fetched again at once (`onLock`) and the shield does the rest.
 /// Quiet during a call (the microphone in use), a focus session, and for bedtime while another timed event is on.
-/// Nothing is quit or locked: Pebble just says so. Aide Guard runs it; the app only while the Guard doesn't.
+/// Bedtime is nudges only. Aide Guard runs it; the app only while the Guard doesn't.
 @MainActor
 final class MacNudges {
     private let api: APIClient
@@ -24,17 +26,27 @@ final class MacNudges {
     private var quietUntil = Date.distantPast
     /// The nudges already shown, by key, so a restart doesn't show them again (kept two days).
     private var shown: [String: Date]
-    /// Off task during the focus event on now: since when without a break, the first nudge, the time off since it.
+    /// Off task during the focus event on now: since when without a break, the last step shown (`first`, `again`,
+    /// `lock`), the time off since it, and whether the second was answered Back to it (then no lock).
     private var offEvent: String?
     private var offSince: Date?
-    private var firstAt: Date?
-    private var offAfterFirst: TimeInterval = 0
+    private var lastStep: String?
+    private var offSinceStep: TimeInterval = 0
+    private var backAfterAgain = false
+    /// A lock step sent: the locks fetched again now (the server made one), not at the next minute.
+    var onLock: (@MainActor () async -> Void)?
     private var lastLook: Date?
     private var observers: [NSObjectProtocol] = []
 
     private static let refresh: TimeInterval = 5 * 60
     private static let offFor: TimeInterval = 60
-    private static let againAfter: TimeInterval = 15 * 60
+    /// Between the steps off task (a minute in a debug build's `nudgeTest offtask`, to see all three).
+    private static var againAfter: TimeInterval {
+        #if DEBUG
+        if UserDefaults.standard.string(forKey: "nudgeTest") == "offtask" { return 60 }
+        #endif
+        return 15 * 60
+    }
     private static let snooze: TimeInterval = 10 * 60
     private static let going: TimeInterval = 20 * 60
     private static let shownKey = "nudgesShown"
@@ -112,6 +124,8 @@ final class MacNudges {
             card.close()
         case .offtask(let key, _) where off == nil || key != focus.map(Self.key):
             card.close()
+        case .locked where focus == nil: // the event's over
+            card.close()
         default:
             break
         }
@@ -133,30 +147,42 @@ final class MacNudges {
         }
         guard let focus, let off, card.content?.isBedtime != true else { return }
         let step: String
-        if firstAt == nil, let offSince, now.timeIntervalSince(offSince) >= Self.offFor {
+        if lastStep == nil, let offSince, now.timeIntervalSince(offSince) >= Self.offFor {
             step = "first"
-            firstAt = now
-            offAfterFirst = 0
-        } else if firstAt != nil, offAfterFirst >= Self.againAfter {
+        } else if lastStep == "first", offSinceStep >= Self.againAfter {
             step = "again"
-            offAfterFirst = -.infinity // once
+        } else if lastStep == "again", !backAfterAgain, offSinceStep >= Self.againAfter {
+            step = "lock"
         } else {
             return
         }
+        lastStep = step
+        offSinceStep = 0
         let eventKey = Self.key(focus)
         let key = "mac-offtask-\(focus.event.start)-\(step)"
         guard shown[key] == nil else { return }
         remember(key, now)
         let until = Self.clock(focus.end)
+        let nudge = NudgeLog(key: key, device: "mac", kind: "offtask", step: step, at: Self.iso(now), app: off,
+                             event: focus.event.title, eventStart: focus.event.start, eventEnd: focus.event.end,
+                             courseId: focus.event.course?.id)
+        if step == "lock" {
+            card.show(.locked(key), title: "Locked for 15 min", body: "Back to \(focus.event.title): it runs until \(until).",
+                      mood: "awake", actions: [NudgeAction("OK", "ok"), NudgeAction("Back to it", "back", prominent: true)],
+                      above: Self.front)
+            Task { [api, weak self] in
+                do { try await api.logNudge(nudge) } catch { NSLog("Aide nudges: couldn't send the lock step: \(error)") }
+                await self?.onLock?()
+            }
+            return
+        }
         let title = step == "first" ? "You're on \(off)" : "Still on \(off)"
         let body = step == "first" ? "The calendar says \(focus.event.title) until \(until)."
             : "Fifteen minutes more; \(focus.event.title) runs until \(until)."
         card.show(.offtask(eventKey, key), title: title, body: body, mood: "awake",
                   actions: [NudgeAction("Not now", "not_now"), NudgeAction("Back to it", "back", prominent: true)],
                   above: Self.front)
-        log(NudgeLog(key: key, device: "mac", kind: "offtask", step: step, at: Self.iso(now), app: off,
-                     event: focus.event.title, eventStart: focus.event.start, eventEnd: focus.event.end,
-                     courseId: focus.event.course?.id))
+        log(nudge)
     }
 
     private func step(at now: Date) -> (BedtimeStep, Date, Date)? {
@@ -164,22 +190,23 @@ final class MacNudges {
     }
 
     /// The time off task during the event on now: a minute without a break before the first nudge, then 15 more in
-    /// all (breaks or not) before the second.
+    /// all (breaks or not) before the second, and 15 more before the lock.
     private func track(_ focus: (event: NudgeEvent, start: Date, end: Date)?, off: String?, now: Date,
                        elapsed: TimeInterval) {
         let key = focus.map(Self.key)
         if key != offEvent {
             offEvent = key
             offSince = nil
-            firstAt = nil
-            offAfterFirst = 0
+            lastStep = nil
+            offSinceStep = 0
+            backAfterAgain = false
         }
         guard off != nil else {
             offSince = nil
             return
         }
         if offSince == nil { offSince = now }
-        if firstAt != nil { offAfterFirst += elapsed }
+        if lastStep != nil { offSinceStep += elapsed }
     }
 
     /// What's off task in front, or playing beside it: the site, else the app's name.
@@ -206,13 +233,17 @@ final class MacNudges {
         let key: String
         switch content {
         case .bedtime(let k): key = k
-        case .offtask(_, let k): key = k
+        case .offtask(let event, let k):
+            key = k
+            if answer == "back", k.hasSuffix("-again"), event == offEvent { backAfterAgain = true }
+        case .locked(let k): key = k
         }
+        guard answer != "ok" else { return } // the lock's card put away: nothing to keep
         Task { [api] in
             // Only the answer goes with the key: the rest is already kept.
             try? await api.logNudge(NudgeLog(key: key, device: "mac", kind: content.isBedtime ? "bedtime" : "offtask",
-                                             step: key.hasSuffix("-again") ? "again" : content.isBedtime
-                                                 ? Self.bedtimeStep(key) : "first",
+                                             step: key.hasSuffix("-lock") ? "lock" : key.hasSuffix("-again") ? "again"
+                                                 : content.isBedtime ? Self.bedtimeStep(key) : "first",
                                              at: Self.iso(now), answer: answer))
         }
     }
@@ -289,7 +320,7 @@ final class MacNudges {
     #if DEBUG
     /// Debug builds: `defaults write <id> nudgeTest -string bedtime` puts bedtime 9 minutes from the plan's fetch
     /// (the "ten minutes" step due at once), `offtask` a study event on now with `nudgeTestApps` (default Notes) as
-    /// the Work list. `defaults delete <id> nudgeTest` and `nudgesShown` after.
+    /// the Work list, a minute between the steps (the lock step asks the server for a real 15-minute lock). `defaults delete <id> nudgeTest` and `nudgesShown` after.
     private static func test(_ plan: inout NudgePlan) {
         let now = Date()
         switch UserDefaults.standard.string(forKey: "nudgeTest") {
@@ -355,6 +386,8 @@ final class NudgeCard {
         case bedtime(String)
         /// The event's key and the nudge's.
         case offtask(String, String)
+        /// The lock step's nudge: stays until put away (the shield hides what was off task, so it isn't "back").
+        case locked(String)
 
         var isBedtime: Bool { if case .bedtime = self { true } else { false } }
     }

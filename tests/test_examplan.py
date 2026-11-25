@@ -300,9 +300,10 @@ async def test_the_pace_is_learnt_from_answers(tmp_path):
 
 async def test_caps_are_checked(tmp_path):
     *_, plan = make(tmp_path, [])
-    assert plan.caps() == {"term_cap_min": 120, "season_cap_min": 240}
+    assert plan.caps() == {"term_cap_min": 120, "season_cap_min": 240, "day_plan": True, "day_plan_at": "21:00"}
     assert plan.update_caps(season_cap_min=300)["season_cap_min"] == 300
-    for bad in ({"season_cap_min": 5}, {"term_cap_min": "2h"}, {"nope": 1}):
+    assert plan.update_caps(day_plan_at="21:30")["day_plan_at"] == "21:30"
+    for bad in ({"season_cap_min": 5}, {"term_cap_min": "2h"}, {"nope": 1}, {"day_plan": 1}, {"day_plan_at": "late"}):
         with pytest.raises(ValueError):
             plan.update_caps(**bad)
 
@@ -326,7 +327,8 @@ async def test_the_api_and_professors_tool(tmp_path):
     assert api.put(f"/v1/study/plan/courses/{macro['id']}", json={"expected": "soon"}, headers=AUTH).status_code == 422
     assert api.put(f"/v1/study/plan/courses/{macro['id']}", json={"topics": ["x"]}, headers=AUTH).status_code == 422
     assert api.put("/v1/study/plan/courses/999", json={"expected": guess}, headers=AUTH).status_code == 404
-    assert api.get("/v1/study/settings", headers=AUTH).json() == {"term_cap_min": 120, "season_cap_min": 240}
+    assert api.get("/v1/study/settings", headers=AUTH).json() == {"term_cap_min": 120, "season_cap_min": 240,
+                                                                  "day_plan": True, "day_plan_at": "21:00"}
     assert api.patch("/v1/study/settings", json={"term_cap_min": 90}, headers=AUTH).json()["term_cap_min"] == 90
     assert api.patch("/v1/study/settings", json={"term_cap_min": 0}, headers=AUTH).status_code == 422
 

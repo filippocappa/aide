@@ -57,6 +57,7 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationC
             MacUsage.shared.start()
             shield = MacShield(screenTime: env.screenTime)
             nudges = MacNudges(api: env.api)
+            nudges?.onLock = { await AppEnvironment.shared.screenTime.sync() } // the lock the server just made, held now
         } else {
             shield?.stop()
             shield = nil

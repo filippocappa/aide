@@ -8,7 +8,8 @@ monitor); the server says what's due and keeps what happened:
   is never touched here.
 - **offtask:** while a calendar event that asks for focus is on (anything in the study calendar, or an event with
   `#focus` in its title or notes) and what's in front is on the Work app list: one nudge per event, one more after
-  fifteen minutes more off task.
+  fifteen minutes more off task, and fifteen minutes after that a short lock on the Work list (`lock`: LOCK_MINUTES,
+  once per event whichever device asks first, never during a focus session). The only lock made here.
 
 `plan()` is what a device needs now; `log()` keeps each nudge shown and its answer, which Coach (the evening digest,
 `sleep_plan`) and Professor (`study_plan`, the study week) see as data.
@@ -31,7 +32,8 @@ LATE_FOR = timedelta(hours=3)  # ... for this long after the bedtime
 AHEAD = timedelta(hours=24)  # events a device is told about
 FOCUS_TAG = "#focus"  # an event outside the study calendar that asks for the off-task nudges
 WORK_LIST = "work"  # the app list (by name, any case) that's off task during a focus event
-KINDS = {"bedtime": {"hour", "half", "now", "late"}, "offtask": {"first", "again"}}
+KINDS = {"bedtime": {"hour", "half", "now", "late"}, "offtask": {"first", "again", "lock"}}
+LOCK_MINUTES = 15  # the off-task lock (Screen Time's shortest)
 ANSWERS = {"bedtime": {"snooze", "going"}, "offtask": {"back", "not_now"}}
 DEVICES = {"mac", "phone"}
 KEPT = timedelta(days=120)
@@ -42,7 +44,7 @@ CREATE TABLE IF NOT EXISTS nudges (
     key         TEXT NOT NULL UNIQUE, -- the device's, so a retry or an answer later is the same row
     device      TEXT NOT NULL,        -- mac, phone
     kind        TEXT NOT NULL,        -- bedtime, offtask
-    step        TEXT NOT NULL,        -- bedtime: hour, half, now, late; offtask: first, again
+    step        TEXT NOT NULL,        -- bedtime: hour, half, now, late; offtask: first, again, lock
     at          TEXT NOT NULL,        -- shown, UTC
     night       TEXT,                 -- bedtime: the morning the night ends on, local
     app         TEXT,                 -- what was in front: an app's name or a site
@@ -221,7 +223,32 @@ class Nudges:
             (key, device, kind, step, at, night, text("app"), text("event"), _utc(body.get("event_start")),
              _utc(body.get("event_end")), course, answer, now.isoformat() if answer else None))
         self.conn.execute("DELETE FROM nudges WHERE at < ?", ((now - KEPT).isoformat(),))
-        return self.get(key)
+        out = self.get(key)
+        if kind == "offtask" and step == "lock":
+            out["lock"] = self._lock(out, now)
+        return out
+
+    def _lock(self, nudge: dict, now: datetime) -> dict | None:
+        """The off-task lock for the nudge's event: LOCK_MINUTES on the Work list, made once per event (the first
+        device to ask; the other gets None), never while a focus session is on (its own lock holds then)."""
+        if self.locks is None or (self.focus and self.focus.current(now)):
+            return None
+        if (work := self._list()) is None:
+            return None
+        title = f"Off task: {nudge['event'] or 'focus event'}"
+        made = self.conn.execute(
+            "SELECT 1 FROM nudges WHERE kind = 'offtask' AND step = 'lock' AND key != ? AND event IS ? "
+            "AND event_start IS ? AND at < ?", (nudge["key"], nudge["event"], nudge["event_start"], nudge["at"])
+        ).fetchone()
+        if made:
+            return None
+        if any(l["title"] == title and l["ends_at"] and l["ends_at"] > now.isoformat() for l in self.locks.all(now)):
+            return None  # this device asked again (a retry with the same key)
+        try:
+            return self.locks.lock_for(title, minutes=LOCK_MINUTES, agent="coach", now=now, list_id=work["id"])
+        except Exception:
+            log.warning("nudges: couldn't make the off-task lock", exc_info=True)
+            return None
 
     def get(self, key: str) -> dict:
         row = self.conn.execute("SELECT * FROM nudges WHERE key = ?", (key,)).fetchone()
@@ -274,8 +301,10 @@ class Nudges:
             when = self._local(start or first["at"])
             span = f" {_clock(when)}–{_clock(self._local(end))}" if start and end else ""
             seen = "; ".join(
-                f"{'again ' if r['step'] == 'again' else ''}on {r['app'] or 'something off the list'} at "
-                f"{_clock(self._local(r['at']))} on the {r['device']} ({self._ANSWER[r['answer']]})" for r in items)
+                (f"locked for {LOCK_MINUTES} min at {_clock(self._local(r['at']))} ({r['device']})"
+                 if r["step"] == "lock" else
+                 f"{'again ' if r['step'] == 'again' else ''}on {r['app'] or 'something off the list'} at "
+                 f"{_clock(self._local(r['at']))} on the {r['device']} ({self._ANSWER[r['answer']]})") for r in items)
             out.append(f"{when:%a %d %b}, {event or 'a focus event'}{span}: {seen}.")
         return out
 

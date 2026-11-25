@@ -1206,8 +1206,8 @@ backwards from the date (review last, then mocks, practise, learn): a target tha
 |---|---|---|
 | `GET /v1/study/plan` | `?fresh=true` to work it out now | Plan |
 | `PUT /v1/study/plan/courses/{id}` | `{"expected": "2027-01-20" or null}` and/or `{"key": "<target key>", "topics": ["t_…"] or null}` | Plan. `422`: a date not after today, an unknown topic, topics without `key`. `404` unknown course |
-| `GET /v1/study/settings` | | `{"term_cap_min": 120, "season_cap_min": 240}` |
-| `PATCH /v1/study/settings` | either, 15–600 | the same. `422` out of range or unknown |
+| `GET /v1/study/settings` | | `{"term_cap_min": 120, "season_cap_min": 240, "day_plan": true, "day_plan_at": "21:00"}` |
+| `PATCH /v1/study/settings` | any of them: the caps 15–600; `day_plan` true or false, `day_plan_at` "HH:MM" (since 2026-11-25, tomorrow's plan below) | the same. `422` out of range or unknown |
 
 Plan: `{"computed_at": "…+01:00", "today": [Block], "targets": [Target], "undated": [{"course": 7, "name": "…"}],
 "settings": {"term_cap_min", "season_cap_min"}, "season_from": "2026-12-20" or null, "assumptions": {"read_wpm",
@@ -1256,6 +1256,15 @@ plan, before the written exam on Wed 20 Jan: learn 30 min, practise 15 min.\nTop
   when the plan has no study in those days.
 - Professor's `propose_study_week` (`start`: the first day, today by default) does the same in the chat it's asked in
   ("plan my week").
+
+Tomorrow's plan (since 2026-11-25, #84; `day_plan`, `day_plan_at`): each evening at `day_plan_at`, when the exam plan
+has study for the next day, Secretary writes in its "Tomorrow" chat (made the first time; a normal Secretary chat), with
+a `message` push "Secretary · Tomorrow": the next day's timed events, the reminders due, the study the plan wants, and
+"Anything else you have to do tomorrow?". The answer is a normal turn: Secretary's `plan_tomorrow` places what the user
+said first (at its time, or in the free time of the morning, afternoon or evening), the exam plan's review sessions
+around it and the calendar, and proposes the whole day as one `events` card (the user's things in the default calendar,
+the study in the study calendar; nothing added until Add). No answer 90 minutes after the question: the review sessions
+around the calendar alone, on a card in the same chat. "Plan my day tomorrow" in a Secretary chat does the same.
 
 ### Study files
 
@@ -2207,8 +2216,8 @@ time every day counts as much as the hours.
 ### Nudges
 
 Since 2026-11-23 (#84). Nudges from the devices themselves, only while you're there using one (each device decides
-that; nothing goes out to an idle or sleeping one). Nudges only: nothing is locked, quit or moved, and Bedtime's own
-lock is never touched.
+that; nothing goes out to an idle or sleeping one). Nudges only, except a short lock off task (below, since
+2026-11-25); Bedtime's own lock is never touched.
 
 - **Bedtime:** while still active near tonight's bedtime (the plan above), firmer as it comes: an hour before ("Start
   wrapping up"), half an hour before ("Save and close what you're on"), ten minutes before ("It's time to sleep: stop
@@ -2218,7 +2227,10 @@ lock is never touched.
 - **Off task:** while an event that asks for focus is on (any timed event in the study calendar, or one with
   `#focus` in its title or notes) and what's in front is on the app list named **Work** (its `mac` entries on the
   Mac; this phone's pick of that list on the phone): one nudge after a minute off task, one more after fifteen minutes
-  more. Answers: `back` (the course's page, or back to work) and `not_now`.
+  more. Answers: `back` (the course's page, or back to work) and `not_now`. Since 2026-11-25, fifteen minutes more off
+  task, unless `again` was answered `back`: step `lock`, and the server makes a 15-minute one-off lock on the Work
+  list (`agent: "coach"`, not strict, "Off task: <event>"), once per event whichever device sends it first, none while
+  a focus session is on. The devices fetch the locks again and hold it as any lock; "Locked for 15 min" is shown.
 - **Quiet:** during a call (the Mac's microphone in use), while a focus session is on (`focus`), and for bedtime while
   a timed `other` event is on (a film night).
 - **On the Mac** (Aide Guard, or the app while the Guard isn't running): Pebble over the front app's Dock icon with
@@ -2226,7 +2238,7 @@ lock is never touched.
   answered, or until the nudge is no longer due. "There" is touched in the last 2 minutes, or a video playing.
 - **On the phone:** a notification, with the answers as its actions. DeviceActivity says the phone is in use: an
   event every 2 minutes of use from an hour before bedtime, and for each of the next 3 focus events a minute, then
-  16 minutes, on that list's apps. The phone can't name the app or see a call, so its off-task nudge names the event
+  16 minutes, and 31 (the lock step) on that list's apps. The phone can't name the app or see a call, so its off-task nudge names the event
   only. What's shown waits on the phone until it can be sent.
 - **Who sees them:** Coach (the evening digest, `sleep_plan`) and Professor (`study_plan`, the study week) get them as
   data.
@@ -2234,7 +2246,7 @@ lock is never touched.
 | Endpoint | Body | Response |
 |---|---|---|
 | `GET /v1/nudges` | | `{"bedtime": Bedtime \| null, "events": [Event], "list": {"id": 1, "name": "Work", "mac": ["site:youtube.com"]} \| null, "focus": false}` |
-| `POST /v1/nudges` | a Nudge | the Nudge as kept; `422` for a bad kind, step, device or answer |
+| `POST /v1/nudges` | a Nudge | the Nudge as kept (a `lock` step's with `"lock"`: the Lock made, or null when none was); `422` for a bad kind, step, device or answer |
 
 - **Bedtime:** `{"date": "2026-11-24", "bedtime": "…", "wake": "…", "steps": [{"step": "hour", "at": "…", "until": "…",
   "title": "An hour to bed", "body": "Start wrapping up: in bed by 0:00."}, …]}`, null while there's no plan (Bedtime
@@ -2244,7 +2256,7 @@ lock is never touched.
   `study`, `asked` (`#focus`, taken out of the title) or `other`. `course` is the course the title names (its name, a
   review session of it, or a word starting a word of its name), else null.
 - **Nudge:** `{"key": "mac-bedtime-2026-11-24-late-0010", "device": "mac" | "phone", "kind": "bedtime" | "offtask",
-  "step": "hour" | "half" | "now" | "late" | "first" | "again", "at": "…", "night": "2026-11-24", "app": "YouTube",
+  "step": "hour" | "half" | "now" | "late" | "first" | "again" | "lock", "at": "…", "night": "2026-11-24", "app": "YouTube",
   "event": "Study Macro", "event_start": "…", "event_end": "…", "course_id": 4, "answer": null}`. `key` is the
   device's own: sending it again (with the answer, once there is one) updates the same nudge. `night` (bedtime) is the
   plan's `date`; `event*` and `course_id` are for off-task ones. `answer` is `snooze` or `going` (bedtime), `back` or

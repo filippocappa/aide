@@ -54,6 +54,7 @@ from .passwords import PasswordStore, load_key
 from .unito import UnitoSession
 from .notebook import NotebookStore, NotebookWorker
 from .examplan import ExamPlan, WeekProposer, examplan_tools
+from .dayplan import DayPlanner, dayplan_tools
 from .study import StudyStore, StudyWorker, whisper_transcribe
 from .vault import Vault
 from .videos import VideoStore, VideoWorker
@@ -374,6 +375,11 @@ def main() -> None:
     date_reminders.sync_all()
     tools += examplan_tools(examplan, study, plans if cal is not None else None,
                             lambda: (agent._conversation, calling_agent.get()))
+    # Evenings: Secretary asks what else tomorrow holds, then proposes the day with the study around it (#84).
+    day_planner = DayPlanner(examplan, plans if cal is not None else None, None, push, reminders,
+                             calendar_events if cal else None, settings.default_calendar)
+    if cal is not None:
+        tools += dayplan_tools(day_planner, lambda: (agent._conversation, calling_agent.get()))
 
     # Made below (digest) or maybe not at all (leave): the settings tools find them when called.
     tools += settings_tools(lambda: digest, live, lambda: leave, engine)
@@ -442,6 +448,7 @@ def main() -> None:
     notes.plans = plans
     review_watcher = ReviewWatcher(reviews, agent, push)
     study_week = WeekProposer(examplan, plans, agent, push)  # Sundays: the week's blocks on the week card
+    day_planner.agent = agent
     reader = PageReader(study.files, agent)  # scans, read once with the model
     worker.engine = notes.engine = reader.engine = engine
     worker.live = notes.live = live
@@ -490,7 +497,7 @@ def main() -> None:
             worker.run(),
             notes.run(),
             reader.run(),
-            *([review_watcher.run(), study_week.run()] if cal else []),
+            *([review_watcher.run(), study_week.run(), day_planner.run()] if cal else []),
             *([vault.run()] if vault else []),
             *([moodle.run()] if settings.moodle_url else []),
             esse3.run(),

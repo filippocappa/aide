@@ -8,8 +8,9 @@ import UserNotifications
 /// notification when a threshold says the phone is being used:
 /// - **Bedtime:** one activity from the first step to the last, an event every 2 minutes of use (anything counted);
 ///   each firing shows the step due now, once. Snooze 10 min and I'm going (20 min) quiet it.
-/// - **Off task:** an activity per study or `#focus` event with the Work list's apps: a minute of them, then 16.
-///   Back to it opens the course.
+/// - **Off task:** an activity per study or `#focus` event with the Work list's apps: a minute of them, then 16,
+///   then 31: the `lock` step (unless the second was answered Back to it), for which the server makes a 15-minute
+///   lock on the Work list; it reaches the phone when the app sends the step and syncs. Back to it opens the course.
 /// Quiet during a focus round, and for bedtime while another timed event is on. A phone can't tell a call from here,
 /// nor name the app: the notification says the event, not the app. What's shown waits in `pending` for the app to
 /// send (`ScreenTimeService`).
@@ -87,6 +88,12 @@ enum NudgeBook {
         set { write(newValue, "nudgePending") }
     }
 
+    /// Focus events (their start) whose second nudge was answered Back to it: no lock step for them.
+    static var backAfterAgain: [String: Date] {
+        get { read("nudgeBackAfterAgain") ?? [:] }
+        set { write(newValue, "nudgeBackAfterAgain") }
+    }
+
     private static func read<T: Decodable>(_ key: String) -> T? {
         defaults?.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
     }
@@ -107,6 +114,8 @@ enum NudgeBook {
     static let first = DeviceActivityEvent.Name("nudge-first")
     static let again = DeviceActivityEvent.Name("nudge-again")
     static let againMinutes = 16
+    static let lock = DeviceActivityEvent.Name("nudge-lock")
+    static let lockMinutes = 31
 
     /// `minutes` of use of `selection` since the activity began (not earlier in the day).
     static func use(_ selection: FamilyActivitySelection, minutes: Int) -> DeviceActivityEvent {
@@ -141,9 +150,17 @@ enum NudgeBook {
         }
         guard let watch = watches.first(where: { $0.activity == activity.rawValue }),
               watch.start.addingTimeInterval(-60) <= now, now < watch.end else { return }
-        let step = event == again ? "again" : "first"
+        let step = event == lock ? "lock" : event == again ? "again" : "first"
         let key = "phone-offtask-\(watch.startISO)-\(step)"
         let until = clock(watch.end)
+        if step == "lock" {
+            guard backAfterAgain[watch.startISO] == nil else { return }
+            show(key, title: "Locked for 15 min", body: "Back to \(watch.title): it runs until \(until).",
+                 category: "nudge-locked", url: watch.courseID.map { "aide://study/\($0)" }, now: now,
+                 Pending(key: key, kind: "offtask", step: step, at: iso(now), event: watch.title,
+                         eventStart: watch.startISO, eventEnd: watch.endISO, courseID: watch.courseID))
+            return
+        }
         let body = step == "first"
             ? "The calendar says \(watch.title) until \(until), and this is on your Work list."
             : "Still on your Work list; \(watch.title) runs until \(until)."
@@ -187,6 +204,9 @@ enum NudgeBook {
                 UNNotificationAction(identifier: back, title: "Back to it", options: [.foreground]),
                 UNNotificationAction(identifier: notNow, title: "Not now"),
             ], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "nudge-locked", actions: [
+                UNNotificationAction(identifier: back, title: "Back to it", options: [.foreground]),
+            ], intentIdentifiers: []),
         ]
     }
 
@@ -202,6 +222,12 @@ enum NudgeBook {
         case UNNotificationDefaultActionIdentifier where kind == "offtask": answer = "back"
         case notNow: answer = "not_now"
         default: return nil
+        }
+        let prefix = "phone-offtask-", suffix = "-again"
+        if answer == "back", kind == "offtask", step == "again", key.hasPrefix(prefix), key.hasSuffix(suffix) {
+            let start = String(key.dropFirst(prefix.count).dropLast(suffix.count)) // the event's start
+            backAfterAgain = backAfterAgain.merging([start: now]) { $1 }
+                .filter { now.timeIntervalSince($0.value) < 2 * 86400 }
         }
         let log = Pending(key: key, kind: kind, step: step, at: iso(now), answer: answer)
         pending = (pending + [log]).suffix(100)

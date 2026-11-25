@@ -329,12 +329,13 @@ final class ScreenTimeService: ObservableObject {
                 watches.append(NudgeBook.Watch(activity: name.rawValue, title: event.title, start: start, end: end,
                                                startISO: event.start, endISO: event.end, courseID: event.course?.id))
                 wanted.insert(name)
-                let key = "\(event.start)-\(event.end)-\(event.title)-\(plan.list?.id ?? 0)-\(pick.applicationTokens.count).\(pick.categoryTokens.count).\(pick.webDomainTokens.count)"
+                let key = "\(event.start)-\(event.end)-\(event.title)-\(plan.list?.id ?? 0)-lock-\(pick.applicationTokens.count).\(pick.categoryTokens.count).\(pick.webDomainTokens.count)"
                 guard scheduled[name.rawValue] != key || !center.activities.contains(name) else { continue }
                 do {
                     try center.startMonitoring(name, during: schedule, events: [
                         NudgeBook.first: NudgeBook.use(pick, minutes: 1),
                         NudgeBook.again: NudgeBook.use(pick, minutes: NudgeBook.againMinutes),
+                        NudgeBook.lock: NudgeBook.use(pick, minutes: NudgeBook.lockMinutes),
                     ])
                     scheduled[name.rawValue] = key
                 } catch {

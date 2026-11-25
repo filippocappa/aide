@@ -22,6 +22,10 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         MacUsage.shared.start()
         shield = MacShield(screenTime: screenTime)
         nudges = MacNudges(api: api)
+        nudges?.onLock = { [weak screenTime] in
+            await screenTime?.sync() // the lock the server just made, held now
+            MacGuard.tell()
+        }
         Task { await screenTime.sync() }
         NSLog("Aide Guard: started (\(server == nil ? "no server yet" : "server known"))")
 

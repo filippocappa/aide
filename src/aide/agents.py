@@ -19,6 +19,7 @@ SETTINGS = ("settings", "change_setting", "run_digest")
 CALENDAR_READ = ("list_calendars", "list_events", "search_events", "free_time")
 CALENDAR = (*CALENDAR_READ, "create_event", "edit_event", "delete_event")
 PLANS = ("propose_events",)
+TOMORROW = ("plan_tomorrow",)  # Secretary's evening plan of the next day (dayplan.py)
 REMINDERS = ("create_reminder", "list_reminders", "update_reminder", "complete_reminder", "delete_reminder")
 MAIL = ("search_mail", "list_unread", "read_mail", "read_thread", "send_mail", "reply_mail", "list_drafts",
         "draft_reply", "discard_draft")
@@ -581,11 +582,17 @@ AIDE_PROMPT = _prompt(
     _ROUTINES_ANY, _OBJECTIVES, _OBJECTIVES_ANY,
 )
 
+_TOMORROW = """- Tomorrow's plan: each evening you ask in the Tomorrow chat what the user has to do the next day besides what's \
+in the calendar. When they answer, call plan_tomorrow once with those things (a time when they gave one, else minutes \
+and morning, afternoon or evening; nothing new: no items); it fits the exam plan's study around them and shows the day \
+as a card to Add. Don't invent things they didn't say, don't put study in the items (the exam plan does that), and \
+say in one line what couldn't be placed. "Plan my day tomorrow" anywhere means the same tool."""
+
 SECRETARY_PROMPT = _prompt(
     "You are Secretary, one of the user's assistants: their calendar, reminders and mail. You are efficient: "
     "you get the day organised in as few words as possible, notice clashes and loose ends, and propose the "
     "next step instead of asking open questions.",
-    _BASICS, _CALENDAR, _UNI, _MAIL, _CARDS, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _WEATHER, _TRANSIT, _BROWSERLESS, _ASKED, _ROUTINES,
+    _BASICS, _CALENDAR, _TOMORROW, _UNI, _MAIL, _CARDS, _PAGES, _PHOTOS, _FOOD_ELSEWHERE, _MEMORY_SCOPED, _WEB, _MAPS, _WEATHER, _TRANSIT, _BROWSERLESS, _ASKED, _ROUTINES,
     _WATCHES, _OBJECTIVES,
 )
 
@@ -681,7 +688,8 @@ AGENTS: dict[str, AgentDef] = {a.id: a for a in (
                                   "suggest a plan: what matters most, where it's tight, what to move.", "20:00", (7,)),)),
     AgentDef("secretary", "Secretary", "Calendar, reminders and mail", "#3B6FD8",
              ("What's on my calendar today?", "Any mail I need to answer?", "Remind me to "),
-             SECRETARY_PROMPT, (*CALENDAR, *UNI, *PLANS, *REMINDERS, *MAIL, *MAPS, *WEATHER, *TRANSIT, *WEB),
+             SECRETARY_PROMPT, (*CALENDAR, *UNI, *PLANS, *TOMORROW, *REMINDERS, *MAIL, *MAPS, *WEATHER, *TRANSIT,
+                                *WEB),
              routine_ideas=(_idea("Mail sweep", "Go through my unread mail: what needs an answer from me today, what "
                                   "can wait, and anything with a date to put in the calendar.", "09:00",
                                   (1, 2, 3, 4, 5)),
@@ -711,8 +719,8 @@ SPECIALISTS = tuple(a for a in AGENTS if not AGENTS[a].orchestrator)
 
 # What the app shows as an agent's connectors: (id, name, its tools, the ones that change something).
 _CONNECTORS = (
-    ("calendar", "iCloud Calendar", (*CALENDAR, *PLANS),
-     {"create_event", "edit_event", "delete_event", "propose_events"}),
+    ("calendar", "iCloud Calendar", (*CALENDAR, *PLANS, *TOMORROW),
+     {"create_event", "edit_event", "delete_event", "propose_events", "plan_tomorrow"}),
     ("reminders", "Reminders", REMINDERS, {"create_reminder", "update_reminder", "complete_reminder", "delete_reminder"}),
     ("mail", "Gmail", MAIL, {"send_mail", "reply_mail", "draft_reply", "discard_draft"}),
     ("health", "Apple Health", (*HEALTH, *BEDTIME, *WEIGHT), {"log_weight", "delete_weight", "set_sleep_plan"}),

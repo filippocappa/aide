@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS exam_plan_history (  -- each day's estimate per cours
 """
 
 KEY = "study_plan"
-DEFAULTS = {"term_cap_min": 120, "season_cap_min": 240, "expected": {}, "topics": {}}
+DEFAULTS = {"term_cap_min": 120, "season_cap_min": 240, "expected": {}, "topics": {}, "day_plan": True,
+            "day_plan_at": "21:00"}
 CAP = (15, 600)  # a daily cap's range, minutes
 PACE = {"read_wpm": 60.0, "card_min": 0.5, "question_min": 1.5, "exercise_min": 12.0}  # defaults until learnt
 LEARNT = 20  # answers of a kind before its pace is the user's own
@@ -174,14 +175,23 @@ class ExamPlan:
 
     def caps(self) -> dict:
         s = self.settings()
-        return {"term_cap_min": s["term_cap_min"], "season_cap_min": s["season_cap_min"]}
+        return {"term_cap_min": s["term_cap_min"], "season_cap_min": s["season_cap_min"],
+                "day_plan": s["day_plan"], "day_plan_at": s["day_plan_at"]}
 
     def update_caps(self, **changes) -> dict:
         s = self.settings()
         for k, v in changes.items():
-            if k not in ("term_cap_min", "season_cap_min"):
+            if k == "day_plan":
+                if not isinstance(v, bool):
+                    raise ValueError("day_plan is true or false")
+            elif k == "day_plan_at":
+                try:
+                    v = time.fromisoformat(v).strftime("%H:%M")
+                except (TypeError, ValueError):
+                    raise ValueError("day_plan_at is HH:MM") from None
+            elif k not in ("term_cap_min", "season_cap_min"):
                 raise ValueError(f"unknown setting {k!r}")
-            if not isinstance(v, int) or isinstance(v, bool) or not CAP[0] <= v <= CAP[1]:
+            elif not isinstance(v, int) or isinstance(v, bool) or not CAP[0] <= v <= CAP[1]:
                 raise ValueError(f"{k} is {CAP[0]} to {CAP[1]} minutes")
             s[k] = v
         self._save(s)
@@ -682,20 +692,27 @@ class ExamPlan:
                         "topics": list(dict.fromkeys(topics))})
         return out
 
-    async def week(self, start: date | None = None, now: datetime | None = None) -> tuple[list[dict], list[str]]:
-        """The blocks of the 7 days from `start` (today when left out; days gone are skipped), placed in each day's
-        free time as review sessions to propose (plans.py): a course's day in one sitting where a gap holds it, else
-        split around events (no piece under 25 min), less a review session already in the calendar for it that day.
-        Returns the items {title, start, end, calendar, course_id, topics, notes} and the short targets' warnings."""
+    async def week(self, start: date | None = None, now: datetime | None = None, days: int = 7,
+                   busy: list[tuple[datetime, datetime]] = (), fresh: bool = True) -> tuple[list[dict], list[str]]:
+        """The blocks of the `days` days from `start` (today when left out; days gone are skipped), placed in each
+        day's free time as review sessions to propose (plans.py): a course's day in one sitting where a gap holds it,
+        else split around events (no piece under 25 min), less a review session already in the calendar for it that
+        day. `busy`: more taken time than the calendar's (the user's things for tomorrow, dayplan.py); `fresh` False
+        when the plan was just worked out. Returns the items {title, start, end, calendar, course_id, topics, notes}
+        and the short targets' warnings."""
         now = now or utcnow()
-        await self.plan(now, fresh=True)
+        if fresh or not self._gaps:
+            await self.plan(now, fresh=True)
         today = now.astimezone(self.tz).date()
         start = max(start or today, today)
-        window = {start + timedelta(days=i) for i in range(7)}
+        window = {start + timedelta(days=i) for i in range(days)}
         gaps = {d: list(g) for d, g in self._gaps.items()}
         for d, held in self._held.items():  # sessions already there are taken time
             for _, s0, e0 in held:
                 gaps[d] = _cut(gaps.get(d, []), s0, e0 + BUSY_GAP)
+        for s0, e0 in busy:
+            d = s0.astimezone(self.tz).date()
+            gaps[d] = _cut(gaps.get(d, []), s0 - BUSY_GAP, e0 + BUSY_GAP)
         items, warnings = [], []
         for t, laid in self._laid:
             name = t["course"]["name"][:1].upper() + t["course"]["name"][1:]

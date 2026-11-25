@@ -174,3 +174,31 @@ def test_the_api_gives_the_plan_and_keeps_nudges(env):  # noqa: F811
     r = client.post("/v1/nudges", json={**body, "answer": "back"}, headers=AUTH)
     assert r.json()["answer"] == "back"
     assert client.post("/v1/nudges", json={**body, "answer": "maybe"}, headers=AUTH).status_code == 422
+
+
+def test_the_third_off_task_step_locks_the_work_list_once_per_event(db):
+    n = nudges(db)
+    work = n._list()
+    study = {"kind": "offtask", "step": "lock", "event": "Review: Business law",
+             "event_start": "2026-11-23T21:00:00Z", "event_end": "2026-11-23T23:00:00Z", "course_id": 2,
+             "app": "youtube.com"}
+    now = NOW.astimezone(timezone.utc)
+    row = n.log({**study, "key": "mac-lock", "device": "mac", "at": now.isoformat()}, now)
+    lock = row["lock"]
+    assert lock["title"] == "Off task: Review: Business law" and lock["list_id"] == work["id"]
+    assert lock["agent"] == "coach" and not lock["strict"]
+    assert datetime.fromisoformat(lock["ends_at"]) - datetime.fromisoformat(lock["starts_at"]) == timedelta(minutes=15)
+    # the same device again (a retry), then the phone for the same event: no second lock
+    assert n.log({**study, "key": "mac-lock", "device": "mac", "at": now.isoformat()}, now)["lock"] is None
+    later = now + timedelta(minutes=20)  # the Mac's lock is over by now
+    assert n.log({**study, "key": "phone-lock", "device": "phone", "at": later.isoformat()}, later)["lock"] is None
+    assert len([l for l in n.locks.all(now) if l["title"].startswith("Off task")]) == 1
+    assert "locked for 15 min at 22:30 (mac)" in n.offtask_lines(now - timedelta(hours=1))[0]
+
+
+def test_no_off_task_lock_during_a_focus_session(db):
+    n = nudges(db, focus=True)
+    row = n.log({"key": "k", "device": "mac", "kind": "offtask", "step": "lock", "event": "Study Macro"},
+                NOW.astimezone(timezone.utc))
+    assert row["lock"] is None
+    assert not any(l["title"].startswith("Off task") for l in n.locks.all(NOW))

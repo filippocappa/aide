@@ -2071,7 +2071,7 @@ struct NudgeLog: Encodable {
     let device: String
     /// `bedtime` or `offtask`.
     let kind: String
-    /// `hour`, `half`, `now`, `late`; `first`, `again`.
+    /// `hour`, `half`, `now`, `late`; `first`, `again`, `lock` (the server makes a 15-minute lock on the Work list).
     let step: String
     let at: String
     var night: String?
@@ -2086,6 +2086,8 @@ struct NudgeLog: Encodable {
 
 struct NudgeKept: Decodable {
     let key: String
+    // A `lock` step's answer also has `lock` (the lock made, or null): not read here, so a change to the lock's
+    // shape can't make a nudge fail to send. The lock itself comes with the next /v1/locks.
 }
 
 extension JSONDecoder {

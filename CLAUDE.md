@@ -55,7 +55,7 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   (a `bedtime` Live Activity or a push), the optional wind-down lock, each night against its plan.
   `nudges.py` (#84): what the devices need for their nudges (tonight's bedtime steps, an hour before to three hours
   after; the next day's events as study, `#focus` or other, with the course; the Work list), and what they showed and
-  the answers, for Coach (evening digest, `sleep_plan`) and Professor (`study_plan`, the study week) as data. The Mac
+  the answers (off task a third time: a 15-min lock on the Work list, the only lock it makes), for Coach (evening digest, `sleep_plan`) and Professor (`study_plan`, the study week) as data. The Mac
   (`Mac/MacNudges.swift`, in Aide Guard) and the phone (`ScreenTime/NudgeBook.swift`, DeviceActivity) decide when.
 - `habits.py`: habits and streaks; never miss twice (#52): each evening Coach writes once about daily habits missed
   yesterday and not done today, offering the habit's two-minute version (`minimum`). `digest.py`: daily/weekly/monthly digests and their schedule.
@@ -100,6 +100,9 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `examplan.py`: the exam plan (#68): the hours each course's next exam still needs (learn, practise, mocks, review,
   less what's known; at most the credits' own study: 25 h a CFU from Esse3 less the lectures in UniTo's timetable)
   against the free days before it, under a daily cap; no model call. Professor's `study_plan`.
+- `dayplan.py` (#84): tomorrow's plan the evening before: at `day_plan_at` (21:00) Secretary asks in its Tomorrow
+  chat what else the day holds; `plan_tomorrow` places those things, the exam plan's review sessions around them
+  (`ExamPlan.week(days=1, busy=…)`), one card to Add; no answer in 90 min: the study around the calendar alone.
 - `lessons.py`: a lesson per notebook topic (hook, goals, steps with checks), written from the topic's notes through
   `engine.py`; marking, Ask and the explanation back.
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
