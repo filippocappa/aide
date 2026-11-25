@@ -856,12 +856,15 @@ struct CourseView: View {
 
     @ViewBuilder private func destination(_ page: Page) -> some View {
         switch page {
-        case .introduction(let markdown): NotePage(title: "Introduction", markdown: markdown)
+        case .introduction(let markdown):
+            NotePage(title: "Introduction", markdown: markdown)
+                .askingProfessor(course: course.id, source: AskSource(notebook: "introduction"))
         case .topic(let topic): TopicPageView(topic: topic, course: course)
         case .formulas:
             LoadedNotePage(title: "Formulas", subtitle: "Every topic's formulas, in the notebook's order") {
                 try await env.api.formulas(course: course.id)
             }
+            .askingProfessor(course: course.id, source: AskSource(notebook: "formulas"))
         case .exercises: ExercisesView(course: course, topics: topics)
         case .mocks: MockExamsView(course: course)
         case .lectures: CourseLecturesView(lectures: lectures)
@@ -1175,7 +1178,9 @@ struct ExercisesView: View {
                         NavigationLink {
                             LoadedNotePage(title: set.topic.title, subtitle: detail(set)) {
                                 try await env.api.exercises(set.id)
-                            }.macPageBack()
+                            }
+                            .askingProfessor(course: course.id, source: AskSource(topic: set.topic.id))
+                            .macPageBack()
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(set.topic.title)

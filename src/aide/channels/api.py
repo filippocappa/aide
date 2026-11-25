@@ -47,6 +47,7 @@ from ..reviews import ReviewStore
 from ..routines import EDITABLE as ROUTINE_FIELDS, deliver
 from ..shapes import event_json, event_start, reminder_json
 from ..material import MAX_FILE, PdfError, page_image
+from ..reading import AskStore
 from ..esse3 import Esse3Reader, SignUpFailed
 from ..moodle import MoodleError, MoodleSync
 from ..passwords import MAX_NAME, MAX_PASSWORD, MAX_SITES, MAX_USERNAME, Locked, PasswordError, PasswordStore, TooMany
@@ -285,6 +286,15 @@ class LessonAsk(BaseModel):
     step: int
     question: str
     history: list[LessonQA] = []  # earlier questions on this step, oldest first
+
+
+class AskIn(BaseModel):  # Ask Professor (#64, #65)
+    course: int | None = None  # needed only for a notebook page (or nothing else)
+    source: dict = {}  # {"file", "page"} | {"topic"} | {"lesson", "step"} | {"notebook": "introduction"|"formulas"}
+    passage: str | None = None  # what the user picked
+    question: str | None = None
+    action: Literal["explain", "quiz"] | None = None  # a file's quick actions, instead of a question
+    thread: str | None = None  # a thread going on (a_…)
 
 
 class LessonFinish(BaseModel):
@@ -787,7 +797,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                errand_store: ErrandStore | None = None, plans: PlanStore | None = None,
                foods: FoodDB | None = None, off: OpenFoodFacts | None = None,
                weights: WeightStore | None = None, videos: VideoWorker | None = None,
-               lessons: LessonStore | None = None, finance: FinanceStore | None = None,
+               lessons: LessonStore | None = None, asks: AskStore | None = None,
+               finance: FinanceStore | None = None,
                banks: Banks | None = None, bank_redirect: str | None = None,
                bedtime: Bedtime | None = None, focus: FocusStore | None = None,
                focus_watch: FocusWatcher | None = None, watches: PriceWatches | None = None,
@@ -836,6 +847,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
 
     lessons = lessons or LessonStore(notebook, lesson_ask, engine.plan_blocked if engine else None, decider=decider)
     lessons.mastery = lessons.mastery or quizzes.mastery
+    asks = asks or AskStore(db.conn, study, notebook, study.files, agent, lesson_ask, lessons)
     reviews = reviews or ReviewStore(db.conn, tz, calendar, study)
     plans = plans or PlanStore(db.conn, tz, calendar, reviews)
     objectives = objectives or ObjectiveStore(db.conn, tz, habits, food, health, store)
@@ -1165,6 +1177,8 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
                     a["proposal"] = notebook.proposal_json(p)  # applied or declined since
                 elif a["type"] == "files":
                     a["files"] = [file_json(f) for old in a["files"] if (f := study.files.get(old["id"]))]
+                elif a["type"] == "ask" and (t := asks.get(a["ask"]["id"])):
+                    a["ask"] = ask_json(t, True, True, True)  # the turns since, as the notes are shown
                 elif a["type"] == "videos" and videos:  # a working card shows how far it got; deleted ones go
                     a["videos"] = [videos.store.card(v) for old in a["videos"] if (v := videos.store.get(old["id"]))]
             m["attachments"] = [a for a in m["attachments"] if a["type"] not in ("files", "videos") or a[a["type"]]]
@@ -2445,6 +2459,32 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
             log.warning("lesson question failed: %s", e)
             raise HTTPException(502, "Professor couldn't answer just now. Try again in a moment.")
         return {"answer": readable(answer, latex, inline) if plain else answer, "markdown": answer}
+
+    def ask_json(t: dict, plain: bool, latex: bool, inline: bool) -> dict:
+        out = asks.as_json(t)
+        if plain:
+            out["turns"] = [{**turn, "a": readable(turn["a"], latex, inline), "markdown": turn["a"]}
+                            for turn in out["turns"]]
+        return out
+
+    @app.post("/v1/study/ask", dependencies=[Depends(auth)])
+    async def study_ask(body: AskIn, plain: bool = False, latex: bool = False, inline: bool = False):
+        try:
+            t = await asks.ask(body.course, body.source, body.question, body.action, body.passage, body.thread)
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            log.warning("ask failed: %s", e)
+            raise HTTPException(502, "Professor couldn't answer just now. Try again in a moment.")
+        return ask_json(t, plain, latex, inline)
+
+    @app.get("/v1/study/ask/{thread_id}", dependencies=[Depends(auth)])
+    async def study_ask_thread(thread_id: str, plain: bool = False, latex: bool = False, inline: bool = False):
+        if (t := asks.get(thread_id)) is None:
+            raise HTTPException(404, f"no thread {thread_id}")
+        return ask_json(t, plain, latex, inline)
 
     @app.post("/v1/lessons/{lesson_id}/finish", dependencies=[Depends(auth)])
     async def lesson_finish(lesson_id: str, body: LessonFinish | None = None, plain: bool = False,

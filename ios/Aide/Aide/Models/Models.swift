@@ -84,6 +84,8 @@ enum Attachment: Decodable, Hashable {
     case routes([TravelRoute])
     case files([StudyFile])
     case proposal(NotebookProposal)
+    /// A thread with Professor about a passage or a file (#64): the course chat's one message for it, folded.
+    case ask(AskThread)
     case errands([Errand])
     case purchases([Purchase])
     /// The cards of errand `errand` (Buy it for me starts from it), from `site`.
@@ -112,6 +114,7 @@ enum Attachment: Decodable, Hashable {
         case "routes": self = .routes(try c.decode([TravelRoute].self, forKey: .routes))
         case "files": self = .files(try c.decode([StudyFile].self, forKey: .files))
         case "proposal": self = .proposal(try c.decode(NotebookProposal.self, forKey: .proposal))
+        case "ask": self = .ask(try c.decode(AskThread.self, forKey: .ask))
         case "errands": self = .errands(try c.decode([Errand].self, forKey: .errands))
         case "purchases": self = .purchases(try c.decode([Purchase].self, forKey: .purchases))
         case "products":
@@ -130,7 +133,7 @@ enum Attachment: Decodable, Hashable {
         }
     }
     private enum CodingKeys: String, CodingKey {
-        case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos
+        case type, reminders, events, meals, departures, routes, files, proposal, errands, purchases, products, videos, ask
         case quiz, review, payments, open, charts, priceWatches, releases, errandId, site
     }
 
@@ -2618,6 +2621,66 @@ struct LessonCheckBody: Encodable { let step: Int; let check: Int; let answer: S
 struct LessonQA: Codable, Hashable { let q: String; let a: String }
 struct LessonAskBody: Encodable { let step: Int; let question: String; let history: [LessonQA] }
 struct LessonAnswer: Decodable { let answer: String }
+
+// MARK: Ask Professor (#64, #65; docs/API.md "Ask Professor")
+
+/// Where a question is from: one of a study file (and the page on screen), a topic, a lesson's step, or a notebook
+/// page ("introduction", "formulas").
+struct AskSource: Codable, Hashable {
+    var file: String? = nil
+    var page: Int? = nil
+    var topic: String? = nil
+    var lesson: String? = nil
+    var step: Int? = nil
+    var notebook: String? = nil
+}
+
+/// A page of the open file an answer used; `text`: words on that page to highlight, when the server found them there.
+struct PageCitation: Decodable, Hashable {
+    let file: String
+    let page: Int
+    let text: String?
+}
+
+struct AskTurn: Decodable, Hashable {
+    let q: String
+    let a: String
+    var citations: [PageCitation] = []
+    var action: String? = nil
+
+    enum CodingKeys: String, CodingKey { case q, a, citations, action }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        q = try c.decode(String.self, forKey: .q)
+        a = try c.decode(String.self, forKey: .a)
+        citations = try c.decodeIfPresent([PageCitation].self, forKey: .citations) ?? []
+        action = try c.decodeIfPresent(String.self, forKey: .action)
+    }
+}
+
+struct AskThread: Decodable, Identifiable, Hashable {
+    let id: String
+    let course: Int
+    let source: AskSource
+    /// "Macroeconomics · Week 3 slides.pdf, p. 14".
+    let place: String
+    let passage: String?
+    let turns: [AskTurn]
+    let conversationId: String?
+
+    enum CodingKeys: String, CodingKey { case id, course, source, place = "where", passage, turns, conversationId }
+}
+
+struct AskBody: Encodable {
+    var course: Int? = nil
+    var source: AskSource
+    var passage: String? = nil
+    var question: String? = nil
+    /// A file's quick actions: "explain" (this page), "quiz" (me on these pages).
+    var action: String? = nil
+    var thread: String? = nil
+}
 struct LessonFinishBody: Encodable { let explanation: String? }
 struct QuizMarkBody: Encodable { let n: Int; let correct: Bool }
 

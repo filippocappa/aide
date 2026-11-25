@@ -1471,6 +1471,11 @@ final class APIClient {
         return answer.answer
     }
 
+    /// Ask Professor about a passage or the open file (#64, #65): the thread with the new answer last.
+    func ask(_ body: AskBody) async throws -> AskThread {
+        try await send("POST", "/v1/study/ask", query: Self.readable, body: body, timeout: 90)
+    }
+
     func finishLesson(_ id: String, explanation: String?) async throws -> Lesson {
         try await send("POST", "/v1/lessons/\(id)/finish", query: Self.readable,
                        body: LessonFinishBody(explanation: explanation), timeout: 90)

@@ -105,6 +105,11 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   (`ExamPlan.week(days=1, busy=…)`), one card to Add; no answer in 90 min: the study around the calendar alone.
 - `lessons.py`: a lesson per notebook topic (hook, goals, steps with checks), written from the topic's notes through
   `engine.py`; marking, Ask and the explanation back.
+- `reading.py` (#64, #65): Ask Professor about a passage (a block of the notes, a lesson's step, text selected in a
+  PDF) or a course file open beside him: the fast model, with the place's notes or the file's pages; answers cite
+  pages, the words checked on the page for the app to highlight; each thread one folded message in the course chat
+  (`ask` card, rewritten after each answer). App: `Views/AskViews.swift` (`FileReader`: side by side when wide, a
+  panel from the bottom on the phone).
 - `routines.py`: routines (an agent's scheduled job, posting in its own chat), their schedule and alerts.
 - `activity.py`: the feed of what the agents did, behind `/v1/activity`; `/v1/approvals` gathers what waits for the user.
 - `objectives.py`: each specialist's objectives for the day, week and month: the store, progress from the data,
@@ -339,7 +344,7 @@ came about, with dates and what was tried, is in [docs/HISTORY.md](docs/HISTORY.
   bedtime, and off the Work list during a study or `#focus` event; Pebble on the Mac, notifications on the phone.
   Not tried for real on the phone yet.
 - **Study:** Moodle files, lecture notes from recordings, notebooks, lessons, quizzes and the Study page, practice and
-  mock exams, spaced repetition (#63), the exam plan and study week (#68), focus sessions (#54), Esse3 (#74: sessions,
+  mock exams, spaced repetition (#63), Ask Professor about a passage or beside a PDF (#64, #65), the exam plan and study week (#68), focus sessions (#54), Esse3 (#74: sessions,
   bookings, transcript; sign-up as an errand, #75). Recording on the phone and an Esse3 sign-up aren't tried for real yet.
 - **Errands:** Aide's Chrome on cappa for shops and bookings (#22), the live view, price watches and timed drops
   (#57), release trackers, the bot-check fixes (#76).

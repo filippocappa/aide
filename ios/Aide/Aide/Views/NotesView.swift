@@ -10,7 +10,9 @@ struct NoteText: View {
     let markdown: String
     /// The page's own notes (not a callout's): its headings get the ids `Contents` jumps to.
     var anchored = false
-    @Environment(\.dynamicTypeSize) private var typeSize  // the maths is drawn again at a new text size
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// Set on a page that can ask Professor about its passages (#64): each block offers it.
+    @Environment(\.askPassage) private var ask  // the maths is drawn again at a new text size
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -22,18 +24,20 @@ struct NoteText: View {
                         .padding(.top, level <= 2 ? 10 : 4)
                         .id(anchored ? Self.anchor(offset) : nil)
                 case .paragraph(let s):
-                    MathText.text(s).lineSpacing(3)
+                    MathText.text(s).lineSpacing(3).askable(s, ask: ask)
                 case .bullet(let s, let indent):
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("•").foregroundStyle(.secondary)
                         MathText.text(s).lineSpacing(3)
                     }
                     .padding(.leading, CGFloat(indent) * 16)
+                    .askable(s, ask: ask)
                 case .numbered(let n, let s):
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(n).").foregroundStyle(.secondary).monospacedDigit()
                         MathText.text(s).lineSpacing(3)
                     }
+                    .askable(s, ask: ask)
                 case .callout(let kind, let title, let folded, let text):
                     Callout(kind: kind, title: title, folded: folded, text: text)
                 case .quote(let s):
@@ -44,12 +48,13 @@ struct NoteText: View {
                 case .figure(let caption, let file, let page):
                     NoteFigure(caption: caption, file: file, page: page)
                 case .math(let latex):
-                    MathFormula(latex: latex)
+                    MathFormula(latex: latex).askable("$$\(latex)$$", ask: ask)
                 case .code(let s):
                     Text(s).font(.callout.monospaced())
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .askable(s, ask: ask)
                 case .rule:
                     Divider()
                 }
@@ -677,6 +682,7 @@ struct TopicPageView: View {
         .sheet(item: $focusing, onDismiss: { Task { await env.refreshFocus() } }) { FocusStartSheet(target: $0) }
         .sheet(item: $openSource) { PDFSheet(file: $0.file, page: $0.pages.first) }
         .navigationDestination(item: $basis) { TopicPageView(topic: $0, course: course) }
+        .askingProfessor(course: course?.id, source: AskSource(topic: topic.id))
         .macWindowCover(item: $learning) { ref in
             if let course { LessonView(topic: ref, course: course.id, courseName: course.title) }
         }
@@ -868,7 +874,9 @@ struct PDFSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let document {
+                if let document, file.course != nil {
+                    FileReader(file: file, document: document, page: page) // Professor beside it (#65)
+                } else if let document {
                     PDFKitView(document: document, page: page)
                 } else if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).padding()

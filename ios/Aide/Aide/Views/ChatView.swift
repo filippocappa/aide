@@ -932,6 +932,10 @@ private struct MessageRow: View {
                     }
                 }
             }
+        } else if let thread = message.attachments.lazy.compactMap({ a -> AskThread? in
+            if case .ask(let t) = a { return t } else { return nil }
+        }).first {
+            AskEntryCard(thread: thread) // the thread written out is for Professor; folded here (#64)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -1204,6 +1208,8 @@ struct AttachmentCard: View {
             if !files.isEmpty { card { FilesCard(files: files) } }
         case .proposal(let proposal):
             card { ProposalAnswerCard(proposal: proposal) }
+        case .ask(let thread):
+            AskEntryCard(thread: thread)
         case .errands(let errands):
             let shown = errands.filter { !foldedErrands.contains($0.id) }
             if !shown.isEmpty {

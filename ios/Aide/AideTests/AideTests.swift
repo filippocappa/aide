@@ -891,6 +891,32 @@ final class PushTests: XCTestCase {
         XCTAssertNil(p.items?[1].topic)
     }
 
+    func testAskThreadAttachmentDecodesAndTheBodySendsOnlyWhatsSet() throws {
+        let json = """
+        [{"type": "ask", "ask": {"id": "a_1", "course": 2, "source": {"file": "f_1", "page": 14},
+          "where": "Macroeconomics · Week 3 slides.pdf, p. 14", "passage": "LM: liquidity preference",
+          "turns": [{"q": "what's LM?", "a": "Money demand meets supply (p. 14).", "markdown": "…",
+                     "citations": [{"file": "f_1", "page": 14, "text": "liquidity preference"},
+                                   {"file": "f_1", "page": 15, "text": null}], "at": "2026-11-25T18:00:00+00:00"},
+                    {"q": "Quiz me", "a": "1. …", "action": "quiz", "at": "2026-11-25T18:01:00+00:00"}],
+          "conversation_id": "c_9"}}]
+        """
+        let attachments = try JSONDecoder.api.decode([Attachment].self, from: Data(json.utf8))
+        guard case .ask(let t) = attachments[0] else { return XCTFail("expected an ask thread") }
+        XCTAssertEqual(t.place, "Macroeconomics · Week 3 slides.pdf, p. 14")
+        XCTAssertEqual(t.source, AskSource(file: "f_1", page: 14))
+        XCTAssertEqual(t.conversationId, "c_9")
+        XCTAssertEqual(t.turns[0].citations.map(\.page), [14, 15])
+        XCTAssertNil(t.turns[0].citations[1].text)
+        XCTAssertEqual(t.turns[1].action, "quiz")
+        XCTAssertEqual(t.turns[1].citations, [])
+
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(
+            AskBody(source: AskSource(topic: "t_1"), passage: "Y = C + I + G"))) as? [String: Any])
+        XCTAssertEqual(Set(body.keys), ["source", "passage"])
+        XCTAssertEqual(body["source"] as? [String: String], ["topic": "t_1"])
+    }
+
     func testTransitAlertPatchSendsOnlyWhatChanges() throws {
         func json(_ patch: TransitAlertPatch) throws -> [String: Any] {
             try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder.api.encode(patch)) as? [String: Any])

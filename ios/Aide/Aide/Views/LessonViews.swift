@@ -284,11 +284,13 @@ private struct LessonRun: View {
                 .accessibilityLabel(voice.speaking ? "Stop reading" : "Read it to me")
             }
             NoteText(markdown: s.body)
+                .askingProfessor(course: nil, source: AskSource(lesson: lesson.id, step: s.n)) // #64
             if anotherWay {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("ANOTHER WAY TO SEE IT").font(.caption2.weight(.semibold)).tracking(0.5)
                         .foregroundStyle(Theme.study)
                     NoteText(markdown: s.again)
+                        .askingProfessor(course: nil, source: AskSource(lesson: lesson.id, step: s.n))
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)

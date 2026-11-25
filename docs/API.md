@@ -125,6 +125,10 @@ from the tools the assistant used in that turn, not parsed from its text:
   [File]}`. On Professor's notebook proposals.
 - `proposal`: a notebook proposal to answer right there (since 2026-10-26; see Notebook), `{"type": "proposal",
   "proposal": Proposal}`. `/v1/history` gives both as they are now: a proposal's `status`, and files still there.
+- `ask`: a thread with Professor about a passage or a file (since 2026-11-25, #64; see Ask Professor), `{"type":
+  "ask", "ask": Thread}`, on the one message the course chat keeps for it. `/v1/history` gives the thread as it is
+  now, its answers readable as the notes are (`plain`, `latex`, `inline`). The message's own text is the thread
+  written out (what Professor reads there later): show the card folded instead ("Asked about: …").
 - `errands`: a browser errand's card (since 2026-10-27; see Browser errands), `{"type": "errands", "errands":
   [Errand]}`: when Aide started or looked up one, and on the messages an errand posts in its chat (needs you, a
   question, ready to confirm, failed). A message's card is the errand as it was then; fetch
@@ -1792,6 +1796,42 @@ Lesson brief or null, "known": 4, "learning": 1, "unseen": 3, "builds_on": ["t_�
 first whose lesson isn't finished, skipping topics already known (every question and flashcard last answered right).
 `missing`: what it builds on that isn't known yet (retained below 0.6, its lesson not finished), weakest first: the app
 asks before starting it ("Start X" or go ahead), never refuses.
+
+### Ask Professor
+
+Since 2026-11-25 (#64, #65): a question to Professor about what's open, answered on the fast model while the user
+waits (a few seconds), with follow-ups in a thread. It starts from a passage the user picked (a block of a topic page,
+the Introduction, the Formulas, a lesson's step, text selected in a PDF), or from a course file open with Professor
+beside it. Professor gets the passage, where it's from and that place's notes; for a file, its pages (the whole file
+when it's short, else the ones around the page on screen and the ones matching the question), then the notebook's
+matching sections. Each thread is kept in the course chat as one message with an `ask` card (Chat, attachments),
+rewritten after each answer.
+
+Source (where it's from), one of:
+- `{"file": "f_…", "page": 14}`: a study file of a course, `page` the one on screen (optional).
+- `{"topic": "t_…"}`: a topic's page.
+- `{"lesson": "ls_…", "step": 2}`: a lesson's step.
+- `{"notebook": "introduction" | "formulas"}`: the course's Introduction or formula sheet; `course` in the body.
+
+Thread:
+```json
+{"id": "a_3f9a1c2b4d5e", "course": 2, "source": {"file": "f_…", "page": 14},
+ "where": "Macroeconomics · Week 3 slides.pdf, p. 14", "passage": "…" or null,
+ "turns": [{"q": "what's LM?", "a": "It's where money demand meets supply (p. 14).", "markdown": "…",
+            "citations": [{"file": "f_…", "page": 14, "text": "liquidity preference equals money supply" or null}],
+            "action": "explain" (only on a quick action), "at": "2026-11-25T18:00:00+00:00"}],
+ "conversation_id": "c_…"}
+```
+- `citations`: the open file's pages the answer used, in the order it names them ("p. 14", "pp. 14–15" in `a`):
+  chips that turn the PDF to that page. `text`: a few words of the answer's source as they are on that page (checked
+  there), to highlight; `null` when the model's words weren't found. Only on a file's threads.
+- `markdown` only with `plain`: `a` as written; `a` itself readable as the notes are.
+- `conversation_id`: the course chat that keeps it.
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /v1/study/ask?plain=true&latex=true&inline=true` | `{"source": Source, "course": 2, "passage": "…", "question": "…", "action": "explain" \| "quiz", "thread": "a_…"}`: all optional but a source (or a `thread`). No `question` and no `action`: "Explain this." (with a passage). `action`, a file's quick actions instead of a question: `explain` this page, `quiz` me on these pages (three questions, each answer in a folded `> [!success]- Answer` callout). `thread`: a follow-up; its source stays, but a `source` with the same file moves its `page` to the one on screen now. | the Thread, with the new turn last. `404` unknown file, topic, lesson, step or thread; `400` nothing to ask, a quick action not on a file, a file of no course; `502` the model didn't answer (nothing kept). |
+| `GET /v1/study/ask/{id}` | same query | the Thread. `404` unknown. |
 
 ### Quizzes and review sessions
 
