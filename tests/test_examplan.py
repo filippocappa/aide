@@ -439,3 +439,11 @@ async def test_proposing_the_week(tmp_path):
     assert db.app_conversation(chat)["title"] == "Study week"
     assert await weekly.tick(evening + timedelta(minutes=30)) is None and len(agent.posts) == 1  # once a week
     assert weekly.chat() == chat
+
+
+def test_a_block_longer_than_a_session_is_cut_into_sessions():
+    from aide.examplan import _split
+    s0 = datetime(2026, 11, 27, 14, 15, tzinfo=ROME)
+    parts = _split(s0, s0 + timedelta(minutes=247))
+    assert [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b in parts] == [("14:15", "16:18"), ("16:18", "18:22")]
+    assert _split(s0, s0 + timedelta(minutes=240)) == [(s0, s0 + timedelta(minutes=240))]

@@ -736,7 +736,7 @@ class ExamPlan:
                 what = ", ".join(f"{p} {m} min" for p, m in phases.items())
                 notes = (f"From the exam plan, before the {t['target']['what']} on {t['target']['date']:%a %d %b}: "
                          f"{what}." + ("\nTopics: " + "; ".join(topics) if topics else ""))
-                for s0, e0 in _place(gaps, d, minutes):
+                for s0, e0 in (part for piece in _place(gaps, d, minutes) for part in _split(*piece)):
                     items.append({"title": REVIEW_PREFIX + name, "start": f"{s0:%Y-%m-%dT%H:%M}",
                                   "end": f"{e0:%Y-%m-%dT%H:%M}", "calendar": self.study.study_calendar,
                                   "course_id": t["course"]["id"], "topics": topics, "notes": notes})
@@ -806,6 +806,17 @@ def _cut(gaps: list[tuple[datetime, datetime]], a: datetime, b: datetime) -> lis
         if b < g1:
             out.append((b, g1))
     return out
+
+
+def _split(s0: datetime, e0: datetime) -> list[tuple[datetime, datetime]]:
+    """A session longer than a review session may be (reviews.LONGEST) as equal pieces back to back."""
+    from .reviews import LONGEST
+    minutes = int((e0 - s0).total_seconds() // 60)
+    n = -(-minutes // LONGEST)
+    if n <= 1:
+        return [(s0, e0)]
+    cuts = [s0 + timedelta(minutes=minutes * k // n) for k in range(n)] + [e0]
+    return list(zip(cuts, cuts[1:]))
 
 
 def _place(gaps: dict[date, list[tuple[datetime, datetime]]], d: date, minutes: int) -> list[tuple[datetime, datetime]]:
