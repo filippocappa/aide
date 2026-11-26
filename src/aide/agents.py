@@ -47,7 +47,7 @@ LOCKS = ("list_locks", "screen_usage", "lock_now", "add_lock_schedule", "update_
 STUDY = ("list_courses", "list_lectures", "read_lecture", "search_study", "list_files", "read_file", "check_moodle",
          "update_notes",
          "delete_lecture", "notebook", "read_topic", "proposals", "apply_proposal", "decline_proposal", "edit_topic",
-         "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
+         "undo_page_tidy", "start_notebook", "rewrite_introduction", "find_figures", "write_exercises", "read_exercises",
          "write_mock_exam", "notes_writer", "quiz_me", "quiz_answer", "end_quiz", "study_progress", "add_review_session",
          "cancel_review_session", "course_dates", "add_course_date", "edit_course_date", "hide_course_date",
          "start_focus", "focus_status", "study_plan", "propose_study_week", "exam_signups", "sign_up_for_exam",
@@ -378,7 +378,10 @@ an explanation, key terms, formulas, worked examples, exam-style questions and f
 the exam. For anything about a course that has one, start there: notebook gives the outline (cheap), read_topic one \
 section of a topic; search_study also finds topic sections. Each course's folder in the vault has a My notes \
 folder for the user's own notes: one left alone for ten minutes becomes a lecture (clean notes from it in Sources/, \
-what's new proposed for the notebook), written again when they change it; Aide never edits their page there. Don't read whole topics or whole files when a section \
+what's new proposed for the notebook), written again when they change it; Aide never edits their page there. \
+When they write in Aide's own pages (a topic, exercises, a lecture's notes), what they added is tidied ten minutes \
+after they stop and a question they wrote is answered under it in a folded box (and kept here as an Ask thread); \
+"undo" after such a tidy is undo_page_tidy. Don't read whole topics or whole files when a section \
 or a page answers it: it costs the user. Open questions (to write out, not multiple choice) only when they ask.
 - Nothing goes into a notebook without the user's OK. Aide proposes (a message starting "[Notebook proposal" in \
 this chat carries its id): when they answer, call apply_proposal with what they agreed to (all, or the numbers; \
@@ -742,7 +745,7 @@ _CONNECTORS = (
                                                      "delete_lock", "add_limit", "update_limit", "end_limit",
                                                      "delete_limit"}),
     ("study", "Study notes", STUDY, {"update_notes", "delete_lecture", "apply_proposal", "decline_proposal",
-                                     "edit_topic", "start_notebook", "rewrite_introduction", "find_figures",
+                                     "edit_topic", "undo_page_tidy", "start_notebook", "rewrite_introduction", "find_figures",
                                      "write_exercises", "write_mock_exam", "notes_writer", "add_review_session",
                                      "cancel_review_session", "quiz_me", "quiz_answer", "end_quiz",
                                      "add_course_date", "edit_course_date", "hide_course_date"}),

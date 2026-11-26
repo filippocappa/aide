@@ -10,7 +10,9 @@ YouTube videos Aide read (videos.py) go in Aide/Videos/, a page each, their fram
 
 Aide only changes what it wrote: a file the user edited (its hash isn't the one Aide wrote) or deleted is theirs
 from then on, and Aide leaves it alone. Two exceptions. A topic page is shared: the user's edits are read back into
-the notebook (pull), Aide's later changes build on them and are written over the page. A cards file is only ever
+the notebook (pull), Aide's later changes build on them and are written over the page; so are a topic's exercises
+and a lecture's page (its notes) when `pages` is set, and what the user added to any of the three is tidied once
+it's left alone, a question written there answered under it (pageedits.py). A cards file is only ever
 added to, a line per new card, since the plugin writes its review data into it. Renamed or deleted lectures and
 topics move or remove their page, when it's unedited.
 
@@ -66,6 +68,8 @@ MY_NOTES = "My notes"
 NOTES_HELP = "How this folder works.md"
 QUIET = timedelta(minutes=10)  # a note unchanged this long is done for now: Remotely Save syncs one being typed each minute
 _DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+EXERCISES_FOOT = ("Write in this page and Aide tidies what you add, once you've left it for a few minutes; a question "
+                  "you write is answered under it.")
 
 
 @dataclass
@@ -148,6 +152,40 @@ def topic_body(page: str, titles: dict[str, str], figures: dict[str, str] | None
     return _links_in(_figures_in(page.strip(), figures or {}), titles)
 
 
+def exercises_body(page: str, titles: dict[str, str]) -> str:
+    """An exercises page's body: without its frontmatter, title, "For [[…]]" line and the footer."""
+    body = topic_body(page, {})
+    if body.startswith("For [["):
+        body = body.partition("\n\n")[2]
+    head, sep, last = body.rpartition("\n\n")
+    if sep and last.startswith(("*The course's own exercises", "*" + EXERCISES_FOOT[:20])):
+        body = head
+    return _links_in(body.strip(), titles)
+
+
+_HEAD = re.compile(r"\b\w{3} \d{2} \w{3} \d{4}, \d{2}:\d{2}")
+_KEPT = ("> [!note]- What you typed", "> [!quote]- Transcript")
+
+
+def lecture_notes(page: str) -> str:
+    """A lecture page's notes: without its frontmatter, title, the lines about it and the folded text below."""
+    blocks = topic_body(page, {}).split("\n\n")
+    if blocks and _HEAD.search(blocks[0]):
+        blocks.pop(0)
+    while blocks and blocks[0].startswith(("Slides: ", "Expanded: ", "From your note ")):
+        blocks.pop(0)
+    out, skipping = [], False
+    for line in "\n\n".join(blocks).splitlines():
+        if line.strip() in _KEPT:
+            skipping = True
+            continue
+        if skipping and line.startswith(">"):
+            continue
+        skipping = False
+        out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
 def _note_text(page: str) -> str:
     """A note of the user's without its frontmatter."""
     if page.startswith("---\n") and (end := page.find("\n---", 4)) >= 0:
@@ -178,6 +216,8 @@ class Vault:
         self.conn.executescript(SCHEMA)
         self._wake = asyncio.Event()
         self.on_note = None  # called after a note became or changed a lecture: the lecture worker's kick
+        self.pages = None  # PageEdits (pageedits.py), set after: exercise and lecture pages read back too, and
+        #                    what the user added to a page tidied once it's left alone
         folder.mkdir(parents=True, exist_ok=True)
 
     def kick(self) -> None:
@@ -221,30 +261,48 @@ class Vault:
         return out
 
     def pull(self) -> int:
-        """Topic pages the user changed, read back into the notebook. How many."""
+        """Pages the user changed, read back: topics into the notebook, and with `pages` exercises and lectures too,
+        each change told to `pages` to tidy later. How many."""
         if self.notebook is None:
             return 0
         changed, titles = 0, None
         figures = {}  # an embedded image's path and file name → figure:f_…/12
         for rec in self.conn.execute("SELECT path, ref FROM vault_files WHERE ref LIKE 'figure:%'"):
             figures[rec["path"].casefold()] = figures[rec["path"].rsplit("/", 1)[-1].casefold()] = rec["ref"]
-        for rec in self.conn.execute("SELECT * FROM vault_files WHERE ref LIKE 'topic:%'").fetchall():
+        refs = "ref LIKE 'topic:%'" + (" OR ref LIKE 'exercises:%' OR ref LIKE 'l\\_%' ESCAPE '\\'"
+                                       if self.pages is not None else "")
+        for rec in self.conn.execute(f"SELECT * FROM vault_files WHERE {refs}").fetchall():
             disk = self.folder / rec["path"]
             if not disk.exists():
                 continue
             data = disk.read_bytes()
-            if _sha(data) == rec["sha"] or (topic := self.notebook.topic(rec["ref"][6:])) is None:
+            if _sha(data) == rec["sha"]:
                 continue
+            ref, page = rec["ref"], data.decode(errors="replace")
             titles = titles if titles is not None else self._titles()
-            body = topic_body(data.decode(errors="replace"), titles, figures)
+            if ref.startswith("topic:"):
+                if (topic := self.notebook.topic(ref[6:])) is None:
+                    continue
+                course_id, old, body = topic["course_id"], topic["body"], topic_body(page, titles, figures)
+            elif ref.startswith("exercises:"):
+                if (e := self.notebook.exercise_set(ref[10:])) is None:
+                    continue
+                course_id, old, body = e["course_id"], e["body"], exercises_body(page, titles)
+            else:
+                if (lec := self.study.get(ref)) is None or not lec["course_id"]:
+                    continue
+                course_id, old, body = lec["course_id"], lec["notes"], lecture_notes(page)
             if not body:
                 continue  # emptied: left as the user made it, like any edited page
-            if body != topic["body"]:
-                self.notebook.set_body(topic["id"], body, by_user=True)
+            if body != old:
+                if self.pages is not None:
+                    self.pages.edited(ref, course_id, old, self.pages.write(ref, body, by_user=True))
+                else:
+                    self.notebook.set_body(topic["id"], body, by_user=True)
                 changed += 1
             self.conn.execute("UPDATE vault_files SET sha = ? WHERE path = ?", (_sha(data), rec["path"]))
         if changed:
-            log.info("vault: read back %d edited topic page(s)", changed)
+            log.info("vault: read back %d edited page(s)", changed)
         return changed
 
     # -- what the vault should hold ----------------------------------------------------
@@ -494,8 +552,7 @@ class Vault:
                 f'topic: "{_link(page, e["topic_title"])}"\ntags:\n  - exercises\n  - {_tag(course["name"])}\n---\n\n'
                 f"# Exercises: {e['topic_title']}\n\nFor {_link(page, e['topic_title'])}. Try each before opening its "
                 f"solution.\n\n{body}\n\n*The course's own exercises, from its exercise sheets and past exams, solved "
-                "by Aide (following the course's solutions where it has them). Edit this page and Aide leaves it as "
-                "you made it.*\n")
+                f"by Aide (following the course's solutions where it has them). {EXERCISES_FOOT}*\n")
 
     def _mock(self, m: dict, course: dict, body: str) -> str:
         """The paper as it would be printed, then its answers: a mock taken on paper, the answers looked at after."""
@@ -578,6 +635,9 @@ class Vault:
                 "Aide never changes these pages. About ten minutes after you stop typing it reads the page and "
                 "writes clean notes from it, with the slides, in Sources/, and proposes in the course chat what "
                 "to add to the topic pages. Change the page later and the notes are written again.\n\n"
+                "You can also write straight into Aide's pages (a topic, its exercises, a lecture's notes): ten "
+                "minutes after you stop, Aide tidies only what you added, and answers a question you wrote there "
+                "in a folded box under it. Say undo in the course chat to get your version back.\n\n"
                 "*Written by Aide.*\n")
 
     def notes_in(self, now: datetime | None = None) -> int:
@@ -641,6 +701,8 @@ class Vault:
         """Brings the vault in line with the study store, after reading back the user's topic edits. Returns how
         many files were written and removed."""
         self.pull()
+        if self.pages is not None:
+            self.pages.queue_due()
         try:
             self.notes_in()
         except Exception:

@@ -1828,6 +1828,9 @@ Source (where it's from), one of:
 - `{"topic": "t_…"}`: a topic's page.
 - `{"lesson": "ls_…", "step": 2}`: a lesson's step.
 - `{"notebook": "introduction" | "formulas"}`: the course's Introduction or formula sheet; `course` in the body.
+- `{"lecture": "l_…"}`, `{"exercises": "e_…"}` (since 2026-11-26): a lecture's notes, a topic's exercises. Only on
+  threads the server starts itself, for a question the user wrote into one of Aide's pages in Obsidian (answered
+  there and kept in the course chat like any other); the app shows them by `where` and goes on with `thread`.
 
 Thread:
 ```json

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS asks (
     public_id   TEXT NOT NULL UNIQUE,  -- a_…
     course_id   INTEGER NOT NULL,
     source      TEXT NOT NULL,         -- JSON: {"file", "page"} | {"topic"} | {"lesson", "step"} | {"notebook"}
+                                       -- | {"lecture"} | {"exercises"} (a question written in the page, pageedits.py)
     passage     TEXT NOT NULL DEFAULT '',
     turns       TEXT NOT NULL DEFAULT '[]',  -- JSON: [{"q", "a", "citations", "at"}]
     chat        TEXT,                  -- the course chat the thread is kept in
@@ -176,6 +177,14 @@ class AskStore:
             if not isinstance(step, int) or not 1 <= step <= len(steps):
                 raise LookupError(f"no step {step}")
             return lesson["course_id"], {"lesson": lid, "step": step}
+        if lid := source.get("lecture"):
+            if (lec := self.study.get(lid)) is None or lec["course_id"] is None:
+                raise LookupError(f"no lecture {lid}")
+            return lec["course_id"], {"lecture": lid}
+        if eid := source.get("exercises"):
+            if (e := self.notebook.exercise_set(eid)) is None:
+                raise LookupError(f"no exercises {eid}")
+            return e["course_id"], {"exercises": eid}
         if (page := source.get("notebook")) in ("introduction", "formulas"):
             if course_id is None or self.study.course(course_id) is None:
                 raise LookupError(f"no course {course_id}")
@@ -197,6 +206,10 @@ class AskStore:
             steps = (lesson.get("content") or {}).get("steps") or []
             title = steps[s["step"] - 1]["title"] if 0 < s.get("step", 0) <= len(steps) else ""
             return f"{name} · lesson, step {s['step']}" + (f" ({title})" if title else "")
+        if s.get("lecture") and (lec := self.study.get(s["lecture"])):
+            return f"{name} · {lec['title'] or 'a lecture'} (lecture notes)"
+        if s.get("exercises") and (e := self.notebook.exercise_set(s["exercises"])):
+            return f"{name} · Exercises: {self.notebook._row(e['topic_id'])['title']}"
         if s.get("notebook"):
             return f"{name} · {s['notebook'].capitalize()}"
         return name
@@ -236,6 +249,13 @@ class AskStore:
             parts.append(f"The topic's notes, \"{topic['title']}\":\n\n{topic['body'][:NOTES_CHARS]}\n\n---\n\n"
                          f"The lesson's step they're on ({source['step']} of {len(lesson['content']['steps'])}), "
                          f"\"{step['title']}\":\n\n{step['body']}")
+        elif source.get("lecture"):
+            lec = self.study.get(source["lecture"])
+            parts.append(f"The lecture's notes, \"{lec['title'] or 'Lecture'}\":\n\n{(lec['notes'] or '')[:NOTES_CHARS]}")
+        elif source.get("exercises"):
+            e = self.notebook.exercise_set(source["exercises"])
+            parts.append(f"The exercises of \"{self.notebook._row(e['topic_id'])['title']}\", with their solutions:"
+                         f"\n\n{e['body'][:NOTES_CHARS]}")
         elif source.get("notebook") == "introduction":
             intro = self.notebook.intro(course_id) or {}
             parts.append(f"The course's Introduction (the exam: {intro.get('exam') or 'not known'}):\n\n"
@@ -255,8 +275,10 @@ class AskStore:
     # -- asking --
 
     async def ask(self, course_id: int | None, source: dict, question: str | None = None, action: str | None = None,
-                  passage: str | None = None, thread: str | None = None) -> dict:
-        """A question (or a quick action) in a thread, new or going on. Returns the thread."""
+                  passage: str | None = None, thread: str | None = None, live: bool = True,
+                  via: str | None = None) -> dict:
+        """A question (or a quick action) in a thread, new or going on. Returns the thread. Not `live`: nobody's
+        waiting (a question written in a page), so the smart model; `via`: how they asked, for the course chat."""
         if thread:
             if (t := self.get(thread)) is None:
                 raise LookupError(f"no thread {thread}")
@@ -288,7 +310,7 @@ class AskStore:
                 + (f"The passage they picked:\n\n> " + passage.replace("\n", "\n> ") + "\n\n" if passage else "")
                 + (f"Earlier in this thread:\n\n{earlier}" if earlier else "") + f"Their question: {question}")
         with usage.labels(purpose="reading ask"):
-            raw = (await self.ask_model(PROMPT, [{"type": "text", "text": text}], ASK_TOKENS, True, True)).strip()
+            raw = (await self.ask_model(PROMPT, [{"type": "text", "text": text}], ASK_TOKENS, live, live)).strip()
         answer, cites = citations(raw, pages, f["pages"] if f else 0)
         if f is not None:
             cites = [{"file": f["public_id"], **c} for c in cites]
@@ -309,7 +331,7 @@ class AskStore:
                               (json.dumps(src), json.dumps([*t["turns"], turn]), now, t["id"]))
         t = self.get(public_id)
         try:
-            await self._keep(t)
+            await self._keep(t, via)
         except Exception:
             log.exception("couldn't keep the ask thread %s in the course chat", public_id)
         return self.get(public_id)
@@ -324,7 +346,7 @@ class AskStore:
             head += "\n\n> " + (short[:300] + "…" if len(short) > 300 else short)
         return head + "".join(f"\n\n**{turn['q']}**\n\n{turn['a']}" for turn in t["turns"])
 
-    async def _keep(self, t: dict) -> None:
+    async def _keep(self, t: dict, via: str | None = None) -> None:
         """The thread's message in the course chat: posted with its first answer, rewritten after each."""
         if t["message_id"] and self.conn.execute("SELECT 1 FROM messages WHERE id = ?",
                                                  (t["message_id"],)).fetchone():
@@ -333,7 +355,7 @@ class AskStore:
                                t["message_id"]))
             return
         chat = self.study.chat(t["course_id"])
-        await self.agent.post(chat, f"[The user asked Professor about {self.where(t)} beside it; the thread "
+        await self.agent.post(chat, f"[The user asked Professor about {self.where(t)} {via or 'beside it'}; the thread "
                                     "follows, kept here.]", self.entry(t),
                               [{"type": "ask", "ask": {"id": t["public_id"]}}], record=False)
         row = self.agent.db.app_conversation(chat)

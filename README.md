@@ -159,6 +159,10 @@ from, in Obsidian on the phone and the Mac. Two kinds of notes come out of it:
   notes: type what the teacher says in a course's `My notes` folder in Obsidian, as rough as you like. About ten
   minutes after you stop typing, Aide writes clean notes from it with the slides (no push) and proposes what to add
   to the notebook. Aide never changes your page; change it and the notes are written again.
+- **Writing in Aide's pages**: add a line to a topic, its exercises or a lecture's notes, as rough as you like, or a
+  question ("why does IS slope down??"). Ten minutes after you stop, Aide rewrites only what you added in the page's
+  style (the rest is left exactly as it was) and answers a question in a folded box under it, also kept in the
+  course chat for follow-ups. Professor says so in the course chat, without a push; "undo" puts your version back.
 - **A course notebook**: an Introduction on the exam, then one page per topic in the order it's taught, with an
   explanation, key terms, formulas, worked examples, figures from the slides, exam-style questions with checked
   answer keys, and flashcards. It grows as new material comes in, but nothing is written until you say yes.

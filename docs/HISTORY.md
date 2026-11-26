@@ -566,5 +566,12 @@ there): a note unchanged for 10 min (`QUIET`; Remotely Save syncs one being type
 with the note as its typed text (`lectures.origin` = "vault:<path>", `vault_notes`), written with `TYPED_PROMPT`
 (no transcript: keep all they wrote, slides fill gaps, "Unclear in your notes"); its page in Sources/ links back to
 the note. A changed note writes the notes again and is sorted again (`{"lecture", "rev"}` material). No pushes for
-any of it, the proposal included. Next: Aide's own pages (topics, exercises, lectures) tidied after the user adds
-to them, and questions written in a page answered there and in the course chat.
+any of it, the proposal included.
+Then Aide's own pages (`pageedits.py`): edited exercise and lecture pages are read back too (`exercises_body`,
+`lecture_notes` in `vault.py`), and each change is kept as Aide's text before (`base`) and the user's (`page_edits`).
+Once a page is left alone 10 min, a notebook `page` job diffs them line by line and sends only the added runs, marked
+⟦n⟧, to the smart model, which returns each part rewritten and any question in it; Aide's own lines are spliced back
+untouched, so a tidy can't lose any of the page (instead of asking for the whole page back and checking it). A
+question goes through Ask Professor as a background ask (`live=False`, new `lecture` and `exercises` sources) and is
+put under the part as `> [!question]- <the question>`. One line in the course chat, no push; `page_tidies` keeps
+the user's version for `undo_page_tidy`.

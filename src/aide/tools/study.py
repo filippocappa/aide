@@ -24,7 +24,7 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 
 def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
-                notebook: NotebookStore | None = None, engine: Engine | None = None) -> list[Tool]:
+                notebook: NotebookStore | None = None, engine: Engine | None = None, pages=None) -> list[Tool]:
     def when(lecture: dict) -> str:
         return f"{datetime.fromisoformat(lecture['recorded_at']).astimezone(tz):%a %d %b %Y %H:%M}"
 
@@ -199,6 +199,16 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
         t = notebook.replace_section(notebook.find_topic(topic), section, text)
         return f"Changed the section {section!r} of {t['title']}. The previous version is kept."
 
+    async def undo_page_tidy(page: str | None = None) -> str:
+        if pages is None:
+            return "There's no vault, so nothing is tidied."
+        try:
+            t = pages.undo(page)
+        except (LookupError, ValueError) as e:
+            return f"Not undone: {e}."
+        return (f"Undone: {t['title']} is back as the user wrote it (in Obsidian at the next sync, within a minute). "
+                "It won't be tidied again unless they write in it again.")
+
     async def start_notebook(course: str) -> str:
         c = await course_row(course)
         notebook.start(c["id"])
@@ -364,6 +374,11 @@ def study_tools(store: StudyStore, tz: ZoneInfo, audio_dir: Path | None = None,
              "when there's none by that name), for a change the user asked for. Runs immediately; the previous "
              "version is kept.", _obj({**tid, "section": {"type": "string"}, "text": {"type": "string"}},
                                       ["topic", "section", "text"]), edit_topic),
+        Tool("undo_page_tidy", "Put back the user's own version of a page of their notes that Aide tidied after they "
+             "wrote in it in Obsidian (a topic, a topic's exercises, a lecture's notes): the latest tidy, of the page "
+             "named (its title) or of any. Runs immediately.",
+             _obj({"page": {"type": "string", "description": "The page's title, or omit for the latest"}}, []),
+             undo_page_tidy),
         Tool("start_notebook", "Set up a course's notebook: an Introduction (the exam, how to prepare) written now, "
              "and the topics proposed to the user, from all the course's material. Runs in the background.",
              _obj(one_course, ["course"]), start_notebook),

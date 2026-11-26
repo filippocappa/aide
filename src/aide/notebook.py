@@ -36,7 +36,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
 from .db import utcnow
-from . import fts
+from . import fts, usage
 from .engine import course_var
 from .icloud import unread
 from .material import PdfError, page_image, visual_pages
@@ -482,6 +482,13 @@ class NotebookStore:
             ("e_" + secrets.token_hex(6), topic["course_id"], topic["id"], tidy_math(body.strip()),
              json.dumps(sources), int(checked), utcnow().isoformat()))
         return self.exercise_set(topic["id"])
+
+    def set_exercises_body(self, public_id: str, body: str, by_user: bool = False) -> dict:
+        """A set's text, the user's as they wrote it (from the vault) or Aide's (its maths tidied)."""
+        body = body.strip() if by_user else tidy_math(body.strip())
+        self.conn.execute("UPDATE exercise_sets SET body = ?, updated_at = ? WHERE public_id = ?",
+                          (body, utcnow().isoformat(), public_id))
+        return self.exercise_set(public_id)
 
     def write_exercises(self, course_id: int, topics: list[str] | None = None) -> list[dict]:
         """Exercises for the written topics (or those named), in the background. The topics they're for."""
@@ -2040,6 +2047,7 @@ class NotebookWorker:
         self.live = None  # LiveActivities, set after: writing topics shows on the Lock Screen
         self.quizzes = None  # QuizStore, set after (else made when first needed): grading a mock exam
         self.plans = None  # PlanStore, set after: an exam missing from the calendar is proposed with it
+        self.pages = None  # PageEdits (pageedits.py), set after: what the user adds to Aide's pages, tidied
         self._visual: dict[tuple[int, str], set[int] | None] = {}  # (file id, updated_at) → visual_pages, None: all
         self._wake = asyncio.Event()
         store.on_job.append(self.kick)
@@ -2097,6 +2105,8 @@ class NotebookWorker:
                     await self.grade(course, job["args"]["quiz"])
                 case "prerequisites":
                     await self.prerequisites(course)
+                case "page":
+                    await self.tidy_page(job["args"]["ref"])
         except Exception as e:
             log.exception("notebook job %s (%s) failed", job["id"], job["kind"])
             error = str(e)[:200] if isinstance(e, (RuntimeError, KeyError, ValueError)) else "something went wrong"
@@ -2113,7 +2123,9 @@ class NotebookWorker:
                                  + quizzes.summary(quiz), push=True, attachments=[quizzes.card(quiz)],
                                  alert=quizzes.headline(quiz) + " The open answers couldn't be marked.")
                 return
-            if course is not None and job["kind"] not in ("dates", "prerequisites"):  # background: the log is enough
+            if job["kind"] == "page" and self.pages is not None:  # their text stays as they wrote it
+                self.pages._drop(job["args"]["ref"])
+            if course is not None and job["kind"] not in ("dates", "prerequisites", "page"):  # background: the log is enough
                 what = {"start": "set up the notebook", "intro": "rewrite the Introduction", "outline": "plan the topics", "triage": "look at the new "
                         "material", "apply": "write the notes", "figures": "add the figures",
                         "exercises": "write the exercises", "mock": "write the mock exam",
@@ -2127,6 +2139,17 @@ class NotebookWorker:
             self.vault.kick()
 
     # -- the steps ---------------------------------------------------------------------------
+
+    async def tidy_page(self, ref: str) -> None:
+        """What the user added to one of Aide's pages, tidied and its questions answered (pageedits.py)."""
+        if self.pages is None:
+            return
+        if self.pages.ask is None:
+            self.pages.ask = lambda system, content, max_tokens: self._ask(system, content, max_tokens)
+        if self.pages.post is None:
+            self.pages.post = lambda course, note, text: self._post(course, note, text, push=False)
+        with usage.labels(purpose="page tidy"):
+            await self.pages.tidy(ref)
 
     async def start(self, course: dict) -> None:
         """The Introduction, written now; then the outline, proposed."""

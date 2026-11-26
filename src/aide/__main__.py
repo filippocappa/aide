@@ -53,6 +53,8 @@ from .moodle import MoodleSync
 from .passwords import PasswordStore, load_key
 from .unito import UnitoSession
 from .notebook import NotebookStore, NotebookWorker
+from .pageedits import PageEdits
+from .reading import AskStore
 from .examplan import ExamPlan, WeekProposer, examplan_tools
 from .dayplan import DayPlanner, dayplan_tools
 from .study import StudyStore, StudyWorker, whisper_transcribe
@@ -230,10 +232,11 @@ def main() -> None:
                        settings.study_skip, settings.db_path.parent / "files")
     audio_dir = settings.db_path.parent / "audio"
     notebook = NotebookStore(study)
+    pages = PageEdits(db.conn, study, notebook)  # what the user writes into Aide's pages in Obsidian, tidied
     engine = Engine(db.conn, client, settings.model, settings.smart_model, workdir=settings.db_path.parent / "claude")
     if not engine.available:
         log.info("Claude Code not found: notes are written through OpenRouter only")
-    tools += study_tools(study, settings.timezone, audio_dir, notebook, engine)
+    tools += study_tools(study, settings.timezone, audio_dir, notebook, engine, pages)
     tools += chart_tools()
     moodle = MoodleSync(study, settings.moodle_url, settings.moodle_token, push=push,  # its worker comes later
                         save_token=lambda token: save_env(Path(".env"), "MOODLE_TOKEN", token), notebook=notebook)
@@ -449,6 +452,9 @@ def main() -> None:
     notes = NotebookWorker(notebook, agent, push)
     notes.quizzes = quizzes
     notes.plans = plans
+    notes.pages = pages
+    asks = AskStore(db.conn, study, notebook, study.files, agent, lesson_ask, lessons)  # Ask Professor (#64)
+    pages.asks = asks
     review_watcher = ReviewWatcher(reviews, agent, push)
     study_week = WeekProposer(examplan, plans, agent, push)  # Sundays: the week's blocks on the week card
     day_planner.agent = agent
@@ -484,6 +490,7 @@ def main() -> None:
         notes.vault = vault
         vault.videos, vault.photos = video_store, photos
         vault.on_note = worker.kick  # a note of the user's became a lecture
+        vault.pages = pages
         video_store.on_ready.append(vault.kick)
         vault_info = {"url": settings.webdav_url, "user": WEBDAV_USER, "password": settings.webdav_password,
                       "vault": settings.vault_name}
@@ -540,7 +547,7 @@ def main() -> None:
                              health, wake, transcriber, food, study, worker, vault_info, moodle,
                              notebook, engine, objectives, planner, location, alerts, boards, drafts, live, leave,
                              quizzes, reviews, locks, errands, errand_store, plans, foods=foods, off=off, watches=watches, releases=releases,
-                             weights=weights, videos=videos, lessons=lessons, decider=decider, finance=finance, examplan=examplan,
+                             weights=weights, videos=videos, lessons=lessons, asks=asks, decider=decider, finance=finance, examplan=examplan,
                              banks=banks, bank_redirect=settings.enable_banking_redirect, bedtime=bedtime,
                              focus=focus, focus_watch=focus_watch, calls=calls,
                              passwords=passwords, esse3=esse3, nudges=nudges)

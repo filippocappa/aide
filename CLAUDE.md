@@ -65,7 +65,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU
   (Parakeet for English, Whisper for the rest and to pick the language).
   `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes (and reads a
-  course's `My notes/` from: a note of the user's left 10 min becomes a typed lecture, `origin` "vault:…", no push), served by
+  course's `My notes/` from: a note of the user's left 10 min becomes a typed lecture, `origin` "vault:…", no push;
+  and reads back edited topic, exercise and lecture pages: `pageedits.py` tidies what was added once the page is
+  left 10 min, only the added lines rewritten, a question in it answered under it as a folded callout and as an Ask
+  thread in the course chat, one chat line, no push, Professor's `undo_page_tidy`), served by
   `webdav.py` (its own unit, `deploy/aide-webdav.service`, published by `tailscale serve` on 8443). `moodle.py`:
   the university Moodle's PDFs into the study files (login through the app; the token in `.env`).
   `passwords.py`: saved logins (Settings → Passwords) for the server's own code, never the model's: AES-256-GCM in
