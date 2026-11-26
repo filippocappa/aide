@@ -5,7 +5,8 @@ due, and the study the exam plan wants that day, and asks what else the user has
 turn, which calls `plan_tomorrow` with those things: they're placed first (at their time, or in the free time of the
 part of the day they said), the exam plan's study blocks go around them (`ExamPlan.week` for one day), and the whole
 day is proposed as one events card (plans.py): nothing is in the calendar until Add. With no answer in FALLBACK_AFTER,
-the study blocks around the calendar alone are proposed in the same chat, so the plan is there in the morning.
+the study blocks around the calendar alone are proposed in the same chat, with a push of its own (nothing is in
+the calendar until Add, so an unseen card is a day without its study).
 
 The study blocks land in the study calendar as review sessions, which is what the off-task nudges (nudges.py) watch.
 """
@@ -90,6 +91,14 @@ class DayPlanner:
             await self.agent.post(self.chat(), f"[Tomorrow's plan without an answer: plan {plan['public_id']}, not "
                                   "in the calendar until Add.]", text,
                                   [{"type": "events", "events": self.plans.card_items(plan)}])
+            if self.push is not None:  # else it waits unseen in the chat, and nothing is in the calendar
+                study = sum(1 for e in self.plans.card_items(plan) if e["title"].startswith("Review:"))
+                try:
+                    await self.push.send_message(self.chat(), "Secretary · Tomorrow", "Tomorrow's plan is ready"
+                                                 + (f": {study} study block{'s' * (study != 1)}" if study else "")
+                                                 + ". Tap Add to put it in your calendar.")
+                except Exception:
+                    log.exception("couldn't push tomorrow's plan")
             return "fallback"
         return None
 

@@ -1293,7 +1293,8 @@ a `message` push "Secretary · Tomorrow": the next day's timed events, the remin
 said first (at its time, or in the free time of the morning, afternoon or evening), the exam plan's review sessions
 around it and the calendar, and proposes the whole day as one `events` card (the user's things in the default calendar,
 the study in the study calendar; nothing added until Add). No answer 90 minutes after the question: the review sessions
-around the calendar alone, on a card in the same chat. "Plan my day tomorrow" in a Secretary chat does the same.
+around the calendar alone, on a card in the same chat, with a `message` push of its own (since 2026-11-26: "Tomorrow's
+plan is ready: 3 study blocks. Tap Add to put it in your calendar."). "Plan my day tomorrow" in a Secretary chat does the same.
 
 ### Study files
 

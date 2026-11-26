@@ -65,7 +65,9 @@ async def test_it_asks_once_in_the_evening_then_falls_back(tmp_path):
     _, _, said, cards = agent.posts[1]
     assert said.startswith("No answer") and cards[0]["type"] == "events"
     assert all(e["title"] == "Review: Macroeconomics" for e in cards[0]["events"])
-    assert await planner.tick(evening(23)) is None and len(agent.posts) == 2
+    assert len(push.sent) == 2 and push.sent[1][1] == "Secretary · Tomorrow"
+    assert push.sent[1][2].startswith("Tomorrow's plan is ready: ") and "Tap Add" in push.sent[1][2]
+    assert await planner.tick(evening(23)) is None and len(agent.posts) == 2 and len(push.sent) == 2
 
 
 async def test_their_things_first_then_the_study_around_them(tmp_path):
