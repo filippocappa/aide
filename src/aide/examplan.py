@@ -67,6 +67,11 @@ WINDOW = (time(8, 30), time(22, 30))  # the day without a wake time
 READY = timedelta(hours=1)  # from waking to studying
 SLEEP = timedelta(hours=8, minutes=30)  # from stopping to the next wake
 BUSY_GAP = timedelta(minutes=15)  # around each event
+# Meals kept free every day (breakfast is in READY): when it may start, when it best starts. A meal in the calendar
+# (the Meal calendar, or a title like "Lunch") in that stretch stands for it; with no free slot, none is kept.
+MEALS = ((time(12, 0), time(14, 30), time(13, 0)), (time(19, 0), time(21, 0), time(20, 0)))
+MEAL = timedelta(minutes=45)
+_MEAL_WORDS = re.compile(r"\b(lunch|dinner|brunch|pranzo|cena|pranzare|cenare)\b", re.I)
 STEP = 5  # minutes
 TIGHT = 0.85  # more of the free time than this: tight
 CLOSE = 7  # two targets this many days apart or less
@@ -287,12 +292,13 @@ class ExamPlan:
         return out
 
     async def _days(self, start: date, end: date, now: datetime, s: dict, season_from: date | None) -> dict[date, int]:
-        """Each day's study room from `start` to before `end`: free time between waking and bed, less the calendar,
-        at most the day's cap; today's from now, less what's already been studied."""
+        """Each day's study room from `start` to before `end`: free time between waking and bed, less the calendar
+        and lunch and dinner (MEALS), at most the day's cap; today's from now, less what's already been studied."""
         self._gaps, self._held = {}, {}
         if end <= start:
             return {}
         busy: list[tuple[datetime, datetime]] = []
+        meals: list[tuple[datetime, datetime]] = []  # meals already in the calendar
         cal = self.study.calendar
         if cal is not None:
             a, b = datetime.combine(start, time.min, self.tz), datetime.combine(end + timedelta(days=1), time.min, self.tz)
@@ -312,6 +318,8 @@ class ExamPlan:
                     continue
                 if title.casefold() in self.study.skip:
                     continue  # and so are the user's study blocks
+                if e.calendar.casefold() == "meal" or _MEAL_WORDS.search(e.title):
+                    meals.append((s0, e0))
                 busy.append((s0 - BUSY_GAP, e0 + BUSY_GAP))
         busy.sort()
         wakes: dict[bool, time | None] = {}
@@ -342,17 +350,17 @@ class ExamPlan:
                      else datetime.combine(d, WINDOW[1], self.tz))
             if d == start:
                 open_ = max(open_, now.astimezone(self.tz))
-            free, cursor, gaps = 0.0, open_, []
+            cursor, gaps = open_, []
             for b0, b1 in busy:
                 if b1 <= cursor or b0 >= close:
                     continue
                 if min(b0, close) > cursor:
                     gaps.append((cursor, min(b0, close)))
-                free += max(0.0, (min(b0, close) - cursor).total_seconds() / 60)
                 cursor = max(cursor, b1)
             if close > cursor:
                 gaps.append((cursor, close))
-            free += max(0.0, (close - cursor).total_seconds() / 60)
+            gaps = _meals(gaps, d, self.tz, meals)
+            free = sum((g1 - g0).total_seconds() / 60 for g0, g1 in gaps)
             self._gaps[d] = gaps
             cap = s["season_cap_min"] if season_from is not None and d >= season_from else s["term_cap_min"]
             if d == start:
@@ -792,6 +800,23 @@ class ExamPlan:
 MIN_PIECE = 25  # minutes: no review session shorter (unless the whole block is)
 QUARTER = 15  # sessions start on the quarter hour
 BREAK = timedelta(minutes=15)  # between two sessions in a row
+
+
+def _meals(gaps: list[tuple[datetime, datetime]], d: date, tz: ZoneInfo,
+           had: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+    """`d`'s free stretches less lunch and dinner: each in the free slot nearest its usual time (on the quarter hour),
+    unless a meal in the calendar (`had`) is already there."""
+    for lo, hi, best in MEALS:
+        a, b = datetime.combine(d, lo, tz), datetime.combine(d, hi, tz)
+        if any(m0 < b + MEAL and a < m1 for m0, m1 in had):
+            continue
+        usual = datetime.combine(d, best, tz)
+        starts = [a + timedelta(minutes=15 * i) for i in range(int((b - a) / timedelta(minutes=15)) + 1)]
+        fits = [t for t in starts if any(g0 <= t and t + MEAL <= g1 for g0, g1 in gaps)]
+        if fits:
+            t = min(fits, key=lambda t: (abs(t - usual), t))
+            gaps = _cut(gaps, t, t + MEAL)
+    return gaps
 
 
 def _cut(gaps: list[tuple[datetime, datetime]], a: datetime, b: datetime) -> list[tuple[datetime, datetime]]:

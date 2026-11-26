@@ -459,3 +459,37 @@ def test_a_block_is_named_by_what_its_for():
     assert session_course("Study: Business law") == "Business law"
     assert session_course("Review: Macroeconomics") == "Macroeconomics"
     assert session_course("Studying") is None
+
+
+def test_lunch_and_dinner_stay_free():
+    """2026-11-27: Friday's study went from the run straight into Business law, with no lunch."""
+    from aide.examplan import _meals
+    d = date(2026, 11, 27)
+
+    def t(h, m=0):
+        return datetime(2026, 11, 27, h, m, tzinfo=ROME)
+
+    def hm(gaps):
+        return [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b in gaps]
+
+    # A free day: lunch 13:00–13:45, dinner 20:00–20:45.
+    assert hm(_meals([(t(9, 30), t(23))], d, ROME, [])) == [("09:30", "13:00"), ("13:45", "20:00"), ("20:45", "23:00")]
+    # Friday: the run (12:45–14:02 with its margins) and getting ready for poker (19:45–21:15). Lunch at 12:00 (nearer
+    # 13:00 than 14:15), dinner 19:00–19:45.
+    gaps = [(t(9, 30), t(12, 45)), (t(14, 2), t(19, 45)), (t(21, 15), t(23))]
+    assert hm(_meals(gaps, d, ROME, [])) == [("09:30", "12:00"), ("14:02", "19:00"), ("21:15", "23:00")]
+    # A lunch already in the calendar stands for it; with no room, none is kept.
+    assert hm(_meals([(t(9, 30), t(23))], d, ROME, [(t(12, 30), t(13, 30))])) == [("09:30", "20:00"), ("20:45", "23:00")]
+    assert hm(_meals([(t(9, 30), t(11)), (t(15), t(18))], d, ROME, [])) == [("09:30", "11:00"), ("15:00", "18:00")]
+
+
+async def test_the_week_leaves_lunch_and_dinner(tmp_path):
+    db, study, notebook, quizzes, plan, macro = await exam_in(tmp_path, 4)
+    items, _ = await plan.week(None, NOW)
+    assert items
+    for i in items:
+        s0, e0 = datetime.fromisoformat(i["start"]), datetime.fromisoformat(i["end"])
+        day = s0.date()
+        for meal in (time(13), time(20)):  # free days: each at its usual time
+            m0 = datetime.combine(day, meal)
+            assert not overlaps(s0.replace(tzinfo=None), e0.replace(tzinfo=None), m0, m0 + timedelta(minutes=45))
