@@ -64,7 +64,8 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
   yesterday and not done today, offering the habit's two-minute version (`minimum`). `digest.py`: daily/weekly/monthly digests and their schedule.
 - `study.py`: courses (from the timetable calendar), lectures, notes; the worker that runs `whisper.py` on the GPU
   (Parakeet for English, Whisper for the rest and to pick the language).
-  `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes, served by
+  `material.py`: study files (PDFs, page text, search). `vault.py`: the Obsidian vault Aide writes (and reads a
+  course's `My notes/` from: a note of the user's left 10 min becomes a typed lecture, `origin` "vault:…", no push), served by
   `webdav.py` (its own unit, `deploy/aide-webdav.service`, published by `tailscale serve` on 8443). `moodle.py`:
   the university Moodle's PDFs into the study files (login through the app; the token in `.env`).
   `passwords.py`: saved logins (Settings → Passwords) for the server's own code, never the model's: AES-256-GCM in

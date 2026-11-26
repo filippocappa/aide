@@ -558,3 +558,13 @@ teammate); voice turns are never routed. App: "Coach answered" above such a repl
 #69 (app only): a message sent while the reply is still coming waits under it, dimmed ("Waiting"; tap for Edit or
 Don't send) and goes when the reply is done, one at a time, in Aide's and the specialists' chats and the Team chat;
 the queue lives while the app runs.
+
+**Done, server (2026-11-26):** your own notes in Obsidian. After a full check of the vault (maths that started with
+a number escaped as money in 55 lines, 29 cards files linking renumbered pages, 15 stale copies a device's sync had
+put back on 22 Nov), each course got a `My notes/` folder (`vault.py`, its help page the only thing Aide writes
+there): a note unchanged for 10 min (`QUIET`; Remotely Save syncs one being typed each minute) becomes a lecture
+with the note as its typed text (`lectures.origin` = "vault:<path>", `vault_notes`), written with `TYPED_PROMPT`
+(no transcript: keep all they wrote, slides fill gaps, "Unclear in your notes"); its page in Sources/ links back to
+the note. A changed note writes the notes again and is sorted again (`{"lecture", "rev"}` material). No pushes for
+any of it, the proposal included. Next: Aide's own pages (topics, exercises, lectures) tidied after the user adds
+to them, and questions written in a page answered there and in the course chat.

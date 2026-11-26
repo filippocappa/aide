@@ -13,6 +13,11 @@ from then on, and Aide leaves it alone. Two exceptions. A topic page is shared: 
 the notebook (pull), Aide's later changes build on them and are written over the page. A cards file is only ever
 added to, a line per new card, since the plugin writes its review data into it. Renamed or deleted lectures and
 topics move or remove their page, when it's unedited.
+
+Each course also has a My notes folder for the user's own notes (what the teacher said, typed in Obsidian): Aide
+never writes there except its one page saying how the folder works. A note left alone for QUIET becomes a lecture
+of the course (its text what the user typed, study.py), with clean notes in Sources/ and what's new proposed for the
+notebook; a later change to the note writes them again.
 """
 
 import asyncio
@@ -23,12 +28,13 @@ import os
 import re
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .material import page_image
 from .notebook import FIGURE, _ranges, date_line, figures, max_points, mock_paper, mock_title
-from .study import StudyStore, stamp
+from .db import utcnow
+from .study import MAX_TEXT, StudyStore, stamp
 from .videos import watch_url
 
 log = logging.getLogger(__name__)
@@ -39,6 +45,15 @@ CREATE TABLE IF NOT EXISTS vault_files (
     ref  TEXT NOT NULL,  -- what it shows: a lecture, file or course id; intro:, topic:, cards:, figure:, formulas:, exercises:, mock:
     sha  TEXT NOT NULL  -- of what Aide wrote (a PDF: its version, size and time; an image: its size and version)
 );
+CREATE TABLE IF NOT EXISTS vault_notes (  -- the user's notes in a course's My notes folder
+    path       TEXT PRIMARY KEY,
+    course_id  INTEGER NOT NULL,
+    sha        TEXT NOT NULL,  -- as last seen
+    seen_at    TEXT NOT NULL,  -- UTC: when it was last seen changed
+    first_seen TEXT NOT NULL,  -- UTC: roughly when the user started it, the lecture's time without a date in the name
+    lecture_id INTEGER,  -- the lecture made from it
+    done_sha   TEXT  -- what the lecture was last made from
+);
 """
 
 ROOT = "Aide"
@@ -47,6 +62,10 @@ _BAD = re.compile(r'[\\/:*?"<>|#^\[\]]+')  # not in file names, or they break Ob
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?\]\]")
 _EMBED = re.compile(r"!\[\[([^\]|]+\.jpg)(?:\|[^\]]*)?\]\](?:[ \t]*\n\*([^*\n]*)\*)?")
 FIGURE_SIDE = 1400  # pixels: a slide drawn for a page, sharp on a laptop
+MY_NOTES = "My notes"
+NOTES_HELP = "How this folder works.md"
+QUIET = timedelta(minutes=10)  # a note unchanged this long is done for now: Remotely Save syncs one being typed each minute
+_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 
 @dataclass
@@ -129,6 +148,21 @@ def topic_body(page: str, titles: dict[str, str], figures: dict[str, str] | None
     return _links_in(_figures_in(page.strip(), figures or {}), titles)
 
 
+def _note_text(page: str) -> str:
+    """A note of the user's without its frontmatter."""
+    if page.startswith("---\n") and (end := page.find("\n---", 4)) >= 0:
+        page = page[end + 4:]
+    return page.strip()
+
+
+def _note_title(stem: str, text: str) -> str:
+    """The note's "# " heading, else its file name without the date."""
+    first = text.lstrip().partition("\n")[0]
+    if first.startswith("# ") and first[2:].strip():
+        return first[2:].strip()
+    return _DATE.sub("", stem).strip(" -_·") or ""
+
+
 def _question(line: str) -> str | None:
     return line.split("::", 1)[0].strip().casefold() if "::" in line else None
 
@@ -143,6 +177,7 @@ class Vault:
         self.conn = study.conn
         self.conn.executescript(SCHEMA)
         self._wake = asyncio.Event()
+        self.on_note = None  # called after a note became or changed a lecture: the lecture worker's kick
         folder.mkdir(parents=True, exist_ok=True)
 
     def kick(self) -> None:
@@ -312,6 +347,11 @@ class Vault:
                      f"{folders[course['id']]}/{_file_name(course['name'])}.md") if course else None
             items.append(Item(lecture_paths[lec["id"]], lec["public_id"],
                               self._lecture(lec, course, index, file_paths, expanded.get(lec["public_id"], []))))
+        # Every course's, even one with nothing yet; kept while the calendar is unreachable.
+        kept = [int(r[0][8:]) for r in self.conn.execute("SELECT ref FROM vault_files WHERE ref LIKE 'mynotes:%'")]
+        for cid, c in ({cid: study.course(cid) for cid in (*live, *kept)} | courses).items():
+            if c is not None:
+                items.append(Item(f"{self._folder(c)}/{MY_NOTES}/{NOTES_HELP}", f"mynotes:{cid}", self._notes_help(c)))
         for cid, c in courses.items():
             lectures = [lec for lec in rows if lec["course_id"] == cid]
             files = [f for f in all_files if f["course_id"] == cid]
@@ -408,6 +448,9 @@ class Vault:
                                               if f["id"] in file_paths))
         if expanded:
             out.append("Expanded: " + ", ".join(expanded))
+        if (lec["origin"] or "").startswith("vault:"):
+            mine = lec["origin"][6:]
+            out.append(f"From your note {_link(mine, mine.rsplit('/', 1)[-1].removesuffix('.md'))}")
         out.append(lec["notes"])
         if lec["text"]:
             out.append("> [!note]- What you typed\n" + _quote(lec["text"]))
@@ -528,12 +571,80 @@ class Vault:
         out.append("*Written by Aide. Edit a page and Aide leaves it as you made it.*")
         return "\n\n".join(out) + "\n"
 
+    def _notes_help(self, course: dict) -> str:
+        return (f"# Your notes for {course['name']}\n\n"
+                "Write your own notes here, a page per lecture: what the teacher says, as rough as you like. "
+                "Put the date at the start of the name (2026-11-26 IS-LM), or Aide takes the day you started it.\n\n"
+                "Aide never changes these pages. About ten minutes after you stop typing it reads the page and "
+                "writes clean notes from it, with the slides, in Sources/, and proposes in the course chat what "
+                "to add to the topic pages. Change the page later and the notes are written again.\n\n"
+                "*Written by Aide.*\n")
+
+    def notes_in(self, now: datetime | None = None) -> int:
+        """The user's notes in each course's My notes folder: one unchanged for QUIET becomes a lecture, or
+        writes its lecture again. How many."""
+        now = now or utcnow()
+        courses = {_file_name(r["name"]).casefold(): r["id"] for r in self.conn.execute("SELECT id, name FROM courses")}
+        known = {r["path"]: dict(r) for r in self.conn.execute("SELECT * FROM vault_notes")}
+        done = 0
+        for disk in sorted((self.folder / ROOT).glob(f"*/{MY_NOTES}/*.md")):
+            path = str(disk.relative_to(self.folder))
+            cid = courses.get(disk.parent.parent.name.casefold())
+            if cid is None or disk.name == NOTES_HELP or disk.name.startswith("."):
+                continue
+            sha = _sha(disk.read_bytes())
+            rec = known.get(path)
+            if rec is None or rec["sha"] != sha:
+                if rec is None:
+                    self.conn.execute("INSERT INTO vault_notes (path, course_id, sha, seen_at, first_seen) VALUES "
+                                      "(?, ?, ?, ?, ?)", (path, cid, sha, now.isoformat(), now.isoformat()))
+                else:
+                    self.conn.execute("UPDATE vault_notes SET sha = ?, seen_at = ? WHERE path = ?",
+                                      (sha, now.isoformat(), path))
+                continue
+            if rec["done_sha"] == sha or now - datetime.fromisoformat(rec["seen_at"]) < QUIET:
+                continue
+            text = _note_text(disk.read_text(errors="replace"))
+            lecture = self.study.lecture_row(rec["lecture_id"]) if rec["lecture_id"] else None
+            if text and lecture is not None:
+                self.study.retype(lecture["id"], text[:MAX_TEXT])
+            elif text:
+                lecture = self.study.add(self._note_time(disk.stem, rec), rec["course_id"], _note_title(disk.stem, text),
+                                         text=text[:MAX_TEXT], origin=f"vault:{path}")
+            self.conn.execute("UPDATE vault_notes SET done_sha = ?, lecture_id = ? WHERE path = ?",
+                              (sha, lecture["id"] if lecture else None, path))
+            if text:
+                done += 1
+                log.info("vault: your note %s → lecture %s", path, lecture["public_id"])
+        if done and self.on_note:
+            self.on_note()
+        return done
+
+    def _note_time(self, stem: str, rec: dict) -> datetime:
+        """A date in the note's name, at the time it was started if that was the same day, else 09:00; without
+        one, when it was started."""
+        started = datetime.fromisoformat(rec["first_seen"])
+        if m := _DATE.search(stem):
+            try:
+                day = datetime.strptime(m.group(1), "%Y-%m-%d").date()
+            except ValueError:
+                return started
+            local = started.astimezone(self.study.tz)
+            if local.date() == day:
+                return started
+            return datetime.combine(day, datetime.min.time().replace(hour=9), self.study.tz).astimezone(timezone.utc)
+        return started
+
     # -- writing ---------------------------------------------------------------------
 
     async def sync(self) -> dict[str, int]:
         """Brings the vault in line with the study store, after reading back the user's topic edits. Returns how
         many files were written and removed."""
         self.pull()
+        try:
+            self.notes_in()
+        except Exception:
+            log.exception("vault: couldn't read the user's notes")
         items = await self.render()
         records = {r["path"]: dict(r) for r in self.conn.execute("SELECT * FROM vault_files")}
         written = removed = 0

@@ -155,7 +155,10 @@ constants are at the top of `scores.py`.
 Professor turns everything a course produces (lecture recordings, slides, Moodle PDFs) into notes you can study
 from, in Obsidian on the phone and the Mac. Two kinds of notes come out of it:
 
-- **Lecture notes**: one page per lecture, written as soon as the lecture is in.
+- **Lecture notes**: one page per lecture, written as soon as the lecture is in. A lecture can also be your own
+  notes: type what the teacher says in a course's `My notes` folder in Obsidian, as rough as you like. About ten
+  minutes after you stop typing, Aide writes clean notes from it with the slides (no push) and proposes what to add
+  to the notebook. Aide never changes your page; change it and the notes are written again.
 - **A course notebook**: an Introduction on the exam, then one page per topic in the order it's taught, with an
   explanation, key terms, formulas, worked examples, figures from the slides, exam-style questions with checked
   answer keys, and flashcards. It grows as new material comes in, but nothing is written until you say yes.

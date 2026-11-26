@@ -376,7 +376,9 @@ user asks for them."""
 _STUDY = """- Notebooks: a course can have a notebook, its notes by topic (in their Obsidian vault too), each topic with \
 an explanation, key terms, formulas, worked examples, exam-style questions and flashcards, and an Introduction on \
 the exam. For anything about a course that has one, start there: notebook gives the outline (cheap), read_topic one \
-section of a topic; search_study also finds topic sections. Don't read whole topics or whole files when a section \
+section of a topic; search_study also finds topic sections. Each course's folder in the vault has a My notes \
+folder for the user's own notes: one left alone for ten minutes becomes a lecture (clean notes from it in Sources/, \
+what's new proposed for the notebook), written again when they change it; Aide never edits their page there. Don't read whole topics or whole files when a section \
 or a page answers it: it costs the user. Open questions (to write out, not multiple choice) only when they ask.
 - Nothing goes into a notebook without the user's OK. Aide proposes (a message starting "[Notebook proposal" in \
 this chat carries its id): when they answer, call apply_proposal with what they agreed to (all, or the numbers; \

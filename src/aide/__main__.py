@@ -483,6 +483,7 @@ def main() -> None:
         vault = Vault(settings.vault_dir / settings.vault_name, study, notebook)
         notes.vault = vault
         vault.videos, vault.photos = video_store, photos
+        vault.on_note = worker.kick  # a note of the user's became a lecture
         video_store.on_ready.append(vault.kick)
         vault_info = {"url": settings.webdav_url, "user": WEBDAV_USER, "password": settings.webdav_password,
                       "vault": settings.vault_name}

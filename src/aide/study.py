@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS lectures (
     transcript  TEXT NOT NULL DEFAULT '',
     notes       TEXT NOT NULL DEFAULT '',
     notes_prev  TEXT,  -- the notes before the last change, kept for one undo
+    origin      TEXT,  -- "vault:<path>": made from the user's own notes in the vault's My notes (vault.py)
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -149,6 +150,9 @@ class StudyStore:
         self.exam_calendar = exam_calendar
         self.skip = {s.casefold() for s in skip}
         self._cached: tuple[float, list[CalEvent]] | None = None
+        if self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'lectures'").fetchone() and "origin" not in {
+                r[1] for r in self.conn.execute("PRAGMA table_info(lectures)")}:
+            self.conn.execute("ALTER TABLE lectures ADD COLUMN origin TEXT")
         self.conn.executescript(SCHEMA)
         self.files = FileStore(db, tz, files_dir)  # after SCHEMA: its tables point at courses and lectures
 
@@ -273,8 +277,9 @@ class StudyStore:
 
     def add(self, recorded_at: datetime, course_id: int | None = None, title: str = "", audio: str | None = None,
             photos: list[str] | tuple[str, ...] = (), text: str = "", public_id: str | None = None,
-            files: list[str] | tuple[str, ...] = ()) -> dict:
-        """A new lecture, queued. `files` are ids of PDFs that become its slides."""
+            files: list[str] | tuple[str, ...] = (), origin: str | None = None) -> dict:
+        """A new lecture, queued. `files` are ids of PDFs that become its slides; `origin` what it was made from
+        ("vault:<path>": the user's notes in the vault)."""
         if course_id is not None and self.course(course_id) is None:
             raise ValueError(f"no course {course_id}")
         if not (audio or photos or text.strip() or files):
@@ -288,10 +293,10 @@ class StudyStore:
             raise ValueError("recorded_at needs a UTC offset")
         now = utcnow().isoformat()
         cur = self.conn.execute(
-            "INSERT INTO lectures (public_id, course_id, title, recorded_at, audio, photos, text, status, created_at, "
-            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+            "INSERT INTO lectures (public_id, course_id, title, recorded_at, audio, photos, text, status, origin, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
             (public_id or self.new_id(), course_id, _title(title), recorded_at.astimezone(timezone.utc).isoformat(),
-             audio, json.dumps(list(photos)), text.strip(), now, now))
+             audio, json.dumps(list(photos)), text.strip(), origin, now, now))
         lecture = self._row(cur.lastrowid)
         for f in slides:
             self.files.update(f["public_id"], lecture_id=lecture["id"],
@@ -378,6 +383,13 @@ class StudyStore:
         if lecture["status"] != "failed":
             raise ValueError("only a failed lecture can be retried")
         return self.set_status(lecture["id"], "queued")
+
+    def retype(self, lecture_id: int, text: str) -> dict:
+        """What the user typed, changed (their note in the vault): the notes are written again from it."""
+        if not text.strip():
+            raise ValueError("the text is empty")
+        self._set(lecture_id, text=text.strip()[:MAX_TEXT])
+        return self.rewrite(lecture_id)
 
     def rewrite(self, lecture_id: int) -> dict:
         """New slides for a lecture whose notes are done (or failed): its notes are written again, from the
@@ -582,6 +594,34 @@ student find a passage, put the transcript's time mark (12:30) or the slide (p. 
 Use what the lecturer said and showed; add nothing from outside the lecture, except to fix an evident mistake, \
 which you then point out. Plain markdown: headings, lists, bold. No tables."""
 
+TYPED_PROMPT = """You write study notes for a university student from one lecture, with no recording: the notes \
+the student typed during it (fast, rough, with abbreviations and typos), maybe photos of slides or the board, and \
+the lecture's slides (their text page by page, marked [p. 3], and their most visual pages as images). Write the \
+notes in the language of the student's notes.
+
+Start with a line "# " and a title of two to six words for the topic, then one sentence saying what the lecture \
+covered. Then these sections, as "## " headings, in this order, leaving out any with nothing in it:
+
+## Summary
+A few short paragraphs: the thread of the lecture, in the order it was taught.
+## Key concepts
+A list: each concept in bold, then what it means and why it matters, in a line or two.
+## Definitions
+A list of the terms defined.
+## Formulas and examples
+Formulas in LaTeX, $Y = C + I + G$ inline or $$…$$ on its own line, what each symbol is, and the worked examples, \
+step by step. Money with its dollar escaped, \\$13.5 trillion; a formula that starts with a number still opens \
+with a plain $.
+## Questions to check yourself
+Five to eight questions an exam could ask about this lecture, from recall to applying it. No answers.
+## Unclear in your notes
+What the notes leave unclear or seem to have wrong (a step skipped, a sign, a number), and what it probably was.
+
+Keep everything the student wrote down, above all what the teacher said beyond the slides, stressed, or said would \
+be in the exam: say that plainly. Put it in order, spell out the abbreviations and fix the slips. Where the slides \
+fill a gap in the notes, take it from them and put (slides, p. 14) after it; add nothing from outside the lecture. \
+Plain markdown: headings, lists, bold. No tables."""
+
 PART_PROMPT = """You get one part of a long lecture's transcript. Write dense working notes on it for the person \
 who will write the final notes from all the parts: every concept, definition, formula, example and announcement \
 (an exam topic, a deadline), in order, with the transcript's time marks. No introduction."""
@@ -663,8 +703,12 @@ class StudyWorker:
         if run:
             run.finished(f"Notes ready: {lecture['title']}" if lecture["title"] else "Notes ready")
         await self._post(lecture, rewrite)
-        if self.notebook is not None and lecture["course_id"] and not rewrite:
-            self.notebook.new_material(lecture["course_id"], [{"lecture": lecture["public_id"]}])
+        mine = (lecture["origin"] or "").startswith("vault:")
+        if self.notebook is not None and lecture["course_id"] and (mine or not rewrite):
+            # A changed note is new material again: its revision tells it from what was sorted before.
+            self.notebook.new_material(lecture["course_id"], [
+                {"lecture": lecture["public_id"], "rev": lecture["updated_at"]} if rewrite else
+                {"lecture": lecture["public_id"]}])
         return lecture
 
     def _course_name(self, lecture: dict) -> str | None:
@@ -696,7 +740,7 @@ class StudyWorker:
         if transcript:
             body += f"\n\nTranscript:\n{transcript}"
         content.append({"type": "text", "text": body})
-        notes = await self._ask(NOTES_PROMPT, content)
+        notes = await self._ask(NOTES_PROMPT if lecture["transcript"] else TYPED_PROMPT, content)
         first, _, rest = notes.strip().partition("\n")
         if first.startswith("# "):
             return first[2:].strip(), rest.strip()
@@ -727,22 +771,27 @@ class StudyWorker:
         name = self._course_name(lecture)
         when = datetime.fromisoformat(lecture["recorded_at"]).astimezone(self.store.tz)
         what = lecture["title"] or "the lecture"
+        mine = (lecture["origin"] or "").startswith("vault:")
         if rewrite:
             which = f"{when:%A}'s {name} lecture" if name else f"the {when:%A} lecture"
-            text = f"I rewrote the notes of {which}, \"{what}\", with the slides."
+            text = (f"I rewrote the notes of {which}, \"{what}\", with what you added to your note." if mine else
+                    f"I rewrote the notes of {which}, \"{what}\", with the slides.")
             if lecture["course_id"]:
                 await self.agent.post(self.store.chat(lecture["course_id"]),
-                                      f"[Lecture notes ready: lecture {lecture['public_id']} rewritten with its slides.]",
-                                      text)
-            await self._alert(lecture, text)
+                                      f"[Lecture notes ready: lecture {lecture['public_id']} rewritten "
+                                      f"{'from the user’s changed note' if mine else 'with its slides'}.]", text)
+            if not mine:  # the user's own notes: they're in the vault already, no push for them
+                await self._alert(lecture, text)
             return
         if lecture["course_id"]:
             line = summary(lecture["notes"]) or ""
-            text = f"Notes from {when:%A}'s {name} lecture, \"{what}\", are ready. {line}".strip()
+            text = (f"I made clean notes from what you typed in {when:%A}'s {name} lecture, \"{what}\". {line}" if mine
+                    else f"Notes from {when:%A}'s {name} lecture, \"{what}\", are ready. {line}").strip()
             note = (f"[Lecture notes ready: lecture {lecture['public_id']}, {name}, {when:%a %d %b %H:%M}, "
                     f"\"{what}\". The user can ask about it here; read it with read_lecture.]")
             await self.agent.post(self.store.chat(lecture["course_id"]), note, text)
-        await self._alert(lecture, summary(lecture["notes"]) or f"Notes for {what} are ready.")
+        if not mine:
+            await self._alert(lecture, summary(lecture["notes"]) or f"Notes for {what} are ready.")
 
     async def _alert(self, lecture: dict, body: str) -> None:
         name = self._course_name(lecture)

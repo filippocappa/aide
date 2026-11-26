@@ -1095,3 +1095,25 @@ async def test_a_cards_file_follows_its_topics_page(nb):
     now = cards.read_text()
     assert "[[Aide/macroeconomics/01 The IS-LM model|The IS-LM model]]" in now and "07 The IS-LM" not in now
     assert "saving <!--SR:!2026-10-25,3,250-->\n" in now  # the plugin's review data stays
+
+
+async def test_what_your_own_note_adds_is_proposed_without_a_push(nb):
+    """A note from the vault's My notes is sorted into the notebook like a lecture, without a push; changed, it's
+    sorted again (2026-11-26)."""
+    is_lm, _ = await built(nb)
+    lec = nb.study.add(datetime.now(ROME), nb.macro["id"], "IS-LM", text="prof: LM flat in a trap", origin="vault:Aide/m/My notes/a.md")
+    lec = nb.study.set_notes(lec["id"], "# IS-LM\nThe liquidity trap.\n\n## Summary\nAt i = 0 the LM is flat.")
+    pushed = len(nb.push.messages)
+    triage = [{"topic": is_lm["public_id"], "title": "x", "add": "The liquidity trap, as the teacher put it.",
+               "sources": [{"lecture": lec["public_id"]}]}]
+    nb.client.responses.append(done(json.dumps(triage)))
+    assert nb.notebook.new_material(nb.macro["id"], [{"lecture": lec["public_id"]}])
+    await drain(nb)
+    assert nb.notebook.proposals(nb.macro["id"], "pending") and len(nb.push.messages) == pushed
+    nb.client.responses.append(done(json.dumps(triage)))  # the same again: already sorted
+    nb.notebook.new_material(nb.macro["id"], [{"lecture": lec["public_id"]}])
+    await drain(nb)
+    assert len(nb.notebook.proposals(nb.macro["id"], "pending")) == 1
+    nb.notebook.new_material(nb.macro["id"], [{"lecture": lec["public_id"], "rev": "2026-11-26T10:00:00+00:00"}])
+    await drain(nb)
+    assert len(nb.notebook.proposals(nb.macro["id"], "pending")) == 2 and len(nb.push.messages) == pushed

@@ -2328,7 +2328,11 @@ class NotebookWorker:
         text = (f"New in {course['name']}: {_and([f'**{n}**' for n in names])}. From "
                 f"{'it' if len(names) == 1 else 'them'} I'd {what} in the notes. Pick below, or tell me which "
                 "(\"only 1 and 3\", \"also stress the graphs\").")
-        await self._post(course, self._note(p, course, lines), text, push=True, chat=chat,
+        # Only the user's own notes (the vault's My notes): no push, they know they wrote them (too many pushes
+        # get ignored, 2026-11-26); the proposal waits in the chat and in Approvals.
+        mine = all("lecture" in m and (lec := self.study.get(m["lecture"])) and (lec["origin"] or "").startswith(
+            "vault:") for m in material)
+        await self._post(course, self._note(p, course, lines), text, push=not mine, chat=chat,
                          attachments=self.store.attachments(p))
         return p
 
