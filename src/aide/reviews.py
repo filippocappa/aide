@@ -43,6 +43,8 @@ CREATE INDEX IF NOT EXISTS review_sessions_start ON review_sessions (starts_at);
 
 TICK = 60  # seconds
 STALE = timedelta(minutes=30)  # a start missed by more than this (the server was off) isn't announced
+AHEAD = timedelta(days=1)  # sessions starting this soon are checked against the calendar, so one moved earlier
+FOLLOW_EVERY = timedelta(minutes=10)  # ... is announced at its new time, this often
 SHORTEST, LONGEST = 15, 240  # minutes
 _ID = re.compile(r"^v_[0-9a-f]{12}$")
 
@@ -50,6 +52,7 @@ _ID = re.compile(r"^v_[0-9a-f]{12}$")
 class ReviewStore:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo, cal: CalendarBackend | None, study: StudyStore):
         self.conn, self.tz, self.cal, self.study = conn, tz, cal, study
+        self._followed: datetime | None = None  # when _follow last ran
         self.conn.executescript(SCHEMA)
         if "kind" not in {r[1] for r in self.conn.execute("PRAGMA table_info(review_sessions)")}:
             self.conn.execute("ALTER TABLE review_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'review'")
@@ -112,10 +115,35 @@ class ReviewStore:
         self.conn.execute("UPDATE review_sessions SET cancelled_at = ? WHERE id = ?", (utcnow().isoformat(), s["id"]))
         return s
 
+    async def _follow(self, now: datetime) -> None:
+        """Sessions starting within AHEAD take their event's time, every FOLLOW_EVERY: one moved earlier in the
+        calendar would otherwise only be seen at its old time, too late to announce (2026-11-27)."""
+        if self.cal is None or (self._followed and now - self._followed < FOLLOW_EVERY):
+            return
+        self._followed = now
+        rows = self.conn.execute(
+            "SELECT * FROM review_sessions WHERE cancelled_at IS NULL AND announced_at IS NULL AND starts_at > ? "
+            "AND starts_at <= ?", (now.isoformat(), (now + AHEAD).isoformat())).fetchall()
+        for s in map(self._row, rows):
+            try:
+                ev = await asyncio.to_thread(self.cal.get, s["event_uid"])
+            except Exception:
+                log.warning("review session %s: couldn't read its event", s["public_id"], exc_info=True)
+                continue
+            if ev is None or not isinstance(ev.start, datetime):
+                continue  # gone: dropped at its time, as before
+            start = (ev.start if ev.start.tzinfo else ev.start.replace(tzinfo=self.tz)).astimezone(timezone.utc)
+            minutes = max(SHORTEST, round((ev.end - ev.start).total_seconds() / 60))
+            if start != s["start"] or minutes != s["minutes"]:
+                self.conn.execute("UPDATE review_sessions SET starts_at = ?, minutes = ? WHERE id = ?",
+                                  (start.isoformat(), minutes, s["id"]))
+
     async def due(self, now: datetime | None = None) -> list[dict]:
         """Sessions starting now that weren't announced, checked against the calendar first: a moved one follows
-        its event (and waits if it's later now), a deleted one is dropped."""
+        its event (and waits if it's later now), a deleted one is dropped. Those coming soon follow theirs too
+        (`_follow`), so one moved earlier is announced at its new time."""
         now = now or utcnow()
+        await self._follow(now)
         out = []
         rows = self.conn.execute(
             "SELECT * FROM review_sessions WHERE cancelled_at IS NULL AND announced_at IS NULL AND starts_at <= ?",

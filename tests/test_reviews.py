@@ -84,6 +84,19 @@ async def test_a_session_that_starts_is_announced_in_the_course_chat(nb, reviews
     assert len(nb.push.messages) == 1  # once
 
 
+async def test_a_session_moved_earlier_is_announced_at_its_new_time(nb, reviews):
+    """2026-11-27: Friday's Business law moved from 14:15 to 10:45 would have been seen only at 14:15, too late."""
+    store, cal, _ = reviews
+    s = await store.add(nb.macro["id"], tomorrow(14), 120, [])
+    (ev,) = cal.store.values()
+    cal.update(ev.uid, start=tomorrow(10), end=tomorrow(12))
+    watcher = ReviewWatcher(store, nb.agent, nb.push)
+    await watcher.tick((tomorrow(10) - timedelta(hours=3)).astimezone(timezone.utc))  # followed ahead of time
+    assert nb.push.messages == [] and store.get(s["public_id"])["start"] == tomorrow(10).astimezone(timezone.utc)
+    await watcher.tick(tomorrow(10).astimezone(timezone.utc))
+    assert [m[2] for m in nb.push.messages] == ["Time for your Macroeconomics review (120 min). Shall I quiz you?"]
+
+
 async def test_a_session_deleted_in_the_calendar_or_long_missed_is_dropped(nb, reviews):
     store, cal, _ = reviews
     gone = await store.add(nb.macro["id"], tomorrow(9), 60, [])
