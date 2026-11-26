@@ -1277,7 +1277,7 @@ isn't made twice. The model is told not to propose study time for those courses.
 by what the day's block is mostly for (since 2026-11-26): "Study: <course>" for the learn phase, "Practice: <course>"
 for practice and mocks, "Review: <course>" for review (`kind` study, practice or review), proposed on the week card (Events and plans: an `events` attachment, added only on Add, each through Review
 sessions with its topics). A course's day is one sitting in the first free stretch that holds it (starts on the quarter
-hour), else pieces of at least 25 min around the events, 15 min between two; a review session already in the calendar
+hour), else pieces of whole quarter hours, at least 30 min, around the events, 15 min between two; a review session already in the calendar
 for the course that day comes off its minutes and its time. Topics run on across the days (learning in order, practice
 where most is left, the review the weakest), so the days don't repeat; mock days have none. `notes`: "From the exam
 plan, before the written exam on Wed 20 Jan: learn 30 min, practise 15 min.\nTopics: …".

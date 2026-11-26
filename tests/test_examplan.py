@@ -392,14 +392,15 @@ async def test_the_week_goes_into_free_time(tmp_path):
     per_day: dict[str, int] = {}
     for i in items:
         s0, e0 = datetime.fromisoformat(i["start"]), datetime.fromisoformat(i["end"])
-        assert s0.minute % 15 == 0 and (e0 - s0) >= timedelta(minutes=25)
+        assert s0.minute % 15 == 0 and e0.minute % 15 == 0 and (e0 - s0) >= timedelta(minutes=30)
         assert TODAY <= s0.date() <= TODAY + timedelta(days=6)
         assert not overlaps(s0, e0, at(1, 9).replace(tzinfo=None) - timedelta(minutes=15),
                             at(1, 18).replace(tzinfo=None) + timedelta(minutes=15))
         assert not overlaps(s0, e0, at(2, 9).replace(tzinfo=None), at(2, 10, ).replace(tzinfo=None) + timedelta(minutes=15))
         per_day[s0.date().isoformat()] = per_day.get(s0.date().isoformat(), 0) + int((e0 - s0).total_seconds() // 60)
     for d, m in per_day.items():
-        assert m <= days[d] - (60 if d == (TODAY + timedelta(days=2)).isoformat() else 0)
+        # Rounded to whole quarters: up to 7 min over the day's share.
+        assert m <= days[d] - (60 if d == (TODAY + timedelta(days=2)).isoformat() else 0) + 7
     # Earlier days take topics first: learning goes through the course in order.
     assert items[0]["topics"][0] == "IS-LM" and "Topics: IS-LM" in items[0]["notes"]
     assert not warnings
@@ -446,7 +447,7 @@ def test_a_block_longer_than_a_session_is_cut_into_sessions():
     from aide.examplan import _split
     s0 = datetime(2026, 11, 27, 14, 15, tzinfo=ROME)
     parts = _split(s0, s0 + timedelta(minutes=247))
-    assert [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b in parts] == [("14:15", "16:18"), ("16:18", "18:22")]
+    assert [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b in parts] == [("14:15", "16:15"), ("16:15", "18:22")]
     assert _split(s0, s0 + timedelta(minutes=240)) == [(s0, s0 + timedelta(minutes=240))]
 
 

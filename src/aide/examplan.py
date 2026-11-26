@@ -703,7 +703,7 @@ class ExamPlan:
                    busy: list[tuple[datetime, datetime]] = (), fresh: bool = True) -> tuple[list[dict], list[str]]:
         """The blocks of the `days` days from `start` (today when left out; days gone are skipped), placed in each
         day's free time as review sessions to propose (plans.py): a course's day in one sitting where a gap holds it,
-        else split around events (no piece under 25 min), less a review session already in the calendar for it that
+        else split around events (in whole quarter hours, no piece under 30 min), less a review session already in the calendar for it that
         day. `busy`: more taken time than the calendar's (the user's things for tomorrow, dayplan.py); `fresh` False
         when the plan was just worked out. Returns the items {title, start, end, calendar, course_id, topics, notes}
         and the short targets' warnings."""
@@ -738,6 +738,7 @@ class ExamPlan:
                 minutes = sum(phases.values()) - sum(
                     int((e0 - s0).total_seconds() // 60) for c, s0, e0 in self._held.get(d, [])
                     if c == t["course"]["name"].casefold())
+                minutes = int(minutes / QUARTER + 0.5) * QUARTER  # whole quarters: 60 min, not 53 (2026-11-27)
                 if minutes < MIN_PIECE:
                     continue
                 what = ", ".join(f"{p} {m} min" for p, m in phases.items())
@@ -797,7 +798,7 @@ class ExamPlan:
         return "\n".join(lines) if items or undated else "No courses to plan."
 
 
-MIN_PIECE = 25  # minutes: no review session shorter (unless the whole block is)
+MIN_PIECE = 30  # minutes: no session shorter
 QUARTER = 15  # sessions start on the quarter hour
 BREAK = timedelta(minutes=15)  # between two sessions in a row
 
@@ -834,19 +835,20 @@ def _cut(gaps: list[tuple[datetime, datetime]], a: datetime, b: datetime) -> lis
 
 
 def _split(s0: datetime, e0: datetime) -> list[tuple[datetime, datetime]]:
-    """A session longer than a review session may be (reviews.LONGEST) as equal pieces back to back."""
+    """A session longer than a review session may be (reviews.LONGEST) as about equal pieces back to back, cut on the
+    quarter hour."""
     from .reviews import LONGEST
     minutes = int((e0 - s0).total_seconds() // 60)
     n = -(-minutes // LONGEST)
     if n <= 1:
         return [(s0, e0)]
-    cuts = [s0 + timedelta(minutes=minutes * k // n) for k in range(n)] + [e0]
+    cuts = [s0 + timedelta(minutes=int(minutes * k / n / QUARTER + 0.5) * QUARTER) for k in range(n)] + [e0]
     return list(zip(cuts, cuts[1:]))
 
 
 def _place(gaps: dict[date, list[tuple[datetime, datetime]]], d: date, minutes: int) -> list[tuple[datetime, datetime]]:
     """Sessions for `minutes` of study on day `d`, taken out of its free stretches: the first that holds it all, else
-    pieces of at least MIN_PIECE in order; what doesn't fit is left out (the plan counted it as free, rounded)."""
+    pieces of at least MIN_PIECE in order, in whole quarters; what doesn't fit is left out (the plan counted it as free, rounded)."""
 
     def at_quarter(t: datetime) -> datetime:
         t = t.replace(second=0, microsecond=0)
@@ -865,8 +867,8 @@ def _place(gaps: dict[date, list[tuple[datetime, datetime]]], d: date, minutes: 
     else:
         left = minutes
         for g in free:
-            piece = min(left, room(g))
-            if piece < min(MIN_PIECE, left):
+            piece = min(left, room(g)) // QUARTER * QUARTER
+            if piece < MIN_PIECE:
                 continue
             s0 = at_quarter(g[0])
             out.append((s0, s0 + timedelta(minutes=piece)))

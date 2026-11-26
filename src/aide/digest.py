@@ -460,7 +460,12 @@ class DigestService:
         return greeting or _fallback_greeting(now, sections), ahead
 
     async def travel_plan(self, event: dict) -> Travel:
-        """How the user gets to this event, from memory; else from AIDE_HOME_ADDRESS, with nothing else fixed."""
+        """How the user gets to this event, from memory; else from AIDE_HOME_ADDRESS, with nothing else fixed.
+        A study block of the plan's own ("Study: Macroeconomics") with no place is wherever the user is, not at uni:
+        no place, so no leave-by time and no tram alert (2026-11-26: "leave home by 9:05 for Macroeconomics")."""
+        from .study import session_course
+        if not (event.get("location") or "").strip() and session_course(event.get("title") or "") is not None:
+            return Travel(self.home)
         # Shared items plus Secretary's own: travel is its domain ("I always walk to uni").
         notes = [r["text"] for r in self.conn.execute(
             "SELECT text FROM memory WHERE agent IS NULL OR agent = 'secretary' ORDER BY id DESC")]

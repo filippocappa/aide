@@ -404,3 +404,13 @@ async def test_the_evening_digest_goes_out_with_tomorrows_question_in_one_push(e
     assert digest_mod.evening_at(service) == (now - timedelta(minutes=1)).time().replace(second=0, microsecond=0)
     service.save_settings({**service.settings(), "evening": {"enabled": False, "time": "21:00"}})
     assert digest_mod.evening_at(service) is None and digest_mod.evening_at(None) is None
+
+
+async def test_a_study_block_is_not_a_trip(env):
+    """2026-11-26: "leave home by 9:05 for Macroeconomics" for a study block of the plan's own, at home."""
+    make, store, habits = env
+    _, service, client = make()
+    service.home = "Via Roma 1, Torino"
+    service.conn.execute("INSERT INTO memory (text, created_at) VALUES ('Lectures are at Campus Luigi Einaudi, by tram', '2026-11-01')")
+    plan = await service.travel_plan({"title": "Study: Macroeconomics", "location": "", "calendar": "Work"})
+    assert plan == digest_mod.Travel("Via Roma 1, Torino") and client.requests == []  # no place, no model call
