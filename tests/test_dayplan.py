@@ -1,6 +1,7 @@
 from datetime import datetime, time, timedelta, timezone
 
 from aide.dayplan import DayPlanner, dayplan_tools
+from aide.icloud import CalEvent
 from aide.plans import PlanStore
 from aide.reminders import ReminderStore
 from test_examplan import ROME, TODAY, exam_in, overlaps
@@ -102,7 +103,7 @@ async def test_what_doesnt_fit_is_said(tmp_path):
     db, study, plan, plans, planner, agent, push = await setup(tmp_path)
     tool = dayplan_tools(planner, lambda: ("c_tomorrow", "secretary"))[0]
     out = await tool.handler(items=[{"title": "Long trip", "minutes": 600, "part": "morning"}])
-    assert "Not placed (say so, and ask when): Long trip" in out
+    assert "Say so (and ask when for anything not placed): Long trip" in out
 
 
 async def test_no_question_without_study_tomorrow(tmp_path):
@@ -110,3 +111,57 @@ async def test_no_question_without_study_tomorrow(tmp_path):
     plan.update_caps(day_plan=False)
     assert await planner.tick(evening(21, 5)) is None and not agent.posts
     assert plan.caps()["day_plan"] is False and plan.update_caps(day_plan_at="21:30")["day_plan_at"] == "21:30"
+
+
+async def test_with_the_evening_digest_its_one_message_and_one_push(tmp_path):
+    db, study, plan, plans, planner, agent, push = await setup(tmp_path)
+    planner.digest_at = lambda: time(21)
+    assert await planner.tick(evening(21, 5)) is None and not agent.posts  # the digest asks, when it's made
+    greeting = "Tomorrow is light. Leave by 8:50 for the lecture, tram 4."
+    assert await planner.with_digest({"greeting": greeting}, evening(21, 2)) is True
+    chat, note, text, cards = agent.posts[0]
+    assert text.startswith(greeting + "\n\nTomorrow, ") and text.endswith("Or just say that's all.")
+    assert "plan_tomorrow" in note and cards is None
+    assert push.sent == [(chat, push.sent[0][1], greeting)]
+    assert push.sent[0][1].startswith("Tomorrow · Anything else tomorrow besides ") and "of study?" in push.sent[0][1]
+    assert await planner.with_digest({"greeting": greeting}, evening(21, 3)) is False  # once an evening
+    assert await planner.tick(evening(21, 30)) is None and len(agent.posts) == 1
+    assert await planner.tick(evening(22, 40)) == "fallback" and len(push.sent) == 2
+
+
+async def test_the_question_goes_alone_when_the_digest_is_late_or_far(tmp_path):
+    db, study, plan, plans, planner, agent, push = await setup(tmp_path)
+    planner.digest_at = lambda: time(21)
+    assert await planner.tick(evening(21, 10)) is None
+    assert await planner.tick(evening(21, 16)) == "asked" and push.sent[0][1] == "Secretary · Tomorrow"
+    assert await planner.with_digest({"greeting": "Hi."}, evening(21, 20)) is False  # it pushes by itself
+    assert not agent.posts[0][2].startswith("Hi.")
+
+    db, study, plan, plans, planner, agent, push = await setup(tmp_path / "far")
+    planner.digest_at = lambda: time(22)  # an hour apart: each on its own
+    assert await planner.tick(evening(21, 5)) == "asked"
+    assert await planner.with_digest({"greeting": "Hi."}, evening(22)) is False
+
+
+async def test_a_newer_plan_for_the_day_drops_the_older_card(tmp_path):
+    db, study, plan, plans, planner, agent, push = await setup(tmp_path)
+    tool = dayplan_tools(planner, lambda: ("c_tomorrow", "secretary"))[0]
+    first = (await tool.handler()).attachment["events"][0]["plan"]
+    out = await tool.handler(items=[{"title": "Dentist", "start": "10:00", "end": "11:00"}])
+    second = out.attachment["events"][0]["plan"]
+    assert first != second
+    assert {i["status"] for i in plans.get(first)["items"]} == {"dropped"}
+    assert {i["status"] for i in plans.get(second)["items"]} == {"proposed"}
+
+
+async def test_a_thing_on_top_of_study_already_added_is_said(tmp_path):
+    db, study, plan, plans, planner, agent, push = await setup(tmp_path)
+    tool = dayplan_tools(planner, lambda: ("c_tomorrow", "secretary"))[0]
+    first = (await tool.handler()).attachment["events"]
+    block = next(e for e in first if e["title"].startswith("Review: "))
+    s0, e0 = local(block["start"]), local(block["end"])
+    study.calendar._events.append(CalEvent("r1", "Work", block["title"], s0, e0))  # the fallback card, added
+    plan.invalidate()
+    out = await tool.handler(items=[{"title": "Gym", "start": f"{s0:%H:%M}", "minutes": 30}])
+    assert f"Gym clashes with study already in the calendar (Macroeconomics, {s0:%H:%M}–{e0:%H:%M})" in out
+    assert not any(e["title"].startswith("Review: ") for e in out.attachment["events"])  # the study is there

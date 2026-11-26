@@ -1295,6 +1295,13 @@ around it and the calendar, and proposes the whole day as one `events` card (the
 the study in the study calendar; nothing added until Add). No answer 90 minutes after the question: the review sessions
 around the calendar alone, on a card in the same chat, with a `message` push of its own (since 2026-11-26: "Tomorrow's
 plan is ready: 3 study blocks. Tap Add to put it in your calendar."). "Plan my day tomorrow" in a Secretary chat does the same.
+With the evening digest (since 2026-11-26): when its time is within 30 minutes of `day_plan_at`, the question goes out
+when the digest is made, as the evening's one notification: the chat message starts with the digest's greeting, and
+its `message` push is titled "Tomorrow · Anything else tomorrow besides 4.2 h of study?" with the greeting as the body
+(the digest's own `digest` push isn't sent; the digest is on Today as usual). With no digest 15 minutes after both
+times, the question goes alone as before. A newer plan for the same day (an answer after the fallback card, or a second
+"plan my day") marks what's still `proposed` on the older card `dropped`, so only one can be added; a thing the user
+says that lands on study already added is placed anyway, and Secretary says it clashes.
 
 ### Study files
 
@@ -1932,7 +1939,8 @@ Habit object: `{"id": 3, "name": "Gym", "cadence": {"type": "daily"} | {"type": 
 - `missed_yesterday` says a daily habit wasn't done yesterday (and existed then). `misses_7d` counts the days of the
   7 before today it wasn't done, from the day it began. Both are `false`/`0` on weekly habits; on limit habits a miss
   is a day over the limit.
-- Each evening (from 19:00) Coach writes once in its "Habits" chat, with a push, about the daily habits missed
+- Each evening (from 19:00) Coach writes once in its "Habits" chat, with a push (none while the evening digest is on,
+  since 2026-11-26: the digest's greeting names them, in the evening's one notification), about the daily habits missed
   yesterday and not done yet today, offering the two-minute version. When one keeps slipping (3 or more misses in
   7 days), Coach offers a smaller version in chat and sets `minimum` only on the user's OK; when that slips too, it
   asks what's in the way. The weekly digest's Looking ahead mentions a habit that keeps slipping.
@@ -3437,7 +3445,7 @@ Every push carries an `aide` object saying what it is. The app ignores kinds it 
 |---|---|---|---|---|
 | `sync` | silent (`content-available: 1`, push type `background`, priority 5) | reminders changed on the server, a habit with `health` was counted, a meal or a Screen Time lock changed, live calls turned on or off (and the voice ready) | | (not shown) the app runs a reminders sync, writes `health_logged` and meals to Health, sets the locks, and reads `GET /v1/voice` |
 | `reminder` | alert | due, but not on the phone (see the notification rule) | `reminder_id` | opens Today |
-| `digest` | alert | a scheduled digest, or the wake-up briefing, is ready | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens Today on the digest (since 2026-10-26; before: a new chat with it) |
+| `digest` | alert | a scheduled digest, or the wake-up briefing, is ready (not the evening one when it goes out with tomorrow's plan question, a `message` push, since 2026-11-26: Exam plan, "Tomorrow's plan") | `digest` (`daily`, `wake`, `evening`, `weekly`, `monthly`) | opens Today on the digest (since 2026-10-26; before: a new chat with it) |
 | `message` | alert | an agent writes first: a routine or watch, lecture notes, a notebook proposal; or a chat reply finished after the app hung up on the stream (since 2026-10-29; title the agent's name, body the reply's first line; since 2026-10-30 also when a Live Activity was there, which the server ends first) | `conversation_id`, `routine` (a routine's or watch's post only) | with `routine`: opens Today on that note; else that conversation |
 | `lecture` | alert | a lecture's notes are ready, or it failed (title "Professor · macroeconomics") | `lecture_id` | opens that lecture |
 | `moodle` | alert | a Moodle sync brought new files (title "Moodle · 3 new files", a line per course naming them: "Macroeconomics: Lecture Notes: Monetary Policy, Lect: Monetary Policy"), or the login expired | `files` (the new files' ids, up to 20; since 2026-10-26), `login` (true: log in again) | lists the new files (`GET /v1/files/{id}`), each opening its PDF; the Moodle login with `login` |

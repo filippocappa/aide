@@ -352,3 +352,26 @@ async def test_never_miss_twice_nudges_once_in_the_evening(api):
     assert said[-1]["text"] == ("Never miss twice: Read slipped yesterday. Today keeps it going, even just the "
                                 "two-minute version: one page.")
     assert fresh.id not in {h.id for h in nudges.due(evening)}
+
+
+async def test_never_miss_twice_has_no_push_of_its_own_while_the_evening_digest_is_on(api):
+    client, agent, habits = api()
+    read = habits.add("Read")
+    _began(habits, read.id, 5)
+
+    class Push:
+        sent = []
+
+        async def send_message(self, chat, title, body):
+            self.sent.append(title)
+    on = {"digest": True}
+    nudges = HabitNudges(habits, agent, Push(), lambda: on["digest"])
+    evening = datetime.now(ROME).replace(hour=20, minute=0)
+    await nudges.tick(evening)
+    assert Push.sent == [] and nudges.due(evening) == []  # said in the chat, and in the evening digest
+    on["digest"] = False
+    habits.add("Walk")
+    walk = habits.all()[-1]
+    _began(habits, walk.id, 5)
+    await nudges.tick(evening)
+    assert Push.sent == ["Coach · Habits"]

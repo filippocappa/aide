@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -359,3 +359,48 @@ def test_opening_makes_a_fresh_digest_when_the_stored_one_is_stale(env):
     service._store("daily", datetime(2026, 1, 1, 7, tzinfo=ROME), stale)
     new = client.post("/v1/conversations", json={"digest": "daily"}, headers=AUTH).json()
     assert new["preview"] == "Fresh one." and len(fake.requests) == 1
+
+
+async def test_evening_lines_say_the_start_clashes_and_habits_that_would_slip_twice(env):
+    make, _, _ = env
+    _, service, _ = make()
+    day = datetime.now(ROME).date() + timedelta(days=1)
+
+    def ev(title, h0, h1):
+        return {"title": title, "all_day": False, "start": datetime.combine(day, time(h0), ROME).isoformat(),
+                "end": datetime.combine(day, time(h1), ROME).isoformat(), "location": ""}
+    lines = await service._evening_lines([
+        {"type": "calendar", "events": [ev("Run", 8, 9), ev("Call", 8, 10), ev("Lecture", 14, 16)]},
+        {"type": "habits", "habits": [{"name": "Read", "missed_yesterday": True, "minimum": "one page"},
+                                      {"name": "Gym", "missed_yesterday": False, "minimum": None}]}])
+    assert lines == ["Tomorrow starts at 08:00 (Run).", "Clash: Run 08:00–09:00 and Call 08:00–10:00.",
+                     "Missed yesterday and not done yet today (never miss twice): Read (two-minute version: one page)."]
+    assert await service._evening_lines([]) == []
+
+
+async def test_the_evening_digest_goes_out_with_tomorrows_question_in_one_push(env, monkeypatch):
+    make, _, _ = env
+    _, service, _ = make([done("Evening.\n---\n- ahead"), done("unused")])
+    now = datetime.now(ROME)
+    off = {"enabled": False, "time": "00:00"}
+    service.save_settings({"daily": off, "evening": {"enabled": True, "time": f"{now - timedelta(minutes=1):%H:%M}"},
+                           "weekly": {**off, "weekday": 1}, "monthly": {**off, "day": 1}})
+    asked, pushed = [], []
+
+    async def hook(digest):
+        asked.append(digest["greeting"])
+        return True
+
+    class Push:
+        async def send_digest(self, kind, greeting, month=None):
+            pushed.append(kind)
+    service.evening_hook = hook
+    monkeypatch.setattr(digest_mod, "TICK", 0)
+    task = asyncio.create_task(digest_mod.digest_schedule(service, Push()))
+    for _ in range(50):
+        await asyncio.sleep(0)
+    task.cancel()
+    assert asked == ["Evening."] and pushed == []  # the question's push carries it
+    assert digest_mod.evening_at(service) == (now - timedelta(minutes=1)).time().replace(second=0, microsecond=0)
+    service.save_settings({**service.settings(), "evening": {"enabled": False, "time": "21:00"}})
+    assert digest_mod.evening_at(service) is None and digest_mod.evening_at(None) is None

@@ -456,11 +456,12 @@ class HabitStore:
 
 class HabitNudges:
     """Never miss twice (#52): in the evening, one message from Coach for the habits missed yesterday and not done
-    yet today, in Coach's Habits chat (made the first time, again if deleted), with a push. A habit gets at most one a
-    day; none on a habit's first days (it didn't exist yesterday) or once today is done."""
+    yet today, in Coach's Habits chat (made the first time, again if deleted), with a push unless the evening digest
+    is on (`quiet()`): then it says them in the evening's one notification. A habit gets at most one a day; none on a
+    habit's first days (it didn't exist yesterday) or once today is done."""
 
-    def __init__(self, store: HabitStore, agent=None, push=None):
-        self.store, self.agent, self.push = store, agent, push
+    def __init__(self, store: HabitStore, agent=None, push=None, quiet=None):
+        self.store, self.agent, self.push, self.quiet = store, agent, push, quiet
 
     def due(self, now: datetime) -> list[Habit]:
         local = now.astimezone(self.store.tz)
@@ -510,7 +511,7 @@ class HabitNudges:
                   "version (update_habit minimum) and set it only on their OK.]")
         chat = self.chat()
         await self.agent.post(chat, note, text)
-        if self.push is not None:
+        if self.push is not None and not (self.quiet and self.quiet()):
             await self.push.send_message(chat, "Coach · Habits", text[:180])
         log.info("habit nudge: %s", ", ".join(h.name for h in habits))
 

@@ -47,7 +47,10 @@ Python 3.12, managed with `uv`. Entry point `src/aide/__main__.py`.
 - `tools/`: everything that touches the outside world (`calendar.py` uses `icloud.py`, CalDAV).
 - `channels/api.py` (FastAPI): the app's API, the only way in since the Discord bot was removed (2026-10-21).
 - `reminders.py`: reminders store and the sync rules. `scheduler.py`: background jobs (a push for reminders not yet on the phone).
-- `push.py`: APNs sender and the devices table (off without `APNS_*` in `.env`; then nothing is pushed).
+- `push.py`: APNs sender and the devices table (off without `APNS_*` in `.env`; then nothing is pushed). Every alert
+  is kept 90 days in `pushes`: "how many notifications" means `ssh cappa 'cd ~/Developer/aide && uv run --no-sync
+  python -m aide.push 1'` (the last 24 hours). The evening is one notification: the evening digest and tomorrow's plan
+  question go out together (`dayplan.py`), and never miss twice says nothing of its own while the digest is on.
 - `photos.py`: photos for chat and food, files in `data/photos/` (backed up once each). `food.py`: meals and food goals (a food day runs 04:00 to 04:00: a snack after midnight is the day before's).
   `foods.py`: saved foods per 100 g with the usual portion, which meals are added up from (`tools/nutrition.py`: Open Food Facts).
 - `health.py`: Apple Health days, "usual" numbers, sleep and recovery. `wake.py`: the wake-up briefing.

@@ -337,3 +337,16 @@ def test_devices_api(env):
     assert client.delete(f"/v1/devices/{SANDBOX}", headers=AUTH).json() == {"ok": True}
     assert client.get("/v1/devices", headers=AUTH).json() == {"devices": []}
     assert client.get("/v1/devices").status_code == 401
+
+
+async def test_every_alert_is_recorded_but_not_silent_ones(env):
+    _, push, apns = env
+    since = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await push.send_message("c_1", "Coach · Habits", "Read slipped yesterday.")  # no device yet: not delivered
+    push.register(SANDBOX, "sandbox")
+    await push.send_digest("evening", "Tomorrow is light.")
+    await push.send({"aps": {"content-available": 1}, "aide": {"kind": "sync"}}, background=True)
+    assert len(apns.requests) == 2
+    assert [(p["kind"], p["title"], p["body"], p["sent"], p["devices"]) for p in push.sent_since(since)] == [
+        ("message", "Coach · Habits", "Read slipped yesterday.", 0, 0), ("digest", "Evening", "Tomorrow is light.", 1, 1)]
+    assert push.sent_since(datetime.now(timezone.utc) + timedelta(minutes=1)) == []

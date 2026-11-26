@@ -8,8 +8,9 @@ what was to be pushed stays in the app.
 import asyncio
 import logging
 import sqlite3
+import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -31,7 +32,18 @@ CREATE TABLE IF NOT EXISTS devices (
     last_push_at  TEXT,              -- UTC, last push APNs accepted
     app           TEXT NOT NULL DEFAULT 'ios'  -- ios or mac: the Mac app has its own bundle ID (the topic)
 );
+CREATE TABLE IF NOT EXISTS pushes (  -- every alert, to count them (`python -m aide.push`); not silent ones
+    id      INTEGER PRIMARY KEY,
+    at      TEXT NOT NULL,     -- UTC
+    kind    TEXT NOT NULL,     -- the payload's aide.kind: message, digest, reminder, bedtime, finance, ...
+    title   TEXT NOT NULL,
+    body    TEXT NOT NULL,
+    sent    INTEGER NOT NULL,  -- devices APNs took it for
+    devices INTEGER NOT NULL   -- devices it was for (0: push is off or nothing is registered)
+);
+CREATE INDEX IF NOT EXISTS pushes_at ON pushes (at);
 """
+KEEP_PUSHES = timedelta(days=90)
 APPS = ("ios", "mac")
 # Alerts only the phone needs: a tram to catch is the phone's (silent pushes are the phone's too).
 PHONE_ONLY = {"transit"}
@@ -123,6 +135,8 @@ class Push:
         if background or payload.get("aide", {}).get("kind") in PHONE_ONLY:
             devices = [d for d in devices if d["app"] == "ios"]
         if not self.enabled or not devices:
+            if not background:
+                self._record(payload, 0, 0)
             return 0, len(devices), False
         headers = {
             "apns-push-type": "background" if background else "alert",
@@ -138,7 +152,28 @@ class Push:
                 sent += 1
             else:
                 retry = retry and self.transient(status, reason)
+        if not background:
+            self._record(payload, sent, len(devices))
         return sent, len(devices) - sent, retry and not sent
+
+    def _record(self, payload: dict, sent: int, devices: int) -> None:
+        """One alert in `pushes`, so how many went out can be counted; never in the way of sending."""
+        try:
+            alert = payload.get("aps", {}).get("alert") or {}
+            with self.conn:
+                self.conn.execute("INSERT INTO pushes (at, kind, title, body, sent, devices) VALUES (?, ?, ?, ?, ?, ?)",
+                                  (_now(), str(payload.get("aide", {}).get("kind") or "?"),
+                                   str(alert.get("title") or ""), str(alert.get("body") or ""), sent, devices))
+                self.conn.execute("DELETE FROM pushes WHERE at < ?",
+                                  ((datetime.now(timezone.utc) - KEEP_PUSHES).isoformat(),))
+        except sqlite3.Error:
+            log.warning("couldn't record a push", exc_info=True)
+
+    def sent_since(self, since: datetime) -> list[dict]:
+        """The alerts since `since`, oldest first."""
+        rows = self.conn.execute("SELECT * FROM pushes WHERE at >= ? ORDER BY at, id",
+                                 (since.astimezone(timezone.utc).isoformat(),)).fetchall()
+        return [dict(r) for r in rows]
 
     async def _post(self, token: str, environment: str, payload: dict, headers: dict) -> tuple[int, str]:
         """One request to APNs: (status, reason), status 0 when it didn't get there."""
@@ -297,3 +332,23 @@ class Push:
             await asyncio.sleep(SYNC_EVERY)
             if not self._sync_again:
                 return
+
+
+def main(argv: list[str]) -> None:
+    """`python -m aide.push [days]`: the alerts sent in the last `days` days (default 1), local time."""
+    from .config import load_settings
+    settings = load_settings()
+    conn = sqlite3.connect(settings.db_path)
+    conn.row_factory = sqlite3.Row
+    days = int(argv[0]) if argv else 1
+    since = datetime.now(settings.timezone) - timedelta(days=days)
+    found = Push(conn).sent_since(since)
+    for p in found:
+        at = datetime.fromisoformat(p["at"]).astimezone(settings.timezone)
+        state = "" if p["sent"] else "  (not delivered)"
+        print(f"{at:%a %d %H:%M}  {p['kind']:<9} {p['title']}: {p['body'][:90]}{state}")
+    print(f"{len(found)} in the last {days * 24} hours" if found else "none")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

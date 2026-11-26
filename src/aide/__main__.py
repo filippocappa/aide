@@ -21,7 +21,7 @@ from .transcribe import Transcriber
 from .config import OPENROUTER_BASE_URL, Settings, load_settings, save_env
 from .db import Database
 from .decide import Decider
-from .digest import DigestService, digest_schedule
+from .digest import DigestService, digest_schedule, evening_at
 from .drafts import Drafts
 from .engine import Engine
 from .errands import ErrandRunner, ErrandStore, errand_tools, purchase_tools
@@ -378,7 +378,8 @@ def main() -> None:
                             lambda: (agent._conversation, calling_agent.get()))
     # Evenings: Secretary asks what else tomorrow holds, then proposes the day with the study around it (#84).
     day_planner = DayPlanner(examplan, plans if cal is not None else None, None, push, reminders,
-                             calendar_events if cal else None, settings.default_calendar)
+                             calendar_events if cal else None, settings.default_calendar,
+                             lambda: evening_at(digest))  # with the evening digest: one push for both
     if cal is not None:
         tools += dayplan_tools(day_planner, lambda: (agent._conversation, calling_agent.get()))
 
@@ -439,6 +440,7 @@ def main() -> None:
     digest.bedtime = bedtime
     digest.nudges = nudges
     digest.drafts = drafts if gmail else None
+    digest.evening_hook = day_planner.with_digest
 
     if not whisper_available():
         log.warning("faster-whisper not installed (uv sync --extra whisper): lecture recordings not accepted")
@@ -511,7 +513,7 @@ def main() -> None:
             lock_watch.run(),
             focus_watch.run(),
             bedtime.run(),
-            HabitNudges(habits, agent, push).run(),
+            HabitNudges(habits, agent, push, lambda: evening_at(digest) is not None).run(),
             *([errands.run(), watches.run(), releases.run()] if errands else []),
             *([browsing.run()] if browsing else []),
             videos.run(),

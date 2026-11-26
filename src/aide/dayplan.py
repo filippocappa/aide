@@ -8,6 +8,11 @@ day is proposed as one events card (plans.py): nothing is in the calendar until 
 the study blocks around the calendar alone are proposed in the same chat, with a push of its own (nothing is in
 the calendar until Add, so an unseen card is a day without its study).
 
+When the evening digest is made within TOGETHER of `day_plan_at`, the question goes out with it instead, at the
+digest's time: one message (the digest's greeting, then tomorrow and the question) and one push, the evening's one
+notification (digest.py's `evening_hook`). If the digest hasn't come WAIT after both times, it asks on its own.
+A newer plan for the same day drops what's still proposed on the older one, so only one card can be added.
+
 The study blocks land in the study calendar as review sessions, which is what the off-task nudges (nudges.py) watch.
 """
 
@@ -28,16 +33,21 @@ FALLBACK_AFTER = timedelta(minutes=90)  # no answer by then: the study blocks ar
 PARTS = {"morning": (time(0, 0), time(13, 0)), "afternoon": (time(13, 0), time(18, 0)),
          "evening": (time(18, 0), time(23, 59))}
 MOST_ITEMS = 12  # the user's things in one plan
+TOGETHER = timedelta(minutes=30)  # the evening digest this close to day_plan_at: the question goes out with it
+WAIT = timedelta(minutes=15)  # past both times with no digest yet: the question goes out alone
+PUSH_BODY = 400  # characters of the digest's greeting in the push
 
 
 class DayPlanner:
     def __init__(self, store: ExamPlan, plans, agent, push=None, reminders=None,
                  events: Callable[[datetime, datetime], Awaitable[list[dict] | None]] | None = None,
-                 calendar: str | None = None):
+                 calendar: str | None = None, digest_at: Callable[[], time | None] | None = None):
         """`events(start, end)`: the calendar as event_json; `calendar`: where the user's own things go (the default
-        calendar), the study blocks going to the study calendar."""
+        calendar), the study blocks going to the study calendar; `digest_at()`: the evening digest's time, None
+        when it's off."""
         self.store, self.plans, self.agent, self.push = store, plans, agent, push
         self.reminders, self.events, self.calendar = reminders, events, calendar
+        self.digest_at = digest_at
         self.tz: ZoneInfo = store.tz
 
     async def run(self) -> None:
@@ -65,8 +75,17 @@ class DayPlanner:
         s[key] = day.isoformat()
         self.store._save(s)
 
+    def _together(self, s: dict, day: date) -> datetime | None:
+        """When the evening digest is due on `day`, if the question goes out with it; else None."""
+        if self.digest_at is None or (d := self.digest_at()) is None:
+            return None
+        at = time.fromisoformat(s["day_plan_at"])
+        digest, asked = datetime.combine(day, d, self.tz), datetime.combine(day, at, self.tz)
+        return digest if abs(digest - asked) <= TOGETHER else None
+
     async def tick(self, now: datetime | None = None) -> str | None:
-        """Asks at day_plan_at, proposes the fallback FALLBACK_AFTER later; each once per evening. Returns what it did."""
+        """Asks at day_plan_at (or with the evening digest, `with_digest`), proposes the fallback FALLBACK_AFTER later;
+        each once per evening. Returns what it did."""
         now = now or utcnow()
         local = now.astimezone(self.tz)
         s = self.store.settings()
@@ -77,6 +96,9 @@ class DayPlanner:
         if local.time() < at:
             return None
         if s.get("day_asked") != tomorrow.isoformat():
+            digest = self._together(s, local.date())
+            if digest is not None and local < max(digest, datetime.combine(local.date(), at, self.tz)) + WAIT:
+                return None  # the evening digest asks, in its own push
             self._mark("day_asked", tomorrow)  # once, whatever happens next
             return "asked" if await self.ask(tomorrow, now) else None
         fallback = min(datetime.combine(local.date(), at, self.tz) + FALLBACK_AFTER,
@@ -149,14 +171,31 @@ class DayPlanner:
                 for b in blocks) + ".")
         return "\n".join(lines), minutes
 
-    async def ask(self, day: date, now: datetime) -> bool:
-        """False (nothing said) when the exam plan has no study for `day`: no evening question about it."""
+    async def with_digest(self, digest: dict, now: datetime | None = None) -> bool:
+        """The evening digest was just made: asks with it when it's due together with the question and hasn't been
+        asked. True when it did (one push for both), False when the digest pushes by itself."""
+        now = now or utcnow()
+        local = now.astimezone(self.tz)
+        s = self.store.settings()
+        if not s["day_plan"] or self.plans is None or self.plans.cal is None:
+            return False
+        tomorrow = local.date() + timedelta(days=1)
+        if s.get("day_asked") == tomorrow.isoformat() or self._together(s, local.date()) is None:
+            return False
+        self._mark("day_asked", tomorrow)
+        return await self.ask(tomorrow, now, digest.get("greeting") or None)
+
+    async def ask(self, day: date, now: datetime, greeting: str | None = None) -> bool:
+        """False (nothing said) when the exam plan has no study for `day`: no evening question about it.
+        `greeting`: the evening digest's, said first and pushed with the question."""
         text, minutes = await self.summary(day, now)
         if not minutes:
             self._mark("day_planned", day)
             return False
         text += ("\n\nAnything else you have to do tomorrow? Tell me the time, or how long it takes and roughly when, "
                  "and I'll fit the study around it. Or just say that's all.")
+        if greeting:
+            text = f"{greeting}\n\n{text}"
         chat = self.chat()
         note = (f"[Tomorrow's plan ({day:%a %d %b}), asked at {datetime.now(self.tz):%H:%M}. When the user answers, "
                 "call plan_tomorrow with what they have to do tomorrow that isn't already in the calendar (timed "
@@ -164,9 +203,12 @@ class DayPlanner:
                 "call it with no items. If they say to skip tomorrow, don't call it.]")
         await self.agent.post(chat, note, text)
         if self.push is not None:
+            question = f"Anything else tomorrow besides {_hours(minutes)} of study?"
             try:
-                await self.push.send_message(chat, "Secretary · Tomorrow", "Anything else tomorrow besides "
-                                             + (f"{_hours(minutes)} of study" if minutes else "what's planned") + "?")
+                if greeting:  # the evening's one notification: the question on top, the digest under it
+                    await self.push.send_message(chat, f"Tomorrow · {question}", _shorten(greeting, PUSH_BODY))
+                else:
+                    await self.push.send_message(chat, "Secretary · Tomorrow", question)
             except Exception:
                 log.exception("couldn't push the day plan question")
         return True
@@ -210,12 +252,42 @@ class DayPlanner:
             items.append({"title": title, "start": f"{s0:%Y-%m-%dT%H:%M}", "end": f"{e0:%Y-%m-%dT%H:%M}",
                           "calendar": t.get("calendar") or self.calendar or self.store.study.study_calendar,
                           "notes": "Planned the evening before."})
+        for item, (s0, e0) in zip(items, busy):  # study already added (an earlier plan's) stays: say it clashes
+            for course, h0, h1 in self.store._held.get(day, []):
+                if h0 < e0 and s0 < h1:
+                    left.append(f"{item['title']} clashes with study already in the calendar ({course.capitalize()}, "
+                                f"{h0.astimezone(self.tz):%H:%M}–{h1.astimezone(self.tz):%H:%M}): say so, so they "
+                                "move one in the calendar")
         study, warnings = await self.store.week(day, now, days=1, busy=busy, fresh=False)
         items = sorted(items + study, key=lambda i: i["start"])
         self._mark("day_planned", day)
         if not items:
             return None, left
-        return self.plans.propose(conversation, agent, items), left + warnings
+        plan = self.plans.propose(conversation, agent, items)
+        self._replace(day, plan["public_id"])
+        return plan, left + warnings
+
+    def _replace(self, day: date, public_id: str) -> None:
+        """`public_id` is now `day`'s plan: what's still proposed on the one before won't be added (added stays)."""
+        s = self.store.settings()
+        before = (s.get("day_plans") or {}).get(day.isoformat())
+        s["day_plans"] = {k: v for k, v in (s.get("day_plans") or {}).items() if k >= f"{day - timedelta(days=7)}"}
+        s["day_plans"][day.isoformat()] = public_id
+        self.store._save(s)
+        if before and before != public_id:
+            try:
+                self.plans.drop(before)
+            except KeyError:
+                pass
+
+
+def _shorten(text: str, most: int) -> str:
+    """At most `most` characters, cut after a sentence when one ends in the second half."""
+    if len(text) <= most:
+        return text
+    cut = text[:most]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    return cut[:end + 1] if end > most // 2 else cut[:most - 1].rstrip() + "…"
 
 
 def _local(value: str, day: date, tz: ZoneInfo) -> datetime:
@@ -245,7 +317,7 @@ def dayplan_tools(planner: DayPlanner, where=None) -> list[Tool]:
         return ToolOutput(
             f"Proposed {d:%a %d %b} as plan {plan['public_id']}: their things first, the exam plan's study around them "
             f"(review sessions in the study calendar). Not in the calendar until the user taps Add on the card.\n"
-            f"{lines}" + (f"\nNot placed (say so, and ask when): {'; '.join(left)}" if left else ""),
+            f"{lines}" + (f"\nSay so (and ask when for anything not placed): {'; '.join(left)}" if left else ""),
             {"type": "events", "events": planner.plans.card_items(plan)})
 
     item = {"type": "object", "properties": {
