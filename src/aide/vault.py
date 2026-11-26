@@ -623,11 +623,17 @@ class Vault:
                 return False  # someone else's file with that name
             have = {q for line in text.splitlines() if (q := _question(line))}
             new = [c for c in item.cards if _question(c) not in have]
-            if not new:
+            # The link to the topic's page follows it when the topics are numbered again (the rest is the plugin's).
+            head = next((line for line in item.text.splitlines() if line.startswith("Cards for [[")), None)
+            linked = re.sub(r"^Cards for \[\[[^\]]*\]\]", lambda m: head.split("]]", 1)[0] + "]]", text,
+                            count=1, flags=re.M) if head else text
+            if not new and linked == text:
                 if rec is None:
                     self._record(item, _sha(text.encode()))
                 return False
-            text = text + ("" if text.endswith("\n") else "\n") + "\n".join(new) + "\n"
+            text = linked
+            if new:
+                text = text + ("" if text.endswith("\n") else "\n") + "\n".join(new) + "\n"
         disk.parent.mkdir(parents=True, exist_ok=True)
         tmp = disk.with_name(f".{disk.name}.tmp")
         tmp.write_text(text)

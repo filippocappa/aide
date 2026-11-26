@@ -488,15 +488,59 @@ _MONEY = re.compile(r"(?<![\\$])\$(?=\d[\d,]*(?:\.\d+)?(?:bn|tn|[kKmMbB])?(?:\s+
 _DISPLAY = re.compile(r"(?<!\\)\$\$(?=\S)([^$\n]+?)(?<=\S)(?<!\\)\$\$")
 
 
+_ESCAPED = re.compile(r"\\\$(?=\d)")  # \$ before a number: money, or a formula escaped by mistake
+_MATHY = re.compile(r"[=<>^_+*/≤≥≈]|\\")
+_COMMAND = re.compile(r"\\[A-Za-z]+(?:\{[^{}]*\})?")  # \times, \text{number of shares}: not words of the text
+
+
+def _close(line: str, start: int) -> int | None:
+    """Where the next unescaped single $ from `start` is on the line."""
+    for m in re.finditer(r"(?<![\\$])\$(?!\$)", line[start:]):
+        return start + m.start()
+    return None
+
+
+def _formula(span: str) -> bool:
+    """What's between a $ before a number and the next $ reads as maths ($500 = 0.6(1200-8000i)$), not as money
+    and the words after it ($5 and the rate $r$)."""
+    return (bool(span) and not span[-1].isspace() and bool(_MATHY.search(span))
+            and not re.search(r"[A-Za-z]{3,}", _COMMAND.sub(" ", span)))
+
+
+def _money(line: str) -> str:
+    """Each $ before an amount escaped, unless it opens a formula closed on the line; a formula's $ escaped
+    earlier (by the model, or by this before 2026-11-26) given back."""
+    line = _ESCAPED.sub(lambda m: "$" if (c := _close(line, m.end())) is not None
+                        and _formula(line[m.end():c]) else m.group(0), line)
+    out, last = [], 0
+    for m in _MONEY.finditer(line):
+        c = _close(line, m.end())
+        if c is not None and _formula(line[m.end():c]):
+            continue
+        out.append(line[last:m.start()] + "\\")
+        last = m.start()
+    return "".join(out) + line[last:]
+
+
+def _inside(line: str) -> str:
+    """Spaces just inside an inline formula dropped ($r' $ is drawn as typed), when the line's $ pair up."""
+    if len(re.findall(r"(?<![\\$])\$(?!\$)", line)) % 2:
+        return line
+    return re.sub(r"(?<![\\$])\$(?!\$)(.+?)(?<![\\$])\$(?!\$)",
+                  lambda m: f"${m.group(1).strip()}$" if m.group(1).strip() else m.group(0), line)
+
+
 def tidy_math(text: str) -> str:
     """Markdown from the model made safe for Obsidian's maths: a dollar for money escaped (\\$13.5 trillion), else
-    it pairs with the next $ and the words between become a formula; a $$…$$ inside a sentence made inline, since
-    Obsidian draws it as a centred block that splits the sentence."""
+    it pairs with the next $ and the words between become a formula, but a formula starting with a number kept
+    ($12 = 12$); no space just inside a $…$; a $$…$$ inside a sentence made inline, since Obsidian draws it as a
+    centred block that splits the sentence."""
     out = []
-    for line in _MONEY.sub(r"\\$", text).split("\n"):
+    for line in text.split("\n"):
+        line = _money(line)
         bare = line.lstrip("> \t")
         if not (bare.startswith("$$") and bare.rstrip().endswith("$$")):
-            line = _DISPLAY.sub(r"$\1$", line)
+            line = _inside(_DISPLAY.sub(r"$\1$", line))
         out.append(line)
     return "\n".join(out)
 

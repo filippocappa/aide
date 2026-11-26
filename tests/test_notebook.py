@@ -1057,3 +1057,39 @@ async def test_topics_build_on_each_other(nb):
     task.cancel()
     assert len(nb.client.linked) == 2 and nb.notebook.prerequisites(nb.macro["id"])[crowding["public_id"]] == []
     assert not any("prerequisites" in m["text"] for m in chat_messages(nb))  # a failure isn't posted either
+
+
+def test_a_formula_that_starts_with_a_number_stays_a_formula():
+    """$12 = 12$ was escaped as money, breaking the line in Obsidian (47 lines in the vault, 2026-11-26)."""
+    cases = {
+        r"Equilibrium $H = H^d$: \$500 = 0.6\,(1200-8000i)$, so $500/0.6 = 833.3$.":
+            r"Equilibrium $H = H^d$: $500 = 0.6\,(1200-8000i)$, so $500/0.6 = 833.3$.",
+        r"With $c = 12$ we get $12 = 12$, always true.": r"With $c = 12$ we get $12 = 12$, always true.",
+        r"Taxes equal \$1000K \times (1+r)$, where $r$ is the rate.":
+            r"Taxes equal $1000K \times (1+r)$, where $r$ is the rate.",
+        r"Assets are \$60 tn here and \$35 tn abroad, so $N = -25$.":
+            r"Assets are \$60 tn here and \$35 tn abroad, so $N = -25$.",
+        r"It costs $5 and the rate is $r$.": r"It costs \$5 and the rate is $r$.",
+        r"Output $13.5 trillion and $x$; ranges $5–$10, costs $5.":
+            r"Output \$13.5 trillion and $x$; ranges \$5–\$10, costs \$5.",
+        r"the real rate it needs, $r' $, is below $\nabla f = $ ?": r"the real rate it needs, $r'$, is below $\nabla f =$ ?",
+    }
+    for raw, want in cases.items():
+        assert tidy_math(raw) == want
+        assert tidy_math(want) == want
+
+
+async def test_a_cards_file_follows_its_topics_page(nb):
+    """Topics numbered again moved the pages, but the cards files linked the old ones (29 in the vault, 2026-11-26)."""
+    await built(nb)
+    await nb.vault.sync()
+    cards = nb.vault.folder / "Aide/macroeconomics/Cards/The IS-LM model.md"
+    old = cards.read_text()
+    assert "Cards for [[Aide/macroeconomics/01 The IS-LM model|The IS-LM model]]." in old
+    reviewed = old.replace("[[Aide/macroeconomics/01 The IS-LM model|", "[[Aide/macroeconomics/07 The IS-LM model|")
+    reviewed = reviewed.replace("saving\n", "saving <!--SR:!2026-10-25,3,250-->\n")
+    cards.write_text(reviewed)
+    await nb.vault.sync()
+    now = cards.read_text()
+    assert "[[Aide/macroeconomics/01 The IS-LM model|The IS-LM model]]" in now and "07 The IS-LM" not in now
+    assert "saving <!--SR:!2026-10-25,3,250-->\n" in now  # the plugin's review data stays
