@@ -168,7 +168,7 @@ class Nudges:
             rows = self.conn.execute("SELECT id, name FROM courses").fetchall()
         except sqlite3.OperationalError:  # no study store yet
             return None
-        words = [w for w in _words(title) if len(w) >= 4 and w not in ("study", "review", "lecture", "lezione")]
+        words = [w for w in _words(title) if len(w) >= 4 and w not in ("study", "practice", "review", "lecture", "lezione")]
         text = " ".join(_words(title))
         best = None
         for course_id, name in rows:

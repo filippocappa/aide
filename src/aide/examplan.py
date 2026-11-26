@@ -31,7 +31,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .db import utcnow
-from .study import REVIEW_PREFIX, _name
+from .study import SESSION_PREFIXES, _name, session_course, session_kind
 from .tools import Tool, ToolOutput
 
 log = logging.getLogger(__name__)
@@ -307,9 +307,8 @@ class ExamPlan:
                 title = _name(e.title)
                 s0 = e.start if e.start.tzinfo else e.start.replace(tzinfo=self.tz)
                 e0 = e.end if e.end.tzinfo else e.end.replace(tzinfo=self.tz)
-                if title.startswith(REVIEW_PREFIX):  # the plan's own review sessions are study time
-                    self._held.setdefault(s0.astimezone(self.tz).date(), []).append(
-                        (title[len(REVIEW_PREFIX):].strip().casefold(), s0, e0))
+                if (course := session_course(title)) is not None:  # the plan's own sessions are study time
+                    self._held.setdefault(s0.astimezone(self.tz).date(), []).append((course.casefold(), s0, e0))
                     continue
                 if title.casefold() in self.study.skip:
                     continue  # and so are the user's study blocks
@@ -734,12 +733,13 @@ class ExamPlan:
                 if minutes < MIN_PIECE:
                     continue
                 what = ", ".join(f"{p} {m} min" for p, m in phases.items())
+                kind = session_kind(phases)
                 notes = (f"From the exam plan, before the {t['target']['what']} on {t['target']['date']:%a %d %b}: "
                          f"{what}." + ("\nTopics: " + "; ".join(topics) if topics else ""))
                 for s0, e0 in (part for piece in _place(gaps, d, minutes) for part in _split(*piece)):
-                    items.append({"title": REVIEW_PREFIX + name, "start": f"{s0:%Y-%m-%dT%H:%M}",
+                    items.append({"title": SESSION_PREFIXES[kind] + name, "start": f"{s0:%Y-%m-%dT%H:%M}",
                                   "end": f"{e0:%Y-%m-%dT%H:%M}", "calendar": self.study.study_calendar,
-                                  "course_id": t["course"]["id"], "topics": topics, "notes": notes})
+                                  "course_id": t["course"]["id"], "kind": kind, "topics": topics, "notes": notes})
         items.sort(key=lambda i: i["start"])
         return items, warnings
 
@@ -890,7 +890,8 @@ def week_message(items: list[dict], warnings: list[str]) -> str:
     by: dict[str, int] = {}
     for i in items:
         minutes = int((datetime.fromisoformat(i["end"]) - datetime.fromisoformat(i["start"])).total_seconds() // 60)
-        by[i["title"][len(REVIEW_PREFIX):]] = by.get(i["title"][len(REVIEW_PREFIX):], 0) + minutes
+        course = session_course(i["title"]) or i["title"]
+        by[course] = by.get(course, 0) + minutes
     total = sum(by.values())
     out = (f"Your study week from the exam plan: {len(items)} session{'s' if len(items) != 1 else ''}, "
            f"{_hours(total)} in all (" + ", ".join(f"{n} {_hours(m)}" for n, m in by.items()) + "). "

@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 from .db import utcnow
 from .examplan import BUSY_GAP, ExamPlan, _cut, _hours, _place
+from .study import session_course
 from .tools import Tool, ToolOutput
 
 log = logging.getLogger(__name__)
@@ -114,7 +115,7 @@ class DayPlanner:
                                   "in the calendar until Add.]", text,
                                   [{"type": "events", "events": self.plans.card_items(plan)}])
             if self.push is not None:  # else it waits unseen in the chat, and nothing is in the calendar
-                study = sum(1 for e in self.plans.card_items(plan) if e["title"].startswith("Review:"))
+                study = sum(1 for e in self.plans.card_items(plan) if session_course(e["title"]))
                 try:
                     await self.push.send_message(self.chat(), "Secretary · Tomorrow", "Tomorrow's plan is ready"
                                                  + (f": {study} study block{'s' * (study != 1)}" if study else "")

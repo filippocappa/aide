@@ -4,6 +4,7 @@ from aide.dayplan import DayPlanner, dayplan_tools
 from aide.icloud import CalEvent
 from aide.plans import PlanStore
 from aide.reminders import ReminderStore
+from aide.study import session_course
 from test_examplan import ROME, TODAY, exam_in, overlaps
 
 TOMORROW = TODAY + timedelta(days=1)
@@ -65,7 +66,7 @@ async def test_it_asks_once_in_the_evening_then_falls_back(tmp_path):
     assert await planner.tick(evening(22, 40)) == "fallback"  # no answer in 90 minutes
     _, _, said, cards = agent.posts[1]
     assert said.startswith("No answer") and cards[0]["type"] == "events"
-    assert all(e["title"] == "Review: Macroeconomics" for e in cards[0]["events"])
+    assert all(session_course(e["title"]) == "Macroeconomics" for e in cards[0]["events"])
     assert len(push.sent) == 2 and push.sent[1][1] == "Secretary · Tomorrow"
     assert push.sent[1][2].startswith("Tomorrow's plan is ready: ") and "Tap Add" in push.sent[1][2]
     assert await planner.tick(evening(23)) is None and len(agent.posts) == 2 and len(push.sent) == 2
@@ -80,8 +81,8 @@ async def test_their_things_first_then_the_study_around_them(tmp_path):
         {"title": "Groceries", "minutes": 45, "part": "afternoon"},
     ])
     events = out.attachment["events"]
-    mine = {e["title"]: e for e in events if not e["title"].startswith("Review: ")}
-    study_items = [e for e in events if e["title"].startswith("Review: ")]
+    mine = {e["title"]: e for e in events if not session_course(e["title"])}
+    study_items = [e for e in events if session_course(e["title"])]
     assert set(mine) == {"Dentist", "Groceries"} and all(e["calendar"] == "Home" for e in mine.values())
     assert local(mine["Dentist"]["start"]).hour == 10
     groceries = local(mine["Groceries"]["start"])
@@ -158,10 +159,10 @@ async def test_a_thing_on_top_of_study_already_added_is_said(tmp_path):
     db, study, plan, plans, planner, agent, push = await setup(tmp_path)
     tool = dayplan_tools(planner, lambda: ("c_tomorrow", "secretary"))[0]
     first = (await tool.handler()).attachment["events"]
-    block = next(e for e in first if e["title"].startswith("Review: "))
+    block = next(e for e in first if session_course(e["title"]))
     s0, e0 = local(block["start"]), local(block["end"])
     study.calendar._events.append(CalEvent("r1", "Work", block["title"], s0, e0))  # the fallback card, added
     plan.invalidate()
     out = await tool.handler(items=[{"title": "Gym", "start": f"{s0:%H:%M}", "minutes": 30}])
     assert f"Gym clashes with study already in the calendar (Macroeconomics, {s0:%H:%M}–{e0:%H:%M})" in out
-    assert not any(e["title"].startswith("Review: ") for e in out.attachment["events"])  # the study is there
+    assert not any(session_course(e["title"]) for e in out.attachment["events"])  # the study is there

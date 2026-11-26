@@ -1246,8 +1246,9 @@ struct QuizResultSheet: View {
     }
 }
 
-/// A review session starting, in the course chat (docs/API.md, Chat, `review`): the course, how long, the topics,
-/// and the quiz a tap away: the Study page on its topics, or by voice.
+/// A study session starting, in the course chat (docs/API.md, Chat, `review`): the course, how long, the topics,
+/// and the quiz a tap away (the Study page on its topics, or by voice); for topics not learnt yet (`study`), the
+/// lesson instead, which Professor opens.
 struct ReviewStartCard: View {
     let session: ReviewSession
     @EnvironmentObject private var chat: ChatViewModel
@@ -1264,7 +1265,7 @@ struct ReviewStartCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "book.fill")
-                Text("Review session").fontWeight(.semibold)
+                Text("\(session.label) session").fontWeight(.semibold)
                 Spacer(minLength: 0)
                 Label([when, "\(session.minutes) min"].compactMap { $0 }.joined(separator: " · "), systemImage: "clock")
             }
@@ -1281,6 +1282,19 @@ struct ReviewStartCard: View {
                     }
                 }
             }
+            if session.kind == "study" {
+                Button { Task { await chat.send("Open the lesson") } } label: {
+                    Label("Open the lesson", systemImage: "book")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .foregroundStyle(Theme.onAccent)
+                        .background(Theme.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(chat.isSending)
+                .padding(.top, 2)
+            } else {
             HStack(spacing: 10) {
                 Button { studying = StudyTarget(course: session.course, name: session.name, topics: session.topics) } label: {
                     Label("Quiz me", systemImage: "rectangle.on.rectangle.angled")
@@ -1305,6 +1319,7 @@ struct ReviewStartCard: View {
             .buttonStyle(.plain)
             .disabled(chat.isSending || voice.isActive)
             .padding(.top, 2)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

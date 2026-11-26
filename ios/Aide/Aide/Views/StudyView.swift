@@ -350,7 +350,7 @@ private struct UpNextCard: View {
                 if !last { Rectangle().fill(Theme.line).frame(width: 2).frame(maxHeight: .infinity) }
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text("Review: \(name(session.course))").font(.body.weight(index == 0 ? .semibold : .regular))
+                Text("\(session.label): \(name(session.course))").font(.body.weight(index == 0 ? .semibold : .regular))
                 Text(([ "\(session.minutes) min"] + session.topics).joined(separator: " · "))
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             }

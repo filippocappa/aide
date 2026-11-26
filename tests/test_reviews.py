@@ -41,7 +41,8 @@ async def test_a_review_session_goes_in_the_timetable_calendar(nb, reviews):
 
     listed = nb.api.get(f"/v1/reviews?course={nb.macro['id']}", headers=AUTH).json()
     assert listed == {"sessions": [{"id": s["public_id"], "course": nb.macro["id"], "start": start.isoformat(),
-                                    "minutes": 90, "topics": ["The IS-LM model", "Phillips curve"]}]}
+                                    "minutes": 90, "topics": ["The IS-LM model", "Phillips curve"],
+                                    "kind": "review"}]}
     assert nb.api.get("/v1/reviews?course=999", headers=AUTH).status_code == 404
 
     progress = await tools["study_progress"].handler(course="macroeconomics")
@@ -78,7 +79,7 @@ async def test_a_session_that_starts_is_announced_in_the_course_chat(nb, reviews
     assert history[-1]["text"] == "Time for your Macroeconomics review. Shall I quiz you on these?"
     assert history[-1]["attachments"] == [{"type": "review", "review": {
         "id": s["public_id"], "course": nb.macro["id"], "start": (start + timedelta(hours=2)).isoformat(),
-        "minutes": 45, "topics": ["The IS-LM model"], "name": "Macroeconomics"}}]
+        "minutes": 45, "topics": ["The IS-LM model"], "kind": "review", "name": "Macroeconomics"}}]
     await watcher.tick((start + timedelta(hours=2, minutes=2)).astimezone(timezone.utc))
     assert len(nb.push.messages) == 1  # once
 
@@ -104,8 +105,27 @@ async def test_sessions_must_make_sense(nb, reviews):
 
 async def test_review_sessions_are_never_a_course(tmp_path):
     db = Database(":memory:")
-    reviews = [e.__class__(e.uid, e.calendar, "Review: Macroeconomics", e.start, e.end)
-               for e in weekly("x", EVENTS[0].start + timedelta(hours=4))]
-    study = StudyStore(db, ROME, FakeCalendar([*EVENTS, *reviews]), files_dir=tmp_path / "files")
-    assert "Review: Macroeconomics" not in {c["name"] for c in await study.courses()}
+    sessions = [e.__class__(e.uid + p, e.calendar, f"{p}: Macroeconomics", e.start, e.end)
+                for p in ("Review", "Study", "Practice") for e in weekly("x", EVENTS[0].start + timedelta(hours=4))]
+    study = StudyStore(db, ROME, FakeCalendar([*EVENTS, *sessions]), files_dir=tmp_path / "files")
+    assert not {"Review: Macroeconomics", "Study: Macroeconomics", "Practice: Macroeconomics"} & {
+        c["name"] for c in await study.courses()}
     db.close()
+
+
+async def test_a_study_session_offers_the_lesson_not_a_quiz(nb, reviews):
+    """Topics the user hasn't learnt yet: "Study: <course>", and the lesson when it starts (2026-11-26)."""
+    store, cal, _ = reviews
+    start = tomorrow(10)
+    s = await store.add(nb.macro["id"], start, 60, ["The IS-LM model"], "study")
+    (ev,) = cal.store.values()
+    assert (ev.title, ev.notes) == ("Study: Macroeconomics", "Study with Professor in Aide.\nTopics: The IS-LM model")
+    assert store.as_json(s)["kind"] == "study"
+    await ReviewWatcher(store, nb.agent, nb.push).tick(start.astimezone(timezone.utc) + timedelta(minutes=1))
+    chat = nb.study.chat(nb.macro["id"])
+    assert nb.push.messages == [(chat, "Professor · Macroeconomics",
+                                 "Time to study Macroeconomics (60 min): The IS-LM model. Shall I open the lesson?")]
+    history = nb.api.get(f"/v1/history?conversation_id={chat}", headers=AUTH).json()["messages"]
+    assert history[-1]["text"] == "Time to study Macroeconomics. Shall I open the lesson on The IS-LM model?"
+    with pytest.raises(ValueError):
+        await store.add(nb.macro["id"], start, 60, [], "cram")

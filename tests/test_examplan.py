@@ -18,6 +18,7 @@ from aide.quiz import QuizStore
 from aide.reminders import ReminderStore
 from aide.study import StudyStore
 from aide.tools import ToolRegistry
+from aide.study import session_course, session_kind
 from test_api import AUTH, TOKEN, FakeCalendar
 from test_food import RecordingClient
 from test_objectives import FakeEngine
@@ -386,7 +387,7 @@ async def test_the_week_goes_into_free_time(tmp_path):
     items, warnings = await plan.week(None, NOW)
     out = await plan.plan(NOW)
     days = {d["date"]: d["minutes"] for d in out["targets"][0]["days"]}
-    assert items and all(i["title"] == "Review: Macroeconomics" and i["calendar"] == study.study_calendar
+    assert items and all(session_course(i["title"]) == "Macroeconomics" and i["calendar"] == study.study_calendar
                          and i["course_id"] == macro["id"] for i in items)
     per_day: dict[str, int] = {}
     for i in items:
@@ -411,7 +412,7 @@ async def test_proposing_the_week(tmp_path):
     assert propose.name == "propose_study_week"
     text = await propose.handler()
     assert "review sessions" in text and text.attachment["type"] == "events"
-    assert all(e["title"] == "Review: Macroeconomics" for e in text.attachment["events"])
+    assert all(session_course(e["title"]) == "Macroeconomics" for e in text.attachment["events"])
 
     class Agent_:
         def __init__(self):
@@ -447,3 +448,14 @@ def test_a_block_longer_than_a_session_is_cut_into_sessions():
     parts = _split(s0, s0 + timedelta(minutes=247))
     assert [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b in parts] == [("14:15", "16:18"), ("16:18", "18:22")]
     assert _split(s0, s0 + timedelta(minutes=240)) == [(s0, s0 + timedelta(minutes=240))]
+
+
+def test_a_block_is_named_by_what_its_for():
+    """Topics not learnt yet are study, not review (2026-11-26: "I don't know nothing, why always review?")."""
+    assert session_kind({"learn": 247}) == "study"
+    assert session_kind({"learn": 30, "practise": 60}) == "practice"
+    assert session_kind({"mocks": 90, "review": 20}) == "practice"
+    assert session_kind({"review": 40}) == "review"
+    assert session_course("Study: Business law") == "Business law"
+    assert session_course("Review: Macroeconomics") == "Macroeconomics"
+    assert session_course("Studying") is None

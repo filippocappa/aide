@@ -1,11 +1,11 @@
 """Review sessions on the calendar (#4). The contract is docs/API.md, "Quizzes and review sessions".
 
 Professor plans them with the user in the course chat (when, how long, which topics: the weakest first, working back
-from the exam) and puts each in the study calendar as "Review: Macroeconomics", with the topics in its notes, once
-the user agrees. Creating an event runs at once, as it does for Secretary; cancelling one is queued in the chat, or
+from the exam) and puts each in the study calendar as "Study: Macroeconomics" (topics to learn), "Practice: …" or
+"Review: …", with the topics in its notes, once the user agrees. Creating an event runs at once, as it does for Secretary; cancelling one is queued in the chat, or
 the user's own tap in the app.
 
-When a session starts, Professor says so in the course chat, with a push, and offers to quiz the user on its topics.
+When a session starts, Professor says so in the course chat, with a push, and offers the lesson (study) or a quiz.
 The calendar is the truth: a session moved there is followed, and one deleted there is dropped.
 """
 
@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from .db import utcnow
 from .icloud import CalendarBackend
-from .study import REVIEW_PREFIX, StudyStore
+from .study import SESSION_NOTES, SESSION_PREFIXES, StudyStore
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS review_sessions (
     topics       TEXT NOT NULL,         -- JSON: the topics' titles
     created_at   TEXT NOT NULL,
     announced_at TEXT,                  -- when Professor said it's time
-    cancelled_at TEXT
+    cancelled_at TEXT,
+    kind         TEXT NOT NULL DEFAULT 'review'  -- study (new topics), practice or review: the title's prefix
 );
 CREATE INDEX IF NOT EXISTS review_sessions_start ON review_sessions (starts_at);
 """
@@ -50,9 +51,15 @@ class ReviewStore:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo, cal: CalendarBackend | None, study: StudyStore):
         self.conn, self.tz, self.cal, self.study = conn, tz, cal, study
         self.conn.executescript(SCHEMA)
+        if "kind" not in {r[1] for r in self.conn.execute("PRAGMA table_info(review_sessions)")}:
+            self.conn.execute("ALTER TABLE review_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'review'")
 
-    async def add(self, course_id: int, start: datetime, minutes: int, topics: list[str]) -> dict:
-        """A session in the study calendar, from `start` (local or aware) for `minutes`, on the topics named."""
+    async def add(self, course_id: int, start: datetime, minutes: int, topics: list[str],
+                  kind: str = "review") -> dict:
+        """A session in the study calendar, from `start` (local or aware) for `minutes`, on the topics named:
+        "Study: <course>" to learn them, "Practice: …" or "Review: …" (`kind`)."""
+        if kind not in SESSION_PREFIXES:
+            raise ValueError(f"a session is one of {', '.join(SESSION_PREFIXES)}")
         if self.cal is None:
             raise RuntimeError("There's no calendar on this server.")
         course = self.study.course(course_id)
@@ -64,14 +71,15 @@ class ReviewStore:
         if start < datetime.now(self.tz) - timedelta(minutes=5):
             raise ValueError("that time has passed")
         name = course["name"][:1].upper() + course["name"][1:]
-        notes = "Review with Professor in Aide." + ("\nTopics: " + "; ".join(topics) if topics else "")
-        ev = await asyncio.to_thread(self.cal.create, self.study.study_calendar, REVIEW_PREFIX + name, start,
+        notes = SESSION_NOTES[kind] + ("\nTopics: " + "; ".join(topics) if topics else "")
+        ev = await asyncio.to_thread(self.cal.create, self.study.study_calendar, SESSION_PREFIXES[kind] + name, start,
                                      start + timedelta(minutes=minutes), "", notes)
         public_id = "v_" + secrets.token_hex(6)
         self.conn.execute(
-            "INSERT INTO review_sessions (public_id, course_id, event_uid, starts_at, minutes, topics, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)", (public_id, course_id, ev.uid, start.astimezone(timezone.utc).isoformat(),
-                                             minutes, json.dumps(topics), utcnow().isoformat()))
+            "INSERT INTO review_sessions (public_id, course_id, event_uid, starts_at, minutes, topics, created_at, "
+            "kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (public_id, course_id, ev.uid, start.astimezone(timezone.utc).isoformat(), minutes, json.dumps(topics),
+             utcnow().isoformat(), kind))
         return self.get(public_id)
 
     def get(self, public_id: str) -> dict | None:
@@ -141,12 +149,14 @@ class ReviewStore:
     def line(self, s: dict) -> str:
         start = s["start"].astimezone(self.tz)
         course = (self.study.course(s["course_id"]) or {}).get("name", "?")
-        return (f"[{s['public_id']}] {start:%a %d %b %H:%M}, {s['minutes']} min · {course}" +
+        kind = f" ({s['kind']})" if s["kind"] != "review" else ""
+        return (f"[{s['public_id']}] {start:%a %d %b %H:%M}, {s['minutes']} min · {course}{kind}" +
                 (f" · {'; '.join(s['topics'])}" if s["topics"] else ""))
 
     def as_json(self, s: dict) -> dict:
         return {"id": s["public_id"], "course": s["course_id"],
-                "start": s["start"].astimezone(self.tz).isoformat(), "minutes": s["minutes"], "topics": s["topics"]}
+                "start": s["start"].astimezone(self.tz).isoformat(), "minutes": s["minutes"], "topics": s["topics"],
+                "kind": s["kind"]}
 
 
 class ReviewWatcher:
@@ -170,12 +180,23 @@ class ReviewWatcher:
                 continue
             name = course["name"][:1].upper() + course["name"][1:]
             topics = ", ".join(s["topics"])
-            alert = (f"Time for your {name} review ({s['minutes']} min)" + (f": {topics}." if topics else ".") +
-                     " Shall I quiz you?")
-            text = f"Time for your {name} review. Shall I quiz you" + (" on these?" if topics else "?")
-            note = (f"[Review session {s['public_id']} starts now: {name}, {s['minutes']} min" +
-                    (f", topics {topics}" if topics else "") + ". When the user wants the quiz, quiz_me on these "
-                    "topics.]")
+            if s["kind"] == "study":  # new topics: learn them first, a quiz comes later
+                alert = (f"Time to study {name} ({s['minutes']} min)" + (f": {topics}." if topics else ".") +
+                         " Shall I open the lesson?")
+                text = (f"Time to study {name}. Shall I open the lesson" +
+                        (f" on {s['topics'][0]}?" if topics else "?"))
+                note = (f"[Study session {s['public_id']} starts now: {name}, {s['minutes']} min" +
+                        (f", topics {topics}" if topics else "") + ". It's for learning these topics, which the user "
+                        "doesn't know yet, not for a quiz: when they want to start, open_page the lesson on the "
+                        "first one, then the next.]")
+            else:
+                what = "practice" if s["kind"] == "practice" else "review"
+                alert = (f"Time for your {name} {what} ({s['minutes']} min)" + (f": {topics}." if topics else ".") +
+                         " Shall I quiz you?")
+                text = f"Time for your {name} {what}. Shall I quiz you" + (" on these?" if topics else "?")
+                note = (f"[{what.capitalize()} session {s['public_id']} starts now: {name}, {s['minutes']} min" +
+                        (f", topics {topics}" if topics else "") + ". When the user wants the quiz, quiz_me on these "
+                        "topics.]")
             chat = self.store.study.chat(s["course_id"])
             card = {"type": "review", "review": self.store.as_json(s) | {"name": name}}
             await self.agent.post(chat, note, text, [card])

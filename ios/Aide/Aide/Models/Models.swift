@@ -2420,8 +2420,19 @@ struct ReviewSession: Decodable, Identifiable, Hashable {
     let start: String
     let minutes: Int
     var topics: [String] = []
+    /// study (topics not learnt yet), practice or review; absent from an older server (review).
+    var kind: String?
     /// The course's name, on the chat card when one starts.
     var name: String?
+
+    /// What the calendar calls it: "Study", "Practice" or "Review".
+    var label: String {
+        switch kind {
+        case "study": return "Study"
+        case "practice": return "Practice"
+        default: return "Review"
+        }
+    }
 }
 struct ReviewSessionList: Decodable { let sessions: [ReviewSession] }
 

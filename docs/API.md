@@ -1223,7 +1223,7 @@ a run; `assumptions`, with `learnt`).
 
 **The days:** from today (from now, less what's been studied today in focus sessions) to the day before the date: the
 time between waking + 1 h and the next wake − 8h30 (Bedtime's wake times; 08:30–22:30 without), less every timed
-calendar event with 15 min around it (not "Review: …" sessions or the user's study blocks: those are study), at most
+calendar event with 15 min around it (not "Study: …", "Practice: …" or "Review: …" sessions or the user's study blocks: those are study), at most
 the day's cap: `term_cap_min` until the last lecture of a course with an exam ahead, `season_cap_min` from the day after.
 Targets take their days in date order; each spreads its hours as evenly as the days allow, and its phases are laid
 backwards from the date (review last, then mocks, practise, learn): a target that doesn't fit is short of learning.
@@ -1273,8 +1273,9 @@ course the plan gives time that day, "Study Macroeconomics for 1h30", with the p
 started like the rest; a replan makes a waiting one again with the plan's numbers then; one the user took or dropped
 isn't made twice. The model is told not to propose study time for those courses.
 
-**The week as review sessions** (since 2026-11-07): the plan's next 7 days placed in the free time as "Review: <course>"
-sessions, proposed on the week card (Events and plans: an `events` attachment, added only on Add, each through Review
+**The week as review sessions** (since 2026-11-07): the plan's next 7 days placed in the free time as sessions named
+by what the day's block is mostly for (since 2026-11-26): "Study: <course>" for the learn phase, "Practice: <course>"
+for practice and mocks, "Review: <course>" for review (`kind` study, practice or review), proposed on the week card (Events and plans: an `events` attachment, added only on Add, each through Review
 sessions with its topics). A course's day is one sitting in the first free stretch that holds it (starts on the quarter
 hour), else pieces of at least 25 min around the events, 15 min between two; a review session already in the calendar
 for the course that day comes off its minutes and its time. Topics run on across the days (learning in order, practice
@@ -1864,9 +1865,11 @@ Nothing new for the app to call: it's chat. To start one by voice, open the cour
 
 **Review sessions.** Professor plans them with the user in the course chat (free time in the calendar, the exam date,
 the weakest topics) and, once they agree, puts each in the timetable calendar as "Review: Macroeconomics" with the
-topics in its notes. When one starts, Professor says so in the course chat with a push (a plain chat message push,
-`conversation_id` the course chat) and offers the quiz on its topics. A session moved in the calendar is followed;
-one deleted there is dropped. Review events never count as lectures or courses. Since 2026-10-31 that message
+topics in its notes; since 2026-11-26 a session has a `kind`: `study` (topics not learnt yet, "Study: Macroeconomics"),
+`practice` ("Practice: …") or `review` (the default, and every older session). When one starts, Professor says so in
+the course chat with a push (a plain chat message push, `conversation_id` the course chat) and offers the quiz on its
+topics, or for a `study` session the lesson (the card's button sends "Open the lesson" in the chat). A session moved in the calendar is followed;
+one deleted there is dropped. Study, practice and review events never count as lectures or courses. Since 2026-10-31 that message
 carries a `review` card (Chat, attachments) with the session's time, length and topics.
 
 | Endpoint | Body | Response |
@@ -1875,7 +1878,7 @@ carries a `review` card (Chat, attachments) with the session's time, length and 
 | `DELETE /v1/reviews/{id}` | | `{"ok": true}`; takes it off the calendar (the user's tap is the confirmation). `404`. |
 
 Session: `{"id": "v_…", "course": 2, "start": "2026-10-28T15:00:00+01:00", "minutes": 90, "topics": ["The IS-LM
-model", "Phillips curve"]}`.
+model", "Phillips curve"], "kind": "review"}` (`kind` since 2026-11-26; an app treats it missing as `review`).
 
 ### Focus sessions
 
@@ -2416,8 +2419,8 @@ does those), `404` for an unknown one, `400` for an end before the start.
 
 Nothing is in the calendar until the user taps Add, which is the confirmation (as with a mail draft's Send):
 - `POST /v1/plans/{plan}/add` with `{"items": ["ep_…-1"]}` (or no body: every item still proposed) → `{"events":
-  [the plan's items]}`. A review session's item (`Review: <course>`) goes in as a review session (see Quizzes and
-  review sessions).
+  [the plan's items]}`. A review session's item (`Study: <course>`, `Practice: …` or `Review: …`, its `kind`) goes in
+  as a review session of that kind (see Quizzes and review sessions).
 - `POST /v1/plans/{plan}/drop` with the same body → `{"events": [...]}`: those won't be added.
 - The chat's agent is told what was added or removed. `404` for an unknown plan or item.
 

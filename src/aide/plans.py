@@ -86,7 +86,8 @@ class PlanStore:
             try:
                 if item.get("course_id") is not None and self.reviews is not None:
                     minutes = int((end - start).total_seconds() // 60)
-                    session = await self.reviews.add(item["course_id"], start, minutes, item.get("topics") or [])
+                    session = await self.reviews.add(item["course_id"], start, minutes, item.get("topics") or [],
+                                                     item.get("kind") or "review")
                     uid = session["event_uid"]
                 else:
                     last = end if isinstance(start, datetime) else end + timedelta(days=1)  # iCalendar's is exclusive

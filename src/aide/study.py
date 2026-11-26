@@ -184,7 +184,7 @@ class StudyStore:
                 counts[_name(e.title).casefold()] = counts.get(_name(e.title).casefold(), 0) + 1
         return [e for e in events if e.calendar == self.study_calendar and _name(e.title)
                 and counts[_name(e.title).casefold()] >= MIN_EVENTS and _name(e.title).casefold() not in self.skip
-                and not _name(e.title).startswith(REVIEW_PREFIX)]
+                and session_course(_name(e.title)) is None]
 
     async def courses(self) -> list[dict]:
         """Every course: the calendar's (added to the table as they appear) and the stored ones with lectures."""
@@ -452,6 +452,24 @@ class StudyStore:
 
 
 REVIEW_PREFIX = "Review: "  # review sessions (reviews.py) in the study calendar: never a course
+# A plan session's title by what it's for: learning new topics, practising them, or going back over them.
+SESSION_PREFIXES = {"study": "Study: ", "practice": "Practice: ", "review": REVIEW_PREFIX}
+SESSION_NOTES = {"study": "Study with Professor in Aide.", "practice": "Practice with Professor in Aide.",
+                 "review": "Review with Professor in Aide."}
+
+
+def session_course(title: str) -> str | None:
+    """The course a plan session's title names ("Study: Macroeconomics"), else None."""
+    for prefix in SESSION_PREFIXES.values():
+        if title.startswith(prefix):
+            return title[len(prefix):].strip()
+    return None
+
+
+def session_kind(phases: dict[str, int | float]) -> str:
+    """A block's kind from the exam plan's phases in it: the biggest decides (learn is study)."""
+    main = max(phases, key=lambda p: phases[p]) if phases else "review"
+    return {"learn": "study", "practise": "practice", "mocks": "practice"}.get(main, "review")
 
 
 def _name(title: str) -> str:

@@ -455,7 +455,9 @@ free_time (a weak topic that others build on goes before them: "builds on" in st
 sessions with one propose_events call (each with its course and topics), spaced out and closer together near \
 the exam: the card under your reply shows them on a week view, and the user adds them with a tap (say so in a \
 line; they aren't in the calendar until then). add_review_session is for one session they asked for outright. \
-They go in the timetable calendar as "Review: <course>", and when one starts you offer a quiz on its topics in \
+Each has a kind: study for topics not learnt yet (study_plan's learn phase: always first, the user can't be \
+quizzed on what they haven't learnt), practice, review near the exam. They go in the timetable calendar as \
+"Study: <course>", "Practice: …" or "Review: …", and when one starts you offer the lesson (study) or a quiz in \
 this chat. Cancelling one is queued; to move one, the user drags it in their \
 calendar (it's followed).
 - Focus sessions: when the user wants to sit down and study ("50 minutes on macro", "a pomodoro on IS-LM", \
