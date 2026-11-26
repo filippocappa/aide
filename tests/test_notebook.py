@@ -1073,6 +1073,8 @@ def test_a_formula_that_starts_with_a_number_stays_a_formula():
         r"Output $13.5 trillion and $x$; ranges $5–$10, costs $5.":
             r"Output \$13.5 trillion and $x$; ranges \$5–\$10, costs \$5.",
         r"the real rate it needs, $r' $, is below $\nabla f = $ ?": r"the real rate it needs, $r'$, is below $\nabla f =$ ?",
+        r"The minors are \$2, 0, 0$ and WS is \$1.2 - 4u$.": r"The minors are $2, 0, 0$ and WS is $1.2 - 4u$.",
+        r"From $5-$10 or $5, $6 and $x$.": r"From \$5-\$10 or \$5, \$6 and $x$.",
     }
     for raw, want in cases.items():
         assert tidy_math(raw) == want

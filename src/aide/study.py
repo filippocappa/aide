@@ -489,7 +489,7 @@ _DISPLAY = re.compile(r"(?<!\\)\$\$(?=\S)([^$\n]+?)(?<=\S)(?<!\\)\$\$")
 
 
 _ESCAPED = re.compile(r"\\\$(?=\d)")  # \$ before a number: money, or a formula escaped by mistake
-_MATHY = re.compile(r"[=<>^_+*/≤≥≈]|\\")
+_MATHY = re.compile(r"[=<>^_+*/≤≥≈,-]|\\")
 _COMMAND = re.compile(r"\\[A-Za-z]+(?:\{[^{}]*\})?")  # \times, \text{number of shares}: not words of the text
 
 
@@ -501,9 +501,9 @@ def _close(line: str, start: int) -> int | None:
 
 
 def _formula(span: str) -> bool:
-    """What's between a $ before a number and the next $ reads as maths ($500 = 0.6(1200-8000i)$), not as money
-    and the words after it ($5 and the rate $r$)."""
-    return (bool(span) and not span[-1].isspace() and bool(_MATHY.search(span))
+    """What's between a $ before a number and the next $ reads as maths ($500 = 0.6(1200-8000i)$, $2, 0, 0$), not as
+    money and the words after it ($5 and the rate $r$, $5-$10)."""
+    return (bool(span) and not span[-1].isspace() and span[-1] not in ",-–" and bool(_MATHY.search(span))
             and not re.search(r"[A-Za-z]{3,}", _COMMAND.sub(" ", span)))
 
 
