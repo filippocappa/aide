@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The Mac's Food section: the food page on its own, with its own day.
 struct FoodView: View {
-    @State private var day = Calendar.current.startOfDay(for: Date())
+    @State private var day = FoodCalendar.today
 
     var body: some View {
         NavigationStack {
@@ -64,7 +64,7 @@ struct FoodPage: View {
 
     private var coach: Agent { chat.agent("coach") }
 
-    private var isToday: Bool { Calendar.current.isDateInToday(day) }
+    private var isToday: Bool { FoodCalendar.isToday(day) }
 
     var body: some View {
         ScrollView {
@@ -163,7 +163,7 @@ struct FoodPage: View {
     private func startMealLog() {
         guard let way = env.mealLog else { return }
         env.mealLog = nil
-        day = Calendar.current.startOfDay(for: Date())
+        day = FoodCalendar.today
         Task {
             try? await Task.sleep(for: .milliseconds(500)) // after the tab switch and any sheet going away
             switch way {

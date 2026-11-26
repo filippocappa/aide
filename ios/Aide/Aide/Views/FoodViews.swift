@@ -205,7 +205,7 @@ struct FoodWeek: View {
     @State private var forward = true
 
     private var calendar: Calendar { .current }
-    private var today: Date { calendar.startOfDay(for: Date()) }
+    private var today: Date { FoodCalendar.today }
     private var weekStart: Date { calendar.dateInterval(of: .weekOfYear, for: day)?.start ?? day }
     private var days: [Date] { (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: weekStart) } }
     private var isThisWeek: Bool { calendar.isDate(day, equalTo: today, toGranularity: .weekOfYear) }
@@ -287,14 +287,14 @@ struct FoodWeek: View {
 
     /// "Today", "Yesterday" or "Monday 19 October".
     private var title: String {
-        if calendar.isDateInToday(day) { return "Today" }
-        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        if FoodCalendar.isToday(day) { return "Today" }
+        if FoodCalendar.isYesterday(day) { return "Yesterday" }
         return day.formatted(.dateTime.weekday(.wide).day().month(.wide))
     }
 
     /// The date beside "Today" and "Yesterday".
     private var subtitle: String? {
-        calendar.isDateInToday(day) || calendar.isDateInYesterday(day)
+        FoodCalendar.isToday(day) || FoodCalendar.isYesterday(day)
             ? day.formatted(.dateTime.weekday(.wide).day().month(.wide)) : nil
     }
 
@@ -864,5 +864,22 @@ private struct QualityPartRow: View {
             Text(detail).font(.caption).foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A food day runs 04:00 to 04:00, as on the server (docs/API.md, Food): a snack after midnight, before sleep, is
+/// the day before's, so until 04:00 the Food page's today is still yesterday's date.
+enum FoodCalendar {
+    static let startHour = 4
+
+    static var today: Date {
+        Calendar.current.startOfDay(for: Date().addingTimeInterval(-Double(startHour) * 3600))
+    }
+
+    static func isToday(_ day: Date) -> Bool { Calendar.current.isDate(day, inSameDayAs: today) }
+
+    static func isYesterday(_ day: Date) -> Bool {
+        guard let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today) else { return false }
+        return Calendar.current.isDate(day, inSameDayAs: yesterday)
     }
 }

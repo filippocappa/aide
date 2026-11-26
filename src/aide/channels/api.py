@@ -1595,7 +1595,7 @@ def create_app(agent: Agent, store: ReminderStore, calendar: CalendarBackend | N
         if day and day > today:
             raise HTTPException(400, "a meal can't be in the future")
         when = datetime.now(tz)
-        return datetime.combine(day, when.time(), tz) if day and day != today else when
+        return food.at_on(day, when.time()) if day and day != today else when
 
     def food_name(rows: list[dict]) -> str:
         """One food: its name (and brand); more: "Yogurt greco, granola and banana"."""

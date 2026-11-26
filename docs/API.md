@@ -932,6 +932,13 @@ one is only a mention, `[Photo p_…]`.
 Meals, mostly from photos: the agent names the dish, estimates the portion and works out calories and macros. Coach
 owns food (it sees it next to sleep, training and habits); Aide hands meals to Coach.
 
+**A food day runs 04:00 to 04:00** (local, since 2026-11-26): a meal eaten at 01:15 on Thursday keeps that
+`eaten_at` but counts on Wednesday, and until 04:00 "today" (every `date` defaulting to today, `GET /v1/food` with
+none) is still Wednesday. Every `date` and `from`/`to` below is a food day. Logging on an earlier `date` puts now's
+time of day on it, on the calendar day after when that time is before 04:00. The app's Food page opens on the food day
+(`FoodCalendar` in `Views/FoodViews.swift`); older builds open on the calendar day, and a snack after midnight shows
+on the page before.
+
 Meal object:
 ```json
 {"id": 12, "name": "Pasta al pomodoro", "eaten_at": "2026-10-21T13:10:00+02:00", "calories": 650,

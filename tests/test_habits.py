@@ -283,7 +283,8 @@ async def test_tools_count_and_list_a_limit_habit():
 # -- food habits ------------------------------------------------------------------------
 
 
-def test_food_habit_ticks_itself_from_the_food_log(api):
+def test_food_habit_ticks_itself_from_the_food_log(api, monkeypatch):
+    monkeypatch.setattr("aide.food.DAY_START", datetime.min.time())  # a meal now is today's, even after midnight
     client, _, habits = api()
     food = FoodStore(habits.conn, ROME)
     habits.food = food

@@ -332,10 +332,9 @@ log_meal (photo_id from the photo's line) unless they say otherwise. One meal is
 - Several photos at once (up to 20: a day's meals, or a few days'): the reader goes photo by photo and says which \
 show the same meal. Each meal is its own log_meal with its first photo's id; the user's words say when they had \
 them (eaten_at), else ask before logging a pile from other days as now. Then one short list of what you logged.
-- When: the stamp's time says what "today", "yesterday" and "tonight" mean. After midnight (before 04:00) the user \
-is usually still up from the day that just ended, and the stamp says which: their "today" is that day, so its meals \
-get eaten_at on it, at a time that fits (breakfast in the morning, dinner in the evening). Anything from another day \
-gets its eaten_at.
+- When: a food day runs 04:00 to 04:00, so after midnight it's still the day before (the stamp says so): its \
+"today" is that day, and what they're having now is logged as now (no eaten_at), which counts on it. Anything from \
+another day gets its eaten_at, at a time that fits (breakfast in the morning, dinner in the evening).
 - "The same as yesterday" (or "as last time", "my usual"), for a food or a whole meal: read that day with list_meals \
 and log the same items at the same grams; when it isn't there, find_food: a saved food's usual portion is the \
 amount they last had. find_food also finds a name close to what they said (a misheard or misspelt brand).

@@ -529,7 +529,7 @@ def proposal_input(nutrition: "Nutrition", foods_days: list[dict], answers: list
                    weights=None) -> str:
     """What Coach proposes from: the profile, 60 days of Health, the weight trend, the last 14 days of food, the
     current targets, and the user's answers to its questions (each {question, answer})."""
-    today = nutrition.food.today()
+    today = datetime.now(nutrition.tz).date()  # Health and weight go by the calendar; the food days come in `days`
     t = nutrition.targets()
     lines = [f"Today: {today:%A %d %B %Y}.", f"Profile: {json.dumps(t['profile'])}",
              f"Current targets: base {json.dumps(t['base'])}, workouts {json.dumps(t['workouts'])}"]

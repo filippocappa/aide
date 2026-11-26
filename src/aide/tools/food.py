@@ -8,7 +8,7 @@ water comes on its own, as plain_water_ml). Meals logged before items only have 
 from datetime import date as Date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from ..food import DRINKS, MACROS, FoodStore, logging_day, totals
+from ..food import DRINKS, MACROS, FoodStore, food_day, logging_day, totals
 from ..foods import FoodDB, free_notes
 from ..health import HealthStore
 from ..nutrition import GOALS, Nutrition, weakest
@@ -18,8 +18,8 @@ from .nutrition import OpenFoodFacts, nutrition_tools, quality_schema
 from .pages import open_card
 
 MAX_LIST_DAYS = 14
-WHEN_HELP = "Local time as YYYY-MM-DDTHH:MM. Omit for now."
-LATE_UNTIL = 4  # before 04:00 the user is usually still up from the day that just ended
+WHEN_HELP = ("Local time as YYYY-MM-DDTHH:MM. Omit for now. A food day runs 04:00 to 04:00: 01:30 on the 26th "
+             "counts on the 25th")
 NAMES = {"calories": "kcal", "protein_g": "protein", "carbs_g": "carbs", "fat_g": "fat"}
 
 
@@ -50,16 +50,15 @@ def food_day_line(store: FoodStore, nutrition: Nutrition, d: Date) -> str:
 
 
 def food_context(store: FoodStore, nutrition: Nutrition, now: datetime) -> str:
-    """Coach's line in each message's stamp (Agent.context): today's food against its targets, and before
-    LATE_UNTIL the day the user is still up from too, since their "today" then means that day."""
-    today = now.date()
+    """Coach's line in each message's stamp (Agent.context): the food day's food against its targets. Until 04:00
+    that's still the day before (food.DAY_START), and the stamp's date isn't: said, so "today" and "yesterday" in the
+    user's words land on the right days."""
+    today = store.today()
     line = "food today: " + food_day_line(store, nutrition, today)
-    if now.hour >= LATE_UNTIL:
+    if today == now.date():
         return line
-    before = today - timedelta(days=1)
-    return (f"after midnight: the user's \"today\" is most likely {before:%a %d %b}, the day they're still up from, "
-            f"\"yesterday\" {before - timedelta(days=1):%a %d %b}; food {food_day_line(store, nutrition, before)}; "
-            + line)
+    return (f"after midnight, still {today:%a %d %b} for food (a food day runs to 04:00: \"today\" is "
+            f"{today:%a %d %b}, \"yesterday\" {today - timedelta(days=1):%a %d %b}); " + line)
 
 
 def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB | None = None,
@@ -109,10 +108,11 @@ def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB
         if (day := logging_day.get()) is None:
             return eaten_at
         when = datetime.fromisoformat(eaten_at) if eaten_at else datetime.now(tz)
-        when = when.astimezone(tz) if when.tzinfo else when
-        if when.date() == day:
+        when = when.astimezone(tz) if when.tzinfo else when.replace(tzinfo=tz)
+        if food_day(when) == day:
             return eaten_at
-        return datetime.combine(day, when.time().replace(second=0, microsecond=0, tzinfo=None)).isoformat()
+        return store.at_on(day, when.time().replace(second=0, microsecond=0, tzinfo=None)).replace(
+            tzinfo=None).isoformat()
 
     async def log_meal(name: str, items: list[dict], eaten_at: str | None = None, photo_id: str | None = None,
                        notes: str | None = None, plain_water_ml: int = 0, caffeine_mg: int = 0,

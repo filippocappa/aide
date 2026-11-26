@@ -65,7 +65,8 @@ def test_bounds():
         bounds("year", wed)
 
 
-def test_measures_tick_themselves(env):
+def test_measures_tick_themselves(env, monkeypatch):
+    monkeypatch.setattr("aide.food.DAY_START", datetime.min.time())  # a meal now is today's, even after midnight
     store, _, _, db, study = env
     run = store.habits.add("Run", per_week=3)
     o = store.add("coach", "week", TODAY, "Run 3 times", measure={"type": "habit", "habit": run.id}, target=3)

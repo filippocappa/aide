@@ -271,7 +271,7 @@ def test_barcodes_the_app_read_go_to_coach(env):
 def test_food_endpoints(env):
     api, _, food, *_ = env()
     today = food.today()
-    noon = datetime.combine(today, time(0, 1), ROME)  # early today: always in the past
+    noon = datetime.combine(today, time(4, 1), ROME)  # early in the food day (from 04:00): always in the past
     lunch = food.add("Salad", 420, 18, 30, 25, noon)
     food.add("Toast", 300, 10, 40, 10, noon - timedelta(days=2))
     body = api.get("/v1/food", headers=AUTH).json()
@@ -347,19 +347,37 @@ def test_backup_copies_only_new_photos(tmp_path):
     assert mirror_photos(tmp_path / "none", dst) == 0
 
 
-def test_after_midnight_coach_is_told_the_day_the_user_is_still_up_from():
+def test_a_food_day_runs_from_four_to_four_and_coach_is_told_after_midnight(monkeypatch):
+    from aide import food as food_module
     from aide.foods import FoodDB
     from aide.nutrition import Nutrition
     from aide.tools.food import food_context
     db = Database(":memory:")
     food = FoodStore(db.conn, ROME)
     FoodDB(db.conn)  # its tables
-    food.add("Carbonara", calories=1180, protein_g=35, carbs_g=88, fat_g=75, eaten_at="2026-11-25T20:30")
+    food.add("Carbonara", calories=1180, protein_g=35, carbs_g=88, fat_g=75, eaten_at="2026-11-18T20:30")
+    snack = food.add("Ricotta", calories=260, protein_g=8, carbs_g=30, fat_g=12, eaten_at="2026-11-19T01:15")
+    food.add("Breakfast", calories=420, protein_g=48, carbs_g=17, fat_g=19, eaten_at="2026-11-19T04:00")
+    wed, thu = datetime(2026, 11, 18).date(), datetime(2026, 11, 19).date()
+    assert [m["name"] for m in food.day(wed)] == ["Carbonara", "Ricotta"]
+    assert [m["name"] for m in food.day(thu)] == ["Breakfast"] and food.local_day(snack) == wed
+    assert food.at_on(wed, time(1, 15)) == datetime(2026, 11, 19, 1, 15, tzinfo=ROME)
+    assert food.at_on(wed, time(13, 0)) == datetime(2026, 11, 18, 13, 0, tzinfo=ROME)
+
+    class Clock(datetime):
+        now_is = datetime(2026, 11, 19, 0, 59, tzinfo=ROME)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.now_is.astimezone(tz) if tz else cls.now_is
+    monkeypatch.setattr(food_module, "datetime", Clock)
     nutrition = Nutrition(food)
-    late = food_context(food, nutrition, datetime(2026, 11, 26, 0, 59, tzinfo=ROME))
-    assert late.startswith('after midnight: the user\'s "today" is most likely Wed 25 Nov')
-    assert '"yesterday" Tue 24 Nov' in late and "food Wed 25 Nov so far: 1180" in late
-    assert "food today: Thu 26 Nov so far: 0" in late
-    morning = food_context(food, nutrition, datetime(2026, 11, 26, 8, 0, tzinfo=ROME))
-    assert morning.startswith("food today: Thu 26 Nov so far: 0") and "after midnight" not in morning
+    assert food.today() == wed
+    late = food_context(food, nutrition, Clock.now_is)
+    assert late.startswith("after midnight, still Wed 18 Nov for food")
+    assert '"yesterday" Tue 17 Nov' in late and "food today: Wed 18 Nov so far: 1440" in late
+    Clock.now_is = datetime(2026, 11, 19, 8, 0, tzinfo=ROME)
+    assert food.today() == thu
+    morning = food_context(food, nutrition, Clock.now_is)
+    assert morning.startswith("food today: Thu 19 Nov so far: 420") and "after midnight" not in morning
     db.close()

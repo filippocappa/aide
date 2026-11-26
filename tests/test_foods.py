@@ -235,7 +235,7 @@ def test_a_scanned_barcode_is_found_saved_and_logged_without_the_model(app_env):
     assert meal["calories"] == 160 and foods.get(found["id"])["usual_g"] == 30
     yesterday = food.today() - timedelta(days=1)
     meal = api.post(f"/v1/food/foods/{found['id']}/log", json={"date": yesterday.isoformat()}, headers=AUTH).json()
-    assert meal["meal"]["calories"] == 160 and meal["meal"]["eaten_at"].startswith(yesterday.isoformat())
+    assert meal["meal"]["calories"] == 160 and food.local_day(food.get(meal["meal"]["id"])) == yesterday
     assert model.requests == []
     # Each one is in Coach's Food log chat too, with its card, the note before it hidden.
     chat = food.chat()

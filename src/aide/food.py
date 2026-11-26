@@ -1,7 +1,7 @@
 """Food log: meals with estimated calories and macros, and daily goals. Contract in docs/API.md, "Food".
 
 The numbers are the model's estimates from a photo or a description, so they're rounded: calories to 10,
-grams to 1. Days are local days (AIDE_TIMEZONE); eaten_at is stored in UTC. Water (ml) and caffeine (mg) go along,
+grams to 1. Days are food days, local (AIDE_TIMEZONE) from 04:00 to 04:00 (DAY_START); eaten_at is stored in UTC. Water (ml) and caffeine (mg) go along,
 0 when there's none; the phone writes every meal to Apple Health.
 """
 
@@ -18,6 +18,7 @@ from .db import utcnow
 # that turn goes on that day, whatever day its eaten_at names (the time of day is kept).
 logging_day: ContextVar[date | None] = ContextVar("logging_day", default=None)
 
+DAY_START = time(4)  # a food day runs 04:00 to 04:00: a snack after midnight, before sleep, is the day before's
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meals (
     id         INTEGER PRIMARY KEY,
@@ -90,6 +91,11 @@ def meal_emoji(name: str) -> str:
     return min(found)[2] if found else "🍽️"
 
 
+def food_day(when: datetime) -> date:
+    """The food day a local time is on: before DAY_START, the calendar day before."""
+    return (when - timedelta(hours=DAY_START.hour, minutes=DAY_START.minute)).date()
+
+
 class FoodStore:
     def __init__(self, conn: sqlite3.Connection, tz: ZoneInfo):
         self.conn = conn
@@ -109,7 +115,12 @@ class FoodStore:
             callback()
 
     def today(self) -> date:
-        return datetime.now(self.tz).date()
+        """The food day now: until 04:00 still the day before (DAY_START)."""
+        return food_day(datetime.now(self.tz))
+
+    def at_on(self, day: date, at: time) -> datetime:
+        """A time of day on a food day: before 04:00 that's the calendar day after."""
+        return datetime.combine(day + timedelta(days=1) if at < DAY_START else day, at, self.tz)
 
     # -- meals ----------------------------------------------------------------
 
@@ -181,10 +192,10 @@ class FoodStore:
         return gone
 
     def _bounds(self, start: date, end: date) -> tuple[str, str]:
-        """UTC bounds of the local days start..end, both included."""
+        """UTC bounds of the food days start..end, both included (each 04:00 to 04:00 local)."""
         utc = ZoneInfo("UTC")
-        lo = datetime.combine(start, time(), self.tz).astimezone(utc)
-        hi = datetime.combine(end + timedelta(days=1), time(), self.tz).astimezone(utc)
+        lo = datetime.combine(start, DAY_START, self.tz).astimezone(utc)
+        hi = datetime.combine(end + timedelta(days=1), DAY_START, self.tz).astimezone(utc)
         return lo.isoformat(), hi.isoformat()
 
     def day(self, d: date) -> list[dict]:
@@ -196,10 +207,11 @@ class FoodStore:
             "SELECT * FROM meals WHERE eaten_at >= ? AND eaten_at < ? ORDER BY eaten_at, id", (lo, hi))]
 
     def local_day(self, meal: dict) -> date:
-        return datetime.fromisoformat(meal["eaten_at"]).astimezone(self.tz).date()
+        """The food day a meal counts on (01:15 on Thursday is Wednesday's)."""
+        return food_day(datetime.fromisoformat(meal["eaten_at"]).astimezone(self.tz))
 
     def days(self, start: date, end: date) -> list[dict]:
-        """Totals for every local day start..end, oldest first, zeros when empty."""
+        """Totals for every food day start..end, oldest first, zeros when empty."""
         by_day: dict[date, list[dict]] = {}
         for m in self.between(start, end):
             by_day.setdefault(self.local_day(m), []).append(m)
@@ -208,7 +220,7 @@ class FoodStore:
                 for d in every]
 
     def met_days(self, metric: str, start: date, end: date) -> set[date]:
-        """The local days start..end (both included) that meet a food metric: a meal logged, the protein goal
+        """The food days start..end (both included) that meet a food metric: a meal logged, the protein goal
         reached, or calories within CALORIE_BAND of the goal. None without the goal it needs."""
         goal = self.goals().get(metric)
         met = set()
@@ -226,7 +238,7 @@ class FoodStore:
         return met
 
     def first_day(self) -> date | None:
-        """The local day of the first meal logged."""
+        """The food day of the first meal logged."""
         row = self.conn.execute("SELECT * FROM meals ORDER BY eaten_at LIMIT 1").fetchone()
         return self.local_day(dict(row)) if row else None
 

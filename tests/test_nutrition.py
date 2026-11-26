@@ -272,7 +272,7 @@ def test_a_proposal_that_doesnt_parse_is_a_502(api_env):
 
 def test_coach_gives_its_take_on_a_score_when_asked(api_env):
     api, f, health, model = api_env(model=[done("  Your HRV is below your usual after a late night.  ")])
-    today = f.today()
+    today = datetime.now(f.tz).date()  # Health's day is the calendar's (a food day runs to 04:00)
     health.save([{"date": (today - timedelta(days=n)).isoformat(), "hrv_ms": 60.0, "resting_hr": 45,
                   "hr_minutes": [[100, 30]]} for n in range(20)])
     got = api.post("/v1/health/insight", json={"kind": "recovery"}, headers=AUTH).json()
