@@ -66,6 +66,29 @@ def test_search_needs_every_word_ignores_accents_and_puts_the_most_eaten_first(e
     assert normalize("  Müller  Fitline ") == "muller fitline"
 
 
+def test_a_misheard_name_finds_the_close_saved_food(env):
+    _, _, foods, _ = env()
+    hipro = foods.save("HiPRO Fragola Lampone", 60, 8.4, 4.5, 0, "label", brand="Danone")
+    foods.save("Fragole", 32, 0.7, 7.7, 0.3, "estimate")
+    milk = foods.save("Milk PRO", 50, 6, 4, 1, "label")
+    ricotta = foods.save("Ricottine fresche", 164, 8, 3, 13, "label")
+    assert foods.search("aipro fragola") == []
+    assert [f["id"] for f in foods.search_close("aipro fragola")] == [hipro["id"]]
+    assert [f["id"] for f in foods.search_close("Aipro")] == [hipro["id"]]  # not 'pro' in Milk PRO
+    assert [f["id"] for f in foods.search_close("ricota")] == [ricotta["id"]]
+    assert milk["id"] not in [f["id"] for f in foods.search_close("prossecco")]
+    assert foods.search_close("burger") == [] and foods.search_close("") == []
+    assert foods.search_close("hpr") == []  # short words must match as they are
+
+
+async def test_find_food_offers_close_names_before_going_online(env):
+    tools, _, foods, rec = env()
+    foods.save("HiPRO Fragola Lampone", 60, 8.4, 4.5, 0, "label", brand="Danone")
+    out = await tools.call("find_food", {"query": "aipro fragola"})
+    assert out.startswith("No saved food is called 'aipro fragola'") and "HiPRO Fragola Lampone" in out
+    assert not rec.requests
+
+
 def test_two_servings_leave_the_usual_portion_one_serving(env):
     _, _, foods, _ = env()
     espresso = foods.save("Espresso", 9, 0.1, 1.7, 0.2, "estimate", kind="drink")

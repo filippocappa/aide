@@ -19,6 +19,7 @@ from .pages import open_card
 
 MAX_LIST_DAYS = 14
 WHEN_HELP = "Local time as YYYY-MM-DDTHH:MM. Omit for now."
+LATE_UNTIL = 4  # before 04:00 the user is usually still up from the day that just ended
 NAMES = {"calories": "kcal", "protein_g": "protein", "carbs_g": "carbs", "fat_g": "fat"}
 
 
@@ -46,6 +47,19 @@ def food_day_line(store: FoodStore, nutrition: Nutrition, d: Date) -> str:
         if low := weakest(s):
             line += f"; weakest: {low}"
     return line
+
+
+def food_context(store: FoodStore, nutrition: Nutrition, now: datetime) -> str:
+    """Coach's line in each message's stamp (Agent.context): today's food against its targets, and before
+    LATE_UNTIL the day the user is still up from too, since their "today" then means that day."""
+    today = now.date()
+    line = "food today: " + food_day_line(store, nutrition, today)
+    if now.hour >= LATE_UNTIL:
+        return line
+    before = today - timedelta(days=1)
+    return (f"after midnight: the user's \"today\" is most likely {before:%a %d %b}, the day they're still up from, "
+            f"\"yesterday\" {before - timedelta(days=1):%a %d %b}; food {food_day_line(store, nutrition, before)}; "
+            + line)
 
 
 def food_tools(store: FoodStore, photos: PhotoStore, tz: ZoneInfo, foods: FoodDB | None = None,

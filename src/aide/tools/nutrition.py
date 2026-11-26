@@ -198,6 +198,9 @@ def nutrition_tools(foods: FoodDB, off: OpenFoodFacts) -> list[Tool]:
             raise ValueError("give a query or a barcode")
         saved = foods.search(query)
         lines = ["Saved foods:", *map(describe, saved)] if saved else [f"No saved food matches '{query}'."]
+        if not saved and (saved := foods.search_close(query)):
+            lines = [f"No saved food is called '{query}'. Saved foods with a name close to it (misheard or "
+                     "misspelt: use one when it's surely what they meant):", *map(describe, saved)]
         if saved and not online:
             return "\n".join(lines)
         found = await off.search(query)

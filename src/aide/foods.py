@@ -7,9 +7,11 @@ A meal logged from items keeps them in meal_items. Drinks are per 100 ml, the sa
 A meal's water is worked out from its drinks (water_share), plus any plain water given on its own.
 """
 
+import re
 import sqlite3
 import unicodedata
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
 
 from .db import utcnow
@@ -72,6 +74,8 @@ QUALITY_COLUMNS = {"sugars_100g": "REAL", "sat_fat_100g": "REAL", "fibre_100g": 
 MAX_NAME = 100
 MAX_PORTION = 5000  # g in one serving or one item
 SEARCH_LIMIT = 5
+CLOSE_RATIO = 0.8  # search_close: how alike a word must be ('aipro' and 'hipro' are 0.8)
+CLOSE_MIN_LEN = 4  # shorter words must match as they are
 RECENT_DAYS = 90  # how far back "what you eat" looks
 RECENT_HOURS = 2  # eaten within this many hours of now's time of day counts double (breakfast in the morning)
 RECENT_FOODS = 40
@@ -148,6 +152,33 @@ class FoodDB:
                  if all(w in normalize(f"{r['name']} {r['brand']} {r['aliases']}") for w in words)]
         found.sort(key=lambda f: (f["uses"], f["last_used"] or ""), reverse=True)
         return found[:limit]
+
+    def search_close(self, text: str, limit: int = SEARCH_LIMIT) -> list[dict]:
+        """When `search` finds nothing: foods with every word of `text` in their name, brand or aliases or close to
+        one of their words (a misheard or misspelt name: 'aipro fragola' → HiPRO Fragola Lampone); the closest
+        first, then the most eaten."""
+        words = normalize(text).split()
+        if not words:
+            return []
+
+        def closeness(word: str, tokens: list[str], hay: str) -> float:
+            if word in hay:
+                return 1.0
+            if len(word) < CLOSE_MIN_LEN:
+                return 0.0
+            # each word of theirs, whole or its start ('ricota' is close to 'ricottine')
+            return max((SequenceMatcher(None, word, part).ratio() for t in tokens if len(t) >= CLOSE_MIN_LEN
+                        for part in (t, t[:len(word)])), default=0.0)
+
+        scored = []
+        for r in self.conn.execute("SELECT * FROM foods ORDER BY id"):
+            hay = normalize(f"{r['name']} {r['brand']} {r['aliases']}")
+            tokens = re.findall(r"[a-z0-9]+", hay)
+            each = [closeness(w, tokens, hay) for w in words]
+            if min(each) >= CLOSE_RATIO:
+                scored.append((sum(each) / len(each), dict(r)))
+        scored.sort(key=lambda s: (s[0], s[1]["uses"], s[1]["last_used"] or ""), reverse=True)
+        return [f for _, f in scored[:limit]]
 
     def recent(self, tz: ZoneInfo, text: str = "", limit: int = RECENT_FOODS) -> dict:
         """What the user eats, to log it again without the model: `foods` (eaten ones, or with `text` any saved food

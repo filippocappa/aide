@@ -345,3 +345,21 @@ def test_backup_copies_only_new_photos(tmp_path):
     store.save(JPEG, "image/png")
     assert mirror_photos(src, dst) == 1 and len(list(dst.iterdir())) == 2
     assert mirror_photos(tmp_path / "none", dst) == 0
+
+
+def test_after_midnight_coach_is_told_the_day_the_user_is_still_up_from():
+    from aide.foods import FoodDB
+    from aide.nutrition import Nutrition
+    from aide.tools.food import food_context
+    db = Database(":memory:")
+    food = FoodStore(db.conn, ROME)
+    FoodDB(db.conn)  # its tables
+    food.add("Carbonara", calories=1180, protein_g=35, carbs_g=88, fat_g=75, eaten_at="2026-11-25T20:30")
+    nutrition = Nutrition(food)
+    late = food_context(food, nutrition, datetime(2026, 11, 26, 0, 59, tzinfo=ROME))
+    assert late.startswith('after midnight: the user\'s "today" is most likely Wed 25 Nov')
+    assert '"yesterday" Tue 24 Nov' in late and "food Wed 25 Nov so far: 1180" in late
+    assert "food today: Thu 26 Nov so far: 0" in late
+    morning = food_context(food, nutrition, datetime(2026, 11, 26, 8, 0, tzinfo=ROME))
+    assert morning.startswith("food today: Thu 26 Nov so far: 0") and "after midnight" not in morning
+    db.close()

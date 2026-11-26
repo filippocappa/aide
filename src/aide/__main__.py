@@ -66,7 +66,7 @@ from .webdav import USER as WEBDAV_USER
 from .tools import ToolRegistry
 from .tools.calendar import calendar_tools
 from .tools.clock import clock_tool
-from .tools.food import food_day_line, food_tools
+from .tools.food import food_context, food_tools
 from .nutrition import Nutrition
 from .tools.nutrition import OpenFoodFacts
 from .tools.objectives import objective_tools
@@ -417,8 +417,8 @@ def main() -> None:
     # Coach sees today's food against the day's targets on every message: a run uploaded after the last meal was
     # logged raises them, and an old tool result in the chat would still say the lower ones.
     day_food = Nutrition(food, health)
-    agent.context = lambda a: ("food today: " + food_day_line(food, day_food, datetime.now(settings.timezone).date())
-                               if a == "coach" else None)
+    agent.context = lambda a: (food_context(food, day_food, datetime.now(settings.timezone)) if a == "coach"
+                               else None)
     if settings.openrouter_api_key:
         agent.reader = PhotoReader(settings.openrouter_api_key, settings.photo_read_model)  # Coach's photos
     if errands:
