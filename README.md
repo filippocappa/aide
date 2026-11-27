@@ -48,10 +48,27 @@ Around them are routines and watches (an agent's scheduled job, or a check that 
 you), widgets, and Live Activities on the Lock Screen and in the Dynamic Island (the next tram, the next event, an
 agent at work, a focus session's round, the time to bedtime).
 
+Study is planned for you. From each course's next exam, the free days before it and what you already know, the **exam
+plan** works out the hours still needed and the study week (no model call; the hours are a ceiling, not a target). At
+21:00 Secretary asks what else tomorrow holds, in its Tomorrow chat, in the same notification as the evening digest,
+and proposes the day as one card: what you said first, then the study blocks in whole quarter hours around it,
+lunch and dinner left free. Nothing is in the calendar until you tap Add; with no answer in 90 minutes it proposes the
+study around the calendar alone. A study session you move earlier is announced at its new time.
+
+**Nudges** come while you're still at a device: firmer ones toward bedtime, and a nudge (then a short lock) if you
+drift off the Work list during a study or `#focus` event. The phone and the Mac decide when, since they know whether
+you're there; the server keeps what was shown and the answers, and Coach mentions them kindly in the evening digest.
+Bedtime's own lock is never touched by them.
+
 The **Mac app** is the same app in a window. It has the sections in a sidebar, the day at a glance under them, and
 Pebble in the menu bar for a quick look. Hold **fn ⌥** anywhere for [Peek](#peek-on-the-mac), Aide's board over
 whatever is on screen. It also has its own screen time: the Mac counts its apps and websites and enforces the phone's
-locks itself.
+locks itself. That part runs in a small helper, **Aide Guard**, which launchd starts at login and restarts if it stops,
+so a quit Aide doesn't leave Bedtime unenforced.
+
+Chats are kept on the device, so you can read them, and write in them, offline: what you write waits and is sent when
+the server is back, each message once. Old chats are grouped (Pinned, Today, This week, Earlier) and archived after
+14 days untouched; a new message brings one back.
 
 The API is in [docs/API.md](docs/API.md), the contract between the server and the app. The original plan is in
 [docs/archive/SPEC.md](docs/archive/SPEC.md), [CLAUDE.md](CLAUDE.md) is how it's built now and
@@ -102,7 +119,7 @@ flowchart TB
         DB[("SQLite")]
         Workers["Study workers<br/>Whisper · notebook"]
         Vault["Obsidian vault<br/>WebDAV"]
-        Browser["Aide's browser<br/>Chromium, headless"]
+        Browser["Aide's browser<br/>Chrome on a virtual screen"]
     end
 
     subgraph Outside["☁️ Outside"]
@@ -393,13 +410,28 @@ src/aide/
   finance.py, banks.py   payments, categories, budget, subscriptions; bank accounts through Enable Banking
   usage.py               what every model call and paid API call cost
   shapes.py              JSON shapes the API and the digest both send
-  routines.py            routines and watches; activity.py: the feed of what the agents did
+  activity.py            the feed of what the agents did
   locks.py               Screen Time locks
   focus.py               focus sessions: rounds as strict locks, the Live Activity, the check and Professor's post
+  router.py, decide.py   the router that sends a typed message to the right specialist; decision models (Jev) for it and for marking a typed study answer
+  consent.py             a spoken yes or no to queued actions, decided in code
+  livecall.py            live voice calls; localvoice.py, voicemodels.py, gptlive.py, voicequiz.py: the voice behind them
+  srs.py, examplan.py    spaced repetition (FSRS); the exam plan: the hours each exam still needs, against the free days
+  dayplan.py             tomorrow's plan, asked the evening before and proposed as one card
+  nudges.py              what the devices need for their nudges (bedtime, off task) and what they showed
+  pageedits.py           what you write into Aide's pages in Obsidian, tidied and its questions answered
+  reading.py, charts.py  Ask Professor about a passage or file; Professor's and Aide's charts
+  esse3.py, unito.py     Esse3 read and signed up to through UniTo's single sign-on; unitimetable.py: the lecture timetable
+  datereminders.py       course dates that aren't exams, as reminders
+  passwords.py           saved logins, encrypted, for the server's own code
+  browsing.py            page tools for chat and errands; pricewatch.py, releases.py: price watches, release trackers
+  feedback.py, agenda.py thumbs on replies with the whole turn; today's and tomorrow's calendar for spoken turns
+  host.py                Aide steps back while another project needs the machine (deploy/host-claim)
+  lang.py                Italian or English
   backup.py              nightly backup of data/ (run by deploy/aide-backup.timer)
 ios/Aide/                the app (SwiftUI): iPhone (iOS 17+) and Mac (target AideMac, macOS 14+)
 brand/                   the brand kit: Pebble and its family, colours, screenshots, promo images
-deploy/                  systemd units
+deploy/                  systemd units, host-claim, aide-status.py (what's going on on the machine, for the app's status line)
 ```
 
 ## Run your own
@@ -622,7 +654,14 @@ the exam sessions and their sign-up windows (into each course's dates), what you
 login (not SPID or CIE), and keeps the session in memory only. If UniTo says the password is wrong it stops and pushes
 once; it won't try again until the password is changed, so the account isn't locked. A page it doesn't know (a code, a
 new password to set, a consent) pushes "UniTo login needs you": log in once yourself at my.unito.it and deal with it; Aide
-tries again the next day. `journalctl --user -u aide | grep "unito login\|esse3"` shows the steps by name.
+tries again the next day. Exam sign-ups and cancellations are an errand that runs only on your tap in the app, never retried. `journalctl --user -u aide | grep "unito login\|esse3"` shows the steps by name.
+
+## UniTo timetable
+
+Set `AIDE_UNITO_TIMETABLE` in `.env` to the link id of your degree year's calendar in UniTo's University Planner (the
+`linkCalendarioId=…` at the end of the schedule link on the degree's site; a new one each academic year). No login is
+needed. Secretary and Professor can then read a week of lectures and, when you say so, add the missing ones to the study
+calendar under the course's name, with the room and teachers in the notes.
 
 ## Errands on the web
 
@@ -799,6 +838,12 @@ back with it.
 
 - LLM: OpenRouter (`OPENROUTER_API_KEY`) or the Anthropic API directly (`ANTHROPIC_API_KEY`). Haiku 5.5 by default, Sonnet 5.5 after "think harder" in the app (`/v1/think`); override with `AIDE_MODEL` / `AIDE_SMART_MODEL`. Voice chats in the app are transcribed by
   `google/gemini-3.5-flash-lite` over OpenRouter (`AIDE_TRANSCRIBE_MODEL` to change it; off without an OpenRouter key). Prompt caching is on for both; server-side refusal fallback only works direct, and not on Haiku.
+- Before Aide answers a typed message, a router picks the specialist (TypeSafe's Jev on OpenRouter, about 0.2 s; at 60%
+  sure or more that specialist answers directly). `AIDE_ROUTER=off` turns it off, `AIDE_ROUTER_MODEL` changes it.
+  Typed study answers are marked the same way (`AIDE_DECIDER_MODEL=off` to disable).
+- Live calls can be turned off for every device in Settings → Voice; the voice models are then let go and nothing loads
+  at the next start (`AIDE_LIVE=off` does it from `.env`). While another project claims the machine with `host-claim`,
+  Aide takes no new calls and holds Whisper.
 - Each turn is saved to SQLite only after it completes. A crash mid-turn loses that turn but never corrupts history.
 - Every tool call is written to `audit_log`.
 
