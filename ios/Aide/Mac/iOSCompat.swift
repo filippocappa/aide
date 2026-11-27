@@ -196,10 +196,12 @@ extension View {
 
 extension ToolbarItemPlacement {
     static var topBarLeading: ToolbarItemPlacement { .navigation }
-    static var topBarTrailing: ToolbarItemPlacement { .primaryAction }
+    /// The window toolbar's trailing end. `.primaryAction` is its *leading* edge on macOS: a page's + landed against
+    /// the title, over the page (2026-11-27).
+    static var topBarTrailing: ToolbarItemPlacement { .automatic }
     static var bottomBar: ToolbarItemPlacement { .automatic }
     static var navigationBarLeading: ToolbarItemPlacement { .navigation }
-    static var navigationBarTrailing: ToolbarItemPlacement { .primaryAction }
+    static var navigationBarTrailing: ToolbarItemPlacement { .automatic }
 }
 
 /// The phone's navigation and tab bars, which the Mac doesn't have. The window toolbar stays whatever a page asks:

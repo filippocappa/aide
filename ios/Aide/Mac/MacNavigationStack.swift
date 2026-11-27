@@ -206,6 +206,21 @@ private struct MacPageBack: ViewModifier {
                         .padding(.leading, 20)
                         .padding(.top, 2)
                         .padding(.bottom, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        // The page scrolled up under the back button and the title stays out of the way: a blur
+                        // from the window's top fading out below the button (the soft scroll edge didn't reach a
+                        // pushed page, 2026-11-27).
+                        .background {
+                            Rectangle()
+                                .fill(.regularMaterial)
+                                .mask(LinearGradient(stops: [.init(color: .black, location: 0),
+                                                             .init(color: .black, location: 0.75),
+                                                             .init(color: .clear, location: 1)],
+                                                     startPoint: .top, endPoint: .bottom))
+                                .padding(.bottom, -14)
+                                .ignoresSafeArea(edges: .top)
+                                .allowsHitTesting(false)
+                        }
                 }
         }
     }
