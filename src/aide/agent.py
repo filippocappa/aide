@@ -725,7 +725,8 @@ class Agent:
         agent's own context), and shown the real queue, which may differ from what it remembers queuing."""
         where = await self.whereabouts() if self.whereabouts else None
         calendar = await self._agenda(agent) if voice else None
-        stamped = (f"[{datetime.now(self.tz):%a %d %b %Y %H:%M}{_written(written_at, self.tz)}"
+        now = datetime.now(self.tz)
+        stamped = (f"[{now:%a %d %b %Y %H:%M}{_written(written_at, self.tz)}{_small_hours(now)}"
                    f"{', ' + where if where else ''}"
                    f"{_spoken(text) if voice else ''}{self._context(agent)}{', ' + calendar if calendar else ''}] {text}")
         # Not on a spoken turn: Haiku brought the queue up in every spoken reply ("the move still waits for your
@@ -1535,6 +1536,15 @@ def _written(at: datetime | None, tz) -> str:
         return ""
     when = f"{at:%H:%M}" if at.date() == now.date() else f"{at:%a %d %b %H:%M}"
     return f", written {when} while offline"
+
+
+def _small_hours(now: datetime) -> str:
+    """Before 05:00 the user hasn't slept yet, so their "tomorrow" is the coming morning, today's date. Haiku took
+    "domani mattina" at 01:33 for the day after and planned a Saturday trip on Sunday's timetable (2026-11-28)."""
+    if now.hour >= 5:
+        return ""
+    day = f"{now:%a} {now.day} {now:%b}"
+    return f', before dawn: "tomorrow", "domani" and "this morning" mean today, {day}, unless they give a date'
 
 
 def _spoken(text: str) -> str:
