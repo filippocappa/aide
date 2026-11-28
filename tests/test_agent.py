@@ -244,12 +244,12 @@ async def test_old_thinking_is_not_sent_on_later_turns(db):
     assert db.history(conv)[1]["content"][0]["type"] == "thinking"  # stored whole
 
 
-def test_before_dawn_tomorrow_is_the_coming_morning():
+def test_before_dawn_tomorrow_is_the_coming_morning(small_hours):
     # 01:33 on Saturday: "domani mattina" is Saturday morning, not Sunday (2026-11-28)
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
-    from aide.agent import _small_hours
+    _small_hours = small_hours
     rome = ZoneInfo("Europe/Rome")
     hint = _small_hours(datetime(2026, 11, 28, 1, 33, tzinfo=rome))
     assert "Sat 28 Nov" in hint and "tomorrow" in hint
